@@ -85,7 +85,7 @@ describe("workspace session orchestrator", () => {
     expect(d.agentSessionManager.startSession).toHaveBeenCalledWith(expect.objectContaining({
       agent: "codex",
       ownerId: "user_workspace",
-      sandbox: { enabled: true, writableRoots: [worktree.path] },
+      sandbox: { enabled: true, mode: "workspace-write", writableRoots: [worktree.path] },
       sessionId: "sess_fixed",
     }));
     expect(d.eventPublisher.publishSessionStarted).toHaveBeenCalledWith(session);
@@ -118,6 +118,30 @@ describe("workspace session orchestrator", () => {
 
     expect(result).toMatchObject({ ok: true, status: 201, session: { id: "sess_fixed" } });
     expect(warn).toHaveBeenCalledWith("[workspace-session-orchestrator] Failed to publish session start event:", "event write failed");
+  });
+
+  it("preserves full-access sandbox requests as Codex danger-full-access launches", async () => {
+    const d = deps();
+    const orchestrator = createWorkspaceSessionOrchestrator({
+      ...d,
+      idGenerator: () => "sess_fixed",
+    });
+
+    const result = await orchestrator.startSession({
+      ownerScope: { type: "user", id: "user_workspace" },
+      request: {
+        projectSlug: "repo",
+        worktreeId: "wt_abc123def456",
+        kind: "agent",
+        agent: "codex",
+        sandboxMode: "full_access",
+      },
+    });
+
+    expect(result).toMatchObject({ ok: true, status: 201 });
+    expect(d.agentSessionManager.startSession).toHaveBeenCalledWith(expect.objectContaining({
+      sandbox: { enabled: true, mode: "danger-full-access", writableRoots: [] },
+    }));
   });
 
   it("returns a safe sandbox failure before launching a session", async () => {

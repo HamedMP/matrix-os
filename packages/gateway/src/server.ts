@@ -34,9 +34,16 @@ import {
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
+import { createReviewStore } from "./review-store.js";
 import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
 import { createSymphonyRunner } from "./symphony-runner.js";
 import { createAgentLauncher } from "./agent-launcher.js";
+import { createAgentSessionManager } from "./agent-session-manager.js";
+import { createAgentSandbox } from "./agent-sandbox.js";
+import { createWorktreeManager } from "./worktree-manager.js";
+import { createWorkspaceSessionOrchestrator } from "./workspace-session-orchestrator.js";
+import { createWorkspaceEventStore } from "./workspace-events.js";
+import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
@@ -89,6 +96,13 @@ import { createToolPackRoutes } from "./onboarding/tool-pack-routes.js";
 import type { CodingSetupStatus } from "./onboarding/coding-setup.js";
 import { createAgentCredentialStatusService } from "./onboarding/agent-credential-status.js";
 import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
+import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-summary.js";
+import { createCodingAgentRoutes } from "./coding-agents/routes.js";
+import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type CodingAgentProviderAdapter, type CodingAgentThreadStore } from "./coding-agents/thread-store.js";
+import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./coding-agents/thread-stream.js";
+import { createWorkspaceCodingAgentProvider } from "./coding-agents/workspace-provider.js";
+import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
+import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -459,6 +473,72 @@ export async function createGateway(config: GatewayConfig) {
         missing: status?.installed === false,
       };
     },
+  });
+  let codingAgentThreadStore: CodingAgentThreadStore | undefined;
+  const codingAgentSessionStopReconciler = createCodingAgentSessionStopReconciler();
+  const workspaceEventStore = createWorkspaceEventStore({ homePath });
+  const reviewStore = createReviewStore({ homePath });
+  const codingAgentReviewSummaryStore = createCodingAgentReviewSummaryStore(reviewStore, {
+    ownerId: process.env.MATRIX_USER_ID,
+    principalOwnerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(
+      (id): id is string => Boolean(id),
+    ),
+  });
+  const workspaceEventPublisher = createWorkspaceEventPublisher({
+    eventStore: workspaceEventStore,
+    onSessionStopped: (session) => codingAgentSessionStopReconciler.handleSessionStopped(session),
+  });
+  const codingAgentProviders: CodingAgentProviderAdapter[] = [];
+  if (process.env.MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER === "1") {
+    const codingAgentWorktreeManager = createWorktreeManager({ homePath });
+    const codingAgentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
+    const codingAgentSessionManager = createAgentSessionManager({
+      homePath,
+      worktreeManager: codingAgentWorktreeManager,
+      agentLauncher: codingAgentLauncher,
+      zellijRuntime: workspaceZellijRuntime,
+    });
+    const codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
+      worktreeManager: codingAgentWorktreeManager,
+      agentSessionManager: codingAgentSessionManager,
+      agentSandbox: createAgentSandbox({ homePath }),
+      sessionRuntimeBridge: workspaceSessionRuntimeBridge,
+      eventPublisher: workspaceEventPublisher,
+    });
+    codingAgentProviders.push(createWorkspaceCodingAgentProvider({
+      providerId: "codex",
+      agent: "codex",
+      runtime: codingAgentWorkspaceRuntime,
+    }));
+  } else if (process.env.MATRIX_CODING_AGENTS_FAKE_PROVIDER === "1") {
+    codingAgentProviders.push(createFakeCodingAgentProvider({ providerId: "codex" }));
+  }
+  codingAgentThreadStore = codingAgentProviders.length > 0
+    ? createCodingAgentThreadStore({
+      homePath,
+      providers: codingAgentProviders,
+    })
+    : undefined;
+  const codingAgentWorkspaceEnabled = Boolean(codingAgentThreadStore);
+  if (codingAgentThreadStore) {
+    void codingAgentSessionStopReconciler.attachThreadStore(codingAgentThreadStore).catch((err: unknown) => {
+      console.warn("[coding-agents] Failed to flush pending session stops:", err instanceof Error ? err.message : String(err));
+    });
+  }
+  const codingAgentThreadStream = codingAgentThreadStore
+    ? createCodingAgentThreadStream({ threads: codingAgentThreadStore })
+    : undefined;
+  const codingAgentRuntimeSummaryService = createCodingAgentRuntimeSummaryService({
+    homePath,
+    terminalRegistry: zellijShellRegistry,
+    agentCredentials: agentCredentialService,
+    threads: codingAgentThreadStore,
+    capabilities: {
+      workspace: codingAgentWorkspaceEnabled,
+      approvals: false,
+      review: true,
+    },
+    terminalOwnerId: process.env.MATRIX_USER_ID,
   });
   const integrationCapabilityService = createIntegrationCapabilityService({
     getConnectedCapabilityIds,
@@ -1474,6 +1554,11 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
   app.route("/api/onboarding", createToolPackRoutes({ service: toolPackService }));
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
+  app.route("/api/coding-agents", createCodingAgentRoutes({
+    service: codingAgentRuntimeSummaryService,
+    threads: codingAgentThreadStore,
+    reviews: codingAgentReviewSummaryStore,
+  }));
   app.route("/api/integrations", createIntegrationCapabilityRoutes({
     service: integrationCapabilityService,
     audit: agentActionAuditService,
@@ -2059,6 +2144,112 @@ export async function createGateway(config: GatewayConfig) {
     }),
   );
 
+  if (codingAgentThreadStream) {
+    app.get(
+      "/ws/coding-agents/thread/:threadId",
+      upgradeWebSocket((c) => {
+        const threadId = c.req.param("threadId") ?? "";
+        const cursor = c.req.query("cursor");
+        let streamHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
+        let socketClosed = false;
+        const pendingFrames: string[] = [];
+        const pendingLimit = 8;
+
+        return {
+          onOpen(_evt, ws) {
+            let principal;
+            try {
+              principal = requireRequestPrincipal(c);
+            } catch (err: unknown) {
+              logBestEffortFailure("Coding agent thread stream principal rejected", err);
+              try {
+                ws.send(JSON.stringify({
+                  type: "thread.stream.error",
+                  error: {
+                    code: "thread_stream_unavailable",
+                    safeMessage: "Thread stream is temporarily unavailable. Try again.",
+                    retryable: true,
+                    recoveryActions: ["retry"],
+                  },
+                }));
+              } catch (sendErr: unknown) {
+                logUnexpectedWsSendFailure("Coding agent thread WebSocket rejected error send failed", sendErr);
+              }
+              ws.close();
+              return;
+            }
+
+            void codingAgentThreadStream.open({
+              ws,
+              principal,
+              threadId,
+              cursor,
+            }).then((session) => {
+              if (socketClosed) {
+                session.onClose();
+                return;
+              }
+              streamHandle = session;
+              for (const frame of pendingFrames.splice(0)) {
+                session.onMessage(frame);
+              }
+            }).catch((err: unknown) => {
+              logBestEffortFailure("Coding agent thread stream attach failed", err);
+              pendingFrames.splice(0);
+              if (socketClosed) return;
+              try {
+                ws.send(JSON.stringify({
+                  type: "thread.stream.error",
+                  error: {
+                    code: "thread_stream_unavailable",
+                    safeMessage: "Thread stream is temporarily unavailable. Try again.",
+                    retryable: true,
+                    recoveryActions: ["retry"],
+                  },
+                }));
+              } catch (sendErr: unknown) {
+                logUnexpectedWsSendFailure("Coding agent thread WebSocket send failed", sendErr);
+              }
+              ws.close();
+            });
+          },
+          onMessage(evt, ws) {
+            const raw = threadStreamFrameDataToString(evt.data);
+            if (raw === null) return;
+            if (streamHandle) {
+              streamHandle.onMessage(raw);
+              return;
+            }
+            if (pendingFrames.length >= pendingLimit) {
+              try {
+                ws.send(JSON.stringify({
+                  type: "thread.stream.error",
+                  error: {
+                    code: "invalid_frame",
+                    safeMessage: "Stream message was invalid. Refresh and try again.",
+                    retryable: true,
+                    recoveryActions: ["retry"],
+                  },
+                }));
+              } catch (sendErr: unknown) {
+                logUnexpectedWsSendFailure("Coding agent thread WebSocket send failed", sendErr);
+              }
+              ws.close();
+              return;
+            }
+            pendingFrames.push(raw);
+          },
+          onClose() {
+            socketClosed = true;
+            pendingFrames.splice(0);
+            streamHandle?.onClose();
+            streamHandle = null;
+          },
+        };
+      }),
+    );
+  }
+
   app.get(
     "/ws/terminal",
     upgradeWebSocket((c) => {
@@ -2503,6 +2694,9 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     zellijRuntime: workspaceZellijRuntime,
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
+    eventStore: workspaceEventStore,
+    eventPublisher: workspaceEventPublisher,
+    reviewStore,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   }));
   app.route("/api/symphony", createElixirSymphonyProxyRoutes({
@@ -3865,6 +4059,8 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
+      codingAgentThreadStream?.shutdown();
+      codingAgentSessionStopReconciler.dispose();
       drainReconnectableAbortEntries(reconnectableAbortControllers);
       if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);
       canvasSubscriptionHub?.close();

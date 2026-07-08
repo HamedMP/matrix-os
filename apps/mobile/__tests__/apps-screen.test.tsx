@@ -62,8 +62,9 @@ describe("AppsScreen", () => {
     render(<AppsScreen />);
 
     await waitFor(() => expect(screen.getByText("Terminal")).toBeTruthy());
-    // "Apps" appears twice now: the screen title and the native Apps card.
-    expect(screen.getAllByText("Apps").length).toBeGreaterThanOrEqual(2);
+    // The mobile workspace slice keeps system surfaces visible in the grid,
+    // except the current Apps launcher itself.
+    expect(screen.queryByLabelText("Open Apps")).toBeNull();
     expect(screen.getByText("Tasks")).toBeTruthy();
     expect(screen.getByText("Settings")).toBeTruthy();
     // Chat is intentionally hidden from the launcher grid.
@@ -136,6 +137,19 @@ describe("AppsScreen", () => {
       MOBILE_SHELL_STATE_STORAGE_KEY,
       expect.stringContaining("\"lastActiveAppSlug\":\"notes\""),
     ));
+  });
+
+  it("keeps the native Tasks app available in the continue card", async () => {
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify({
+      mode: "app",
+      lastActiveAppSlug: "tasks",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+    }));
+    useGatewayMock.mockReturnValue(gatewayContext({}));
+
+    render(<AppsScreen />);
+
+    await waitFor(() => expect(screen.getByLabelText("Continue Tasks")).toBeTruthy());
   });
 
   it("groups visible apps into main, my apps, and games sections", async () => {

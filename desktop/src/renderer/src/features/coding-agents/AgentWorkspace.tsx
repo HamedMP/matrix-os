@@ -1,0 +1,429 @@
+import { Bot, ClipboardCheck, GitBranch, Play, RefreshCw, Server, SquareTerminal } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  defaultAgentThreadComposerDraft,
+  type AgentThreadComposerDraft,
+  type ReviewSummary,
+  type RuntimeSummary,
+} from "@matrix-os/contracts";
+import { Button, EmptyState, StatusDot } from "../../design/primitives";
+import { useConnection } from "../../stores/connection";
+import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { useTabs } from "../../stores/tabs";
+
+const STATUS_COLOR: Record<string, string> = {
+  available: "var(--success)",
+  running: "var(--success)",
+  installed: "var(--success)",
+  authenticated: "var(--success)",
+  degraded: "var(--warning)",
+  setup_required: "var(--warning)",
+  auth_required: "var(--warning)",
+  missing: "var(--warning)",
+  offline: "var(--danger)",
+  failed: "var(--danger)",
+  unavailable: "var(--danger)",
+  unknown: "var(--text-tertiary)",
+};
+const DEFAULT_STATUS_COLOR = "var(--text-tertiary)";
+
+function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
+  return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
+}
+
+function Section({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count?: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="flex min-h-0 flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+          {title}
+        </h2>
+        {typeof count === "number" ? (
+          <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+            {count}
+          </span>
+        ) : null}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function RuntimeHeader({ summary, onRefresh }: { summary: RuntimeSummary; onRefresh: () => void }) {
+  return (
+    <div
+      className="flex shrink-0 items-center justify-between border-b px-5 py-4"
+      style={{ borderColor: "var(--border-subtle)" }}
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <span
+          className="flex h-9 w-9 items-center justify-center rounded-md"
+          style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
+        >
+          <Bot size={19} />
+        </span>
+        <div className="min-w-0">
+          <h1 className="truncate text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
+            Agent workspace
+          </h1>
+          <div className="flex items-center gap-2 text-sm" style={{ color: "var(--text-secondary)" }}>
+            <StatusDot color={STATUS_COLOR[summary.runtime.status] ?? DEFAULT_STATUS_COLOR} pulse={summary.runtime.status === "available"} />
+            <span className="truncate">{summary.runtime.label}</span>
+          </div>
+        </div>
+      </div>
+      <Button variant="ghost" onClick={onRefresh} aria-label="Refresh agent workspace">
+        <RefreshCw size={14} />
+        Refresh
+      </Button>
+    </div>
+  );
+}
+
+function ProviderList({ summary }: { summary: RuntimeSummary }) {
+  return (
+    <Section title="Providers" count={summary.providers.length}>
+      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+        {summary.providers.map((provider) => (
+          <article
+            key={provider.id}
+            className="rounded-md border p-3"
+            style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                  {provider.displayName}
+                </h3>
+                <p className="text-xs capitalize" style={{ color: "var(--text-tertiary)" }}>
+                  {provider.kind}
+                </p>
+              </div>
+              <StatusDot color={STATUS_COLOR[provider.availability] ?? DEFAULT_STATUS_COLOR} />
+            </div>
+            <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <dt style={{ color: "var(--text-tertiary)" }}>Install</dt>
+                <dd style={{ color: "var(--text-secondary)" }}>{provider.installStatus.replace(/_/g, " ")}</dd>
+              </div>
+              <div>
+                <dt style={{ color: "var(--text-tertiary)" }}>Auth</dt>
+                <dd style={{ color: "var(--text-secondary)" }}>{provider.authStatus.replace(/_/g, " ")}</dd>
+              </div>
+            </dl>
+          </article>
+        ))}
+        {summary.providers.length === 0 ? (
+          <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+            No providers are ready.
+          </p>
+        ) : null}
+      </div>
+    </Section>
+  );
+}
+
+function AgentComposer({ summary }: { summary: RuntimeSummary }) {
+  const initialDraft = useMemo(() => defaultAgentThreadComposerDraft(summary), [summary]);
+  const [draft, setDraft] = useState<AgentThreadComposerDraft>(initialDraft);
+  const createStatus = useCodingAgentWorkspace((s) => s.createStatus);
+  const createError = useCodingAgentWorkspace((s) => s.createError);
+  const createThread = useCodingAgentWorkspace((s) => s.createThread);
+  const openTab = useTabs((s) => s.openTab);
+  const canCreate = capabilityEnabled(summary, "codingAgentsThreadCreate");
+
+  useEffect(() => {
+    setDraft(initialDraft);
+  }, [initialDraft]);
+
+  if (!canCreate) return null;
+
+  const selectedProvider = summary.providers.find((provider) => provider.id === draft.providerId);
+  const modes = selectedProvider?.supportedModes ?? [];
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const threadId = await createThread(draft);
+    if (!threadId) return;
+    const thread = useCodingAgentWorkspace
+      .getState()
+      .summary?.activeThreads.items.find((candidate) => candidate.id === threadId);
+    openTab({
+      kind: "thread",
+      threadId,
+      title: thread?.title ?? "Agent thread",
+      closable: true,
+    });
+    setDraft((current) => ({ ...current, prompt: "" }));
+  }
+
+  return (
+    <Section title="New Run">
+      <form
+        onSubmit={(event) => void submit(event)}
+        className="grid gap-3 rounded-md border p-3"
+        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+      >
+        <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_180px]">
+          <label className="grid gap-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
+            Provider
+            <select
+              className="h-8 rounded-md border px-2 text-sm outline-none"
+              style={{
+                borderColor: "var(--border-subtle)",
+                background: "var(--bg-overlay)",
+                color: "var(--text-primary)",
+              }}
+              value={draft.providerId ?? ""}
+              onChange={(event) => {
+                const provider = summary.providers.find((candidate) => candidate.id === event.target.value);
+                setDraft((current) => ({
+                  ...current,
+                  providerId: provider?.id,
+                  mode: provider?.defaultMode ?? current.mode,
+                }));
+              }}
+            >
+              {summary.providers.map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.displayName}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
+            Mode
+            <select
+              className="h-8 rounded-md border px-2 text-sm outline-none"
+              style={{
+                borderColor: "var(--border-subtle)",
+                background: "var(--bg-overlay)",
+                color: "var(--text-primary)",
+              }}
+              value={draft.mode ?? ""}
+              onChange={(event) => {
+                const mode = modes.find((candidate) => candidate === event.target.value);
+                if (!mode) return;
+                setDraft((current) => ({ ...current, mode }));
+              }}
+            >
+              {modes.map((mode) => (
+                <option key={mode} value={mode}>
+                  {mode.replace(/_/g, " ")}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <label className="grid gap-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
+          <span className="sr-only">Agent run prompt</span>
+          <textarea
+            aria-label="Agent run prompt"
+            className="min-h-[92px] resize-y rounded-md border px-3 py-2 text-sm outline-none"
+            style={{
+              borderColor: "var(--border-subtle)",
+              background: "var(--bg-overlay)",
+              color: "var(--text-primary)",
+            }}
+            value={draft.prompt}
+            onChange={(event) => setDraft((current) => ({ ...current, prompt: event.target.value }))}
+          />
+        </label>
+        <div className="flex items-center justify-between gap-3">
+          <p className="min-h-5 text-sm" style={{ color: createError ? "var(--danger)" : "var(--text-tertiary)" }}>
+            {createError ?? ""}
+          </p>
+          <Button variant="primary" type="submit" disabled={createStatus === "submitting"}>
+            <Play size={14} />
+            {createStatus === "submitting" ? "Starting" : "Start run"}
+          </Button>
+        </div>
+      </form>
+    </Section>
+  );
+}
+
+function ThreadList({ summary }: { summary: RuntimeSummary }) {
+  return (
+    <Section title="Active Threads" count={summary.activeThreads.items.length}>
+      <div className="grid gap-2">
+        {summary.activeThreads.items.map((thread) => (
+          <article
+            key={thread.id}
+            className="flex items-center justify-between gap-3 rounded-md border p-3"
+            style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <GitBranch size={15} style={{ color: "var(--text-tertiary)" }} />
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                  {thread.title}
+                </h3>
+                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+                  {thread.providerId}
+                </p>
+              </div>
+            </div>
+            <span className="shrink-0 text-xs capitalize" style={{ color: "var(--text-secondary)" }}>
+              {thread.status.replace(/_/g, " ")}
+            </span>
+          </article>
+        ))}
+        {summary.activeThreads.items.length === 0 ? (
+          <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+            No active threads.
+          </p>
+        ) : null}
+      </div>
+    </Section>
+  );
+}
+
+function TerminalList({ summary }: { summary: RuntimeSummary }) {
+  return (
+    <Section title="Terminals" count={summary.terminalSessions.items.length}>
+      <div className="grid gap-2">
+        {summary.terminalSessions.items.map((session) => (
+          <article
+            key={session.id}
+            className="flex items-center justify-between gap-3 rounded-md border p-3"
+            style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <SquareTerminal size={15} style={{ color: "var(--text-tertiary)" }} />
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                  {session.name}
+                </h3>
+                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+                  {session.attachable ? "Attachable" : "Unavailable"}
+                </p>
+              </div>
+            </div>
+            <span className="shrink-0 text-xs capitalize" style={{ color: "var(--text-secondary)" }}>
+              {session.status}
+            </span>
+          </article>
+        ))}
+        {summary.terminalSessions.items.length === 0 ? (
+          <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+            No terminal sessions.
+          </p>
+        ) : null}
+      </div>
+    </Section>
+  );
+}
+
+function reviewStatusLabel(status: ReviewSummary["status"]): string {
+  return status.replace(/_/g, " ");
+}
+
+function ReviewList() {
+  const reviewsStatus = useCodingAgentWorkspace((s) => s.reviewsStatus);
+  const reviews = useCodingAgentWorkspace((s) => s.reviews);
+  const reviewsError = useCodingAgentWorkspace((s) => s.reviewsError);
+  const items = reviews?.items ?? [];
+
+  return (
+    <Section title="Review" count={items.length}>
+      <div className="grid gap-2">
+        {reviewsStatus === "error" ? (
+          <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
+            {reviewsError ?? "Review state unavailable"}
+          </p>
+        ) : null}
+        {items.map((review) => (
+          <article
+            key={review.id}
+            className="flex items-center justify-between gap-3 rounded-md border p-3"
+            style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <ClipboardCheck size={15} style={{ color: "var(--text-tertiary)" }} />
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                  {review.projectId}
+                </h3>
+                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+                  {`PR #${review.pullRequestNumber} - Round ${review.round} of ${review.maxRounds}`}
+                </p>
+              </div>
+            </div>
+            <div className="shrink-0 text-right text-xs" style={{ color: "var(--text-secondary)" }}>
+              <p className="capitalize">{reviewStatusLabel(review.status)}</p>
+              {review.findings ? (
+                <p style={{ color: review.findings.high > 0 ? "var(--danger)" : "var(--text-tertiary)" }}>
+                  {review.findings.high} high
+                </p>
+              ) : null}
+            </div>
+          </article>
+        ))}
+        {reviewsStatus !== "error" && reviewsStatus !== "loading" && items.length === 0 ? (
+          <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+            No reviews.
+          </p>
+        ) : null}
+      </div>
+    </Section>
+  );
+}
+
+export default function AgentWorkspace() {
+  const runtimeSlot = useConnection((s) => s.runtimeSlot);
+  const status = useCodingAgentWorkspace((s) => s.status);
+  const summary = useCodingAgentWorkspace((s) => s.summary);
+  const error = useCodingAgentWorkspace((s) => s.error);
+  const refresh = useCodingAgentWorkspace((s) => s.refresh);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh, runtimeSlot]);
+
+  if (status === "loading" && !summary) {
+    return (
+      <EmptyState
+        icon={<Server size={28} />}
+        headline="Loading workspace..."
+        description="Fetching runtime state from your Matrix computer."
+      />
+    );
+  }
+
+  if (status === "error" && !summary) {
+    return (
+      <EmptyState
+        icon={<Server size={28} />}
+        headline={error ?? "Runtime summary unavailable"}
+        description="Refresh the workspace or check your selected runtime."
+        action={<Button onClick={() => void refresh()}>Retry</Button>}
+      />
+    );
+  }
+
+  if (!summary) return null;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <RuntimeHeader summary={summary} onRefresh={() => void refresh()} />
+      <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-5">
+        <AgentComposer summary={summary} />
+        <ProviderList summary={summary} />
+        <div className="grid gap-4 xl:grid-cols-2">
+          <ThreadList summary={summary} />
+          <TerminalList summary={summary} />
+        </div>
+        {capabilityEnabled(summary, "codingAgentsReview") ? <ReviewList /> : null}
+      </div>
+    </div>
+  );
+}

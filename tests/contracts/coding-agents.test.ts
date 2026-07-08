@@ -1,0 +1,506 @@
+import { describe, expect, it } from "vitest";
+import {
+  AgentProviderSummarySchema,
+  AgentThreadEventSchema,
+  AgentThreadSnapshotSchema,
+  ApprovalDecisionRequestSchema,
+  AgentThreadComposerDraftSchema,
+  CreateAgentThreadRequestSchema,
+  FileMetadataSchema,
+  PreviewSessionSummarySchema,
+  ReviewFileDiffSchema,
+  ReviewSummarySchema,
+  RuntimeSummarySchema,
+  SafeClientErrorSchema,
+  TerminalClientFrameSchema,
+  TerminalServerFrameSchema,
+  TerminalSessionSummarySchema,
+  ThreadIdSchema,
+  UserInputAnswerRequestSchema,
+  buildCreateAgentThreadRequestFromComposer,
+  defaultAgentThreadComposerDraft,
+} from "../../packages/contracts/src/index.js";
+
+const now = "2026-07-06T12:00:00.000Z";
+
+describe("coding agent contracts", () => {
+  it("rejects unsafe identifiers and unsafe client error text", () => {
+    expect(ThreadIdSchema.parse("thread_abc-123")).toBe("thread_abc-123");
+    expect(() => ThreadIdSchema.parse("../thread_abc")).toThrow();
+    expect(() => ThreadIdSchema.parse("thread_")).toThrow();
+
+    expect(SafeClientErrorSchema.parse({
+      code: "runtime_unavailable",
+      safeMessage: "Workspace is temporarily unavailable. Try again.",
+      retryable: true,
+      recoveryActions: ["retry"],
+    })).toEqual({
+      code: "runtime_unavailable",
+      safeMessage: "Workspace is temporarily unavailable. Try again.",
+      retryable: true,
+      recoveryActions: ["retry"],
+    });
+
+    expect(() =>
+      SafeClientErrorSchema.parse({
+        code: "server_error",
+        safeMessage: "Postgres constraint failed in /home/matrix/project",
+        retryable: false,
+      }),
+    ).toThrow();
+  });
+
+  it("parses bounded runtime summaries without sensitive runtime data", () => {
+    const summary = RuntimeSummarySchema.parse({
+      runtime: {
+        id: "rt_primary",
+        label: "Primary Matrix computer",
+        status: "available",
+      },
+      capabilities: [
+        { id: "codingAgentsRuntimeSummary", enabled: true },
+        { id: "codingAgentsThreadCreate", enabled: false, reason: "Not enabled yet" },
+      ],
+      providers: [],
+      projects: { items: [], hasMore: false, limit: 20 },
+      activeThreads: { items: [], hasMore: false, limit: 20 },
+      terminalSessions: {
+        items: [
+          {
+            id: "term_main",
+            name: "main",
+            status: "running",
+            attachable: true,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        hasMore: false,
+        limit: 20,
+      },
+      recentActivity: { items: [], hasMore: false, limit: 30 },
+      limits: {
+        maxPromptBytes: 24000,
+        maxAttachmentCount: 8,
+        maxTerminalInputBytes: 65536,
+        maxListItems: 50,
+      },
+      serverTime: now,
+    });
+
+    expect(summary.terminalSessions.items[0]?.attachable).toBe(true);
+    expect(() =>
+      RuntimeSummarySchema.parse({
+        ...summary,
+        terminalOutput: "secret output",
+      }),
+    ).toThrow();
+  });
+
+  it("validates providers, thread creation, events, approvals, and terminal frames", () => {
+    expect(AgentProviderSummarySchema.parse({
+      id: "codex",
+      displayName: "Codex",
+      kind: "codex",
+      availability: "available",
+      installStatus: "installed",
+      authStatus: "authenticated",
+      supportedModes: ["default", "review"],
+      defaultMode: "default",
+      setupActions: [],
+      lastCheckedAt: now,
+    }).id).toBe("codex");
+
+    expect(() =>
+      AgentProviderSummarySchema.parse({
+        id: "bad provider",
+        displayName: "/tmp/provider.log",
+        kind: "custom",
+        availability: "available",
+        installStatus: "installed",
+        authStatus: "authenticated",
+        supportedModes: ["default"],
+        defaultMode: "default",
+        setupActions: [{ id: "setup", label: "Run setup", kind: "raw_command", command: "cat ~/.ssh/id_rsa" }],
+      }),
+    ).toThrow();
+
+    expect(CreateAgentThreadRequestSchema.parse({
+      providerId: "codex",
+      prompt: "Fix the failing gateway tests.",
+      clientRequestId: "req_123",
+      mode: "default",
+      approvalPolicy: "on_request",
+      sandboxMode: "workspace_write",
+    }).providerId).toBe("codex");
+    expect(() =>
+      CreateAgentThreadRequestSchema.parse({
+        providerId: "codex",
+        prompt: "",
+        clientRequestId: "req_123",
+      }),
+    ).toThrow();
+    const promptWithWhitespace = "  cat <<'EOF'\n  keep indentation\nEOF\n";
+    expect(CreateAgentThreadRequestSchema.parse({
+      providerId: "codex",
+      prompt: promptWithWhitespace,
+      clientRequestId: "req_preserve",
+    }).prompt).toBe(promptWithWhitespace);
+    expect(CreateAgentThreadRequestSchema.parse({
+      providerId: "codex",
+      prompt: "Use the selected worktree.",
+      worktreeId: "wt_abc123def456",
+      clientRequestId: "req_worktree",
+    }).worktreeId).toBe("wt_abc123def456");
+    expect(() =>
+      CreateAgentThreadRequestSchema.parse({
+        providerId: "codex",
+        prompt: "Use a worktree.",
+        worktreeId: "WT_bad:ref",
+        clientRequestId: "req_worktree",
+      }),
+    ).toThrow();
+
+    expect(AgentThreadEventSchema.parse({
+      type: "approval.requested",
+      eventId: "evt_1",
+      threadId: "thread_1",
+      occurredAt: now,
+      approval: {
+        approvalId: "appr_1",
+        threadId: "thread_1",
+        title: "Approve command",
+        safeDescription: "The agent wants to run a workspace command.",
+        risk: "medium",
+        actionKind: "command",
+        allowedDecisions: ["approve", "decline"],
+        correlationId: "corr_1",
+      },
+    }).type).toBe("approval.requested");
+    expect(AgentThreadEventSchema.parse({
+      type: "user_input.answered",
+      eventId: "evt_answered",
+      threadId: "thread_1",
+      occurredAt: now,
+      requestId: "req_answer",
+      correlationId: "corr_answer",
+    }).type).toBe("user_input.answered");
+    expect(AgentThreadSnapshotSchema.parse({
+      thread: {
+        id: "thread_1",
+        providerId: "codex",
+        title: "Fix tests",
+        status: "running",
+        createdAt: now,
+        updatedAt: now,
+      },
+      events: {
+        items: [
+          {
+            type: "thread.status",
+            eventId: "evt_snapshot",
+            threadId: "thread_1",
+            occurredAt: now,
+            status: "running",
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    }).events.items[0]?.type).toBe("thread.status");
+    expect(() =>
+      AgentThreadSnapshotSchema.parse({
+        thread: {
+          id: "thread_1",
+          providerId: "codex",
+          title: "Fix tests",
+          status: "running",
+          createdAt: now,
+          updatedAt: now,
+        },
+        events: {
+          items: [{ rawProviderPayload: "do not accept unknown event shapes" }],
+          hasMore: false,
+          limit: 200,
+        },
+      }),
+    ).toThrow();
+
+    expect(TerminalClientFrameSchema.parse({ type: "resize", cols: 120, rows: 40 })).toEqual({
+      type: "resize",
+      cols: 120,
+      rows: 40,
+    });
+    expect(() => TerminalClientFrameSchema.parse({ type: "resize", cols: 2000, rows: 40 })).toThrow();
+
+    expect(TerminalSessionSummarySchema.parse({
+      id: "term_main",
+      name: "main",
+      status: "running",
+      attachable: true,
+      createdAt: now,
+      updatedAt: now,
+    }).status).toBe("running");
+  });
+
+  it("validates decision, input, file, review, preview, and server frame contracts", () => {
+    expect(ApprovalDecisionRequestSchema.parse({
+      decision: "approve",
+      clientRequestId: "req_approve",
+      correlationId: "corr_approve",
+    }).decision).toBe("approve");
+
+    expect(UserInputAnswerRequestSchema.parse({
+      answer: "Please continue with the safer implementation.",
+      clientRequestId: "req_answer",
+      correlationId: "corr_answer",
+    }).answer).toBe("Please continue with the safer implementation.");
+    const answerWithWhitespace = "\n  keep this exact answer  \n";
+    expect(UserInputAnswerRequestSchema.parse({
+      answer: answerWithWhitespace,
+      clientRequestId: "req_answer_preserve",
+      correlationId: "corr_answer",
+    }).answer).toBe(answerWithWhitespace);
+
+    expect(FileMetadataSchema.parse({
+      path: "src/index.ts",
+      kind: "file",
+      sizeBytes: 512,
+      etag: "etag_123",
+      updatedAt: now,
+    }).path).toBe("src/index.ts");
+    expect(() => FileMetadataSchema.parse({ path: "../secret", kind: "file" })).toThrow();
+
+    expect(ReviewSummarySchema.parse({
+      id: "rev_123",
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      status: "reviewing",
+      pullRequestNumber: 757,
+      round: 1,
+      maxRounds: 3,
+      reviewer: "codex",
+      implementer: "claude",
+      findings: {
+        total: 2,
+        high: 1,
+        medium: 1,
+        low: 0,
+      },
+      updatedAt: now,
+    }).findings.total).toBe(2);
+    expect(() =>
+      ReviewSummarySchema.parse({
+        id: "rev_123",
+        projectId: "matrix-os",
+        worktreeId: "wt_abc123def456",
+        status: "reviewing",
+        pullRequestNumber: 757,
+        round: 1,
+        maxRounds: 3,
+        reviewer: "codex",
+        implementer: "claude",
+        safeStatus: "Postgres failed at /home/matrix/home",
+        updatedAt: now,
+      }),
+    ).toThrow();
+
+    expect(ReviewFileDiffSchema.parse({
+      path: "src/index.ts",
+      status: "modified",
+      additions: 12,
+      deletions: 4,
+      partial: true,
+    }).partial).toBe(true);
+    expect(() =>
+      ReviewFileDiffSchema.parse({
+        path: "src/index.ts",
+        status: "modified",
+        additions: 1_000_001,
+        deletions: 0,
+        partial: false,
+      }),
+    ).toThrow();
+
+    expect(PreviewSessionSummarySchema.parse({
+      id: "preview_main",
+      label: "Development preview",
+      status: "running",
+      origin: `https://preview.example.com/${"a".repeat(700)}?token=${"b".repeat(700)}`,
+      updatedAt: now,
+    }).status).toBe("running");
+
+    expect(TerminalServerFrameSchema.parse({
+      type: "attached",
+      session: "main",
+      state: "running",
+      fromSeq: 0,
+    }).type).toBe("attached");
+    expect(TerminalServerFrameSchema.parse({
+      type: "attached",
+      sessionId: "550e8400-e29b-41d4-a716-446655440000",
+      state: "running",
+    }).type).toBe("attached");
+    expect(TerminalServerFrameSchema.parse({ type: "replay-start", fromSeq: 0 }).type).toBe("replay-start");
+    expect(TerminalServerFrameSchema.parse({ type: "replay-end", toSeq: null }).type).toBe("replay-end");
+    expect(TerminalServerFrameSchema.parse({ type: "replay-evicted", fromSeq: 0, nextSeq: 10 }).type).toBe("replay-evicted");
+    expect(TerminalServerFrameSchema.parse({
+      type: "error",
+      code: "invalid_message",
+      message: "Invalid message",
+    }).type).toBe("error");
+    expect(TerminalServerFrameSchema.parse({
+      type: "safe-error",
+      error: {
+        code: "session_unavailable",
+        safeMessage: "Terminal session is unavailable. Start a new session.",
+        retryable: false,
+        recoveryActions: ["start_new_session"],
+      },
+    }).type).toBe("safe-error");
+  });
+
+  it("builds a create-thread request from a safe composer draft", () => {
+    const summary = RuntimeSummarySchema.parse({
+      runtime: {
+        id: "rt_primary",
+        label: "Primary Matrix computer",
+        status: "available",
+      },
+      capabilities: [
+        { id: "codingAgentsRuntimeSummary", enabled: true },
+        { id: "codingAgentsThreadCreate", enabled: true },
+      ],
+      providers: [
+        {
+          id: "codex",
+          displayName: "Codex",
+          kind: "codex",
+          availability: "available",
+          installStatus: "installed",
+          authStatus: "authenticated",
+          supportedModes: ["default", "review"],
+          defaultMode: "review",
+          setupActions: [],
+          lastCheckedAt: now,
+        },
+      ],
+      projects: { items: [], hasMore: false, limit: 20 },
+      activeThreads: { items: [], hasMore: false, limit: 20 },
+      terminalSessions: { items: [], hasMore: false, limit: 20 },
+      recentActivity: { items: [], hasMore: false, limit: 30 },
+      limits: {
+        maxPromptBytes: 24000,
+        maxAttachmentCount: 8,
+        maxTerminalInputBytes: 65536,
+        maxListItems: 50,
+      },
+      serverTime: now,
+    });
+    const draft = AgentThreadComposerDraftSchema.parse({
+      prompt: "  keep exact prompt whitespace\n",
+      projectId: "repo-main",
+      terminalSessionId: "main",
+      approvalPolicy: "on_request",
+      sandboxMode: "workspace_write",
+    });
+
+    expect(defaultAgentThreadComposerDraft(summary)).toMatchObject({
+      providerId: "codex",
+      mode: "review",
+      approvalPolicy: "on_request",
+      sandboxMode: "workspace_write",
+    });
+    const result = buildCreateAgentThreadRequestFromComposer({
+      draft,
+      summary,
+      clientRequestId: "req_create_from_composer",
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      request: {
+        providerId: "codex",
+        prompt: "  keep exact prompt whitespace\n",
+        projectId: "repo-main",
+        terminalSessionId: "main",
+        mode: "review",
+        approvalPolicy: "on_request",
+        sandboxMode: "workspace_write",
+        clientRequestId: "req_create_from_composer",
+      },
+    });
+  });
+
+  it("returns safe composer issues for unavailable or invalid create inputs", () => {
+    const summary = RuntimeSummarySchema.parse({
+      runtime: {
+        id: "rt_primary",
+        label: "Primary Matrix computer",
+        status: "available",
+      },
+      capabilities: [
+        { id: "codingAgentsRuntimeSummary", enabled: true },
+        { id: "codingAgentsThreadCreate", enabled: false, reason: "Not enabled yet" },
+      ],
+      providers: [
+        {
+          id: "codex",
+          displayName: "Codex",
+          kind: "codex",
+          availability: "auth_required",
+          installStatus: "installed",
+          authStatus: "expired",
+          supportedModes: ["default"],
+          defaultMode: "default",
+          setupActions: [],
+          lastCheckedAt: now,
+        },
+      ],
+      projects: { items: [], hasMore: false, limit: 20 },
+      activeThreads: { items: [], hasMore: false, limit: 20 },
+      terminalSessions: { items: [], hasMore: false, limit: 20 },
+      recentActivity: { items: [], hasMore: false, limit: 30 },
+      limits: {
+        maxPromptBytes: 24000,
+        maxAttachmentCount: 8,
+        maxTerminalInputBytes: 65536,
+        maxListItems: 50,
+      },
+      serverTime: now,
+    });
+
+    const result = buildCreateAgentThreadRequestFromComposer({
+      draft: {
+        providerId: "codex",
+        prompt: "   ",
+        mode: "review",
+      },
+      summary,
+      clientRequestId: "req_bad_composer",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: "thread_create_unavailable",
+          safeMessage: "Agent runs are not available on this runtime yet.",
+        },
+        {
+          code: "prompt_required",
+          safeMessage: "Enter a prompt before starting an agent run.",
+        },
+        {
+          code: "provider_unavailable",
+          safeMessage: "Selected provider is not ready. Choose another provider or finish setup.",
+        },
+        {
+          code: "mode_unsupported",
+          safeMessage: "Selected mode is not supported by this provider.",
+        },
+      ],
+    });
+    expect(JSON.stringify(result)).not.toMatch(/zod|stack trace|\/home\/|token|secret/i);
+  });
+});

@@ -6,6 +6,9 @@ import type { AuthService } from "../auth/auth-service";
 import type { EmbedService } from "../embeds/embed-service";
 import type { LocalStore, LocalStoreKey } from "../persistence/local-store";
 import type { UpdateStatus } from "../updates";
+import type { CreateAgentThreadRequest, ReviewSummary, RuntimeSummary } from "@matrix-os/contracts";
+import type { z } from "zod/v4";
+import { AgentThreadSnapshotSchema } from "@matrix-os/contracts";
 
 interface IpcMainLike {
   handle(
@@ -23,6 +26,13 @@ export interface HandlerContext {
   notify: (input: { threadId: string; title: string; body: string; kind: string }) => void;
   onRuntimeChanged: (slot: string) => void;
   getUpdateStatus: () => UpdateStatus;
+  fetchRuntimeSummary: () => Promise<RuntimeSummary>;
+  fetchReviewSummaries: (
+    options: { cursor?: string },
+  ) => Promise<{ items: ReviewSummary[]; hasMore: boolean; limit: number; nextCursor?: string }>;
+  createAgentThread: (
+    request: CreateAgentThreadRequest,
+  ) => Promise<z.infer<typeof AgentThreadSnapshotSchema>>;
 }
 
 type Handler<C extends InvokeChannel> = (
@@ -78,6 +88,9 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     ctx.onRuntimeChanged(slot);
     return { ok: true };
   });
+  handle("runtime:get-summary", () => ctx.fetchRuntimeSummary());
+  handle("runtime:get-reviews", (request) => ctx.fetchReviewSummaries(request));
+  handle("runtime:create-thread", (request) => ctx.createAgentThread(request));
 
   handle("state:get", async ({ key }) => ({
     value: await ctx.store.get(key as LocalStoreKey),

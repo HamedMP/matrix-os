@@ -18,6 +18,14 @@ describe("review-store", () => {
   });
 
   function record(id = "rev_abc123") {
+    const minuteById: Record<string, string> = {
+      rev_abc123: "00",
+      rev_older: "00",
+      rev_newer: "01",
+      rev_oldest: "00",
+      rev_middle: "01",
+      rev_newest: "02",
+    };
     return createReviewLoopRecord({
       id,
       projectSlug: "repo",
@@ -28,7 +36,7 @@ describe("review-store", () => {
       maxRounds: 3,
       convergenceGate: "findings_only",
       verificationCommands: [],
-      now: () => id === "rev_abc123" ? "2026-04-26T00:00:00.000Z" : "2026-04-26T00:01:00.000Z",
+      now: () => `2026-04-26T00:${minuteById[id] ?? "00"}:00.000Z`,
     });
   }
 
@@ -62,6 +70,29 @@ describe("review-store", () => {
     await expect(store.listReviews({ projectSlug: "other", limit: 10 })).resolves.toMatchObject({
       ok: true,
       reviews: [expect.objectContaining({ id: "rev_newer" })],
+    });
+  });
+
+  it("paginates review records with a cursor from the last returned review", async () => {
+    const store = createReviewStore({ homePath });
+    await store.saveReview(record("rev_oldest"));
+    await store.saveReview(record("rev_middle"));
+    await store.saveReview(record("rev_newest"));
+
+    const first = await store.listReviews({ limit: 2 });
+
+    expect(first).toMatchObject({
+      ok: true,
+      reviews: [
+        expect.objectContaining({ id: "rev_newest" }),
+        expect.objectContaining({ id: "rev_middle" }),
+      ],
+      nextCursor: "rev_middle",
+    });
+    await expect(store.listReviews({ limit: 2, cursor: "rev_middle" })).resolves.toMatchObject({
+      ok: true,
+      reviews: [expect.objectContaining({ id: "rev_oldest" })],
+      nextCursor: null,
     });
   });
 

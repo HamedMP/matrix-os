@@ -24,6 +24,7 @@
     "@expo-google-fonts/jetbrains-mono": "^0.2.3",
     "@expo/metro-runtime": "~57.0.3",
     "@expo/vector-icons": "15.1.1",
+    "@matrix-os/contracts": "workspace:*",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "expo": "^57.0.0",
     "expo-auth-session": "~57.0.1",

@@ -92,7 +92,10 @@ const ROUTE_SCOPED_BEARER_PATHS = [
 const MESSAGE_APPSERVICE_PREFIX = "/api/messages/appservice/";
 const MESSAGE_HERMES_REPLY_PATH = /^\/api\/messages\/conversations\/[^/]+\/reply$/;
 const WS_QUERY_TOKEN_PATHS = ["/ws", "/ws/voice", "/ws/terminal", "/ws/terminal/session", "/ws/onboarding", "/ws/vocal"];
-const WS_QUERY_TOKEN_PATH_PATTERNS = [/^\/api\/canvases\/[^/]+\/ws$/];
+const WS_QUERY_TOKEN_PATH_PATTERNS = [
+  /^\/api\/canvases\/[^/]+\/ws$/,
+  /^\/ws\/coding-agents\/thread\/thread_[A-Za-z0-9_-]+$/,
+];
 
 // Constant-time string compare. Previously, the length-mismatch branch ran
 // timingSafeEqual(bufB, bufB) as a dummy call -- but the work done in

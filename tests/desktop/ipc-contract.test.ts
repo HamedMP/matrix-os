@@ -4,6 +4,7 @@ import {
   EVENT_CHANNELS,
   type InvokeChannel,
 } from "@desktop/shared/ipc-contract";
+import type { CreateAgentThreadRequest } from "@matrix-os/contracts";
 
 describe("IPC contract", () => {
   it("defines every invoke channel from the contract doc", () => {
@@ -12,6 +13,9 @@ describe("IPC contract", () => {
       "auth:poll",
       "auth:status",
       "auth:sign-out",
+      "runtime:create-thread",
+      "runtime:get-reviews",
+      "runtime:get-summary",
       "runtime:select",
       "state:get",
       "state:set",
@@ -27,6 +31,121 @@ describe("IPC contract", () => {
     for (const ch of expected) {
       expect(INVOKE_CHANNELS[ch], ch).toBeDefined();
     }
+  });
+
+  it("validates runtime:create-thread requests and rejects credential leakage shapes", () => {
+    const request: CreateAgentThreadRequest = {
+      providerId: "codex",
+      prompt: "Summarize the failing checks",
+      mode: "default",
+      approvalPolicy: "on_request",
+      sandboxMode: "workspace_write",
+      clientRequestId: "req_desktop_1",
+    };
+
+    expect(INVOKE_CHANNELS["runtime:create-thread"].request.safeParse(request).success).toBe(true);
+    expect(
+      INVOKE_CHANNELS["runtime:create-thread"].request.safeParse({ ...request, accessToken: "secret" }).success,
+    ).toBe(false);
+    expect(
+      INVOKE_CHANNELS["runtime:create-thread"].response.safeParse({
+        thread: {
+          id: "thread_desktop_1",
+          providerId: "codex",
+          title: "Summarize the failing checks",
+          status: "queued",
+          attention: "none",
+          createdAt: "2026-07-06T00:00:00.000Z",
+          updatedAt: "2026-07-06T00:00:00.000Z",
+        },
+        events: {
+          items: [],
+          hasMore: false,
+          limit: 200,
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("validates runtime:get-summary responses and rejects credential leakage shapes", () => {
+    const schema = INVOKE_CHANNELS["runtime:get-summary"].response;
+    const valid = {
+      runtime: {
+        id: "rt_primary",
+        label: "Primary",
+        status: "available",
+      },
+      capabilities: [
+        {
+          id: "codingAgentsRuntimeSummary",
+          enabled: true,
+        },
+      ],
+      providers: [],
+      projects: {
+        items: [],
+        hasMore: false,
+        limit: 20,
+      },
+      activeThreads: {
+        items: [],
+        hasMore: false,
+        limit: 20,
+      },
+      terminalSessions: {
+        items: [],
+        limit: 20,
+        hasMore: false,
+      },
+      recentActivity: {
+        items: [],
+        limit: 20,
+        hasMore: false,
+      },
+      limits: {
+        maxPromptBytes: 16384,
+        maxAttachmentCount: 8,
+        maxTerminalInputBytes: 8192,
+        maxListItems: 20,
+      },
+      serverTime: "2026-07-06T00:00:00.000Z",
+    };
+
+    expect(schema.safeParse(valid).success).toBe(true);
+    expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
+  });
+
+  it("validates runtime:get-reviews responses and rejects credential leakage shapes", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:get-reviews"].request;
+    const schema = INVOKE_CHANNELS["runtime:get-reviews"].response;
+    const valid = {
+      items: [
+        {
+          id: "rev_desktop_1",
+          projectId: "matrix-os",
+          worktreeId: "wt_abc123def456",
+          status: "reviewing",
+          pullRequestNumber: 757,
+          round: 1,
+          maxRounds: 3,
+          reviewer: "codex",
+          implementer: "claude",
+          findings: { total: 1, high: 0, medium: 1, low: 0 },
+          updatedAt: "2026-07-06T00:00:00.000Z",
+        },
+      ],
+      hasMore: false,
+      limit: 50,
+    };
+
+    expect(requestSchema.safeParse({ cursor: "rev_desktop_1" }).success).toBe(true);
+    expect(requestSchema.safeParse({ cursor: "../secret" }).success).toBe(false);
+    expect(schema.safeParse(valid).success).toBe(true);
+    expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
+    expect(schema.safeParse({
+      ...valid,
+      items: [{ ...valid.items[0], safeStatus: "Postgres failed at /home/matrix/home" }],
+    }).success).toBe(false);
   });
 
   it("validates auth:poll responses and rejects token leakage shapes", () => {

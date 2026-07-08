@@ -1,0 +1,675 @@
+# Implementation Plan: Coding Agent Shells
+
+**Status**: Draft
+**Created**: 2026-07-06
+**Planning horizon**: Incremental PR series, not a single mega-branch.
+
+## Summary
+
+This plan upgrades Matrix OS desktop and mobile into first-class coding-agent interfaces while preserving current behavior. The sequence intentionally starts with contracts and read-only projections, then adds agent thread creation, streaming, approvals, terminal binding, review, preview, and notification polish.
+
+The guiding rule is simple: build shared runtime primitives first, then render them differently per shell.
+
+## Strategic Choices
+
+### Choice 1 - Shared Runtime Contracts First
+
+Start with shared schemas before UI work.
+
+Why:
+
+- Desktop, mobile, browser shell, CLI, and gateway need the same vocabulary.
+- Contract tests prevent drift between clients.
+- Read-only rollout lets us verify state shape before mutating runtime behavior.
+
+How:
+
+- Add or expand a schema-only contract module/package.
+- Keep Zod 4 schemas close to gateway route validation.
+- Export inferred types for clients.
+- Add parse/reject tests before any UI imports the schemas.
+
+### Choice 2 - Runtime Summary As First Integration Point
+
+Add a safe `RuntimeSummary` projection before thread creation.
+
+Why:
+
+- It gives every shell one hydration path.
+- It makes feature availability explicit.
+- It prevents clients from calling many ad hoc endpoints at startup.
+- It provides a compatibility bridge while deeper thread/review APIs mature.
+
+Summary should include:
+
+- Selected runtime.
+- Capabilities.
+- Provider status.
+- Projects/tasks overview.
+- Active threads.
+- Terminal sessions.
+- Recent activity.
+- Limits.
+- Server time.
+
+Summary must not include:
+
+- Terminal output.
+- File contents.
+- Thread transcript bodies beyond bounded summaries.
+- Provider raw logs.
+- Tokens.
+- Internal hostnames.
+- Raw errors.
+
+### Choice 3 - Thin Clients, Strong Reducers
+
+Clients should render runtime state with pure reducers and bounded caches.
+
+Why:
+
+- Agent streams are event-heavy and reconnect-prone.
+- Mobile suspension and desktop sleep/wake are normal.
+- Idempotent reducers make replay safe.
+
+Pattern:
+
+- Gateway streams typed events.
+- Client parses and reduces events.
+- Reducers ignore duplicate event IDs.
+- Reducers tolerate unknown event types.
+- Reducers cap transcript/tool arrays.
+- Client fetches snapshots when cursors are stale.
+
+### Choice 4 - Terminal Sessions Stay Canonical
+
+Do not create a parallel terminal model for agent threads.
+
+Why:
+
+- Matrix already has named shell sessions.
+- CLI, web terminal, mobile, and desktop should attach to the same sessions.
+- Thread-to-terminal binding can be metadata, not a duplicate process model.
+
+Pattern:
+
+- `TerminalSession` is remote process state.
+- `TerminalAttachment` is a client connection.
+- Detach does not kill the process.
+- Terminate is an explicit user action.
+- Attachments support replay/cursor or a compatibility equivalent.
+
+### Choice 5 - Native Desktop Trust Boundary
+
+Desktop main/preload remain the trusted boundary.
+
+Why:
+
+- Renderer can be compromised like any web surface.
+- Embedded apps and hosted shell content must never see privileged APIs.
+- Credentials belong in OS-encrypted trusted core storage.
+
+Pattern:
+
+- Trusted core owns credential and bearer injection.
+- Renderer calls validated IPC/preload APIs.
+- IPC schemas validate request and response.
+- Notification/deep-link payloads only focus UI after validation.
+
+### Choice 6 - Mobile SDK 57 First, Native Terminal Later
+
+Preserve the current mobile terminal and add native terminal behind capability detection only after a spike.
+
+Why:
+
+- Mobile is on Expo SDK 57 in this branch.
+- Existing terminal behavior must not regress.
+- Native modules require dev-client/device validation.
+
+Pattern:
+
+- Phase 1 keeps WebView terminal fallback.
+- Improve state, parser, reconnect, and thread binding first.
+- Add native renderer as optional capability after spike.
+- Keep fallback until native is proven across required devices.
+
+## Phase Roadmap
+
+### Phase A - Foundation
+
+Scope:
+
+- Current-state inventory.
+- Feature flag plan.
+- Shared contracts.
+- Runtime summary route.
+- Provider registry read path.
+- Terminal session summary adapter.
+
+Exit criteria:
+
+- Contract tests pass.
+- Runtime summary returns bounded safe payload.
+- No desktop/mobile UI changes required.
+- No existing route behavior changes.
+
+Primary PRs:
+
+1. `contracts(agent-shells): add coding-agent schemas`
+2. `feat(gateway): expose coding-agent runtime summary`
+
+### Phase B - Read-Only Shells
+
+Scope:
+
+- Desktop read-only agent dashboard.
+- Mobile read-only recent work/agent dashboard.
+- Runtime status, providers, active threads, terminal sessions, recent activity.
+- Safe empty/offline/setup-required states.
+
+Exit criteria:
+
+- Desktop and mobile hydrate from the same summary.
+- Existing desktop and mobile features still pass regression checks.
+- Feature flags can disable new UI.
+
+Primary PRs:
+
+1. `feat(desktop): add read-only agent workspace`
+2. `feat(mobile): add read-only agent workspace`
+
+### Phase C - Thread Lifecycle
+
+Scope:
+
+- Thread store.
+- Thread create route.
+- Thread event append/replay.
+- Thread WebSocket.
+- Fake provider adapter tests.
+- First real provider adapter behind flag.
+
+Exit criteria:
+
+- Threads can be created idempotently.
+- Events replay and stream.
+- Clients can show live thread detail.
+- Abort works for one thread without affecting others.
+
+Primary PRs:
+
+1. `feat(gateway): add agent thread store and event stream`
+2. `feat(agents): connect first provider adapter`
+3. `feat(desktop): create and follow agent threads`
+4. `feat(mobile): create and follow agent threads`
+
+### Phase D - Approvals And Input
+
+Scope:
+
+- Approval request events.
+- Approval decision route.
+- User input answer route.
+- Desktop approval UI.
+- Mobile approval UI.
+- Attention state.
+
+Exit criteria:
+
+- Approval can be resolved from either shell.
+- Duplicate/racing decisions are idempotent.
+- All shells see resolved state.
+- User-facing copy is safe.
+
+Primary PRs:
+
+1. `feat(agents): add approval lifecycle`
+2. `feat(desktop): handle agent approvals`
+3. `feat(mobile): handle agent approvals`
+
+### Phase E - Terminal Binding
+
+Scope:
+
+- Thread-to-terminal binding.
+- Terminal panel in desktop workspace.
+- Thread terminal route in mobile.
+- Cross-shell attach/resume tests.
+- Replay gap and fatal session error handling.
+
+Exit criteria:
+
+- Desktop-created session can be attached from mobile.
+- Mobile-created session can be attached from desktop.
+- Detach does not kill process.
+- Termination updates all shells.
+
+Primary PRs:
+
+1. `feat(gateway): bind terminal sessions to agent threads`
+2. `feat(desktop): add workspace terminal panel`
+3. `feat(mobile): add thread terminal route`
+
+### Phase F - Files And Review
+
+Scope:
+
+- File browse/search/read/write contracts.
+- Conflict-safe saves.
+- Review snapshot/diff service.
+- Desktop review panel.
+- Mobile review route.
+- Ask-agent-follow-up action with structured references.
+
+Exit criteria:
+
+- Agent changes are visible as review snapshots.
+- Large diffs do not freeze clients.
+- File writes detect conflicts.
+- Follow-up prompts reference structured file/hunk context.
+
+Primary PRs:
+
+1. `feat(gateway): add agent workspace file and review APIs`
+2. `feat(desktop): add review panel`
+3. `feat(mobile): add review screens`
+
+### Phase G - Preview And App Runtime
+
+Scope:
+
+- Preview capability in runtime summary.
+- Safe preview session metadata.
+- Desktop preview panel using existing embed isolation.
+- Mobile preview route.
+- App/session launch handoff reuse.
+
+Exit criteria:
+
+- Preview origins are validated.
+- Embedded auth failure does not destroy native sign-in.
+- Existing app launch remains intact.
+
+Primary PRs:
+
+1. `feat(gateway): expose safe workspace previews`
+2. `feat(desktop): add preview panel`
+3. `feat(mobile): add preview route`
+
+### Phase H - Native Quality And Polish
+
+Scope:
+
+- Desktop command palette and keyboard flow.
+- Desktop workspace layout persistence/LRU.
+- Mobile recent work home polish.
+- Mobile ergonomics.
+- Notification routing.
+- Native mobile terminal spike and optional rollout.
+
+Exit criteria:
+
+- Desktop is keyboard-first for core agent workflows.
+- Mobile can manage daily agent work from phone.
+- Notifications route to exact thread/task/session.
+- Native terminal lands only if fallback remains and device validation passes.
+
+Primary PRs:
+
+1. `feat(desktop): polish agent mission control`
+2. `feat(mobile): polish agent daily workflow`
+3. `feat(notifications): route coding-agent attention`
+4. `feat(mobile): add native terminal capability`
+
+## Workstream Ownership
+
+### Gateway/Core Workstream
+
+Owns:
+
+- Contracts at route boundary.
+- Runtime summary.
+- Provider registry.
+- Thread store/events.
+- Approval lifecycle.
+- Terminal binding.
+- File/review/preview APIs.
+- Safe errors.
+- Auth/resource limits.
+
+Must coordinate with:
+
+- Kernel provider/session implementation.
+- Terminal session reliability.
+- Platform auth/runtime routing.
+- Public docs.
+
+### Desktop Workstream
+
+Owns:
+
+- Trusted-core runtime client.
+- Validated IPC/preload API.
+- Agent mission control UI.
+- Desktop composer.
+- Thread streams.
+- Terminal/review/preview panels.
+- Notifications/deep links.
+- Runtime switch behavior.
+
+Must preserve:
+
+- Existing auth.
+- Existing embeds.
+- Existing settings.
+- Existing updater.
+- Existing menu/window behavior.
+- Existing terminal behavior.
+
+### Mobile Workstream
+
+Owns:
+
+- SDK 57 runtime client.
+- Mobile agent routes.
+- Mobile composer.
+- Thread detail.
+- Approval UI.
+- Thread terminal route.
+- Review/files/preview screens.
+- Mobile resume state.
+- Native terminal spike.
+
+Must preserve:
+
+- Existing chat.
+- Existing terminal tab.
+- Existing apps tab.
+- Existing mission control.
+- Existing canvas entry.
+- Existing settings.
+- Existing auth/push/offline behavior.
+
+### Shell/CLI Workstream
+
+Owns:
+
+- Browser shell parity where needed.
+- Canvas/Desktop built-in route wiring.
+- CLI compatibility for terminal/session operations.
+- Shared contracts usage.
+
+Must preserve:
+
+- Canvas as primary browser shell.
+- Terminal built-in route behavior.
+- App launcher/app runtime behavior.
+
+## Decision Gates
+
+### Gate 1 - Contract Acceptance
+
+Proceed only when:
+
+- Schemas cover all planned runtime primitives.
+- Tests reject malformed payloads.
+- At least gateway and one client can import types without circular dependencies.
+- Sensitive-field audit passes.
+
+### Gate 2 - Summary Acceptance
+
+Proceed only when:
+
+- Summary route works for authenticated owner.
+- Summary is safe when providers/runtime are unavailable.
+- Lists are capped.
+- Desktop and mobile can render read-only dashboards from summary.
+
+### Gate 3 - Thread Creation Acceptance
+
+Proceed only when:
+
+- Thread create is idempotent.
+- Event stream supports replay.
+- Fake provider test covers lifecycle.
+- First real provider path is behind flag.
+- Abort does not affect unrelated work.
+
+### Gate 4 - Cross-Shell Continuity Acceptance
+
+Proceed only when:
+
+- Desktop and mobile can open the same thread.
+- Terminal session created in one shell can attach in another.
+- Approval resolved in one shell updates the other.
+- Runtime switch closes stale streams.
+
+### Gate 5 - Review/Preview Acceptance
+
+Proceed only when:
+
+- File read/write paths are conflict-safe.
+- Diff snapshots are bounded.
+- Preview origins are validated.
+- Existing app embeds still pass regression checks.
+
+### Gate 6 - Rollout Acceptance
+
+Proceed only when:
+
+- Desktop and mobile regression checklists pass.
+- Error-path audit passes.
+- Public docs are updated or explicitly deferred.
+- Deployment path is documented for platform/app-shell/host-bundle/native mobile impacts.
+
+## Risk Register
+
+### Risk: Contract Drift
+
+Clients may implement local shapes instead of shared schemas.
+
+Mitigation:
+
+- Contract package or single gateway-local contract source.
+- Contract tests in every client adapter.
+- PR review checks for duplicate schema definitions.
+
+### Risk: Desktop Renderer Credential Exposure
+
+New runtime client code may accidentally pass credentials to renderer.
+
+Mitigation:
+
+- Trusted core owns credential.
+- Renderer receives safe projections only.
+- IPC response schemas exclude tokens.
+- Add tests scanning IPC response fixtures for forbidden keys.
+
+### Risk: Mobile Resume Uses Stale Runtime IDs
+
+AsyncStorage may point to deleted threads/sessions.
+
+Mitigation:
+
+- Parse then reconcile against runtime summary.
+- Drop stale references.
+- Fall back to recent work.
+
+### Risk: Terminal Session Model Fork
+
+Agent work may introduce separate terminal session logic.
+
+Mitigation:
+
+- Thread binding references canonical terminal session IDs/names.
+- Reuse existing session list/attach/delete behavior.
+- Add cross-shell attach tests.
+
+### Risk: Unbounded Streams And Memory
+
+Agent threads and terminal output can grow indefinitely.
+
+Mitigation:
+
+- Event cursors.
+- Transcript windows.
+- Ring buffers.
+- Subscriber caps.
+- Stale connection cleanup.
+- LRU workspace panels.
+
+### Risk: Raw Errors Leak To UI
+
+Provider setup and command execution may return sensitive details.
+
+Mitigation:
+
+- Central safe error mapper.
+- Client allowlist/cap error strings.
+- Error-path tests.
+- Detailed logs only in redacted diagnostics.
+
+### Risk: Existing Mobile/Desktop Regression
+
+New agent workspace could break current terminal/app/canvas/settings flows.
+
+Mitigation:
+
+- Feature flags.
+- Read-only rollout first.
+- Regression checklist per phase.
+- Avoid replacing existing screens until supersets are verified.
+
+### Risk: Native Mobile Terminal Complexity
+
+Native terminal may destabilize SDK 57 builds.
+
+Mitigation:
+
+- Separate spike.
+- Capability flag.
+- WebView fallback.
+- Device validation.
+- No removal of existing terminal until native is proven.
+
+## Implementation Patterns
+
+### Pattern: Additive Route
+
+1. Add schema.
+2. Add focused tests.
+3. Add service function.
+4. Add route with auth/body limit/validation.
+5. Add safe error mapper.
+6. Add client adapter.
+7. Add UI behind flag.
+
+### Pattern: Event Reducer
+
+1. Define event union.
+2. Write reducer tests for every event.
+3. Add duplicate-event handling.
+4. Add unknown-event handling.
+5. Add cap/truncation behavior.
+6. Wire stream.
+7. Render projection, not raw events.
+
+### Pattern: Cross-Shell Feature
+
+1. Gateway contract.
+2. Browser shell or CLI compatibility check.
+3. Desktop adapter.
+4. Mobile adapter.
+5. Shared test fixtures.
+6. Cross-shell E2E.
+
+### Pattern: Provider Setup
+
+1. Provider registry returns setup required.
+2. UI shows setup action.
+3. Setup opens foreground terminal command/session.
+4. User completes auth/install.
+5. Provider health refreshes.
+6. Provider becomes selectable.
+
+### Pattern: Runtime Switch
+
+1. User selects runtime.
+2. Client cancels old in-flight requests.
+3. Client closes old streams.
+4. Trusted core clears embedded sessions if needed.
+5. Client fetches new summary.
+6. Client drops stale local references.
+7. Client renders new runtime safely.
+
+## Documentation Plan
+
+Internal:
+
+- `docs/dev/coding-agent-shells.md`
+- Include contracts, route map, event reducer guide, provider adapter guide, terminal binding guide, approval lifecycle, and client state rules.
+
+Public:
+
+- Add/update docs under `www/content/docs/`.
+- Explain desktop/mobile coding-agent workflows.
+- Explain remote Matrix computer model.
+- Explain provider setup.
+- Explain session continuity.
+
+Support:
+
+- Add troubleshooting for provider setup, runtime offline, terminal attach failure, mobile native terminal if applicable.
+- Keep public repo safe: no customer identifiers, secrets, private hostnames, or incident-only commands.
+
+## Recommended First Three PRs
+
+### PR 1 - Contracts
+
+Deliver:
+
+- Shared schemas for IDs, safe errors, runtime summary, providers, threads, events, approvals, terminal summaries.
+- Tests.
+- No UI.
+
+Why first:
+
+- Gives every later agent a stable vocabulary.
+
+### PR 2 - Gateway Summary
+
+Deliver:
+
+- Authenticated runtime summary route.
+- Provider summary adapter.
+- Terminal summary adapter.
+- Caps and safe errors.
+- Tests.
+
+Why second:
+
+- Enables desktop/mobile read-only work without provider execution risk.
+
+### PR 3 - Read-Only Clients
+
+Deliver:
+
+- Desktop runtime summary IPC and dashboard behind flag.
+- Mobile runtime summary client and recent work screen behind flag.
+- Existing behavior preserved.
+
+Why third:
+
+- Verifies cross-client shape early and gives product feedback before mutating runtime.
+
+## Stop Conditions
+
+Stop and ask for design review if:
+
+- A task requires changing canonical auth flow.
+- A task requires storing provider credentials client-side.
+- A task requires new persistence technology.
+- A task requires removing existing mobile terminal fallback.
+- A task requires changing production VPS deployment model.
+- A task requires bypassing route/WS validation.
+- A task cannot be tested without relying on manual happy path only.

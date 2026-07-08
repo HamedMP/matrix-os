@@ -36,6 +36,9 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     notify: vi.fn(),
     onRuntimeChanged: vi.fn(),
     getUpdateStatus: vi.fn(() => "disabled"),
+    fetchRuntimeSummary: vi.fn(),
+    fetchReviewSummaries: vi.fn(),
+    createAgentThread: vi.fn(),
     ...overrides,
   } as unknown as HandlerContext;
 
@@ -105,5 +108,157 @@ describe("registerIpcHandlers", () => {
     const harness = makeHarness({ getUpdateStatus: vi.fn(() => "ready") });
 
     await expect(harness.invoke("update:check")).resolves.toEqual({ status: "ready" });
+  });
+
+  it("returns the runtime summary through a strict trusted-core IPC channel", async () => {
+    const summary = {
+      runtime: {
+        id: "rt_primary",
+        label: "Primary",
+        status: "available",
+      },
+      capabilities: [
+        {
+          id: "codingAgentsRuntimeSummary",
+          enabled: true,
+        },
+      ],
+      providers: [],
+      projects: {
+        items: [],
+        hasMore: false,
+        limit: 20,
+      },
+      activeThreads: {
+        items: [],
+        hasMore: false,
+        limit: 20,
+      },
+      terminalSessions: {
+        items: [],
+        limit: 20,
+        hasMore: false,
+      },
+      recentActivity: {
+        items: [],
+        limit: 20,
+        hasMore: false,
+      },
+      limits: {
+        maxPromptBytes: 16384,
+        maxAttachmentCount: 8,
+        maxTerminalInputBytes: 8192,
+        maxListItems: 20,
+      },
+      serverTime: "2026-07-06T00:00:00.000Z",
+    };
+    const fetchRuntimeSummary = vi.fn().mockResolvedValue(summary);
+    const harness = makeHarness({ fetchRuntimeSummary } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:get-summary")).resolves.toEqual(summary);
+    expect(fetchRuntimeSummary).toHaveBeenCalledWith();
+  });
+
+  it("maps runtime summary failures to a generic IPC error", async () => {
+    const fetchRuntimeSummary = vi
+      .fn()
+      .mockRejectedValue(new Error("connect ECONNREFUSED 10.0.0.5:4000"));
+    const harness = makeHarness({ fetchRuntimeSummary } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:get-summary")).rejects.toThrow("internal error");
+    await expect(harness.invoke("runtime:get-summary")).rejects.not.toThrow("10.0.0.5");
+  });
+
+  it("returns coding agent review summaries through a strict trusted-core IPC channel", async () => {
+    const reviews = {
+      items: [
+        {
+          id: "rev_desktop_1",
+          projectId: "matrix-os",
+          worktreeId: "wt_abc123def456",
+          status: "reviewing",
+          pullRequestNumber: 757,
+          round: 1,
+          maxRounds: 3,
+          reviewer: "codex",
+          implementer: "claude",
+          findings: { total: 1, high: 0, medium: 1, low: 0 },
+          updatedAt: "2026-07-06T00:00:00.000Z",
+        },
+      ],
+      hasMore: false,
+      limit: 50,
+    };
+    const fetchReviewSummaries = vi.fn().mockResolvedValue(reviews);
+    const harness = makeHarness({ fetchReviewSummaries } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:get-reviews")).resolves.toEqual(reviews);
+    await expect(harness.invoke("runtime:get-reviews", { cursor: "rev_desktop_1" })).resolves.toEqual(reviews);
+    expect(fetchReviewSummaries).toHaveBeenNthCalledWith(1, {});
+    expect(fetchReviewSummaries).toHaveBeenNthCalledWith(2, { cursor: "rev_desktop_1" });
+  });
+
+  it("maps review summary failures to a generic IPC error", async () => {
+    const fetchReviewSummaries = vi
+      .fn()
+      .mockRejectedValue(new Error("Postgres failed at /home/matrix/home"));
+    const harness = makeHarness({ fetchReviewSummaries } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:get-reviews")).rejects.toThrow("internal error");
+    await expect(harness.invoke("runtime:get-reviews")).rejects.not.toThrow("/home/matrix");
+  });
+
+  it("creates agent threads through trusted-core IPC without exposing credentials", async () => {
+    const snapshot = {
+      thread: {
+        id: "thread_desktop_1",
+        providerId: "codex",
+        title: "Summarize the failing checks",
+        status: "queued",
+        attention: "none",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+      },
+      events: {
+        items: [],
+        hasMore: false,
+        limit: 200,
+      },
+    };
+    const createAgentThread = vi.fn().mockResolvedValue(snapshot);
+    const harness = makeHarness({ createAgentThread } as Partial<HandlerContext>);
+    const request = {
+      providerId: "codex",
+      prompt: "Summarize the failing checks",
+      mode: "default",
+      approvalPolicy: "on_request",
+      sandboxMode: "workspace_write",
+      clientRequestId: "req_desktop_1",
+    };
+
+    await expect(harness.invoke("runtime:create-thread", request)).resolves.toEqual(snapshot);
+    expect(createAgentThread).toHaveBeenCalledWith(request);
+  });
+
+  it("maps agent thread create failures to a generic IPC error", async () => {
+    const createAgentThread = vi
+      .fn()
+      .mockRejectedValue(new Error("provider failed on /home/matrix/workspace with token secret"));
+    const harness = makeHarness({ createAgentThread } as Partial<HandlerContext>);
+
+    await expect(
+      harness.invoke("runtime:create-thread", {
+        providerId: "codex",
+        prompt: "Summarize the failing checks",
+        clientRequestId: "req_desktop_1",
+      }),
+    ).rejects.toThrow("internal error");
+    await expect(
+      harness.invoke("runtime:create-thread", {
+        providerId: "codex",
+        prompt: "Summarize the failing checks",
+        clientRequestId: "req_desktop_1",
+      }),
+    ).rejects.not.toThrow("/home/matrix");
   });
 });

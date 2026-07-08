@@ -1,0 +1,225 @@
+import { Hono, type Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { z } from "zod/v4";
+import {
+  ApprovalDecisionRequestSchema,
+  ApprovalIdSchema,
+  CreateAgentThreadRequestSchema,
+  CursorSchema,
+  RequestIdSchema,
+  ThreadIdSchema,
+  SafeClientErrorSchema,
+  UserInputAnswerRequestSchema,
+  boundedListSchema,
+  AgentThreadSummarySchema,
+  ReviewSummarySchema,
+} from "@matrix-os/contracts";
+import {
+  isRequestPrincipalError,
+  mapRequestPrincipalError,
+  requireRequestPrincipal,
+  type RequestPrincipal,
+} from "../request-principal.js";
+import type { CodingAgentRuntimeSummaryService } from "./runtime-summary.js";
+import {
+  CodingAgentThreadError,
+  safeThreadError,
+  type CodingAgentThreadStore,
+} from "./thread-store.js";
+import type { CodingAgentReviewSummaryStore } from "./review-summary.js";
+
+export interface CodingAgentRouteDeps {
+  service: CodingAgentRuntimeSummaryService;
+  threads?: CodingAgentThreadStore;
+  reviews?: CodingAgentReviewSummaryStore;
+  getPrincipal?: (c: Context) => RequestPrincipal;
+}
+
+const THREAD_MUTATION_BODY_LIMIT = 128 * 1024;
+const THREAD_ABORT_BODY_LIMIT = 1024;
+const THREAD_APPROVAL_BODY_LIMIT = 8 * 1024;
+const THREAD_INPUT_BODY_LIMIT = 40 * 1024;
+
+const AbortThreadBodySchema = z.object({
+  clientRequestId: RequestIdSchema,
+}).strict();
+
+const ThreadListSchema = boundedListSchema(AgentThreadSummarySchema, 50);
+const ReviewListSchema = boundedListSchema(ReviewSummarySchema, 50);
+
+function summaryUnavailable() {
+  return SafeClientErrorSchema.parse({
+    code: "summary_unavailable",
+    safeMessage: "Runtime summary is temporarily unavailable. Try again.",
+    retryable: true,
+    recoveryActions: ["retry"],
+  });
+}
+
+function threadsUnavailable() {
+  return SafeClientErrorSchema.parse({
+    code: "thread_store_unavailable",
+    safeMessage: "Agent thread state is temporarily unavailable. Try again.",
+    retryable: true,
+    recoveryActions: ["retry"],
+  });
+}
+
+function reviewsUnavailable() {
+  return SafeClientErrorSchema.parse({
+    code: "review_state_unavailable",
+    safeMessage: "Review state is temporarily unavailable. Try again.",
+    retryable: true,
+    recoveryActions: ["retry"],
+  });
+}
+
+function validationFailed() {
+  return SafeClientErrorSchema.parse({
+    code: "validation_failed",
+    safeMessage: "Request could not be processed. Check the inputs and try again.",
+    retryable: false,
+  });
+}
+
+function mapThreadRouteError(c: Context, err: unknown) {
+  if (isRequestPrincipalError(err)) {
+    const mapped = mapRequestPrincipalError(err);
+    return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+  }
+  if (err instanceof CodingAgentThreadError) {
+    const status = err.code === "thread_not_found" ? 404 : err.code === "provider_unavailable" ? 400 : 503;
+    return c.json({ error: safeThreadError(err.code) }, status);
+  }
+  if (err instanceof z.ZodError) {
+    return c.json({ error: validationFailed() }, 400);
+  }
+  console.warn("[coding-agents] thread route failed:", err instanceof Error ? err.message : String(err));
+  return c.json({ error: threadsUnavailable() }, 503);
+}
+
+export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
+  const app = new Hono();
+  const principalFor = (c: Context) => deps.getPrincipal?.(c) ?? requireRequestPrincipal(c);
+  const threadMutationBodyLimit = bodyLimit({ maxSize: THREAD_MUTATION_BODY_LIMIT });
+  const threadAbortBodyLimit = bodyLimit({ maxSize: THREAD_ABORT_BODY_LIMIT });
+  const threadApprovalBodyLimit = bodyLimit({ maxSize: THREAD_APPROVAL_BODY_LIMIT });
+  const threadInputBodyLimit = bodyLimit({ maxSize: THREAD_INPUT_BODY_LIMIT });
+
+  app.get("/summary", async (c) => {
+    try {
+      const principal = principalFor(c);
+      return c.json(await deps.service.getSummary(principal));
+    } catch (err: unknown) {
+      if (isRequestPrincipalError(err)) {
+        const mapped = mapRequestPrincipalError(err);
+        return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+      }
+      console.warn("[coding-agents] summary route failed:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: summaryUnavailable() }, 503);
+    }
+  });
+
+  if (deps.threads) {
+    app.post("/threads", threadMutationBodyLimit, async (c) => {
+      try {
+        const principal = principalFor(c);
+        const request = CreateAgentThreadRequestSchema.parse(await c.req.json());
+        const result = await deps.threads!.createThread(principal, request);
+        return c.json(result.snapshot, result.existing ? 200 : 202);
+      } catch (err: unknown) {
+        return mapThreadRouteError(c, err);
+      }
+    });
+
+    app.get("/threads", async (c) => {
+      try {
+        const principal = principalFor(c);
+        return c.json(ThreadListSchema.parse(await deps.threads!.listThreads(principal)));
+      } catch (err: unknown) {
+        return mapThreadRouteError(c, err);
+      }
+    });
+
+    app.get("/threads/:threadId", async (c) => {
+      try {
+        const principal = principalFor(c);
+        const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
+        return c.json(await deps.threads!.getThread(principal, threadId));
+      } catch (err: unknown) {
+        return mapThreadRouteError(c, err);
+      }
+    });
+
+    app.get("/threads/:threadId/events", async (c) => {
+      try {
+        const principal = principalFor(c);
+        const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
+        const rawCursor = c.req.query("cursor");
+        const cursor = rawCursor ? CursorSchema.parse(rawCursor) : undefined;
+        return c.json(await deps.threads!.getThread(principal, threadId, cursor));
+      } catch (err: unknown) {
+        return mapThreadRouteError(c, err);
+      }
+    });
+
+    app.post("/threads/:threadId/abort", threadAbortBodyLimit, async (c) => {
+      try {
+        const principal = principalFor(c);
+        const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
+        const body = AbortThreadBodySchema.parse(await c.req.json());
+        return c.json(await deps.threads!.abortThread(principal, threadId, body.clientRequestId));
+      } catch (err: unknown) {
+        return mapThreadRouteError(c, err);
+      }
+    });
+
+    app.post("/threads/:threadId/approvals/:approvalId/decision", threadApprovalBodyLimit, async (c) => {
+      try {
+        const principal = principalFor(c);
+        const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
+        const approvalId = ApprovalIdSchema.parse(c.req.param("approvalId"));
+        const body = ApprovalDecisionRequestSchema.parse(await c.req.json());
+        return c.json(await deps.threads!.submitApproval(principal, threadId, approvalId, body));
+      } catch (err: unknown) {
+        return mapThreadRouteError(c, err);
+      }
+    });
+
+    app.post("/threads/:threadId/inputs/:inputRequestId/answer", threadInputBodyLimit, async (c) => {
+      try {
+        const principal = principalFor(c);
+        const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
+        const inputRequestId = RequestIdSchema.parse(c.req.param("inputRequestId"));
+        const body = UserInputAnswerRequestSchema.parse(await c.req.json());
+        return c.json(await deps.threads!.submitInput(principal, threadId, inputRequestId, body));
+      } catch (err: unknown) {
+        return mapThreadRouteError(c, err);
+      }
+    });
+  }
+
+  if (deps.reviews) {
+    app.get("/reviews", async (c) => {
+      try {
+        const principal = principalFor(c);
+        const rawCursor = c.req.query("cursor");
+        const cursor = rawCursor ? CursorSchema.parse(rawCursor) : undefined;
+        return c.json(ReviewListSchema.parse(await deps.reviews!.listReviews(principal, { cursor })));
+      } catch (err: unknown) {
+        if (isRequestPrincipalError(err)) {
+          const mapped = mapRequestPrincipalError(err);
+          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+        }
+        if (err instanceof z.ZodError) {
+          return c.json({ error: validationFailed() }, 400);
+        }
+        console.warn("[coding-agents] review route failed:", err instanceof Error ? err.message : String(err));
+        return c.json({ error: reviewsUnavailable() }, 503);
+      }
+    });
+  }
+
+  return app;
+}

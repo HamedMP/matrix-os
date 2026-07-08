@@ -19,6 +19,7 @@ export interface AgentStatus {
 
 export interface AgentLaunchSandbox {
   enabled: boolean;
+  mode?: "read-only" | "workspace-write" | "danger-full-access";
   writableRoots?: string[];
   adminOverride?: boolean;
 }
@@ -27,7 +28,9 @@ export interface AgentLaunchInput {
   agent: SupportedAgent;
   cwd: string;
   prompt?: string;
+  mode?: "default" | "plan" | "review" | "full_access";
   sandbox?: AgentLaunchSandbox;
+  approvalPolicy?: "untrusted" | "on-request" | "on-failure" | "never";
   runtimeHome?: string;
 }
 
@@ -93,15 +96,28 @@ function codexSandboxArgs(sandbox?: AgentLaunchSandbox): string[] {
     }
     throw new Error("Codex sandbox preflight is required");
   }
-  const args = ["--sandbox", "workspace-write"];
-  for (const root of sandbox.writableRoots ?? []) {
-    args.push("--add-dir", root);
+  const mode = sandbox.mode ?? "workspace-write";
+  const args = ["--sandbox", mode];
+  if (mode === "workspace-write") {
+    for (const root of sandbox.writableRoots ?? []) {
+      args.push("--add-dir", root);
+    }
   }
   return args;
 }
 
 function authStatusArgs(agent: SupportedAgent): string[] {
   return agent === "codex" ? ["login", "status"] : ["auth", "status"];
+}
+
+function codexModeArgs(mode?: AgentLaunchInput["mode"]): string[] {
+  return mode === "review" ? ["review"] : [];
+}
+
+function codexPrompt(prompt: string | undefined, mode?: AgentLaunchInput["mode"]): string | undefined {
+  if (mode !== "plan") return prompt;
+  const planPrefix = "Plan the work first. Do not modify files until the plan is clear.";
+  return prompt ? `${planPrefix}\n\n${prompt}` : planPrefix;
 }
 
 export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
@@ -116,11 +132,12 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
         command,
         args: [
           "--ask-for-approval",
-          "never",
+          input.approvalPolicy ?? "never",
           "exec",
           "--skip-git-repo-check",
           ...codexSandboxArgs(input.sandbox),
-          ...promptArgs(input.prompt),
+          ...codexModeArgs(input.mode),
+          ...promptArgs(codexPrompt(input.prompt, input.mode)),
         ],
         cwd: input.cwd,
         env,
