@@ -2,45 +2,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ActivityIndicator, AppState, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import * as Haptics from "expo-haptics";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ReviewIdSchema, type AgentThreadEvent, type AgentThreadSnapshot, type AgentThreadSummary, type ApprovalDecisionRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
+import { useAgentThreadActions, type AgentThreadRouteState, type ThreadActionError } from "@/lib/agent-thread-actions";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
 import { isSafeShellSessionName } from "@/lib/terminal-state";
 
-type ThreadRouteState =
-  | { status: "loading"; snapshot: null; error: null }
-  | { status: "ready"; snapshot: AgentThreadSnapshot; error: "Thread state unavailable" | null; refreshing: boolean }
-  | { status: "error"; snapshot: null; error: "Thread state unavailable" };
-
 type TerminalOpenError = "Terminal session unavailable. Try again.";
-type ThreadActionError =
-  | "Approval could not be sent. Try again."
-  | "Input could not be sent. Try again.";
 type AssistantTimelineEvent = Extract<AgentThreadEvent, { type: "assistant.text.delta" | "assistant.text.completed" }>;
 type ToolTimelineEvent = Extract<AgentThreadEvent, { type: "tool.started" | "tool.output" | "tool.completed" }>;
 type TimelineItem =
   | { kind: "assistant"; key: string; events: AssistantTimelineEvent[]; order: number }
   | { kind: "event"; event: AgentThreadEvent; order: number }
   | { kind: "tool"; key: string; events: ToolTimelineEvent[]; order: number };
-type PendingAcceptedThreadAction = {
-  threadId: string;
-  snapshotKey: string;
-  inputRequestId: string | null;
-};
-
-function notifySuccessfulThreadAction(): void {
-  void Promise.resolve(Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success))
-    .catch((err: unknown) => {
-      console.warn("[mobile] thread action haptic failed", err instanceof Error ? err.message : String(err));
-    });
-}
-
-function threadSnapshotFeedbackKey(snapshot: AgentThreadSnapshot): string {
-  const lastEventId = snapshot.events.items.at(-1)?.eventId ?? "none";
-  return `${snapshot.thread.id}:${snapshot.thread.updatedAt}:${snapshot.events.items.length}:${lastEventId}`;
-}
 
 export default function AgentThreadRoute() {
   const { theme } = useUnistyles();
@@ -49,41 +24,29 @@ export default function AgentThreadRoute() {
   const threadId = typeof params.threadId === "string" ? params.threadId : "thread";
   const { client } = useGateway();
   const requestGeneration = useRef(0);
-  const [state, setState] = useState<ThreadRouteState>({
+  const [state, setState] = useState<AgentThreadRouteState>({
     status: "loading",
     snapshot: null,
     error: null,
   });
   const [terminalOpenError, setTerminalOpenError] = useState<TerminalOpenError | null>(null);
-  const [pendingActionIds, setPendingActionIds] = useState<Record<string, true>>({});
-  const [threadActionErrors, setThreadActionErrors] = useState<Record<string, ThreadActionError>>({});
-  const [inputAnswers, setInputAnswers] = useState<Record<string, string>>({});
   const streamSubscriptionRef = useRef<{ detach(): void } | null>(null);
   const streamGenerationRef = useRef(0);
-  const pendingActionKeysRef = useRef<Record<string, true>>({});
-  const mountedRef = useRef(true);
-  const routeThreadIdRef = useRef(threadId);
-  const pendingAcceptedActionRef = useRef<PendingAcceptedThreadAction | null>(null);
-  routeThreadIdRef.current = threadId;
-
-  const applyThreadActionSnapshot = useCallback((
-    snapshot: AgentThreadSnapshot,
-    options: { inputRequestId?: string } = {},
-  ) => {
-    if (!mountedRef.current || routeThreadIdRef.current !== snapshot.thread.id) return;
-    setState((current) => {
-      if (!mountedRef.current || current.status !== "ready" || current.snapshot.thread.id !== snapshot.thread.id) {
-        return current;
-      }
-      requestGeneration.current += 1;
-      pendingAcceptedActionRef.current = {
-        threadId: snapshot.thread.id,
-        snapshotKey: threadSnapshotFeedbackKey(snapshot),
-        inputRequestId: options.inputRequestId ?? null,
-      };
-      return { ...current, snapshot, error: null, refreshing: false };
-    });
-  }, []);
+  const {
+    inputAnswers,
+    pendingActionIds,
+    resetThreadActionErrors,
+    setInputAnswer,
+    submitApprovalDecision,
+    submitInputAnswer,
+    threadActionErrors,
+  } = useAgentThreadActions({
+    client,
+    requestGeneration,
+    routeThreadId: threadId,
+    setState,
+    state,
+  });
 
   const attachThreadStream = useCallback((snapshot: AgentThreadSnapshot) => {
     streamGenerationRef.current += 1;
@@ -128,7 +91,7 @@ export default function AgentThreadRoute() {
 
   const loadSnapshot = useCallback(async (cancelled: () => boolean = () => false) => {
     setTerminalOpenError(null);
-    setThreadActionErrors({});
+    resetThreadActionErrors();
     if (!client || !threadId) {
       setState((current) => current.status === "ready"
         ? { ...current, error: "Thread state unavailable", refreshing: false }
@@ -150,7 +113,7 @@ export default function AgentThreadRoute() {
     setState((current) => current.status === "ready"
       ? { ...current, error: "Thread state unavailable", refreshing: false }
       : { status: "error", snapshot: null, error: "Thread state unavailable" });
-  }, [attachThreadStream, client, threadId]);
+  }, [attachThreadStream, client, resetThreadActionErrors, threadId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -176,135 +139,11 @@ export default function AgentThreadRoute() {
     };
   }, [client, loadSnapshot]);
 
-  useEffect(() => {
-    const pending = pendingAcceptedActionRef.current;
-    if (!pending) {
-      return;
-    }
-    if (routeThreadIdRef.current !== pending.threadId) {
-      pendingAcceptedActionRef.current = null;
-      return;
-    }
-    if (state.status !== "ready" || state.snapshot.thread.id !== pending.threadId) return;
-    if (threadSnapshotFeedbackKey(state.snapshot) !== pending.snapshotKey) {
-      pendingAcceptedActionRef.current = null;
-      return;
-    }
-    pendingAcceptedActionRef.current = null;
-    if (pending.inputRequestId) {
-      const inputRequestId = pending.inputRequestId;
-      setInputAnswers((current) => {
-        const next = { ...current };
-        delete next[inputRequestId];
-        return next;
-      });
-    }
-    notifySuccessfulThreadAction();
-  }, [state]);
-
   useEffect(() => () => {
-    mountedRef.current = false;
-    pendingAcceptedActionRef.current = null;
     streamGenerationRef.current += 1;
     streamSubscriptionRef.current?.detach();
     streamSubscriptionRef.current = null;
   }, []);
-
-  const submitApprovalDecision = useCallback(async (
-    event: Extract<AgentThreadEvent, { type: "approval.requested" }>,
-    decision: ApprovalDecisionRequest["decision"],
-  ) => {
-    if (!client || state.status !== "ready") return;
-    const actionGroupId = `approval:${event.approval.approvalId}`;
-    if (pendingActionKeysRef.current[actionGroupId]) return;
-    pendingActionKeysRef.current[actionGroupId] = true;
-    const actionId = `${event.approval.approvalId}:${decision}`;
-    setPendingActionIds((current) => ({ ...current, [actionId]: true }));
-    setThreadActionErrors((current) => {
-      const next = { ...current };
-      delete next[actionId];
-      return next;
-    });
-    let result: Awaited<ReturnType<NonNullable<typeof client>["submitCodingAgentApprovalDecision"]>>;
-    try {
-      result = await client.submitCodingAgentApprovalDecision({
-        threadId: state.snapshot.thread.id,
-        approvalId: event.approval.approvalId,
-        decision,
-        correlationId: event.approval.correlationId,
-        clientRequestId: createMobileClientRequestId(),
-      });
-    } catch {
-      result = { ok: false, error: "Approval could not be sent. Try again." };
-    } finally {
-      setPendingActionIds((current) => {
-        const next = { ...current };
-        delete next[actionId];
-        return next;
-      });
-      delete pendingActionKeysRef.current[actionGroupId];
-    }
-    if (result.ok) {
-      applyThreadActionSnapshot(result.snapshot);
-      return;
-    }
-    setThreadActionErrors((current) => ({
-      ...current,
-      [actionId]: "Approval could not be sent. Try again.",
-    }));
-  }, [applyThreadActionSnapshot, client, state]);
-
-  const setInputAnswer = useCallback((requestId: string, answer: string) => {
-    setInputAnswers((current) => ({
-      ...current,
-      [requestId]: answer,
-    }));
-  }, []);
-
-  const submitInputAnswer = useCallback(async (
-    event: Extract<AgentThreadEvent, { type: "user_input.requested" }>,
-  ) => {
-    if (!client || state.status !== "ready") return;
-    const answer = inputAnswers[event.request.requestId] ?? "";
-    if (!answer.trim()) return;
-    const actionGroupId = `input:${event.request.requestId}`;
-    if (pendingActionKeysRef.current[actionGroupId]) return;
-    pendingActionKeysRef.current[actionGroupId] = true;
-    const actionId = `${event.request.requestId}:answer`;
-    setPendingActionIds((current) => ({ ...current, [actionId]: true }));
-    setThreadActionErrors((current) => {
-      const next = { ...current };
-      delete next[actionId];
-      return next;
-    });
-    let result: Awaited<ReturnType<NonNullable<typeof client>["submitCodingAgentInputAnswer"]>>;
-    try {
-      result = await client.submitCodingAgentInputAnswer({
-        threadId: state.snapshot.thread.id,
-        inputRequestId: event.request.requestId,
-        answer,
-        correlationId: event.request.correlationId,
-        clientRequestId: createMobileClientRequestId(),
-      });
-    } catch {
-      result = { ok: false, error: "Input could not be sent. Try again." };
-    } finally {
-      setPendingActionIds((current) => {
-        const next = { ...current };
-        delete next[actionId];
-        return next;
-      });
-      delete pendingActionKeysRef.current[actionGroupId];
-    }
-    if (result.ok) {
-      applyThreadActionSnapshot(result.snapshot, { inputRequestId: event.request.requestId });
-      return;
-    }
-    setThreadActionErrors((current) => ({
-      ...current,
-      [actionId]: "Input could not be sent. Try again.",
-    }));
-  }, [applyThreadActionSnapshot, client, inputAnswers, state]);
 
   const boundTerminalSessionId = state.status === "ready" ? state.snapshot.thread.terminalSessionId ?? null : null;
   const openBoundTerminal = useCallback(async () => {
@@ -1139,11 +978,6 @@ function findApprovalActionError(
     if (error) return error;
   }
   return null;
-}
-
-function createMobileClientRequestId(): `req_${string}` {
-  const random = Math.random().toString(36).slice(2, 10).padEnd(8, "0");
-  return `req_mobile_${Date.now().toString(36)}_${random}`;
 }
 
 const styles = StyleSheet.create((theme, rt) => ({
