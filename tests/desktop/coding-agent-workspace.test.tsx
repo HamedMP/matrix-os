@@ -787,6 +787,86 @@ describe("AgentWorkspace", () => {
     expect(bodyText.indexOf("Assistant message")).toBeLessThan(bodyText.indexOf("Tool activity"));
   });
 
+  it("collapses desktop tool activity details until expanded", async () => {
+    const snapshot = {
+      ...threadSnapshotFixture(),
+      events: {
+        ...threadSnapshotFixture().events,
+        items: [
+          {
+            type: "tool.started",
+            eventId: "evt_desktop_tool_collapsed_started",
+            threadId: "thread_alpha",
+            toolCallId: "tool_desktop_collapsed",
+            displayName: "Run checks",
+            kind: "command",
+            occurredAt: "2026-07-06T00:02:10.000Z",
+          },
+          {
+            type: "tool.output",
+            eventId: "evt_desktop_tool_collapsed_output_1",
+            threadId: "thread_alpha",
+            toolCallId: "tool_desktop_collapsed",
+            text: "stdout leaked /home/matrix/private and token_sk_live_123",
+            truncated: false,
+            occurredAt: "2026-07-06T00:02:20.000Z",
+          },
+          {
+            type: "tool.output",
+            eventId: "evt_desktop_tool_collapsed_output_2",
+            threadId: "thread_alpha",
+            toolCallId: "tool_desktop_collapsed",
+            text: "stderr leaked /home/matrix/private and token_sk_live_456",
+            truncated: true,
+            occurredAt: "2026-07-06T00:02:25.000Z",
+          },
+          {
+            type: "tool.completed",
+            eventId: "evt_desktop_tool_collapsed_completed",
+            threadId: "thread_alpha",
+            toolCallId: "tool_desktop_collapsed",
+            outcome: "success",
+            occurredAt: "2026-07-06T00:02:30.000Z",
+          },
+        ],
+      },
+    };
+    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-notification-preferences") {
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true } });
+      }
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(snapshot);
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+
+    render(<AgentWorkspace />);
+
+    expect(await screen.findByText("Tool activity")).toBeTruthy();
+    expect(screen.getByText("Run checks completed successfully after receiving partial output")).toBeTruthy();
+    expect(screen.getByText("2 outputs")).toBeTruthy();
+    expect(screen.queryByText("Started command")).toBeNull();
+    expect(screen.queryByText("Output 1")).toBeNull();
+    expect(screen.queryByText("Output 2")).toBeNull();
+    expect(screen.queryByText(/home\/matrix|token|stdout leaked|stderr leaked|tool_desktop_collapsed/i)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand tool activity Tool activity" }));
+
+    expect(await screen.findByText("Started command")).toBeTruthy();
+    expect(screen.getByText("Output 1")).toBeTruthy();
+    expect(screen.getByText("Output received")).toBeTruthy();
+    expect(screen.getByText("Output 2")).toBeTruthy();
+    expect(screen.getByText("Output received, partial")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|stdout leaked|stderr leaked|tool_desktop_collapsed/i)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse tool activity Tool activity" }));
+
+    expect(screen.queryByText("Started command")).toBeNull();
+    expect(screen.queryByText("Output 1")).toBeNull();
+  });
+
   it("hydrates and updates notification preferences through trusted IPC", async () => {
     let preferenceReads = 0;
     window.operator.invoke = vi.fn((channel: string, payload?: unknown) => {

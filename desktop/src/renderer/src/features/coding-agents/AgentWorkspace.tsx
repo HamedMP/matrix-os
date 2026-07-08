@@ -1,4 +1,4 @@
-import { Bell, Bot, ChevronRight, ClipboardCheck, ExternalLink, FileText, FolderOpen, GitBranch, GitCommitHorizontal, GitPullRequest, Monitor, Play, RefreshCw, Save, Search, Server, SquareTerminal } from "lucide-react";
+import { Bell, Bot, ChevronDown, ChevronRight, ChevronUp, ClipboardCheck, ExternalLink, FileText, FolderOpen, GitBranch, GitCommitHorizontal, GitPullRequest, Monitor, Play, RefreshCw, Save, Search, Server, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   defaultAgentThreadComposerDraft,
@@ -636,10 +636,10 @@ function ThreadSnapshotPanel({
             {...describeAssistantTimeline(item.events)}
           />
         ) : item.kind === "tool" ? (
-          <ThreadTimelineSummaryRow
+          <ThreadToolTimelineRow
             key={item.key}
             occurredAt={item.events[0]?.occurredAt ?? snapshot.thread.updatedAt}
-            {...describeToolTimeline(item.events)}
+            events={item.events}
           />
         ) : (
           <ThreadEventRow key={item.event.eventId} event={item.event} answeredInputRequestKeys={answeredInputRequestKeys} />
@@ -668,6 +668,78 @@ function ThreadTimelineSummaryRow({ title, detail, occurredAt }: { title: string
           {occurredAt}
         </span>
       </div>
+      <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
+        {detail}
+      </p>
+    </div>
+  );
+}
+
+function ThreadToolTimelineRow({ events, occurredAt }: { events: ToolTimelineEvent[]; occurredAt: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const copy = describeToolTimeline(events);
+  const details = describeToolTimelineDetails(events);
+  const outputCount = `${details.outputs.length} ${details.outputs.length === 1 ? "output" : "outputs"}`;
+
+  return (
+    <div
+      className="grid gap-2 rounded-md border px-3 py-2"
+      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+          {copy.title}
+        </p>
+        <span className="shrink-0 text-xs" style={{ color: "var(--text-tertiary)" }}>
+          {occurredAt}
+        </span>
+      </div>
+      <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
+        {copy.detail}
+      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs font-medium" style={{ color: "var(--text-tertiary)" }}>
+          {outputCount}
+        </span>
+        <Button
+          variant="ghost"
+          aria-label={`${expanded ? "Collapse" : "Expand"} tool activity ${copy.title}`}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          {expanded ? "Hide details" : "Show details"}
+        </Button>
+      </div>
+      {expanded ? (
+        <div className="grid gap-1">
+          {details.started ? (
+            <ThreadToolDetailRow title={`Started ${details.started.kind}`} detail="Tool run started" />
+          ) : null}
+          {details.outputs.map((output, index) => (
+            <ThreadToolDetailRow
+              key={output.eventId}
+              title={`Output ${index + 1}`}
+              detail={output.truncated ? "Output received, partial" : "Output received"}
+            />
+          ))}
+          {details.completed ? (
+            <ThreadToolDetailRow title="Completed" detail={formatToolCompletion(details.completed.outcome)} />
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ThreadToolDetailRow({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div
+      className="grid gap-1 rounded-md border px-3 py-2"
+      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+    >
+      <p className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>
+        {title}
+      </p>
       <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
         {detail}
       </p>
@@ -849,10 +921,29 @@ function describeToolTimeline(events: ToolTimelineEvent[]): { title: string; det
   };
 }
 
+function describeToolTimelineDetails(events: ToolTimelineEvent[]): {
+  started: Extract<ToolTimelineEvent, { type: "tool.started" }> | null;
+  outputs: Array<Extract<ToolTimelineEvent, { type: "tool.output" }>>;
+  completed: Extract<ToolTimelineEvent, { type: "tool.completed" }> | null;
+} {
+  return {
+    started: events.find((event): event is Extract<ToolTimelineEvent, { type: "tool.started" }> => event.type === "tool.started") ?? null,
+    outputs: events.filter((event): event is Extract<ToolTimelineEvent, { type: "tool.output" }> => event.type === "tool.output"),
+    completed: events.find((event): event is Extract<ToolTimelineEvent, { type: "tool.completed" }> => event.type === "tool.completed") ?? null,
+  };
+}
+
 function describeToolOutcome(outcome: string): string {
   if (outcome === "success") return "successfully";
   if (outcome === "failed") return "with errors";
   if (outcome === "cancelled") return "cancelled";
+  return outcome.replace(/_/g, " ");
+}
+
+function formatToolCompletion(outcome: string): string {
+  if (outcome === "success") return "Completed successfully";
+  if (outcome === "failed") return "Failed";
+  if (outcome === "cancelled") return "Cancelled";
   return outcome.replace(/_/g, " ");
 }
 
