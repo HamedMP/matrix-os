@@ -1,9 +1,11 @@
 import {
+  PreviewSessionSummarySchema,
   RuntimeSummarySchema,
   SafeDisplayStringSchema,
   TerminalSessionIdSchema,
   type AgentProviderSummary,
   type AgentThreadSummary,
+  type PreviewSessionSummary,
   type RuntimeSummary,
   type TerminalSessionSummary,
 } from "@matrix-os/contracts";
@@ -16,6 +18,7 @@ import type {
 import type { AgentCredentialStatusService } from "../onboarding/agent-credential-status.js";
 
 const TERMINAL_SUMMARY_LIMIT = 20;
+const PREVIEW_SUMMARY_LIMIT = 50;
 
 export interface CodingAgentTerminalSession {
   name: string;
@@ -40,15 +43,21 @@ export interface CodingAgentThreadSummaryStore {
   listAttentionThreads?(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
 }
 
+export interface CodingAgentPreviewSummaryStore {
+  listPreviewSessions(principal: RequestPrincipal): Promise<{ items: PreviewSessionSummary[]; hasMore: boolean; limit: number }>;
+}
+
 export interface CodingAgentRuntimeSummaryOptions {
   homePath: string;
   terminalRegistry?: CodingAgentTerminalSessionRegistry;
   agentCredentials?: Pick<AgentCredentialStatusService, "getStatus">;
   threads?: CodingAgentThreadSummaryStore;
+  previews?: CodingAgentPreviewSummaryStore;
   capabilities?: {
     workspace?: boolean;
     approvals?: boolean;
     review?: boolean;
+    preview?: boolean;
   };
   terminalOwnerId?: string;
   now?: () => Date;
@@ -196,6 +205,29 @@ async function readAttentionThreads(
   }
 }
 
+async function readPreviewSessions(
+  store: CodingAgentPreviewSummaryStore | undefined,
+  principal: RequestPrincipal,
+): Promise<{ items: PreviewSessionSummary[]; hasMore: boolean; limit: number }> {
+  if (!store) return { items: [], hasMore: false, limit: PREVIEW_SUMMARY_LIMIT };
+  try {
+    const sessions = await store.listPreviewSessions(principal);
+    const parsed: PreviewSessionSummary[] = [];
+    for (const item of sessions.items.slice(0, PREVIEW_SUMMARY_LIMIT + 1)) {
+      const result = PreviewSessionSummarySchema.safeParse(item);
+      if (result.success) parsed.push(result.data);
+    }
+    return {
+      items: parsed.slice(0, PREVIEW_SUMMARY_LIMIT),
+      hasMore: sessions.hasMore || parsed.length > PREVIEW_SUMMARY_LIMIT,
+      limit: PREVIEW_SUMMARY_LIMIT,
+    };
+  } catch (err: unknown) {
+    console.warn("[coding-agents] preview summary unavailable:", err instanceof Error ? err.message : String(err));
+    return { items: [], hasMore: false, limit: PREVIEW_SUMMARY_LIMIT };
+  }
+}
+
 async function readTerminalSessions(
   registry: CodingAgentTerminalSessionRegistry | undefined,
   homePath: string,
@@ -242,10 +274,12 @@ export function createCodingAgentRuntimeSummaryService(
       const providers = await readProviders(options.agentCredentials, principal);
       const activeThreads = await readActiveThreads(options.threads, principal);
       const attentionThreads = await readAttentionThreads(options.threads, principal);
+      const previewSessions = readPreviewSessions(options.previews, principal);
       const threadsEnabled = Boolean(options.threads);
       const workspaceEnabled = threadsEnabled && options.capabilities?.workspace === true;
       const approvalsEnabled = threadsEnabled && options.capabilities?.approvals === true;
       const reviewEnabled = options.capabilities?.review === true;
+      const previewEnabled = Boolean(options.previews) && options.capabilities?.preview === true;
       const terminalEnabled = Boolean(options.terminalRegistry) &&
         canReadTerminalSessions(principal, options.terminalOwnerId);
 
@@ -264,6 +298,7 @@ export function createCodingAgentRuntimeSummaryService(
           capability({ id: "codingAgentsThreadCreate", enabled: threadsEnabled }),
           capability({ id: "codingAgentsApprovals", enabled: approvalsEnabled }),
           capability({ id: "codingAgentsReview", enabled: reviewEnabled }),
+          capability({ id: "codingAgentsPreview", enabled: previewEnabled }),
           capability({ id: "codingAgentsNativeMobileTerminal", enabled: terminalEnabled }),
         ],
         providers,
@@ -271,6 +306,7 @@ export function createCodingAgentRuntimeSummaryService(
         activeThreads,
         attentionThreads,
         terminalSessions: await terminalSessions,
+        previewSessions: await previewSessions,
         recentActivity: { items: [], hasMore: false, limit: 30 },
         limits: {
           maxPromptBytes: 24_000,
