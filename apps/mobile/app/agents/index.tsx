@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type { FileReadRequest, FileReadResponse, PreviewSessionSummary, ReviewSnapshot, ReviewSummary, RuntimeSummary } from "@matrix-os/contracts";
+import type { FileReadRequest, FileReadResponse, FileWriteRequest, PreviewSessionSummary, ReviewSnapshot, ReviewSummary, RuntimeSummary } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 
@@ -33,6 +33,14 @@ type FileContentState =
   | { status: "loading"; selectedPath: string; file: null; error: null }
   | { status: "ready"; selectedPath: string; file: FileReadResponse; error: null }
   | { status: "error"; selectedPath: string; file: null; error: "File content unavailable" };
+
+type FileSaveState =
+  | { status: "idle"; error: null }
+  | { status: "saving"; error: null }
+  | { status: "saved"; error: null }
+  | { status: "error"; error: "File could not be saved. Refresh and try again." };
+
+type FileReference = Pick<FileReadRequest, "projectId" | "worktreeId" | "path">;
 
 type ReviewSnapshotHunk = ReviewSnapshot["files"]["items"][number]["hunks"][number];
 type ReviewSnapshotLine = NonNullable<ReviewSnapshotHunk["lines"]>[number];
@@ -64,11 +72,20 @@ const INITIAL_FILE_CONTENT_STATE: FileContentState = {
   error: null,
 };
 
+const INITIAL_FILE_SAVE_STATE: FileSaveState = { status: "idle", error: null };
+
 const SECRET_LIKE_FINDING_TEXT =
   /(gh[psuor]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9_]{20,}|ya29[A-Za-z0-9._-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|(?:A3T|AKIA|ASIA)[A-Z0-9]{16}|bearer\s+[A-Za-z0-9._-]{12,}|sk(?:_live|_test)?[_-][A-Za-z0-9_-]{16,})/i;
 const HIDDEN_FINDING_SUMMARY = "Finding summary hidden for safety.";
 const HIDDEN_REVIEW_NOTICE = "Review notice hidden for safety.";
 const HIDDEN_FILE_PATH = "File path hidden for safety.";
+
+let fileSaveRequestSeq = 0;
+
+function nextFileSaveRequestId(): string {
+  fileSaveRequestSeq += 1;
+  return `req_mobile_${Date.now().toString(36)}_${fileSaveRequestSeq}`;
+}
 
 function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
   return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
@@ -80,6 +97,10 @@ function safeFindingSummary(summary: string): string {
 
 function safeSnapshotText(value: string, fallback: string): string {
   return SECRET_LIKE_FINDING_TEXT.test(value) ? fallback : value;
+}
+
+function fileReferenceMatches(left: FileReference | null, right: FileReference): boolean {
+  return left?.projectId === right.projectId && left.worktreeId === right.worktreeId && left.path === right.path;
 }
 
 function formatHunkRange(hunk: ReviewSnapshotHunk): string {
@@ -168,15 +189,21 @@ export default function AgentsScreen() {
   const [reviewState, setReviewState] = useState<ReviewState>(INITIAL_REVIEW_STATE);
   const [reviewSnapshotState, setReviewSnapshotState] = useState<ReviewSnapshotState>(INITIAL_REVIEW_SNAPSHOT_STATE);
   const [fileContentState, setFileContentState] = useState<FileContentState>(INITIAL_FILE_CONTENT_STATE);
+  const [fileSaveState, setFileSaveState] = useState<FileSaveState>(INITIAL_FILE_SAVE_STATE);
   const [refreshing, setRefreshing] = useState(false);
   const requestGeneration = useRef(0);
   const reviewSnapshotGeneration = useRef(0);
   const fileContentGeneration = useRef(0);
   const selectedReviewIdRef = useRef<string | null>(null);
+  const selectedFileReferenceRef = useRef<FileReference | null>(null);
+  const activeFileSaveReferenceRef = useRef<FileReference | null>(null);
 
   const clearFileContent = useCallback(() => {
     fileContentGeneration.current += 1;
+    selectedFileReferenceRef.current = null;
+    activeFileSaveReferenceRef.current = null;
     setFileContentState(INITIAL_FILE_CONTENT_STATE);
+    setFileSaveState(INITIAL_FILE_SAVE_STATE);
   }, []);
 
   const clearReviewSnapshot = useCallback(() => {
@@ -229,6 +256,8 @@ export default function AgentsScreen() {
   }, [clearFileContent, client]);
 
   const loadFileContent = useCallback(async (request: FileReadRequest) => {
+    selectedFileReferenceRef.current = request;
+    activeFileSaveReferenceRef.current = null;
     if (!client) {
       setFileContentState({
         status: "error",
@@ -246,24 +275,73 @@ export default function AgentsScreen() {
       file: null,
       error: null,
     });
+    setFileSaveState(INITIAL_FILE_SAVE_STATE);
     const result = await client.getCodingAgentFileContent(request);
     if (generation !== fileContentGeneration.current) return;
     if (result.ok) {
+      selectedFileReferenceRef.current = request;
       setFileContentState({
         status: "ready",
         selectedPath: request.path,
         file: result.file,
         error: null,
       });
+      setFileSaveState(INITIAL_FILE_SAVE_STATE);
       return;
     }
+    selectedFileReferenceRef.current = request;
     setFileContentState({
       status: "error",
       selectedPath: request.path,
       file: null,
       error: "File content unavailable",
     });
+    setFileSaveState(INITIAL_FILE_SAVE_STATE);
   }, [client]);
+
+  const saveFileContent = useCallback(async (
+    request: Omit<FileWriteRequest, "encoding" | "clientRequestId">,
+  ) => {
+    if (!client || fileSaveState.status === "saving") return;
+    activeFileSaveReferenceRef.current = request;
+    setFileSaveState({ status: "saving", error: null });
+    const result = await client.saveCodingAgentFileContent({
+      ...request,
+      encoding: "utf8",
+      clientRequestId: nextFileSaveRequestId(),
+    });
+    if (!fileReferenceMatches(activeFileSaveReferenceRef.current, request)) return;
+    activeFileSaveReferenceRef.current = null;
+    if (!fileReferenceMatches(selectedFileReferenceRef.current, request)) {
+      setFileSaveState(INITIAL_FILE_SAVE_STATE);
+      return;
+    }
+    if (!result.ok) {
+      setFileSaveState({
+        status: "error",
+        error: "File could not be saved. Refresh and try again.",
+      });
+      return;
+    }
+    setFileContentState((current) => {
+      if (current.status !== "ready" || !fileReferenceMatches(selectedFileReferenceRef.current, request)) {
+        return current;
+      }
+      return {
+        status: "ready",
+        selectedPath: request.path,
+        file: {
+          metadata: result.file.metadata,
+          content: request.content,
+          encoding: "utf8",
+          truncated: false,
+          limitBytes: current.file.limitBytes,
+        },
+        error: null,
+      };
+    });
+    setFileSaveState({ status: "saved", error: null });
+  }, [client, fileSaveState.status]);
 
   const loadSummary = useCallback(async () => {
     const generation = requestGeneration.current + 1;
@@ -491,8 +569,10 @@ export default function AgentsScreen() {
           state={reviewState}
           snapshotState={reviewSnapshotState}
           fileContentState={fileContentState}
+          fileSaveState={fileSaveState}
           onSelectReview={selectReview}
           onOpenFile={loadFileContent}
+          onSaveFile={saveFileContent}
         />
       ) : null}
     </ScrollView>
@@ -572,16 +652,20 @@ function ReviewSection({
   state,
   snapshotState,
   fileContentState,
+  fileSaveState,
   onSelectReview,
   onOpenFile,
+  onSaveFile,
 }: {
   canCreate: boolean;
   canReadFiles: boolean;
   state: ReviewState;
   snapshotState: ReviewSnapshotState;
   fileContentState: FileContentState;
+  fileSaveState: FileSaveState;
   onSelectReview: (reviewId: string) => void;
   onOpenFile: (request: FileReadRequest) => void;
+  onSaveFile: (request: Omit<FileWriteRequest, "encoding" | "clientRequestId">) => void;
 }) {
   const { theme } = useUnistyles();
   const items = state.reviews?.items ?? [];
@@ -623,7 +707,9 @@ function ReviewSection({
         canReadFiles={canReadFiles}
         state={snapshotState}
         fileContentState={fileContentState}
+        fileSaveState={fileSaveState}
         onOpenFile={onOpenFile}
+        onSaveFile={onSaveFile}
       />
     </Section>
   );
@@ -634,13 +720,17 @@ function ReviewSnapshotPanel({
   canReadFiles,
   state,
   fileContentState,
+  fileSaveState,
   onOpenFile,
+  onSaveFile,
 }: {
   canCreate: boolean;
   canReadFiles: boolean;
   state: ReviewSnapshotState;
   fileContentState: FileContentState;
+  fileSaveState: FileSaveState;
   onOpenFile: (request: FileReadRequest) => void;
+  onSaveFile: (request: Omit<FileWriteRequest, "encoding" | "clientRequestId">) => void;
 }) {
   const { theme } = useUnistyles();
   const router = useRouter();
@@ -684,7 +774,9 @@ function ReviewSnapshotPanel({
           reviewProjectId={state.snapshot.review.projectId}
           reviewWorktreeId={state.snapshot.review.worktreeId}
           fileContentState={fileContentState}
+          fileSaveState={fileSaveState}
           onOpenFile={onOpenFile}
+          onSaveFile={onSaveFile}
         />
       ))}
       {canCreate && activeSelectedHunk ? (
@@ -729,7 +821,9 @@ function ReviewSnapshotFileRow({
   reviewProjectId,
   reviewWorktreeId,
   fileContentState,
+  fileSaveState,
   onOpenFile,
+  onSaveFile,
 }: {
   file: ReviewSnapshot["files"]["items"][number];
   fileIndex: number;
@@ -741,7 +835,9 @@ function ReviewSnapshotFileRow({
   reviewProjectId: string;
   reviewWorktreeId: string;
   fileContentState: FileContentState;
+  fileSaveState: FileSaveState;
   onOpenFile: (request: FileReadRequest) => void;
+  onSaveFile: (request: Omit<FileWriteRequest, "encoding" | "clientRequestId">) => void;
 }) {
   const { theme } = useUnistyles();
   const displayPath = safeSnapshotText(file.path, HIDDEN_FILE_PATH);
@@ -783,7 +879,13 @@ function ReviewSnapshotFileRow({
         </Pressable>
       ) : null}
       {fileContentState.selectedPath === file.path ? (
-        <FileContentPanel state={fileContentState} />
+        <FileContentPanel
+          state={fileContentState}
+          saveState={fileSaveState}
+          projectId={reviewProjectId}
+          worktreeId={reviewWorktreeId}
+          onSave={onSaveFile}
+        />
       ) : null}
       {file.findings?.length ? (
         file.findings.map((finding, findingIndex) => (
@@ -845,7 +947,19 @@ function ReviewSnapshotFileRow({
   );
 }
 
-function FileContentPanel({ state }: { state: FileContentState }) {
+function FileContentPanel({
+  state,
+  saveState,
+  projectId,
+  worktreeId,
+  onSave,
+}: {
+  state: FileContentState;
+  saveState: FileSaveState;
+  projectId: string;
+  worktreeId: string;
+  onSave: (request: Omit<FileWriteRequest, "encoding" | "clientRequestId">) => void;
+}) {
   if (state.status === "loading") {
     return <Text style={styles.reviewDetailNotice}>Loading file...</Text>;
   }
@@ -855,14 +969,81 @@ function FileContentPanel({ state }: { state: FileContentState }) {
   if (state.status !== "ready") return null;
 
   return (
+    <ReadyFileContentPanel
+      key={`${state.file.metadata.path}:${state.file.metadata.etag}`}
+      file={state.file}
+      saveState={saveState}
+      projectId={projectId}
+      worktreeId={worktreeId}
+      onSave={onSave}
+    />
+  );
+}
+
+function ReadyFileContentPanel({
+  file,
+  saveState,
+  projectId,
+  worktreeId,
+  onSave,
+}: {
+  file: FileReadResponse;
+  saveState: FileSaveState;
+  projectId: string;
+  worktreeId: string;
+  onSave: (request: Omit<FileWriteRequest, "encoding" | "clientRequestId">) => void;
+}) {
+  const { theme } = useUnistyles();
+  const [draft, setDraft] = useState(file.content);
+  const dirty = draft !== file.content;
+  const saveDisabled = saveState.status === "saving" || !dirty || file.truncated;
+  const displayPath = safeSnapshotText(file.metadata.path, HIDDEN_FILE_PATH);
+
+  return (
     <View style={styles.fileContentPanel}>
       <View style={styles.fileContentHeader}>
-        <Text style={styles.fileContentMeta}>{`${state.file.metadata.sizeBytes} bytes`}</Text>
-        {state.file.truncated ? <Text style={styles.fileContentTruncated}>Truncated</Text> : null}
+        <Text style={styles.fileContentMeta}>{`${file.metadata.sizeBytes} bytes`}</Text>
+        <View style={styles.fileContentActions}>
+          {saveState.status === "saved" ? <Text style={styles.fileContentSaved}>Saved</Text> : null}
+          {file.truncated ? <Text style={styles.fileContentTruncated}>Truncated</Text> : null}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Save file ${displayPath}`}
+            accessibilityState={{ disabled: saveDisabled }}
+            disabled={saveDisabled}
+            onPress={() => onSave({
+              projectId,
+              worktreeId,
+              path: file.metadata.path,
+              content: draft,
+              baseEtag: file.metadata.etag,
+            })}
+            style={[
+              styles.fileContentSaveButton,
+              saveDisabled ? styles.fileContentSaveButtonDisabled : null,
+            ]}
+          >
+            <Ionicons
+              name="save-outline"
+              size={14}
+              color={saveDisabled ? theme.colors.mutedForeground : theme.colors.background}
+            />
+            <Text style={styles.fileContentSaveText}>{saveState.status === "saving" ? "Saving" : "Save"}</Text>
+          </Pressable>
+        </View>
       </View>
-      <Text selectable style={styles.fileContentText}>
-        {state.file.content}
-      </Text>
+      <TextInput
+        accessibilityLabel={`Edit file ${displayPath}`}
+        multiline
+        scrollEnabled={false}
+        autoCapitalize="none"
+        autoCorrect={false}
+        spellCheck={false}
+        value={draft}
+        onChangeText={setDraft}
+        style={styles.fileContentInput}
+      />
+      {saveState.status === "error" ? <Text style={styles.fileContentError}>{saveState.error}</Text> : null}
     </View>
   );
 }
@@ -1198,16 +1379,53 @@ const styles = StyleSheet.create((theme, rt) => ({
     fontSize: 11,
     color: theme.colors.mutedForeground,
   },
+  fileContentActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing.xs,
+  },
+  fileContentSaved: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 11,
+    color: theme.colors.forest,
+  },
   fileContentTruncated: {
     fontFamily: theme.fonts.sansSemiBold,
     fontSize: 11,
     color: theme.colors.moss,
   },
-  fileContentText: {
+  fileContentSaveButton: {
+    minHeight: 30,
+    borderRadius: 15,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing.xs,
+    paddingHorizontal: theme.spacing.sm,
+    backgroundColor: theme.colors.forest,
+  },
+  fileContentSaveButtonDisabled: {
+    backgroundColor: theme.colors.secondary,
+  },
+  fileContentSaveText: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 12,
+    color: theme.colors.background,
+  },
+  fileContentInput: {
+    minHeight: 156,
     padding: theme.spacing.sm,
     fontFamily: theme.fonts.mono,
     fontSize: 11,
+    textAlignVertical: "top",
     color: theme.colors.foreground,
+  },
+  fileContentError: {
+    paddingHorizontal: theme.spacing.sm,
+    paddingBottom: theme.spacing.sm,
+    fontFamily: theme.fonts.sans,
+    fontSize: 12,
+    color: theme.colors.destructive,
   },
   reviewHunks: {
     gap: theme.spacing.xs,
