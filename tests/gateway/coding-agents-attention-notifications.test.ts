@@ -40,6 +40,32 @@ function approvalProvider(): CodingAgentProviderAdapter {
   };
 }
 
+function repeatedApprovalProvider(): CodingAgentProviderAdapter {
+  return {
+    ...approvalProvider(),
+    submitApproval({ thread, nextEventId }) {
+      return [
+        AgentThreadEventSchema.parse({
+          type: "approval.requested",
+          eventId: nextEventId(),
+          threadId: thread.id,
+          occurredAt: now.toISOString(),
+          approval: {
+            approvalId: "appr_followup_action",
+            threadId: thread.id,
+            title: "Approve next command",
+            safeDescription: "Approve the follow-up step.",
+            risk: "medium",
+            actionKind: "command",
+            allowedDecisions: ["approve", "decline"],
+            correlationId: "corr_followup_action",
+          },
+        }),
+      ];
+    },
+  };
+}
+
 function inputProvider(): CodingAgentProviderAdapter {
   return {
     providerId: "codex",
@@ -172,6 +198,86 @@ describe("coding agent attention notifications", () => {
     expect(send).toHaveBeenCalledWith(expect.objectContaining({
       ownerId: principal.userId,
       text: "Agent run needs attention.",
+      metadata: {
+        category: "agent",
+        threadId: created.snapshot.thread.id,
+      },
+    }));
+
+    subscription.dispose();
+  });
+
+  it("deduplicates repeated attention notifications for the same owner thread and kind within the notification window", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-attention-notifications-"));
+    const send = vi.fn<(reply: ChannelReply) => Promise<void>>().mockResolvedValue(undefined);
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => now,
+      providers: [repeatedApprovalProvider()],
+    });
+    const subscription = registerCodingAgentAttentionNotifications({
+      threads,
+      send,
+      now: () => 1_000,
+      dedupeWindowMs: 60_000,
+    });
+
+    const created = await threads.createThread(principal, {
+      providerId: "codex",
+      prompt: "Review the next command.",
+      clientRequestId: "req_attention_dedupe",
+    });
+    await threads.submitApproval(principal, created.snapshot.thread.id, "appr_safe_action", {
+      decision: "approve",
+      correlationId: "corr_safe_action",
+      clientRequestId: "req_attention_dedupe_approval",
+    });
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      ownerId: principal.userId,
+      text: "Agent needs approval.",
+      metadata: {
+        category: "agent",
+        threadId: created.snapshot.thread.id,
+      },
+    }));
+
+    subscription.dispose();
+  });
+
+  it("allows a repeated attention notification after the dedupe window expires", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-attention-notifications-"));
+    let currentTime = 1_000;
+    const send = vi.fn<(reply: ChannelReply) => Promise<void>>().mockResolvedValue(undefined);
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => now,
+      providers: [repeatedApprovalProvider()],
+    });
+    const subscription = registerCodingAgentAttentionNotifications({
+      threads,
+      send,
+      now: () => currentTime,
+      dedupeWindowMs: 60_000,
+    });
+
+    const created = await threads.createThread(principal, {
+      providerId: "codex",
+      prompt: "Review the next command.",
+      clientRequestId: "req_attention_dedupe_expiry",
+    });
+    currentTime += 61_000;
+    await threads.submitApproval(principal, created.snapshot.thread.id, "appr_safe_action", {
+      decision: "approve",
+      correlationId: "corr_safe_action",
+      clientRequestId: "req_attention_dedupe_expiry_approval",
+    });
+
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenLastCalledWith(expect.objectContaining({
+      ownerId: principal.userId,
+      text: "Agent needs approval.",
       metadata: {
         category: "agent",
         threadId: created.snapshot.thread.id,
