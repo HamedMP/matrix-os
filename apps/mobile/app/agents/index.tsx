@@ -800,6 +800,7 @@ export default function AgentsScreen() {
         ...savedState,
         mode: "terminal",
         lastActiveTerminalSessionId: session.name,
+        terminalHandoffSessionId: session.name,
         updatedAt: new Date().toISOString(),
       });
     } catch {
@@ -1008,18 +1009,34 @@ export default function AgentsScreen() {
 
       <Section title="Terminals" count={summary.terminalSessions.items.length}>
         {summary.terminalSessions.items.length === 0 ? <EmptyText>No terminal sessions.</EmptyText> : null}
-        {summary.terminalSessions.items.map((session) => (
-          <View key={session.id} style={styles.row}>
-            <View style={styles.rowIcon}>
-              <Ionicons name="terminal-outline" size={18} color={theme.colors.moss} />
-            </View>
-            <View style={styles.rowText}>
-              <Text style={styles.rowTitle}>{session.name}</Text>
-              <Text style={styles.rowSubtitle}>{session.attachable ? "Attachable" : "Unavailable"}</Text>
-            </View>
-            <Text style={styles.rowMeta}>{session.status}</Text>
-          </View>
-        ))}
+        {summary.terminalSessions.items.map((session) => {
+          const canOpenTerminal = session.attachable && session.status === "running";
+          return (
+            <Pressable
+              key={session.id}
+              accessibilityRole={canOpenTerminal ? "button" : undefined}
+              accessibilityLabel={canOpenTerminal
+                ? `Open terminal session ${session.name}`
+                : `Terminal session ${session.name} unavailable`}
+              accessibilityState={canOpenTerminal ? undefined : { disabled: true }}
+              disabled={!canOpenTerminal}
+              onPress={() => void openTerminalSession(session)}
+              style={({ pressed }) => [
+                styles.row,
+                pressed ? styles.rowPressed : null,
+              ]}
+            >
+              <View style={styles.rowIcon}>
+                <Ionicons name="terminal-outline" size={18} color={theme.colors.moss} />
+              </View>
+              <View style={styles.rowText}>
+                <Text style={styles.rowTitle}>{session.name}</Text>
+                <Text style={styles.rowSubtitle}>{canOpenTerminal ? "Attachable" : "Unavailable"}</Text>
+              </View>
+              <Text style={styles.rowMeta}>{session.status}</Text>
+            </Pressable>
+          );
+        })}
       </Section>
 
       {capabilityEnabled(summary, "codingAgentsReview") ? (

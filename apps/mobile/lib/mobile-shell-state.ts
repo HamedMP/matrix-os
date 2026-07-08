@@ -11,6 +11,7 @@ export interface MobileShellState {
   mode: MobileShellMode;
   lastActiveAppSlug: string | null;
   lastActiveTerminalSessionId: string | null;
+  terminalHandoffSessionId?: string | null;
   canvasEnteredAt: string | null;
   updatedAt: string;
 }
@@ -26,6 +27,7 @@ function createDefaultMobileShellState(surface: MobileShellSurface = "native-mob
     mode: "launcher",
     lastActiveAppSlug: null,
     lastActiveTerminalSessionId: null,
+    terminalHandoffSessionId: null,
     canvasEnteredAt: null,
     updatedAt: new Date().toISOString(),
   };
@@ -50,6 +52,7 @@ export function parseMobileShellState(
     mode,
     lastActiveAppSlug: safeAppSlug(record.lastActiveAppSlug),
     lastActiveTerminalSessionId: safeTerminalSessionId(record.lastActiveTerminalSessionId),
+    terminalHandoffSessionId: safeTerminalSessionId(record.terminalHandoffSessionId),
     canvasEnteredAt: safeIsoTimestamp(record.canvasEnteredAt),
     updatedAt: safeIsoTimestamp(record.updatedAt) ?? fallback.updatedAt,
   };

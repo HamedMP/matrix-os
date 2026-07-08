@@ -799,6 +799,10 @@ describe("AgentsScreen", () => {
       MOBILE_SHELL_STATE_STORAGE_KEY,
       expect.stringContaining("\"lastActiveTerminalSessionId\":\"matrix-newer\""),
     );
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith(
+      MOBILE_SHELL_STATE_STORAGE_KEY,
+      expect.stringContaining("\"terminalHandoffSessionId\":\"matrix-newer\""),
+    );
     expect(mockRouterPush).toHaveBeenCalledWith("/terminal");
 
     await act(async () => {
@@ -841,6 +845,86 @@ describe("AgentsScreen", () => {
     await screen.findByText("Recent Work");
     expect(screen.getByLabelText("Open recent terminal matrix-abc1234")).toBeTruthy();
     expect(screen.queryByLabelText("Open recent work Active task 1")).toBeNull();
+  });
+
+  it("opens terminal summary rows through the existing mobile Terminal tab", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("Terminals");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open terminal session matrix-abc1234"));
+    });
+
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith(
+      MOBILE_SHELL_STATE_STORAGE_KEY,
+      expect.stringContaining("\"lastActiveTerminalSessionId\":\"matrix-abc1234\""),
+    );
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith(
+      MOBILE_SHELL_STATE_STORAGE_KEY,
+      expect.stringContaining("\"terminalHandoffSessionId\":\"matrix-abc1234\""),
+    );
+    expect(mockRouterPush).toHaveBeenCalledWith("/terminal");
+  });
+
+  it("keeps non-running attachable terminal summary rows disabled", async () => {
+    const summary = summaryFixture();
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: {
+          ...summary,
+          terminalSessions: {
+            ...summary.terminalSessions,
+            items: [
+              {
+                ...summary.terminalSessions.items[0],
+                id: "matrix-idle",
+                name: "matrix-idle",
+                status: "idle",
+                attachable: true,
+              },
+            ],
+          },
+        },
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    const row = await screen.findByLabelText("Terminal session matrix-idle unavailable");
+    expect(row.props.accessibilityState?.disabled).toBe(true);
+    expect(screen.queryByLabelText("Open terminal session matrix-idle")).toBeNull();
+
+    fireEvent.press(row);
+
+    expect(AsyncStorage.setItem).not.toHaveBeenCalledWith(
+      MOBILE_SHELL_STATE_STORAGE_KEY,
+      expect.stringContaining("matrix-idle"),
+    );
+    expect(mockRouterPush).not.toHaveBeenCalledWith("/terminal");
   });
 
   it("surfaces safe provider setup warnings without rendering setup commands", async () => {
