@@ -1,8 +1,10 @@
 import type { ChannelAdapter, ChannelConfig, ChannelMessage, ChannelReply } from "./types.js";
+import { z } from "zod/v4";
 
 interface PushToken {
   token: string;
   platform: string;
+  ownerId?: string;
   registeredAt: number;
 }
 
@@ -15,15 +17,40 @@ interface PushSendResult {
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 30;
+const MAX_PUSH_METADATA_KEYS = 10;
+
+const PushDataValueSchema = z.union([
+  z.string().max(160),
+  z.number().finite(),
+  z.boolean(),
+  z.null(),
+]);
+const PushMetadataSchema = z.record(z.string().regex(/^[A-Za-z0-9_.:-]{1,64}$/), PushDataValueSchema);
+
+function safePushData(reply: ChannelReply): Record<string, unknown> {
+  const parsed = PushMetadataSchema.safeParse(reply.metadata ?? {});
+  const metadata = parsed.success
+    ? Object.fromEntries(Object.entries(parsed.data).slice(0, MAX_PUSH_METADATA_KEYS))
+    : {};
+  return {
+    ...metadata,
+    type: "message",
+    chatId: reply.chatId,
+  };
+}
 
 export function createPushAdapter(): ChannelAdapter & {
-  registerToken(token: string, platform: string): void;
-  removeToken(token: string): void;
+  registerToken(token: string, platform: string, ownerId?: string): void;
+  removeToken(token: string, ownerId?: string): void;
   getTokens(): PushToken[];
 } {
   const tokens: Map<string, PushToken> = new Map();
   const sendTimestamps: number[] = [];
   let messageHandler: (msg: ChannelMessage) => void = () => {};
+
+  function tokenKey(token: string, ownerId: string | undefined): string {
+    return JSON.stringify([ownerId ?? null, token]);
+  }
 
   function isRateLimited(): boolean {
     const now = Date.now();
@@ -80,12 +107,18 @@ export function createPushAdapter(): ChannelAdapter & {
   return {
     id: "push",
 
-    registerToken(token: string, platform: string) {
-      tokens.set(token, { token, platform, registeredAt: Date.now() });
+    registerToken(token: string, platform: string, ownerId?: string) {
+      tokens.set(tokenKey(token, ownerId), { token, platform, ownerId, registeredAt: Date.now() });
     },
 
-    removeToken(token: string) {
-      tokens.delete(token);
+    removeToken(token: string, ownerId?: string) {
+      if (ownerId !== undefined) {
+        tokens.delete(tokenKey(token, ownerId));
+        return;
+      }
+      for (const [key, registered] of tokens) {
+        if (registered.token === token) tokens.delete(key);
+      }
     },
 
     getTokens(): PushToken[] {
@@ -105,13 +138,13 @@ export function createPushAdapter(): ChannelAdapter & {
 
       sendTimestamps.push(Date.now());
 
-      const allTokens = Array.from(tokens.values()).map((t) => t.token);
-      if (allTokens.length === 0) return;
+      const allTokens = Array.from(tokens.values())
+        .filter((token) => reply.ownerId === undefined || token.ownerId === reply.ownerId)
+        .map((t) => t.token);
+      const uniqueTokens = Array.from(new Set(allTokens));
+      if (uniqueTokens.length === 0) return;
 
-      await sendPush(allTokens, "Matrix OS", reply.text, {
-        type: "message",
-        chatId: reply.chatId,
-      });
+      await sendPush(uniqueTokens, "Matrix OS", reply.text, safePushData(reply));
     },
 
     set onMessage(handler: (msg: ChannelMessage) => void) {
