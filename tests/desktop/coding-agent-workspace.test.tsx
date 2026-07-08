@@ -700,6 +700,87 @@ describe("AgentWorkspace", () => {
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-summary", {});
   });
 
+  it("groups desktop assistant and tool activity without exposing raw event text", async () => {
+    const snapshot = {
+      ...threadSnapshotFixture(),
+      events: {
+        ...threadSnapshotFixture().events,
+        items: [
+          {
+            type: "assistant.text.delta",
+            eventId: "evt_desktop_assistant_delta_1",
+            threadId: "thread_alpha",
+            messageId: "msg_desktop_grouped",
+            delta: "Reading /home/matrix/private with token_sk_live_123.",
+            occurredAt: "2026-07-06T00:02:00.000Z",
+          },
+          {
+            type: "tool.started",
+            eventId: "evt_desktop_tool_started",
+            threadId: "thread_alpha",
+            toolCallId: "tool_desktop_grouped",
+            displayName: "Read",
+            occurredAt: "2026-07-06T00:02:10.000Z",
+          },
+          {
+            type: "tool.output",
+            eventId: "evt_desktop_tool_output",
+            threadId: "thread_alpha",
+            toolCallId: "tool_desktop_grouped",
+            output: "secret local output from /home/matrix/private",
+            truncated: false,
+            occurredAt: "2026-07-06T00:02:20.000Z",
+          },
+          {
+            type: "tool.completed",
+            eventId: "evt_desktop_tool_completed",
+            threadId: "thread_alpha",
+            toolCallId: "tool_desktop_grouped",
+            outcome: "success",
+            occurredAt: "2026-07-06T00:02:30.000Z",
+          },
+          {
+            type: "assistant.text.delta",
+            eventId: "evt_desktop_assistant_delta_2",
+            threadId: "thread_alpha",
+            messageId: "msg_desktop_grouped",
+            delta: "Finished with private credentials hidden.",
+            occurredAt: "2026-07-06T00:02:40.000Z",
+          },
+          {
+            type: "assistant.text.completed",
+            eventId: "evt_desktop_assistant_completed",
+            threadId: "thread_alpha",
+            messageId: "msg_desktop_grouped",
+            occurredAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+      },
+    };
+    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-notification-preferences") {
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true } });
+      }
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(snapshot);
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+
+    render(<AgentWorkspace />);
+
+    expect(await screen.findByText("Assistant message")).toBeTruthy();
+    expect(screen.getByText("2 text updates received, complete")).toBeTruthy();
+    expect(screen.queryByText("Assistant message complete")).toBeNull();
+    expect(screen.getByText("Tool activity")).toBeTruthy();
+    expect(screen.getByText("Read completed successfully after receiving output")).toBeTruthy();
+    expect(screen.queryByText("Tool output")).toBeNull();
+    expect(screen.queryByText("msg_desktop_grouped")).toBeNull();
+    expect(screen.queryByText("tool_desktop_grouped")).toBeNull();
+    expect(screen.queryByText(/home\/matrix|token|secret local output|private credentials/i)).toBeNull();
+  });
+
   it("hydrates and updates notification preferences through trusted IPC", async () => {
     let preferenceReads = 0;
     window.operator.invoke = vi.fn((channel: string, payload?: unknown) => {
