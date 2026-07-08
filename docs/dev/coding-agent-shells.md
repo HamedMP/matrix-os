@@ -90,6 +90,8 @@ Client UI must disable duplicate submission while a decision is in flight and re
 
 Mobile thread detail should rehydrate its current bounded thread snapshot when the app returns to the foreground so pending approval and input state reconciles with decisions made from other shells. This refresh must use the authenticated gateway client and must not persist approval payloads, input text, transcripts, or terminal output.
 
+Mobile approval and input action handling lives in `apps/mobile/lib/agent-thread-actions.ts`. Keep the route responsible for hydration, streaming, navigation, and render composition; keep transient pending action ids, bounded action errors, input drafts, idempotency request ids, and accepted-snapshot haptic guards inside that hook. The hook must only act on the current route thread id, and success haptics must wait until the gateway-returned bounded snapshot has been accepted by the route.
+
 Desktop thread timelines may group `assistant.text.delta` and `assistant.text.completed` events by bounded `messageId`, plus `tool.started`, `tool.output`, and `tool.completed` events by bounded `toolCallId`, for readability. Grouped rows must render only safe counts, display metadata, output presence/truncation, and completion state; never render raw assistant text, raw tool output, message ids, or tool call ids.
 
 Mobile thread timelines may group `assistant.text.delta` and `assistant.text.completed` events by bounded `messageId` for readability. Grouped rows must render only update counts and completion state; never render raw assistant text or message ids.
