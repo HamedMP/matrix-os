@@ -830,6 +830,51 @@ describe("AgentWorkspace", () => {
     expect(bodyText.indexOf("Assistant message")).toBeLessThan(bodyText.indexOf("Tool activity"));
   });
 
+  it("shows bounded safe desktop assistant transcript previews without exposing message ids", async () => {
+    const longSafeDelta = "Reviewed the failing shard and found the route test. ".repeat(8);
+    const expectedPreview = `1 text update received, complete. ${longSafeDelta.slice(0, 240).trimEnd()}...`;
+    const snapshot = {
+      ...threadSnapshotFixture(),
+      events: {
+        ...threadSnapshotFixture().events,
+        items: [
+          {
+            type: "assistant.text.delta",
+            eventId: "evt_desktop_assistant_safe_delta",
+            threadId: "thread_alpha",
+            messageId: "msg_desktop_safe_preview",
+            delta: longSafeDelta,
+            occurredAt: "2026-07-06T00:02:00.000Z",
+          },
+          {
+            type: "assistant.text.completed",
+            eventId: "evt_desktop_assistant_safe_completed",
+            threadId: "thread_alpha",
+            messageId: "msg_desktop_safe_preview",
+            occurredAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+      },
+    };
+    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-notification-preferences") {
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
+      }
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(snapshot);
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+
+    render(<AgentWorkspace />);
+
+    expect(await screen.findByText("Assistant message")).toBeTruthy();
+    expect(screen.getByText(expectedPreview)).toBeTruthy();
+    expect(screen.queryByText("msg_desktop_safe_preview")).toBeNull();
+    expect(screen.queryByText(/route test\. Reviewed the failing shard and found the route test\.$/)).toBeNull();
+  });
+
   it("collapses desktop tool activity details until expanded", async () => {
     const snapshot = {
       ...threadSnapshotFixture(),

@@ -2,6 +2,8 @@ import { Bell, Bot, ChevronDown, ChevronRight, ChevronUp, ClipboardCheck, Extern
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ReviewIdSchema,
+  SafeAssistantPreviewSourceTextSchema,
+  SafeAssistantPreviewTextSchema,
   defaultAgentThreadComposerDraft,
   type AgentThreadEvent,
   type AgentThreadSnapshot,
@@ -64,6 +66,8 @@ type SelectedReviewHunk = {
   hunk: ReviewSnapshotHunk;
   hunkIndex: number;
 };
+
+const ASSISTANT_PREVIEW_MAX_CHARS = 240;
 
 function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
   return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
@@ -967,14 +971,34 @@ function isToolTimelineEvent(event: AgentThreadEvent): event is ToolTimelineEven
 function describeAssistantTimeline(events: AssistantTimelineEvent[]): { title: string; detail: string } {
   const deltas = events.filter((event): event is Extract<AssistantTimelineEvent, { type: "assistant.text.delta" }> => event.type === "assistant.text.delta");
   const completed = events.some((event) => event.type === "assistant.text.completed");
+  const preview = formatAssistantPreview(deltas);
   if (deltas.length === 1 && !completed) {
-    return { title: "Assistant update", detail: "Text update received" };
+    return { title: "Assistant update", detail: preview ?? "Text update received" };
   }
   const updates = `${deltas.length} ${deltas.length === 1 ? "text update" : "text updates"} received`;
+  const statusDetail = completed ? `${updates}, complete` : updates;
   return {
     title: completed ? "Assistant message" : "Assistant updates",
-    detail: completed ? `${updates}, complete` : updates,
+    detail: preview ? completed ? `${statusDetail}. ${preview}` : preview : statusDetail,
   };
+}
+
+function formatAssistantPreview(deltas: Extract<AssistantTimelineEvent, { type: "assistant.text.delta" }>[]): string | null {
+  const preview = deltas
+    .map((event) => event.delta)
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!preview) {
+    return null;
+  }
+  if (!SafeAssistantPreviewSourceTextSchema.safeParse(preview).success) {
+    return null;
+  }
+  const cappedPreview = preview.length <= ASSISTANT_PREVIEW_MAX_CHARS
+    ? preview
+    : `${preview.slice(0, ASSISTANT_PREVIEW_MAX_CHARS).trimEnd()}...`;
+  return SafeAssistantPreviewTextSchema.safeParse(cappedPreview).success ? cappedPreview : null;
 }
 
 function describeToolTimeline(events: ToolTimelineEvent[]): { title: string; detail: string } {

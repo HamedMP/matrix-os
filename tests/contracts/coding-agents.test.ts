@@ -27,6 +27,8 @@ import {
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
+  SafeAssistantPreviewSourceTextSchema,
+  SafeAssistantPreviewTextSchema,
   SafeClientErrorSchema,
   TerminalClientFrameSchema,
   TerminalServerFrameSchema,
@@ -64,6 +66,36 @@ describe("coding agent contracts", () => {
         retryable: false,
       }),
     ).toThrow();
+  });
+
+  it("rejects unsafe assistant preview text before shell display", () => {
+    expect(SafeAssistantPreviewTextSchema.parse("Reviewed the route test and updated the focused assertion.")).toBe(
+      "Reviewed the route test and updated the focused assertion.",
+    );
+    expect(SafeAssistantPreviewSourceTextSchema.parse("Reviewed the full source text before capping.")).toBe(
+      "Reviewed the full source text before capping.",
+    );
+
+    for (const unsafePreview of [
+      "Read /opt/matrix/app/BUNDLE_VERSION from the host.",
+      "Opened /Users/alice/.ssh/config while debugging.",
+      "postgres://matrix:secret@db.internal/app failed",
+      "Anthropic returned a provider stack trace.",
+      "OpenAI request failed with token details.",
+      "Use password=hunter2 for the test account.",
+      "JWT eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature was printed.",
+      "GitHub token ghp_1234567890abcdef1234567890abcdef1234 failed.",
+      `GitHub token ${["github", "pat", "1234567890abcdef", "1234567890abcdef1234567890abcdef"].join("_")} failed.`,
+      "GitLab token glpat-1234567890abcdef1234 failed.",
+      "Slack token xoxb-1234567890-abcdef failed.",
+      `Stripe key ${["sk", "live", "1234567890abcdef1234567890abcdef"].join("_")} failed.`,
+      "AWS key AKIAIOSFODNN7EXAMPLE failed.",
+    ]) {
+      expect(() => SafeAssistantPreviewTextSchema.parse(unsafePreview)).toThrow();
+    }
+
+    const boundaryToken = `${"Reviewed safe progress. ".repeat(12)}ghp_1234567890abcdef1234567890abcdef1234`;
+    expect(() => SafeAssistantPreviewSourceTextSchema.parse(boundaryToken)).toThrow();
   });
 
   it("parses bounded runtime summaries without sensitive runtime data", () => {

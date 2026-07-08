@@ -3,7 +3,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ActivityIndicator, AppState, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ReviewIdSchema, type AgentThreadEvent, type AgentThreadSnapshot, type AgentThreadSummary, type ApprovalDecisionRequest } from "@matrix-os/contracts";
+import { ReviewIdSchema, SafeAssistantPreviewSourceTextSchema, SafeAssistantPreviewTextSchema, type AgentThreadEvent, type AgentThreadSnapshot, type AgentThreadSummary, type ApprovalDecisionRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { useAgentThreadActions, type AgentThreadRouteState, type ThreadActionError } from "@/lib/agent-thread-actions";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
@@ -18,7 +18,6 @@ type TimelineItem =
   | { kind: "tool"; key: string; events: ToolTimelineEvent[]; order: number };
 
 const ASSISTANT_PREVIEW_MAX_CHARS = 240;
-const UNSAFE_ASSISTANT_PREVIEW_PATTERN = /(?:stack trace|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+|token|secret|private key)/i;
 
 export default function AgentThreadRoute() {
   const { theme } = useUnistyles();
@@ -808,13 +807,16 @@ function formatAssistantPreview(deltas: Extract<AssistantTimelineEvent, { type: 
     .join("")
     .replace(/\s+/g, " ")
     .trim();
-  if (!preview || UNSAFE_ASSISTANT_PREVIEW_PATTERN.test(preview)) {
+  if (!preview) {
     return null;
   }
-  if (preview.length <= ASSISTANT_PREVIEW_MAX_CHARS) {
-    return preview;
+  if (!SafeAssistantPreviewSourceTextSchema.safeParse(preview).success) {
+    return null;
   }
-  return `${preview.slice(0, ASSISTANT_PREVIEW_MAX_CHARS).trimEnd()}...`;
+  const cappedPreview = preview.length <= ASSISTANT_PREVIEW_MAX_CHARS
+    ? preview
+    : `${preview.slice(0, ASSISTANT_PREVIEW_MAX_CHARS).trimEnd()}...`;
+  return SafeAssistantPreviewTextSchema.safeParse(cappedPreview).success ? cappedPreview : null;
 }
 
 function ToolTimelineItem({ events }: { events: ToolTimelineEvent[] }) {
