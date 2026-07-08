@@ -11,6 +11,8 @@ import {
   CursorSchema,
   FileReadRequestSchema,
   FileReadResponseSchema,
+  FileWriteRequestSchema,
+  FileWriteResponseSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
@@ -126,6 +128,10 @@ export const INVOKE_CHANNELS = {
   "runtime:get-file-content": {
     request: FileReadRequestSchema,
     response: FileReadResponseSchema,
+  },
+  "runtime:save-file-content": {
+    request: FileWriteRequestSchema,
+    response: FileWriteResponseSchema,
   },
   "runtime:get-thread-snapshot": {
     request: z.object({ threadId: ThreadIdSchema }).strict(),

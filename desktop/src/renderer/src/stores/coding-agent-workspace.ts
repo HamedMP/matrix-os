@@ -5,6 +5,7 @@ import {
   type AgentThreadComposerDraft,
   type FileReadRequest,
   type FileReadResponse,
+  type FileWriteRequest,
   type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
@@ -16,9 +17,11 @@ import { invoke } from "../lib/operator";
 type WorkspaceStatus = "idle" | "loading" | "ready" | "error";
 type ReviewStatus = "idle" | "loading" | "ready" | "error";
 type FileReadStatus = "idle" | "loading" | "ready" | "error";
+type FileWriteStatus = "idle" | "saving" | "saved" | "error";
 type CreateStatus = "idle" | "submitting";
 type ActionStatus = "idle" | "submitting";
 type AgentThreadSnapshotEvent = AgentThreadSnapshot["events"]["items"][number];
+type FileReference = Pick<FileReadRequest, "projectId" | "worktreeId" | "path">;
 type ReviewSummaryList = {
   items: ReviewSummary[];
   hasMore: boolean;
@@ -40,7 +43,10 @@ interface CodingAgentWorkspaceState {
   fileReadStatus: FileReadStatus;
   fileRead: FileReadResponse | null;
   fileReadError: string | null;
+  fileWriteStatus: FileWriteStatus;
+  fileWriteError: string | null;
   selectedFilePath: string | null;
+  selectedFileReference: FileReference | null;
   threadSnapshotStatus: ReviewStatus;
   threadSnapshot: AgentThreadSnapshot | null;
   threadSnapshotError: string | null;
@@ -60,6 +66,7 @@ interface CodingAgentWorkspaceState {
   refresh: () => Promise<void>;
   selectReview: (reviewId: string) => Promise<void>;
   loadFileContent: (request: FileReadRequest) => Promise<void>;
+  saveFileContent: (request: Omit<FileWriteRequest, "encoding" | "clientRequestId">) => Promise<void>;
   loadThreadSnapshot: (threadId: string) => Promise<void>;
   submitApprovalDecision: (input: {
     threadId: string;
@@ -101,7 +108,10 @@ function clearFileReadState() {
     fileReadStatus: "idle" as const,
     fileRead: null,
     fileReadError: null,
+    fileWriteStatus: "idle" as const,
+    fileWriteError: null,
     selectedFilePath: null,
+    selectedFileReference: null,
   };
 }
 
@@ -127,6 +137,12 @@ function nextActionRequestId(): string {
 function withoutRecordKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   const { [key]: _removed, ...rest } = record;
   return rest;
+}
+
+function fileReferenceMatches(reference: FileReference | null, request: FileReference): boolean {
+  return reference?.projectId === request.projectId
+    && reference.worktreeId === request.worktreeId
+    && reference.path === request.path;
 }
 
 function compareThreadEvents(left: AgentThreadSnapshotEvent, right: AgentThreadSnapshotEvent): number {
@@ -211,7 +227,10 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   fileReadStatus: "idle",
   fileRead: null,
   fileReadError: null,
+  fileWriteStatus: "idle",
+  fileWriteError: null,
   selectedFilePath: null,
+  selectedFileReference: null,
   threadSnapshotStatus: "idle",
   threadSnapshot: null,
   threadSnapshotError: null,
@@ -344,27 +363,80 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
     const seq = ++fileReadSeq;
     set((state) => ({
       selectedFilePath: request.path,
-      fileReadStatus: state.fileRead?.metadata.path === request.path ? "ready" : "loading",
-      fileRead: state.fileRead?.metadata.path === request.path ? state.fileRead : null,
+      selectedFileReference: request,
+      fileReadStatus: fileReferenceMatches(state.selectedFileReference, request) ? "ready" : "loading",
+      fileRead: fileReferenceMatches(state.selectedFileReference, request) ? state.fileRead : null,
       fileReadError: null,
+      fileWriteStatus: "idle",
+      fileWriteError: null,
     }));
     try {
       const response = await invoke("runtime:get-file-content", request);
       if (seq !== fileReadSeq) return;
       set({
         selectedFilePath: request.path,
+        selectedFileReference: request,
         fileReadStatus: "ready",
         fileRead: response,
         fileReadError: null,
+        fileWriteStatus: "idle",
+        fileWriteError: null,
       });
     } catch {
       console.warn("[coding-agents] file content load failed");
       if (seq !== fileReadSeq) return;
       set({
         selectedFilePath: request.path,
+        selectedFileReference: request,
         fileReadStatus: "error",
         fileRead: null,
         fileReadError: "File content unavailable",
+        fileWriteStatus: "idle",
+        fileWriteError: null,
+      });
+    }
+  },
+
+  saveFileContent: async (request) => {
+    const { fileWriteStatus } = useCodingAgentWorkspace.getState();
+    if (fileWriteStatus === "saving") return;
+
+    set({
+      fileWriteStatus: "saving",
+      fileWriteError: null,
+    });
+    try {
+      const response = await invoke("runtime:save-file-content", {
+        ...request,
+        encoding: "utf8",
+        clientRequestId: nextActionRequestId(),
+      });
+      set((state) => {
+        const stillSelected = fileReferenceMatches(state.selectedFileReference, request);
+        return {
+          fileReadStatus: stillSelected ? "ready" : state.fileReadStatus,
+          fileRead: stillSelected
+            ? {
+                metadata: response.metadata,
+                content: request.content,
+                encoding: "utf8" as const,
+                truncated: false,
+                limitBytes: state.fileRead?.limitBytes ?? response.metadata.sizeBytes,
+              }
+            : state.fileRead,
+          fileReadError: stillSelected ? null : state.fileReadError,
+          fileWriteStatus: stillSelected ? "saved" : "idle",
+          fileWriteError: null,
+        };
+      });
+    } catch {
+      console.warn("[coding-agents] file content save failed");
+      set((state) => {
+        if (!fileReferenceMatches(state.selectedFileReference, request)) return state;
+        return {
+          fileWriteStatus: "error",
+          fileWriteError: "File could not be saved. Refresh and try again.",
+        };
       });
     }
   },

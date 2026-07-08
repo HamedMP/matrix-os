@@ -11,6 +11,7 @@ import {
   fetchCodingAgentReviewSnapshot,
   fetchCodingAgentReviewSummaries,
   fetchCodingAgentRuntimeSummary,
+  saveCodingAgentFileContent,
   submitCodingAgentApprovalDecision,
   submitCodingAgentInputAnswer,
 } from "./coding-agents/runtime-summary-client";
@@ -240,6 +241,7 @@ if (!gotLock) {
         fetchReviewSummaries: (options) => fetchCodingAgentReviewSummaries(auth, options),
         fetchReviewSnapshot: (options) => fetchCodingAgentReviewSnapshot(auth, options),
         fetchFileContent: (request) => fetchCodingAgentFileContent(auth, request),
+        saveFileContent: (request) => saveCodingAgentFileContent(auth, request),
         fetchThreadSnapshot: (options) => fetchCodingAgentThreadSnapshot(auth, options),
         submitApprovalDecision: ({ threadId, approvalId, decision, clientRequestId, correlationId }) =>
           submitCodingAgentApprovalDecision(auth, {

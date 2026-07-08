@@ -40,6 +40,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     fetchReviewSummaries: vi.fn(),
     fetchReviewSnapshot: vi.fn(),
     fetchFileContent: vi.fn(),
+    saveFileContent: vi.fn(),
     fetchThreadSnapshot: vi.fn(),
     submitApprovalDecision: vi.fn(),
     submitInputAnswer: vi.fn(),
@@ -319,6 +320,67 @@ describe("registerIpcHandlers", () => {
       projectId: "matrix-os",
       worktreeId: "wt_abc123def456",
       path: "packages/gateway/src/coding-agents/routes.ts",
+    })).rejects.not.toThrow("/home/matrix");
+  });
+
+  it("saves coding agent file content through a strict trusted-core IPC channel", async () => {
+    const saved = {
+      metadata: {
+        path: "packages/gateway/src/coding-agents/routes.ts",
+        kind: "file",
+        sizeBytes: 38,
+        etag: "sha256_desktop_file_next",
+        updatedAt: "2026-07-06T00:04:00.000Z",
+      },
+      encoding: "utf8",
+      writtenBytes: 38,
+    };
+    const saveFileContent = vi.fn().mockResolvedValue(saved);
+    const harness = makeHarness({ saveFileContent } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:save-file-content", {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      content: "export const safeRoute = false;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_desktop_file",
+      clientRequestId: "req_desktop_file_save",
+    })).resolves.toEqual(saved);
+    expect(saveFileContent).toHaveBeenCalledWith({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      content: "export const safeRoute = false;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_desktop_file",
+      clientRequestId: "req_desktop_file_save",
+    });
+  });
+
+  it("maps file save failures to a generic IPC error", async () => {
+    const saveFileContent = vi
+      .fn()
+      .mockRejectedValue(new Error("EACCES: /home/matrix/home/projects/private token"));
+    const harness = makeHarness({ saveFileContent } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:save-file-content", {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      content: "export const safeRoute = false;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_desktop_file",
+      clientRequestId: "req_desktop_file_save",
+    })).rejects.toThrow("internal error");
+    await expect(harness.invoke("runtime:save-file-content", {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      content: "export const safeRoute = false;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_desktop_file",
+      clientRequestId: "req_desktop_file_save",
     })).rejects.not.toThrow("/home/matrix");
   });
 

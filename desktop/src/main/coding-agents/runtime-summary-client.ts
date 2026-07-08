@@ -2,6 +2,8 @@ import {
   AgentThreadSnapshotSchema,
   FileReadRequestSchema,
   FileReadResponseSchema,
+  FileWriteRequestSchema,
+  FileWriteResponseSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
@@ -9,6 +11,8 @@ import {
   type CreateAgentThreadRequest,
   type FileReadRequest,
   type FileReadResponse,
+  type FileWriteRequest,
+  type FileWriteResponse,
   type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
@@ -22,6 +26,7 @@ const RUNTIME_SUMMARY_TIMEOUT_MS = 10_000;
 const REVIEW_SUMMARY_TIMEOUT_MS = 10_000;
 const REVIEW_SNAPSHOT_TIMEOUT_MS = 10_000;
 const FILE_READ_TIMEOUT_MS = 10_000;
+const FILE_WRITE_TIMEOUT_MS = 10_000;
 const THREAD_CREATE_TIMEOUT_MS = 15_000;
 const THREAD_SNAPSHOT_TIMEOUT_MS = 10_000;
 const APPROVAL_DECISION_TIMEOUT_MS = 10_000;
@@ -313,6 +318,44 @@ export async function fetchCodingAgentFileContent(
   const parsed = FileReadResponseSchema.safeParse(body);
   if (!parsed.success) {
     throw new Error("file content unavailable");
+  }
+  return parsed.data;
+}
+
+export async function saveCodingAgentFileContent(
+  auth: AuthService,
+  request: FileWriteRequest,
+  fetchFn: FetchFn = fetch,
+): Promise<FileWriteResponse> {
+  const token = auth.getToken();
+  if (!token) {
+    throw new Error("file save unavailable");
+  }
+
+  const parsedRequest = FileWriteRequestSchema.safeParse(request);
+  if (!parsedRequest.success) {
+    throw new Error("file save unavailable");
+  }
+
+  const url = new URL("/api/coding-agents/files/write", auth.getGatewayOrigin());
+  const res = await fetchFn(url.toString(), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(parsedRequest.data),
+    signal: AbortSignal.timeout(FILE_WRITE_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error("file save unavailable");
+  }
+
+  const body = await res.json();
+  const parsed = FileWriteResponseSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new Error("file save unavailable");
   }
   return parsed.data;
 }

@@ -3,6 +3,7 @@ import {
   fetchCodingAgentFileContent,
   fetchCodingAgentThreadSnapshot,
   fetchCodingAgentReviewSnapshot,
+  saveCodingAgentFileContent,
   submitCodingAgentApprovalDecision,
   submitCodingAgentInputAnswer,
 } from "../../desktop/src/main/coding-agents/runtime-summary-client";
@@ -355,6 +356,54 @@ describe("coding agent desktop runtime client", () => {
     expect(file.content).toBe("export const safeRoute = true;\n");
   });
 
+  it("saves bounded file content with bearer auth and validates safe output", async () => {
+    const responseBody = {
+      metadata: {
+        path: "packages/gateway/src/coding-agents/routes.ts",
+        kind: "file",
+        sizeBytes: 38,
+        etag: "sha256_desktop_file_next",
+        updatedAt: "2026-07-06T00:04:00.000Z",
+      },
+      encoding: "utf8",
+      writtenBytes: 38,
+    };
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify(responseBody), { status: 200 }));
+
+    const saved = await saveCodingAgentFileContent(auth(), {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      content: "export const safeRoute = false;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_desktop_file",
+      clientRequestId: "req_desktop_file_save",
+    }, fetchFn);
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://runtime.test/api/coding-agents/files/write",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer desktop-token",
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify({
+          projectId: "matrix-os",
+          worktreeId: "wt_abc123def456",
+          path: "packages/gateway/src/coding-agents/routes.ts",
+          content: "export const safeRoute = false;\n",
+          encoding: "utf8",
+          baseEtag: "sha256_desktop_file",
+          clientRequestId: "req_desktop_file_save",
+        }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(saved.metadata.etag).toBe("sha256_desktop_file_next");
+  });
+
   it("rejects unsafe or malformed review snapshot responses with a generic error", async () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       ...snapshotBody(),
@@ -386,6 +435,39 @@ describe("coding agent desktop runtime client", () => {
       projectId: "matrix-os",
       worktreeId: "wt_abc123def456",
       path: "packages/gateway/src/coding-agents/routes.ts",
+    }, fetchFn)).rejects.not.toThrow("/home/matrix");
+  });
+
+  it("rejects unsafe file save responses with a generic error", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      metadata: {
+        path: "/home/matrix/private/secret.ts",
+        kind: "file",
+        sizeBytes: 38,
+        etag: "sha256_desktop_file_next",
+        updatedAt: "2026-07-06T00:04:00.000Z",
+      },
+      encoding: "utf8",
+      writtenBytes: 38,
+    }), { status: 200 }));
+
+    await expect(saveCodingAgentFileContent(auth(), {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      content: "export const safeRoute = false;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_desktop_file",
+      clientRequestId: "req_desktop_file_save",
+    }, fetchFn)).rejects.toThrow("file save unavailable");
+    await expect(saveCodingAgentFileContent(auth(), {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      content: "export const safeRoute = false;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_desktop_file",
+      clientRequestId: "req_desktop_file_save",
     }, fetchFn)).rejects.not.toThrow("/home/matrix");
   });
 });
