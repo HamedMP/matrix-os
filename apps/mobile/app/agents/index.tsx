@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } 
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type { ReviewSummary, RuntimeSummary } from "@matrix-os/contracts";
+import type { ReviewSnapshot, ReviewSummary, RuntimeSummary } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 
@@ -22,8 +22,35 @@ type ReviewState =
 
 const INITIAL_REVIEW_STATE: ReviewState = { status: "idle", reviews: null, error: null };
 
+type ReviewSnapshotState =
+  | { status: "idle"; selectedReviewId: null; snapshot: null; error: null }
+  | { status: "loading"; selectedReviewId: string; snapshot: null; error: null }
+  | { status: "ready"; selectedReviewId: string; snapshot: ReviewSnapshot; error: null }
+  | { status: "error"; selectedReviewId: string; snapshot: null; error: "Review details unavailable" };
+
+const INITIAL_REVIEW_SNAPSHOT_STATE: ReviewSnapshotState = {
+  status: "idle",
+  selectedReviewId: null,
+  snapshot: null,
+  error: null,
+};
+
+const SECRET_LIKE_FINDING_TEXT =
+  /(gh[psuor]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9_]{20,}|ya29[A-Za-z0-9._-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|(?:A3T|AKIA|ASIA)[A-Z0-9]{16}|bearer\s+[A-Za-z0-9._-]{12,}|sk(?:_live|_test)?[_-][A-Za-z0-9_-]{16,})/i;
+const HIDDEN_FINDING_SUMMARY = "Finding summary hidden for safety.";
+const HIDDEN_REVIEW_NOTICE = "Review notice hidden for safety.";
+const HIDDEN_FILE_PATH = "File path hidden for safety.";
+
 function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
   return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
+}
+
+function safeFindingSummary(summary: string): string {
+  return SECRET_LIKE_FINDING_TEXT.test(summary) ? HIDDEN_FINDING_SUMMARY : summary;
+}
+
+function safeSnapshotText(value: string, fallback: string): string {
+  return SECRET_LIKE_FINDING_TEXT.test(value) ? fallback : value;
 }
 
 export default function AgentsScreen() {
@@ -32,8 +59,58 @@ export default function AgentsScreen() {
   const { client } = useGateway();
   const [state, setState] = useState<ScreenState>(INITIAL_STATE);
   const [reviewState, setReviewState] = useState<ReviewState>(INITIAL_REVIEW_STATE);
+  const [reviewSnapshotState, setReviewSnapshotState] = useState<ReviewSnapshotState>(INITIAL_REVIEW_SNAPSHOT_STATE);
   const [refreshing, setRefreshing] = useState(false);
   const requestGeneration = useRef(0);
+  const reviewSnapshotGeneration = useRef(0);
+  const selectedReviewIdRef = useRef<string | null>(null);
+
+  const clearReviewSnapshot = useCallback(() => {
+    reviewSnapshotGeneration.current += 1;
+    selectedReviewIdRef.current = null;
+    setReviewSnapshotState(INITIAL_REVIEW_SNAPSHOT_STATE);
+  }, []);
+
+  const loadReviewSnapshot = useCallback(async (reviewId: string) => {
+    if (!client) {
+      selectedReviewIdRef.current = reviewId;
+      setReviewSnapshotState({
+        status: "error",
+        selectedReviewId: reviewId,
+        snapshot: null,
+        error: "Review details unavailable",
+      });
+      return;
+    }
+    const generation = reviewSnapshotGeneration.current + 1;
+    reviewSnapshotGeneration.current = generation;
+    selectedReviewIdRef.current = reviewId;
+    setReviewSnapshotState({
+      status: "loading",
+      selectedReviewId: reviewId,
+      snapshot: null,
+      error: null,
+    });
+    const result = await client.getCodingAgentReviewSnapshot({ reviewId });
+    if (generation !== reviewSnapshotGeneration.current) return;
+    if (result.ok) {
+      selectedReviewIdRef.current = reviewId;
+      setReviewSnapshotState({
+        status: "ready",
+        selectedReviewId: reviewId,
+        snapshot: result.snapshot,
+        error: null,
+      });
+      return;
+    }
+    selectedReviewIdRef.current = reviewId;
+    setReviewSnapshotState({
+      status: "error",
+      selectedReviewId: reviewId,
+      snapshot: null,
+      error: "Review details unavailable",
+    });
+  }, [client]);
 
   const loadSummary = useCallback(async () => {
     const generation = requestGeneration.current + 1;
@@ -41,11 +118,13 @@ export default function AgentsScreen() {
     if (!CODING_AGENTS_MOBILE_WORKSPACE) {
       setState({ status: "error", summary: null, error: "Runtime summary unavailable" });
       setReviewState(INITIAL_REVIEW_STATE);
+      clearReviewSnapshot();
       return;
     }
     if (!client) {
       setState({ status: "error", summary: null, error: "Runtime summary unavailable" });
       setReviewState(INITIAL_REVIEW_STATE);
+      clearReviewSnapshot();
       return;
     }
     const result = await client.getCodingAgentRuntimeSummary();
@@ -54,6 +133,7 @@ export default function AgentsScreen() {
       setState({ status: "ready", summary: result.summary, error: null });
       if (!capabilityEnabled(result.summary, "codingAgentsReview")) {
         setReviewState(INITIAL_REVIEW_STATE);
+        clearReviewSnapshot();
         return;
       }
       setReviewState((current) => (current.reviews ? current : { status: "loading", reviews: null, error: null }));
@@ -61,14 +141,23 @@ export default function AgentsScreen() {
       if (generation !== requestGeneration.current) return;
       if (reviewsResult.ok) {
         setReviewState({ status: "ready", reviews: reviewsResult.reviews, error: null });
+        const selectedReviewId = selectedReviewIdRef.current;
+        if (!selectedReviewId) return;
+        if (reviewsResult.reviews.items.some((review) => review.id === selectedReviewId)) {
+          void loadReviewSnapshot(selectedReviewId);
+          return;
+        }
+        clearReviewSnapshot();
         return;
       }
       setReviewState({ status: "error", reviews: null, error: "Review state unavailable" });
+      clearReviewSnapshot();
       return;
     }
     setState({ status: "error", summary: null, error: "Runtime summary unavailable" });
     setReviewState(INITIAL_REVIEW_STATE);
-  }, [client]);
+    clearReviewSnapshot();
+  }, [clearReviewSnapshot, client, loadReviewSnapshot]);
 
   useEffect(() => {
     setState((current) => (current.summary ? current : INITIAL_STATE));
@@ -83,6 +172,10 @@ export default function AgentsScreen() {
       setRefreshing(false);
     }
   }, [loadSummary]);
+
+  const selectReview = useCallback((reviewId: string) => {
+    void loadReviewSnapshot(reviewId);
+  }, [loadReviewSnapshot]);
 
   if (state.status === "loading") {
     return (
@@ -112,6 +205,7 @@ export default function AgentsScreen() {
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
+      accessibilityLabel="Refresh agent workspace"
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.forest} />}
     >
       <View style={styles.header}>
@@ -183,7 +277,13 @@ export default function AgentsScreen() {
         ))}
       </Section>
 
-      {capabilityEnabled(summary, "codingAgentsReview") ? <ReviewSection state={reviewState} /> : null}
+      {capabilityEnabled(summary, "codingAgentsReview") ? (
+        <ReviewSection
+          state={reviewState}
+          snapshotState={reviewSnapshotState}
+          onSelectReview={selectReview}
+        />
+      ) : null}
     </ScrollView>
   );
 }
@@ -192,7 +292,15 @@ function reviewStatusLabel(status: ReviewSummary["status"]): string {
   return status.replace(/_/g, " ");
 }
 
-function ReviewSection({ state }: { state: ReviewState }) {
+function ReviewSection({
+  state,
+  snapshotState,
+  onSelectReview,
+}: {
+  state: ReviewState;
+  snapshotState: ReviewSnapshotState;
+  onSelectReview: (reviewId: string) => void;
+}) {
   const { theme } = useUnistyles();
   const items = state.reviews?.items ?? [];
 
@@ -201,7 +309,16 @@ function ReviewSection({ state }: { state: ReviewState }) {
       {state.status === "error" ? <Text style={styles.reviewError}>{state.error}</Text> : null}
       {items.length === 0 && state.status !== "loading" && state.status !== "error" ? <EmptyText>No reviews.</EmptyText> : null}
       {items.map((review) => (
-        <View key={review.id} style={styles.row}>
+        <Pressable
+          key={review.id}
+          accessibilityRole="button"
+          accessibilityLabel={`Open review PR #${review.pullRequestNumber}`}
+          onPress={() => onSelectReview(review.id)}
+          style={[
+            styles.row,
+            snapshotState.selectedReviewId === review.id ? styles.selectedReviewRow : null,
+          ]}
+        >
           <View style={styles.rowIcon}>
             <Ionicons name="checkmark-done-outline" size={18} color={theme.colors.moss} />
           </View>
@@ -217,9 +334,69 @@ function ReviewSection({ state }: { state: ReviewState }) {
               </Text>
             ) : null}
           </View>
+        </Pressable>
+      ))}
+      <ReviewSnapshotPanel state={snapshotState} />
+    </Section>
+  );
+}
+
+function ReviewSnapshotPanel({ state }: { state: ReviewSnapshotState }) {
+  const { theme } = useUnistyles();
+  if (state.status === "idle") return null;
+  if (state.status === "loading") {
+    return <Text style={styles.reviewDetailNotice}>Loading review details...</Text>;
+  }
+  if (state.status === "error") {
+    return <Text style={styles.reviewError}>{state.error}</Text>;
+  }
+
+  return (
+    <View style={styles.reviewDetailPanel}>
+      <View style={styles.reviewDetailHeader}>
+        <View style={styles.rowText}>
+          <Text style={styles.rowTitle}>{`PR #${state.snapshot.review.pullRequestNumber} review details`}</Text>
+          <Text style={styles.rowSubtitle}>{`${state.snapshot.files.items.length} files${state.snapshot.partial ? " - partial" : ""}`}</Text>
+        </View>
+        <Text style={styles.rowMeta}>{reviewStatusLabel(state.snapshot.review.status)}</Text>
+      </View>
+      {state.snapshot.safeNotice ? (
+        <Text style={styles.reviewDetailNotice}>{safeSnapshotText(state.snapshot.safeNotice, HIDDEN_REVIEW_NOTICE)}</Text>
+      ) : null}
+      {state.snapshot.files.items.map((file, fileIndex) => (
+        <View key={`${file.path}:${fileIndex}`} style={styles.reviewFileRow}>
+          <View style={styles.reviewDetailHeader}>
+            <View style={styles.rowIcon}>
+              <Ionicons name="document-text-outline" size={17} color={theme.colors.moss} />
+            </View>
+            <View style={styles.rowText}>
+              <Text
+                selectable={!SECRET_LIKE_FINDING_TEXT.test(file.path)}
+                style={styles.rowTitle}
+              >
+                {safeSnapshotText(file.path, HIDDEN_FILE_PATH)}
+              </Text>
+              <Text style={styles.rowSubtitle}>{file.status}</Text>
+            </View>
+          </View>
+          {file.findings?.length ? (
+            file.findings.map((finding, findingIndex) => (
+              <Text
+                key={`${finding.id}:${finding.line}:${findingIndex}`}
+                style={[
+                  styles.reviewFinding,
+                  finding.severity === "high" ? styles.reviewHighActive : null,
+                ]}
+              >
+                {safeFindingSummary(finding.summary)}
+              </Text>
+            ))
+          ) : (
+            <Text style={styles.rowSubtitle}>No findings in this file.</Text>
+          )}
         </View>
       ))}
-    </Section>
+    </View>
   );
 }
 
@@ -364,6 +541,9 @@ const styles = StyleSheet.create((theme, rt) => ({
     alignItems: "center",
     gap: theme.spacing.sm,
   },
+  selectedReviewRow: {
+    borderColor: theme.colors.forest,
+  },
   rowIcon: {
     width: 34,
     height: 34,
@@ -416,6 +596,46 @@ const styles = StyleSheet.create((theme, rt) => ({
     padding: theme.spacing.md,
     fontFamily: theme.fonts.sans,
     color: theme.colors.destructive,
+  },
+  reviewDetailPanel: {
+    borderRadius: 14,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    padding: theme.spacing.md,
+    gap: theme.spacing.sm,
+  },
+  reviewDetailHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing.sm,
+  },
+  reviewDetailNotice: {
+    borderRadius: 12,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.secondary,
+    padding: theme.spacing.sm,
+    fontFamily: theme.fonts.sans,
+    fontSize: 12,
+    color: theme.colors.mutedForeground,
+  },
+  reviewFileRow: {
+    borderRadius: 12,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.secondary,
+    padding: theme.spacing.sm,
+    gap: theme.spacing.xs,
+  },
+  reviewFinding: {
+    fontFamily: theme.fonts.sans,
+    fontSize: 12,
+    color: theme.colors.mutedForeground,
   },
   emptyText: {
     borderRadius: 14,

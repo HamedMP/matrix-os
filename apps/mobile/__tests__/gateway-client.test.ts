@@ -6,6 +6,54 @@ import {
 import type { CreateAgentThreadRequest } from "@matrix-os/contracts";
 import { jsonResponse } from "./mobile-shell-test-utils";
 
+function reviewSnapshotPayload(id = "rev_mobile_1") {
+  return {
+    review: {
+      id,
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      status: "reviewing",
+      pullRequestNumber: 757,
+      round: 1,
+      maxRounds: 3,
+      reviewer: "codex",
+      implementer: "claude",
+      findings: {
+        total: 1,
+        high: 1,
+        medium: 0,
+        low: 0,
+      },
+      updatedAt: "2026-07-06T00:00:00.000Z",
+    },
+    files: {
+      items: [
+        {
+          path: "packages/gateway/src/coding-agents/routes.ts",
+          status: "modified",
+          additions: 0,
+          deletions: 0,
+          partial: true,
+          hunks: [],
+          findings: [
+            {
+              id: "HIGH-1",
+              severity: "high",
+              line: 42,
+              summary: "Validate ownership before returning snapshots.",
+            },
+          ],
+        },
+      ],
+      hasMore: false,
+      limit: 100,
+    },
+    partial: true,
+    safeNotice: "Diff content is not available yet. Showing bounded review findings.",
+    updatedAt: "2026-07-06T00:00:00.000Z",
+  };
+}
+
 describe("GatewayClient", () => {
   it("initializes with disconnected state", () => {
     const client = new GatewayClient("http://localhost:4000");
@@ -337,6 +385,138 @@ describe("GatewayClient", () => {
         signal: expect.any(Object),
       }),
     );
+
+    fetchMock.mockRestore();
+  });
+
+  it("fetches coding agent review snapshots with the existing auth header", async () => {
+    const snapshot = {
+      review: {
+        id: "rev_mobile_1",
+        projectId: "matrix-os",
+        worktreeId: "wt_abc123def456",
+        status: "reviewing",
+        pullRequestNumber: 757,
+        round: 1,
+        maxRounds: 3,
+        reviewer: "codex",
+        implementer: "claude",
+        findings: {
+          total: 1,
+          high: 1,
+          medium: 0,
+          low: 0,
+        },
+        updatedAt: "2026-07-06T00:00:00.000Z",
+      },
+      files: {
+        items: [
+          {
+            path: "packages/gateway/src/coding-agents/routes.ts",
+            status: "modified",
+            additions: 0,
+            deletions: 0,
+            partial: true,
+            hunks: [],
+            findings: [
+              {
+                id: "HIGH-1",
+                severity: "high",
+                line: 42,
+                summary: "Validate ownership before returning snapshots.",
+              },
+            ],
+          },
+        ],
+        hasMore: false,
+        limit: 100,
+      },
+      partial: true,
+      safeNotice: "Diff content is not available yet. Showing bounded review findings.",
+      updatedAt: "2026-07-06T00:00:00.000Z",
+    };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse(snapshot));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.getCodingAgentReviewSnapshot({ reviewId: "rev_mobile_1" })).resolves.toEqual({
+      ok: true,
+      snapshot,
+    });
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost:4000/api/coding-agents/reviews/rev_mobile_1", expect.objectContaining({
+      headers: expect.objectContaining({
+        Authorization: "Bearer token",
+        "Content-Type": "application/json",
+      }),
+      signal: expect.any(Object),
+    }));
+
+    fetchMock.mockRestore();
+  });
+
+  it("accepts contract-valid review references when fetching snapshots", async () => {
+    const snapshot = {
+      ...reviewSnapshotPayload(),
+      review: {
+        ...reviewSnapshotPayload().review,
+        id: "rev_mobile:round.2",
+      },
+    };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse(snapshot));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.getCodingAgentReviewSnapshot({ reviewId: "rev_mobile:round.2" })).resolves.toEqual({
+      ok: true,
+      snapshot,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/reviews/rev_mobile%3Around.2",
+      expect.any(Object),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("returns a safe mobile review details error for invalid gateway payloads", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      review: {
+        id: "rev_mobile_1",
+        projectId: "matrix-os",
+        worktreeId: "wt_abc123def456",
+        status: "reviewing",
+        pullRequestNumber: 757,
+        round: 1,
+        maxRounds: 3,
+        reviewer: "codex",
+        implementer: "claude",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+      },
+      files: {
+        items: [
+          {
+            path: "/home/matrix/private/secret.ts",
+            status: "modified",
+            additions: 0,
+            deletions: 0,
+            partial: true,
+            hunks: [],
+          },
+        ],
+        hasMore: false,
+        limit: 100,
+      },
+      partial: true,
+      updatedAt: "2026-07-06T00:00:00.000Z",
+    }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.getCodingAgentReviewSnapshot({ reviewId: "rev_mobile_1" })).resolves.toEqual({
+      ok: false,
+      error: "Review details unavailable",
+    });
+    await expect(client.getCodingAgentReviewSnapshot({ reviewId: "../secret" })).resolves.toEqual({
+      ok: false,
+      error: "Review details unavailable",
+    });
 
     fetchMock.mockRestore();
   });

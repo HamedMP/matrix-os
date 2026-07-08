@@ -13,7 +13,7 @@ jest.mock("expo-router", () => ({
 }));
 
 import React from "react";
-import { act, render, screen, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import AgentsScreen from "../app/agents";
 import { useGateway } from "@/app/_layout";
 import type { GatewayClient } from "../lib/gateway-client";
@@ -131,6 +131,54 @@ function reviewsFixture() {
   };
 }
 
+function reviewSnapshotFixture() {
+  return {
+    review: reviewsFixture().items[0],
+    files: {
+      items: [
+        {
+          path: "packages/gateway/src/coding-agents/routes.ts",
+          status: "modified",
+          additions: 0,
+          deletions: 0,
+          partial: true,
+          hunks: [],
+          findings: [
+            {
+              id: "HIGH-1",
+              severity: "high",
+              line: 42,
+              summary: "Validate ownership before returning snapshots.",
+            },
+          ],
+        },
+      ],
+      hasMore: false,
+      limit: 100,
+    },
+    partial: true,
+    safeNotice: "Diff content is not available yet. Showing bounded review findings.",
+    updatedAt: "2026-07-06T00:02:00.000Z",
+  };
+}
+
+function reviewSnapshotWithFinding(summary: string) {
+  const snapshot = reviewSnapshotFixture();
+  return {
+    ...snapshot,
+    files: {
+      ...snapshot.files,
+      items: snapshot.files.items.map((file) => ({
+        ...file,
+        findings: file.findings?.map((finding) => ({
+          ...finding,
+          summary,
+        })),
+      })),
+    },
+  };
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((promiseResolve) => {
@@ -194,6 +242,40 @@ describe("AgentsScreen", () => {
     expect(client.getCodingAgentReviews).toHaveBeenCalledWith();
   });
 
+  it("loads a read-only review snapshot when a review is selected", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+      getCodingAgentReviewSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: reviewSnapshotFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("matrix-os");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #759"));
+    });
+
+    expect(client.getCodingAgentReviewSnapshot).toHaveBeenCalledWith({ reviewId: "rev_mobile_1" });
+    expect(await screen.findByText("packages/gateway/src/coding-agents/routes.ts")).toBeTruthy();
+    expect(screen.getByText("Validate ownership before returning snapshots.")).toBeTruthy();
+    expect(screen.getByText("Diff content is not available yet. Showing bounded review findings.")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
   it("renders a generic review error without dropping the runtime summary", async () => {
     const client = {
       getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
@@ -215,6 +297,337 @@ describe("AgentsScreen", () => {
     await screen.findByText("Primary");
     expect(await screen.findByText("Review state unavailable")).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("clears loaded review details when review summaries become unavailable", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          reviews: reviewsFixture(),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          error: "Review state unavailable",
+        }),
+      getCodingAgentReviewSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: reviewSnapshotFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("matrix-os");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #759"));
+    });
+    expect(await screen.findByText("Validate ownership before returning snapshots.")).toBeTruthy();
+
+    await act(async () => {
+      screen.getByLabelText("Refresh agent workspace").props.refreshControl.props.onRefresh();
+    });
+
+    expect(await screen.findByText("Review state unavailable")).toBeTruthy();
+    expect(screen.queryByText("Validate ownership before returning snapshots.")).toBeNull();
+    expect(screen.queryByText("packages/gateway/src/coding-agents/routes.ts")).toBeNull();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("reloads selected review details when refreshed summaries still include the review", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+      getCodingAgentReviewSnapshot: jest.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          snapshot: reviewSnapshotWithFinding("Initial review finding."),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          snapshot: reviewSnapshotWithFinding("Fresh review finding after refresh."),
+        }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("matrix-os");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #759"));
+    });
+    expect(await screen.findByText("Initial review finding.")).toBeTruthy();
+
+    await act(async () => {
+      screen.getByLabelText("Refresh agent workspace").props.refreshControl.props.onRefresh();
+    });
+
+    expect(await screen.findByText("Fresh review finding after refresh.")).toBeTruthy();
+    expect(screen.queryByText("Initial review finding.")).toBeNull();
+    expect(client.getCodingAgentReviewSnapshot).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    `${"ghs_"}abcdefghijklmnopqrstuvwxyz1234567890`,
+    `${"glpat-"}abcdefghijklmnopqrstuvwxyz1234567890`,
+    `${"npm_"}abcdefghijklmnopqrstuvwxyz1234567890`,
+    `${"ya29"}abcdefghijklmnopqrstuvwxyz1234567890`,
+    `sk_${"live"}_abcdefghijklmnopqrstuvwxyz1234567890`,
+  ])("redacts token-shaped finding summaries in the review snapshot panel", async (credential) => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+      getCodingAgentReviewSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: reviewSnapshotWithFinding(`Rotate ${credential} before merge.`),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("matrix-os");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #759"));
+    });
+
+    expect(await screen.findByText("Finding summary hidden for safety.")).toBeTruthy();
+    expect(screen.queryByText(new RegExp(`ghs_|glpat-|npm_|ya29|sk_${"live"}_|token|secret`, "i"))).toBeNull();
+  });
+
+  it("redacts token-shaped review notices and file paths", async () => {
+    const snapshot = {
+      ...reviewSnapshotFixture(),
+      safeNotice: `Rotate ${"ghs_"}abcdefghijklmnopqrstuvwxyz1234567890 before showing details.`,
+      files: {
+        ...reviewSnapshotFixture().files,
+        items: reviewSnapshotFixture().files.items.map((file) => ({
+          ...file,
+          path: `src/${"ghp_"}abcdefghijklmnopqrstuvwxyz1234567890/config.ts`,
+        })),
+      },
+    };
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+      getCodingAgentReviewSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot,
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("matrix-os");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #759"));
+    });
+
+    expect(await screen.findByText("Review notice hidden for safety.")).toBeTruthy();
+    expect(screen.getByText("File path hidden for safety.")).toBeTruthy();
+    expect(screen.queryByText(/ghs_|ghp_|token|secret/i)).toBeNull();
+  });
+
+  it("renders duplicate file paths and finding ids without duplicate key warnings", async () => {
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const snapshot = {
+      ...reviewSnapshotFixture(),
+      files: {
+        items: [
+          {
+            path: "packages/gateway/src/coding-agents/routes.ts",
+            status: "modified",
+            additions: 0,
+            deletions: 0,
+            partial: true,
+            hunks: [],
+            findings: [
+              {
+                id: "HIGH-1",
+                severity: "high",
+                line: 42,
+                summary: "First duplicate-key finding.",
+              },
+              {
+                id: "HIGH-1",
+                severity: "high",
+                line: 43,
+                summary: "Second duplicate-key finding.",
+              },
+            ],
+          },
+          {
+            path: "packages/gateway/src/coding-agents/routes.ts",
+            status: "modified",
+            additions: 0,
+            deletions: 0,
+            partial: true,
+            hunks: [],
+            findings: [],
+          },
+        ],
+        hasMore: false,
+        limit: 100,
+      },
+    };
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+      getCodingAgentReviewSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot,
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("matrix-os");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #759"));
+    });
+
+    expect(await screen.findByText("First duplicate-key finding.")).toBeTruthy();
+    expect(screen.getByText("Second duplicate-key finding.")).toBeTruthy();
+    expect(screen.getAllByText("packages/gateway/src/coding-agents/routes.ts")).toHaveLength(2);
+    expect(consoleError).not.toHaveBeenCalledWith(expect.stringContaining("Encountered two children with the same key"), expect.anything());
+    consoleError.mockRestore();
+  });
+
+  it("clears loaded review details when runtime summary refresh fails", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          summary: summaryFixture(),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          error: "Runtime summary unavailable",
+        }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+      getCodingAgentReviewSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: reviewSnapshotFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("matrix-os");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #759"));
+    });
+    expect(await screen.findByText("Validate ownership before returning snapshots.")).toBeTruthy();
+
+    await act(async () => {
+      screen.getByLabelText("Refresh agent workspace").props.refreshControl.props.onRefresh();
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Validate ownership before returning snapshots.")).toBeNull();
+    });
+    expect(screen.queryByText("packages/gateway/src/coding-agents/routes.ts")).toBeNull();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("does not restore an in-flight review snapshot after refresh removes the review", async () => {
+    const snapshotRequest = deferred<{ ok: true; snapshot: ReturnType<typeof reviewSnapshotFixture> }>();
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          reviews: reviewsFixture(),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          reviews: { items: [], hasMore: false, limit: 50 },
+        }),
+      getCodingAgentReviewSnapshot: jest.fn(() => snapshotRequest.promise),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("matrix-os");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #759"));
+    });
+    expect(await screen.findByText("Loading review details...")).toBeTruthy();
+
+    await act(async () => {
+      screen.getByLabelText("Refresh agent workspace").props.refreshControl.props.onRefresh();
+    });
+    expect(await screen.findByText("No reviews.")).toBeTruthy();
+
+    await act(async () => {
+      snapshotRequest.resolve({ ok: true, snapshot: reviewSnapshotFixture() });
+      await snapshotRequest.promise;
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Validate ownership before returning snapshots.")).toBeNull();
+    });
+    expect(screen.queryByText("packages/gateway/src/coding-agents/routes.ts")).toBeNull();
   });
 
   it("renders a safe error when the runtime summary is unavailable", async () => {

@@ -13,6 +13,7 @@ import {
   UserInputAnswerRequestSchema,
   boundedListSchema,
   AgentThreadSummarySchema,
+  ReviewIdSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
 } from "@matrix-os/contracts";
@@ -51,7 +52,6 @@ const AbortThreadBodySchema = z.object({
 
 const ThreadListSchema = boundedListSchema(AgentThreadSummarySchema, 50);
 const ReviewListSchema = boundedListSchema(ReviewSummarySchema, 50);
-const ReviewIdSchema = z.string().regex(/^rev_[A-Za-z0-9_-]{1,128}$/);
 
 function summaryUnavailable() {
   return SafeClientErrorSchema.parse({

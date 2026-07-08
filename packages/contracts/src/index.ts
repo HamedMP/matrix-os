@@ -68,6 +68,7 @@ export const ApprovalIdSchema = prefixedId("appr_");
 export const RequestIdSchema = prefixedId("req_");
 export const CorrelationIdSchema = prefixedId("corr_");
 export const TerminalSessionIdSchema = referenceId(128);
+export const ReviewIdSchema = referenceId(128);
 export const WorktreeIdSchema = z.string().regex(/^wt_[a-z0-9]{12,40}$/, "Invalid worktree id");
 export const CursorSchema = referenceId(160);
 export const IsoTimestampSchema = z.string().regex(ISO_DATETIME, "Invalid ISO timestamp");
@@ -395,7 +396,7 @@ export const AgentThreadEventSchema = z.discriminatedUnion("type", [
   }).strict(),
   BaseThreadEventSchema.extend({
     type: z.literal("review.ready"),
-    reviewId: referenceId(128),
+    reviewId: ReviewIdSchema,
     summary: z.object({
       changedFileCount: z.number().int().min(0).max(10_000),
       additions: z.number().int().min(0).max(1_000_000),
@@ -675,7 +676,7 @@ export const ReviewSnapshotFileSchema = ReviewFileDiffSchema.extend({
 }).strict();
 
 export const ReviewSummarySchema = z.object({
-  id: referenceId(128),
+  id: ReviewIdSchema,
   projectId: ProjectIdSchema,
   worktreeId: WorktreeIdSchema,
   status: z.enum([

@@ -494,6 +494,45 @@ describe("coding agent runtime summary", () => {
     expect(JSON.stringify(body)).not.toMatch(/\/home\/matrix|Postgres|token|secret/i);
   });
 
+  it("accepts contract-valid encoded review references for snapshots", async () => {
+    const requestedReviewIds: string[] = [];
+    const app = new Hono();
+    app.route("/api/coding-agents", createCodingAgentRoutes({
+      service: { getSummary: vi.fn() },
+      reviews: {
+        listReviews: async () => ({ items: [], hasMore: false, limit: 50 }),
+        getReviewSnapshot: async (_principal, reviewId) => {
+          requestedReviewIds.push(reviewId);
+          return ReviewSnapshotSchema.parse({
+            review: {
+              id: reviewId,
+              projectId: "matrix-os",
+              worktreeId: "wt_abc123def456",
+              status: "reviewing",
+              pullRequestNumber: 758,
+              round: 1,
+              maxRounds: 3,
+              reviewer: "codex",
+              implementer: "claude",
+              updatedAt: now.toISOString(),
+            },
+            files: { items: [], hasMore: false, limit: 100 },
+            partial: false,
+            updatedAt: now.toISOString(),
+          });
+        },
+      },
+      getPrincipal: () => testPrincipal,
+    }));
+
+    const res = await app.request("/api/coding-agents/reviews/rev_mobile%3Around.2");
+
+    expect(res.status).toBe(200);
+    expect(requestedReviewIds).toEqual(["rev_mobile:round.2"]);
+    const body = ReviewSnapshotSchema.parse(await res.json());
+    expect(body.review.id).toBe("rev_mobile:round.2");
+  });
+
   it("maps missing review snapshots to a stable safe not-found response", async () => {
     const app = new Hono();
     app.route("/api/coding-agents", createCodingAgentRoutes({
