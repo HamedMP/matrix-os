@@ -14,6 +14,7 @@ import {
   type ReviewSummary,
   type RuntimeSummary,
   type SourceControlCreatePullRequestRequest,
+  type SourceControlCreatePullRequestResponse,
   type SourceControlPrepareCommitRequest,
 } from "@matrix-os/contracts";
 import { Button, EmptyState, StatusDot } from "../../design/primitives";
@@ -992,6 +993,7 @@ function ReviewList({
   const sourceCommitStatus = useCodingAgentWorkspace((s) => s.sourceCommitStatus);
   const sourceCommitError = useCodingAgentWorkspace((s) => s.sourceCommitError);
   const sourcePullRequestStatus = useCodingAgentWorkspace((s) => s.sourcePullRequestStatus);
+  const sourcePullRequest = useCodingAgentWorkspace((s) => s.sourcePullRequest);
   const sourcePullRequestError = useCodingAgentWorkspace((s) => s.sourcePullRequestError);
   const selectedFilePath = useCodingAgentWorkspace((s) => s.selectedFilePath);
   const selectReview = useCodingAgentWorkspace((s) => s.selectReview);
@@ -1056,6 +1058,7 @@ function ReviewList({
           sourceCommitStatus={sourceCommitStatus}
           sourceCommitError={sourceCommitError}
           sourcePullRequestStatus={sourcePullRequestStatus}
+          sourcePullRequest={sourcePullRequest}
           sourcePullRequestError={sourcePullRequestError}
           selectedFilePath={selectedFilePath}
           onOpenFile={loadFileContent}
@@ -1089,6 +1092,7 @@ function ReviewSnapshotPanel({
   sourceCommitStatus,
   sourceCommitError,
   sourcePullRequestStatus,
+  sourcePullRequest,
   sourcePullRequestError,
   selectedFilePath,
   onOpenFile,
@@ -1111,6 +1115,7 @@ function ReviewSnapshotPanel({
   sourceCommitStatus: "idle" | "preparing" | "prepared" | "error";
   sourceCommitError: string | null;
   sourcePullRequestStatus: "idle" | "creating" | "ready" | "error";
+  sourcePullRequest: SourceControlCreatePullRequestResponse | null;
   sourcePullRequestError: string | null;
   selectedFilePath: string | null;
   onOpenFile: (request: FileReadRequest) => void;
@@ -1156,6 +1161,7 @@ function ReviewSnapshotPanel({
   const prepareCommitPaths = snapshot.files.items.map((file) => file.path).slice(0, 100);
   const prepareCommitDisabled = sourceCommitStatus === "preparing" || prepareCommitPaths.length === 0;
   const createPullRequestDisabled = sourcePullRequestStatus === "creating";
+  const sourcePullRequestUrl = canOpenPreviewExternally(sourcePullRequest?.url) ? sourcePullRequest.url : null;
 
   return (
     <article className="grid gap-3 rounded-md border p-3" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
@@ -1188,6 +1194,21 @@ function ReviewSnapshotPanel({
             <span className="text-xs" style={{ color: "var(--success)" }}>
               Pull request ready
             </span>
+          ) : null}
+          {sourcePullRequestStatus === "ready" && sourcePullRequestUrl ? (
+            <Button
+              variant="ghost"
+              type="button"
+              aria-label={`Open created pull request #${sourcePullRequest?.number}`}
+              onClick={() => {
+                void invoke("shell:open-external", { url: sourcePullRequestUrl }).catch(() => {
+                  console.warn("[coding-agents] source pull request open failed");
+                });
+              }}
+            >
+              <ExternalLink size={14} />
+              Open PR
+            </Button>
           ) : null}
           {sourcePullRequestStatus === "error" ? (
             <span className="text-xs" style={{ color: "var(--danger)" }}>

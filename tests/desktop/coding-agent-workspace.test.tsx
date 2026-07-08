@@ -1573,6 +1573,7 @@ describe("AgentWorkspace", () => {
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
       if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());
       if (channel === "runtime:create-source-pull-request") return Promise.resolve(pullRequest);
+      if (channel === "shell:open-external") return Promise.resolve({ ok: true });
       return Promise.reject(new Error("unexpected channel"));
     });
 
@@ -1597,6 +1598,10 @@ describe("AgentWorkspace", () => {
     }));
     expect(JSON.stringify(pullRequestCall?.[1])).not.toMatch(/token|bearer|secret/i);
     expect(await screen.findByText("Pull request ready")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open created pull request #808" }));
+    expect(window.operator.invoke).toHaveBeenCalledWith("shell:open-external", {
+      url: "https://github.com/HamedMP/matrix-os/pull/808",
+    });
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
   });
 

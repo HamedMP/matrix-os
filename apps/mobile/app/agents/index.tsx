@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Linking, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type { FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchResponse, FileWriteRequest, PreviewSessionSummary, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlPrepareCommitRequest } from "@matrix-os/contracts";
+import type { FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchResponse, FileWriteRequest, PreviewSessionSummary, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 
@@ -49,7 +49,7 @@ type SourceCommitState =
 type SourcePullRequestState =
   | { status: "idle"; error: null }
   | { status: "creating"; error: null }
-  | { status: "ready"; error: null }
+  | { status: "ready"; pullRequest: SourceControlCreatePullRequestResponse; error: null }
   | { status: "error"; error: "Pull request could not be created. Refresh and try again." };
 
 type FileReference = Pick<FileReadRequest, "projectId" | "worktreeId" | "path">;
@@ -57,6 +57,15 @@ type FileBrowserStatus = "idle" | "loading" | "ready" | "error";
 
 type ReviewSnapshotHunk = ReviewSnapshot["files"]["items"][number]["hunks"][number];
 type ReviewSnapshotLine = NonNullable<ReviewSnapshotHunk["lines"]>[number];
+
+function canOpenExternalUrl(url: string | undefined): url is string {
+  if (!url) return false;
+  try {
+    return new URL(url).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 type SelectedReviewHunk = {
   reviewId: string;
@@ -425,7 +434,7 @@ export default function AgentsScreen() {
       setSourcePullRequestState(INITIAL_SOURCE_PULL_REQUEST_STATE);
       return;
     }
-    setSourcePullRequestState({ status: "ready", error: null });
+    setSourcePullRequestState({ status: "ready", pullRequest: result.pullRequest, error: null });
   }, [client, reviewSnapshotState, sourcePullRequestState.status]);
 
   const loadSummary = useCallback(async () => {
@@ -867,6 +876,9 @@ function ReviewSnapshotPanel({
   const prepareCommitPaths = state.snapshot.files.items.map((file) => file.path).slice(0, 100);
   const prepareCommitDisabled = sourceCommitState.status === "preparing" || prepareCommitPaths.length === 0;
   const createPullRequestDisabled = sourcePullRequestState.status === "creating";
+  const sourcePullRequestUrl = sourcePullRequestState.status === "ready" && canOpenExternalUrl(sourcePullRequestState.pullRequest.url)
+    ? sourcePullRequestState.pullRequest.url
+    : null;
 
   return (
     <View style={styles.reviewDetailPanel}>
@@ -890,6 +902,21 @@ function ReviewSnapshotPanel({
           ) : null}
           {sourcePullRequestState.status === "error" ? (
             <Text style={styles.reviewError}>{sourcePullRequestState.error}</Text>
+          ) : null}
+          {sourcePullRequestState.status === "ready" && sourcePullRequestUrl ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Open created pull request #${sourcePullRequestState.pullRequest.number}`}
+              onPress={() => {
+                void Linking.openURL(sourcePullRequestUrl).catch(() => {
+                  console.warn("[agents] source pull request open failed");
+                });
+              }}
+              style={styles.reviewFileOpenButton}
+            >
+              <Ionicons name="open-outline" size={15} color={theme.colors.background} />
+              <Text style={styles.reviewFileOpenText}>Open PR</Text>
+            </Pressable>
           ) : null}
           <Pressable
             accessibilityRole="button"
