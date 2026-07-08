@@ -303,6 +303,7 @@ Screen:
 - `apps/mobile/app/agents/[threadId].tsx`
 - Read-only phone-first dashboard with a capped Recent Work section, providers, gateway-owned attention threads, active threads, and terminal sessions.
 - Recent Work is derived only from `RuntimeSummarySchema`: attention threads sort before normal active threads, running attachable terminal sessions appear after thread work, and the quick new-run action uses the existing `/agents/new` route when thread creation is enabled.
+- Provider Setup warnings are derived only from `RuntimeSummarySchema.providers`, show coarse install/auth/availability states plus safe setup action labels, and do not render foreground terminal setup commands, credentials, or raw provider errors.
 - Notification controls render approval, input, and failed-run attention push switches, load them through the authenticated gateway client, submit full replacement updates, and keep preference state transient in component memory.
 - Attention thread rows read only from `RuntimeSummarySchema.attentionThreads`, show safe attention labels such as approval/input/failed, and navigate to the existing bounded thread detail route.
 - When the runtime advertises `codingAgentsReview`, the dashboard fetches bounded review summaries through the authenticated gateway client and renders project, PR, round, status, and high-severity count.

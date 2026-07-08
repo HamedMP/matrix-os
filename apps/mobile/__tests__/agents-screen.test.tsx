@@ -241,6 +241,47 @@ function recentWorkSummaryFixture() {
   };
 }
 
+function providerSetupSummaryFixture() {
+  const summary = summaryFixture();
+  return {
+    ...summary,
+    providers: [
+      {
+        ...summary.providers[0],
+        id: "codex",
+        displayName: "Codex",
+        availability: "auth_required",
+        installStatus: "installed",
+        authStatus: "missing",
+        setupActions: [
+          {
+            id: "codex",
+            kind: "foreground_terminal",
+            label: "Sign in from Terminal",
+            command: "codex login --api-key ghp_should_not_render_secret",
+          },
+        ],
+      },
+      {
+        ...summary.providers[0],
+        id: "claude",
+        kind: "claude",
+        displayName: "Claude Code",
+        availability: "setup_required",
+        installStatus: "missing",
+        authStatus: "unknown",
+        setupActions: [
+          {
+            id: "claude",
+            kind: "open_settings",
+            label: "Open agent settings",
+          },
+        ],
+      },
+    ],
+  };
+}
+
 function previewSummaryFixture() {
   const summary = summaryFixture();
   return {
@@ -745,6 +786,86 @@ describe("AgentsScreen", () => {
     await screen.findByText("Recent Work");
     expect(screen.getByLabelText("Open recent terminal matrix-abc1234")).toBeTruthy();
     expect(screen.queryByLabelText("Open recent work Active task 1")).toBeNull();
+  });
+
+  it("surfaces safe provider setup warnings without rendering setup commands", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: providerSetupSummaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("Provider Setup");
+    expect(screen.getByText("Sign in from Terminal")).toBeTruthy();
+    expect(screen.getByText("Open agent settings")).toBeTruthy();
+    expect(screen.getByLabelText("Provider setup needed for Codex, auth required")).toBeTruthy();
+    expect(screen.getByLabelText("Provider setup needed for Claude Code, setup required")).toBeTruthy();
+    expect(screen.queryByText(/codex login|api-key|ghp_should_not_render_secret/i)).toBeNull();
+  });
+
+  it("does not show setup warnings for ready or non-actionable provider states", async () => {
+    const summary = summaryFixture();
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: {
+          ...summary,
+          providers: [
+            {
+              ...summary.providers[0],
+              id: "ready-with-action",
+              displayName: "Ready Provider",
+              availability: "available",
+              installStatus: "installed",
+              authStatus: "authenticated",
+              setupActions: [
+                {
+                  id: "ready-with-action",
+                  kind: "open_settings",
+                  label: "Optional settings",
+                },
+              ],
+            },
+            {
+              ...summary.providers[0],
+              id: "unknown-provider",
+              displayName: "Unknown Provider",
+              availability: "unknown",
+              installStatus: "unknown",
+              authStatus: "unknown",
+              setupActions: [],
+            },
+          ],
+        },
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("Providers");
+    expect(screen.queryByText("Provider Setup")).toBeNull();
+    expect(screen.queryByLabelText(/Provider setup needed for Ready Provider/i)).toBeNull();
+    expect(screen.queryByLabelText(/Provider setup needed for Unknown Provider/i)).toBeNull();
+    expect(screen.queryByText("Optional settings")).toBeNull();
   });
 
   it("renders read-only preview summaries without unsafe origin details", async () => {
