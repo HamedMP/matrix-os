@@ -65,6 +65,69 @@ function socket(): ShellWsSocket & { sent: unknown[]; closed: boolean } {
 }
 
 describe("zellij terminal WebSocket", () => {
+  it("rewrites detected Codex TUI reverse-video output before send and replay persistence", async () => {
+    const pty = new FakePty();
+    const secondPty = new FakePty();
+    const ws = socket();
+    const append = vi.fn(async () => undefined);
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn()
+          .mockReturnValueOnce(pty)
+          .mockReturnValueOnce(secondPty),
+      },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => null),
+        readSince: vi.fn(async () => []),
+        append,
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+    });
+    const raw = "OpenAI Codex (v0.142.5)\n\x1b[7mprompt\x1b[27m";
+    const readable = "OpenAI Codex (v0.142.5)\n\x1b[38;2;214;216;221;48;2;48;54;61mprompt\x1b[39;49m";
+
+    const first = await handler.open({ ws, session: "main", fromSeq: 0 });
+    pty.emitData(raw);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    first.onClose();
+
+    expect(ws.sent).toContainEqual({ type: "output", seq: 0, data: readable });
+    expect(append).toHaveBeenCalledWith("main", [{ type: "output", seq: 0, data: readable }]);
+
+    const replayWs = socket();
+    const second = await handler.open({ ws: replayWs, session: "main", fromSeq: 0 });
+    second.onClose();
+
+    expect(replayWs.sent).toContainEqual({ type: "output", seq: 0, data: readable });
+    expect(replayWs.sent).not.toContainEqual({ type: "output", seq: 0, data: raw });
+  });
+
+  it("keeps non-Codex reverse-video output unchanged", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => pty),
+      },
+      maxReplayBytes: 4096,
+    });
+    const raw = "plain \x1b[7mselected\x1b[27m";
+
+    await handler.open({ ws, session: "main", fromSeq: 0 });
+    pty.emitData(raw);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(ws.sent).toContainEqual({ type: "output", seq: 0, data: raw });
+  });
+
   it("attaches to a named session, replays from seq, forwards input, and cleans up", async () => {
     const pty = new FakePty();
     const ws = socket();

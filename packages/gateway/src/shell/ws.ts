@@ -4,6 +4,7 @@ import { ShellReplayBuffer } from "./replay-buffer.js";
 import type { ScrollbackStore } from "./scrollback-store.js";
 import { validateSessionName } from "./names.js";
 import type { ShellAttachProcess } from "./zellij.js";
+import { createTerminalOutputCompatStream } from "../terminal-output-compat.js";
 
 const ShellWsInputSchema = z.object({
   type: z.literal("input"),
@@ -192,11 +193,16 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       sendJson(ws, event);
     }
 
+    const outputCompat = createTerminalOutputCompatStream({ sessionName: safeName });
     const onData = (data: string) => {
-      void replayBuffer.writePersistent(data)
+      const compatibleData = outputCompat.write(data);
+      if (compatibleData.length === 0) {
+        return;
+      }
+      void replayBuffer.writePersistent(compatibleData)
         .then((result) => {
           if (result.seq !== null) {
-            sendJson(ws, { type: "output", seq: result.seq, data });
+            sendJson(ws, { type: "output", seq: result.seq, data: compatibleData });
           }
         })
         .catch((err: unknown) => {

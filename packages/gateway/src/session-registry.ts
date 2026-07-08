@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { RingBuffer } from "./ring-buffer.js";
 import { resolveWithinHome } from "./path-security.js";
 import { applyTerminalTruecolorEnv } from "./terminal-env.js";
+import { createTerminalOutputCompatStream } from "./terminal-output-compat.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG === "1";
@@ -200,8 +201,13 @@ class PtySession {
     this.createdAt = metadata?.createdAt ?? Date.now();
     this.lastAttachedAt = metadata?.lastAttachedAt ?? this.createdAt;
 
+    const outputCompat = createTerminalOutputCompatStream({ sessionName: sessionId });
     this.ptyProcess.onData((data: string) => {
-      for (const chunk of splitByUtf8Bytes(data, this.buffer.capacityBytes)) {
+      const compatibleData = outputCompat.write(data);
+      if (compatibleData.length === 0) {
+        return;
+      }
+      for (const chunk of splitByUtf8Bytes(compatibleData, this.buffer.capacityBytes)) {
         const seq = this.buffer.write(chunk);
         if (seq === null) {
           console.warn("Dropped oversized terminal output chunk");
