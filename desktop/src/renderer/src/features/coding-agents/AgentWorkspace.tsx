@@ -1,4 +1,4 @@
-import { Bot, ChevronRight, ClipboardCheck, FileText, GitBranch, Play, RefreshCw, Server, SquareTerminal } from "lucide-react";
+import { Bot, ChevronRight, ClipboardCheck, FileText, GitBranch, Monitor, Play, RefreshCw, Server, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   defaultAgentThreadComposerDraft,
@@ -766,6 +766,47 @@ function TerminalList({ summary }: { summary: RuntimeSummary }) {
   );
 }
 
+function PreviewList({ summary }: { summary: RuntimeSummary }) {
+  const previewSessions = summary.previewSessions ?? { items: [], hasMore: false, limit: 50 };
+
+  return (
+    <Section title="Previews" count={previewSessions.items.length}>
+      <div className="grid gap-2">
+        {previewSessions.items.map((preview) => (
+          <article
+            key={preview.id}
+            className="flex min-h-[68px] items-center justify-between gap-3 rounded-md border p-3"
+            style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <Monitor size={15} style={{ color: "var(--text-tertiary)" }} />
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                  {preview.label}
+                </h3>
+                <p className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
+                  {preview.origin ?? "No local origin"}
+                </p>
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <StatusDot color={STATUS_COLOR[preview.status] ?? DEFAULT_STATUS_COLOR} />
+              <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
+                {preview.status}
+              </span>
+            </div>
+          </article>
+        ))}
+        {previewSessions.items.length === 0 ? (
+          <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+            No previews.
+          </p>
+        ) : null}
+      </div>
+    </Section>
+  );
+}
+
 function reviewStatusLabel(status: ReviewSummary["status"]): string {
   return status.replace(/_/g, " ");
 }
@@ -1182,6 +1223,9 @@ export default function AgentWorkspace() {
               snapshot={threadSnapshot}
               error={threadSnapshotError}
             />
+            {capabilityEnabled(summary, "codingAgentsPreview") ? (
+              <PreviewList summary={summary} />
+            ) : null}
             <TerminalList summary={summary} />
           </div>
         </div>
