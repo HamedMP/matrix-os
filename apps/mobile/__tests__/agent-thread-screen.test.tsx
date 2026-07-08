@@ -2,16 +2,25 @@ jest.mock("@/app/_layout", () => ({
   useGateway: jest.fn(),
 }));
 
+jest.mock("@react-native-async-storage/async-storage", () => ({
+  getItem: jest.fn(),
+  setItem: jest.fn(),
+}));
+
 const mockParams = { threadId: "thread_mobile" };
+const mockRouterPush = jest.fn();
 
 jest.mock("expo-router", () => ({
   useLocalSearchParams: () => mockParams,
+  useRouter: () => ({ push: mockRouterPush }),
 }));
 
 import React from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import AgentThreadRoute from "../app/agents/[threadId]";
 import { useGateway } from "@/app/_layout";
+import { MOBILE_SHELL_STATE_STORAGE_KEY } from "../lib/mobile-shell-state";
 import type { GatewayClient } from "../lib/gateway-client";
 
 const useGatewayMock = useGateway as jest.MockedFunction<typeof useGateway>;
@@ -77,6 +86,8 @@ describe("AgentThreadRoute", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockParams.threadId = "thread_mobile";
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+    jest.mocked(AsyncStorage.setItem).mockResolvedValue();
   });
 
   it("hydrates a bounded coding-agent thread snapshot from the gateway", async () => {
@@ -100,6 +111,84 @@ describe("AgentThreadRoute", () => {
     expect(screen.getAllByText("matrix-abc1234").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("2 events")).toBeTruthy();
     expect(client.getCodingAgentThreadSnapshot).toHaveBeenCalledWith({ threadId: "thread_mobile" });
+  });
+
+  it("opens the bound terminal through the existing terminal tab and safe resume state", async () => {
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: threadSnapshotFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Repair mobile route")).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open bound terminal"));
+    });
+
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith(
+      MOBILE_SHELL_STATE_STORAGE_KEY,
+      expect.stringContaining('"lastActiveTerminalSessionId":"matrix-abc1234"'),
+    );
+    expect(mockRouterPush).toHaveBeenCalledWith("/terminal");
+  });
+
+  it("does not open a stale terminal session when safe resume state cannot be saved", async () => {
+    jest.mocked(AsyncStorage.setItem).mockRejectedValueOnce(new Error("storage unavailable"));
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: threadSnapshotFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Repair mobile route")).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open bound terminal"));
+    });
+
+    expect(mockRouterPush).not.toHaveBeenCalled();
+    expect(await screen.findByText("Terminal session unavailable. Try again.")).toBeTruthy();
+    warnSpy.mockRestore();
+  });
+
+  it("does not open terminal fallback when the bound session id is not attachable", async () => {
+    const snapshot = threadSnapshotFixture();
+    snapshot.thread.terminalSessionId = "term_sess_workspace_1";
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot,
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Repair mobile route")).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open bound terminal"));
+    });
+
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+    expect(mockRouterPush).not.toHaveBeenCalled();
+    expect(await screen.findByText("Terminal session unavailable. Try again.")).toBeTruthy();
   });
 
   it("renders a readable bounded event timeline from the thread snapshot", async () => {

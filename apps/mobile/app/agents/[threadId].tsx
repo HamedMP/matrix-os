@@ -1,19 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
+import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
+import { isSafeShellSessionName } from "@/lib/terminal-state";
 
 type ThreadRouteState =
   | { status: "loading"; snapshot: null; error: null }
   | { status: "ready"; snapshot: AgentThreadSnapshot; error: "Thread state unavailable" | null; refreshing: boolean }
   | { status: "error"; snapshot: null; error: "Thread state unavailable" };
 
+type TerminalOpenError = "Terminal session unavailable. Try again.";
+
 export default function AgentThreadRoute() {
   const { theme } = useUnistyles();
   const params = useLocalSearchParams<{ threadId?: string }>();
+  const router = useRouter();
   const threadId = typeof params.threadId === "string" ? params.threadId : "thread";
   const { client } = useGateway();
   const requestGeneration = useRef(0);
@@ -22,8 +27,10 @@ export default function AgentThreadRoute() {
     snapshot: null,
     error: null,
   });
+  const [terminalOpenError, setTerminalOpenError] = useState<TerminalOpenError | null>(null);
 
   const loadSnapshot = useCallback(async (cancelled: () => boolean = () => false) => {
+    setTerminalOpenError(null);
     if (!client || !threadId) {
       setState((current) => current.status === "ready"
         ? { ...current, error: "Thread state unavailable", refreshing: false }
@@ -56,6 +63,30 @@ export default function AgentThreadRoute() {
       clearTimeout(timer);
     };
   }, [loadSnapshot]);
+
+  const boundTerminalSessionId = state.status === "ready" ? state.snapshot.thread.terminalSessionId ?? null : null;
+  const openBoundTerminal = useCallback(async () => {
+    if (!boundTerminalSessionId) return;
+    setTerminalOpenError(null);
+    if (!isSafeShellSessionName(boundTerminalSessionId)) {
+      setTerminalOpenError("Terminal session unavailable. Try again.");
+      return;
+    }
+    try {
+      const savedState = await loadMobileShellState();
+      await saveMobileShellState({
+        ...savedState,
+        mode: "terminal",
+        lastActiveTerminalSessionId: boundTerminalSessionId,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch {
+      console.warn("[mobile] failed to remember bound terminal session");
+      setTerminalOpenError("Terminal session unavailable. Try again.");
+      return;
+    }
+    router.push("/terminal");
+  }, [boundTerminalSessionId, router]);
 
   if (state.status === "loading") {
     return (
@@ -108,15 +139,31 @@ export default function AgentThreadRoute() {
         {state.error ? (
           <Text style={styles.inlineError}>{state.error}</Text>
         ) : null}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Refresh thread"
-          onPress={() => void loadSnapshot()}
-          style={styles.refreshButton}
-        >
-          <Ionicons name="refresh-outline" size={16} color={theme.colors.background} />
-          <Text style={styles.refreshText}>{state.refreshing ? "Refreshing" : "Refresh"}</Text>
-        </Pressable>
+        {terminalOpenError ? (
+          <Text style={styles.inlineError}>{terminalOpenError}</Text>
+        ) : null}
+        <View style={styles.actionRow}>
+          {thread.terminalSessionId ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open bound terminal"
+              onPress={() => void openBoundTerminal()}
+              style={styles.secondaryButton}
+            >
+              <Ionicons name="terminal-outline" size={16} color={theme.colors.forest} />
+              <Text style={styles.secondaryText}>Terminal</Text>
+            </Pressable>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Refresh thread"
+            onPress={() => void loadSnapshot()}
+            style={styles.refreshButton}
+          >
+            <Ionicons name="refresh-outline" size={16} color={theme.colors.background} />
+            <Text style={styles.refreshText}>{state.refreshing ? "Refreshing" : "Refresh"}</Text>
+          </Pressable>
+        </View>
       </View>
       {events.items.length > 0 ? (
         <View style={styles.timeline}>
@@ -295,8 +342,14 @@ const styles = StyleSheet.create((theme, rt) => ({
     fontSize: 13,
     color: theme.colors.foreground,
   },
-  refreshButton: {
+  actionRow: {
     marginTop: theme.spacing.sm,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing.sm,
+  },
+  refreshButton: {
+    flexGrow: 1,
     minHeight: 40,
     borderRadius: 20,
     paddingHorizontal: theme.spacing.lg,
@@ -310,6 +363,23 @@ const styles = StyleSheet.create((theme, rt) => ({
     fontFamily: theme.fonts.sansSemiBold,
     fontSize: 13,
     color: theme.colors.background,
+  },
+  secondaryButton: {
+    minHeight: 40,
+    borderRadius: 20,
+    paddingHorizontal: theme.spacing.lg,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing.xs,
+    backgroundColor: theme.colors.background,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  secondaryText: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 13,
+    color: theme.colors.forest,
   },
   inlineError: {
     fontFamily: theme.fonts.sansSemiBold,
