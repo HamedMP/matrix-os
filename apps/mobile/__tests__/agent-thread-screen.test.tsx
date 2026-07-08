@@ -662,7 +662,7 @@ describe("AgentThreadRoute", () => {
     render(<AgentThreadRoute />);
 
     expect(await screen.findByText("Approval needed")).toBeTruthy();
-    expect(screen.getByText("Run the focused mobile thread test command.")).toBeTruthy();
+    expect(screen.getAllByText("Run the focused mobile thread test command.")).toHaveLength(2);
     await act(async () => {
       fireEvent.press(screen.getByLabelText("Approve Run focused tests"));
     });
@@ -676,6 +676,74 @@ describe("AgentThreadRoute", () => {
     }));
     expect(await screen.findByText("Approval resolved")).toBeTruthy();
     expect(screen.queryByText("Run the focused mobile thread test command.")).toBeNull();
+  });
+
+  it("surfaces a current approval action before the timeline", async () => {
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: approvalRequestedSnapshotFixture(),
+      }),
+      submitCodingAgentApprovalDecision: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: approvalResolvedSnapshotFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Current action")).toBeTruthy();
+    expect(screen.getByText("Run focused tests")).toBeTruthy();
+    expect(screen.getAllByText("Run the focused mobile thread test command.")).toHaveLength(2);
+    expect(screen.queryByText(/appr_mobile|corr_mobile|home\/matrix|token|secret|stack trace/i)).toBeNull();
+
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Approve current action Run focused tests"));
+    });
+
+    expect(client.submitCodingAgentApprovalDecision).toHaveBeenCalledWith(expect.objectContaining({
+      approvalId: "appr_mobile_1",
+      decision: "approve",
+      correlationId: "corr_mobile_approval_1",
+    }));
+    expect(await screen.findByText("Approval resolved")).toBeTruthy();
+  });
+
+  it("guards duplicate approval submissions across pinned and timeline controls", async () => {
+    const pendingDecision = deferred<{ ok: true; snapshot: ReturnType<typeof approvalResolvedSnapshotFixture> }>();
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: approvalRequestedSnapshotFixture(),
+      }),
+      submitCodingAgentApprovalDecision: jest.fn().mockImplementation(() => pendingDecision.promise),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByLabelText("Approve current action Run focused tests")).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Approve current action Run focused tests"));
+      fireEvent.press(screen.getByLabelText("Decline Run focused tests"));
+    });
+
+    expect(client.submitCodingAgentApprovalDecision).toHaveBeenCalledTimes(1);
+    expect(client.submitCodingAgentApprovalDecision).toHaveBeenCalledWith(expect.objectContaining({
+      decision: "approve",
+    }));
+
+    await act(async () => {
+      pendingDecision.resolve({ ok: true, snapshot: approvalResolvedSnapshotFixture() });
+      await pendingDecision.promise;
+    });
   });
 
   it.each([
@@ -734,6 +802,42 @@ describe("AgentThreadRoute", () => {
     }));
     expect(await screen.findByText("Input answered")).toBeTruthy();
     expect(screen.queryByLabelText("Answer Clarify command")).toBeNull();
+  });
+
+  it("surfaces a current input action before the timeline", async () => {
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: inputRequestedSnapshotFixture(),
+      }),
+      submitCodingAgentInputAnswer: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: inputAnsweredSnapshotFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Current action")).toBeTruthy();
+    expect(screen.getByText("Clarify command")).toBeTruthy();
+    expect(screen.getAllByText("Provide the next safe instruction for this run.")).toHaveLength(2);
+    expect(screen.queryByText(/req_mobile|corr_mobile|home\/matrix|token|secret|stack trace/i)).toBeNull();
+
+    fireEvent.changeText(screen.getByLabelText("Answer current action Clarify command"), "Run the focused mobile screen test.");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Send current action Clarify command"));
+    });
+
+    expect(client.submitCodingAgentInputAnswer).toHaveBeenCalledWith(expect.objectContaining({
+      inputRequestId: "req_mobile_prompt_1",
+      answer: "Run the focused mobile screen test.",
+      correlationId: "corr_mobile_input_1",
+    }));
+    expect(await screen.findByText("Input answered")).toBeTruthy();
   });
 
   it("does not render approval actions once the approval is resolved", async () => {
