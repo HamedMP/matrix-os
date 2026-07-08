@@ -365,7 +365,6 @@ function AgentComposer({ summary, seed, focusRequestId }: { summary: RuntimeSumm
   const createStatus = useCodingAgentWorkspace((s) => s.createStatus);
   const createError = useCodingAgentWorkspace((s) => s.createError);
   const createThread = useCodingAgentWorkspace((s) => s.createThread);
-  const openTab = useTabs((s) => s.openTab);
   const canCreate = capabilityEnabled(summary, "codingAgentsThreadCreate");
 
   useEffect(() => {
@@ -406,15 +405,6 @@ function AgentComposer({ summary, seed, focusRequestId }: { summary: RuntimeSumm
       setDraft((current) => clearComposerLaunchContext(current));
       return;
     }
-    const thread = useCodingAgentWorkspace
-      .getState()
-      .summary?.activeThreads.items.find((candidate) => candidate.id === threadId);
-    openTab({
-      kind: "thread",
-      threadId,
-      title: thread?.title ?? "Agent thread",
-      closable: true,
-    });
     setDraft(initialDraft);
   }
 
@@ -574,6 +564,58 @@ function ThreadList({ summary }: { summary: RuntimeSummary }) {
             No active threads.
           </p>
         ) : null}
+      </div>
+    </Section>
+  );
+}
+
+function CreatedThreadHandleList({ summary }: { summary: RuntimeSummary }) {
+  const createdThreadHandles = useCodingAgentWorkspace((s) => s.createdThreadHandles);
+  const activeThreadId = useCodingAgentWorkspace((s) => s.activeThreadId);
+  const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
+  const summaryThreadIds = new Set([
+    ...summary.activeThreads.items.map((thread) => thread.id),
+    ...summary.attentionThreads.items.map((thread) => thread.id),
+  ]);
+  const visibleHandles = createdThreadHandles.filter((thread) => !summaryThreadIds.has(thread.id));
+
+  if (visibleHandles.length === 0) return null;
+
+  return (
+    <Section title="Created Runs" count={visibleHandles.length}>
+      <div className="grid gap-2">
+        {visibleHandles.map((thread) => {
+          const active = activeThreadId === thread.id;
+          return (
+            <button
+              key={thread.id}
+              type="button"
+              aria-current={active ? "true" : undefined}
+              aria-label={`Open created run ${thread.title}`}
+              className="no-drag flex min-h-[64px] items-center justify-between gap-3 rounded-md border p-3 text-left transition-colors duration-100 hover:brightness-105"
+              style={{
+                borderColor: active ? "var(--accent)" : "var(--border-subtle)",
+                background: active ? "var(--accent-muted)" : "var(--bg-surface)",
+              }}
+              onClick={() => void loadThreadSnapshot(thread.id)}
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <GitBranch size={15} style={{ color: "var(--text-tertiary)" }} />
+                <div className="min-w-0">
+                  <h3 className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                    {thread.title}
+                  </h3>
+                  <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+                    {thread.providerId}
+                  </p>
+                </div>
+              </div>
+              <span className="shrink-0 text-xs capitalize" style={{ color: "var(--text-secondary)" }}>
+                {thread.status.replace(/_/g, " ")}
+              </span>
+            </button>
+          );
+        })}
       </div>
     </Section>
   );
@@ -2066,7 +2108,10 @@ export default function AgentWorkspace() {
         <ProviderList summary={summary} />
         <AttentionThreadList summary={summary} />
         <div className="grid gap-4 xl:grid-cols-2">
-          <ThreadList summary={summary} />
+          <div className="grid gap-4">
+            <ThreadList summary={summary} />
+            <CreatedThreadHandleList summary={summary} />
+          </div>
           <div className="grid gap-4">
             <ThreadSnapshotPanel
               status={threadSnapshotStatus}
