@@ -30,6 +30,7 @@ const DEFAULT_STATUS_COLOR = "var(--text-tertiary)";
 type ReviewDetailStatus = "idle" | "loading" | "ready" | "error";
 type ReviewSnapshotFile = ReviewSnapshot["files"]["items"][number];
 type ReviewSnapshotHunk = ReviewSnapshotFile["hunks"][number];
+type ReviewSnapshotLine = NonNullable<ReviewSnapshotHunk["lines"]>[number];
 type ComposerSeed = {
   seedId: number;
   draft: AgentThreadComposerDraft;
@@ -413,6 +414,68 @@ function formatHunkRange(hunk: ReviewSnapshot["files"]["items"][number]["hunks"]
   return `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
 }
 
+function reviewDiffLineMarker(line: ReviewSnapshotLine): string {
+  if (line.kind === "add") return "+";
+  if (line.kind === "remove") return "-";
+  return " ";
+}
+
+function reviewDiffLineColor(line: ReviewSnapshotLine): string {
+  if (line.kind === "add") return "var(--success)";
+  if (line.kind === "remove") return "var(--danger)";
+  return "var(--text-secondary)";
+}
+
+function reviewDiffOldLine(line: ReviewSnapshotLine): number | null {
+  return "oldLine" in line ? line.oldLine : null;
+}
+
+function reviewDiffNewLine(line: ReviewSnapshotLine): number | null {
+  return "newLine" in line ? line.newLine : null;
+}
+
+function reviewDiffLineLabel(line: ReviewSnapshotLine): string {
+  const parts = [
+    line.kind === "add" ? "Added line" : line.kind === "remove" ? "Removed line" : "Context line",
+  ];
+  const oldLine = reviewDiffOldLine(line);
+  const newLine = reviewDiffNewLine(line);
+  if (oldLine !== null) parts.push("old", String(oldLine));
+  if (newLine !== null) parts.push("new", String(newLine));
+  return parts.join(" ");
+}
+
+function ReviewDiffLines({ lines }: { lines: ReviewSnapshotLine[] }) {
+  if (!lines.length) return null;
+
+  return (
+    <div
+      className="ph-no-capture mx-3 mb-2 overflow-hidden rounded border font-mono text-xs"
+      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+    >
+      {lines.map((line, index) => (
+        <div
+          key={`${line.kind}:${reviewDiffOldLine(line) ?? ""}:${reviewDiffNewLine(line) ?? ""}:${index}`}
+          aria-label={reviewDiffLineLabel(line)}
+          className="grid min-h-6 grid-cols-[24px_44px_44px_minmax(0,1fr)] items-start gap-2 border-b px-2 py-1 last:border-b-0"
+          style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}
+        >
+          <span style={{ color: reviewDiffLineColor(line) }}>{reviewDiffLineMarker(line)}</span>
+          <span className="text-right tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+            {reviewDiffOldLine(line) ?? ""}
+          </span>
+          <span className="text-right tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+            {reviewDiffNewLine(line) ?? ""}
+          </span>
+          <code className="min-w-0 whitespace-pre-wrap break-words" style={{ color: "var(--text-primary)" }}>
+            {line.content}
+          </code>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ReviewList({
   canCreateFollowUp,
   onAskHunkFollowUp,
@@ -605,30 +668,36 @@ function ReviewSnapshotPanel({
                   const hunkKey = reviewHunkKey(fileIndex, file, hunk, hunkIndex);
                   const selected = selectedHunk?.key === hunkKey;
                   return (
-                    <button
+                    <div
                       key={`${file.path}:${fileIndex}:${hunk.id}:${hunkIndex}`}
-                      type="button"
-                      aria-label={`Select hunk ${hunkIndex + 1} in ${file.path}`}
-                      aria-pressed={selected}
-                      className="no-drag grid gap-1 rounded-md border px-3 py-2 text-left transition-colors duration-100 hover:brightness-105"
-                      onClick={() => setSelectedHunkKey(hunkKey)}
+                      className="grid gap-1 rounded-md border transition-colors duration-100"
                       style={{
                         borderColor: selected ? "var(--accent)" : "var(--border-subtle)",
                         background: selected ? "var(--accent-muted)" : "transparent",
                       }}
                     >
-                      <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
-                        {`Hunk ${hunkIndex + 1}`}
-                      </span>
-                      <span className="font-mono text-xs" style={{ color: "var(--text-primary)" }}>
-                        {formatHunkRange(hunk)}
-                      </span>
-                      {hunk.partial ? (
-                        <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-                          Partial hunk
+                      <button
+                        type="button"
+                        aria-label={`Select hunk ${hunkIndex + 1} in ${file.path}`}
+                        aria-pressed={selected}
+                        className="no-drag grid gap-1 rounded-md px-3 py-2 text-left transition-colors duration-100 hover:brightness-105"
+                        onClick={() => setSelectedHunkKey(hunkKey)}
+                        style={{ background: "transparent" }}
+                      >
+                        <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+                          {`Hunk ${hunkIndex + 1}`}
                         </span>
-                      ) : null}
-                    </button>
+                        <span className="font-mono text-xs" style={{ color: "var(--text-primary)" }}>
+                          {formatHunkRange(hunk)}
+                        </span>
+                        {hunk.partial ? (
+                          <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+                            Partial hunk
+                          </span>
+                        ) : null}
+                      </button>
+                      <ReviewDiffLines lines={hunk.lines ?? []} />
+                    </div>
                   );
                 })}
               </div>
