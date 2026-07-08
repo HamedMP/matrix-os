@@ -212,9 +212,100 @@ describe("WorkspaceApp", () => {
     render(<WorkspaceApp initialProjectSlug="repo" />);
 
     expect((await screen.findAllByText("Repo")).length).toBeGreaterThan(0);
-    await waitFor(() => expect(warn).toHaveBeenCalledWith("Coding agent previews unavailable"));
+    await waitFor(() => expect(warn).toHaveBeenCalledWith("Coding agent workspace summary unavailable"));
     expect(screen.queryByText("/home/matrix/private")).toBeNull();
     expect(screen.queryByText("https://preview.matrix-os.com")).toBeNull();
+  });
+
+  it("renders current-project coding-agent thread summaries from the runtime summary only", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/workspace/projects")) {
+        return json({ projects: [{ slug: "repo", name: "Repo", github: { owner: "owner", repo: "repo" } }] });
+      }
+      if (url.includes("/api/coding-agents/summary")) {
+        return json(codingAgentRuntimeSummary({
+          activeThreads: {
+            items: [
+              {
+                id: "thread_active",
+                providerId: "codex",
+                title: "Implement checkout flow",
+                status: "running",
+                attention: "none",
+                projectId: "repo",
+                terminalSessionId: "matrix-agent",
+                createdAt: "2026-07-07T16:00:00.000Z",
+                updatedAt: "2026-07-07T16:03:00.000Z",
+              },
+              {
+                id: "thread_duplicate",
+                providerId: "codex",
+                title: "Active duplicate survives",
+                status: "running",
+                attention: "none",
+                projectId: "repo",
+                createdAt: "2026-07-07T16:00:00.000Z",
+                updatedAt: "2026-07-07T16:05:00.000Z",
+              },
+              {
+                id: "thread_other_project",
+                providerId: "claude",
+                title: "Other project run",
+                status: "running",
+                attention: "none",
+                projectId: "other-repo",
+                createdAt: "2026-07-07T16:00:00.000Z",
+                updatedAt: "2026-07-07T16:02:00.000Z",
+              },
+            ],
+            hasMore: false,
+            limit: 50,
+          },
+          attentionThreads: {
+            items: [
+              {
+                id: "thread_duplicate",
+                providerId: "codex",
+                title: "Unscoped duplicate",
+                status: "waiting_for_approval",
+                attention: "approval_required",
+                createdAt: "2026-07-07T16:00:00.000Z",
+                updatedAt: "2026-07-07T16:06:00.000Z",
+              },
+              {
+                id: "thread_attention",
+                providerId: "codex",
+                title: "Needs approval",
+                status: "waiting_for_approval",
+                attention: "approval_required",
+                projectId: "repo",
+                createdAt: "2026-07-07T16:00:00.000Z",
+                updatedAt: "2026-07-07T16:04:00.000Z",
+              },
+            ],
+            hasMore: false,
+            limit: 50,
+          },
+        }));
+      }
+      if (url.includes("/api/projects/") || url.includes("/api/sessions") || url.includes("/api/reviews") || url.includes("/api/workspace/events")) {
+        return json({ tasks: [], sessions: [], reviews: [], worktrees: [], previews: [], events: [] });
+      }
+      return json({});
+    }));
+
+    render(<WorkspaceApp initialProjectSlug="repo" />);
+
+    expect(await screen.findByText("Coding Agents")).toBeTruthy();
+    expect(screen.getByText("Needs approval")).toBeTruthy();
+    expect(screen.getByText("approval required")).toBeTruthy();
+    expect(screen.getByText("Implement checkout flow")).toBeTruthy();
+    expect(screen.getByText("Active duplicate survives")).toBeTruthy();
+    expect(screen.queryByText("Unscoped duplicate")).toBeNull();
+    expect(screen.getAllByText("running · codex").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("Terminal matrix-agent")).toBeTruthy();
+    expect(screen.queryByText("Other project run")).toBeNull();
   });
 
   it("clears coding-agent preview rows when a project switch load fails", async () => {

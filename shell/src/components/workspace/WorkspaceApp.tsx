@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { BotIcon, CodeIcon, GitBranchIcon, PanelRightOpenIcon, PlayIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
-import { RuntimeSummarySchema, type PreviewSessionSummary } from "@matrix-os/contracts";
+import { RuntimeSummarySchema, type PreviewSessionSummary, type RuntimeSummary } from "@matrix-os/contracts";
 import { getGatewayUrl } from "@/lib/gateway";
 import { getCodeEditorUrl } from "@/lib/feature-flags";
 
@@ -69,6 +69,11 @@ interface WorkspaceAppProps {
 }
 
 type WorkspaceAgent = "claude" | "codex" | "opencode" | "pi";
+type WorkspaceCodingAgentThread = RuntimeSummary["activeThreads"]["items"][number];
+type WorkspaceCodingAgentState = {
+  previews: PreviewSessionSummary[];
+  threads: WorkspaceCodingAgentThread[];
+};
 
 const WORKSPACE_AGENTS: WorkspaceAgent[] = ["codex", "claude", "opencode", "pi"];
 
@@ -87,13 +92,44 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   return await response.json() as T;
 }
 
-async function fetchCodingAgentPreviews(projectSlug: string): Promise<PreviewSessionSummary[]> {
+function threadPriority(thread: WorkspaceCodingAgentThread): number {
+  switch (thread.attention) {
+    case "approval_required":
+      return 0;
+    case "input_required":
+      return 1;
+    case "failed":
+      return 2;
+    default:
+      return 10;
+  }
+}
+
+function attentionLabel(attention: WorkspaceCodingAgentThread["attention"]): string | null {
+  return attention === "none" ? null : attention.replace(/_/g, " ");
+}
+
+async function fetchCodingAgentWorkspaceState(projectSlug: string): Promise<WorkspaceCodingAgentState> {
   const body = await fetchJson<unknown>(`/api/coding-agents/summary?projectId=${encodeURIComponent(projectSlug)}`);
   const summary = RuntimeSummarySchema.parse(body);
   const previewEnabled = summary.capabilities.some((capability) => capability.id === "codingAgentsPreview" && capability.enabled);
-  return previewEnabled
+  const threadEnabled = summary.capabilities.some((capability) => capability.id === "codingAgentsRuntimeSummary" && capability.enabled);
+  const previews = previewEnabled
     ? summary.previewSessions.items.filter((preview) => preview.projectId === projectSlug)
     : [];
+  const projectThreads = threadEnabled
+    ? [...summary.attentionThreads.items, ...summary.activeThreads.items]
+      .filter((thread) => thread.projectId === projectSlug)
+    : [];
+  const threads = projectThreads
+    .filter((thread, index, allThreads) => allThreads.findIndex((candidate) => candidate.id === thread.id) === index)
+    .sort((left, right) => {
+      const priority = threadPriority(left) - threadPriority(right);
+      if (priority !== 0) return priority;
+      return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+    })
+    .slice(0, 8);
+  return { previews, threads };
 }
 
 const COUNT_FORMATTER = new Intl.NumberFormat("en-US");
@@ -144,6 +180,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [worktrees, setWorktrees] = useState<WorkspaceWorktree[]>([]);
   const [previews, setPreviews] = useState<WorkspacePreview[]>([]);
   const [codingAgentPreviews, setCodingAgentPreviews] = useState<PreviewSessionSummary[]>([]);
+  const [codingAgentThreads, setCodingAgentThreads] = useState<WorkspaceCodingAgentThread[]>([]);
   const [events, setEvents] = useState<WorkspaceEvent[]>([]);
   const [attachMessage, setAttachMessage] = useState("");
   const [sessionSearch, setSessionSearch] = useState("");
@@ -179,6 +216,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     setCreatingWorktree(false);
     setStartingAgent(false);
     setCodingAgentPreviews([]);
+    setCodingAgentThreads([]);
   }
 
   // Default the selected worktree to the first available one (and drop a
@@ -217,16 +255,16 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     try {
       const encodedSlug = encodeURIComponent(projectSlug);
       // react-doctor-disable-next-line react-doctor/async-defer-await -- the await must run before the `activeSlugRef.current !== projectSlug` staleness check below: that guard discards results from a superseded selection AFTER the fetch resolves, so the await cannot be deferred past it. The rule misses this because the ref is named `activeSlugRef`, not a bare guard identifier.
-      const [taskData, sessionData, reviewData, worktreeData, previewData, eventData, codingPreviewData] = await Promise.all([
+      const [taskData, sessionData, reviewData, worktreeData, previewData, eventData, codingAgentState] = await Promise.all([
         fetchJson<{ tasks: WorkspaceTask[] }>(`/api/projects/${encodedSlug}/tasks?includeArchived=true&limit=100`),
         fetchJson<{ sessions: WorkspaceSession[] }>(`/api/sessions?projectSlug=${encodedSlug}&limit=100`),
         fetchJson<{ reviews: WorkspaceReview[] }>(`/api/reviews?projectSlug=${encodedSlug}&limit=20`),
         fetchJson<{ worktrees: WorkspaceWorktree[] }>(`/api/projects/${encodedSlug}/worktrees`),
         fetchJson<{ previews: WorkspacePreview[] }>(`/api/projects/${encodedSlug}/previews?limit=20`),
         fetchJson<{ events: WorkspaceEvent[] }>(`/api/workspace/events?projectSlug=${encodedSlug}&limit=20`),
-        fetchCodingAgentPreviews(projectSlug).catch(() => {
-          console.warn("Coding agent previews unavailable");
-          return [];
+        fetchCodingAgentWorkspaceState(projectSlug).catch(() => {
+          console.warn("Coding agent workspace summary unavailable");
+          return { previews: [], threads: [] };
         }),
       ]);
       if (activeSlugRef.current !== projectSlug) return;
@@ -235,12 +273,14 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
       setReviews(reviewData.reviews ?? []);
       setWorktrees(worktreeData.worktrees ?? []);
       setPreviews(previewData.previews ?? []);
-      setCodingAgentPreviews(codingPreviewData);
+      setCodingAgentPreviews(codingAgentState.previews);
+      setCodingAgentThreads(codingAgentState.threads);
       setEvents(eventData.events ?? []);
       setError("");
     } catch (err: unknown) {
       if (activeSlugRef.current !== projectSlug) return;
       setCodingAgentPreviews([]);
+      setCodingAgentThreads([]);
       setError(err instanceof Error ? err.message : "Workspace request failed");
     }
   }, []);
@@ -694,6 +734,14 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
             ))}
           </WorkspacePanel>
 
+          {codingAgentThreads.length > 0 && (
+            <WorkspacePanel title="Coding Agents" icon={<BotIcon className="size-3.5" />}>
+              {codingAgentThreads.map((thread) => (
+                <CodingAgentThreadRow key={thread.id} thread={thread} />
+              ))}
+            </WorkspacePanel>
+          )}
+
           <WorkspacePanel title="Previews">
             {previews.map((preview) => (
               <a
@@ -721,6 +769,28 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
             ))}
           </WorkspacePanel>
         </aside>
+      </div>
+    </div>
+  );
+}
+
+function CodingAgentThreadRow({ thread }: { thread: WorkspaceCodingAgentThread }) {
+  const label = attentionLabel(thread.attention);
+  return (
+    <div className="py-2 text-xs">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="truncate font-medium">{thread.title}</div>
+          <div className="text-muted-foreground">{thread.status.replace(/_/g, " ")} · {thread.providerId}</div>
+          {thread.terminalSessionId && (
+            <div className="text-muted-foreground">Terminal {thread.terminalSessionId}</div>
+          )}
+        </div>
+        {label && (
+          <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+            {label}
+          </span>
+        )}
       </div>
     </div>
   );
