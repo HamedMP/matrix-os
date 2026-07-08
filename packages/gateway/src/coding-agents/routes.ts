@@ -7,6 +7,8 @@ import {
   ApprovalIdSchema,
   CreateAgentThreadRequestSchema,
   CursorSchema,
+  FileReadRequestSchema,
+  FileReadResponseSchema,
   RequestIdSchema,
   ThreadIdSchema,
   SafeClientErrorSchema,
@@ -33,11 +35,16 @@ import {
   CodingAgentReviewSnapshotError,
   type CodingAgentReviewSummaryStore,
 } from "./review-summary.js";
+import {
+  CodingAgentFileReadError,
+  type CodingAgentFileStore,
+} from "./file-read.js";
 
 export interface CodingAgentRouteDeps {
   service: CodingAgentRuntimeSummaryService;
   threads?: CodingAgentThreadStore;
   reviews?: CodingAgentReviewSummaryStore;
+  files?: CodingAgentFileStore;
   getPrincipal?: (c: Context) => RequestPrincipal;
 }
 
@@ -80,10 +87,27 @@ function reviewsUnavailable() {
   });
 }
 
+function filesUnavailable() {
+  return SafeClientErrorSchema.parse({
+    code: "file_state_unavailable",
+    safeMessage: "File content is temporarily unavailable. Try again.",
+    retryable: true,
+    recoveryActions: ["retry"],
+  });
+}
+
 function reviewNotFound() {
   return SafeClientErrorSchema.parse({
     code: "review_not_found",
     safeMessage: "Review is unavailable. Refresh and try again.",
+    retryable: false,
+  });
+}
+
+function fileNotFound() {
+  return SafeClientErrorSchema.parse({
+    code: "file_not_found",
+    safeMessage: "File is unavailable. Refresh and try again.",
     retryable: false,
   });
 }
@@ -255,6 +279,35 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         }
         console.warn("[coding-agents] review snapshot route failed:", err instanceof Error ? err.message : String(err));
         return c.json({ error: reviewsUnavailable() }, 503);
+      }
+    });
+  }
+
+  if (deps.files) {
+    app.get("/files/read", async (c) => {
+      try {
+        const principal = principalFor(c);
+        const request = FileReadRequestSchema.parse({
+          projectId: c.req.query("projectId"),
+          worktreeId: c.req.query("worktreeId"),
+          path: c.req.query("path"),
+        });
+        return c.json(FileReadResponseSchema.parse(await deps.files!.readFile(principal, request)));
+      } catch (err: unknown) {
+        if (isRequestPrincipalError(err)) {
+          const mapped = mapRequestPrincipalError(err);
+          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+        }
+        if (err instanceof z.ZodError) {
+          return c.json({ error: validationFailed() }, 400);
+        }
+        if (err instanceof CodingAgentFileReadError) {
+          if (err.code === "file_not_found") return c.json({ error: fileNotFound() }, 404);
+          if (err.code === "not_file") return c.json({ error: validationFailed() }, 400);
+          return c.json({ error: filesUnavailable() }, 503);
+        }
+        console.warn("[coding-agents] file read route failed:", err instanceof Error ? err.message : String(err));
+        return c.json({ error: filesUnavailable() }, 503);
       }
     });
   }

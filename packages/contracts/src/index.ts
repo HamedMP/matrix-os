@@ -112,6 +112,7 @@ export const RuntimeCapabilityIdSchema = z.enum([
   "codingAgentsApprovals",
   "codingAgentsReview",
   "codingAgentsPreview",
+  "codingAgentsFiles",
   "codingAgentsNativeMobileTerminal",
 ]);
 
@@ -669,6 +670,29 @@ export const FileMetadataSchema = z.object({
   etag: referenceId(160).optional(),
   updatedAt: IsoTimestampSchema.optional(),
 }).strict();
+export const FileReadRequestSchema = z.object({
+  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
+    message: "Invalid project id",
+  }),
+  worktreeId: WorktreeIdSchema,
+  path: FilePathSchema,
+}).strict();
+export const FileReadResponseSchema = z.object({
+  metadata: FileMetadataSchema.extend({
+    kind: z.literal("file"),
+    sizeBytes: z.number().int().min(0).max(100 * 1024 * 1024),
+    etag: referenceId(160),
+    updatedAt: IsoTimestampSchema,
+  }),
+  content: z.string()
+    .max(65_536)
+    .refine((value) => byteLength(value) <= 65_536, { message: "File content exceeds byte limit" }),
+  encoding: z.literal("utf8"),
+  truncated: z.boolean(),
+  limitBytes: z.number().int().min(1).max(65_536),
+}).strict();
+export type FileReadRequest = z.infer<typeof FileReadRequestSchema>;
+export type FileReadResponse = z.infer<typeof FileReadResponseSchema>;
 
 export const ReviewFileDiffSchema = z.object({
   path: FilePathSchema,

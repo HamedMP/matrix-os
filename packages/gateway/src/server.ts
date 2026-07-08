@@ -105,6 +105,7 @@ import { createWorkspaceCodingAgentProvider } from "./coding-agents/workspace-pr
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
 import { createCodingAgentPreviewSummaryStore } from "./coding-agents/preview-summary.js";
+import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
@@ -497,6 +498,14 @@ export async function createGateway(config: GatewayConfig) {
       (id): id is string => Boolean(id),
     ),
   });
+  const codingAgentOwnerIds = [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(
+    (id): id is string => Boolean(id),
+  );
+  const codingAgentFileStore = createCodingAgentFileStore({
+    homePath,
+    ownerId: process.env.MATRIX_USER_ID,
+    principalOwnerIds: codingAgentOwnerIds,
+  });
   const workspaceEventPublisher = createWorkspaceEventPublisher({
     eventStore: workspaceEventStore,
     onSessionStopped: (session) => codingAgentSessionStopReconciler.handleSessionStopped(session),
@@ -560,6 +569,7 @@ export async function createGateway(config: GatewayConfig) {
       approvals: false,
       review: true,
       preview: true,
+      files: true,
     },
     terminalOwnerId: process.env.MATRIX_USER_ID,
   });
@@ -1587,6 +1597,7 @@ export async function createGateway(config: GatewayConfig) {
     service: codingAgentRuntimeSummaryService,
     threads: codingAgentThreadStore,
     reviews: codingAgentReviewSummaryStore,
+    files: codingAgentFileStore,
   }));
   app.route("/api/integrations", createIntegrationCapabilityRoutes({
     service: integrationCapabilityService,
