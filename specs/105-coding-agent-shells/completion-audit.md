@@ -1,10 +1,10 @@
 # Completion Audit: Coding Agent Shells
 
-**Audited commit**: `545ab794be9983c66ca0010ec44bc6b880e9c1a1`
+**Audited commit**: `056b3da668ed6d1753712120316d2d5accfafdcf`
 **Date**: 2026-07-08
 **Scope**: Evidence review for the Matrix OS coding-agent desktop, mobile, browser, and gateway shell implementation checkpoint.
 
-This audit records current evidence through the desktop operator smoke checkpoint. It does not mark the full rollout complete while device smoke and broader cross-shell validation remain outstanding.
+This audit records current evidence through the desktop operator palette smoke and mobile terminal handoff checkpoint. It does not mark the full rollout complete while real-device smoke and broader cross-shell validation remain outstanding.
 
 ## Evidence Matrix
 
@@ -55,10 +55,31 @@ The desktop operator smoke checkpoint in PR #866 added and passed focused PR val
 
 That automated desktop smoke covers the stubbed sign-in/device-auth flow, project board hydration, canonical terminal attach and echo, the current Agents workspace summary and create path, the Terminal Shells workspace, Apps, Settings, Chat, and hosted-shell detach behavior.
 
+The mobile terminal handoff checkpoint in PR #868 added and passed focused PR validation:
+
+- `pnpm --filter matrix-os-mobile exec jest __tests__/agent-thread-screen.test.tsx --runInBand`
+- `pnpm --filter matrix-os-mobile exec jest __tests__/agents-screen.test.tsx __tests__/agent-thread-screen.test.tsx __tests__/agent-workspace-state.test.ts --runInBand`
+- `pnpm --filter matrix-os-mobile exec tsc --noEmit`
+- `pnpm --filter matrix-os-mobile run lint`
+- `bun run check:patterns`
+
+That mobile validation confirms a coding-agent thread detail handoff persists both the last active terminal session and the explicit terminal handoff reference without storing terminal output or transcript data.
+
+The desktop palette and menu-entry checkpoint in PR #869 added and passed focused PR validation:
+
+- `pnpm exec vitest run tests/desktop/menu-template.test.ts tests/desktop/shortcuts.test.ts`
+- `pnpm exec vitest run tests/desktop/menu-template.test.ts tests/desktop/shortcuts.test.ts tests/desktop/command-palette.test.tsx`
+- `bun run build:desktop`
+- `pnpm --filter desktop run typecheck`
+- `xvfb-run -a bun run test:e2e tests/e2e/desktop/operator.e2e.test.ts`
+- `bun run check:patterns`
+
+That automated desktop smoke now also covers opening the Agents workspace from the command palette after the terminal smoke path, and unit coverage confirms the native Agents menu accelerator matches the renderer shortcut.
+
 ## Remaining Validation
 
-- Run manual desktop smoke against a real Matrix computer for runtime switch, menu/palette entry points, review/file/preview paths, notification click-through, non-stub provider setup, and cross-shell terminal binding. The automated desktop operator smoke now covers sign-in, project board, terminal attach, current Agents workspace create, Terminal, Apps, Settings, Chat, and hosted-shell detach through the stub gateway.
-- Run manual mobile SDK 57 device smoke for chat, mission control, terminal, apps, agents workspace, thread detail, review/file/preview paths, approvals/input, notification tap routing, offline/reconnect state, and persisted safe references.
+- Run manual desktop smoke against a real Matrix computer for runtime switch, native menu entry points, review/file/preview paths, notification click-through, non-stub provider setup, and cross-shell terminal binding. The automated desktop operator smoke now covers sign-in, project board, terminal attach, current Agents workspace create, command-palette Agents entry, Terminal, Apps, Settings, Chat, and hosted-shell detach through the stub gateway.
+- Run manual mobile SDK 57 device smoke for chat, mission control, terminal, apps, agents workspace, thread detail, terminal handoff, review/file/preview paths, approvals/input, notification tap routing, offline/reconnect state, and persisted safe references.
 - Keep `docs/dev/coding-agent-shells.md`, `www/content/docs/coding-agents.mdx`, and this audit synchronized when provider/runtime behavior changes.
 
 ## Security Notes
