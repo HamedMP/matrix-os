@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AgentWorkspace from "../../desktop/src/renderer/src/features/coding-agents/AgentWorkspace";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 
-function summaryFixture() {
+function summaryFixture({ threadCreate = false }: { threadCreate?: boolean } = {}) {
   return {
     runtime: {
       id: "rt_primary",
@@ -21,8 +21,8 @@ function summaryFixture() {
       },
       {
         id: "codingAgentsThreadCreate",
-        enabled: false,
-        reason: "Not enabled yet",
+        enabled: threadCreate,
+        ...(threadCreate ? {} : { reason: "Not enabled yet" }),
       },
     ],
     providers: [
@@ -88,7 +88,14 @@ function summaryFixture() {
 
 describe("AgentWorkspace", () => {
   beforeEach(() => {
-    useCodingAgentWorkspace.setState({ status: "idle", summary: null, error: null });
+    useCodingAgentWorkspace.setState({
+      status: "idle",
+      summary: null,
+      error: null,
+      createStatus: "idle",
+      createError: null,
+      activeThreadId: null,
+    });
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -116,6 +123,118 @@ describe("AgentWorkspace", () => {
     expect(screen.getByText("Fix settings route")).toBeTruthy();
     expect(screen.getByText("matrix-abc1234")).toBeTruthy();
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-summary", {});
+  });
+
+  it("creates a thread from the desktop composer and focuses the new thread", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ threadCreate: true }));
+      if (channel === "runtime:create-thread") {
+        return Promise.resolve({
+          thread: {
+            id: "thread_desktop_1",
+            providerId: "codex",
+            title: "Investigate flaky desktop check",
+            status: "queued",
+            attention: "none",
+            createdAt: "2026-07-06T00:00:00.000Z",
+            updatedAt: "2026-07-06T00:00:00.000Z",
+          },
+          events: {
+            items: [],
+            hasMore: false,
+            limit: 200,
+          },
+        });
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByLabelText("Agent run prompt");
+    fireEvent.change(screen.getByLabelText("Agent run prompt"), {
+      target: { value: "Investigate flaky desktop check" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+
+    await waitFor(() => {
+      expect(window.operator.invoke).toHaveBeenCalledWith(
+        "runtime:create-thread",
+        expect.objectContaining({
+          providerId: "codex",
+          prompt: "Investigate flaky desktop check",
+          clientRequestId: expect.stringMatching(/^req_desktop_/),
+        }),
+      );
+    });
+    expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_desktop_1");
+  });
+
+  it("shows safe composer validation and create failures", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ threadCreate: true }));
+      if (channel === "runtime:create-thread") {
+        return Promise.reject(new Error("provider failed on /home/matrix/private with token secret"));
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByLabelText("Agent run prompt");
+    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+    expect(await screen.findByText("Enter a prompt before starting an agent run.")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Agent run prompt"), {
+      target: { value: "Investigate flaky desktop check" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+
+    expect(await screen.findByText("Agent run could not be started. Try again.")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("does not submit duplicate create requests while one is in flight", async () => {
+    let resolveCreate: (value: unknown) => void = () => undefined;
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:create-thread") {
+        return new Promise((resolve) => {
+          resolveCreate = resolve;
+        });
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+    useCodingAgentWorkspace.setState({ summary: summaryFixture({ threadCreate: true }) });
+    const draft = {
+      providerId: "codex",
+      prompt: "Investigate duplicate submits",
+      mode: "default",
+      approvalPolicy: "on_request",
+      sandboxMode: "workspace_write",
+    } as const;
+
+    const first = useCodingAgentWorkspace.getState().createThread(draft);
+    const second = useCodingAgentWorkspace.getState().createThread(draft);
+
+    await expect(second).resolves.toBeNull();
+    expect(window.operator.invoke).toHaveBeenCalledTimes(1);
+    resolveCreate({
+      thread: {
+        id: "thread_duplicate_1",
+        providerId: "codex",
+        title: "Investigate duplicate submits",
+        status: "queued",
+        attention: "none",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+      },
+      events: {
+        items: [],
+        hasMore: false,
+        limit: 200,
+      },
+    });
+    await expect(first).resolves.toBe("thread_duplicate_1");
   });
 
   it("shows a generic safe error when summary refresh fails", async () => {

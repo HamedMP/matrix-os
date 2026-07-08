@@ -1,9 +1,17 @@
-import { RuntimeSummarySchema, type RuntimeSummary } from "@matrix-os/contracts";
+import {
+  AgentThreadSnapshotSchema,
+  RuntimeSummarySchema,
+  type CreateAgentThreadRequest,
+  type RuntimeSummary,
+} from "@matrix-os/contracts";
+import type { z } from "zod/v4";
 import type { AuthService } from "../auth/auth-service";
 
 const RUNTIME_SUMMARY_TIMEOUT_MS = 10_000;
+const THREAD_CREATE_TIMEOUT_MS = 15_000;
 
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
+type AgentThreadSnapshot = z.infer<typeof AgentThreadSnapshotSchema>;
 
 function buildSummaryUrl(origin: string, runtimeSlot: string): string {
   const url = new URL("/api/coding-agents/summary", origin);
@@ -40,6 +48,39 @@ export async function fetchCodingAgentRuntimeSummary(
   const parsed = RuntimeSummarySchema.safeParse(body);
   if (!parsed.success) {
     throw new Error("runtime summary unavailable");
+  }
+  return parsed.data;
+}
+
+export async function createCodingAgentThread(
+  auth: AuthService,
+  request: CreateAgentThreadRequest,
+  fetchFn: FetchFn = fetch,
+): Promise<AgentThreadSnapshot> {
+  const token = auth.getToken();
+  if (!token) {
+    throw new Error("agent thread unavailable");
+  }
+
+  const url = new URL("/api/coding-agents/threads", auth.getGatewayOrigin()).toString();
+  const res = await fetchFn(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+    signal: AbortSignal.timeout(THREAD_CREATE_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error("agent thread unavailable");
+  }
+
+  const body = await res.json();
+  const parsed = AgentThreadSnapshotSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new Error("agent thread unavailable");
   }
   return parsed.data;
 }

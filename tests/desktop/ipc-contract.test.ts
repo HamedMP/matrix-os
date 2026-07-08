@@ -4,6 +4,7 @@ import {
   EVENT_CHANNELS,
   type InvokeChannel,
 } from "@desktop/shared/ipc-contract";
+import type { CreateAgentThreadRequest } from "@matrix-os/contracts";
 
 describe("IPC contract", () => {
   it("defines every invoke channel from the contract doc", () => {
@@ -12,6 +13,7 @@ describe("IPC contract", () => {
       "auth:poll",
       "auth:status",
       "auth:sign-out",
+      "runtime:create-thread",
       "runtime:get-summary",
       "runtime:select",
       "state:get",
@@ -28,6 +30,40 @@ describe("IPC contract", () => {
     for (const ch of expected) {
       expect(INVOKE_CHANNELS[ch], ch).toBeDefined();
     }
+  });
+
+  it("validates runtime:create-thread requests and rejects credential leakage shapes", () => {
+    const request: CreateAgentThreadRequest = {
+      providerId: "codex",
+      prompt: "Summarize the failing checks",
+      mode: "default",
+      approvalPolicy: "on_request",
+      sandboxMode: "workspace_write",
+      clientRequestId: "req_desktop_1",
+    };
+
+    expect(INVOKE_CHANNELS["runtime:create-thread"].request.safeParse(request).success).toBe(true);
+    expect(
+      INVOKE_CHANNELS["runtime:create-thread"].request.safeParse({ ...request, accessToken: "secret" }).success,
+    ).toBe(false);
+    expect(
+      INVOKE_CHANNELS["runtime:create-thread"].response.safeParse({
+        thread: {
+          id: "thread_desktop_1",
+          providerId: "codex",
+          title: "Summarize the failing checks",
+          status: "queued",
+          attention: "none",
+          createdAt: "2026-07-06T00:00:00.000Z",
+          updatedAt: "2026-07-06T00:00:00.000Z",
+        },
+        events: {
+          items: [],
+          hasMore: false,
+          limit: 200,
+        },
+      }).success,
+    ).toBe(true);
   });
 
   it("validates runtime:get-summary responses and rejects credential leakage shapes", () => {

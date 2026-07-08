@@ -1,9 +1,14 @@
-import { Bot, GitBranch, RefreshCw, Server, SquareTerminal } from "lucide-react";
-import { useEffect } from "react";
-import type { RuntimeSummary } from "@matrix-os/contracts";
+import { Bot, GitBranch, Play, RefreshCw, Server, SquareTerminal } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  defaultAgentThreadComposerDraft,
+  type AgentThreadComposerDraft,
+  type RuntimeSummary,
+} from "@matrix-os/contracts";
 import { Button, EmptyState, StatusDot } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { useTabs } from "../../stores/tabs";
 
 const STATUS_COLOR: Record<string, string> = {
   available: "var(--success)",
@@ -20,6 +25,10 @@ const STATUS_COLOR: Record<string, string> = {
   unknown: "var(--text-tertiary)",
 };
 const DEFAULT_STATUS_COLOR = "var(--text-tertiary)";
+
+function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
+  return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
+}
 
 function Section({
   title,
@@ -117,6 +126,126 @@ function ProviderList({ summary }: { summary: RuntimeSummary }) {
           </p>
         ) : null}
       </div>
+    </Section>
+  );
+}
+
+function AgentComposer({ summary }: { summary: RuntimeSummary }) {
+  const initialDraft = useMemo(() => defaultAgentThreadComposerDraft(summary), [summary]);
+  const [draft, setDraft] = useState<AgentThreadComposerDraft>(initialDraft);
+  const createStatus = useCodingAgentWorkspace((s) => s.createStatus);
+  const createError = useCodingAgentWorkspace((s) => s.createError);
+  const createThread = useCodingAgentWorkspace((s) => s.createThread);
+  const openTab = useTabs((s) => s.openTab);
+  const canCreate = capabilityEnabled(summary, "codingAgentsThreadCreate");
+
+  useEffect(() => {
+    setDraft(initialDraft);
+  }, [initialDraft]);
+
+  if (!canCreate) return null;
+
+  const selectedProvider = summary.providers.find((provider) => provider.id === draft.providerId);
+  const modes = selectedProvider?.supportedModes ?? [];
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const threadId = await createThread(draft);
+    if (!threadId) return;
+    const thread = useCodingAgentWorkspace
+      .getState()
+      .summary?.activeThreads.items.find((candidate) => candidate.id === threadId);
+    openTab({
+      kind: "thread",
+      threadId,
+      title: thread?.title ?? "Agent thread",
+      closable: true,
+    });
+    setDraft((current) => ({ ...current, prompt: "" }));
+  }
+
+  return (
+    <Section title="New Run">
+      <form
+        onSubmit={(event) => void submit(event)}
+        className="grid gap-3 rounded-md border p-3"
+        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+      >
+        <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_180px]">
+          <label className="grid gap-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
+            Provider
+            <select
+              className="h-8 rounded-md border px-2 text-sm outline-none"
+              style={{
+                borderColor: "var(--border-subtle)",
+                background: "var(--bg-overlay)",
+                color: "var(--text-primary)",
+              }}
+              value={draft.providerId ?? ""}
+              onChange={(event) => {
+                const provider = summary.providers.find((candidate) => candidate.id === event.target.value);
+                setDraft((current) => ({
+                  ...current,
+                  providerId: provider?.id,
+                  mode: provider?.defaultMode ?? current.mode,
+                }));
+              }}
+            >
+              {summary.providers.map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.displayName}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
+            Mode
+            <select
+              className="h-8 rounded-md border px-2 text-sm outline-none"
+              style={{
+                borderColor: "var(--border-subtle)",
+                background: "var(--bg-overlay)",
+                color: "var(--text-primary)",
+              }}
+              value={draft.mode ?? ""}
+              onChange={(event) => {
+                const mode = modes.find((candidate) => candidate === event.target.value);
+                if (!mode) return;
+                setDraft((current) => ({ ...current, mode }));
+              }}
+            >
+              {modes.map((mode) => (
+                <option key={mode} value={mode}>
+                  {mode.replace(/_/g, " ")}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <label className="grid gap-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
+          <span className="sr-only">Agent run prompt</span>
+          <textarea
+            aria-label="Agent run prompt"
+            className="min-h-[92px] resize-y rounded-md border px-3 py-2 text-sm outline-none"
+            style={{
+              borderColor: "var(--border-subtle)",
+              background: "var(--bg-overlay)",
+              color: "var(--text-primary)",
+            }}
+            value={draft.prompt}
+            onChange={(event) => setDraft((current) => ({ ...current, prompt: event.target.value }))}
+          />
+        </label>
+        <div className="flex items-center justify-between gap-3">
+          <p className="min-h-5 text-sm" style={{ color: createError ? "var(--danger)" : "var(--text-tertiary)" }}>
+            {createError ?? ""}
+          </p>
+          <Button variant="primary" type="submit" disabled={createStatus === "submitting"}>
+            <Play size={14} />
+            {createStatus === "submitting" ? "Starting" : "Start run"}
+          </Button>
+        </div>
+      </form>
     </Section>
   );
 }
@@ -231,6 +360,7 @@ export default function AgentWorkspace() {
     <div className="flex min-h-0 flex-1 flex-col">
       <RuntimeHeader summary={summary} onRefresh={() => void refresh()} />
       <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-5">
+        <AgentComposer summary={summary} />
         <ProviderList summary={summary} />
         <div className="grid gap-4 xl:grid-cols-2">
           <ThreadList summary={summary} />
