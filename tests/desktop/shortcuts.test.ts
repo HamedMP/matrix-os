@@ -3,6 +3,8 @@ import {
   handleCycleTabShortcut,
   handleCloseTabShortcut,
   handleMenuNavigate,
+  handleTerminalFocusShortcut,
+  isTerminalFocusShortcut,
 } from "@desktop/renderer/src/features/mission-control/shortcuts";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
@@ -81,6 +83,66 @@ describe("handleCycleTabShortcut", () => {
   });
 });
 
+describe("handleTerminalFocusShortcut", () => {
+  it("matches only the exact terminal focus modifier chord", () => {
+    expect(isTerminalFocusShortcut({
+      altKey: true,
+      ctrlKey: false,
+      key: "t",
+      metaKey: true,
+      shiftKey: false,
+    })).toBe(true);
+    expect(isTerminalFocusShortcut({
+      altKey: true,
+      ctrlKey: false,
+      key: "t",
+      metaKey: true,
+      shiftKey: true,
+    })).toBe(false);
+  });
+
+  it("prevents default and focuses an existing terminal tab", () => {
+    const preventDefault = vi.fn();
+    const focusTab = vi.fn();
+    const openTab = vi.fn();
+
+    handleTerminalFocusShortcut(
+      { preventDefault },
+      {
+        tabs: [
+          { id: "home", kind: "home" },
+          { id: "term", kind: "terminal" },
+        ],
+        focusTab,
+        openTab,
+      },
+    );
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(focusTab).toHaveBeenCalledWith("term");
+    expect(openTab).not.toHaveBeenCalled();
+  });
+
+  it("opens the terminal workspace when no terminal tab exists", () => {
+    const preventDefault = vi.fn();
+    const focusTab = vi.fn();
+    const openTab = vi.fn();
+
+    handleTerminalFocusShortcut(
+      { preventDefault },
+      {
+        tabs: [{ id: "home", kind: "home" }],
+        focusTab,
+        openTab,
+      },
+    );
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(focusTab).not.toHaveBeenCalled();
+    expect(openTab).toHaveBeenCalledWith({ kind: "terminals", title: "Terminal" });
+  });
+});
+
 describe("handleMenuNavigate", () => {
   beforeEach(() => {
     useBoard.setState({
@@ -114,6 +176,15 @@ describe("handleMenuNavigate", () => {
       kind: "agents",
       title: "Agents",
     });
+  });
+
+  it("focuses an existing terminal tab from menu navigation", () => {
+    const terminalId = useTabs.getState().openTab({ kind: "terminal", sessionName: "matrix-main", title: "matrix-main" });
+    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+
+    handleMenuNavigate("terminals");
+
+    expect(useTabs.getState().activeTabId).toBe(terminalId);
   });
 
   it("falls back to home and logs unsupported menu kinds", () => {

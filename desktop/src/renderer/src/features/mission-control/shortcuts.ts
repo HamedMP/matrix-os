@@ -16,10 +16,23 @@ interface CycleTabShortcutState {
   focusTab(id: string): void;
 }
 
+interface TerminalFocusShortcutState {
+  tabs: Array<{ id: string; kind: string }>;
+  focusTab(id: string): void;
+  openTab(spec: { kind: "terminals"; title: string }): void;
+}
+
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
+}
+
+export function isTerminalFocusShortcut(
+  event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+): boolean {
+  const meta = event.metaKey || event.ctrlKey;
+  return meta && event.altKey && !event.shiftKey && event.key.toLowerCase() === "t";
 }
 
 export function handleMenuNavigate(kind: string): void {
@@ -29,6 +42,10 @@ export function handleMenuNavigate(kind: string): void {
   }
   if (kind === "agents") {
     useTabs.getState().openTab({ kind: "agents", title: "Agents" });
+    return;
+  }
+  if (kind === "terminals") {
+    handleTerminalFocusShortcut({ preventDefault: () => undefined }, useTabs.getState());
     return;
   }
   if (kind === "board") {
@@ -78,6 +95,19 @@ export function handleCycleTabShortcut(
   if (next) tabs.focusTab(next.id);
 }
 
+export function handleTerminalFocusShortcut(
+  event: Pick<KeyboardEvent, "preventDefault">,
+  tabs: TerminalFocusShortcutState,
+): void {
+  event.preventDefault();
+  const existing = tabs.tabs.find((tab) => tab.kind === "terminal" || tab.kind === "terminals");
+  if (existing) {
+    tabs.focusTab(existing.id);
+    return;
+  }
+  tabs.openTab({ kind: "terminals", title: "Terminal" });
+}
+
 export function useGlobalShortcuts(): void {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -99,6 +129,10 @@ export function useGlobalShortcuts(): void {
       if (meta && key === "p") {
         e.preventDefault();
         ui.setQuickOpenOpen(!ui.quickOpenOpen);
+        return;
+      }
+      if (isTerminalFocusShortcut(e)) {
+        handleTerminalFocusShortcut(e, tabs);
         return;
       }
       // New chat with the OS agent.
