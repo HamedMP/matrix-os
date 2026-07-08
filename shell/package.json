@@ -26,6 +26,7 @@
     "@fontsource/fira-code": "^5.2.7",
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@matrix-os/brand": "workspace:*",
+    "@matrix-os/contracts": "workspace:*",
     "@matrix-os/observability": "workspace:*",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.1",

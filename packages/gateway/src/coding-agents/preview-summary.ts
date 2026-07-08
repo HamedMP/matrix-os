@@ -8,7 +8,10 @@ import {
 import { PROJECT_SLUG_REGEX } from "../project-manager.js";
 import type { PreviewRecord } from "../preview-manager.js";
 import type { RequestPrincipal } from "../request-principal.js";
-import type { CodingAgentPreviewSummaryStore } from "./runtime-summary.js";
+import type {
+  CodingAgentPreviewSummaryStore,
+  CodingAgentRuntimeSummaryRequestOptions,
+} from "./runtime-summary.js";
 
 type PreviewListResult =
   | { ok: true; previews: PreviewRecord[]; nextCursor: string | null }
@@ -77,12 +80,14 @@ function localPreviewOrigin(rawUrl: string): string | undefined {
   }
 }
 
-function summaryFromPreview(preview: PreviewRecord): PreviewSessionSummary | null {
+function summaryFromPreview(preview: PreviewRecord, projectSlug: string): PreviewSessionSummary | null {
+  const origin = localPreviewOrigin(preview.url);
   const parsed = PreviewSessionSummarySchema.safeParse({
     id: preview.id,
+    projectId: projectSlug,
     label: safeLabel(preview.label),
     status: previewStatus(preview.lastStatus),
-    origin: localPreviewOrigin(preview.url),
+    ...(origin ? { origin } : {}),
     updatedAt: preview.updatedAt,
   });
   return parsed.success ? parsed.data : null;
@@ -113,12 +118,23 @@ export function createCodingAgentPreviewSummaryStore(
   const ownerIds = ownerIdsFor(options);
 
   return {
-    async listPreviewSessions(principal: RequestPrincipal) {
+    async listPreviewSessions(
+      principal: RequestPrincipal,
+      requestOptions: CodingAgentRuntimeSummaryRequestOptions = {},
+    ) {
       if (!canReadPreviewSessions(principal, ownerIds)) {
         return { items: [], hasMore: false, limit };
       }
 
-      const rawProjectSlugs = (await listProjectSlugs()).filter((slug) => PROJECT_SLUG_REGEX.test(slug));
+      const projectId = "projectId" in requestOptions && typeof requestOptions.projectId === "string"
+        ? requestOptions.projectId
+        : undefined;
+      let rawProjectSlugs: string[];
+      if (projectId) {
+        rawProjectSlugs = PROJECT_SLUG_REGEX.test(projectId) ? [projectId] : [];
+      } else {
+        rawProjectSlugs = (await listProjectSlugs()).filter((slug) => PROJECT_SLUG_REGEX.test(slug));
+      }
       const projectSlugs = rawProjectSlugs
         .slice(0, PROJECT_SCAN_LIMIT);
       const items: PreviewSessionSummary[] = [];
@@ -135,7 +151,7 @@ export function createCodingAgentPreviewSummaryStore(
           if (!result.ok) continue;
           for (const preview of result.previews) {
             rawPreviewCount += 1;
-            const summary = summaryFromPreview(preview);
+            const summary = summaryFromPreview(preview, projectSlug);
             if (summary) items.push(summary);
             if (rawPreviewCount >= MAX_RAW_PREVIEW_SCAN) break;
           }
@@ -151,7 +167,7 @@ export function createCodingAgentPreviewSummaryStore(
           if (!result.ok) break;
           for (const preview of result.previews) {
             rawPreviewCount += 1;
-            const summary = summaryFromPreview(preview);
+            const summary = summaryFromPreview(preview, projectSlug);
             if (summary) items.push(summary);
             if (rawPreviewCount >= MAX_RAW_PREVIEW_SCAN) break;
           }

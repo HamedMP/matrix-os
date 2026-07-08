@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { BotIcon, CodeIcon, GitBranchIcon, PanelRightOpenIcon, PlayIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
+import { RuntimeSummarySchema, type PreviewSessionSummary } from "@matrix-os/contracts";
 import { getGatewayUrl } from "@/lib/gateway";
 import { getCodeEditorUrl } from "@/lib/feature-flags";
 
@@ -86,6 +87,15 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   return await response.json() as T;
 }
 
+async function fetchCodingAgentPreviews(projectSlug: string): Promise<PreviewSessionSummary[]> {
+  const body = await fetchJson<unknown>(`/api/coding-agents/summary?projectId=${encodeURIComponent(projectSlug)}`);
+  const summary = RuntimeSummarySchema.parse(body);
+  const previewEnabled = summary.capabilities.some((capability) => capability.id === "codingAgentsPreview" && capability.enabled);
+  return previewEnabled
+    ? summary.previewSessions.items.filter((preview) => preview.projectId === projectSlug)
+    : [];
+}
+
 const COUNT_FORMATTER = new Intl.NumberFormat("en-US");
 
 function formatCount(value: number): string {
@@ -105,6 +115,25 @@ function worktreePrNumber(worktree?: WorkspaceWorktree): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
+function previewOrigin(origin?: string): string {
+  if (!origin) return "Preview unavailable";
+  try {
+    return new URL(origin).origin;
+  } catch {
+    return "Preview unavailable";
+  }
+}
+
+function previewHref(preview: PreviewSessionSummary): string | undefined {
+  if (preview.status !== "running" || !preview.origin) return undefined;
+  try {
+    const url = new URL(preview.origin);
+    return url.protocol === "https:" ? url.origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // react-doctor-disable-next-line react-doctor/prefer-useReducer, react-doctor/no-giant-component -- the 22 useState fields are mostly independent (separate form inputs, transient status messages, multiple server lists, and per-action in-flight flags) rather than one related cluster; collapsing them into a single reducer would not be a mechanical, behavior-identical change and would obscure the independent update sites. The component is a single cohesive workspace dashboard whose handlers all close over this shared state, so splitting it would require threading every setter through props with no behavior change.
 export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -114,6 +143,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [reviews, setReviews] = useState<WorkspaceReview[]>([]);
   const [worktrees, setWorktrees] = useState<WorkspaceWorktree[]>([]);
   const [previews, setPreviews] = useState<WorkspacePreview[]>([]);
+  const [codingAgentPreviews, setCodingAgentPreviews] = useState<PreviewSessionSummary[]>([]);
   const [events, setEvents] = useState<WorkspaceEvent[]>([]);
   const [attachMessage, setAttachMessage] = useState("");
   const [sessionSearch, setSessionSearch] = useState("");
@@ -148,6 +178,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     setWorktreeMessage("");
     setCreatingWorktree(false);
     setStartingAgent(false);
+    setCodingAgentPreviews([]);
   }
 
   // Default the selected worktree to the first available one (and drop a
@@ -186,13 +217,17 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     try {
       const encodedSlug = encodeURIComponent(projectSlug);
       // react-doctor-disable-next-line react-doctor/async-defer-await -- the await must run before the `activeSlugRef.current !== projectSlug` staleness check below: that guard discards results from a superseded selection AFTER the fetch resolves, so the await cannot be deferred past it. The rule misses this because the ref is named `activeSlugRef`, not a bare guard identifier.
-      const [taskData, sessionData, reviewData, worktreeData, previewData, eventData] = await Promise.all([
+      const [taskData, sessionData, reviewData, worktreeData, previewData, eventData, codingPreviewData] = await Promise.all([
         fetchJson<{ tasks: WorkspaceTask[] }>(`/api/projects/${encodedSlug}/tasks?includeArchived=true&limit=100`),
         fetchJson<{ sessions: WorkspaceSession[] }>(`/api/sessions?projectSlug=${encodedSlug}&limit=100`),
         fetchJson<{ reviews: WorkspaceReview[] }>(`/api/reviews?projectSlug=${encodedSlug}&limit=20`),
         fetchJson<{ worktrees: WorkspaceWorktree[] }>(`/api/projects/${encodedSlug}/worktrees`),
         fetchJson<{ previews: WorkspacePreview[] }>(`/api/projects/${encodedSlug}/previews?limit=20`),
         fetchJson<{ events: WorkspaceEvent[] }>(`/api/workspace/events?projectSlug=${encodedSlug}&limit=20`),
+        fetchCodingAgentPreviews(projectSlug).catch(() => {
+          console.warn("Coding agent previews unavailable");
+          return [];
+        }),
       ]);
       if (activeSlugRef.current !== projectSlug) return;
       setTasks(taskData.tasks ?? []);
@@ -200,10 +235,12 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
       setReviews(reviewData.reviews ?? []);
       setWorktrees(worktreeData.worktrees ?? []);
       setPreviews(previewData.previews ?? []);
+      setCodingAgentPreviews(codingPreviewData);
       setEvents(eventData.events ?? []);
       setError("");
     } catch (err: unknown) {
       if (activeSlugRef.current !== projectSlug) return;
+      setCodingAgentPreviews([]);
       setError(err instanceof Error ? err.message : "Workspace request failed");
     }
   }, []);
@@ -670,6 +707,9 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
                 <span className="block text-muted-foreground">{preview.lastStatus ?? "unknown"}</span>
               </a>
             ))}
+            {codingAgentPreviews.map((preview) => (
+              <CodingAgentPreviewRow key={preview.id} preview={preview} />
+            ))}
           </WorkspacePanel>
 
           <WorkspacePanel title="Activity">
@@ -684,6 +724,27 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
       </div>
     </div>
   );
+}
+
+function CodingAgentPreviewRow({ preview }: { preview: PreviewSessionSummary }) {
+  const href = previewHref(preview);
+  const content = (
+    <>
+      <span className="font-medium">{preview.label}</span>
+      <span className="block text-muted-foreground">{previewOrigin(preview.origin)}</span>
+      <span className="block text-muted-foreground">{preview.status}</span>
+    </>
+  );
+
+  if (href) {
+    return (
+      <a href={href} target="_blank" rel="noreferrer" className="block py-2 text-xs hover:underline">
+        {content}
+      </a>
+    );
+  }
+
+  return <div className="py-2 text-xs">{content}</div>;
 }
 
 function SessionButton({
