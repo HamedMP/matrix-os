@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ActivityIndicator, AppState, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, AppState, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ReviewIdSchema, type AgentThreadEvent, type AgentThreadSnapshot, type AgentThreadSummary, type ApprovalDecisionRequest } from "@matrix-os/contracts";
@@ -232,6 +232,8 @@ export default function AgentThreadRoute() {
       style={styles.container}
       contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={styles.content}
+      accessibilityLabel="Refresh thread details"
+      refreshControl={<RefreshControl refreshing={state.refreshing} onRefresh={() => void loadSnapshot()} tintColor={theme.colors.forest} />}
     >
       <View style={styles.panel}>
         <View style={styles.headerRow}>

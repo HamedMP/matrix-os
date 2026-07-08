@@ -1727,6 +1727,42 @@ describe("AgentThreadRoute", () => {
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
   });
 
+  it("refreshes the thread snapshot from the pull-to-refresh control", async () => {
+    const refreshed = {
+      ...threadSnapshotFixture(),
+      thread: {
+        ...threadSnapshotFixture().thread,
+        title: "Refreshed from pull",
+        updatedAt: "2026-07-06T00:07:00.000Z",
+      },
+    };
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          snapshot: threadSnapshotFixture(),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          snapshot: refreshed,
+        }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Repair mobile route")).toBeTruthy();
+    await act(async () => {
+      screen.getByLabelText("Refresh thread details").props.refreshControl.props.onRefresh();
+    });
+
+    expect(await screen.findByText("Refreshed from pull")).toBeTruthy();
+    expect(client.getCodingAgentThreadSnapshot).toHaveBeenCalledTimes(2);
+  });
+
   it("refreshes pending attention when the app resumes to the foreground", async () => {
     let appStateChange: ((state: string) => void) | null = null;
     const removeAppStateListener = jest.fn();
