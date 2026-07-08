@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  fetchCodingAgentFileContent,
   fetchCodingAgentThreadSnapshot,
   fetchCodingAgentReviewSnapshot,
   submitCodingAgentApprovalDecision,
@@ -58,6 +59,22 @@ function snapshotBody() {
     partial: true,
     safeNotice: "Diff content is not available yet. Showing bounded review findings.",
     updatedAt: "2026-07-06T00:00:00.000Z",
+  };
+}
+
+function fileReadBody() {
+  return {
+    metadata: {
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      kind: "file",
+      sizeBytes: 37,
+      etag: "sha256_desktop_file",
+      updatedAt: "2026-07-06T00:03:00.000Z",
+    },
+    content: "export const safeRoute = true;\n",
+    encoding: "utf8",
+    truncated: false,
+    limitBytes: 65536,
   };
 }
 
@@ -315,6 +332,29 @@ describe("coding agent desktop runtime client", () => {
     expect(snapshot.files.items[0]?.path).toBe("packages/gateway/src/coding-agents/routes.ts");
   });
 
+  it("fetches bounded file content with bearer auth and validates safe output", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify(fileReadBody()), { status: 200 }));
+
+    const file = await fetchCodingAgentFileContent(auth(), {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+    }, fetchFn);
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://runtime.test/api/coding-agents/files/read?projectId=matrix-os&worktreeId=wt_abc123def456&path=packages%2Fgateway%2Fsrc%2Fcoding-agents%2Froutes.ts",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({
+          Authorization: "Bearer desktop-token",
+          Accept: "application/json",
+        }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(file.content).toBe("export const safeRoute = true;\n");
+  });
+
   it("rejects unsafe or malformed review snapshot responses with a generic error", async () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       ...snapshotBody(),
@@ -326,5 +366,26 @@ describe("coding agent desktop runtime client", () => {
 
     await expect(fetchCodingAgentReviewSnapshot(auth(), { reviewId: "rev_desktop_1" }, fetchFn)).rejects.toThrow("review state unavailable");
     await expect(fetchCodingAgentReviewSnapshot(auth(), { reviewId: "rev_desktop_1" }, fetchFn)).rejects.not.toThrow("/home/matrix");
+  });
+
+  it("rejects unsafe file content responses with a generic error", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...fileReadBody(),
+      metadata: {
+        ...fileReadBody().metadata,
+        path: "/home/matrix/private/secret.ts",
+      },
+    }), { status: 200 }));
+
+    await expect(fetchCodingAgentFileContent(auth(), {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+    }, fetchFn)).rejects.toThrow("file content unavailable");
+    await expect(fetchCodingAgentFileContent(auth(), {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+    }, fetchFn)).rejects.not.toThrow("/home/matrix");
   });
 });

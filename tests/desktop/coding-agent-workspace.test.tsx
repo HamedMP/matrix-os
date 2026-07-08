@@ -13,9 +13,10 @@ import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
 function summaryFixture({
   threadCreate = false,
+  files = false,
   threadTerminalSessionId,
   terminalSessionName = "matrix-abc1234",
-}: { threadCreate?: boolean; threadTerminalSessionId?: string; terminalSessionName?: string } = {}) {
+}: { threadCreate?: boolean; files?: boolean; threadTerminalSessionId?: string; terminalSessionName?: string } = {}) {
   return {
     runtime: {
       id: "rt_primary",
@@ -36,6 +37,12 @@ function summaryFixture({
         id: "codingAgentsReview",
         enabled: true,
       },
+      ...(files
+        ? [{
+            id: "codingAgentsFiles",
+            enabled: true,
+          }]
+        : []),
     ],
     providers: [
       {
@@ -260,6 +267,22 @@ function reviewSnapshotFixture() {
     partial: true,
     safeNotice: "Diff content is not available yet. Showing bounded review findings.",
     updatedAt: "2026-07-06T00:02:00.000Z",
+  };
+}
+
+function fileReadFixture() {
+  return {
+    metadata: {
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      kind: "file",
+      sizeBytes: 37,
+      etag: "sha256_desktop_file",
+      updatedAt: "2026-07-06T00:03:00.000Z",
+    },
+    content: "export const safeRoute = true;\n",
+    encoding: "utf8",
+    truncated: false,
+    limitBytes: 65536,
   };
 }
 
@@ -592,6 +615,10 @@ describe("AgentWorkspace", () => {
       reviewSnapshotStatus: "idle",
       reviewSnapshot: null,
       reviewSnapshotError: null,
+      fileReadStatus: "idle",
+      fileRead: null,
+      fileReadError: null,
+      selectedFilePath: null,
       threadSnapshotStatus: "idle",
       threadSnapshot: null,
       threadSnapshotError: null,
@@ -1201,6 +1228,33 @@ describe("AgentWorkspace", () => {
     expect(await screen.findByText("packages/gateway/src/coding-agents/routes.ts")).toBeTruthy();
     expect(screen.getByText("Validate ownership before returning snapshots.")).toBeTruthy();
     expect(screen.getByText("Diff content is not available yet. Showing bounded review findings.")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("loads bounded file content from trusted IPC when a review file is selected", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ files: true }));
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());
+      if (channel === "runtime:get-file-content") return Promise.resolve(fileReadFixture());
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByText("matrix-os");
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
+    await screen.findByText("packages/gateway/src/coding-agents/routes.ts");
+    fireEvent.click(screen.getByRole("button", {
+      name: /Open file packages\/gateway\/src\/coding-agents\/routes\.ts/i,
+    }));
+
+    expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-file-content", {
+      projectId: "matrix-os",
+      worktreeId: "wt_desktop_1",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+    });
+    expect(await screen.findByText("export const safeRoute = true;")).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
   });
 

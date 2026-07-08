@@ -6,6 +6,7 @@ import { installGatewayCors, installHeaderInjection } from "./auth/header-inject
 import { EmbedService } from "./embeds/embed-service";
 import {
   createCodingAgentThread,
+  fetchCodingAgentFileContent,
   fetchCodingAgentThreadSnapshot,
   fetchCodingAgentReviewSnapshot,
   fetchCodingAgentReviewSummaries,
@@ -238,6 +239,7 @@ if (!gotLock) {
         fetchRuntimeSummary: () => fetchCodingAgentRuntimeSummary(auth),
         fetchReviewSummaries: (options) => fetchCodingAgentReviewSummaries(auth, options),
         fetchReviewSnapshot: (options) => fetchCodingAgentReviewSnapshot(auth, options),
+        fetchFileContent: (request) => fetchCodingAgentFileContent(auth, request),
         fetchThreadSnapshot: (options) => fetchCodingAgentThreadSnapshot(auth, options),
         submitApprovalDecision: ({ threadId, approvalId, decision, clientRequestId, correlationId }) =>
           submitCodingAgentApprovalDecision(auth, {
