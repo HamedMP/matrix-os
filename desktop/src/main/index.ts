@@ -4,6 +4,7 @@ import { AuthService } from "./auth/auth-service";
 import { createCredentialStore } from "./auth/credential-store";
 import { installGatewayCors, installHeaderInjection } from "./auth/header-injection";
 import { EmbedService } from "./embeds/embed-service";
+import { fetchCodingAgentRuntimeSummary } from "./coding-agents/runtime-summary-client";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
@@ -226,6 +227,7 @@ if (!gotLock) {
           sendEvent("runtime:changed", { slot });
         },
         getUpdateStatus: () => updater.status(),
+        fetchRuntimeSummary: () => fetchCodingAgentRuntimeSummary(auth),
       });
 
       let boundsSaveTimer: ReturnType<typeof setTimeout> | null = null;

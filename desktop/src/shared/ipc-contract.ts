@@ -3,6 +3,7 @@
 // preload import this module; every channel is validated on both sides
 // (FR-081). The credential never appears in any schema.
 import { z } from "zod/v4";
+import { RuntimeSummarySchema } from "@matrix-os/contracts";
 
 const Empty = z.object({}).strict();
 
@@ -93,6 +94,10 @@ export const INVOKE_CHANNELS = {
   "runtime:select": {
     request: z.object({ slot: z.string().min(1).max(64) }).strict(),
     response: Ok,
+  },
+  "runtime:get-summary": {
+    request: Empty,
+    response: RuntimeSummarySchema,
   },
   "state:get": {
     request: z.object({ key: z.enum(STATE_KEYS) }).strict(),
