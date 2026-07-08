@@ -4,6 +4,7 @@ const MAX_DETECTION_TEXT_BYTES = 4096;
 const CODEX_TUI_FOREGROUND = "#D6D8DD";
 const CODEX_TUI_REVERSE_BG = "#30363D";
 const CODEX_TUI_BANNER = "OpenAI Codex (";
+const CODEX_TUI_PROMPT_BG = ["48", "2", "240", "240", "239"];
 
 export interface TerminalOutputCompatStream {
   readonly codexTuiActive: boolean;
@@ -57,6 +58,43 @@ function sgrColorGroupLength(params: string[], index: number): number {
     return 3;
   }
   return 0;
+}
+
+function isForegroundColorParam(param: string): boolean {
+  if (param.startsWith("38:")) {
+    return true;
+  }
+  const value = Number.parseInt(param, 10);
+  return (value >= 30 && value <= 37) || (value >= 90 && value <= 97);
+}
+
+function isBackgroundColorParam(param: string): boolean {
+  if (param.startsWith("48:")) {
+    return true;
+  }
+  const value = Number.parseInt(param, 10);
+  return (value >= 40 && value <= 47) || (value >= 100 && value <= 107);
+}
+
+function sgrColorGroupsEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function hasExplicitNonDefaultForeground(params: string[]): boolean {
+  for (let index = 0; index < params.length; index += 1) {
+    const colorGroupLength = sgrColorGroupLength(params, index);
+    if (colorGroupLength > 0) {
+      if (params[index] === "38") {
+        return true;
+      }
+      index += colorGroupLength - 1;
+      continue;
+    }
+    if (isForegroundColorParam(params[index] ?? "")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function cloneColorState(state: SgrColorState): SgrColorState {
@@ -137,9 +175,11 @@ function rewriteSgr(
   theme: CodexTuiCompatTheme,
   colorState: SgrColorState,
   reverseSnapshot: { current: SgrColorState | null },
+  promptBand: { active: boolean },
 ): string {
   const body = sequence.slice(2, -1);
   const params = body.length === 0 ? ["0"] : body.split(";");
+  const hasForegroundInSequence = hasExplicitNonDefaultForeground(params);
   const foreground = parseHexColor(theme.foreground, CODEX_TUI_FOREGROUND);
   const reverseBackground = parseHexColor(theme.reverseBackground, CODEX_TUI_REVERSE_BG);
   const foregroundParams = rgbSgr(38, foreground).split(";");
@@ -157,6 +197,26 @@ function rewriteSgr(
     const colorGroupLength = sgrColorGroupLength(params, index);
     if (colorGroupLength > 0) {
       const group = params.slice(index, index + colorGroupLength);
+      if (sgrColorGroupsEqual(group, CODEX_TUI_PROMPT_BG)) {
+        promptBand.active = true;
+        if (!hasForegroundInSequence) {
+          colorState.foreground = foregroundParams;
+          if (reverseSnapshot.current) {
+            reverseSnapshot.current.foreground = foregroundParams;
+          }
+          pending.push(...foregroundParams);
+        }
+        colorState.background = backgroundParams;
+        if (reverseSnapshot.current) {
+          reverseSnapshot.current.background = backgroundParams;
+        }
+        pending.push(...backgroundParams);
+        index += colorGroupLength - 1;
+        continue;
+      }
+      if (group[0] === "48") {
+        promptBand.active = false;
+      }
       applyColorGroupToState(group, colorState);
       if (reverseSnapshot.current) {
         applyColorGroupToState(group, reverseSnapshot.current);
@@ -173,6 +233,7 @@ function rewriteSgr(
       colorState.foreground = null;
       colorState.background = null;
       reverseSnapshot.current = null;
+      promptBand.active = false;
       continue;
     }
     if (param === "7") {
@@ -194,6 +255,17 @@ function rewriteSgr(
         output.push("\x1b[27m");
       }
       continue;
+    }
+    if (param === "39" && promptBand.active) {
+      colorState.foreground = foregroundParams;
+      if (reverseSnapshot.current) {
+        reverseSnapshot.current.foreground = foregroundParams;
+      }
+      pending.push(...foregroundParams);
+      continue;
+    }
+    if (param === "49" || isBackgroundColorParam(param)) {
+      promptBand.active = false;
     }
     applyColorParamToState(param, colorState);
     if (reverseSnapshot.current) {
@@ -224,6 +296,7 @@ function createCodexTuiCompatTransform(theme: CodexTuiCompatTheme): CodexTuiComp
   let trackingPending = "";
   const colorState: SgrColorState = { foreground: null, background: null };
   const reverseSnapshot: { current: SgrColorState | null } = { current: null };
+  const promptBand = { active: false };
 
   return {
     observe(data: string): void {
@@ -303,7 +376,7 @@ function createCodexTuiCompatTransform(theme: CodexTuiCompatTheme): CodexTuiComp
           }
           const sequence = input.slice(escapeIndex, finalIndex + 1);
           output += input[finalIndex] === "m"
-            ? rewriteSgr(sequence, theme, colorState, reverseSnapshot)
+            ? rewriteSgr(sequence, theme, colorState, reverseSnapshot, promptBand)
             : sequence;
           index = finalIndex + 1;
           continue;
