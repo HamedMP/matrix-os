@@ -1,6 +1,6 @@
 # Current State: Coding Agent Shells
 
-**Branch stack**: implementation checkpoint merged to `main` through PR #866 (`545ab794be9983c66ca0010ec44bc6b880e9c1a1`)
+**Branch stack**: implementation checkpoint merged to `main` through PR #869 (`056b3da668ed6d1753712120316d2d5accfafdcf`)
 **Updated**: 2026-07-08
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
@@ -17,6 +17,11 @@ Current source-of-truth boundaries:
 - Mobile gets coding-agent data through the existing authenticated gateway client and stores only bounded UI references.
 - Browser shell reads coding-agent preview summaries through the authenticated gateway route and validates `RuntimeSummarySchema` before rendering bounded origin/status metadata scoped to the active Workspace project.
 - Canonical terminal sessions remain the existing Matrix shell/session primitives under `/api/terminal/sessions` and `/ws/terminal`.
+
+Post-merge checkpoint updates:
+
+- PR #868 confirmed mobile thread detail terminal handoff persists the bounded canonical terminal session reference needed by the Terminal route without persisting terminal output or transcript data.
+- PR #869 confirmed the desktop command-palette Agents entry still opens after terminal interaction, and menu-template tests cover the native Agents accelerator used to focus the same workspace.
 
 ## Shared Contracts
 
