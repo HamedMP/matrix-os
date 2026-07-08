@@ -11,6 +11,10 @@ This guide documents the Matrix OS coding-agent shell architecture for gateway, 
 - Browser shell surfaces call authenticated gateway routes and validate shared contracts before rendering. Shell-only filtering is defensive; project and owner scoping must happen in the gateway before list bounds are applied.
 - Canonical terminals remain the existing Matrix terminal/session primitives under `/api/terminal/sessions`, `/ws/terminal`, and related compatibility routes. Do not create a separate coding-agent terminal model.
 
+## Browser Shell
+
+Browser Workspace remains Canvas-first and does not own coding-agent runtime state. It may render active-project thread and preview summaries from `RuntimeSummarySchema`, and it may open an existing Canvas PR workspace from bounded worktree metadata that already includes a pull request number. Browser Workspace must not create source-control commits or pull requests, store transcripts, store file contents, store diffs, or execute provider setup actions. Those write paths stay in gateway-owned routes and trusted desktop/mobile clients.
+
 ## Gateway Routes
 
 The coding-agent route module is `packages/gateway/src/coding-agents/routes.ts`, mounted under `/api/coding-agents`.
