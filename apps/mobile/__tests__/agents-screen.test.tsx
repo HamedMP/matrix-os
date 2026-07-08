@@ -36,7 +36,7 @@ function gatewayContext(overrides: Partial<GatewayContextValue>): GatewayContext
   };
 }
 
-function summaryFixture({ threadCreate = false }: { threadCreate?: boolean } = {}) {
+function summaryFixture({ threadCreate = false, files = false }: { threadCreate?: boolean; files?: boolean } = {}) {
   return {
     runtime: {
       id: "rt_primary",
@@ -54,6 +54,10 @@ function summaryFixture({ threadCreate = false }: { threadCreate?: boolean } = {
       },
       ...(threadCreate ? [{
         id: "codingAgentsThreadCreate",
+        enabled: true,
+      }] : []),
+      ...(files ? [{
+        id: "codingAgentsFiles",
         enabled: true,
       }] : []),
     ],
@@ -263,6 +267,22 @@ function reviewSnapshotFixture() {
     partial: true,
     safeNotice: "Diff content is not available yet. Showing bounded review findings.",
     updatedAt: "2026-07-06T00:02:00.000Z",
+  };
+}
+
+function fileReadFixture() {
+  return {
+    metadata: {
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      kind: "file",
+      sizeBytes: 37,
+      etag: "sha256_mobile_file",
+      updatedAt: "2026-07-06T00:03:00.000Z",
+    },
+    content: "export const safeRoute = true;\n",
+    encoding: "utf8",
+    truncated: false,
+    limitBytes: 65536,
   };
 }
 
@@ -562,6 +582,50 @@ describe("AgentsScreen", () => {
     expect(await screen.findByText("packages/gateway/src/coding-agents/routes.ts")).toBeTruthy();
     expect(screen.getByText("Validate ownership before returning snapshots.")).toBeTruthy();
     expect(screen.getByText("Diff content is not available yet. Showing bounded review findings.")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("loads bounded file content from the gateway when a review file is selected", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture({ files: true }),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+      getCodingAgentReviewSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: reviewSnapshotFixture(),
+      }),
+      getCodingAgentFileContent: jest.fn().mockResolvedValue({
+        ok: true,
+        file: fileReadFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("matrix-os");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #759"));
+    });
+    await screen.findByText("packages/gateway/src/coding-agents/routes.ts");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open file packages/gateway/src/coding-agents/routes.ts"));
+    });
+
+    expect(client.getCodingAgentFileContent).toHaveBeenCalledWith({
+      projectId: "matrix-os",
+      worktreeId: "wt_mobile_1",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+    });
+    expect(await screen.findByText("export const safeRoute = true;")).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
   });
 

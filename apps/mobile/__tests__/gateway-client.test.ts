@@ -54,6 +54,22 @@ function reviewSnapshotPayload(id = "rev_mobile_1") {
   };
 }
 
+function fileReadPayload() {
+  return {
+    metadata: {
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      kind: "file",
+      sizeBytes: 37,
+      etag: "sha256_mobile_file",
+      updatedAt: "2026-07-06T00:03:00.000Z",
+    },
+    content: "export const safeRoute = true;\n",
+    encoding: "utf8",
+    truncated: false,
+    limitBytes: 65536,
+  };
+}
+
 describe("GatewayClient", () => {
   it("initializes with disconnected state", () => {
     const client = new GatewayClient("http://localhost:4000");
@@ -688,6 +704,62 @@ describe("GatewayClient", () => {
     await expect(client.getCodingAgentReviewSnapshot({ reviewId: "../secret" })).resolves.toEqual({
       ok: false,
       error: "Review details unavailable",
+    });
+
+    fetchMock.mockRestore();
+  });
+
+  it("fetches coding agent file content with the existing auth header", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse(fileReadPayload()));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.getCodingAgentFileContent({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+    })).resolves.toEqual({
+      ok: true,
+      file: fileReadPayload(),
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/files/read?projectId=matrix-os&worktreeId=wt_abc123def456&path=packages%2Fgateway%2Fsrc%2Fcoding-agents%2Froutes.ts",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("returns a safe mobile file content error for invalid gateway payloads", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      ...fileReadPayload(),
+      metadata: {
+        ...fileReadPayload().metadata,
+        path: "/home/matrix/private/secret.ts",
+      },
+    }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.getCodingAgentFileContent({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+    })).resolves.toEqual({
+      ok: false,
+      error: "File content unavailable",
+    });
+    await expect(client.getCodingAgentFileContent({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system/config.json",
+    })).resolves.toEqual({
+      ok: false,
+      error: "File content unavailable",
     });
 
     fetchMock.mockRestore();
