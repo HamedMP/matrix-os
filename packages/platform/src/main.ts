@@ -1378,6 +1378,13 @@ function rewriteSandboxedViteJsAssetImports(js: string, assetToken: string | nul
   );
 }
 
+function rewriteExplicitVmShellAssetUrls(html: string, handle: string): string {
+  const prefix = `/vm/${handle}`;
+  return html
+    .replaceAll('"/_next/static/', `"${prefix}/_next/static/`)
+    .replaceAll("'/_next/static/", `'${prefix}/_next/static/`);
+}
+
 async function buildAppDomainProxyResponse(input: {
   upstream: Response;
   responseHeaders: Headers;
@@ -1385,7 +1392,20 @@ async function buildAppDomainProxyResponse(input: {
   handle: string;
   platformSecret: string;
   assetRouteToken?: string | null;
+  explicitVmRoute?: boolean;
 }): Promise<Response> {
+  if (
+    input.explicitVmRoute &&
+    input.path === '/' &&
+    input.responseHeaders.get('content-type')?.includes('text/html')
+  ) {
+    const html = await input.upstream.text();
+    input.responseHeaders.delete('content-length');
+    return new Response(rewriteExplicitVmShellAssetUrls(html, input.handle), {
+      status: input.upstream.status,
+      headers: input.responseHeaders,
+    });
+  }
   if (getViteAppHtmlSlug(input.path) && input.responseHeaders.get('content-type')?.includes('text/html')) {
     const html = await input.upstream.text();
     input.responseHeaders.delete('content-length');
@@ -3446,6 +3466,7 @@ export function createApp(deps: {
           handle: machine.handle,
           platformSecret,
           assetRouteToken: readAppAssetRouteToken(c.req.url),
+          explicitVmRoute: true,
         });
       } catch (err: unknown) {
         logPlatformRouteError('app-domain explicit vps proxy', err);

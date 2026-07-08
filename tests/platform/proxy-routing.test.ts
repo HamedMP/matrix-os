@@ -3754,6 +3754,69 @@ describe("platform proxy routing", () => {
     );
   });
 
+  it("rewrites explicit VM shell HTML Next assets to the explicit VM route", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff140",
+      clerkUserId: "user_alice",
+      handle: "alice-staging",
+      runtimeSlot: "staging",
+      status: "running",
+      hetznerServerId: 123484,
+      publicIPv4: "203.0.113.33",
+      imageVersion: "v082-login-shell-8935a7cd",
+      provisionedAt: "2026-05-25T11:23:51.076Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(
+        '<!doctype html><link rel="stylesheet" href="/_next/static/css/app.css"><script src="/_next/static/chunks/app.js"></script><script>self.__next_f.push([":HL[\\"/_next/static/media/font.woff2\\",\\"font\\"]"])</script>',
+        {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        },
+      ))
+      .mockResolvedValueOnce(new Response("asset", {
+        status: 200,
+        headers: { "content-type": "text/javascript" },
+      }));
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const htmlResponse = await app.request("/vm/alice-staging", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(htmlResponse.status).toBe(200);
+    const html = await htmlResponse.text();
+    expect(html).toContain('href="/vm/alice-staging/_next/static/css/app.css"');
+    expect(html).toContain('src="/vm/alice-staging/_next/static/chunks/app.js"');
+    expect(html).toContain('\\"/vm/alice-staging/_next/static/media/font.woff2\\"');
+    expect(html).not.toContain('"/_next/static/');
+    expect(htmlResponse.headers.get("set-cookie")).toContain("matrix_shell_route=alice-staging");
+
+    const assetResponse = await app.request("/vm/alice-staging/_next/static/chunks/app.js", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(assetResponse.status).toBe(200);
+    expect(await assetResponse.text()).toBe("asset");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.33:443/");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("https://203.0.113.33:443/_next/static/chunks/app.js");
+    expect(assetResponse.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+  });
+
   it("routes signed explicit VM Vite app assets with null-origin CORS without browser cookies", async () => {
     await deleteContainer(db, "alice");
     await insertUserMachine(db, {
