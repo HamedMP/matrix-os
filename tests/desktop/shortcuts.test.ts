@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   handleCycleTabShortcut,
   handleCloseTabShortcut,
+  handleAgentWorkspaceShortcut,
   handleMenuNavigate,
   handleNewAgentRunShortcut,
   handleTerminalFocusShortcut,
+  isAgentWorkspaceShortcut,
   isTerminalFocusShortcut,
 } from "@desktop/renderer/src/features/mission-control/shortcuts";
 import { useBoard } from "@desktop/renderer/src/stores/board";
@@ -216,6 +218,48 @@ describe("handleNewAgentRunShortcut", () => {
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(useUi.getState().composerOpen).toBe(true);
     expect(useTabs.getState().tabs).toEqual([]);
+  });
+});
+
+describe("handleAgentWorkspaceShortcut", () => {
+  beforeEach(() => {
+    useCodingAgentWorkspace.setState({
+      summary: null,
+      composerFocusRequestId: 0,
+    });
+    useTabs.setState({ tabs: [], activeTabId: null });
+  });
+
+  it("matches only the exact Agents workspace modifier chord", () => {
+    expect(isAgentWorkspaceShortcut({
+      altKey: true,
+      ctrlKey: false,
+      key: "a",
+      metaKey: true,
+      shiftKey: false,
+    })).toBe(true);
+    expect(isAgentWorkspaceShortcut({
+      altKey: true,
+      ctrlKey: false,
+      key: "a",
+      metaKey: true,
+      shiftKey: true,
+    })).toBe(false);
+  });
+
+  it("opens the Agents workspace without requesting composer focus", () => {
+    const preventDefault = vi.fn();
+    const focusRequestId = useCodingAgentWorkspace.getState().composerFocusRequestId;
+
+    handleAgentWorkspaceShortcut({ preventDefault }, useTabs.getState());
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(useTabs.getState().tabs[0]).toMatchObject({
+      kind: "agents",
+      slug: "agents",
+      title: "Agents",
+    });
+    expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequestId);
   });
 });
 

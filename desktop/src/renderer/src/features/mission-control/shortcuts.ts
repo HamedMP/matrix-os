@@ -33,6 +33,10 @@ interface NewAgentRunShortcutTabsState {
   openTab(spec: typeof AGENTS_WORKSPACE_TAB_SPEC): void;
 }
 
+interface AgentWorkspaceShortcutTabsState {
+  openTab(spec: typeof AGENTS_WORKSPACE_TAB_SPEC): void;
+}
+
 interface NewAgentRunShortcutWorkspaceState {
   summary: { capabilities: Array<{ id: string; enabled: boolean }> } | null;
   requestComposerFocus(): void;
@@ -49,6 +53,13 @@ export function isTerminalFocusShortcut(
 ): boolean {
   const meta = event.metaKey || event.ctrlKey;
   return meta && event.altKey && !event.shiftKey && event.key.toLowerCase() === "t";
+}
+
+export function isAgentWorkspaceShortcut(
+  event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+): boolean {
+  const meta = event.metaKey || event.ctrlKey;
+  return meta && event.altKey && !event.shiftKey && event.key.toLowerCase() === "a";
 }
 
 export function handleMenuNavigate(kind: string): void {
@@ -124,6 +135,14 @@ export function handleTerminalFocusShortcut(
   tabs.openTab({ kind: "terminals", title: "Terminal" });
 }
 
+export function handleAgentWorkspaceShortcut(
+  event: Pick<KeyboardEvent, "preventDefault">,
+  tabs: AgentWorkspaceShortcutTabsState,
+): void {
+  event.preventDefault();
+  tabs.openTab(AGENTS_WORKSPACE_TAB_SPEC);
+}
+
 function canRequestAgentComposerFocus(summary: NewAgentRunShortcutWorkspaceState["summary"]): boolean {
   if (!summary) return true;
   return summary.capabilities.some((capability) => capability.id === "codingAgentsThreadCreate" && capability.enabled);
@@ -170,6 +189,10 @@ export function useGlobalShortcuts(): void {
       }
       if (isTerminalFocusShortcut(e)) {
         handleTerminalFocusShortcut(e, tabs);
+        return;
+      }
+      if (CODING_AGENTS_DESKTOP_WORKSPACE && isAgentWorkspaceShortcut(e)) {
+        handleAgentWorkspaceShortcut(e, tabs);
         return;
       }
       // New chat with the OS agent.
