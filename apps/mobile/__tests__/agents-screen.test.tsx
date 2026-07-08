@@ -6,6 +6,11 @@ jest.mock("@/lib/feature-flags", () => ({
   CODING_AGENTS_MOBILE_WORKSPACE: true,
 }));
 
+jest.mock("@react-native-async-storage/async-storage", () => ({
+  getItem: jest.fn(),
+  setItem: jest.fn(),
+}));
+
 const mockRouterPush = jest.fn();
 
 jest.mock("expo-router", () => ({
@@ -16,9 +21,11 @@ jest.mock("expo-router", () => ({
 
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Linking } from "react-native";
 import AgentsScreen from "../app/agents";
 import { useGateway } from "@/app/_layout";
+import { MOBILE_SHELL_STATE_STORAGE_KEY } from "../lib/mobile-shell-state";
 import type { GatewayClient } from "../lib/gateway-client";
 
 const useGatewayMock = useGateway as jest.MockedFunction<typeof useGateway>;
@@ -184,6 +191,52 @@ function attentionOnlySummaryFixture() {
       ],
       hasMore: false,
       limit: 20,
+    },
+  };
+}
+
+function recentWorkSummaryFixture() {
+  const summary = summaryFixture({ threadCreate: true });
+  const approvalThread = {
+    ...summary.activeThreads.items[0],
+    id: "thread_approval",
+    title: "Approve deploy plan",
+    status: "waiting_for_approval",
+    attention: "approval_required",
+    updatedAt: "2026-07-06T00:02:00.000Z",
+  };
+
+  return {
+    ...summary,
+    activeThreads: {
+      ...summary.activeThreads,
+      items: [
+        {
+          ...summary.activeThreads.items[0],
+          id: "thread_newer_running",
+          title: "Newer running task",
+          status: "running",
+          updatedAt: "2026-07-06T00:10:00.000Z",
+        },
+      ],
+    },
+    attentionThreads: {
+      items: [approvalThread],
+      hasMore: false,
+      limit: 20,
+    },
+    terminalSessions: {
+      ...summary.terminalSessions,
+      items: [
+        {
+          ...summary.terminalSessions.items[0],
+          id: "matrix-newer",
+          name: "matrix-newer",
+          status: "running",
+          attachable: true,
+          updatedAt: "2026-07-06T00:11:00.000Z",
+        },
+      ],
     },
   };
 }
@@ -456,6 +509,8 @@ function deferred<T>() {
 describe("AgentsScreen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+    jest.mocked(AsyncStorage.setItem).mockResolvedValue();
   });
 
   it("renders provider, thread, and terminal summaries", async () => {
@@ -478,8 +533,8 @@ describe("AgentsScreen", () => {
 
     expect(screen.getByText("Loading workspace...")).toBeTruthy();
     await screen.findByText("Codex");
-    expect(screen.getByText("Repair mobile route")).toBeTruthy();
-    expect(screen.getByText("matrix-abc1234")).toBeTruthy();
+    expect(screen.getAllByText("Repair mobile route").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("matrix-abc1234").length).toBeGreaterThan(0);
   });
 
   it("hydrates and updates notification preferences", async () => {
@@ -545,7 +600,7 @@ describe("AgentsScreen", () => {
 
     render(<AgentsScreen />);
 
-    await screen.findByText("Repair mobile route");
+    await screen.findAllByText("Repair mobile route");
     await act(async () => {
       fireEvent.press(screen.getByLabelText("Open thread Repair mobile route"));
     });
@@ -571,9 +626,9 @@ describe("AgentsScreen", () => {
 
     render(<AgentsScreen />);
 
-    expect(await screen.findByText("Approve deployment")).toBeTruthy();
-    expect(screen.getByText("Approval needed")).toBeTruthy();
-    expect(screen.getByText("Input needed")).toBeTruthy();
+    expect((await screen.findAllByText("Approve deployment")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Approval needed").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Input needed").length).toBeGreaterThan(0);
     expect(screen.getByLabelText("Open thread Approve deployment, Approval needed")).toBeTruthy();
     expect(screen.getByLabelText("Open thread Clarify test target, Input needed")).toBeTruthy();
     expect(screen.getByLabelText("Open thread Repair failing run")).toBeTruthy();
@@ -600,16 +655,96 @@ describe("AgentsScreen", () => {
     render(<AgentsScreen />);
 
     expect(await screen.findByText("Needs Attention")).toBeTruthy();
-    expect(screen.getByText("Approve deployment")).toBeTruthy();
-    expect(screen.getByText("Repair failed run")).toBeTruthy();
-    expect(screen.getByText("Approval needed")).toBeTruthy();
-    expect(screen.getByText("Failed")).toBeTruthy();
+    expect(screen.getAllByText("Approve deployment").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Repair failed run").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Approval needed").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Failed").length).toBeGreaterThan(0);
     expect(screen.getByText("No active threads.")).toBeTruthy();
 
     await act(async () => {
       fireEvent.press(screen.getByLabelText("Open attention thread Repair failed run, Failed"));
     });
     expect(mockRouterPush).toHaveBeenCalledWith("/agents/thread_failed");
+  });
+
+  it("prioritizes pending approval recent work before active runs and terminals", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: recentWorkSummaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("Recent Work");
+    expect(screen.getByLabelText("Open recent work Approve deploy plan, Approval needed")).toBeTruthy();
+    expect(screen.getByLabelText("Open recent work Newer running task")).toBeTruthy();
+    expect(screen.getByLabelText("Open recent terminal matrix-newer")).toBeTruthy();
+
+    const buttonOrder = screen.getAllByRole("button").map((node) => node.props.accessibilityLabel);
+    expect(buttonOrder.indexOf("Open recent work Approve deploy plan, Approval needed"))
+      .toBeLessThan(buttonOrder.indexOf("Open recent work Newer running task"));
+    expect(buttonOrder.indexOf("Open recent work Newer running task"))
+      .toBeLessThan(buttonOrder.indexOf("Open recent terminal matrix-newer"));
+
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open recent terminal matrix-newer"));
+    });
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith(
+      MOBILE_SHELL_STATE_STORAGE_KEY,
+      expect.stringContaining("\"lastActiveTerminalSessionId\":\"matrix-newer\""),
+    );
+    expect(mockRouterPush).toHaveBeenCalledWith("/terminal");
+
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Start a new coding-agent run"));
+    });
+    expect(mockRouterPush).toHaveBeenCalledWith("/agents/new");
+  });
+
+  it("keeps a terminal resume row when active threads fill recent work", async () => {
+    const summary = summaryFixture();
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: {
+          ...summary,
+          activeThreads: {
+            ...summary.activeThreads,
+            items: Array.from({ length: 7 }, (_, index) => ({
+              ...summary.activeThreads.items[0],
+              id: `thread_recent_${index}`,
+              title: `Active task ${index}`,
+              status: "running",
+              updatedAt: `2026-07-06T00:0${index}:00.000Z`,
+            })),
+          },
+        },
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("Recent Work");
+    expect(screen.getByLabelText("Open recent terminal matrix-abc1234")).toBeTruthy();
+    expect(screen.queryByLabelText("Open recent work Active task 1")).toBeNull();
   });
 
   it("renders read-only preview summaries without unsafe origin details", async () => {

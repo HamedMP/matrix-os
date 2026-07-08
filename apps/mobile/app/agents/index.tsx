@@ -6,6 +6,8 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchResponse, FileWriteRequest, PreviewSessionSummary, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
+import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
+import { isSafeShellSessionName } from "@/lib/terminal-state";
 
 type ScreenState =
   | { status: "loading"; summary: null; error: null }
@@ -61,6 +63,30 @@ type SourcePullRequestState =
 
 type FileReference = Pick<FileReadRequest, "projectId" | "worktreeId" | "path">;
 type FileBrowserStatus = "idle" | "loading" | "ready" | "error";
+type SummaryThread = RuntimeSummary["activeThreads"]["items"][number];
+type SummaryTerminalSession = RuntimeSummary["terminalSessions"]["items"][number];
+type TerminalOpenError = "Terminal session unavailable. Try again.";
+type RecentWorkItem =
+  | {
+    kind: "thread";
+    key: string;
+    title: string;
+    subtitle: string;
+    meta: string;
+    attentionLabel: string | null;
+    updatedAt: string;
+    thread: SummaryThread;
+  }
+  | {
+    kind: "terminal";
+    key: string;
+    title: string;
+    subtitle: string;
+    meta: string;
+    attentionLabel: null;
+    updatedAt: string;
+    session: SummaryTerminalSession;
+  };
 
 type ReviewSnapshotHunk = ReviewSnapshot["files"]["items"][number]["hunks"][number];
 type ReviewSnapshotLine = NonNullable<ReviewSnapshotHunk["lines"]>[number];
@@ -106,6 +132,7 @@ const NOTIFICATION_TOGGLES: { key: NotificationPreferenceKey; label: string; det
   { key: "input", label: "Input request alerts", detail: "Runs waiting for a response" },
   { key: "failed", label: "Failed run alerts", detail: "Runs that need recovery" },
 ];
+const MAX_RECENT_WORK_ITEMS = 6;
 
 const INITIAL_FILE_CONTENT_STATE: FileContentState = {
   status: "idle",
@@ -139,6 +166,78 @@ function nextSourceCommitRequestId(): string {
 
 function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
   return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
+}
+
+function timestampMs(value: string): number {
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function recentThreadPriority(thread: SummaryThread): number {
+  switch (thread.attention) {
+    case "approval_required":
+      return 0;
+    case "input_required":
+      return 1;
+    case "failed":
+      return 2;
+    default:
+      return 10;
+  }
+}
+
+function recentWorkItems(summary: RuntimeSummary): RecentWorkItem[] {
+  const threads: SummaryThread[] = [];
+
+  for (const thread of summary.attentionThreads.items) {
+    if (!threads.some((candidate) => candidate.id === thread.id)) {
+      threads.push(thread);
+    }
+  }
+  for (const thread of summary.activeThreads.items) {
+    if (!threads.some((candidate) => candidate.id === thread.id)) {
+      threads.push(thread);
+    }
+  }
+
+  const threadItems = threads.map((thread) => {
+    const attentionLabel = attentionThreadLabel(thread.attention) ?? threadAttentionLabel(thread.attention);
+    return {
+      kind: "thread" as const,
+      key: `thread:${thread.id}`,
+      title: thread.title,
+      subtitle: attentionLabel ? `${thread.providerId} - ${attentionLabel}` : thread.providerId,
+      meta: thread.status.replace(/_/g, " "),
+      attentionLabel,
+      updatedAt: thread.updatedAt,
+      thread,
+    };
+  });
+  threadItems.sort((left, right) => {
+    const priority = recentThreadPriority(left.thread) - recentThreadPriority(right.thread);
+    if (priority !== 0) return priority;
+    return timestampMs(right.updatedAt) - timestampMs(left.updatedAt);
+  });
+
+  const terminalItems = summary.terminalSessions.items
+    .filter((session) => session.status === "running" && session.attachable)
+    .map((session) => ({
+      kind: "terminal" as const,
+      key: `terminal:${session.id}`,
+      title: session.name,
+      subtitle: "Terminal session",
+      meta: session.status,
+      attentionLabel: null,
+      updatedAt: session.updatedAt,
+      session,
+    }));
+  terminalItems.sort((left, right) => timestampMs(right.updatedAt) - timestampMs(left.updatedAt));
+
+  const threadLimit = terminalItems.length > 0 ? MAX_RECENT_WORK_ITEMS - 1 : MAX_RECENT_WORK_ITEMS;
+  return [
+    ...threadItems.slice(0, threadLimit),
+    ...terminalItems,
+  ].slice(0, MAX_RECENT_WORK_ITEMS);
 }
 
 function safeFindingSummary(summary: string): string {
@@ -244,6 +343,7 @@ export default function AgentsScreen() {
   const [sourceCommitState, setSourceCommitState] = useState<SourceCommitState>(INITIAL_SOURCE_COMMIT_STATE);
   const [sourcePullRequestState, setSourcePullRequestState] = useState<SourcePullRequestState>(INITIAL_SOURCE_PULL_REQUEST_STATE);
   const [refreshing, setRefreshing] = useState(false);
+  const [terminalOpenError, setTerminalOpenError] = useState<TerminalOpenError | null>(null);
   const requestGeneration = useRef(0);
   const notificationPreferencesGeneration = useRef(0);
   const notificationPreferencesRef = useRef<CodingAgentNotificationPreferences | null>(null);
@@ -642,6 +742,28 @@ export default function AgentsScreen() {
     }
   }, [loadNotificationPreferences, loadSummary]);
 
+  const openTerminalSession = useCallback(async (session: SummaryTerminalSession) => {
+    setTerminalOpenError(null);
+    if (!isSafeShellSessionName(session.name)) {
+      setTerminalOpenError("Terminal session unavailable. Try again.");
+      return;
+    }
+    try {
+      const savedState = await loadMobileShellState();
+      await saveMobileShellState({
+        ...savedState,
+        mode: "terminal",
+        lastActiveTerminalSessionId: session.name,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch {
+      console.warn("[mobile] failed to remember recent terminal session");
+      setTerminalOpenError("Terminal session unavailable. Try again.");
+      return;
+    }
+    router.push("/terminal");
+  }, [router]);
+
   const selectReview = useCallback((reviewId: string) => {
     void loadReviewSnapshot(reviewId);
   }, [loadReviewSnapshot]);
@@ -734,6 +856,15 @@ export default function AgentsScreen() {
           ) : null}
         </View>
       </Section>
+
+      <RecentWorkSection
+        summary={summary}
+        canCreate={canCreate}
+        terminalOpenError={terminalOpenError}
+        onCreate={() => router.push("/agents/new")}
+        onOpenThread={(thread) => router.push(`/agents/${thread.id}` as any)}
+        onOpenTerminal={(session) => void openTerminalSession(session)}
+      />
 
       <Section title="Providers" count={summary.providers.length}>
         {summary.providers.length === 0 ? <EmptyText>No providers are ready.</EmptyText> : null}
@@ -856,6 +987,103 @@ export default function AgentsScreen() {
         />
       ) : null}
     </ScrollView>
+  );
+}
+
+function RecentWorkSection({
+  summary,
+  canCreate,
+  terminalOpenError,
+  onCreate,
+  onOpenThread,
+  onOpenTerminal,
+}: {
+  summary: RuntimeSummary;
+  canCreate: boolean;
+  terminalOpenError: TerminalOpenError | null;
+  onCreate: () => void;
+  onOpenThread: (thread: SummaryThread) => void;
+  onOpenTerminal: (session: SummaryTerminalSession) => void;
+}) {
+  const { theme } = useUnistyles();
+  const items = recentWorkItems(summary);
+  const count = items.length + (canCreate ? 1 : 0);
+
+  return (
+    <Section title="Recent Work" count={count}>
+      {canCreate ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Start a new coding-agent run"
+          onPress={onCreate}
+          style={({ pressed }) => [
+            styles.row,
+            pressed ? styles.rowPressed : null,
+          ]}
+        >
+          <View style={styles.rowIcon}>
+            <Ionicons name="add" size={18} color={theme.colors.moss} />
+          </View>
+          <View style={styles.rowText}>
+            <Text style={styles.rowTitle}>New run</Text>
+            <Text style={styles.rowSubtitle}>Start from a fresh prompt</Text>
+          </View>
+          <Text style={styles.rowMeta}>Create</Text>
+        </Pressable>
+      ) : null}
+      {items.length === 0 ? <EmptyText>No recent work yet.</EmptyText> : null}
+      {items.map((item) => {
+        if (item.kind === "thread") {
+          return (
+            <Pressable
+              key={item.key}
+              accessibilityRole="button"
+              accessibilityLabel={item.attentionLabel
+                ? `Open recent work ${item.title}, ${item.attentionLabel}`
+                : `Open recent work ${item.title}`}
+              onPress={() => onOpenThread(item.thread)}
+              style={({ pressed }) => [
+                styles.row,
+                pressed ? styles.rowPressed : null,
+              ]}
+            >
+              <View style={styles.rowIcon}>
+                <Ionicons name="git-branch-outline" size={18} color={theme.colors.moss} />
+              </View>
+              <View style={styles.rowText}>
+                <Text style={styles.rowTitle}>{item.title}</Text>
+                <Text style={styles.rowSubtitle}>{item.subtitle}</Text>
+                {item.attentionLabel ? <Text style={styles.attentionBadge}>{item.attentionLabel}</Text> : null}
+              </View>
+              <Text style={styles.rowMeta}>{item.meta}</Text>
+            </Pressable>
+          );
+        }
+
+        return (
+          <Pressable
+            key={item.key}
+            accessibilityRole="button"
+            accessibilityLabel={`Open recent terminal ${item.title}`}
+            onPress={() => onOpenTerminal(item.session)}
+            style={({ pressed }) => [
+              styles.row,
+              pressed ? styles.rowPressed : null,
+            ]}
+          >
+            <View style={styles.rowIcon}>
+              <Ionicons name="terminal-outline" size={18} color={theme.colors.moss} />
+            </View>
+            <View style={styles.rowText}>
+              <Text style={styles.rowTitle}>{item.title}</Text>
+              <Text style={styles.rowSubtitle}>{item.subtitle}</Text>
+            </View>
+            <Text style={styles.rowMeta}>{item.meta}</Text>
+          </Pressable>
+        );
+      })}
+      {terminalOpenError ? <Text style={styles.notificationError}>{terminalOpenError}</Text> : null}
+    </Section>
   );
 }
 
