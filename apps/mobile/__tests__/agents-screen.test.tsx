@@ -211,6 +211,24 @@ function reviewSnapshotWithHunks() {
             newStart: 93,
             newLines: 2,
             partial: false,
+            lines: [
+              {
+                kind: "context",
+                oldLine: 88,
+                newLine: 93,
+                content: "const request = parseReviewRequest(input);",
+              },
+              {
+                kind: "remove",
+                oldLine: 89,
+                content: "return rawReviewDetails;",
+              },
+              {
+                kind: "add",
+                newLine: 94,
+                content: "return safeReviewDetails;",
+              },
+            ],
           },
         ],
       })),
@@ -379,6 +397,44 @@ describe("AgentsScreen", () => {
 
     expect(hunk.props.accessibilityState?.selected).toBe(true);
     expect(screen.queryByText(/export const|function create|raw diff/i)).toBeNull();
+  });
+
+  it("renders bounded review diff lines with mobile old and new line labels", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+      getCodingAgentReviewSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: reviewSnapshotWithHunks(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("matrix-os");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #759"));
+    });
+
+    const contextLine = await screen.findByLabelText("Context line old 88 new 93");
+    const removedLine = screen.getByLabelText("Removed line old 89");
+    const addedLine = screen.getByLabelText("Added line new 94");
+
+    expect(contextLine.props.children).toContain("const request = parseReviewRequest(input);");
+    expect(removedLine.props.children).toContain("return rawReviewDetails;");
+    expect(addedLine.props.children).toContain("return safeReviewDetails;");
+    expect(screen.getByText("+")).toBeTruthy();
+    expect(screen.getByText("-")).toBeTruthy();
   });
 
   it("opens the mobile composer with bounded selected review hunk context", async () => {

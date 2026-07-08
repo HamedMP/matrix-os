@@ -28,6 +28,9 @@ type ReviewSnapshotState =
   | { status: "ready"; selectedReviewId: string; snapshot: ReviewSnapshot; error: null }
   | { status: "error"; selectedReviewId: string; snapshot: null; error: "Review details unavailable" };
 
+type ReviewSnapshotHunk = ReviewSnapshot["files"]["items"][number]["hunks"][number];
+type ReviewSnapshotLine = NonNullable<ReviewSnapshotHunk["lines"]>[number];
+
 type SelectedReviewHunk = {
   reviewId: string;
   snapshotKey: string;
@@ -66,8 +69,33 @@ function safeSnapshotText(value: string, fallback: string): string {
   return SECRET_LIKE_FINDING_TEXT.test(value) ? fallback : value;
 }
 
-function formatHunkRange(hunk: ReviewSnapshot["files"]["items"][number]["hunks"][number]): string {
+function formatHunkRange(hunk: ReviewSnapshotHunk): string {
   return `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
+}
+
+function reviewDiffLineMarker(line: ReviewSnapshotLine): string {
+  if (line.kind === "add") return "+";
+  if (line.kind === "remove") return "-";
+  return " ";
+}
+
+function reviewDiffOldLine(line: ReviewSnapshotLine): number | null {
+  return "oldLine" in line ? line.oldLine : null;
+}
+
+function reviewDiffNewLine(line: ReviewSnapshotLine): number | null {
+  return "newLine" in line ? line.newLine : null;
+}
+
+function reviewDiffLineLabel(line: ReviewSnapshotLine): string {
+  const parts = [
+    line.kind === "add" ? "Added line" : line.kind === "remove" ? "Removed line" : "Context line",
+  ];
+  const oldLine = reviewDiffOldLine(line);
+  const newLine = reviewDiffNewLine(line);
+  if (oldLine !== null) parts.push("old", String(oldLine));
+  if (newLine !== null) parts.push("new", String(newLine));
+  return parts.join(" ");
 }
 
 function reviewSnapshotSelectionKey(snapshot: ReviewSnapshot): string {
@@ -83,6 +111,40 @@ function reviewSnapshotSelectionKey(snapshot: ReviewSnapshot): string {
       file.hunks.map((hunk) => `${hunk.id}:${hunk.oldStart}:${hunk.oldLines}:${hunk.newStart}:${hunk.newLines}:${hunk.partial ? "partial" : "complete"}`).join("|"),
     ].join(":")).join("\u0001"),
   ].join("\u0002");
+}
+
+function ReviewDiffLines({ lines }: { lines: ReviewSnapshotLine[] }) {
+  if (!lines.length) return null;
+
+  return (
+    <View style={styles.reviewDiffLines}>
+      {lines.map((line, index) => (
+        <View
+          key={`${line.kind}:${reviewDiffOldLine(line) ?? ""}:${reviewDiffNewLine(line) ?? ""}:${index}`}
+          style={styles.reviewDiffLine}
+        >
+          <Text
+            style={[
+              styles.reviewDiffMarker,
+              line.kind === "add" ? styles.reviewDiffAdded : null,
+              line.kind === "remove" ? styles.reviewDiffRemoved : null,
+            ]}
+          >
+            {reviewDiffLineMarker(line)}
+          </Text>
+          <Text style={styles.reviewDiffLineNumber}>{reviewDiffOldLine(line) ?? ""}</Text>
+          <Text style={styles.reviewDiffLineNumber}>{reviewDiffNewLine(line) ?? ""}</Text>
+          <Text
+            accessibilityLabel={reviewDiffLineLabel(line)}
+            selectable
+            style={styles.reviewDiffContent}
+          >
+            {line.content}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
 }
 
 export default function AgentsScreen() {
@@ -508,32 +570,37 @@ function ReviewSnapshotFileRow({
             const hunkKey = `${fileIndex}\u0000${file.path}\u0000${hunk.id}\u0000${hunkIndex}`;
             const selected = selectedHunk?.reviewId === selectedReviewId && selectedHunk.snapshotKey === snapshotKey && selectedHunk.key === hunkKey;
             return (
-              <Pressable
+              <View
                 key={`${file.path}:${fileIndex}:${hunk.id}:${hunkIndex}`}
-                accessibilityRole="button"
-                accessibilityLabel={`Select hunk ${hunkIndex + 1} in ${displayPath}`}
-                accessibilityState={{ selected }}
-                onPress={() => onSelectHunk({
-                  reviewId: selectedReviewId,
-                  snapshotKey,
-                  key: hunkKey,
-                  filePath: file.path,
-                  hunkId: hunk.id,
-                  hunkIndex,
-                  oldStart: hunk.oldStart,
-                  oldLines: hunk.oldLines,
-                  newStart: hunk.newStart,
-                  newLines: hunk.newLines,
-                })}
                 style={[
                   styles.reviewHunkRow,
                   selected ? styles.selectedReviewHunkRow : null,
                 ]}
               >
-                <Text style={styles.reviewHunkLabel}>{`Hunk ${hunkIndex + 1}`}</Text>
-                <Text style={styles.reviewHunkRange}>{formatHunkRange(hunk)}</Text>
-                {hunk.partial ? <Text style={styles.reviewHunkPartial}>Partial hunk</Text> : null}
-              </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Select hunk ${hunkIndex + 1} in ${displayPath}`}
+                  accessibilityState={{ selected }}
+                  onPress={() => onSelectHunk({
+                    reviewId: selectedReviewId,
+                    snapshotKey,
+                    key: hunkKey,
+                    filePath: file.path,
+                    hunkId: hunk.id,
+                    hunkIndex,
+                    oldStart: hunk.oldStart,
+                    oldLines: hunk.oldLines,
+                    newStart: hunk.newStart,
+                    newLines: hunk.newLines,
+                  })}
+                  style={styles.reviewHunkPressable}
+                >
+                  <Text style={styles.reviewHunkLabel}>{`Hunk ${hunkIndex + 1}`}</Text>
+                  <Text style={styles.reviewHunkRange}>{formatHunkRange(hunk)}</Text>
+                  {hunk.partial ? <Text style={styles.reviewHunkPartial}>Partial hunk</Text> : null}
+                </Pressable>
+                <ReviewDiffLines lines={hunk.lines ?? []} />
+              </View>
             );
           })}
         </View>
@@ -826,12 +893,15 @@ const styles = StyleSheet.create((theme, rt) => ({
     borderWidth: 1,
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.card,
-    padding: theme.spacing.sm,
-    gap: 2,
+    overflow: "hidden",
   },
   selectedReviewHunkRow: {
     borderColor: theme.colors.forest,
     backgroundColor: theme.colors.background,
+  },
+  reviewHunkPressable: {
+    padding: theme.spacing.sm,
+    gap: 2,
   },
   reviewHunkLabel: {
     fontFamily: theme.fonts.sansSemiBold,
@@ -847,6 +917,47 @@ const styles = StyleSheet.create((theme, rt) => ({
     fontFamily: theme.fonts.sans,
     fontSize: 11,
     color: theme.colors.mutedForeground,
+  },
+  reviewDiffLines: {
+    borderTopWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.secondary,
+  },
+  reviewDiffLine: {
+    minHeight: 24,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: theme.spacing.xs,
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  reviewDiffMarker: {
+    width: 14,
+    fontFamily: theme.fonts.mono,
+    fontSize: 11,
+    color: theme.colors.mutedForeground,
+  },
+  reviewDiffAdded: {
+    color: theme.colors.forest,
+  },
+  reviewDiffRemoved: {
+    color: theme.colors.destructive,
+  },
+  reviewDiffLineNumber: {
+    width: 34,
+    textAlign: "right",
+    fontFamily: theme.fonts.mono,
+    fontSize: 11,
+    color: theme.colors.mutedForeground,
+  },
+  reviewDiffContent: {
+    flex: 1,
+    minWidth: 0,
+    fontFamily: theme.fonts.mono,
+    fontSize: 11,
+    color: theme.colors.foreground,
   },
   reviewFollowUpButton: {
     minHeight: 42,
