@@ -1,6 +1,6 @@
 # Current State: Coding Agent Shells
 
-**Branch stack**: implementation checkpoint merged to `main` through PR #862 (`b437ef39b0dfe3ee0b5bc3238e3597be85205c12`)
+**Branch stack**: implementation checkpoint merged to `main` through PR #863 (`87bc72d0fdd9067fcec395c479de80fcaccfe641`)
 **Updated**: 2026-07-08
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 

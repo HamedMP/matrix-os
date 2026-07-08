@@ -1,10 +1,10 @@
 # Completion Audit: Coding Agent Shells
 
-**Audited commit**: `b437ef39b0dfe3ee0b5bc3238e3597be85205c12`
+**Audited commit**: `87bc72d0fdd9067fcec395c479de80fcaccfe641`
 **Date**: 2026-07-08
 **Scope**: Evidence review for the Matrix OS coding-agent desktop, mobile, browser, and gateway shell implementation checkpoint.
 
-This audit records current evidence. It does not mark the full rollout complete while release workflows, device smoke, and broader cross-shell validation remain outstanding.
+This audit records current evidence. It does not mark the full rollout complete while device smoke and broader cross-shell validation remain outstanding.
 
 ## Evidence Matrix
 
@@ -13,7 +13,7 @@ This audit records current evidence. It does not mark the full rollout complete 
 | Shared Matrix-native contracts for runtime summaries, providers, threads, events, approvals, terminal summaries, files, reviews, previews, source control, notifications, and safe errors | `packages/contracts/src/index.ts`; `tests/contracts/coding-agents.test.ts`; `current-state.md` Shared Contracts section | Implemented |
 | Gateway runtime summary and read-only hydration source for shells | `packages/gateway/src/coding-agents/runtime-summary.ts`; `packages/gateway/src/coding-agents/routes.ts`; `tests/gateway/coding-agents-summary.test.ts` | Implemented |
 | Provider registry and normalized server-side adapters | `packages/gateway/src/coding-agents/provider-registry.ts`; `packages/gateway/src/coding-agents/workspace-provider.ts`; `tests/gateway/coding-agents-workspace-provider.test.ts` | Implemented behind flags |
-| Thread create, replay, stream, abort, approval, and input lifecycle | `packages/gateway/src/coding-agents/thread-store.ts`; `packages/gateway/src/coding-agents/thread-stream.ts`; `tests/gateway/coding-agents-threads.test.ts`; `tests/gateway/coding-agents-thread-stream.test.ts` | Implemented |
+| Thread create, replay, stream, abort, approval, input lifecycle, and startup-stopped session reconciliation | `packages/gateway/src/coding-agents/thread-store.ts`; `packages/gateway/src/coding-agents/thread-stream.ts`; `packages/gateway/src/workspace-startup-recovery.ts`; `tests/gateway/coding-agents-threads.test.ts`; `tests/gateway/coding-agents-thread-stream.test.ts`; `tests/gateway/coding-agents-session-stop-reconciler.test.ts`; `tests/gateway/workspace-startup-recovery.test.ts`; `tests/gateway/agent-session-manager.test.ts` | Implemented |
 | Cross-shell terminal binding through canonical Matrix terminal sessions | `current-state.md` Terminal Session Surfaces section; desktop/mobile workspace tests listed there | Implemented without a forked terminal model |
 | Desktop coding-agent workspace and trusted main-process bridge | `desktop/src/main/coding-agents/runtime-summary-client.ts`; `desktop/src/renderer/src/features/coding-agents/AgentWorkspace.tsx`; `tests/desktop/coding-agent-workspace.test.tsx`; `tests/desktop/coding-agent-runtime-client.test.ts` | Implemented |
 | Mobile SDK 57 coding-agent workspace and phone-first routes | `apps/mobile/app/agents/index.tsx`; `apps/mobile/app/agents/[threadId].tsx`; `apps/mobile/components/AgentComposerScreen.tsx`; mobile tests listed in `current-state.md` | Implemented |
@@ -26,7 +26,7 @@ This audit records current evidence. It does not mark the full rollout complete 
 
 ## Validation Evidence
 
-GitHub CI for `b437ef39b0dfe3ee0b5bc3238e3597be85205c12` completed successfully:
+GitHub CI for `87bc72d0fdd9067fcec395c479de80fcaccfe641` completed successfully:
 
 - Pattern Scan
 - React Doctor
@@ -39,7 +39,13 @@ GitHub CI for `b437ef39b0dfe3ee0b5bc3238e3597be85205c12` completed successfully:
 
 Docker Tests and Host Bundle Release completed successfully for the same commit. The Host Bundle Release built the bundle, published the release, and triggered the exact-version VPS deploy job.
 
-Platform Cloud Run completed successfully for the implementation checkpoint commit `87ce9e8cc2a6357a122ea0fd9120487702ea9323`.
+Platform Cloud Run completed successfully for the browser Workspace implementation checkpoint commit `87ce9e8cc2a6357a122ea0fd9120487702ea9323`. The later `87bc72d0fdd9067fcec395c479de80fcaccfe641` checkpoint changed gateway/spec state and did not require a platform app-shell deploy.
+
+Focused local validation on `87bc72d0fdd9067fcec395c479de80fcaccfe641` also passed:
+
+- `pnpm exec vitest run tests/contracts/coding-agents.test.ts tests/gateway/coding-agents-summary.test.ts tests/gateway/coding-agents-threads.test.ts tests/gateway/coding-agents-thread-stream.test.ts tests/gateway/coding-agents-session-stop-reconciler.test.ts tests/gateway/agent-session-manager.test.ts tests/gateway/workspace-startup-recovery.test.ts`
+- `pnpm exec vitest run tests/desktop/coding-agent-runtime-client.test.ts tests/desktop/coding-agent-thread-stream.test.ts tests/desktop/coding-agent-workspace.test.tsx tests/desktop/ipc-contract.test.ts`
+- `pnpm --filter matrix-os-mobile exec jest __tests__/agents-screen.test.tsx __tests__/agent-thread-screen.test.tsx __tests__/agents-preview-screen.test.tsx __tests__/agent-workspace-state.test.ts __tests__/gateway-client.test.ts --runInBand`
 
 ## Remaining Validation
 
