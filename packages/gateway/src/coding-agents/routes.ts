@@ -29,6 +29,8 @@ import {
   SourceControlCreatePullRequestResponseSchema,
   SourceControlPrepareCommitRequestSchema,
   SourceControlPrepareCommitResponseSchema,
+  CodingAgentNotificationPreferencesSchema,
+  CodingAgentNotificationPreferencesUpdateSchema,
 } from "@matrix-os/contracts";
 import {
   isRequestPrincipalError,
@@ -55,6 +57,7 @@ import {
   CodingAgentSourceControlError,
   type CodingAgentSourceControlStore,
 } from "./source-control.js";
+import type { CodingAgentNotificationPreferenceStore } from "./notification-preferences.js";
 
 export interface CodingAgentRouteDeps {
   service: CodingAgentRuntimeSummaryService;
@@ -62,6 +65,7 @@ export interface CodingAgentRouteDeps {
   reviews?: CodingAgentReviewSummaryStore;
   files?: CodingAgentFileStore;
   sourceControl?: CodingAgentSourceControlStore;
+  notificationPreferences?: CodingAgentNotificationPreferenceStore;
   getPrincipal?: (c: Context) => RequestPrincipal;
 }
 
@@ -71,6 +75,7 @@ const THREAD_APPROVAL_BODY_LIMIT = 8 * 1024;
 const THREAD_INPUT_BODY_LIMIT = 40 * 1024;
 const FILE_WRITE_BODY_LIMIT = 512 * 1024;
 const SOURCE_CONTROL_BODY_LIMIT = 256 * 1024;
+const NOTIFICATION_PREFERENCES_BODY_LIMIT = 4 * 1024;
 
 const AbortThreadBodySchema = z.object({
   clientRequestId: RequestIdSchema,
@@ -142,6 +147,15 @@ function sourceControlNoChanges() {
     code: "source_control_no_changes",
     safeMessage: "No source changes are ready to commit.",
     retryable: false,
+  });
+}
+
+function notificationPreferencesUnavailable() {
+  return SafeClientErrorSchema.parse({
+    code: "notification_preferences_unavailable",
+    safeMessage: "Notification preferences are temporarily unavailable. Try again.",
+    retryable: true,
+    recoveryActions: ["retry"],
   });
 }
 
@@ -219,6 +233,10 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
   });
   const sourceControlBodyLimit = bodyLimit({
     maxSize: SOURCE_CONTROL_BODY_LIMIT,
+    onError: (c) => c.json({ error: bodyTooLarge() }, 413),
+  });
+  const notificationPreferencesBodyLimit = bodyLimit({
+    maxSize: NOTIFICATION_PREFERENCES_BODY_LIMIT,
     onError: (c) => c.json({ error: bodyTooLarge() }, 413),
   });
 
@@ -537,6 +555,49 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         }
         console.warn("[coding-agents] source-control pull request route failed:", err instanceof Error ? err.message : String(err));
         return c.json({ error: sourceControlUnavailable() }, 503);
+      }
+    });
+  }
+
+  if (deps.notificationPreferences) {
+    app.get("/notification-preferences", async (c) => {
+      try {
+        const principal = principalFor(c);
+        const preferences = CodingAgentNotificationPreferencesSchema.parse(
+          await deps.notificationPreferences!.load(principal),
+        );
+        return c.json({ preferences });
+      } catch (err: unknown) {
+        if (isRequestPrincipalError(err)) {
+          const mapped = mapRequestPrincipalError(err);
+          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+        }
+        console.warn("[coding-agents] notification preferences route failed:", err instanceof Error ? err.message : String(err));
+        return c.json({ error: notificationPreferencesUnavailable() }, 503);
+      }
+    });
+
+    app.put("/notification-preferences", notificationPreferencesBodyLimit, async (c) => {
+      try {
+        const principal = principalFor(c);
+        const request = CodingAgentNotificationPreferencesUpdateSchema.parse(await c.req.json());
+        const preferences = CodingAgentNotificationPreferencesSchema.parse(
+          await deps.notificationPreferences!.save(principal, request),
+        );
+        return c.json({ preferences });
+      } catch (err: unknown) {
+        if (isBodyLimitError(err)) {
+          return c.json({ error: bodyTooLarge() }, 413);
+        }
+        if (isRequestPrincipalError(err)) {
+          const mapped = mapRequestPrincipalError(err);
+          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+        }
+        if (err instanceof z.ZodError || err instanceof SyntaxError) {
+          return c.json({ error: validationFailed() }, 400);
+        }
+        console.warn("[coding-agents] notification preferences update failed:", err instanceof Error ? err.message : String(err));
+        return c.json({ error: notificationPreferencesUnavailable() }, 503);
       }
     });
   }

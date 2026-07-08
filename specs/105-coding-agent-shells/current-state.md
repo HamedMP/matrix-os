@@ -1,6 +1,6 @@
 # Current State: Coding Agent Shells
 
-**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-notification-dedupe`
+**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-notification-prefs`
 **Updated**: 2026-07-07
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
@@ -26,6 +26,7 @@ Implemented coding-agent schemas:
 
 - IDs and bounds: `RuntimeIdSchema`, `ProviderIdSchema`, `ProjectIdSchema`, `TaskIdSchema`, `ThreadIdSchema`, `EventIdSchema`, `ApprovalIdSchema`, `RequestIdSchema`, `CorrelationIdSchema`, `TerminalSessionIdSchema`, `WorktreeIdSchema`, `CursorSchema`, `IsoTimestampSchema`, `SafeDisplayStringSchema`, `SafeClientErrorSchema`.
 - Runtime summary: `RuntimeTargetSchema`, `RuntimeCapabilitySchema`, `RuntimeLimitsSchema`, `RuntimeSummarySchema` with bounded `activeThreads`, separate bounded `attentionThreads`, and bounded `previewSessions`.
+- Notifications: `CodingAgentAttentionNotificationKindSchema`, `CodingAgentNotificationPreferencesSchema`, and `CodingAgentNotificationPreferencesUpdateSchema` for owner-scoped attention push preferences.
 - Providers: `AgentProviderSummarySchema`, provider availability/install/auth enums, `AgentModeSchema`, `ApprovalPolicySchema`, `SandboxModeSchema`, `SafeSetupActionSchema`.
 - Threads: `CreateAgentThreadRequestSchema`, `AgentThreadSummarySchema`, `AgentThreadStatusSchema`, `AgentAttachmentSchema`, `AgentThreadSnapshotSchema`.
 - Events: `AgentThreadEventSchema` discriminated union with lifecycle, text delta, tool activity, approval/input, file change, review ready, terminal bound, safe error, and completion event variants.
@@ -62,6 +63,8 @@ Implemented routes:
 | `/api/coding-agents/files/write` | `POST` | Implemented | Authenticated owner-worktree UTF-8 write. Validates `FileWriteRequestSchema`, applies a 512 KiB JSON body limit for escaped 64 KiB content, rejects traversal/symlinks, caps content at 64 KiB, preserves existing file mode on replace, rejects updates from truncated snapshots, requires matching `baseEtag` for updates or `baseEtag: null` for creates, and returns `FileWriteResponseSchema` or safe conflict errors. |
 | `/api/coding-agents/source-control/prepare-commit` | `POST` | Implemented | Authenticated owner-worktree local commit preparation. Validates `SourceControlPrepareCommitRequestSchema`, uses a body limit and bounded git operations, preserves previous staged state on rollback, and returns only `SourceControlPrepareCommitResponseSchema` metadata. |
 | `/api/coding-agents/source-control/pull-requests` | `POST` | Implemented | Authenticated owner-worktree pull request creation. Validates `SourceControlCreatePullRequestRequestSchema`, detects the current branch and GitHub origin server-side, returns an existing PR for the same head branch when present, otherwise pushes the branch and creates a PR through gateway-owned credentials. Returns only `SourceControlCreatePullRequestResponseSchema` metadata. |
+| `/api/coding-agents/notification-preferences` | `GET` | Implemented | Authenticated per-owner preference read. Returns `CodingAgentNotificationPreferencesSchema` defaults when no preference file exists for the authenticated owner. |
+| `/api/coding-agents/notification-preferences` | `PUT` | Implemented | Authenticated per-owner preference update. Uses a 4 KiB body limit, validates `CodingAgentNotificationPreferencesUpdateSchema`, atomically writes the authenticated owner's preference file, and returns only validated preference booleans. |
 
 Security and ownership:
 
@@ -150,7 +153,7 @@ Thread store behavior:
 - Idempotent thread creation, aborts, approval decisions, and input answers by bounded request-id arrays.
 - Event replay with bounded per-thread event storage; default thread snapshots return the latest bounded event window, while explicit cursors continue forward from the cursor.
 - Safe terminal statuses and attention states derived from events.
-- Thread-event sinks can bridge approval, input, and failed attention events to the existing push channel with owner scope, generic copy, and bounded `threadId` metadata only.
+- Thread-event sinks can bridge approval, input, and failed attention events to the existing push channel with owner scope, generic copy, bounded `threadId` metadata only, capped TTL dedupe, and owner notification preferences.
 
 Review summary behavior:
 
@@ -165,6 +168,7 @@ Focused tests:
 
 - `tests/gateway/coding-agents-threads.test.ts`
 - `tests/gateway/coding-agents-attention-notifications.test.ts`
+- `tests/gateway/coding-agents-notification-preferences.test.ts`
 - `tests/gateway/push-adapter.test.ts`
 - `tests/gateway/coding-agents-workspace-provider.test.ts`
 - `tests/gateway/agent-launcher.test.ts`
@@ -414,5 +418,5 @@ git diff --check
 - File/review/preview/source-control shell surfaces: read-only review summaries now have coding-agent contracts/routes/desktop IPC/mobile clients plus desktop and mobile read-only review panels. A read-only review snapshot route now exposes bounded diff hunk metadata and capped hunk line bodies from safe owner worktrees plus partial findings-derived fallback metadata for shell diff panels. Runtime summaries now include safe preview summary rows from existing workspace preview records, and the desktop/mobile Agents workspaces render those rows read-only. Desktop also has a read-only preview inspector with HTTPS-only external launch through the existing safe IPC path, mobile has an HTTPS-only preview route using the existing app runtime frame, and the browser Workspace preview panel renders validated active-project coding-agent preview origin/status rows with direct launch limited to HTTPS origins. Gateway now has bounded browse/search/read and conflict-safe write routes for owner worktree files, desktop/mobile review details can render one selected bounded file snapshot through trusted clients, desktop/mobile review details can prepare a local source-control commit through trusted clients, the gateway can create or return a GitHub pull request from a validated owner worktree without exposing credentials, and desktop/mobile review details can trigger that PR creation through trusted clients with generic safe error states and safe HTTPS open actions for the returned pull request URL. Remaining work: browser-shell source-control entry if needed.
 - Approval/input shell actions: desktop and mobile approval decisions plus user-input answers now use trusted gateway clients, bounded UI controls, idempotent request ids, and focused tests. Remaining work: cross-shell resolved-state refresh tests and richer mobile action-sheet polish.
 - Browser shell entry point: Canvas-first placement is still undecided.
-- Notifications/attention routing: desktop notification IPC exists and notification clicks focus the coding-agent workspace thread in the Agents tab with a visible current-thread marker. Gateway runtime summaries expose bounded `attentionThreads` separately from `activeThreads`, allowing failed or waiting attention to be surfaced without reclassifying terminal threads as active. Desktop and mobile dashboards now render the `attentionThreads` list directly. Gateway thread-event sinks can emit safe push-channel payloads for approval-required, input-required, and failed attention events through a capped TTL dedupe registry, and mobile push notification taps can route bounded coding-agent `threadId` payloads into the existing thread detail route. Remaining work: user notification preferences and cross-device delivery policy are not yet implemented.
+- Notifications/attention routing: desktop notification IPC exists and notification clicks focus the coding-agent workspace thread in the Agents tab with a visible current-thread marker. Gateway runtime summaries expose bounded `attentionThreads` separately from `activeThreads`, allowing failed or waiting attention to be surfaced without reclassifying terminal threads as active. Desktop and mobile dashboards now render the `attentionThreads` list directly. Gateway thread-event sinks can emit safe push-channel payloads for approval-required, input-required, and failed attention events through a capped TTL dedupe registry, per-owner notification preferences can disable approval/input/failed attention push delivery before channel send, and mobile push notification taps can route bounded coding-agent `threadId` payloads into the existing thread detail route. Remaining work: desktop/mobile preference controls and cross-device delivery policy are not yet implemented.
 - Public docs: public Matrix OS docs and the internal operator runbook are present. Remaining work is keeping them synchronized with later write/source-control, provider setup, and browser entry slices.

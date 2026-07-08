@@ -138,6 +138,25 @@ export const RuntimeLimitsSchema = z.object({
   maxListItems: z.number().int().min(1).max(200),
 }).strict();
 
+export const CodingAgentAttentionNotificationKindSchema = z.enum(["approval", "input", "failed"]);
+
+export const CodingAgentNotificationPreferencesSchema = z.object({
+  attentionPush: z.object({
+    approval: z.boolean(),
+    input: z.boolean(),
+    failed: z.boolean(),
+  }).strict(),
+}).strict();
+
+export const CodingAgentNotificationPreferencesUpdateSchema = CodingAgentNotificationPreferencesSchema;
+
+export type CodingAgentAttentionNotificationKind =
+  z.infer<typeof CodingAgentAttentionNotificationKindSchema>;
+export type CodingAgentNotificationPreferences =
+  z.infer<typeof CodingAgentNotificationPreferencesSchema>;
+export type CodingAgentNotificationPreferencesUpdate =
+  z.infer<typeof CodingAgentNotificationPreferencesUpdateSchema>;
+
 export const ProviderKindSchema = z.enum(["claude", "codex", "opencode", "cursor", "custom"]);
 export const ProviderAvailabilitySchema = z.enum([
   "available",

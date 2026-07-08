@@ -1,4 +1,9 @@
-import { ThreadIdSchema, type AgentThreadEvent } from "@matrix-os/contracts";
+import {
+  CodingAgentAttentionNotificationKindSchema,
+  ThreadIdSchema,
+  type AgentThreadEvent,
+  type CodingAgentAttentionNotificationKind,
+} from "@matrix-os/contracts";
 import type { ChannelReply } from "../channels/types.js";
 import type { CodingAgentThreadStore } from "./thread-store.js";
 
@@ -6,31 +11,40 @@ const PUSH_CHAT_ID = "coding-agents";
 const DEFAULT_DEDUPE_WINDOW_MS = 2 * 60 * 1000;
 const DEFAULT_MAX_DEDUPE_ENTRIES = 512;
 
-type AttentionNotificationKind = "approval" | "input" | "failed";
-
 export interface CodingAgentAttentionNotificationSender {
   send(reply: ChannelReply): Promise<void>;
+}
+
+export interface CodingAgentAttentionNotificationPreferences {
+  isAttentionPushEnabled(input: {
+    ownerId: string;
+    threadId: string;
+    kind: CodingAgentAttentionNotificationKind;
+  }): boolean | Promise<boolean>;
 }
 
 export interface CodingAgentAttentionNotificationsOptions {
   threads: CodingAgentThreadStore;
   send: (reply: ChannelReply) => Promise<void>;
+  preferences?: CodingAgentAttentionNotificationPreferences;
   now?: () => number;
   dedupeWindowMs?: number;
   maxDedupeEntries?: number;
 }
 
-function notificationKindFor(events: AgentThreadEvent[]): AttentionNotificationKind | null {
+function notificationKindFor(events: AgentThreadEvent[]): CodingAgentAttentionNotificationKind | null {
   for (const event of events) {
-    if (event.type === "approval.requested") return "approval";
-    if (event.type === "user_input.requested") return "input";
-    if (event.type === "thread.error") return "failed";
-    if (event.type === "thread.completed" && event.outcome === "failed") return "failed";
+    if (event.type === "approval.requested") return CodingAgentAttentionNotificationKindSchema.parse("approval");
+    if (event.type === "user_input.requested") return CodingAgentAttentionNotificationKindSchema.parse("input");
+    if (event.type === "thread.error") return CodingAgentAttentionNotificationKindSchema.parse("failed");
+    if (event.type === "thread.completed" && event.outcome === "failed") {
+      return CodingAgentAttentionNotificationKindSchema.parse("failed");
+    }
   }
   return null;
 }
 
-function bodyFor(kind: AttentionNotificationKind): string {
+function bodyFor(kind: CodingAgentAttentionNotificationKind): string {
   if (kind === "approval") return "Agent needs approval.";
   if (kind === "input") return "Agent needs input.";
   return "Agent run needs attention.";
@@ -93,12 +107,29 @@ export function registerCodingAgentAttentionNotifications(options: CodingAgentAt
     if (!kind) return;
     const notification = buildCodingAgentAttentionNotification({ ownerId, threadId, events });
     if (!notification) return;
-    const currentTime = now();
-    if (!remember(`${ownerId}:${threadId}:${kind}`, currentTime)) return;
+    const safeNotification = notification;
+    const dedupeKey = `${ownerId}:${threadId}:${kind}`;
 
-    void options.send(notification).catch((err: unknown) => {
-      console.warn("[coding-agents] attention notification failed:", err instanceof Error ? err.message : String(err));
-    });
+    function sendIfEligible(): void {
+      if (!remember(dedupeKey, now())) return;
+      void options.send(safeNotification).catch((err: unknown) => {
+        console.warn("[coding-agents] attention notification failed:", err instanceof Error ? err.message : String(err));
+      });
+    }
+
+    if (options.preferences) {
+      void Promise.resolve(options.preferences.isAttentionPushEnabled({ ownerId, threadId, kind }))
+        .then((enabled) => {
+          if (!enabled) return;
+          sendIfEligible();
+        })
+        .catch((err: unknown) => {
+          console.warn("[coding-agents] attention notification preference check failed:", err instanceof Error ? err.message : String(err));
+        });
+      return;
+    }
+
+    sendIfEligible();
   });
   return {
     dispose() {
