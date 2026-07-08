@@ -1,9 +1,13 @@
-import { Save } from "lucide-react";
+import type { AgentProviderSummary, RuntimeSummary } from "@matrix-os/contracts";
+import { Save, SquareTerminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { type AgentConfigView, normalizeAgentConfig, selectedModelEffort } from "../../../lib/agent-config";
 import { Button, StatusDot } from "../../../design/primitives";
 import { toUserMessage } from "../../../lib/errors";
+import { invoke } from "../../../lib/operator";
 import { useConnection } from "../../../stores/connection";
+import { useTabs } from "../../../stores/tabs";
+import { openProviderSetupTerminal, providerSetupCommands, type ProviderSetupCommand } from "../../coding-agents/provider-setup-terminal";
 import { Card, Empty, SectionHeader } from "./section-kit";
 
 const SOUL_PATH = "/files/system/soul.md";
@@ -29,6 +33,27 @@ const STATUS_COLOR: Record<AgentCredential["status"], string> = {
   revoked: "var(--warning)",
   failed: "var(--danger)",
 };
+
+const PROVIDER_STATUS_COLOR: Record<AgentProviderSummary["availability"], string> = {
+  available: "var(--success)",
+  setup_required: "var(--warning)",
+  auth_required: "var(--warning)",
+  installing: "var(--accent)",
+  unavailable: "var(--danger)",
+  unknown: "var(--text-tertiary)",
+};
+
+const SETUP_DISCONNECTED_ERROR = "Connect to your Matrix computer before opening setup.";
+const SETUP_TERMINAL_ERROR = "Could not open setup terminal. Try again from Terminal.";
+
+function titleCaseStatus(value: string): string {
+  const label = value.replace(/_/g, " ");
+  return `${label.charAt(0).toUpperCase()}${label.slice(1)}`;
+}
+
+function providerStatusLine(provider: AgentProviderSummary): string {
+  return `${titleCaseStatus(provider.availability)} · ${provider.installStatus} / ${provider.authStatus}`;
+}
 
 function Segmented<T extends string>({
   options,
@@ -345,6 +370,98 @@ function ProvidersCard() {
   );
 }
 
+function RuntimeProvidersCard() {
+  const api = useConnection((s) => s.api);
+  const runtimeSlot = useConnection((s) => s.runtimeSlot);
+  const openTab = useTabs((s) => s.openTab);
+  const [summary, setSummary] = useState<RuntimeSummary | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [setupError, setSetupError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!api) {
+      setSummary(null);
+      setError("Provider status unavailable.");
+      return;
+    }
+    let cancelled = false;
+    setSummary(null);
+    setError(null);
+    setSetupError(null);
+    invoke("runtime:get-summary", {})
+      .then((nextSummary) => {
+        if (cancelled) return;
+        setSummary(nextSummary);
+        setError(null);
+      })
+      .catch((err: unknown) => {
+        console.error("[settings] Failed to load runtime provider summary:", err instanceof Error ? err.name : typeof err);
+        if (!cancelled) setError("Provider status unavailable.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, runtimeSlot]);
+
+  const openSetup = async (setup: ProviderSetupCommand) => {
+    setSetupError(null);
+    if (!api) {
+      setSetupError(SETUP_DISCONNECTED_ERROR);
+      return;
+    }
+    const opened = await openProviderSetupTerminal(api, setup, openTab, "settings");
+    if (!opened) setSetupError(SETUP_TERMINAL_ERROR);
+  };
+
+  return (
+    <Card>
+      <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>Coding agent providers</span>
+      {setupError ? <span className="text-xs" style={{ color: "var(--danger)" }}>{setupError}</span> : null}
+      {!summary ? (
+        <Empty text={error ?? "Checking provider status…"} />
+      ) : summary.providers.length === 0 ? (
+        <Empty text="No coding agent providers are configured yet." />
+      ) : (
+        <div className="flex flex-col gap-2">
+          {summary.providers.map((provider) => {
+            const setupCommands = providerSetupCommands([provider]);
+            return (
+              <div
+                key={provider.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2"
+                style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}
+              >
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <StatusDot color={PROVIDER_STATUS_COLOR[provider.availability]} />
+                  <div className="flex min-w-0 flex-col">
+                    <span className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>{provider.displayName}</span>
+                    <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>{providerStatusLine(provider)}</span>
+                  </div>
+                </div>
+                {setupCommands.length > 0 ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {setupCommands.map((setup) => (
+                      <Button
+                        key={setup.key}
+                        variant="subtle"
+                        aria-label={`Open provider setup ${setup.label}`}
+                        onClick={() => void openSetup(setup)}
+                      >
+                        <SquareTerminal size={13} />
+                        {setup.label}
+                      </Button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export default function AgentSection() {
   return (
     <>
@@ -353,6 +470,7 @@ export default function AgentSection() {
         description="Hermes is your OS agent. Tune its model and reasoning, edit its standing instructions (SOUL), and check which coding agents are connected."
       />
       <ModelEffortCard />
+      <RuntimeProvidersCard />
       <ProvidersCard />
       <SoulEditor />
     </>
