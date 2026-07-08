@@ -139,6 +139,36 @@ function mergeSelectedThreadSnapshot(
   };
 }
 
+function summaryIncludesThread(summary: RuntimeSummary, threadId: string): boolean {
+  return summary.activeThreads.items.some((thread) => thread.id === threadId)
+    || summary.attentionThreads.items.some((thread) => thread.id === threadId);
+}
+
+function reconcileSummaryThread(
+  summary: RuntimeSummary,
+  thread: RuntimeSummary["activeThreads"]["items"][number],
+): RuntimeSummary {
+  const activeItems = summary.activeThreads.items.map((candidate) =>
+    candidate.id === thread.id ? thread : candidate,
+  );
+  const attentionItems = thread.attention === "none"
+    ? summary.attentionThreads.items.filter((candidate) => candidate.id !== thread.id)
+    : summary.attentionThreads.items.map((candidate) =>
+        candidate.id === thread.id ? thread : candidate,
+      );
+  return {
+    ...summary,
+    activeThreads: {
+      ...summary.activeThreads,
+      items: activeItems,
+    },
+    attentionThreads: {
+      ...summary.attentionThreads,
+      items: attentionItems,
+    },
+  };
+}
+
 export function codingAgentApprovalActionKey(threadId: string, approvalId: string): string {
   return `${threadId}:${approvalId}`;
 }
@@ -186,7 +216,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
       if (seq !== refreshSeq) return;
       set((state) => {
         const activeThreadStillPresent = state.activeThreadId
-          ? summary.activeThreads.items.some((thread) => thread.id === state.activeThreadId)
+          ? summaryIncludesThread(summary, state.activeThreadId)
           : true;
         return {
           status: "ready",
@@ -336,17 +366,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         const currentSummary = state.summary;
         const nextPendingApprovalKeys = state.pendingApprovalKeys.filter((key) => key !== approvalKey);
         const visibleThreadStillSelected = state.activeThreadId === snapshot.thread.id;
-        const summary = currentSummary
-          ? {
-              ...currentSummary,
-              activeThreads: {
-                ...currentSummary.activeThreads,
-                items: currentSummary.activeThreads.items.map((thread) =>
-                  thread.id === snapshot.thread.id ? snapshot.thread : thread,
-                ),
-              },
-            }
-          : currentSummary;
+        const summary = currentSummary ? reconcileSummaryThread(currentSummary, snapshot.thread) : currentSummary;
         return {
           approvalActionStatus: nextPendingApprovalKeys.length > 0 ? "submitting" : "idle",
           pendingApprovalId: null,
@@ -408,17 +428,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         const visibleSnapshot = visibleThreadStillSelected
           ? mergeSelectedThreadSnapshot(state.threadSnapshot, snapshot)
           : snapshot;
-        const summary = currentSummary
-          ? {
-              ...currentSummary,
-              activeThreads: {
-                ...currentSummary.activeThreads,
-                items: currentSummary.activeThreads.items.map((thread) =>
-                  thread.id === visibleSnapshot.thread.id ? visibleSnapshot.thread : thread,
-                ),
-              },
-            }
-          : currentSummary;
+        const summary = currentSummary ? reconcileSummaryThread(currentSummary, visibleSnapshot.thread) : currentSummary;
         return {
           inputActionStatus: nextPendingInputRequestKeys.length > 0 ? "submitting" : "idle",
           pendingInputRequestId: null,

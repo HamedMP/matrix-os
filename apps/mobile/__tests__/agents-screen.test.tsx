@@ -85,6 +85,7 @@ function summaryFixture({ threadCreate = false }: { threadCreate?: boolean } = {
       hasMore: false,
       limit: 20,
     },
+    attentionThreads: { items: [], hasMore: false, limit: 20 },
     terminalSessions: {
       items: [
         {
@@ -139,6 +140,37 @@ function attentionSummaryFixture() {
           attention: "failed",
         },
       ],
+    },
+  };
+}
+
+function attentionOnlySummaryFixture() {
+  const summary = summaryFixture();
+  return {
+    ...summary,
+    activeThreads: {
+      ...summary.activeThreads,
+      items: [],
+    },
+    attentionThreads: {
+      items: [
+        {
+          ...summary.activeThreads.items[0],
+          id: "thread_approval",
+          title: "Approve deployment",
+          status: "waiting_for_approval",
+          attention: "approval_required",
+        },
+        {
+          ...summary.activeThreads.items[0],
+          id: "thread_failed",
+          title: "Repair failed run",
+          status: "failed",
+          attention: "failed",
+        },
+      ],
+      hasMore: false,
+      limit: 20,
     },
   };
 }
@@ -381,6 +413,37 @@ describe("AgentsScreen", () => {
     expect(screen.getByLabelText("Open thread Repair failing run")).toBeTruthy();
     expect(screen.queryByText("Run failed")).toBeNull();
     expect(screen.queryByText(/home\/matrix|token|secret|stack trace/i)).toBeNull();
+  });
+
+  it("renders gateway-owned attention threads separately from active threads", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: attentionOnlySummaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    expect(await screen.findByText("Needs Attention")).toBeTruthy();
+    expect(screen.getByText("Approve deployment")).toBeTruthy();
+    expect(screen.getByText("Repair failed run")).toBeTruthy();
+    expect(screen.getByText("Approval needed")).toBeTruthy();
+    expect(screen.getByText("Failed")).toBeTruthy();
+    expect(screen.getByText("No active threads.")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open attention thread Repair failed run, Failed"));
+    });
+    expect(mockRouterPush).toHaveBeenCalledWith("/agents/thread_failed");
   });
 
   it("renders read-only review summaries", async () => {

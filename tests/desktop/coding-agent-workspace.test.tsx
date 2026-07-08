@@ -70,6 +70,11 @@ function summaryFixture({
       hasMore: false,
       limit: 20,
     },
+    attentionThreads: {
+      items: [],
+      hasMore: false,
+      limit: 20,
+    },
     terminalSessions: {
       items: [
         {
@@ -96,6 +101,37 @@ function summaryFixture({
       maxListItems: 20,
     },
     serverTime: "2026-07-06T00:03:00.000Z",
+  };
+}
+
+function attentionOnlySummaryFixture() {
+  const summary = summaryFixture();
+  return {
+    ...summary,
+    activeThreads: {
+      ...summary.activeThreads,
+      items: [],
+    },
+    attentionThreads: {
+      items: [
+        {
+          ...summary.activeThreads.items[0],
+          id: "thread_approval",
+          title: "Approve deployment",
+          status: "waiting_for_approval",
+          attention: "approval_required",
+        },
+        {
+          ...summary.activeThreads.items[0],
+          id: "thread_failed",
+          title: "Repair failed run",
+          status: "failed",
+          attention: "failed",
+        },
+      ],
+      hasMore: false,
+      limit: 20,
+    },
   };
 }
 
@@ -231,6 +267,26 @@ function threadSnapshotFixture() {
   };
 }
 
+function attentionThreadSnapshotFixture() {
+  return {
+    ...threadSnapshotFixture(),
+    thread: {
+      ...threadSnapshotFixture().thread,
+      id: "thread_failed",
+      title: "Repair failed run",
+      status: "failed",
+      attention: "failed",
+      terminalSessionId: undefined,
+      updatedAt: "2026-07-06T00:06:00.000Z",
+    },
+    events: {
+      items: [],
+      hasMore: false,
+      limit: 200,
+    },
+  };
+}
+
 function approvalResolvedThreadSnapshotFixture() {
   return {
     ...threadSnapshotFixture(),
@@ -253,6 +309,22 @@ function approvalResolvedThreadSnapshotFixture() {
           decision: "approve",
         },
       ],
+    },
+  };
+}
+
+function resolvedAttentionApprovalSnapshotFixture() {
+  const resolved = approvalResolvedThreadSnapshotFixture();
+  return {
+    ...resolved,
+    thread: {
+      ...resolved.thread,
+      id: "thread_approval",
+      title: "Approve deployment",
+      status: "running",
+      attention: "none",
+      terminalSessionId: undefined,
+      updatedAt: "2026-07-06T00:07:00.000Z",
     },
   };
 }
@@ -399,6 +471,22 @@ function inputAnsweredThreadSnapshotFixture() {
   };
 }
 
+function resolvedAttentionInputSnapshotFixture() {
+  const answered = inputAnsweredThreadSnapshotFixture();
+  return {
+    ...answered,
+    thread: {
+      ...answered.thread,
+      id: "thread_approval",
+      title: "Approve deployment",
+      status: "running",
+      attention: "none",
+      terminalSessionId: undefined,
+      updatedAt: "2026-07-06T00:08:00.000Z",
+    },
+  };
+}
+
 function multiInputRequestedThreadSnapshotFixture() {
   const base = inputRequestedThreadSnapshotFixture();
   return {
@@ -533,6 +621,46 @@ describe("AgentWorkspace", () => {
     expect(activeThread.getAttribute("aria-current")).toBe("true");
   });
 
+  it("renders gateway-owned attention threads separately from active threads", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(attentionOnlySummaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    expect(await screen.findByText("Needs Attention")).toBeTruthy();
+    expect(screen.getByText("Approve deployment")).toBeTruthy();
+    expect(screen.getByText("Repair failed run")).toBeTruthy();
+    expect(screen.getByText("Approval needed")).toBeTruthy();
+    expect(screen.getByText("Failed")).toBeTruthy();
+    expect(screen.getByText("No active threads.")).toBeTruthy();
+  });
+
+  it("keeps selected attention-only thread details when refreshed summary still includes the attention thread", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(attentionOnlySummaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(attentionThreadSnapshotFixture());
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open details for Repair failed run, Failed" }));
+    expect(await screen.findByText("Thread details")).toBeTruthy();
+    expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_failed");
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+
+    await waitFor(() => {
+      expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_failed");
+    });
+    expect(screen.getByText("Thread details")).toBeTruthy();
+    expect(useCodingAgentWorkspace.getState().threadSnapshot?.thread.id).toBe("thread_failed");
+  });
+
   it("hydrates selected thread details through trusted IPC", async () => {
     useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
 
@@ -574,6 +702,38 @@ describe("AgentWorkspace", () => {
     });
     expect(await screen.findByText("Approval resolved")).toBeTruthy();
     expect(screen.getByText("approve")).toBeTruthy();
+  });
+
+  it("removes a resolved approval thread from the desktop attention summary", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:submit-approval-decision") return Promise.resolve(resolvedAttentionApprovalSnapshotFixture());
+      return Promise.reject(new Error("unexpected channel"));
+    });
+    useCodingAgentWorkspace.setState({
+      summary: attentionOnlySummaryFixture(),
+      activeThreadId: "thread_approval",
+      threadSnapshotStatus: "ready",
+      threadSnapshot: {
+        ...threadSnapshotFixture(),
+        thread: {
+          ...threadSnapshotFixture().thread,
+          id: "thread_approval",
+          title: "Approve deployment",
+          attention: "approval_required",
+        },
+      },
+    });
+
+    await useCodingAgentWorkspace.getState().submitApprovalDecision({
+      threadId: "thread_approval",
+      approvalId: "appr_desktop_1",
+      decision: "approve",
+      correlationId: "corr_desktop_1",
+    });
+
+    const state = useCodingAgentWorkspace.getState();
+    expect(state.threadSnapshot?.thread.attention).toBe("none");
+    expect(state.summary?.attentionThreads.items.map((thread) => thread.id)).toEqual(["thread_failed"]);
   });
 
   it("does not reopen a stale approval thread after the user selects another thread", async () => {
@@ -758,6 +918,51 @@ describe("AgentWorkspace", () => {
     });
     expect(await screen.findByText("Input answered")).toBeTruthy();
     expect(screen.queryByLabelText(/answer clarify failure/i)).toBeNull();
+  });
+
+  it("removes a resolved input thread from the desktop attention summary", async () => {
+    const attentionSummary = attentionOnlySummaryFixture();
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:submit-input-answer") return Promise.resolve(resolvedAttentionInputSnapshotFixture());
+      return Promise.reject(new Error("unexpected channel"));
+    });
+    useCodingAgentWorkspace.setState({
+      summary: {
+        ...attentionSummary,
+        attentionThreads: {
+          ...attentionSummary.attentionThreads,
+          items: [
+            {
+              ...attentionSummary.attentionThreads.items[0],
+              attention: "input_required",
+              status: "waiting_for_input",
+            },
+            attentionSummary.attentionThreads.items[1],
+          ],
+        },
+      },
+      activeThreadId: "thread_approval",
+      threadSnapshotStatus: "ready",
+      threadSnapshot: {
+        ...inputRequestedThreadSnapshotFixture(),
+        thread: {
+          ...inputRequestedThreadSnapshotFixture().thread,
+          id: "thread_approval",
+          title: "Approve deployment",
+        },
+      },
+    });
+
+    await useCodingAgentWorkspace.getState().submitInputAnswer({
+      threadId: "thread_approval",
+      inputRequestId: "req_input_desktop_1",
+      answer: "Continue.",
+      correlationId: "corr_input_desktop_1",
+    });
+
+    const state = useCodingAgentWorkspace.getState();
+    expect(state.threadSnapshot?.thread.attention).toBe("none");
+    expect(state.summary?.attentionThreads.items.map((thread) => thread.id)).toEqual(["thread_failed"]);
   });
 
   it("shows input submission errors only on the failed input row", async () => {
