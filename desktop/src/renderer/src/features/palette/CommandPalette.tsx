@@ -14,6 +14,30 @@ import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 
 const EMPTY_REVIEWS: ReviewSummary[] = [];
 const MAX_PALETTE_REVIEWS = 10;
+const TERMINAL_REVIEW_STATUSES: ReviewSummary["status"][] = ["approved", "converged", "stopped"];
+
+function isTerminalReviewStatus(status: ReviewSummary["status"]): boolean {
+  return TERMINAL_REVIEW_STATUSES.includes(status);
+}
+
+function reviewUpdatedAtMs(review: ReviewSummary): number {
+  const value = Date.parse(review.updatedAt);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function paletteReviewCommands(reviews: ReviewSummary[]): ReviewSummary[] {
+  return [...reviews]
+    .sort((a, b) => {
+      const statusPriority = Number(isTerminalReviewStatus(a.status)) - Number(isTerminalReviewStatus(b.status));
+      if (statusPriority !== 0) return statusPriority;
+      const updatedPriority = reviewUpdatedAtMs(b) - reviewUpdatedAtMs(a);
+      if (updatedPriority !== 0) return updatedPriority;
+      const pullRequestPriority = b.pullRequestNumber - a.pullRequestNumber;
+      if (pullRequestPriority !== 0) return pullRequestPriority;
+      return a.id.localeCompare(b.id);
+    })
+    .slice(0, MAX_PALETTE_REVIEWS);
+}
 
 export default function CommandPalette() {
   const open = useUi((s) => s.paletteOpen);
@@ -51,7 +75,7 @@ export default function CommandPalette() {
 
   const cards = activeSlug ? (cardsByProject[activeSlug] ?? []) : [];
   const otherTabs = tabs.filter((t) => t.id !== activeTabId);
-  const reviewCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? (reviews?.items ?? EMPTY_REVIEWS).slice(0, MAX_PALETTE_REVIEWS) : EMPTY_REVIEWS;
+  const reviewCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteReviewCommands(reviews?.items ?? EMPTY_REVIEWS) : EMPTY_REVIEWS;
 
   const run = (fn: () => void) => {
     setOpen(false);

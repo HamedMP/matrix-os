@@ -148,4 +148,57 @@ describe("CommandPalette", () => {
     });
     expect(selectReview).toHaveBeenCalledWith("rev_desktop_1");
   });
+
+  it("prioritizes current reviews before slicing loaded command-palette reviews", async () => {
+    const openTab = vi.fn();
+    const selectReview = vi.fn().mockResolvedValue(undefined);
+    useTabs.setState({ openTab });
+    useCodingAgentWorkspace.setState({
+      reviewsStatus: "ready",
+      reviews: {
+        items: [
+          ...Array.from({ length: 10 }, (_, index) => ({
+            id: `rev_old_${index}`,
+            projectId: "matrix-os",
+            worktreeId: `wt_old_${index}`,
+            status: "approved" as const,
+            pullRequestNumber: 700 + index,
+            round: 3,
+            maxRounds: 3,
+            reviewer: "matrix-reviewer",
+            implementer: "matrix-implementer",
+            updatedAt: `2026-07-05T00:${String(index).padStart(2, "0")}:00.000Z`,
+          })),
+          {
+            id: "rev_recent",
+            projectId: "matrix-os",
+            worktreeId: "wt_recent",
+            status: "reviewing",
+            pullRequestNumber: 811,
+            round: 1,
+            maxRounds: 3,
+            reviewer: "matrix-reviewer",
+            implementer: "matrix-implementer",
+            updatedAt: "2026-07-07T00:00:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 50,
+      },
+      selectReview,
+    });
+
+    render(<CommandPalette />);
+
+    expect(screen.getByText("Open review PR #811")).toBeTruthy();
+    expect(screen.queryByText("Open review PR #700")).toBeNull();
+
+    fireEvent.click(screen.getByText("Open review PR #811"));
+
+    expect(openTab).toHaveBeenCalledWith({
+      kind: "agents",
+      title: "Agents",
+    });
+    expect(selectReview).toHaveBeenCalledWith("rev_recent");
+  });
 });
