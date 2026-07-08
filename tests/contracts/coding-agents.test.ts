@@ -10,6 +10,8 @@ import {
   FileReadResponseSchema,
   SourceControlPrepareCommitRequestSchema,
   SourceControlPrepareCommitResponseSchema,
+  SourceControlCreatePullRequestRequestSchema,
+  SourceControlCreatePullRequestResponseSchema,
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   FileMetadataSchema,
@@ -407,6 +409,58 @@ describe("coding agent contracts", () => {
       changedFileCount: 1,
       safeMessage: "Changes were committed.",
     }).branch).toHaveLength(228);
+    expect(SourceControlCreatePullRequestRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix: update reviewed files",
+      body: "Review updates are ready.",
+      baseBranch: "main",
+      draft: true,
+      clientRequestId: "req_create_pull_request",
+    }).draft).toBe(true);
+    expect(SourceControlCreatePullRequestRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix: update reviewed files",
+      clientRequestId: "req_create_pull_request_default",
+    }).body).toBeUndefined();
+    expect(() => SourceControlCreatePullRequestRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix:\u0000 update reviewed files",
+      clientRequestId: "req_create_pull_request_bad_title",
+    })).toThrow();
+    expect(SourceControlCreatePullRequestRequestSchema.safeParse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix: update reviewed files",
+      clientRequestId: "req_create_pull_request_leak",
+      accessToken: "secret",
+    }).success).toBe(false);
+    expect(SourceControlCreatePullRequestResponseSchema.parse({
+      status: "created",
+      number: 807,
+      url: "https://github.com/HamedMP/matrix-os/pull/807",
+      headBranch: "feature/review-fix",
+      baseBranch: "main",
+      safeMessage: "Pull request is ready for review.",
+    }).number).toBe(807);
+    expect(SourceControlCreatePullRequestResponseSchema.parse({
+      status: "existing",
+      number: 808,
+      url: "https://github.com/HamedMP/matrix-os/pull/808",
+      headBranch: "feature/review-fix",
+      baseBranch: "main",
+      safeMessage: "Pull request is ready for review.",
+    }).status).toBe("existing");
+    expect(() => SourceControlCreatePullRequestResponseSchema.parse({
+      status: "created",
+      number: 807,
+      url: "https://internal.example.test/HamedMP/matrix-os/pull/807",
+      headBranch: "feature/review-fix",
+      baseBranch: "main",
+      safeMessage: "Pull request is ready for review.",
+    })).toThrow();
 
     expect(ReviewSummarySchema.parse({
       id: "rev_123",

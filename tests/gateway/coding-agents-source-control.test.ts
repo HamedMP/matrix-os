@@ -39,6 +39,7 @@ async function createRouteHarness(options: {
   principal?: RequestPrincipal | null;
   ownerIds?: string[];
   gitCommandFactory?: (homePath: string) => Promise<string>;
+  ghCommandFactory?: (homePath: string) => Promise<string>;
   maxQueueDepth?: number;
 } = {}) {
   const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-source-control-"));
@@ -49,6 +50,7 @@ async function createRouteHarness(options: {
   execFileSync("git", ["add", "."], { cwd: worktreeRoot, stdio: "ignore" });
   execFileSync("git", [...gitIdentity, "commit", "-m", "init"], { cwd: worktreeRoot, stdio: "ignore" });
   const gitCommand = await options.gitCommandFactory?.(homePath);
+  const ghCommand = await options.ghCommandFactory?.(homePath);
 
   const app = new Hono();
   app.route("/api/coding-agents", createCodingAgentRoutes({
@@ -58,6 +60,7 @@ async function createRouteHarness(options: {
       ownerId: options.ownerIds?.[0],
       principalOwnerIds: options.ownerIds,
       gitCommand,
+      ghCommand,
       maxQueueDepth: options.maxQueueDepth,
     }),
     getPrincipal: () => {
@@ -75,6 +78,14 @@ async function createFakeGit(homePath: string, script: string): Promise<string> 
   await writeFile(commandPath, `#!/usr/bin/env bash\nREAL_GIT=${JSON.stringify(realGit)}\n${script}\nexec "$REAL_GIT" "$@"\n`);
   await chmod(commandPath, 0o755);
   return commandPath;
+}
+
+async function createFakeGh(homePath: string, script: string): Promise<{ commandPath: string; logPath: string }> {
+  const logPath = join(homePath, "fake-gh.log");
+  const commandPath = join(homePath, "fake-gh");
+  await writeFile(commandPath, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(logPath)}\n${script}\nexit 1\n`);
+  await chmod(commandPath, 0o755);
+  return { commandPath, logPath };
 }
 
 async function delay(ms: number): Promise<void> {
@@ -276,6 +287,172 @@ describe("coding agent source-control route", () => {
       expect(JSON.stringify(await invalid.json())).not.toMatch(/\/tmp|secret\.txt|token/i);
       expect(JSON.stringify(await oversized.json())).not.toMatch(/x{64}|\/tmp|token/i);
       expect(await readFile(join(ownerHarness.worktreeRoot, "src", "index.ts"), "utf8")).toBe("export const answer = 42;\n");
+    } finally {
+      await rm(ownerHarness.homePath, { recursive: true, force: true });
+      await rm(otherHarness.homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("creates a remote pull request from the owner worktree without exposing credentials or paths", async () => {
+    let ghLogPath = "";
+    const harness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+      gitCommandFactory: (homePath) => createFakeGit(homePath, 'if [ "$1" = "push" ]; then exit 0; fi'),
+      ghCommandFactory: async (homePath) => {
+        const fake = await createFakeGh(homePath, `
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  if [ "$3" = "https://github.com/HamedMP/matrix-os/pull/808" ]; then
+    echo '{"number":808,"url":"https://github.com/HamedMP/matrix-os/pull/808","headRefName":"feature/review-fix","baseRefName":"main"}'
+    exit 0
+  fi
+  exit 1
+fi
+if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
+  echo "https://github.com/HamedMP/matrix-os/pull/808"
+  exit 0
+fi
+`);
+        ghLogPath = fake.logPath;
+        return fake.commandPath;
+      },
+    });
+    try {
+      execFileSync("git", ["remote", "add", "origin", "https://github.com/HamedMP/matrix-os.git"], { cwd: harness.worktreeRoot });
+      execFileSync("git", ["checkout", "-b", "feature/review-fix"], { cwd: harness.worktreeRoot, stdio: "ignore" });
+
+      const res = await harness.app.request("/api/coding-agents/source-control/pull-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          worktreeId,
+          title: "fix: update reviewed files",
+          body: "Review updates are ready.",
+          baseBranch: "main",
+          draft: true,
+          clientRequestId: "req_create_pull_request",
+        }),
+      });
+      const body = await res.json();
+      const ghLog = await readFile(ghLogPath, "utf8");
+
+      expect(res.status).toBe(201);
+      expect(body).toEqual({
+        status: "created",
+        number: 808,
+        url: "https://github.com/HamedMP/matrix-os/pull/808",
+        headBranch: "feature/review-fix",
+        baseBranch: "main",
+        safeMessage: "Pull request is ready for review.",
+      });
+      expect(ghLog).toContain("pr view");
+      expect(ghLog).toContain("pr create");
+      expect(ghLog).toContain("--draft");
+      expect(ghLog).toContain("--head feature/review-fix");
+      expect(JSON.stringify(body)).not.toMatch(/\/tmp\/matrix-coding-agent-source-control|token|bearer|secret/i);
+      expect(ghLog).not.toMatch(/token|bearer|secret/i);
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("returns an existing pull request for the same head branch without creating another one", async () => {
+    let ghLogPath = "";
+    const harness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+      ghCommandFactory: async (homePath) => {
+        const fake = await createFakeGh(homePath, `
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  echo '{"number":807,"url":"https://github.com/HamedMP/matrix-os/pull/807","headRefName":"feature/review-fix","baseRefName":"main"}'
+  exit 0
+fi
+`);
+        ghLogPath = fake.logPath;
+        return fake.commandPath;
+      },
+    });
+    try {
+      execFileSync("git", ["remote", "add", "origin", "https://github.com/HamedMP/matrix-os.git"], { cwd: harness.worktreeRoot });
+      execFileSync("git", ["checkout", "-b", "feature/review-fix"], { cwd: harness.worktreeRoot, stdio: "ignore" });
+
+      const res = await harness.app.request("/api/coding-agents/source-control/pull-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          worktreeId,
+          title: "fix: update reviewed files",
+          baseBranch: "main",
+          clientRequestId: "req_create_pull_request_existing",
+        }),
+      });
+      const body = await res.json();
+      const ghLog = await readFile(ghLogPath, "utf8");
+
+      expect(res.status).toBe(200);
+      expect(body).toMatchObject({
+        status: "existing",
+        number: 807,
+        url: "https://github.com/HamedMP/matrix-os/pull/807",
+        headBranch: "feature/review-fix",
+        baseBranch: "main",
+      });
+      expect(ghLog).toContain("pr view");
+      expect(ghLog).not.toContain("pr create");
+      expect(JSON.stringify(body)).not.toMatch(/\/tmp|token|bearer|secret/i);
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects non-owner, invalid, and oversized pull-request creation safely", async () => {
+    const ownerHarness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+    });
+    const otherHarness = await createRouteHarness({
+      principal: { userId: "other_user", source: "jwt" },
+      ownerIds: [testPrincipal.userId],
+    });
+    try {
+      const nonOwner = await otherHarness.app.request("/api/coding-agents/source-control/pull-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          worktreeId,
+          title: "fix: update reviewed files",
+          clientRequestId: "req_create_pull_request_non_owner",
+        }),
+      });
+      const invalid = await ownerHarness.app.request("/api/coding-agents/source-control/pull-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          worktreeId,
+          title: "fix: update reviewed files",
+          baseBranch: "../main",
+          clientRequestId: "req_create_pull_request_invalid",
+        }),
+      });
+      const oversized = await ownerHarness.app.request("/api/coding-agents/source-control/pull-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          worktreeId,
+          title: "fix: update reviewed files",
+          body: "x".repeat(300_000),
+          clientRequestId: "req_create_pull_request_oversized",
+        }),
+      });
+
+      expect(nonOwner.status).toBe(404);
+      expect(invalid.status).toBe(400);
+      expect(oversized.status).toBe(413);
+      expect(JSON.stringify(await nonOwner.json())).not.toMatch(/\/tmp|other_user|token|secret/i);
+      expect(JSON.stringify(await invalid.json())).not.toMatch(/\.\.\/main|token|secret/i);
+      expect(JSON.stringify(await oversized.json())).not.toMatch(/x{64}|\/tmp|token/i);
     } finally {
       await rm(ownerHarness.homePath, { recursive: true, force: true });
       await rm(otherHarness.homePath, { recursive: true, force: true });
