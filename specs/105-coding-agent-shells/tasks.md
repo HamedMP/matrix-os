@@ -1,8 +1,22 @@
 # Tasks: Coding Agent Shells
 
-**Status**: Draft
-**Branch**: `chore/mobile-expo-sdk-57`
+**Status**: Implementation checkpoint
+**Branch**: merged implementation through `main` commit `87ce9e8cc2a6357a122ea0fd9120487702ea9323`
 **Rule**: Preserve all existing desktop and mobile functionality. Add coding-agent capabilities incrementally behind contracts, tests, and feature flags.
+
+## Implementation Checkpoint
+
+The phase checklist below is the original implementation plan. The authoritative
+landed-state inventory is now `current-state.md`, and the requirement/evidence
+matrix is `completion-audit.md`.
+
+As of the `87ce9e8cc2a6357a122ea0fd9120487702ea9323` main checkpoint:
+
+- Shared contracts, gateway summary/routes, provider/thread/review/file/preview/source-control contracts, desktop shell surfaces, mobile SDK 57 surfaces, browser Workspace handoff, notification preferences, and public/internal docs are implemented and inventoried in `current-state.md`.
+- GitHub CI for the checkpoint completed successfully, including pattern scan, React Doctor, typecheck, shell production build, sync-client package checks, all four unit shards, and E2E.
+- Platform Cloud Run completed successfully for the checkpoint.
+- Host Bundle Release and Docker Tests were still running or queued when this audit PR was prepared; keep them as release-readiness evidence, not implementation proof.
+- Remaining work is validation and rollout hardening: device/manual desktop and mobile smoke, release workflow completion, optional autonomous process-exit reconciliation, and continued docs sync as later provider/runtime behavior changes.
 
 ## Agent Instructions
 
