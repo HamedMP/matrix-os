@@ -1038,6 +1038,61 @@ describe("AgentThreadRoute", () => {
     expect(screen.queryByText(/home\/matrix|token|stdout leaked/i)).toBeNull();
   });
 
+  it("keeps grouped tool outcomes ordered after interleaved events", async () => {
+    const snapshot = {
+      ...threadSnapshotFixture(),
+      events: {
+        ...threadSnapshotFixture().events,
+        items: [
+          ...threadSnapshotFixture().events.items,
+          {
+            eventId: "evt_mobile_interleaved_tool_started",
+            threadId: "thread_mobile",
+            type: "tool.started",
+            toolCallId: "tool_mobile_interleaved",
+            displayName: "Run tests",
+            kind: "command",
+            occurredAt: "2026-07-06T00:02:00.000Z",
+          },
+          {
+            eventId: "evt_mobile_interleaved_file",
+            threadId: "thread_mobile",
+            type: "file.changed",
+            path: "apps/mobile/app/agents/[threadId].tsx",
+            changeKind: "updated",
+            occurredAt: "2026-07-06T00:02:30.000Z",
+          },
+          {
+            eventId: "evt_mobile_interleaved_tool_completed",
+            threadId: "thread_mobile",
+            type: "tool.completed",
+            toolCallId: "tool_mobile_interleaved",
+            outcome: "success",
+            occurredAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+      },
+    };
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot,
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    const rendered = render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Run tests")).toBeTruthy();
+    const textValues = rendered.UNSAFE_queryAllByType(Text)
+      .map((node) => node.props.children)
+      .filter((value): value is string => typeof value === "string");
+    expect(textValues.indexOf("File updated")).toBeLessThan(textValues.indexOf("Completed successfully, no output received"));
+  });
+
   it("renders a generic thread error without exposing raw gateway details", async () => {
     const client = {
       getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({

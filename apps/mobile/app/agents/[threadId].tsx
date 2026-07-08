@@ -19,8 +19,8 @@ type ThreadActionError =
   | "Input could not be sent. Try again.";
 type ToolTimelineEvent = Extract<AgentThreadEvent, { type: "tool.started" | "tool.output" | "tool.completed" }>;
 type TimelineItem =
-  | { kind: "event"; event: AgentThreadEvent }
-  | { kind: "tool"; key: string; events: ToolTimelineEvent[] };
+  | { kind: "event"; event: AgentThreadEvent; order: number }
+  | { kind: "tool"; key: string; events: ToolTimelineEvent[]; order: number };
 
 export default function AgentThreadRoute() {
   const { theme } = useUnistyles();
@@ -397,21 +397,23 @@ export default function AgentThreadRoute() {
 function createTimelineItems(events: AgentThreadEvent[]): TimelineItem[] {
   const toolGroups = new Map<string, ToolTimelineEvent[]>();
   const items: TimelineItem[] = [];
-  for (const event of events) {
+  for (const [order, event] of events.entries()) {
     if (isToolTimelineEvent(event)) {
       const group = toolGroups.get(event.toolCallId);
       if (group) {
         group.push(event);
+        const item = items.find((candidate) => candidate.kind === "tool" && candidate.key === `tool:${event.toolCallId}`);
+        if (item) item.order = order;
         continue;
       }
       const eventsForTool = [event];
       toolGroups.set(event.toolCallId, eventsForTool);
-      items.push({ kind: "tool", key: `tool:${event.toolCallId}`, events: eventsForTool });
+      items.push({ kind: "tool", key: `tool:${event.toolCallId}`, events: eventsForTool, order });
       continue;
     }
-    items.push({ kind: "event", event });
+    items.push({ kind: "event", event, order });
   }
-  return items;
+  return items.sort((a, b) => a.order - b.order);
 }
 
 function isToolTimelineEvent(event: AgentThreadEvent): event is ToolTimelineEvent {
