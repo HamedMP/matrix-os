@@ -1,7 +1,7 @@
 [Unit]
 Description=Matrix OS customer gateway
-After=matrix-restore.service docker.service
-Requires=matrix-restore.service docker.service
+After=matrix-restore.service docker.service matrix-developer-tools.service
+Requires=matrix-restore.service docker.service matrix-developer-tools.service
 ConditionPathExists=/opt/matrix/restore-complete
 ConditionPathExists=/opt/matrix/bin/matrix-gateway
 
