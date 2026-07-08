@@ -549,8 +549,10 @@ export function createWorkspaceRoutes(options: {
   app.post("/api/reviews", limited, async (c) => {
     const body = await parseJson(c, CreateReviewSchema);
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const ownerScope = options.getOwnerScope?.(c);
     const review = createReviewLoopRecord({
       id: `rev_${randomUUID()}`,
+      ownerId: ownerScope?.id,
       ...body.value,
     });
     const saved = await reviewStore.saveReview(review);

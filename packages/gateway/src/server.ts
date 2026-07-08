@@ -479,6 +479,7 @@ export async function createGateway(config: GatewayConfig) {
   const workspaceEventStore = createWorkspaceEventStore({ homePath });
   const reviewStore = createReviewStore({ homePath });
   const codingAgentReviewSummaryStore = createCodingAgentReviewSummaryStore(reviewStore, {
+    homePath,
     ownerId: process.env.MATRIX_USER_ID,
     principalOwnerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(
       (id): id is string => Boolean(id),
