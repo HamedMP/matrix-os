@@ -175,6 +175,39 @@ function attentionOnlySummaryFixture() {
   };
 }
 
+function previewSummaryFixture() {
+  const summary = summaryFixture();
+  return {
+    ...summary,
+    capabilities: [
+      ...summary.capabilities,
+      {
+        id: "codingAgentsPreview",
+        enabled: true,
+      },
+    ],
+    previewSessions: {
+      items: [
+        {
+          id: "prev_mobile_local",
+          label: "Mobile app preview",
+          status: "running",
+          origin: "http://localhost:8081",
+          updatedAt: "2026-07-06T00:04:00.000Z",
+        },
+        {
+          id: "prev_mobile_internal",
+          label: "Internal preview",
+          status: "starting",
+          updatedAt: "2026-07-06T00:03:00.000Z",
+        },
+      ],
+      hasMore: false,
+      limit: 50,
+    },
+  };
+}
+
 function reviewsFixture() {
   return {
     items: [
@@ -444,6 +477,32 @@ describe("AgentsScreen", () => {
       fireEvent.press(screen.getByLabelText("Open attention thread Repair failed run, Failed"));
     });
     expect(mockRouterPush).toHaveBeenCalledWith("/agents/thread_failed");
+  });
+
+  it("renders read-only preview summaries without unsafe origin details", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: previewSummaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    expect(await screen.findByText("Previews")).toBeTruthy();
+    expect(screen.getByText("Mobile app preview")).toBeTruthy();
+    expect(screen.getByText("http://localhost:8081")).toBeTruthy();
+    expect(screen.getByText("Internal preview")).toBeTruthy();
+    expect(screen.getByText("No local origin")).toBeTruthy();
+    expect(screen.queryByText(/internal\.preview|token=secret|\/home\/matrix/i)).toBeNull();
   });
 
   it("renders read-only review summaries", async () => {
