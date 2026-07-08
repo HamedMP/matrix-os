@@ -632,13 +632,13 @@ function ThreadSnapshotPanel({
         {timelineItems.map((item) => item.kind === "assistant" ? (
           <ThreadTimelineSummaryRow
             key={item.key}
-            occurredAt={item.events.at(-1)?.occurredAt ?? snapshot.thread.updatedAt}
+            occurredAt={item.events[0]?.occurredAt ?? snapshot.thread.updatedAt}
             {...describeAssistantTimeline(item.events)}
           />
         ) : item.kind === "tool" ? (
           <ThreadTimelineSummaryRow
             key={item.key}
-            occurredAt={item.events.at(-1)?.occurredAt ?? snapshot.thread.updatedAt}
+            occurredAt={item.events[0]?.occurredAt ?? snapshot.thread.updatedAt}
             {...describeToolTimeline(item.events)}
           />
         ) : (

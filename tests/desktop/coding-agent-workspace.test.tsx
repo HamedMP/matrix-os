@@ -779,6 +779,10 @@ describe("AgentWorkspace", () => {
     expect(screen.queryByText("msg_desktop_grouped")).toBeNull();
     expect(screen.queryByText("tool_desktop_grouped")).toBeNull();
     expect(screen.queryByText(/home\/matrix|token|secret local output|private credentials/i)).toBeNull();
+    expect(screen.getByText("2026-07-06T00:02:00.000Z")).toBeTruthy();
+    expect(screen.getByText("2026-07-06T00:02:10.000Z")).toBeTruthy();
+    expect(screen.queryByText("2026-07-06T00:02:30.000Z")).toBeNull();
+    expect(screen.queryByText("2026-07-06T00:03:00.000Z")).toBeNull();
     const bodyText = document.body.textContent ?? "";
     expect(bodyText.indexOf("Assistant message")).toBeLessThan(bodyText.indexOf("Tool activity"));
   });
