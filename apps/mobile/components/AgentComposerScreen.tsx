@@ -9,7 +9,10 @@ import {
   defaultAgentThreadComposerDraft,
   type AgentProviderSummary,
   type AgentThreadComposerDraft,
+  ProviderIdSchema,
   type RuntimeSummary,
+  SafeDisplayStringSchema,
+  ThreadIdSchema,
 } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
@@ -54,6 +57,23 @@ const ReviewHunkSeedParamsSchema = z.object({
 
 type ReviewHunkSeedParams = z.infer<typeof ReviewHunkSeedParamsSchema>;
 
+const ThreadFollowUpSeedParamsSchema = z.object({
+  sourceThreadId: z.preprocess(
+    (value) => Array.isArray(value) ? value[0] : value,
+    ThreadIdSchema,
+  ),
+  sourceThreadTitle: z.preprocess(
+    (value) => Array.isArray(value) ? value[0] : value,
+    SafeDisplayStringSchema,
+  ),
+  sourceProviderId: z.preprocess(
+    (value) => Array.isArray(value) ? value[0] : value,
+    ProviderIdSchema,
+  ).optional(),
+}).strict();
+
+type ThreadFollowUpSeedParams = z.infer<typeof ThreadFollowUpSeedParamsSchema>;
+
 let requestCounter = 0;
 
 function firstRouteParam(value: unknown): string | undefined {
@@ -81,6 +101,11 @@ function providerReady(provider: AgentProviderSummary): boolean {
 
 function parseReviewHunkSeedParams(params: Record<string, unknown>): ReviewHunkSeedParams | null {
   const parsed = ReviewHunkSeedParamsSchema.safeParse(params);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseThreadFollowUpSeedParams(params: Record<string, unknown>): ThreadFollowUpSeedParams | null {
+  const parsed = ThreadFollowUpSeedParamsSchema.safeParse(params);
   return parsed.success ? parsed.data : null;
 }
 
@@ -119,6 +144,32 @@ function reviewHunkFollowUpDraft(summary: RuntimeSummary, seed: ReviewHunkSeedPa
   };
 }
 
+function threadFollowUpDraft(summary: RuntimeSummary, seed: ThreadFollowUpSeedParams): AgentThreadComposerDraft {
+  const base = defaultAgentThreadComposerDraft(summary);
+  const sourceProvider = seed.sourceProviderId
+    ? summary.providers.find((provider) => provider.id === seed.sourceProviderId)
+    : null;
+  return {
+    ...base,
+    providerId: sourceProvider && providerReady(sourceProvider) ? sourceProvider.id : base.providerId,
+    prompt: [
+      "Please follow up on this agent run.",
+      "",
+      `Thread: ${seed.sourceThreadId}`,
+      `Title: ${seed.sourceThreadTitle}`,
+      "",
+      "Use the structured reference attached to inspect the current thread state and continue with the smallest safe next step.",
+    ].join("\n"),
+    attachments: [
+      {
+        id: `thread:${safeReferenceSegment(seed.sourceThreadId)}`,
+        kind: "structured_ref",
+        label: "Source thread",
+      },
+    ],
+  };
+}
+
 function isUntouchedDefaultDraft(current: AgentThreadComposerDraft, defaultDraft: AgentThreadComposerDraft): boolean {
   return current.providerId === defaultDraft.providerId &&
     current.prompt === defaultDraft.prompt &&
@@ -130,6 +181,36 @@ function isUntouchedDefaultDraft(current: AgentThreadComposerDraft, defaultDraft
     current.approvalPolicy === defaultDraft.approvalPolicy &&
     current.sandboxMode === defaultDraft.sandboxMode &&
     (current.attachments?.length ?? 0) === 0;
+}
+
+function mergeSeededDraft(
+  current: AgentThreadComposerDraft | null,
+  defaultDraft: AgentThreadComposerDraft,
+  seededDraft: AgentThreadComposerDraft | null,
+): AgentThreadComposerDraft {
+  if (!current) return seededDraft ?? defaultDraft;
+  if (!seededDraft) return current;
+  if (isUntouchedDefaultDraft(current, defaultDraft)) return seededDraft;
+  if ((current.attachments?.length ?? 0) > 0) return current;
+
+  if (current.prompt === defaultDraft.prompt) {
+    return {
+      ...seededDraft,
+      providerId: current.providerId,
+      mode: current.mode,
+      approvalPolicy: current.approvalPolicy,
+      sandboxMode: current.sandboxMode,
+    };
+  }
+
+  return {
+    ...current,
+    projectId: seededDraft.projectId ?? current.projectId,
+    worktreeId: seededDraft.worktreeId ?? current.worktreeId,
+    taskId: seededDraft.taskId ?? current.taskId,
+    terminalSessionId: seededDraft.terminalSessionId ?? current.terminalSessionId,
+    attachments: seededDraft.attachments,
+  };
 }
 
 export default function AgentComposerScreen() {
@@ -149,6 +230,9 @@ export default function AgentComposerScreen() {
   const oldLinesParam = firstRouteParam(routeParams.oldLines);
   const newStartParam = firstRouteParam(routeParams.newStart);
   const newLinesParam = firstRouteParam(routeParams.newLines);
+  const sourceThreadIdParam = firstRouteParam(routeParams.sourceThreadId);
+  const sourceThreadTitleParam = firstRouteParam(routeParams.sourceThreadTitle);
+  const sourceProviderIdParam = firstRouteParam(routeParams.sourceProviderId);
   const reviewHunkSeed = useMemo(() => parseReviewHunkSeedParams({
     reviewId: reviewIdParam,
     projectId: projectIdParam,
@@ -176,6 +260,15 @@ export default function AgentComposerScreen() {
     newStartParam,
     newLinesParam,
   ]);
+  const threadFollowUpSeed = useMemo(() => parseThreadFollowUpSeedParams({
+    sourceThreadId: sourceThreadIdParam,
+    sourceThreadTitle: sourceThreadTitleParam,
+    sourceProviderId: sourceProviderIdParam,
+  }), [
+    sourceThreadIdParam,
+    sourceThreadTitleParam,
+    sourceProviderIdParam,
+  ]);
   const [state, setState] = useState<ScreenState>(INITIAL_STATE);
   const [draft, setDraft] = useState<AgentThreadComposerDraft | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -201,13 +294,13 @@ export default function AgentComposerScreen() {
     const summary = result.summary;
     setState({ status: "ready", summary, error: null });
     const defaultDraft = defaultAgentThreadComposerDraft(summary);
-    const seededDraft = reviewHunkSeed ? reviewHunkFollowUpDraft(summary, reviewHunkSeed) : null;
-    setDraft((current) => {
-      if (!current) return seededDraft ?? defaultDraft;
-      if (seededDraft && isUntouchedDefaultDraft(current, defaultDraft)) return seededDraft;
-      return current;
-    });
-  }, [client, reviewHunkSeed]);
+    const seededDraft = reviewHunkSeed
+      ? reviewHunkFollowUpDraft(summary, reviewHunkSeed)
+      : threadFollowUpSeed
+        ? threadFollowUpDraft(summary, threadFollowUpSeed)
+        : null;
+    setDraft((current) => mergeSeededDraft(current, defaultDraft, seededDraft));
+  }, [client, reviewHunkSeed, threadFollowUpSeed]);
 
   useEffect(() => {
     void loadSummary();
