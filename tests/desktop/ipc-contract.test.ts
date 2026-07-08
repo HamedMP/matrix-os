@@ -708,5 +708,6 @@ describe("IPC contract", () => {
     ).toBe(true);
     expect(EVENT_CHANNELS["embed:state"].safeParse({ embedId: "e", state: "??" }).success).toBe(false);
     expect(EVENT_CHANNELS["menu:navigate"].safeParse({ kind: "agents" }).success).toBe(true);
+    expect(EVENT_CHANNELS["menu:navigate"].safeParse({ kind: "terminals" }).success).toBe(true);
   });
 });

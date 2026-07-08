@@ -28,6 +28,11 @@ export function createAppMenuTemplate({
       accelerator: "Cmd+P",
       click: () => send("menu:action", { action: "quick-open" }),
     },
+    {
+      label: "Terminal",
+      accelerator: "Cmd+Alt+T",
+      click: () => send("menu:navigate", { kind: "terminals" }),
+    },
   ];
 
   if (codingAgentsWorkspace) {
