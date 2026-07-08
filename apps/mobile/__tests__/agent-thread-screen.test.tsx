@@ -74,6 +74,176 @@ function threadSnapshotFixture() {
   };
 }
 
+function approvalRequestedSnapshotFixture() {
+  const snapshot = threadSnapshotFixture();
+  return {
+    ...snapshot,
+    events: {
+      ...snapshot.events,
+      items: [
+        ...snapshot.events.items,
+        {
+          eventId: "evt_mobile_approval_requested",
+          threadId: "thread_mobile",
+          type: "approval.requested",
+          approval: {
+            approvalId: "appr_mobile_1",
+            threadId: "thread_mobile",
+            title: "Run focused tests",
+            safeDescription: "Run the focused mobile thread test command.",
+            risk: "low",
+            actionKind: "command",
+            allowedDecisions: ["approve", "decline"],
+            correlationId: "corr_mobile_approval_1",
+          },
+          occurredAt: "2026-07-06T00:02:00.000Z",
+        },
+      ],
+    },
+  };
+}
+
+function approvalResolvedSnapshotFixture() {
+  const snapshot = threadSnapshotFixture();
+  return {
+    ...snapshot,
+    events: {
+      ...snapshot.events,
+      items: [
+        ...snapshot.events.items,
+        {
+          eventId: "evt_mobile_approval_resolved",
+          threadId: "thread_mobile",
+          type: "approval.resolved",
+          approvalId: "appr_mobile_1",
+          decision: "approve",
+          occurredAt: "2026-07-06T00:03:00.000Z",
+        },
+      ],
+    },
+  };
+}
+
+function approvalRequestedAndResolvedSnapshotFixture() {
+  const requested = approvalRequestedSnapshotFixture();
+  return {
+    ...requested,
+    events: {
+      ...requested.events,
+      items: [
+        ...requested.events.items,
+        {
+          eventId: "evt_mobile_approval_resolved",
+          threadId: "thread_mobile",
+          type: "approval.resolved",
+          approvalId: "appr_mobile_1",
+          decision: "approve",
+          occurredAt: "2026-07-06T00:03:00.000Z",
+        },
+      ],
+    },
+  };
+}
+
+function twoApprovalRequestsSnapshotFixture() {
+  const snapshot = approvalRequestedSnapshotFixture();
+  return {
+    ...snapshot,
+    events: {
+      ...snapshot.events,
+      items: [
+        ...snapshot.events.items,
+        {
+          eventId: "evt_mobile_approval_requested_2",
+          threadId: "thread_mobile",
+          type: "approval.requested",
+          approval: {
+            approvalId: "appr_mobile_2",
+            threadId: "thread_mobile",
+            title: "Update fixture",
+            safeDescription: "Update the focused mobile fixture.",
+            risk: "low",
+            actionKind: "file_change",
+            allowedDecisions: ["approve", "decline"],
+            correlationId: "corr_mobile_approval_2",
+          },
+          occurredAt: "2026-07-06T00:02:30.000Z",
+        },
+      ],
+    },
+  };
+}
+
+function inputRequestedSnapshotFixture() {
+  const snapshot = threadSnapshotFixture();
+  return {
+    ...snapshot,
+    events: {
+      ...snapshot.events,
+      items: [
+        ...snapshot.events.items,
+        {
+          eventId: "evt_mobile_input_requested",
+          threadId: "thread_mobile",
+          type: "user_input.requested",
+          request: {
+            requestId: "req_mobile_prompt_1",
+            threadId: "thread_mobile",
+            title: "Clarify command",
+            safeDescription: "Provide the next safe instruction for this run.",
+            placeholder: "Type an instruction",
+            required: true,
+            correlationId: "corr_mobile_input_1",
+          },
+          occurredAt: "2026-07-06T00:02:00.000Z",
+        },
+      ],
+    },
+  };
+}
+
+function inputAnsweredSnapshotFixture() {
+  const snapshot = threadSnapshotFixture();
+  return {
+    ...snapshot,
+    events: {
+      ...snapshot.events,
+      items: [
+        ...snapshot.events.items,
+        {
+          eventId: "evt_mobile_input_answered",
+          threadId: "thread_mobile",
+          type: "user_input.answered",
+          requestId: "req_mobile_prompt_1",
+          correlationId: "corr_mobile_input_1",
+          occurredAt: "2026-07-06T00:03:00.000Z",
+        },
+      ],
+    },
+  };
+}
+
+function inputRequestedAndAnsweredSnapshotFixture() {
+  const requested = inputRequestedSnapshotFixture();
+  return {
+    ...requested,
+    events: {
+      ...requested.events,
+      items: [
+        ...requested.events.items,
+        {
+          eventId: "evt_mobile_input_answered",
+          threadId: "thread_mobile",
+          type: "user_input.answered",
+          requestId: "req_mobile_prompt_1",
+          correlationId: "corr_mobile_input_1",
+          occurredAt: "2026-07-06T00:03:00.000Z",
+        },
+      ],
+    },
+  };
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((promiseResolve) => {
@@ -137,6 +307,183 @@ describe("AgentThreadRoute", () => {
       expect.stringContaining('"lastActiveTerminalSessionId":"matrix-abc1234"'),
     );
     expect(mockRouterPush).toHaveBeenCalledWith("/terminal");
+  });
+
+  it("submits an approval decision and applies the returned thread snapshot", async () => {
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: approvalRequestedSnapshotFixture(),
+      }),
+      submitCodingAgentApprovalDecision: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: approvalResolvedSnapshotFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Approval needed")).toBeTruthy();
+    expect(screen.getByText("Run the focused mobile thread test command.")).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Approve Run focused tests"));
+    });
+
+    expect(client.submitCodingAgentApprovalDecision).toHaveBeenCalledWith(expect.objectContaining({
+      threadId: "thread_mobile",
+      approvalId: "appr_mobile_1",
+      decision: "approve",
+      correlationId: "corr_mobile_approval_1",
+      clientRequestId: expect.stringMatching(/^req_mobile_/),
+    }));
+    expect(await screen.findByText("Approval resolved")).toBeTruthy();
+    expect(screen.queryByText("Run the focused mobile thread test command.")).toBeNull();
+  });
+
+  it("submits a user input answer and applies the returned thread snapshot", async () => {
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: inputRequestedSnapshotFixture(),
+      }),
+      submitCodingAgentInputAnswer: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: inputAnsweredSnapshotFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Input needed")).toBeTruthy();
+    fireEvent.changeText(screen.getByLabelText("Answer Clarify command"), "Run the focused mobile screen test.");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Send Clarify command"));
+    });
+
+    expect(client.submitCodingAgentInputAnswer).toHaveBeenCalledWith(expect.objectContaining({
+      threadId: "thread_mobile",
+      inputRequestId: "req_mobile_prompt_1",
+      answer: "Run the focused mobile screen test.",
+      correlationId: "corr_mobile_input_1",
+      clientRequestId: expect.stringMatching(/^req_mobile_/),
+    }));
+    expect(await screen.findByText("Input answered")).toBeTruthy();
+    expect(screen.queryByLabelText("Answer Clarify command")).toBeNull();
+  });
+
+  it("does not render approval actions once the approval is resolved", async () => {
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: approvalRequestedAndResolvedSnapshotFixture(),
+      }),
+      submitCodingAgentApprovalDecision: jest.fn(),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Approval needed")).toBeTruthy();
+    expect(screen.getByText("Approval resolved")).toBeTruthy();
+    expect(screen.queryByLabelText("Approve Run focused tests")).toBeNull();
+  });
+
+  it("does not render an input composer once the input is answered", async () => {
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: inputRequestedAndAnsweredSnapshotFixture(),
+      }),
+      submitCodingAgentInputAnswer: jest.fn(),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Input needed")).toBeTruthy();
+    expect(screen.getByText("Input answered")).toBeTruthy();
+    expect(screen.queryByLabelText("Answer Clarify command")).toBeNull();
+  });
+
+  it("keeps pending approval decisions scoped to the matching row", async () => {
+    const pendingDecision = deferred<{ ok: true; snapshot: ReturnType<typeof twoApprovalRequestsSnapshotFixture> }>();
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: twoApprovalRequestsSnapshotFixture(),
+      }),
+      submitCodingAgentApprovalDecision: jest.fn()
+        .mockImplementationOnce(() => pendingDecision.promise)
+        .mockResolvedValueOnce({
+          ok: true,
+          snapshot: twoApprovalRequestsSnapshotFixture(),
+        }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByLabelText("Approve Run focused tests")).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Approve Run focused tests"));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Approve Update fixture"));
+    });
+
+    expect(client.submitCodingAgentApprovalDecision).toHaveBeenCalledTimes(2);
+    expect(client.submitCodingAgentApprovalDecision).toHaveBeenLastCalledWith(expect.objectContaining({
+      approvalId: "appr_mobile_2",
+    }));
+
+    await act(async () => {
+      pendingDecision.resolve({ ok: true, snapshot: twoApprovalRequestsSnapshotFixture() });
+      await pendingDecision.promise;
+    });
+  });
+
+  it("keeps approval errors scoped to the matching row", async () => {
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: twoApprovalRequestsSnapshotFixture(),
+      }),
+      submitCodingAgentApprovalDecision: jest.fn().mockResolvedValue({
+        ok: false,
+        error: "Approval could not be sent. Try again.",
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByLabelText("Approve Run focused tests")).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Approve Run focused tests"));
+    });
+
+    expect(await screen.findByText("Approval could not be sent. Try again.")).toBeTruthy();
+    expect(screen.getAllByText("Approval could not be sent. Try again.")).toHaveLength(1);
   });
 
   it("does not open a stale terminal session when safe resume state cannot be saved", async () => {

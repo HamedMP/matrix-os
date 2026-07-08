@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
+import type { AgentThreadEvent, AgentThreadSnapshot, ApprovalDecisionRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
 import { isSafeShellSessionName } from "@/lib/terminal-state";
@@ -14,6 +14,9 @@ type ThreadRouteState =
   | { status: "error"; snapshot: null; error: "Thread state unavailable" };
 
 type TerminalOpenError = "Terminal session unavailable. Try again.";
+type ThreadActionError =
+  | "Approval could not be sent. Try again."
+  | "Input could not be sent. Try again.";
 
 export default function AgentThreadRoute() {
   const { theme } = useUnistyles();
@@ -28,9 +31,13 @@ export default function AgentThreadRoute() {
     error: null,
   });
   const [terminalOpenError, setTerminalOpenError] = useState<TerminalOpenError | null>(null);
+  const [pendingActionIds, setPendingActionIds] = useState<Record<string, true>>({});
+  const [threadActionErrors, setThreadActionErrors] = useState<Record<string, ThreadActionError>>({});
+  const [inputAnswers, setInputAnswers] = useState<Record<string, string>>({});
 
   const loadSnapshot = useCallback(async (cancelled: () => boolean = () => false) => {
     setTerminalOpenError(null);
+    setThreadActionErrors({});
     if (!client || !threadId) {
       setState((current) => current.status === "ready"
         ? { ...current, error: "Thread state unavailable", refreshing: false }
@@ -63,6 +70,91 @@ export default function AgentThreadRoute() {
       clearTimeout(timer);
     };
   }, [loadSnapshot]);
+
+  const submitApprovalDecision = useCallback(async (
+    event: Extract<AgentThreadEvent, { type: "approval.requested" }>,
+    decision: ApprovalDecisionRequest["decision"],
+  ) => {
+    if (!client || state.status !== "ready") return;
+    const actionId = `${event.approval.approvalId}:${decision}`;
+    setPendingActionIds((current) => ({ ...current, [actionId]: true }));
+    setThreadActionErrors((current) => {
+      const next = { ...current };
+      delete next[actionId];
+      return next;
+    });
+    const result = await client.submitCodingAgentApprovalDecision({
+      threadId: state.snapshot.thread.id,
+      approvalId: event.approval.approvalId,
+      decision,
+      correlationId: event.approval.correlationId,
+      clientRequestId: createMobileClientRequestId(),
+    });
+    setPendingActionIds((current) => {
+      const next = { ...current };
+      delete next[actionId];
+      return next;
+    });
+    if (result.ok) {
+      setState((current) => current.status === "ready"
+        ? { ...current, snapshot: result.snapshot, error: null, refreshing: false }
+        : current);
+      return;
+    }
+    setThreadActionErrors((current) => ({
+      ...current,
+      [actionId]: "Approval could not be sent. Try again.",
+    }));
+  }, [client, state]);
+
+  const setInputAnswer = useCallback((requestId: string, answer: string) => {
+    setInputAnswers((current) => ({
+      ...current,
+      [requestId]: answer,
+    }));
+  }, []);
+
+  const submitInputAnswer = useCallback(async (
+    event: Extract<AgentThreadEvent, { type: "user_input.requested" }>,
+  ) => {
+    if (!client || state.status !== "ready") return;
+    const answer = inputAnswers[event.request.requestId] ?? "";
+    if (!answer.trim()) return;
+    const actionId = `${event.request.requestId}:answer`;
+    setPendingActionIds((current) => ({ ...current, [actionId]: true }));
+    setThreadActionErrors((current) => {
+      const next = { ...current };
+      delete next[actionId];
+      return next;
+    });
+    const result = await client.submitCodingAgentInputAnswer({
+      threadId: state.snapshot.thread.id,
+      inputRequestId: event.request.requestId,
+      answer,
+      correlationId: event.request.correlationId,
+      clientRequestId: createMobileClientRequestId(),
+    });
+    setPendingActionIds((current) => {
+      const next = { ...current };
+      delete next[actionId];
+      return next;
+    });
+    if (result.ok) {
+      setInputAnswers((current) => {
+        const next = { ...current };
+        delete next[event.request.requestId];
+        return next;
+      });
+      setState((current) => current.status === "ready"
+        ? { ...current, snapshot: result.snapshot, error: null, refreshing: false }
+        : current);
+      return;
+    }
+    setThreadActionErrors((current) => ({
+      ...current,
+      [actionId]: "Input could not be sent. Try again.",
+    }));
+  }, [client, inputAnswers, state]);
 
   const boundTerminalSessionId = state.status === "ready" ? state.snapshot.thread.terminalSessionId ?? null : null;
   const openBoundTerminal = useCallback(async () => {
@@ -109,6 +201,12 @@ export default function AgentThreadRoute() {
 
   const { thread, events } = state.snapshot;
   const terminalSessionId = thread.terminalSessionId ?? "No terminal bound";
+  const resolvedApprovalIds = new Set(events.items
+    .filter((event): event is Extract<AgentThreadEvent, { type: "approval.resolved" }> => event.type === "approval.resolved")
+    .map((event) => event.approvalId));
+  const answeredInputRequestIds = new Set(events.items
+    .filter((event): event is Extract<AgentThreadEvent, { type: "user_input.answered" }> => event.type === "user_input.answered")
+    .map((event) => event.requestId));
 
   return (
     <ScrollView
@@ -169,7 +267,19 @@ export default function AgentThreadRoute() {
         <View style={styles.timeline}>
           <Text style={styles.sectionTitle}>Activity timeline</Text>
           {events.items.map((event) => (
-            <ThreadEventItem key={event.eventId} event={event} />
+            <ThreadEventItem
+              key={event.eventId}
+              event={event}
+              pendingActionIds={pendingActionIds}
+              actionErrors={threadActionErrors}
+              resolved={event.type === "approval.requested"
+                ? resolvedApprovalIds.has(event.approval.approvalId)
+                : event.type === "user_input.requested" && answeredInputRequestIds.has(event.request.requestId)}
+              inputAnswer={event.type === "user_input.requested" ? inputAnswers[event.request.requestId] ?? "" : ""}
+              onInputAnswerChange={setInputAnswer}
+              onInputAnswerSubmit={submitInputAnswer}
+              onApprovalDecision={submitApprovalDecision}
+            />
           ))}
         </View>
       ) : null}
@@ -186,7 +296,28 @@ function MetaItem({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ThreadEventItem({ event }: { event: AgentThreadEvent }) {
+function ThreadEventItem({
+  event,
+  pendingActionIds,
+  actionErrors,
+  resolved,
+  inputAnswer,
+  onInputAnswerChange,
+  onInputAnswerSubmit,
+  onApprovalDecision,
+}: {
+  event: AgentThreadEvent;
+  pendingActionIds: Record<string, true>;
+  actionErrors: Record<string, ThreadActionError>;
+  resolved: boolean;
+  inputAnswer: string;
+  onInputAnswerChange: (requestId: string, answer: string) => void;
+  onInputAnswerSubmit: (event: Extract<AgentThreadEvent, { type: "user_input.requested" }>) => void;
+  onApprovalDecision: (
+    event: Extract<AgentThreadEvent, { type: "approval.requested" }>,
+    decision: ApprovalDecisionRequest["decision"],
+  ) => void;
+}) {
   const { theme } = useUnistyles();
   const copy = describeThreadEvent(event);
   return (
@@ -197,6 +328,76 @@ function ThreadEventItem({ event }: { event: AgentThreadEvent }) {
       <View style={styles.eventText}>
         <Text style={styles.eventTitle}>{copy.title}</Text>
         <Text selectable style={styles.eventDetail}>{copy.detail}</Text>
+        {event.type === "approval.requested" && !resolved ? (
+          <View style={styles.inlineActionGroup}>
+            {event.approval.allowedDecisions.map((decision) => {
+              const label = formatApprovalDecision(decision);
+              const actionId = `${event.approval.approvalId}:${decision}`;
+              const pending = Boolean(pendingActionIds[actionId]);
+              const rowPending = event.approval.allowedDecisions.some((allowedDecision) =>
+                Boolean(pendingActionIds[`${event.approval.approvalId}:${allowedDecision}`]));
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`${label} ${event.approval.title}`}
+                  disabled={rowPending}
+                  key={decision}
+                  onPress={() => onApprovalDecision(event, decision)}
+                  style={[
+                    decision === "approve" || decision === "approve_for_session"
+                      ? styles.inlinePrimaryButton
+                      : styles.inlineSecondaryButton,
+                    pending ? styles.inlineButtonDisabled : null,
+                  ]}
+                >
+                  <Text
+                    style={decision === "approve" || decision === "approve_for_session"
+                      ? styles.inlinePrimaryButtonText
+                      : styles.inlineSecondaryButtonText}
+                  >
+                    {pending ? "Sending" : label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+            {findApprovalActionError(event, actionErrors) ? (
+              <Text style={styles.inlineError}>{findApprovalActionError(event, actionErrors)}</Text>
+            ) : null}
+          </View>
+        ) : null}
+        {event.type === "user_input.requested" && !resolved ? (
+          <View style={styles.inputComposer}>
+            <TextInput
+              accessibilityLabel={`Answer ${event.request.title}`}
+              multiline
+              numberOfLines={3}
+              onChangeText={(value) => onInputAnswerChange(event.request.requestId, value)}
+              placeholder={event.request.placeholder ?? "Answer"}
+              placeholderTextColor={theme.colors.mutedForeground}
+              style={styles.inputField}
+              value={inputAnswer}
+            />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Send ${event.request.title}`}
+              disabled={Boolean(pendingActionIds[`${event.request.requestId}:answer`]) || !inputAnswer.trim()}
+              onPress={() => onInputAnswerSubmit(event)}
+              style={[
+                styles.inlinePrimaryButton,
+                Boolean(pendingActionIds[`${event.request.requestId}:answer`]) || !inputAnswer.trim()
+                  ? styles.inlineButtonDisabled
+                  : null,
+              ]}
+            >
+              <Text style={styles.inlinePrimaryButtonText}>
+                {pendingActionIds[`${event.request.requestId}:answer`] ? "Sending" : "Send"}
+              </Text>
+            </Pressable>
+            {actionErrors[`${event.request.requestId}:answer`] ? (
+              <Text style={styles.inlineError}>{actionErrors[`${event.request.requestId}:answer`]}</Text>
+            ) : null}
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -256,6 +457,35 @@ function describeThreadEvent(event: AgentThreadEvent): { icon: keyof typeof Ioni
 
 function capitalize(value: string): string {
   return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
+}
+
+function formatApprovalDecision(decision: ApprovalDecisionRequest["decision"]): string {
+  switch (decision) {
+    case "approve":
+      return "Approve";
+    case "approve_for_session":
+      return "Approve for session";
+    case "decline":
+      return "Decline";
+    case "cancel":
+      return "Cancel";
+  }
+}
+
+function findApprovalActionError(
+  event: Extract<AgentThreadEvent, { type: "approval.requested" }>,
+  actionErrors: Record<string, ThreadActionError>,
+): ThreadActionError | null {
+  for (const decision of event.approval.allowedDecisions) {
+    const error = actionErrors[`${event.approval.approvalId}:${decision}`];
+    if (error) return error;
+  }
+  return null;
+}
+
+function createMobileClientRequestId(): `req_${string}` {
+  const random = Math.random().toString(36).slice(2, 10).padEnd(8, "0");
+  return `req_mobile_${Date.now().toString(36)}_${random}`;
 }
 
 const styles = StyleSheet.create((theme, rt) => ({
@@ -427,5 +657,61 @@ const styles = StyleSheet.create((theme, rt) => ({
     fontFamily: theme.fonts.mono,
     fontSize: 12,
     color: theme.colors.mutedForeground,
+  },
+  inlineActionGroup: {
+    marginTop: theme.spacing.sm,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing.sm,
+    alignItems: "center",
+  },
+  inlinePrimaryButton: {
+    minHeight: 36,
+    borderRadius: 18,
+    paddingHorizontal: theme.spacing.md,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.forest,
+  },
+  inlinePrimaryButtonText: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 12,
+    color: theme.colors.background,
+  },
+  inlineSecondaryButton: {
+    minHeight: 36,
+    borderRadius: 18,
+    paddingHorizontal: theme.spacing.md,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.background,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  inlineSecondaryButtonText: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 12,
+    color: theme.colors.forest,
+  },
+  inlineButtonDisabled: {
+    opacity: 0.55,
+  },
+  inputComposer: {
+    marginTop: theme.spacing.sm,
+    gap: theme.spacing.sm,
+  },
+  inputField: {
+    minHeight: 84,
+    borderRadius: 12,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
+    fontFamily: theme.fonts.sans,
+    fontSize: 14,
+    color: theme.colors.foreground,
+    textAlignVertical: "top",
   },
 }));
