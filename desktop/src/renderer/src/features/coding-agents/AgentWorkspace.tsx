@@ -1,4 +1,4 @@
-import { Bot, ChevronRight, ClipboardCheck, ExternalLink, FileText, GitBranch, GitCommitHorizontal, Monitor, Play, RefreshCw, Save, Server, SquareTerminal } from "lucide-react";
+import { Bot, ChevronRight, ClipboardCheck, ExternalLink, FileText, GitBranch, GitCommitHorizontal, GitPullRequest, Monitor, Play, RefreshCw, Save, Server, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   defaultAgentThreadComposerDraft,
@@ -11,6 +11,7 @@ import {
   type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
+  type SourceControlCreatePullRequestRequest,
   type SourceControlPrepareCommitRequest,
 } from "@matrix-os/contracts";
 import { Button, EmptyState, StatusDot } from "../../design/primitives";
@@ -987,11 +988,14 @@ function ReviewList({
   const fileWriteError = useCodingAgentWorkspace((s) => s.fileWriteError);
   const sourceCommitStatus = useCodingAgentWorkspace((s) => s.sourceCommitStatus);
   const sourceCommitError = useCodingAgentWorkspace((s) => s.sourceCommitError);
+  const sourcePullRequestStatus = useCodingAgentWorkspace((s) => s.sourcePullRequestStatus);
+  const sourcePullRequestError = useCodingAgentWorkspace((s) => s.sourcePullRequestError);
   const selectedFilePath = useCodingAgentWorkspace((s) => s.selectedFilePath);
   const selectReview = useCodingAgentWorkspace((s) => s.selectReview);
   const loadFileContent = useCodingAgentWorkspace((s) => s.loadFileContent);
   const saveFileContent = useCodingAgentWorkspace((s) => s.saveFileContent);
   const prepareSourceCommit = useCodingAgentWorkspace((s) => s.prepareSourceCommit);
+  const createSourcePullRequest = useCodingAgentWorkspace((s) => s.createSourcePullRequest);
   const items = reviews?.items ?? [];
 
   return (
@@ -1048,11 +1052,14 @@ function ReviewList({
           fileWriteError={fileWriteError}
           sourceCommitStatus={sourceCommitStatus}
           sourceCommitError={sourceCommitError}
+          sourcePullRequestStatus={sourcePullRequestStatus}
+          sourcePullRequestError={sourcePullRequestError}
           selectedFilePath={selectedFilePath}
           onOpenFile={loadFileContent}
           onSaveFile={saveFileContent}
           canPrepareCommit={canPrepareCommit}
           onPrepareCommit={prepareSourceCommit}
+          onCreatePullRequest={createSourcePullRequest}
           canCreateFollowUp={canCreateFollowUp}
           onAskHunkFollowUp={onAskHunkFollowUp}
         />
@@ -1078,11 +1085,14 @@ function ReviewSnapshotPanel({
   fileWriteError,
   sourceCommitStatus,
   sourceCommitError,
+  sourcePullRequestStatus,
+  sourcePullRequestError,
   selectedFilePath,
   onOpenFile,
   onSaveFile,
   canPrepareCommit,
   onPrepareCommit,
+  onCreatePullRequest,
   canCreateFollowUp,
   onAskHunkFollowUp,
 }: {
@@ -1097,11 +1107,14 @@ function ReviewSnapshotPanel({
   fileWriteError: string | null;
   sourceCommitStatus: "idle" | "preparing" | "prepared" | "error";
   sourceCommitError: string | null;
+  sourcePullRequestStatus: "idle" | "creating" | "ready" | "error";
+  sourcePullRequestError: string | null;
   selectedFilePath: string | null;
   onOpenFile: (request: FileReadRequest) => void;
   onSaveFile: (request: { projectId: string; worktreeId: string; path: string; content: string; baseEtag: string | null }) => void;
   canPrepareCommit: boolean;
   onPrepareCommit: (request: Omit<SourceControlPrepareCommitRequest, "clientRequestId">) => void;
+  onCreatePullRequest: (request: Omit<SourceControlCreatePullRequestRequest, "clientRequestId">) => void;
   canCreateFollowUp: boolean;
   onAskHunkFollowUp: (snapshot: ReviewSnapshot, selected: SelectedReviewHunk) => void;
 }) {
@@ -1139,6 +1152,7 @@ function ReviewSnapshotPanel({
   if (!snapshot) return null;
   const prepareCommitPaths = snapshot.files.items.map((file) => file.path).slice(0, 100);
   const prepareCommitDisabled = sourceCommitStatus === "preparing" || prepareCommitPaths.length === 0;
+  const createPullRequestDisabled = sourcePullRequestStatus === "creating";
 
   return (
     <article className="grid gap-3 rounded-md border p-3" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
@@ -1167,6 +1181,16 @@ function ReviewSnapshotPanel({
               {sourceCommitError ?? "Source commit could not be prepared. Refresh and try again."}
             </span>
           ) : null}
+          {sourcePullRequestStatus === "ready" ? (
+            <span className="text-xs" style={{ color: "var(--success)" }}>
+              Pull request ready
+            </span>
+          ) : null}
+          {sourcePullRequestStatus === "error" ? (
+            <span className="text-xs" style={{ color: "var(--danger)" }}>
+              {sourcePullRequestError ?? "Pull request could not be created. Refresh and try again."}
+            </span>
+          ) : null}
           <Button
             variant="ghost"
             type="button"
@@ -1181,6 +1205,21 @@ function ReviewSnapshotPanel({
           >
             <GitCommitHorizontal size={14} />
             {sourceCommitStatus === "preparing" ? "Preparing" : "Prepare commit"}
+          </Button>
+          <Button
+            variant="ghost"
+            type="button"
+            disabled={createPullRequestDisabled}
+            aria-label={`Create pull request for review PR #${snapshot.review.pullRequestNumber}`}
+            onClick={() => onCreatePullRequest({
+              projectId: snapshot.review.projectId,
+              worktreeId: snapshot.review.worktreeId,
+              title: `fix: apply review updates for PR #${snapshot.review.pullRequestNumber}`,
+              body: "Review updates are ready.",
+            })}
+          >
+            <GitPullRequest size={14} />
+            {sourcePullRequestStatus === "creating" ? "Creating" : "Create PR"}
           </Button>
         </div>
       ) : null}

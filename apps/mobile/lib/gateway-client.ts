@@ -19,6 +19,8 @@ import {
   ReviewSummarySchema,
   RuntimeSummarySchema,
   SafeClientErrorSchema,
+  SourceControlCreatePullRequestRequestSchema,
+  SourceControlCreatePullRequestResponseSchema,
   SourceControlPrepareCommitRequestSchema,
   SourceControlPrepareCommitResponseSchema,
   ThreadIdSchema,
@@ -31,6 +33,8 @@ import {
   type FileWriteResponse,
   type ReviewSnapshot,
   type RuntimeSummary,
+  type SourceControlCreatePullRequestRequest,
+  type SourceControlCreatePullRequestResponse,
   type SourceControlPrepareCommitRequest,
   type SourceControlPrepareCommitResponse,
   boundedListSchema,
@@ -140,6 +144,10 @@ export type CodingAgentFileSaveResult =
 export type CodingAgentSourceCommitResult =
   | { ok: true; commit: SourceControlPrepareCommitResponse }
   | { ok: false; error: "Source commit could not be prepared. Refresh and try again." };
+
+export type CodingAgentSourcePullRequestResult =
+  | { ok: true; pullRequest: SourceControlCreatePullRequestResponse }
+  | { ok: false; error: "Pull request could not be created. Refresh and try again." };
 
 export type CodingAgentThreadStreamStatus = "connecting" | "open" | "closed" | "error";
 
@@ -991,6 +999,36 @@ export class GatewayClient {
       const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
       console.warn(`[mobile] /api/coding-agents/source-control/prepare-commit ${reason}`);
       return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
+    }
+  }
+
+  async createCodingAgentSourcePullRequest(
+    request: SourceControlCreatePullRequestRequest,
+  ): Promise<CodingAgentSourcePullRequestResult> {
+    try {
+      const parsedRequest = SourceControlCreatePullRequestRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "Pull request could not be created. Refresh and try again." };
+      }
+      const res = await this.fetchGateway("/api/coding-agents/source-control/pull-requests", {
+        method: "POST",
+        body: JSON.stringify(parsedRequest.data),
+      });
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/source-control/pull-requests unavailable");
+        return { ok: false, error: "Pull request could not be created. Refresh and try again." };
+      }
+      const body = await res.json();
+      const parsed = SourceControlCreatePullRequestResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/source-control/pull-requests returned invalid payload");
+        return { ok: false, error: "Pull request could not be created. Refresh and try again." };
+      }
+      return { ok: true, pullRequest: parsed.data };
+    } catch (err: unknown) {
+      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
+      console.warn(`[mobile] /api/coding-agents/source-control/pull-requests ${reason}`);
+      return { ok: false, error: "Pull request could not be created. Refresh and try again." };
     }
   }
 

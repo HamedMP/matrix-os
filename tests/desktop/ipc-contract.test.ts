@@ -447,6 +447,33 @@ describe("IPC contract", () => {
     expect(schema.safeParse({ ...response, branch: "/home/matrix/private" }).success).toBe(false);
   });
 
+  it("validates runtime:create-source-pull-request requests and rejects credential leakage shapes", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:create-source-pull-request"].request;
+    const schema = INVOKE_CHANNELS["runtime:create-source-pull-request"].response;
+    const request = {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix: apply review updates for PR #758",
+      body: "Review updates are ready.",
+      clientRequestId: "req_desktop_create_pr",
+    };
+    const response = {
+      status: "created",
+      number: 808,
+      url: "https://github.com/HamedMP/matrix-os/pull/808",
+      headBranch: "feature/review-fix",
+      baseBranch: "main",
+      safeMessage: "Pull request is ready for review.",
+    };
+
+    expect(requestSchema.safeParse(request).success).toBe(true);
+    expect(requestSchema.safeParse({ ...request, accessToken: "secret" }).success).toBe(false);
+    expect(requestSchema.safeParse({ ...request, title: "" }).success).toBe(false);
+    expect(schema.safeParse(response).success).toBe(true);
+    expect(schema.safeParse({ ...response, bearerToken: "secret" }).success).toBe(false);
+    expect(schema.safeParse({ ...response, url: "file:///home/matrix/private/secret" }).success).toBe(false);
+  });
+
   it("validates auth:poll responses and rejects token leakage shapes", () => {
     const schema = INVOKE_CHANNELS["auth:poll"].response;
     expect(schema.safeParse({ status: "authorized", profile: { handle: "neo", userId: "u1" } }).success).toBe(true);

@@ -1465,6 +1465,107 @@ describe("AgentWorkspace", () => {
     expect(screen.queryByText(/Source commit could not be prepared/i)).toBeNull();
   });
 
+  it("creates a source-control pull request for reviewed files through trusted IPC", async () => {
+    const pullRequest = {
+      status: "created",
+      number: 808,
+      url: "https://github.com/HamedMP/matrix-os/pull/808",
+      headBranch: "feature/review-fix",
+      baseBranch: "main",
+      safeMessage: "Pull request is ready for review.",
+    };
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ sourceControl: true }));
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());
+      if (channel === "runtime:create-source-pull-request") return Promise.resolve(pullRequest);
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByText("matrix-os");
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
+    await screen.findByText("packages/gateway/src/coding-agents/routes.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Create pull request for review PR #758" }));
+
+    await waitFor(() => {
+      expect(window.operator.invoke).toHaveBeenCalledWith("runtime:create-source-pull-request", expect.objectContaining({
+        projectId: "matrix-os",
+        worktreeId: "wt_desktop_1",
+      }));
+    });
+    const pullRequestCall = vi.mocked(window.operator.invoke).mock.calls.find(([channel]) => channel === "runtime:create-source-pull-request");
+    expect(pullRequestCall?.[1]).toEqual(expect.objectContaining({
+      title: "fix: apply review updates for PR #758",
+      body: "Review updates are ready.",
+      clientRequestId: expect.stringMatching(/^req_desktop_/),
+    }));
+    expect(JSON.stringify(pullRequestCall?.[1])).not.toMatch(/token|bearer|secret/i);
+    expect(await screen.findByText("Pull request ready")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("ignores stale desktop pull request completions after another review opens the same worktree", async () => {
+    const pullRequestResult = deferred<{
+      status: "created";
+      number: number;
+      url: string;
+      headBranch: string;
+      baseBranch: string;
+      safeMessage: string;
+    }>();
+    const secondReview = {
+      ...reviewsFixture().items[0],
+      id: "rev_desktop_2",
+      pullRequestNumber: 759,
+      updatedAt: "2026-07-06T00:05:00.000Z",
+    };
+    const reviews = {
+      ...reviewsFixture(),
+      items: [reviewsFixture().items[0], secondReview],
+    };
+    const firstSnapshot = reviewSnapshotFixture();
+    const secondSnapshot = {
+      ...reviewSnapshotFixture(),
+      review: secondReview,
+      updatedAt: "2026-07-06T00:05:00.000Z",
+    };
+
+    window.operator.invoke = vi.fn((channel: string, request?: unknown) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ sourceControl: true }));
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviews);
+      if (channel === "runtime:get-review-snapshot") {
+        return Promise.resolve((request as { reviewId?: string }).reviewId === "rev_desktop_2" ? secondSnapshot : firstSnapshot);
+      }
+      if (channel === "runtime:create-source-pull-request") return pullRequestResult.promise;
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Open review PR #758/i }));
+    await screen.findByText("PR #758 review details");
+    fireEvent.click(screen.getByRole("button", { name: "Create pull request for review PR #758" }));
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #759/i }));
+    await screen.findByText("PR #759 review details");
+
+    await act(async () => {
+      pullRequestResult.resolve({
+        status: "created",
+        number: 808,
+        url: "https://github.com/HamedMP/matrix-os/pull/808",
+        headBranch: "feature/review-fix",
+        baseBranch: "main",
+        safeMessage: "Pull request is ready for review.",
+      });
+      await pullRequestResult.promise;
+    });
+
+    expect(screen.queryByText("Pull request ready")).toBeNull();
+    expect(screen.queryByText(/Pull request could not be created/i)).toBeNull();
+  });
+
   it("ignores stale desktop save completions after another worktree opens the same path", async () => {
     let resolveSave: ((value: {
       metadata: {

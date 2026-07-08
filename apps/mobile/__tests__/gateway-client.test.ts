@@ -94,6 +94,17 @@ function sourceCommitPayload() {
   };
 }
 
+function sourcePullRequestPayload() {
+  return {
+    status: "created",
+    number: 808,
+    url: "https://github.com/HamedMP/matrix-os/pull/808",
+    headBranch: "feature/review-fix",
+    baseBranch: "main",
+    safeMessage: "Pull request is ready for review.",
+  };
+}
+
 describe("GatewayClient", () => {
   it("initializes with disconnected state", () => {
     const client = new GatewayClient("http://localhost:4000");
@@ -968,6 +979,42 @@ describe("GatewayClient", () => {
     fetchMock.mockRestore();
   });
 
+  it("creates coding agent source pull requests with existing auth and safe validation", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse(sourcePullRequestPayload()));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.createCodingAgentSourcePullRequest({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix: apply review updates for PR #759",
+      body: "Review updates are ready.",
+      clientRequestId: "req_mobile_create_pr",
+    })).resolves.toEqual({
+      ok: true,
+      pullRequest: sourcePullRequestPayload(),
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/source-control/pull-requests",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          projectId: "matrix-os",
+          worktreeId: "wt_abc123def456",
+          title: "fix: apply review updates for PR #759",
+          body: "Review updates are ready.",
+          clientRequestId: "req_mobile_create_pr",
+        }),
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }),
+    );
+
+    fetchMock.mockRestore();
+  });
+
   it("returns a safe mobile file save error for invalid requests and gateway payloads", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
       ...fileWritePayload(),
@@ -1032,6 +1079,37 @@ describe("GatewayClient", () => {
     })).resolves.toEqual({
       ok: false,
       error: "Source commit could not be prepared. Refresh and try again.",
+    });
+
+    fetchMock.mockRestore();
+  });
+
+  it("returns a safe mobile source-control pull request error for invalid requests and gateway payloads", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      ...sourcePullRequestPayload(),
+      url: "file:///home/matrix/private/secret",
+    }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.createCodingAgentSourcePullRequest({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix: apply review updates for PR #759",
+      body: "Review updates are ready.",
+      clientRequestId: "req_mobile_create_pr",
+    })).resolves.toEqual({
+      ok: false,
+      error: "Pull request could not be created. Refresh and try again.",
+    });
+    await expect(client.createCodingAgentSourcePullRequest({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "",
+      body: "Review updates are ready.",
+      clientRequestId: "req_mobile_create_pr",
+    })).resolves.toEqual({
+      ok: false,
+      error: "Pull request could not be created. Refresh and try again.",
     });
 
     fetchMock.mockRestore();
