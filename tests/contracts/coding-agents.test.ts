@@ -8,6 +8,8 @@ import {
   CreateAgentThreadRequestSchema,
   FileReadRequestSchema,
   FileReadResponseSchema,
+  FileWriteRequestSchema,
+  FileWriteResponseSchema,
   FileMetadataSchema,
   PreviewSessionSummarySchema,
   ReviewDiffLineSchema,
@@ -317,6 +319,44 @@ describe("coding agent contracts", () => {
       truncated: false,
       limitBytes: 65536,
     }).truncated).toBe(false);
+    expect(FileWriteRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "src/index.ts",
+      content: "export const answer = 43;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_123",
+      clientRequestId: "req_file_write",
+    }).baseEtag).toBe("sha256_123");
+    expect(FileWriteRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "src/new.ts",
+      content: "export {};\n",
+      encoding: "utf8",
+      baseEtag: null,
+      clientRequestId: "req_file_create",
+    }).baseEtag).toBeNull();
+    expect(() => FileWriteRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system/config.json",
+      content: "unsafe",
+      encoding: "utf8",
+      baseEtag: null,
+      clientRequestId: "req_file_bad_path",
+    })).toThrow();
+    expect(FileWriteResponseSchema.parse({
+      metadata: {
+        path: "src/index.ts",
+        kind: "file",
+        sizeBytes: 27,
+        etag: "sha256_456",
+        updatedAt: now,
+      },
+      encoding: "utf8",
+      writtenBytes: 27,
+    }).writtenBytes).toBe(27);
 
     expect(ReviewSummarySchema.parse({
       id: "rev_123",
