@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { RingBuffer } from "./ring-buffer.js";
 import { resolveWithinHome } from "./path-security.js";
 import { applyTerminalTruecolorEnv } from "./terminal-env.js";
+import { createTerminalOutputCompatStream, type TerminalOutputCompatStream } from "./terminal-output-compat.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG === "1";
@@ -183,6 +184,7 @@ class PtySession {
   private static readonly MAX_SUBSCRIBERS = 10;
   private subscribers = new Set<SubscriberFn>();
   private _attachedClients = 0;
+  private readonly outputCompat: TerminalOutputCompatStream;
 
   constructor(
     sessionId: string,
@@ -199,22 +201,14 @@ class PtySession {
     this.shell = shell;
     this.createdAt = metadata?.createdAt ?? Date.now();
     this.lastAttachedAt = metadata?.lastAttachedAt ?? this.createdAt;
+    this.outputCompat = createTerminalOutputCompatStream({ sessionName: sessionId });
 
     this.ptyProcess.onData((data: string) => {
-      for (const chunk of splitByUtf8Bytes(data, this.buffer.capacityBytes)) {
-        const seq = this.buffer.write(chunk);
-        if (seq === null) {
-          console.warn("Dropped oversized terminal output chunk");
-          continue;
-        }
-        const msg: PtyServerMessage = { type: "output", data: chunk, seq };
-        for (const sub of this.subscribers) {
-          sub(msg);
-        }
-      }
+      this.emitOutput(this.outputCompat.write(data));
     });
 
     this.ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
+      this.emitOutput(this.outputCompat.flush());
       this.state = "exited";
       this.exitCode = exitCode;
       const msg: PtyServerMessage = { type: "exit", code: exitCode };
@@ -222,6 +216,23 @@ class PtySession {
         sub(msg);
       }
     });
+  }
+
+  private emitOutput(data: string): void {
+    if (data.length === 0) {
+      return;
+    }
+    for (const chunk of splitByUtf8Bytes(data, this.buffer.capacityBytes)) {
+      const seq = this.buffer.write(chunk);
+      if (seq === null) {
+        console.warn("Dropped oversized terminal output chunk");
+        continue;
+      }
+      const msg: PtyServerMessage = { type: "output", data: chunk, seq };
+      for (const sub of this.subscribers) {
+        sub(msg);
+      }
+    }
   }
 
   get attachedClients(): number {
@@ -267,6 +278,7 @@ class PtySession {
   }
 
   kill(): void {
+    this.emitOutput(this.outputCompat.flush());
     if (this.state === "running") {
       this.ptyProcess.kill();
     }

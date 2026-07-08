@@ -4,6 +4,7 @@ import { ShellReplayBuffer } from "./replay-buffer.js";
 import type { ScrollbackStore } from "./scrollback-store.js";
 import { validateSessionName } from "./names.js";
 import type { ShellAttachProcess } from "./zellij.js";
+import { createTerminalOutputCompatStream } from "../terminal-output-compat.js";
 
 const ShellWsInputSchema = z.object({
   type: z.literal("input"),
@@ -192,8 +193,12 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       sendJson(ws, event);
     }
 
-    const onData = (data: string) => {
-      void replayBuffer.writePersistent(data)
+    const outputCompat = createTerminalOutputCompatStream({ sessionName: safeName });
+    const persistOutput = async (data: string) => {
+      if (data.length === 0) {
+        return;
+      }
+      await replayBuffer.writePersistent(data)
         .then((result) => {
           if (result.seq !== null) {
             sendJson(ws, { type: "output", seq: result.seq, data });
@@ -203,22 +208,28 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           console.warn("[shell] failed to persist terminal output:", err instanceof Error ? err.message : String(err));
         });
     };
+    const onData = (data: string) => {
+      void persistOutput(outputCompat.write(data));
+    };
     const onExit = (event: { exitCode: number }) => {
       if (closed) {
         return;
       }
       closed = true;
       cleanupProcessListeners();
-      sendJson(ws, { type: "exit", code: event.exitCode });
+      void persistOutput(outputCompat.flush()).finally(() => {
+        sendJson(ws, { type: "exit", code: event.exitCode });
+      });
     };
     dataDisposable = child.onData(onData);
     exitDisposable = child.onExit(onExit);
 
-    const closeSession = () => {
+    const closeSession = async () => {
       if (closed) {
         return;
       }
       closed = true;
+      await persistOutput(outputCompat.flush());
       abortController.abort();
       cleanupProcessListeners();
       child.kill();
@@ -247,8 +258,9 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           return;
         }
         if (msg.type === "detach" || msg.type === "destroy") {
-          closeSession();
-          ws.close?.();
+          void closeSession().finally(() => {
+            ws.close?.();
+          });
           return;
         }
         if (msg.type === "input") {
@@ -259,7 +271,9 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           child.resize(msg.cols, msg.rows);
         }
       },
-      onClose: closeSession,
+      onClose() {
+        void closeSession();
+      },
     };
   }
 
