@@ -951,9 +951,10 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
               return;
             }
             sendInputData(result.outgoingText);
-          }).catch(() => {
+          }).catch((err: unknown) => {
             if (!settled) {
               errorOutput.write(`\r\n${RICH_PASTE_UPLOAD_FAILED_MESSAGE}\r\n`);
+              errorOutput.write(`[debug] rich paste rewrite failed: ${err instanceof Error ? err.name : typeof err}\r\n`);
             }
           });
         };
