@@ -680,6 +680,7 @@ describe("AgentWorkspace", () => {
       threadSnapshotError: null,
       createStatus: "idle",
       createError: null,
+      composerFocusRequestId: 0,
       approvalActionStatus: "idle",
       pendingApprovalId: null,
       approvalActionError: null,
@@ -729,6 +730,16 @@ describe("AgentWorkspace", () => {
     expect(screen.getByText("Fix settings route")).toBeTruthy();
     expect(screen.getByText("matrix-abc1234")).toBeTruthy();
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-summary", {});
+  });
+
+  it("renders a clear new-run unavailable state when thread creation is disabled", async () => {
+    render(<AgentWorkspace />);
+
+    await screen.findByText("Primary");
+
+    expect(screen.getByText("New Run")).toBeTruthy();
+    expect(screen.getByText("Agent runs are not available on this runtime yet.")).toBeTruthy();
+    expect(screen.queryByLabelText("Agent run prompt")).toBeNull();
   });
 
   it("groups desktop assistant and tool activity without exposing raw event text", async () => {
@@ -2758,6 +2769,27 @@ describe("AgentWorkspace", () => {
       );
     });
     expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_desktop_1");
+  });
+
+  it("focuses the desktop composer prompt when a new-run focus request arrives", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ threadCreate: true }));
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    const prompt = await screen.findByLabelText("Agent run prompt");
+    expect(document.activeElement).not.toBe(prompt);
+
+    act(() => {
+      useCodingAgentWorkspace.getState().requestComposerFocus();
+    });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(prompt);
+    });
   });
 
   it("shows safe composer validation and create failures", async () => {

@@ -73,6 +73,7 @@ interface CodingAgentWorkspaceState {
   threadSnapshotError: string | null;
   createStatus: CreateStatus;
   createError: string | null;
+  composerFocusRequestId: number;
   approvalActionStatus: ActionStatus;
   pendingApprovalId: string | null;
   approvalActionError: string | null;
@@ -105,6 +106,7 @@ interface CodingAgentWorkspaceState {
     answer: UserInputAnswerRequest["answer"];
     correlationId: string;
   }) => Promise<void>;
+  requestComposerFocus: () => void;
   createThread: (draft: AgentThreadComposerDraft) => Promise<string | null>;
 }
 
@@ -448,6 +450,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   threadSnapshotError: null,
   createStatus: "idle",
   createError: null,
+  composerFocusRequestId: 0,
   approvalActionStatus: "idle",
   pendingApprovalId: null,
   approvalActionError: null,
@@ -959,6 +962,10 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         };
       });
     }
+  },
+
+  requestComposerFocus: () => {
+    set((state) => ({ composerFocusRequestId: state.composerFocusRequestId + 1 }));
   },
 
   createThread: async (draft) => {

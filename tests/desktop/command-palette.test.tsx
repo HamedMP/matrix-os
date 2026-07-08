@@ -154,6 +154,41 @@ describe("CommandPalette", () => {
     });
   });
 
+  it("routes new agent runs to the coding-agent workspace composer", async () => {
+    const openTab = vi.fn();
+    useTabs.setState({ openTab });
+
+    render(<CommandPalette />);
+
+    const focusRequestId = useCodingAgentWorkspace.getState().composerFocusRequestId;
+    fireEvent.click(screen.getByText("New agent run"));
+
+    expect(openTab).toHaveBeenCalledWith({
+      kind: "agents",
+      title: "Agents",
+    });
+    expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequestId + 1);
+    expect(useUi.getState().composerOpen).toBe(false);
+  });
+
+  it("does not request composer focus when thread creation is unavailable", async () => {
+    const openTab = vi.fn();
+    useTabs.setState({ openTab });
+    useCodingAgentWorkspace.setState({ summary: runtimeSummaryWithThreads() });
+
+    render(<CommandPalette />);
+
+    const focusRequestId = useCodingAgentWorkspace.getState().composerFocusRequestId;
+    fireEvent.click(screen.getByText("New agent run"));
+
+    expect(openTab).toHaveBeenCalledWith({
+      kind: "agents",
+      title: "Agents",
+    });
+    expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequestId);
+    expect(useUi.getState().composerOpen).toBe(false);
+  });
+
   it("opens loaded coding-agent reviews from the command palette", async () => {
     const openTab = vi.fn();
     const selectReview = vi.fn().mockResolvedValue(undefined);

@@ -67,6 +67,11 @@ function paletteThreadCommands(summary: { activeThreads: { items: AgentThreadSum
   return commands;
 }
 
+function canRequestAgentComposerFocus(summary: { capabilities: Array<{ id: string; enabled: boolean }> } | null): boolean {
+  if (!summary) return true;
+  return summary.capabilities.some((capability) => capability.id === "codingAgentsThreadCreate" && capability.enabled);
+}
+
 function safeSessionSegment(value: string): string {
   const segment = value
     .toLowerCase()
@@ -156,6 +161,7 @@ export default function CommandPalette() {
   const reviews = useCodingAgentWorkspace((s) => s.reviews);
   const selectReview = useCodingAgentWorkspace((s) => s.selectReview);
   const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
+  const requestComposerFocus = useCodingAgentWorkspace((s) => s.requestComposerFocus);
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
 
@@ -257,7 +263,21 @@ export default function CommandPalette() {
                 })
               }
             />
-            <PaletteItem icon={<MessageSquarePlus size={14} />} label="New agent run" shortcut="⌘J" onSelect={() => run(() => setComposerOpen(true))} />
+            <PaletteItem
+              icon={<MessageSquarePlus size={14} />}
+              label="New agent run"
+              shortcut="⌘J"
+              onSelect={() =>
+                run(() => {
+                  if (CODING_AGENTS_DESKTOP_WORKSPACE) {
+                    if (canRequestAgentComposerFocus(summary)) requestComposerFocus();
+                    openTab({ kind: "agents", title: "Agents" });
+                    return;
+                  }
+                  setComposerOpen(true);
+                })
+              }
+            />
             {CODING_AGENTS_DESKTOP_WORKSPACE ? (
               <PaletteItem icon={<Bot size={14} />} label="Open Agents" onSelect={() => run(() => openTab({ kind: "agents", title: "Agents" }))} />
             ) : null}
