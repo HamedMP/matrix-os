@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  createCodingAgentThread,
   createCodingAgentSourcePullRequest,
   fetchCodingAgentFileBrowse,
   fetchCodingAgentFileContent,
@@ -15,14 +16,14 @@ import {
 } from "../../desktop/src/main/coding-agents/runtime-summary-client";
 import type { AuthService } from "../../desktop/src/main/auth/auth-service";
 
-function auth(): AuthService {
+function auth(runtimeSlot = "primary"): AuthService {
   return {
     getToken: () => "desktop-token",
     getGatewayOrigin: () => "https://runtime.test",
     getStatus: () => ({
       signedIn: true,
       handle: "operator",
-      runtimeSlot: "primary",
+      runtimeSlot,
       platformHost: "https://runtime.test",
     }),
   } as unknown as AuthService;
@@ -242,6 +243,24 @@ describe("coding agent desktop runtime client", () => {
     );
     expect(snapshot.thread.id).toBe("thread_desktop_1");
     expect(snapshot.events.items[0]?.type).toBe("approval.requested");
+  });
+
+  it("creates threads against the selected runtime slot", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify(threadSnapshotBody()), { status: 201 }));
+
+    await createCodingAgentThread(auth("secondary"), {
+      providerId: "codex",
+      prompt: "Run the focused tests.",
+      mode: "default",
+      approvalPolicy: "on_request",
+      sandboxMode: "workspace_write",
+      clientRequestId: "req_desktop_thread_create",
+    }, fetchFn);
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://runtime.test/api/coding-agents/threads?runtime=secondary",
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 
   it("rejects unsafe or malformed thread snapshot responses with a generic error", async () => {
@@ -586,6 +605,36 @@ describe("coding agent desktop runtime client", () => {
       }),
     );
     expect(saved.metadata.etag).toBe("sha256_desktop_file_next");
+  });
+
+  it("routes file writes through the selected runtime slot", async () => {
+    const responseBody = {
+      metadata: {
+        path: "packages/gateway/src/coding-agents/routes.ts",
+        kind: "file",
+        sizeBytes: 38,
+        etag: "sha256_desktop_file_next",
+        updatedAt: "2026-07-06T00:04:00.000Z",
+      },
+      encoding: "utf8",
+      writtenBytes: 38,
+    };
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify(responseBody), { status: 200 }));
+
+    await saveCodingAgentFileContent(auth("secondary"), {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      content: "export const safeRoute = false;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_desktop_file",
+      clientRequestId: "req_desktop_file_save",
+    }, fetchFn);
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://runtime.test/api/coding-agents/files/write?runtime=secondary",
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 
   it("prepares a source-control commit with bearer auth and validates safe output", async () => {

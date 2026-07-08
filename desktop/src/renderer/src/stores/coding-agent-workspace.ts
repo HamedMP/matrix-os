@@ -686,19 +686,18 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
       });
       set((state) => {
         const stillSelected = fileReferenceMatches(state.selectedFileReference, request);
+        if (!stillSelected) return state;
         return {
-          fileReadStatus: stillSelected ? "ready" : state.fileReadStatus,
-          fileRead: stillSelected
-            ? {
-                metadata: response.metadata,
-                content: request.content,
-                encoding: "utf8" as const,
-                truncated: false,
-                limitBytes: state.fileRead?.limitBytes ?? response.metadata.sizeBytes,
-              }
-            : state.fileRead,
-          fileReadError: stillSelected ? null : state.fileReadError,
-          fileWriteStatus: stillSelected ? "saved" : "idle",
+          fileReadStatus: "ready",
+          fileRead: {
+            metadata: response.metadata,
+            content: request.content,
+            encoding: "utf8" as const,
+            truncated: false,
+            limitBytes: state.fileRead?.limitBytes ?? response.metadata.sizeBytes,
+          },
+          fileReadError: null,
+          fileWriteStatus: "saved",
           fileWriteError: null,
         };
       });

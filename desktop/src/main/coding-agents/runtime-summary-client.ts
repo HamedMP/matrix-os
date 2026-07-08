@@ -72,6 +72,15 @@ function buildSummaryUrl(origin: string, runtimeSlot: string): string {
   return url.toString();
 }
 
+function buildRuntimeUrl(auth: AuthService, path: string): URL {
+  const url = new URL(path, auth.getGatewayOrigin());
+  const runtimeSlot = auth.getStatus().runtimeSlot;
+  if (runtimeSlot !== "primary") {
+    url.searchParams.set("runtime", runtimeSlot);
+  }
+  return url;
+}
+
 export async function fetchCodingAgentRuntimeSummary(
   auth: AuthService,
   fetchFn: FetchFn = fetch,
@@ -112,7 +121,7 @@ export async function fetchCodingAgentNotificationPreferences(
     throw new Error("notification settings unavailable");
   }
 
-  const url = new URL("/api/coding-agents/notification-preferences", auth.getGatewayOrigin());
+  const url = buildRuntimeUrl(auth, "/api/coding-agents/notification-preferences");
   const res = await fetchFn(url.toString(), {
     method: "GET",
     headers: {
@@ -148,7 +157,7 @@ export async function updateCodingAgentNotificationPreferences(
     throw new Error("notification settings unavailable");
   }
 
-  const url = new URL("/api/coding-agents/notification-preferences", auth.getGatewayOrigin());
+  const url = buildRuntimeUrl(auth, "/api/coding-agents/notification-preferences");
   const res = await fetchFn(url.toString(), {
     method: "PUT",
     headers: {
@@ -181,8 +190,8 @@ export async function createCodingAgentThread(
     throw new Error("agent thread unavailable");
   }
 
-  const url = new URL("/api/coding-agents/threads", auth.getGatewayOrigin()).toString();
-  const res = await fetchFn(url, {
+  const url = buildRuntimeUrl(auth, "/api/coding-agents/threads");
+  const res = await fetchFn(url.toString(), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -214,10 +223,7 @@ export async function fetchCodingAgentThreadSnapshot(
     throw new Error("thread state unavailable");
   }
 
-  const url = new URL(
-    `/api/coding-agents/threads/${encodeURIComponent(options.threadId)}`,
-    auth.getGatewayOrigin(),
-  );
+  const url = buildRuntimeUrl(auth, `/api/coding-agents/threads/${encodeURIComponent(options.threadId)}`);
   const res = await fetchFn(url.toString(), {
     method: "GET",
     headers: {
@@ -248,9 +254,9 @@ export async function submitCodingAgentApprovalDecision(
     throw new Error("approval unavailable");
   }
 
-  const url = new URL(
+  const url = buildRuntimeUrl(
+    auth,
     `/api/coding-agents/threads/${encodeURIComponent(options.threadId)}/approvals/${encodeURIComponent(options.approvalId)}/decision`,
-    auth.getGatewayOrigin(),
   );
   const res = await fetchFn(url.toString(), {
     method: "POST",
@@ -284,9 +290,9 @@ export async function submitCodingAgentInputAnswer(
     throw new Error("input unavailable");
   }
 
-  const url = new URL(
+  const url = buildRuntimeUrl(
+    auth,
     `/api/coding-agents/threads/${encodeURIComponent(options.threadId)}/inputs/${encodeURIComponent(options.inputRequestId)}/answer`,
-    auth.getGatewayOrigin(),
   );
   const res = await fetchFn(url.toString(), {
     method: "POST",
@@ -320,7 +326,7 @@ export async function fetchCodingAgentReviewSummaries(
     throw new Error("review state unavailable");
   }
 
-  const url = new URL("/api/coding-agents/reviews", auth.getGatewayOrigin());
+  const url = buildRuntimeUrl(auth, "/api/coding-agents/reviews");
   if (options.cursor) {
     url.searchParams.set("cursor", options.cursor);
   }
@@ -354,10 +360,7 @@ export async function fetchCodingAgentReviewSnapshot(
     throw new Error("review state unavailable");
   }
 
-  const url = new URL(
-    `/api/coding-agents/reviews/${encodeURIComponent(options.reviewId)}`,
-    auth.getGatewayOrigin(),
-  );
+  const url = buildRuntimeUrl(auth, `/api/coding-agents/reviews/${encodeURIComponent(options.reviewId)}`);
   const res = await fetchFn(url.toString(), {
     method: "GET",
     headers: {
@@ -393,7 +396,7 @@ export async function fetchCodingAgentFileBrowse(
     throw new Error("file list unavailable");
   }
 
-  const url = new URL("/api/coding-agents/files/browse", auth.getGatewayOrigin());
+  const url = buildRuntimeUrl(auth, "/api/coding-agents/files/browse");
   url.searchParams.set("projectId", parsedRequest.data.projectId);
   url.searchParams.set("worktreeId", parsedRequest.data.worktreeId);
   if (parsedRequest.data.path) {
@@ -435,7 +438,7 @@ export async function fetchCodingAgentFileSearch(
     throw new Error("file search unavailable");
   }
 
-  const url = new URL("/api/coding-agents/files/search", auth.getGatewayOrigin());
+  const url = buildRuntimeUrl(auth, "/api/coding-agents/files/search");
   url.searchParams.set("projectId", parsedRequest.data.projectId);
   url.searchParams.set("worktreeId", parsedRequest.data.worktreeId);
   if (parsedRequest.data.path) {
@@ -478,7 +481,7 @@ export async function fetchCodingAgentFileContent(
     throw new Error("file content unavailable");
   }
 
-  const url = new URL("/api/coding-agents/files/read", auth.getGatewayOrigin());
+  const url = buildRuntimeUrl(auth, "/api/coding-agents/files/read");
   url.searchParams.set("projectId", parsedRequest.data.projectId);
   url.searchParams.set("worktreeId", parsedRequest.data.worktreeId);
   url.searchParams.set("path", parsedRequest.data.path);
@@ -517,7 +520,7 @@ export async function saveCodingAgentFileContent(
     throw new Error("file save unavailable");
   }
 
-  const url = new URL("/api/coding-agents/files/write", auth.getGatewayOrigin());
+  const url = buildRuntimeUrl(auth, "/api/coding-agents/files/write");
   const res = await fetchFn(url.toString(), {
     method: "POST",
     headers: {
@@ -555,7 +558,7 @@ export async function prepareCodingAgentSourceCommit(
     throw new Error("source commit unavailable");
   }
 
-  const url = new URL("/api/coding-agents/source-control/prepare-commit", auth.getGatewayOrigin());
+  const url = buildRuntimeUrl(auth, "/api/coding-agents/source-control/prepare-commit");
   const res = await fetchFn(url.toString(), {
     method: "POST",
     headers: {
@@ -593,7 +596,7 @@ export async function createCodingAgentSourcePullRequest(
     throw new Error("pull request unavailable");
   }
 
-  const url = new URL("/api/coding-agents/source-control/pull-requests", auth.getGatewayOrigin());
+  const url = buildRuntimeUrl(auth, "/api/coding-agents/source-control/pull-requests");
   const res = await fetchFn(url.toString(), {
     method: "POST",
     headers: {

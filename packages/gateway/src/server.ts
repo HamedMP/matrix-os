@@ -570,6 +570,7 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     terminalRegistry: zellijShellRegistry,
     agentCredentials: agentCredentialService,
+    providerIds: codingAgentProviders.map((provider) => provider.providerId),
     threads: codingAgentThreadStore,
     previews: codingAgentPreviewSummaryStore,
     capabilities: {
@@ -581,6 +582,7 @@ export async function createGateway(config: GatewayConfig) {
       sourceControl: true,
     },
     terminalOwnerId: process.env.MATRIX_USER_ID,
+    filesOwnerId: process.env.MATRIX_USER_ID,
   });
   const integrationCapabilityService = createIntegrationCapabilityService({
     getConnectedCapabilityIds,
