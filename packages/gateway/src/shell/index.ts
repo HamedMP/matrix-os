@@ -5,6 +5,7 @@ export * from "./command-runner.js";
 export * from "./errors.js";
 export * from "./layouts.js";
 export * from "./pending-input.js";
+export * from "./paste-assets.js";
 export * from "./preferences.js";
 export * from "./registry.js";
 export * from "./replay-buffer.js";
