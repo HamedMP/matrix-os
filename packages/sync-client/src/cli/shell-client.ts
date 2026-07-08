@@ -1,4 +1,16 @@
 import { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ } from "../protocol/shell.js";
+import {
+  createMacOsClipboardImageReader,
+  type ClipboardImageReader,
+} from "./clipboard-image.js";
+import {
+  createRichPasteRewriter,
+  createRichPasteUploadClient,
+  shouldProcessRichPasteText,
+  splitBracketedPasteInput,
+  type RichPasteRewriter,
+  type RichPasteUploadClient,
+} from "./rich-paste.js";
 
 export interface ShellClientOptions {
   gatewayUrl: string;
@@ -71,6 +83,12 @@ export interface ShellAttachOptions {
   reconnectBaseDelayMs?: number;
   reconnectMaxDelayMs?: number;
   WebSocketImpl?: new (url: string, options?: { headers?: Record<string, string> }) => AttachWebSocket;
+  richPaste?: {
+    enabled?: boolean;
+    rewriter?: RichPasteRewriter;
+    uploadClient?: RichPasteUploadClient;
+    clipboardReader?: ClipboardImageReader;
+  };
 }
 
 export const SHELL_ATTACH_MAX_QUEUED_BYTES = 65_536;
@@ -103,6 +121,7 @@ const SAFE_SHELL_SERVER_ERROR_CODES = new Set([
   "session_not_found",
   "zellij_failed",
 ]);
+const RICH_PASTE_UPLOAD_FAILED_MESSAGE = "Image paste failed: upload did not complete.";
 
 type MaybeTtyStream = NodeJS.ReadStream & {
   isTTY?: boolean;
@@ -442,6 +461,17 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         dropMouse,
         resetLocalInputModes,
       });
+      const richPasteEnabled = attachOptions.richPaste?.enabled !== false;
+      const richPasteRewriter: RichPasteRewriter | undefined = richPasteEnabled
+        ? attachOptions.richPaste?.rewriter ?? createRichPasteRewriter({
+          uploadClient: attachOptions.richPaste?.uploadClient ?? createRichPasteUploadClient({
+            gatewayUrl: base,
+            token: options.token,
+            fetch: fetchImpl,
+          }),
+          clipboardReader: attachOptions.richPaste?.clipboardReader ?? createMacOsClipboardImageReader(),
+        })
+        : undefined;
       const heartbeatIntervalMs = attachOptions.heartbeatIntervalMs ?? SHELL_ATTACH_HEARTBEAT_INTERVAL_MS;
       const heartbeatTimeoutMs = attachOptions.heartbeatTimeoutMs ?? SHELL_ATTACH_HEARTBEAT_TIMEOUT_MS;
       const heartbeatMissesBeforeReconnect =
@@ -660,20 +690,41 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           settle(() => resolve({ detached: true }));
           wsToClose?.close();
         };
-        const onInput = (chunk: Buffer | string) => {
-          const rawData = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
-          if (rawModeEnabled && !everAttached && rawData.includes("\u0003")) {
-            detachLocal();
+        const sendInputFrame = (data: string, observablePaste: boolean) => {
+          const shouldRewrite = observablePaste
+            ? data.length === 0 || shouldProcessRichPasteText(data)
+            : shouldProcessRichPasteText(data);
+          if (!richPasteRewriter || !shouldRewrite) {
+            sendFrame(JSON.stringify({ type: "input", data }));
             return;
           }
-          const data = inputFilter.filter(rawData);
+          void richPasteRewriter.rewrite({
+            sessionName: name,
+            text: data,
+            observablePaste,
+          }).then((result) => {
+            if (settled) {
+              return;
+            }
+            if (result.status === "failed") {
+              errorOutput.write(`\r\n${result.localMessage}\r\n`);
+              return;
+            }
+            sendFrame(JSON.stringify({ type: "input", data: result.outgoingText }));
+          }).catch(() => {
+            if (!settled) {
+              errorOutput.write(`\r\n${RICH_PASTE_UPLOAD_FAILED_MESSAGE}\r\n`);
+            }
+          });
+        };
+        const processInputData = (data: string, observablePaste: boolean) => {
           let outbound = "";
           for (const char of data) {
             pendingInput += char;
             if (pendingInput === detachSequence) {
               pendingInput = "";
               if (outbound.length > 0) {
-                sendFrame(JSON.stringify({ type: "input", data: outbound }));
+                sendInputFrame(outbound, false);
               }
               detachLocal();
               return;
@@ -686,9 +737,27 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
               pendingInput = pendingInput.slice(1);
             }
           }
-          if (outbound.length > 0) {
-            sendFrame(JSON.stringify({ type: "input", data: outbound }));
+          if (outbound.length > 0 || observablePaste) {
+            sendInputFrame(outbound, observablePaste);
           }
+        };
+        const onInput = (chunk: Buffer | string) => {
+          const rawData = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
+          if (rawModeEnabled && !everAttached && rawData.includes("\u0003")) {
+            detachLocal();
+            return;
+          }
+          const bracketedSegments = splitBracketedPasteInput(rawData);
+          if (bracketedSegments) {
+            for (const segment of bracketedSegments) {
+              processInputData(
+                segment.observablePaste ? segment.text : inputFilter.filter(segment.text),
+                segment.observablePaste,
+              );
+            }
+            return;
+          }
+          processInputData(inputFilter.filter(rawData), false);
         };
         const sendResizeFrame = () => {
           const size = terminalSize(input, output);

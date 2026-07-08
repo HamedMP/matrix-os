@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -6,8 +6,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createShellRoutes } from "../../packages/gateway/src/shell/routes.js";
 import { ShellRegistry } from "../../packages/gateway/src/shell/registry.js";
 import { createRateLimiter } from "../../packages/gateway/src/security/rate-limiter.js";
+import {
+  createTerminalPasteAssetService,
+  TERMINAL_PASTE_ASSET_MAX_FILE_BYTES,
+} from "../../packages/gateway/src/shell/paste-assets.js";
 
 const roots: string[] = [];
+const pngBytes = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+  0x00, 0x00, 0x00, 0x0d,
+]);
 
 async function tempRoot() {
   const root = await mkdtemp(join(tmpdir(), "matrix-shell-routes-"));
@@ -231,6 +239,185 @@ describe("gateway shell routes", () => {
       durationMs: 12,
     });
     expect(commandRunner.run).toHaveBeenCalledWith({ command: ["ls"], cwd: "projects/app" });
+  });
+
+  it("uploads terminal paste image assets with server-generated owner-scoped paths", async () => {
+    const root = await tempRoot();
+    const registry = {
+      list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      create: vi.fn(),
+      delete: vi.fn(),
+    };
+    const app = new Hono();
+    app.route("/api/terminal", createShellRoutes({
+      registry,
+      pasteAssets: createTerminalPasteAssetService({
+        homePath: root,
+        now: () => new Date("2026-07-08T12:00:00.000Z"),
+      }),
+    }));
+    const form = new FormData();
+    form.append("transactionId", "txn-1");
+    form.append("asset", new Blob([pngBytes], { type: "image/png" }), "Screenshot 2026-07-08 at 10.31.00.png");
+
+    const res = await app.request("/api/terminal/sessions/main/paste-assets", {
+      method: "POST",
+      body: form,
+    });
+
+    expect(res.status).toBe(201);
+    const payload = await res.json() as {
+      assets: Array<{
+        assetId: string;
+        path: string;
+        homeRelativePath: string;
+        mimeType: string;
+        size: number;
+      }>;
+    };
+    expect(payload.assets).toHaveLength(1);
+    expect(payload.assets[0]).toMatchObject({
+      mimeType: "image/png",
+      size: pngBytes.byteLength,
+    });
+    expect(payload.assets[0].assetId).toMatch(/^paste_/);
+    expect(payload.assets[0].homeRelativePath).toMatch(
+      /^projects\/\.matrix-terminal-pastes\/main\/2026-07-08\/paste_[a-zA-Z0-9_-]+\.png$/,
+    );
+    expect(payload.assets[0].path).toBe(join(root, payload.assets[0].homeRelativePath));
+    expect(payload.assets[0].path).not.toContain("Screenshot");
+    await expect(readFile(payload.assets[0].path)).resolves.toEqual(pngBytes);
+    const entries = await readdir(join(root, "projects", ".matrix-terminal-pastes", "main", "2026-07-08"));
+    expect(entries.some((entry) => entry.endsWith(".tmp"))).toBe(false);
+  });
+
+  it("enforces paste asset body, session, type, count, and size limits with generic responses", async () => {
+    const root = await tempRoot();
+    const registry = {
+      list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      create: vi.fn(),
+      delete: vi.fn(),
+    };
+    const app = new Hono();
+    app.route("/api/terminal", createShellRoutes({
+      registry,
+      pasteAssets: createTerminalPasteAssetService({ homePath: root }),
+    }));
+
+    const tooLargeBody = await app.request("/api/terminal/sessions/main/paste-assets", {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream", "Content-Length": String(60 * 1024 * 1024) },
+      body: "x",
+    });
+    const invalidSession = await app.request("/api/terminal/sessions/Main/paste-assets", {
+      method: "POST",
+      body: new FormData(),
+    });
+    const invalidTypeForm = new FormData();
+    invalidTypeForm.append("asset", new Blob(["not image"], { type: "text/plain" }), "notes.txt");
+    const invalidType = await app.request("/api/terminal/sessions/main/paste-assets", {
+      method: "POST",
+      body: invalidTypeForm,
+    });
+    const tooManyForm = new FormData();
+    for (let index = 0; index < 6; index += 1) {
+      tooManyForm.append("asset", new Blob([pngBytes], { type: "image/png" }), `screen-${index}.png`);
+    }
+    const tooMany = await app.request("/api/terminal/sessions/main/paste-assets", {
+      method: "POST",
+      body: tooManyForm,
+    });
+    const oversizedForm = new FormData();
+    oversizedForm.append(
+      "asset",
+      new Blob([Buffer.alloc(TERMINAL_PASTE_ASSET_MAX_FILE_BYTES + 1)], { type: "image/png" }),
+      "huge.png",
+    );
+    const oversized = await app.request("/api/terminal/sessions/main/paste-assets", {
+      method: "POST",
+      body: oversizedForm,
+    });
+
+    expect(tooLargeBody.status).toBe(413);
+    await expect(tooLargeBody.json()).resolves.toEqual({
+      error: { code: "payload_too_large", message: "Request failed" },
+    });
+    expect(invalidSession.status).toBe(400);
+    await expect(invalidSession.json()).resolves.toEqual({
+      error: { code: "invalid_request", message: "Invalid request" },
+    });
+    expect(invalidType.status).toBe(400);
+    await expect(invalidType.json()).resolves.toEqual({
+      error: { code: "invalid_request", message: "Invalid request" },
+    });
+    expect(tooMany.status).toBe(400);
+    await expect(tooMany.json()).resolves.toEqual({
+      error: { code: "invalid_request", message: "Invalid request" },
+    });
+    expect(oversized.status).toBe(413);
+    await expect(oversized.json()).resolves.toEqual({
+      error: { code: "payload_too_large", message: "Request failed" },
+    });
+  });
+
+  it("maps paste asset service failures to generic responses", async () => {
+    const registry = {
+      list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      create: vi.fn(),
+      delete: vi.fn(),
+    };
+    const app = new Hono();
+    app.route("/api/terminal", createShellRoutes({
+      registry,
+      pasteAssets: {
+        upload: vi.fn(async () => {
+          throw new Error("/home/matrix/home/projects/.matrix-terminal-pastes leaked");
+        }),
+        sweepExpired: vi.fn(),
+        close: vi.fn(),
+      },
+    }));
+    const form = new FormData();
+    form.append("asset", new Blob([pngBytes], { type: "image/png" }), "screen.png");
+
+    const res = await app.request("/api/terminal/sessions/main/paste-assets", {
+      method: "POST",
+      body: form,
+    });
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual({
+      error: { code: "shell_failed", message: "Request failed" },
+    });
+  });
+
+  it("sweeps expired paste assets without following symlinks", async () => {
+    const root = await tempRoot();
+    const service = createTerminalPasteAssetService({
+      homePath: root,
+      cleanupPolicy: {
+        maxAgeMs: 60_000,
+        maxAssetsPerSession: 10,
+        cleanupIntervalMs: 0,
+      },
+      now: () => new Date("2026-07-08T12:00:00.000Z"),
+    });
+    const pasteDir = join(root, "projects", ".matrix-terminal-pastes", "main", "2026-07-08");
+    await mkdir(pasteDir, { recursive: true });
+    const expired = join(pasteDir, "expired.png");
+    const current = join(pasteDir, "current.png");
+    const link = join(pasteDir, "link.png");
+    await writeFile(expired, pngBytes);
+    await writeFile(current, pngBytes);
+    await symlink(expired, link);
+    await utimes(expired, new Date("2026-07-08T11:00:00.000Z"), new Date("2026-07-08T11:00:00.000Z"));
+    await utimes(current, new Date("2026-07-08T12:00:00.000Z"), new Date("2026-07-08T12:00:00.000Z"));
+
+    await service.sweepExpired();
+
+    await expect(readFile(expired)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(current)).resolves.toEqual(pngBytes);
+    expect((await lstat(link)).isSymbolicLink()).toBe(true);
   });
 
   it("allows digit-leading session names consistently across create and route params", async () => {

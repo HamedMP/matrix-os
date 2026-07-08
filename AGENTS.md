@@ -420,12 +420,15 @@ Read these on demand, not every session:
 - Owner-local Postgres on the customer VPS for Matrix OS permission/audit data; separate homeserver database; separate Telegram bridge database; separate WhatsApp bridge database; owner-local media/cache paths covered by backup/restore policy (077-matrix-messaging-bridge)
 - TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 shell/platform, Hono gateway + Hono, Zod 4 via `zod/v4`, Kysely/Postgres, existing onboarding WebSocket, existing Symphony routes, existing integrations registry/Pipedream proxy, existing terminal stack, lucide-react, Playwright/Vitest, always-on Hermes with Claude/Codex augmentation, Finna-inspired admin/control surface patterns (082-paid-beta-readiness)
 - Owner-controlled Postgres/Kysely for readiness, integration capability, agent action, admin/control activity, company context, and audit data; owner home files for inspectable onboarding completion/profile/config exports under `~/system/`; no new embedded database or ORM (082-paid-beta-readiness)
+- TypeScript 5.9+, strict mode, ES modules; runtime target Node.js 24+ + Existing sync-client CLI, gateway shell routes, Hono, Zod 4, native Fetch/FormData/Blob, existing `ws` attach transport (106-terminal-rich-paste)
+- Owner-controlled filesystem under Matrix home for paste assets; no new database persistence (106-terminal-rich-paste)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
 
 ## Recent Changes
 
+- 106-terminal-rich-paste: Planned attached CLI rich paste for local image paths and observable clipboard image pastes, with owner-scoped gateway paste assets and safe prompt rewriting.
 - 077-matrix-messaging-bridge: Planned owner-controlled Matrix messaging bridge for Telegram and WhatsApp first, with homeserver/appservice spike gates, per-room Hermes permissions, and separate owner-local bridge/homeserver/permission storage.
 - 056-terminal-upgrade: Added TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation)
 
@@ -475,5 +478,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current Spec Kit plan: `specs/088-macos-dev-experience/plan.md`.
+Current Spec Kit plan: `specs/106-terminal-rich-paste/plan.md`.
 <!-- SPECKIT END -->

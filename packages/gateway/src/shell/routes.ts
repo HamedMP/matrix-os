@@ -10,6 +10,13 @@ import {
   type ShellPreferencesStore,
 } from "./preferences.js";
 import type { ShellCommandRunner } from "./command-runner.js";
+import {
+  TERMINAL_PASTE_ASSET_BODY_LIMIT_BYTES,
+  TERMINAL_PASTE_ASSET_FIELD,
+  TERMINAL_PASTE_ASSET_TRANSACTION_FIELD,
+  TerminalPasteAssetError,
+  type TerminalPasteAssetService,
+} from "./paste-assets.js";
 
 interface SessionRegistryRoutes {
   list(): Promise<unknown[]>;
@@ -78,6 +85,7 @@ export interface ShellRouteDeps {
   shellBackend?: ShellBackendHealthRoutes;
   shellThemeConfig?: ShellThemeConfigRoutes;
   commandRunner?: ShellCommandRunner;
+  pasteAssets?: TerminalPasteAssetService;
   sessionCreateRateLimiter?: RateLimiter;
 }
 
@@ -148,6 +156,13 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   const layoutBodyLimit = bodyLimit({ maxSize: 128_000 });
   const deleteBodyLimit = bodyLimit({ maxSize: 512 });
   const runBodyLimit = bodyLimit({ maxSize: 16_384 });
+  const pasteAssetBodyLimit = bodyLimit({
+    maxSize: TERMINAL_PASTE_ASSET_BODY_LIMIT_BYTES,
+    onError: (c) => c.json(
+      { error: { code: "payload_too_large", message: "Request failed" } },
+      413,
+    ),
+  });
 
   app.get("/health", async (c) => {
     if (!deps.shellBackend) {
@@ -274,6 +289,25 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
       if (!deps.commandRunner) return unavailable(c, "run_unavailable");
       const body = RunBodySchema.parse(await c.req.json());
       return c.json(await deps.commandRunner.run(body));
+    } catch (err) {
+      return safeError(c, err);
+    }
+  });
+
+  app.post("/sessions/:name/paste-assets", pasteAssetBodyLimit, async (c) => {
+    try {
+      if (!deps.pasteAssets) return unavailable(c, "paste_assets_unavailable");
+      const sessionName = SafeSessionNameSchema.parse(c.req.param("name"));
+      const form = await c.req.formData();
+      const transactionIdValue = form.get(TERMINAL_PASTE_ASSET_TRANSACTION_FIELD);
+      const transactionId = typeof transactionIdValue === "string" ? transactionIdValue : undefined;
+      const files = form.getAll(TERMINAL_PASTE_ASSET_FIELD).filter(isUploadFile);
+      const result = await deps.pasteAssets.upload({
+        sessionName,
+        transactionId,
+        files,
+      });
+      return c.json(result, 201);
     } catch (err) {
       return safeError(c, err);
     }
@@ -495,6 +529,17 @@ function safeError(c: Context, err: unknown) {
       400,
     );
   }
+  if (err instanceof TerminalPasteAssetError) {
+    return c.json(
+      {
+        error: {
+          code: err.code,
+          message: err.code === "invalid_request" ? "Invalid request" : "Request failed",
+        },
+      },
+      err.status as 500,
+    );
+  }
   const shellErr = toShellError(err);
   if (shellErr.diagnostic) {
     console.warn("[shell] route failed:", {
@@ -508,6 +553,19 @@ function safeError(c: Context, err: unknown) {
   return c.json(
     { error: { code: shellErr.code, message: shellErr.safeMessage } },
     (shellErr.status ?? 500) as 500,
+  );
+}
+
+function isUploadFile(value: FormDataEntryValue): value is File {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "arrayBuffer" in value &&
+    typeof (value as { arrayBuffer?: unknown }).arrayBuffer === "function" &&
+    "size" in value &&
+    typeof (value as { size?: unknown }).size === "number" &&
+    "type" in value &&
+    typeof (value as { type?: unknown }).type === "string"
   );
 }
 
