@@ -28,7 +28,18 @@ type ReviewSnapshotState =
   | { status: "ready"; selectedReviewId: string; snapshot: ReviewSnapshot; error: null }
   | { status: "error"; selectedReviewId: string; snapshot: null; error: "Review details unavailable" };
 
-type SelectedReviewHunk = { reviewId: string; snapshotKey: string; key: string };
+type SelectedReviewHunk = {
+  reviewId: string;
+  snapshotKey: string;
+  key: string;
+  filePath: string;
+  hunkId: string;
+  hunkIndex: number;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+};
 
 const INITIAL_REVIEW_SNAPSHOT_STATE: ReviewSnapshotState = {
   status: "idle",
@@ -300,6 +311,7 @@ export default function AgentsScreen() {
 
       {capabilityEnabled(summary, "codingAgentsReview") ? (
         <ReviewSection
+          canCreate={canCreate}
           state={reviewState}
           snapshotState={reviewSnapshotState}
           onSelectReview={selectReview}
@@ -314,10 +326,12 @@ function reviewStatusLabel(status: ReviewSummary["status"]): string {
 }
 
 function ReviewSection({
+  canCreate,
   state,
   snapshotState,
   onSelectReview,
 }: {
+  canCreate: boolean;
   state: ReviewState;
   snapshotState: ReviewSnapshotState;
   onSelectReview: (reviewId: string) => void;
@@ -357,12 +371,14 @@ function ReviewSection({
           </View>
         </Pressable>
       ))}
-      <ReviewSnapshotPanel state={snapshotState} />
+      <ReviewSnapshotPanel canCreate={canCreate} state={snapshotState} />
     </Section>
   );
 }
 
-function ReviewSnapshotPanel({ state }: { state: ReviewSnapshotState }) {
+function ReviewSnapshotPanel({ canCreate, state }: { canCreate: boolean; state: ReviewSnapshotState }) {
+  const { theme } = useUnistyles();
+  const router = useRouter();
   const [selectedHunk, setSelectedHunk] = useState<SelectedReviewHunk | null>(null);
 
   if (state.status === "idle") return null;
@@ -374,6 +390,9 @@ function ReviewSnapshotPanel({ state }: { state: ReviewSnapshotState }) {
   }
 
   const snapshotKey = reviewSnapshotSelectionKey(state.snapshot);
+  const activeSelectedHunk = selectedHunk?.reviewId === state.selectedReviewId && selectedHunk.snapshotKey === snapshotKey
+    ? selectedHunk
+    : null;
 
   return (
     <View style={styles.reviewDetailPanel}>
@@ -394,10 +413,37 @@ function ReviewSnapshotPanel({ state }: { state: ReviewSnapshotState }) {
           fileIndex={fileIndex}
           selectedReviewId={state.selectedReviewId}
           snapshotKey={snapshotKey}
-          selectedHunk={selectedHunk}
+          selectedHunk={activeSelectedHunk}
           onSelectHunk={setSelectedHunk}
         />
       ))}
+      {canCreate && activeSelectedHunk ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Ask agent about selected hunk"
+          onPress={() => router.push({
+            pathname: "/agents/new",
+            params: {
+              reviewId: state.snapshot.review.id,
+              projectId: state.snapshot.review.projectId,
+              pullRequestNumber: String(state.snapshot.review.pullRequestNumber),
+              round: String(state.snapshot.review.round),
+              maxRounds: String(state.snapshot.review.maxRounds),
+              filePath: activeSelectedHunk.filePath,
+              hunkId: activeSelectedHunk.hunkId,
+              hunkIndex: String(activeSelectedHunk.hunkIndex),
+              oldStart: String(activeSelectedHunk.oldStart),
+              oldLines: String(activeSelectedHunk.oldLines),
+              newStart: String(activeSelectedHunk.newStart),
+              newLines: String(activeSelectedHunk.newLines),
+            },
+          } as any)}
+          style={styles.reviewFollowUpButton}
+        >
+          <Ionicons name="chatbubble-ellipses-outline" size={16} color={theme.colors.background} />
+          <Text style={styles.reviewFollowUpText}>Ask agent about selected hunk</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -467,7 +513,18 @@ function ReviewSnapshotFileRow({
                 accessibilityRole="button"
                 accessibilityLabel={`Select hunk ${hunkIndex + 1} in ${displayPath}`}
                 accessibilityState={{ selected }}
-                onPress={() => onSelectHunk({ reviewId: selectedReviewId, snapshotKey, key: hunkKey })}
+                onPress={() => onSelectHunk({
+                  reviewId: selectedReviewId,
+                  snapshotKey,
+                  key: hunkKey,
+                  filePath: file.path,
+                  hunkId: hunk.id,
+                  hunkIndex,
+                  oldStart: hunk.oldStart,
+                  oldLines: hunk.oldLines,
+                  newStart: hunk.newStart,
+                  newLines: hunk.newLines,
+                })}
                 style={[
                   styles.reviewHunkRow,
                   selected ? styles.selectedReviewHunkRow : null,
@@ -790,6 +847,20 @@ const styles = StyleSheet.create((theme, rt) => ({
     fontFamily: theme.fonts.sans,
     fontSize: 11,
     color: theme.colors.mutedForeground,
+  },
+  reviewFollowUpButton: {
+    minHeight: 42,
+    borderRadius: 21,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing.xs,
+    backgroundColor: theme.colors.forest,
+  },
+  reviewFollowUpText: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 13,
+    color: theme.colors.background,
   },
   emptyText: {
     borderRadius: 14,
