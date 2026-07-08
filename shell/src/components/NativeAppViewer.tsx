@@ -33,7 +33,19 @@ function safeViewerMessage(value: unknown): string {
 }
 
 function nativeApiPath(path: string): string {
-  return `/api/native-apps${path}`;
+  return `${explicitVmPrefix()}/api/native-apps${path}`;
+}
+
+function explicitVmPrefix(): string {
+  if (typeof window === "undefined") return "";
+  const match = window.location.pathname.match(/^\/vm\/([a-z][a-z0-9-]{2,30})(?:\/|$)/);
+  return match?.[1] ? `/vm/${match[1]}` : "";
+}
+
+function nativeStreamUrl(streamUrl: string): string {
+  const prefix = explicitVmPrefix();
+  if (!prefix || !streamUrl.startsWith("/api/native-apps/")) return streamUrl;
+  return `${prefix}${streamUrl}`;
 }
 
 async function launchNativeSession(appId: string): Promise<NativeAppSession> {
@@ -51,7 +63,10 @@ async function launchNativeSession(appId: string): Promise<NativeAppSession> {
     throw new Error(safeViewerMessage(body));
   }
   const session = (body as { session: NativeAppSession }).session;
-  return session;
+  return {
+    ...session,
+    streamUrl: nativeStreamUrl(session.streamUrl),
+  };
 }
 
 async function terminateNativeSession(sessionId: string): Promise<void> {

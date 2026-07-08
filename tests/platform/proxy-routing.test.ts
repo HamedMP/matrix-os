@@ -14,12 +14,14 @@ import {
   upsertBillingEntitlement,
 } from "../../packages/platform/src/db.js";
 import {
+  buildExplicitVmWebSocketUpstreamPath,
   buildPlatformWebSocketUpgradeHeaders,
   buildPostAuthRedirectPath,
   classifySessionRoutedHost,
   classifyWebSocketPath,
   createApp,
   escapeInlineScriptJson,
+  readExplicitVmWebSocketRoute,
   getTrustedSessionRoutedWebSocketHost,
 } from "../../packages/platform/src/main.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
@@ -3738,6 +3740,18 @@ describe("platform proxy routing", () => {
     expect(setCookie).toContain("matrix_native_session__session_aaaaaaaaaaaaaaaaaaaaaaaa=");
     expect(setCookie).toContain("Path=/vm/alice-staging/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/");
     expect(setCookie).not.toContain("Path=/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/");
+  });
+
+  it("maps explicit VM native app WebSocket paths to the selected customer VPS route", () => {
+    const path = "/vm/alice-staging/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/websocket?nativeStreamToken=stream_bbbbbbbbbbbbbbbbbbbbbbbb";
+
+    expect(readExplicitVmWebSocketRoute(path)).toEqual({
+      handle: "alice-staging",
+      upstreamPath: "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/websocket",
+    });
+    expect(buildExplicitVmWebSocketUpstreamPath(path)).toBe(
+      "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/websocket?nativeStreamToken=stream_bbbbbbbbbbbbbbbbbbbbbbbb",
+    );
   });
 
   it("routes signed explicit VM Vite app assets with null-origin CORS without browser cookies", async () => {

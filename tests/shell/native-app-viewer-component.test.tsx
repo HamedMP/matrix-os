@@ -53,11 +53,11 @@ describe("NativeAppViewer", () => {
     });
   });
 
-  it("uses root gateway routes when opened under /vm/:handle so the current platform route cookie can proxy it", async () => {
+  it("pins native app routes to the explicit VM when opened under /vm/:handle", async () => {
     window.history.replaceState({}, "", "/vm/pr-703");
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const requestUrl = String(url);
-      if (requestUrl === "/api/native-apps/xterm/sessions" && init?.method === "POST") {
+      if (requestUrl === "/vm/pr-703/api/native-apps/xterm/sessions" && init?.method === "POST") {
         return new Response(JSON.stringify({
           session: {
             id: "session_bbbbbbbbbbbbbbbbbbbbbbbb",
@@ -70,7 +70,7 @@ describe("NativeAppViewer", () => {
           headers: { "Content-Type": "application/json" },
         });
       }
-      if (requestUrl === "/api/native-apps/sessions/session_bbbbbbbbbbbbbbbbbbbbbbbb" && init?.method === "DELETE") {
+      if (requestUrl === "/vm/pr-703/api/native-apps/sessions/session_bbbbbbbbbbbbbbbbbbbbbbbb" && init?.method === "DELETE") {
         return new Response(null, { status: 200 });
       }
       return new Response(JSON.stringify({ error: "not found" }), { status: 404 });
@@ -85,14 +85,14 @@ describe("NativeAppViewer", () => {
     const frame = await screen.findByTitle("xterm native app");
 
     expect(frame.getAttribute("src")).toBe(
-      "/api/native-apps/sessions/session_bbbbbbbbbbbbbbbbbbbbbbbb/stream/?nativeStreamToken=stream_cccccccccccccccccccccccc",
+      "/vm/pr-703/api/native-apps/sessions/session_bbbbbbbbbbbbbbbbbbbbbbbb/stream/?nativeStreamToken=stream_cccccccccccccccccccccccc",
     );
 
     unmount();
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/native-apps/sessions/session_bbbbbbbbbbbbbbbbbbbbbbbb",
+        "/vm/pr-703/api/native-apps/sessions/session_bbbbbbbbbbbbbbbbbbbbbbbb",
         expect.objectContaining({ method: "DELETE" }),
       );
     });

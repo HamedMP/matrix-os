@@ -631,6 +631,28 @@ function readExplicitVmRoute(path: string): ExplicitVmRoute | null {
   };
 }
 
+export function readExplicitVmWebSocketRoute(path: string): ExplicitVmRoute | null {
+  try {
+    const url = new URL(path, 'https://app.matrix-os.com');
+    return readExplicitVmRoute(url.pathname);
+  } catch (err: unknown) {
+    if (err instanceof TypeError) return null;
+    throw err;
+  }
+}
+
+export function buildExplicitVmWebSocketUpstreamPath(path: string): string {
+  try {
+    const url = new URL(path, 'https://app.matrix-os.com');
+    const route = readExplicitVmRoute(url.pathname);
+    if (!route) return path;
+    return `${route.upstreamPath}${url.search}`;
+  } catch (err: unknown) {
+    if (err instanceof TypeError) return path;
+    throw err;
+  }
+}
+
 function hasValidExplicitVmAppAssetToken(input: {
   method: string;
   rawUrl: string;
@@ -4872,7 +4894,6 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     }
 
     const path = req.url ?? '/';
-    const pathClass = classifyWebSocketPath(path);
     const host = getTrustedSessionRoutedWebSocketHost(
       req.headers.host,
       req.headers['x-forwarded-host'],
@@ -4885,10 +4906,20 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       return;
     }
     const isCodeDomain = isCodeDomainHost(host);
+    const isAppDomain = isAppDomainHost(host);
     const hostClass = classifySessionRoutedHost(host);
+    const explicitVmRoute = isAppDomain ? readExplicitVmWebSocketRoute(path) : null;
+    const webSocketProxyPath = explicitVmRoute
+      ? buildExplicitVmWebSocketUpstreamPath(path)
+      : path;
+    const pathClass = classifyWebSocketPath(webSocketProxyPath);
+    if (isAppDomain && path.startsWith('/vm/') && !explicitVmRoute) {
+      socket.destroy();
+      return;
+    }
 
-    const requestRuntimeSlot = readRuntimeSlot(path);
-    const wsToken = getWebSocketUpgradeToken(path);
+    const requestRuntimeSlot = readRuntimeSlot(webSocketProxyPath);
+    const wsToken = getWebSocketUpgradeToken(webSocketProxyPath);
     let identity: AppDomainIdentity | null;
     try {
       identity = await resolveAppDomainIdentity({
@@ -4898,6 +4929,8 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         db,
         platformJwtSecret: PLATFORM_JWT_SECRET,
         legacyContainerRoutingEnabled,
+        allowUnroutedClerkIdentity: Boolean(explicitVmRoute),
+        requestedHandle: explicitVmRoute?.handle ?? readGatewayRouteCookie(webSocketProxyPath, req.headers.cookie),
         runtimeSlot: requestRuntimeSlot,
         wsToken,
       });
@@ -4931,9 +4964,19 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
     let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
     let requestedActiveMachine: UserMachineRecord | undefined;
-    let runningMachine = identity.userId
-      ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
-      : await getRunningUserMachineByHandle(db, identity.handle);
+    let runningMachine: UserMachineRecord | undefined;
+    if (explicitVmRoute) {
+      const explicitMachine = await getRunningUserMachineByHandle(db, explicitVmRoute.handle);
+      if (!explicitMachine || (identity.userId && explicitMachine.clerkUserId !== identity.userId)) {
+        socket.destroy();
+        return;
+      }
+      runningMachine = explicitMachine;
+    } else {
+      runningMachine = identity.userId
+        ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
+        : await getRunningUserMachineByHandle(db, identity.handle);
+    }
     if (!runningMachine && identity.userId) {
       requestedActiveMachine = await getActiveUserMachineByClerkId(db, identity.userId, runtimeSlot);
       if (!requestedActiveMachine) {
@@ -4976,12 +5019,12 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       upstreamHostHeader: string,
       headers: string,
     ): void => {
-      if (!isSafeWebSocketUpgradePath(path)) {
+      if (!isSafeWebSocketUpgradePath(webSocketProxyPath)) {
         socket.destroy();
         upstream.destroy();
         return;
       }
-      const upstreamPath = stripWebSocketUpgradeToken(path);
+      const upstreamPath = stripWebSocketUpgradeToken(webSocketProxyPath);
       upstream.write(
         `${req.method} ${upstreamPath} HTTP/1.1\r\nHost: ${upstreamHostHeader}\r\n${headers}\r\n\r\n`
       );

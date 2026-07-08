@@ -516,11 +516,16 @@ exit 99
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
     const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-linux-tools'), 'utf8');
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
 
     for (const pkg of ['dbus-x11', 'xauth', 'xpra', 'xterm']) {
       expect(cloudInit).toContain(pkg);
       expect(installer).toContain(pkg);
     }
+    expect(existsSync(join(root, 'distro/customer-vps/systemd/matrix-linux-tools.service'))).toBe(true);
+    expect(syncAgent).toContain('matrix-linux-tools.service');
+    expect(syncAgent).toContain('systemctl start --no-block matrix-linux-tools.service');
+    expect(syncAgent).toContain('Linux tools service enabled');
   });
 
   it('installs a customer host code-server service behind restore completion', () => {
