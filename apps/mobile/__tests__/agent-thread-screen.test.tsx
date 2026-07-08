@@ -981,6 +981,71 @@ describe("AgentThreadRoute", () => {
     expect(screen.queryByText(/home\/matrix|token|leaked|\.ssh|id_rsa/i)).toBeNull();
   });
 
+  it("groups assistant message activity without exposing raw text", async () => {
+    const snapshot = {
+      ...threadSnapshotFixture(),
+      events: {
+        ...threadSnapshotFixture().events,
+        items: [
+          ...threadSnapshotFixture().events.items,
+          {
+            eventId: "evt_mobile_assistant_delta_1",
+            threadId: "thread_mobile",
+            type: "assistant.text.delta",
+            messageId: "msg_mobile_grouped",
+            delta: "Reading /home/matrix/private and token_sk_live_123.",
+            occurredAt: "2026-07-06T00:02:00.000Z",
+          },
+          {
+            eventId: "evt_mobile_assistant_file",
+            threadId: "thread_mobile",
+            type: "file.changed",
+            path: "apps/mobile/app/agents/[threadId].tsx",
+            changeKind: "updated",
+            occurredAt: "2026-07-06T00:02:30.000Z",
+          },
+          {
+            eventId: "evt_mobile_assistant_delta_2",
+            threadId: "thread_mobile",
+            type: "assistant.text.delta",
+            messageId: "msg_mobile_grouped",
+            delta: "Finished with secret local output.",
+            occurredAt: "2026-07-06T00:02:45.000Z",
+          },
+          {
+            eventId: "evt_mobile_assistant_completed",
+            threadId: "thread_mobile",
+            type: "assistant.text.completed",
+            messageId: "msg_mobile_grouped",
+            occurredAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+      },
+    };
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot,
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    const rendered = render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Assistant message")).toBeTruthy();
+    expect(screen.getByText("2 text updates received, complete")).toBeTruthy();
+    expect(screen.queryByText("Assistant message complete")).toBeNull();
+    expect(screen.queryByText("msg_mobile_grouped")).toBeNull();
+    expect(screen.queryByText(/home\/matrix|token|secret local output/i)).toBeNull();
+    const textValues = rendered.UNSAFE_queryAllByType(Text)
+      .map((node) => node.props.children)
+      .filter((value): value is string => typeof value === "string");
+    expect(textValues.indexOf("File updated")).toBeLessThan(textValues.indexOf("Assistant message"));
+  });
+
   it("groups bounded tool activity without exposing raw tool output", async () => {
     const snapshot = {
       ...threadSnapshotFixture(),

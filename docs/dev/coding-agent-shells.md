@@ -89,6 +89,8 @@ Client UI must disable duplicate submission while a decision is in flight and re
 
 Mobile thread detail should rehydrate its current bounded thread snapshot when the app returns to the foreground so pending approval and input state reconciles with decisions made from other shells. This refresh must use the authenticated gateway client and must not persist approval payloads, input text, transcripts, or terminal output.
 
+Mobile thread timelines may group `assistant.text.delta` and `assistant.text.completed` events by bounded `messageId` for readability. Grouped rows must render only update counts and completion state; never render raw assistant text or message ids.
+
 Mobile thread timelines may group `tool.started`, `tool.output`, and `tool.completed` events by `toolCallId` for readability. Grouped rows must render only safe tool display metadata, coarse output presence/truncation, and completion outcome; never render raw tool output text.
 
 Desktop thread streams are owned by the trusted main process. The renderer asks
