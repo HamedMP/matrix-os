@@ -1,12 +1,12 @@
 # Current State: Coding Agent Shells
 
-**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-desktop-notification-focus`
+**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-desktop-thread-detail`
 **Updated**: 2026-07-07
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
 ## Summary
 
-The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, desktop/mobile read-only review summary panels, and a read-only coding-agent review snapshot route with bounded file metadata from safe owner worktree diffs plus findings fallback metadata. Review snapshots can include bounded per-hunk diff lines with truncation markers. Desktop and mobile review details render changed-file counts, selectable hunk coordinate metadata, and gateway-bounded diff lines. Desktop and mobile can seed their existing agent composers from a selected review hunk using bounded prompt context and a `structured_ref` attachment. Mobile active thread rows now open a bounded thread detail route that hydrates `AgentThreadSnapshotSchema` through the authenticated gateway client, renders safe thread metadata, event counts, and a read-only snapshot event timeline, and can hand a bound canonical terminal session to the existing mobile Terminal tab. Desktop active thread rows can open a matching attachable bound canonical terminal session in the existing Terminal tab model. Desktop native notification clicks focus the Agents tab and visibly select the bounded coding-agent workspace thread reference in the active thread list. Full file content and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated preview shell UI is not yet integrated.
+The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, desktop/mobile read-only review summary panels, and a read-only coding-agent review snapshot route with bounded file metadata from safe owner worktree diffs plus findings fallback metadata. Review snapshots can include bounded per-hunk diff lines with truncation markers. Desktop and mobile review details render changed-file counts, selectable hunk coordinate metadata, and gateway-bounded diff lines. Desktop and mobile can seed their existing agent composers from a selected review hunk using bounded prompt context and a `structured_ref` attachment. Mobile active thread rows now open a bounded thread detail route that hydrates `AgentThreadSnapshotSchema` through the authenticated gateway client, renders safe thread metadata, event counts, and a read-only snapshot event timeline, and can hand a bound canonical terminal session to the existing mobile Terminal tab. Desktop active thread rows can open a matching attachable bound canonical terminal session in the existing Terminal tab model and selected desktop threads now hydrate `AgentThreadSnapshotSchema` through trusted main-process IPC for safe read-only metadata and event timeline rendering. Desktop native notification clicks focus the Agents tab and visibly select the bounded coding-agent workspace thread reference in the active thread list. Full file content and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated preview shell UI is not yet integrated.
 
 Current source-of-truth boundaries:
 
@@ -184,6 +184,7 @@ IPC contract:
 
 - `desktop/src/shared/ipc-contract.ts`
 - `runtime:get-summary` returns `RuntimeSummarySchema`.
+- `runtime:get-thread-snapshot` accepts a bounded `threadId` and returns `AgentThreadSnapshotSchema`.
 - `runtime:get-reviews` returns a bounded list of `ReviewSummarySchema` rows from the trusted main process.
 - `notify` accepts bounded notification data with `threadId`, `title`, `body`, and kind.
 - `notification:clicked` emits bounded `threadId`.
@@ -192,8 +193,9 @@ Main process:
 
 - `desktop/src/main/coding-agents/runtime-summary-client.ts`
 - Fetches `/api/coding-agents/summary` from the selected runtime origin with bearer auth in the main process.
+- Fetches `/api/coding-agents/threads/:threadId` from the selected runtime origin with bearer auth in the main process and validates `AgentThreadSnapshotSchema`.
 - Fetches `/api/coding-agents/reviews` from the selected runtime origin with bearer auth in the main process.
-- Uses `AbortSignal.timeout(10_000)` and validates `RuntimeSummarySchema` or bounded `ReviewSummarySchema` lists.
+- Uses `AbortSignal.timeout(10_000)` and validates `RuntimeSummarySchema`, `AgentThreadSnapshotSchema`, or bounded `ReviewSummarySchema` lists.
 - Renderer receives only parsed summary data through IPC.
 
 Renderer:
@@ -207,6 +209,7 @@ Current behavior:
 
 - Read-only dashboard renders providers, active threads, and terminals.
 - Active thread rows with a matching attachable `terminalSessionId` can open the existing desktop Terminal tab for that canonical session; stale or unavailable terminal bindings do not render an action.
+- Selected active threads hydrate a bounded thread snapshot through `runtime:get-thread-snapshot`, show provider/status/terminal metadata, event counts, loading and safe generic error states, and render gateway-bounded snapshot events with generic copy for assistant text, tool output, file changes, and unsafe runtime errors.
 - Native notification clicks carrying a bounded `threadId` focus the existing Agents tab and visibly mark that thread current in the coding-agent workspace thread list while preserving the legacy thread-store selection path.
 - When the runtime advertises `codingAgentsReview`, the dashboard fetches bounded review summaries through the trusted main-process IPC route and renders project, PR, round, status, and high-severity count.
 - Review snapshot details render bounded file paths, additions/deletions, partial markers, selectable hunk coordinate metadata, gateway-bounded hunk lines, and safe finding summaries. Diff line containers are blocked from session recording.
@@ -219,6 +222,9 @@ Current behavior:
 Focused tests:
 
 - `tests/desktop/coding-agent-workspace.test.tsx`
+- `tests/desktop/coding-agent-runtime-client.test.ts`
+- `tests/desktop/ipc-contract.test.ts`
+- `tests/desktop/ipc-handlers.test.ts`
 - `tests/desktop/kernel-wiring.test.ts`
 
 ## Mobile Shell State

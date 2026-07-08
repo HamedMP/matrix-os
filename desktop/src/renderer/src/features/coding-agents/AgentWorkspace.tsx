@@ -2,6 +2,8 @@ import { Bot, ChevronRight, ClipboardCheck, FileText, GitBranch, Play, RefreshCw
 import { useEffect, useMemo, useState } from "react";
 import {
   defaultAgentThreadComposerDraft,
+  type AgentThreadEvent,
+  type AgentThreadSnapshot,
   type AgentThreadComposerDraft,
   type ReviewSnapshot,
   type ReviewSummary,
@@ -28,6 +30,7 @@ const STATUS_COLOR: Record<string, string> = {
 };
 const DEFAULT_STATUS_COLOR = "var(--text-tertiary)";
 type ReviewDetailStatus = "idle" | "loading" | "ready" | "error";
+type ThreadDetailStatus = "idle" | "loading" | "ready" | "error";
 type ReviewSnapshotFile = ReviewSnapshot["files"]["items"][number];
 type ReviewSnapshotHunk = ReviewSnapshotFile["hunks"][number];
 type ReviewSnapshotLine = NonNullable<ReviewSnapshotHunk["lines"]>[number];
@@ -337,6 +340,7 @@ function AgentComposer({ summary, seed }: { summary: RuntimeSummary; seed: Compo
 function ThreadList({ summary }: { summary: RuntimeSummary }) {
   const openTab = useTabs((s) => s.openTab);
   const activeThreadId = useCodingAgentWorkspace((s) => s.activeThreadId);
+  const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
   const findAttachableSessionName = (sessionId: string): string | null =>
     summary.terminalSessions.items.find((session) => session.id === sessionId && session.attachable)?.name ?? null;
 
@@ -385,6 +389,14 @@ function ThreadList({ summary }: { summary: RuntimeSummary }) {
                 <span className="text-xs capitalize" style={{ color: "var(--text-secondary)" }}>
                   {thread.status.replace(/_/g, " ")}
                 </span>
+                <Button
+                  variant="ghost"
+                  aria-label={`Open details for ${thread.title}`}
+                  title={`Open details for ${thread.title}`}
+                  onClick={() => void loadThreadSnapshot(thread.id)}
+                >
+                  <ChevronRight size={14} />
+                </Button>
               </div>
             </article>
           );
@@ -397,6 +409,153 @@ function ThreadList({ summary }: { summary: RuntimeSummary }) {
       </div>
     </Section>
   );
+}
+
+function ThreadSnapshotPanel({
+  status,
+  snapshot,
+  error,
+}: {
+  status: ThreadDetailStatus;
+  snapshot: AgentThreadSnapshot | null;
+  error: string | null;
+}) {
+  if (status === "idle") return null;
+  if (status === "loading") {
+    return (
+      <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+        Loading thread details...
+      </p>
+    );
+  }
+  if (status === "error") {
+    return (
+      <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
+        {error ?? "Thread state unavailable"}
+      </p>
+    );
+  }
+  if (!snapshot) return null;
+
+  return (
+    <article
+      className="ph-no-capture grid gap-3 rounded-md border p-3"
+      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+            Thread details
+          </h2>
+          <p className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
+            {snapshot.thread.title}
+          </p>
+        </div>
+        <span className="shrink-0 text-xs capitalize" style={{ color: "var(--text-secondary)" }}>
+          {snapshot.thread.status.replace(/_/g, " ")}
+        </span>
+      </div>
+      <dl className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+        <div>
+          <dt style={{ color: "var(--text-tertiary)" }}>Provider</dt>
+          <dd className="truncate" style={{ color: "var(--text-secondary)" }}>{snapshot.thread.providerId}</dd>
+        </div>
+        <div>
+          <dt style={{ color: "var(--text-tertiary)" }}>Terminal</dt>
+          <dd className="truncate" style={{ color: "var(--text-secondary)" }}>
+            {snapshot.thread.terminalSessionId ?? "Not bound"}
+          </dd>
+        </div>
+        <div>
+          <dt style={{ color: "var(--text-tertiary)" }}>Updated</dt>
+          <dd className="truncate" style={{ color: "var(--text-secondary)" }}>{snapshot.thread.updatedAt}</dd>
+        </div>
+        <div>
+          <dt style={{ color: "var(--text-tertiary)" }}>Events</dt>
+          <dd className="truncate" style={{ color: "var(--text-secondary)" }}>{snapshot.events.items.length}</dd>
+        </div>
+      </dl>
+      <div className="grid gap-2">
+        {snapshot.events.items.map((event) => (
+          <ThreadEventRow key={event.eventId} event={event} />
+        ))}
+        {snapshot.events.items.length === 0 ? (
+          <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+            No thread events yet.
+          </p>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function ThreadEventRow({ event }: { event: AgentThreadEvent }) {
+  const copy = describeThreadEvent(event);
+  return (
+    <div
+      className="grid gap-1 rounded-md border px-3 py-2"
+      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+          {copy.title}
+        </p>
+        <span className="shrink-0 text-xs" style={{ color: "var(--text-tertiary)" }}>
+          {event.occurredAt}
+        </span>
+      </div>
+      <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
+        {copy.detail}
+      </p>
+    </div>
+  );
+}
+
+function describeThreadEvent(event: AgentThreadEvent): { title: string; detail: string } {
+  switch (event.type) {
+    case "thread.created":
+      return { title: "Thread created", detail: event.thread.title };
+    case "thread.status":
+      return { title: "Status changed", detail: event.status.replace(/_/g, " ") };
+    case "assistant.text.delta":
+      return { title: "Assistant update", detail: "Text update received" };
+    case "assistant.text.completed":
+      return { title: "Assistant message complete", detail: "Message complete" };
+    case "tool.started":
+      return { title: "Tool started", detail: event.displayName };
+    case "tool.output":
+      return { title: "Tool output", detail: event.truncated ? "Output received, partial" : "Output received" };
+    case "tool.completed":
+      return { title: "Tool completed", detail: event.outcome };
+    case "approval.requested":
+      return { title: "Approval needed", detail: event.approval.safeDescription };
+    case "approval.resolved":
+      return { title: "Approval resolved", detail: event.decision };
+    case "user_input.requested":
+      return { title: "Input needed", detail: event.request.safeDescription };
+    case "user_input.answered":
+      return { title: "Input answered", detail: "Input answer received" };
+    case "file.changed":
+      return { title: `File ${event.changeKind}`, detail: `${capitalize(event.changeKind)} file` };
+    case "review.ready": {
+      const files = `${event.summary.changedFileCount} ${event.summary.changedFileCount === 1 ? "file" : "files"} changed`;
+      const partial = event.summary.partial ? ", partial" : "";
+      return { title: "Review ready", detail: `${files}, +${event.summary.additions} -${event.summary.deletions}${partial}` };
+    }
+    case "terminal.bound":
+      return { title: "Terminal bound", detail: event.terminalSessionId };
+    case "thread.error":
+      return {
+        title: "Thread needs attention",
+        detail: event.error.retryable ? "Refresh the thread or check the runtime." : "Open the workspace again.",
+      };
+    case "thread.completed":
+      return { title: "Thread completed", detail: event.outcome };
+  }
+}
+
+function capitalize(value: string): string {
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
 }
 
 function TerminalList({ summary }: { summary: RuntimeSummary }) {
@@ -794,11 +953,22 @@ export default function AgentWorkspace() {
   const summary = useCodingAgentWorkspace((s) => s.summary);
   const error = useCodingAgentWorkspace((s) => s.error);
   const refresh = useCodingAgentWorkspace((s) => s.refresh);
+  const activeThreadId = useCodingAgentWorkspace((s) => s.activeThreadId);
+  const threadSnapshotStatus = useCodingAgentWorkspace((s) => s.threadSnapshotStatus);
+  const threadSnapshot = useCodingAgentWorkspace((s) => s.threadSnapshot);
+  const threadSnapshotError = useCodingAgentWorkspace((s) => s.threadSnapshotError);
+  const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
   const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
 
   useEffect(() => {
     void refresh();
   }, [refresh, runtimeSlot]);
+
+  useEffect(() => {
+    if (!activeThreadId) return;
+    if (threadSnapshotStatus === "ready" && threadSnapshot?.thread.id === activeThreadId) return;
+    void loadThreadSnapshot(activeThreadId);
+  }, [activeThreadId, loadThreadSnapshot, runtimeSlot, threadSnapshot?.thread.id, threadSnapshotStatus]);
 
   if (status === "loading" && !summary) {
     return (
@@ -833,7 +1003,14 @@ export default function AgentWorkspace() {
         <ProviderList summary={summary} />
         <div className="grid gap-4 xl:grid-cols-2">
           <ThreadList summary={summary} />
-          <TerminalList summary={summary} />
+          <div className="grid gap-4">
+            <ThreadSnapshotPanel
+              status={threadSnapshotStatus}
+              snapshot={threadSnapshot}
+              error={threadSnapshotError}
+            />
+            <TerminalList summary={summary} />
+          </div>
         </div>
         {capabilityEnabled(summary, "codingAgentsReview") ? (
           <ReviewList

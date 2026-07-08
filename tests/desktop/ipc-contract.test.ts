@@ -14,6 +14,7 @@ describe("IPC contract", () => {
       "auth:status",
       "auth:sign-out",
       "runtime:create-thread",
+      "runtime:get-thread-snapshot",
       "runtime:get-review-snapshot",
       "runtime:get-reviews",
       "runtime:get-summary",
@@ -66,6 +67,53 @@ describe("IPC contract", () => {
         },
       }).success,
     ).toBe(true);
+  });
+
+  it("validates runtime:get-thread-snapshot requests and rejects credential leakage shapes", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:get-thread-snapshot"].request;
+    const schema = INVOKE_CHANNELS["runtime:get-thread-snapshot"].response;
+    const valid = {
+      thread: {
+        id: "thread_desktop_1",
+        providerId: "codex",
+        title: "Fix desktop notifications",
+        status: "waiting_for_approval",
+        attention: "approval_required",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:01:00.000Z",
+      },
+      events: {
+        items: [
+          {
+            type: "approval.requested",
+            eventId: "evt_approval_1",
+            threadId: "thread_desktop_1",
+            occurredAt: "2026-07-06T00:01:00.000Z",
+            approval: {
+              approvalId: "appr_desktop_1",
+              threadId: "thread_desktop_1",
+              actionKind: "command",
+              risk: "medium",
+              title: "Run tests",
+              safeDescription: "Run the focused desktop tests.",
+              allowedDecisions: ["approve", "decline"],
+              correlationId: "corr_desktop_1",
+            },
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    };
+
+    expect(requestSchema.safeParse({ threadId: "thread_desktop_1" }).success).toBe(true);
+    expect(requestSchema.safeParse({ threadId: "../secret" }).success).toBe(false);
+    expect(schema.safeParse(valid).success).toBe(true);
+    expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
+    expect(schema.safeParse({
+      ...valid,
+      thread: { ...valid.thread, providerSecret: "secret" },
+    }).success).toBe(false);
   });
 
   it("validates runtime:get-summary responses and rejects credential leakage shapes", () => {
