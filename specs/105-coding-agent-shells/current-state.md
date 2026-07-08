@@ -1,12 +1,12 @@
 # Current State: Coding Agent Shells
 
-**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-session-reconcile`
+**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-review-summary`
 **Updated**: 2026-07-06
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
 ## Summary
 
-The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, and approval/input route handling. File/review/preview coding-agent surfaces are contract-only or existing workspace routes; they are not yet integrated into the coding-agent shell UI.
+The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, and a read-only coding-agent review summary route/client contract. File diff and preview coding-agent surfaces are contract-only or existing workspace routes; they are not yet integrated into the coding-agent shell UI.
 
 Current source-of-truth boundaries:
 
@@ -28,7 +28,7 @@ Implemented coding-agent schemas:
 - Events: `AgentThreadEventSchema` discriminated union with lifecycle, text delta, tool activity, approval/input, file change, review ready, terminal bound, safe error, and completion event variants.
 - Approvals/input: `AgentApprovalRequestSchema`, `ApprovalDecisionRequestSchema`, `UserInputRequestSchema`, `UserInputAnswerRequestSchema`.
 - Terminal frames/summaries: `TerminalSessionSummarySchema`, `TerminalClientFrameSchema`, `TerminalServerFrameSchema`.
-- File/review/preview: `FilePathSchema`, `FileMetadataSchema`, `ReviewFileDiffSchema`, `PreviewSessionSummarySchema`.
+- File/review/preview: `FilePathSchema`, `FileMetadataSchema`, `ReviewSummarySchema`, `ReviewFileDiffSchema`, `PreviewSessionSummarySchema`.
 
 Contract tests:
 
@@ -50,6 +50,7 @@ Implemented routes:
 | `/api/coding-agents/threads/:threadId/abort` | `POST` | Implemented | Body limit 8 KiB, idempotent abort by client request id. |
 | `/api/coding-agents/threads/:threadId/approvals/:approvalId/decision` | `POST` | Implemented | Body limit 8 KiB, validates approval id and decision payload. |
 | `/api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer` | `POST` | Implemented | Body limit 40 KiB, validates bounded answer payload. |
+| `/api/coding-agents/reviews` | `GET` | Implemented | Authenticated read-only review summary list. Returns bounded `ReviewSummarySchema` items only. |
 
 Security and ownership:
 
@@ -115,6 +116,7 @@ Core files:
 - `packages/gateway/src/coding-agents/thread-store.ts`
 - `packages/gateway/src/coding-agents/provider-registry.ts`
 - `packages/gateway/src/coding-agents/workspace-provider.ts`
+- `packages/gateway/src/coding-agents/review-summary.ts`
 
 Implemented providers:
 
@@ -135,6 +137,12 @@ Thread store behavior:
 - Idempotent thread creation, aborts, approval decisions, and input answers by bounded request-id arrays.
 - Event replay with bounded per-thread event storage.
 - Safe terminal statuses and attention states derived from events.
+
+Review summary behavior:
+
+- Adapts existing owner-local review-loop records into bounded `ReviewSummarySchema` rows.
+- Drops malformed legacy records instead of exposing raw review state.
+- Caps the coding-agent route response at 50 items.
 
 Focused tests:
 
@@ -171,6 +179,7 @@ IPC contract:
 
 - `desktop/src/shared/ipc-contract.ts`
 - `runtime:get-summary` returns `RuntimeSummarySchema`.
+- `runtime:get-reviews` returns a bounded list of `ReviewSummarySchema` rows from the trusted main process.
 - `notify` accepts bounded notification data with `threadId`, `title`, `body`, and kind.
 - `notification:clicked` emits bounded `threadId`.
 
@@ -178,7 +187,8 @@ Main process:
 
 - `desktop/src/main/coding-agents/runtime-summary-client.ts`
 - Fetches `/api/coding-agents/summary` from the selected runtime origin with bearer auth in the main process.
-- Uses `AbortSignal.timeout(10_000)` and validates `RuntimeSummarySchema`.
+- Fetches `/api/coding-agents/reviews` from the selected runtime origin with bearer auth in the main process.
+- Uses `AbortSignal.timeout(10_000)` and validates `RuntimeSummarySchema` or bounded `ReviewSummarySchema` lists.
 - Renderer receives only parsed summary data through IPC.
 
 Renderer:
@@ -200,12 +210,16 @@ Gateway client:
 
 - `apps/mobile/lib/gateway-client.ts`
 - `getCodingAgentRuntimeSummary()` calls `GET /api/coding-agents/summary`, validates `RuntimeSummarySchema`, and returns the safe `"Runtime summary unavailable"` error on failure.
+- `getCodingAgentReviews()` calls `GET /api/coding-agents/reviews`, validates a bounded review summary list, and returns the safe `"Review state unavailable"` error on failure.
 - Existing terminal session methods call `/api/terminal/sessions`.
 
 Screen:
 
-- `apps/mobile/app/agents.tsx`
+- `apps/mobile/app/agents/index.tsx`
+- `apps/mobile/app/agents/new.tsx`
+- `apps/mobile/app/agents/[threadId].tsx`
 - Read-only phone-first dashboard with providers, active threads, and terminal sessions.
+- Composer route for creating accepted coding-agent threads; thread route is a bounded placeholder until replay/review surfaces are wired.
 - Flag: `apps/mobile/lib/feature-flags.ts` with `EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE === "1"`.
 
 Persisted UI references:
@@ -232,6 +246,8 @@ Relevant existing browser shell paths:
 - Built-in app/canvas behavior remains outside this coding-agent stack.
 
 Open follow-up: decide whether a browser-shell coding-agent entry belongs in Canvas, Developer mode, or both after desktop/mobile read-only shells settle.
+
+Public docs note: public docs remain deferred for this review-summary slice because it is an internal read contract with no user-visible review UI yet. Update `www/content/docs/` when the file/review/preview surfaces become visible in desktop, mobile, or browser shell navigation.
 
 ## Feature Flags
 
@@ -261,7 +277,7 @@ Current behavior:
 - Runtime summary advertises `codingAgentsThreadCreate` when a coding-agent thread store is wired.
 - Runtime summary advertises `codingAgentsApprovals` only when a thread store is wired and gateway summary wiring explicitly sets `capabilities.approvals`; current production wiring keeps it disabled until a provider/handler can bridge approval decisions to the running agent, not merely record local resolution events.
 - Runtime summary advertises `codingAgentsNativeMobileTerminal` when a terminal registry is wired and the caller can read terminal sessions.
-- Runtime summary keeps `codingAgentsReview` disabled until coding-agent-specific review shell integration is implemented.
+- Runtime summary advertises `codingAgentsReview` when the read-only coding-agent review summary route is wired.
 
 ## Baseline Commands
 
@@ -305,7 +321,7 @@ git diff --check
 ## Open Questions And Deferred Work
 
 - Session completion reconciliation: implemented for workspace `session.stopped` events that carry owner id, workspace session id, and bound `terminalSessionId`; the gateway thread store marks matching active coding-agent threads completed or failed server-side without matching unrelated owners or reused terminal ids. Remaining work: if runtime managers add autonomous process-exit detection beyond explicit workspace stop events, route those through the same `session.stopped` publisher path.
-- File/review/preview shell surfaces: contracts exist and workspace routes exist, but coding-agent-specific UI integration is not implemented yet.
+- File/review/preview shell surfaces: read-only review summaries now have coding-agent contracts/routes/desktop IPC/mobile clients. File diffs, previews, and visible review UI integration are not implemented yet.
 - Browser shell entry point: Canvas-first placement is still undecided.
 - Notifications/attention routing: desktop notification IPC exists, but thread attention notifications are not yet wired end-to-end from gateway events.
 - Public docs: public Matrix OS docs should be updated once the user-facing coding-agent shell flow is stable enough to document.

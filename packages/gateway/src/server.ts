@@ -34,6 +34,7 @@ import {
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
+import { createReviewStore } from "./review-store.js";
 import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
 import { createSymphonyRunner } from "./symphony-runner.js";
 import { createAgentLauncher } from "./agent-launcher.js";
@@ -101,6 +102,7 @@ import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type Codin
 import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./coding-agents/thread-stream.js";
 import { createWorkspaceCodingAgentProvider } from "./coding-agents/workspace-provider.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
+import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -475,6 +477,13 @@ export async function createGateway(config: GatewayConfig) {
   let codingAgentThreadStore: CodingAgentThreadStore | undefined;
   const codingAgentSessionStopReconciler = createCodingAgentSessionStopReconciler();
   const workspaceEventStore = createWorkspaceEventStore({ homePath });
+  const reviewStore = createReviewStore({ homePath });
+  const codingAgentReviewSummaryStore = createCodingAgentReviewSummaryStore(reviewStore, {
+    ownerId: process.env.MATRIX_USER_ID,
+    principalOwnerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(
+      (id): id is string => Boolean(id),
+    ),
+  });
   const workspaceEventPublisher = createWorkspaceEventPublisher({
     eventStore: workspaceEventStore,
     onSessionStopped: (session) => codingAgentSessionStopReconciler.handleSessionStopped(session),
@@ -527,6 +536,7 @@ export async function createGateway(config: GatewayConfig) {
     capabilities: {
       workspace: codingAgentWorkspaceEnabled,
       approvals: false,
+      review: true,
     },
     terminalOwnerId: process.env.MATRIX_USER_ID,
   });
@@ -1547,6 +1557,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/coding-agents", createCodingAgentRoutes({
     service: codingAgentRuntimeSummaryService,
     threads: codingAgentThreadStore,
+    reviews: codingAgentReviewSummaryStore,
   }));
   app.route("/api/integrations", createIntegrationCapabilityRoutes({
     service: integrationCapabilityService,
@@ -2685,6 +2696,7 @@ export async function createGateway(config: GatewayConfig) {
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
     eventStore: workspaceEventStore,
     eventPublisher: workspaceEventPublisher,
+    reviewStore,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   }));
   app.route("/api/symphony", createElixirSymphonyProxyRoutes({

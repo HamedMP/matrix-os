@@ -14,6 +14,7 @@ describe("IPC contract", () => {
       "auth:status",
       "auth:sign-out",
       "runtime:create-thread",
+      "runtime:get-reviews",
       "runtime:get-summary",
       "runtime:select",
       "state:get",
@@ -112,6 +113,39 @@ describe("IPC contract", () => {
 
     expect(schema.safeParse(valid).success).toBe(true);
     expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
+  });
+
+  it("validates runtime:get-reviews responses and rejects credential leakage shapes", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:get-reviews"].request;
+    const schema = INVOKE_CHANNELS["runtime:get-reviews"].response;
+    const valid = {
+      items: [
+        {
+          id: "rev_desktop_1",
+          projectId: "matrix-os",
+          worktreeId: "wt_abc123def456",
+          status: "reviewing",
+          pullRequestNumber: 757,
+          round: 1,
+          maxRounds: 3,
+          reviewer: "codex",
+          implementer: "claude",
+          findings: { total: 1, high: 0, medium: 1, low: 0 },
+          updatedAt: "2026-07-06T00:00:00.000Z",
+        },
+      ],
+      hasMore: false,
+      limit: 50,
+    };
+
+    expect(requestSchema.safeParse({ cursor: "rev_desktop_1" }).success).toBe(true);
+    expect(requestSchema.safeParse({ cursor: "../secret" }).success).toBe(false);
+    expect(schema.safeParse(valid).success).toBe(true);
+    expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
+    expect(schema.safeParse({
+      ...valid,
+      items: [{ ...valid.items[0], safeStatus: "Postgres failed at /home/matrix/home" }],
+    }).success).toBe(false);
   });
 
   it("validates auth:poll responses and rejects token leakage shapes", () => {
