@@ -37,6 +37,7 @@ export interface CodingAgentRuntimeSummaryService {
 
 export interface CodingAgentThreadSummaryStore {
   listThreads(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
+  listAttentionThreads?(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
 }
 
 export interface CodingAgentRuntimeSummaryOptions {
@@ -182,6 +183,19 @@ async function readActiveThreads(
   }
 }
 
+async function readAttentionThreads(
+  store: CodingAgentThreadSummaryStore | undefined,
+  principal: RequestPrincipal,
+): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }> {
+  if (!store?.listAttentionThreads) return { items: [], hasMore: false, limit: 20 };
+  try {
+    return await store.listAttentionThreads(principal);
+  } catch (err: unknown) {
+    console.warn("[coding-agents] attention summary unavailable:", err instanceof Error ? err.message : String(err));
+    return { items: [], hasMore: false, limit: 20 };
+  }
+}
+
 async function readTerminalSessions(
   registry: CodingAgentTerminalSessionRegistry | undefined,
   homePath: string,
@@ -227,6 +241,7 @@ export function createCodingAgentRuntimeSummaryService(
       );
       const providers = await readProviders(options.agentCredentials, principal);
       const activeThreads = await readActiveThreads(options.threads, principal);
+      const attentionThreads = await readAttentionThreads(options.threads, principal);
       const threadsEnabled = Boolean(options.threads);
       const workspaceEnabled = threadsEnabled && options.capabilities?.workspace === true;
       const approvalsEnabled = threadsEnabled && options.capabilities?.approvals === true;
@@ -254,6 +269,7 @@ export function createCodingAgentRuntimeSummaryService(
         providers,
         projects: { items: [], hasMore: false, limit: 20 },
         activeThreads,
+        attentionThreads,
         terminalSessions: await terminalSessions,
         recentActivity: { items: [], hasMore: false, limit: 30 },
         limits: {

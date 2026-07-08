@@ -1,12 +1,12 @@
 # Current State: Coding Agent Shells
 
-**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-mobile-attention`
+**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-attention-summary`
 **Updated**: 2026-07-07
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
 ## Summary
 
-The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, desktop/mobile read-only review summary panels, and a read-only coding-agent review snapshot route with bounded file metadata from safe owner worktree diffs plus findings fallback metadata. Review snapshots can include bounded per-hunk diff lines with truncation markers. Desktop and mobile review details render changed-file counts, selectable hunk coordinate metadata, and gateway-bounded diff lines. Desktop and mobile can seed their existing agent composers from a selected review hunk using bounded prompt context and a `structured_ref` attachment. Mobile active thread rows now open a bounded thread detail route that hydrates `AgentThreadSnapshotSchema` through the authenticated gateway client, renders safe thread metadata, event counts, in-app attention labels, and snapshot event timeline, can hand a bound canonical terminal session to the existing mobile Terminal tab, and can submit approval decisions plus user-input answers through the authenticated gateway client. Desktop active thread rows can open a matching attachable bound canonical terminal session in the existing Terminal tab model and selected desktop threads now hydrate `AgentThreadSnapshotSchema` through trusted main-process IPC for safe metadata and event timeline rendering. Desktop approval-request events can submit allowed decisions, and desktop user-input request events can submit bounded answers, through trusted main-process IPC and replace local details with the gateway-returned bounded thread snapshot. Desktop native notification clicks focus the Agents tab and visibly select the bounded coding-agent workspace thread reference in the active thread list. Full file content and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated preview shell UI is not yet integrated.
+The stack currently has shared contracts, a gateway runtime summary read model, a gateway-owned bounded attention summary, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, desktop/mobile read-only review summary panels, and a read-only coding-agent review snapshot route with bounded file metadata from safe owner worktree diffs plus findings fallback metadata. Review snapshots can include bounded per-hunk diff lines with truncation markers. Desktop and mobile review details render changed-file counts, selectable hunk coordinate metadata, and gateway-bounded diff lines. Desktop and mobile can seed their existing agent composers from a selected review hunk using bounded prompt context and a `structured_ref` attachment. Mobile active thread rows now open a bounded thread detail route that hydrates `AgentThreadSnapshotSchema` through the authenticated gateway client, renders safe thread metadata, event counts, in-app attention labels, and snapshot event timeline, can hand a bound canonical terminal session to the existing mobile Terminal tab, and can submit approval decisions plus user-input answers through the authenticated gateway client. Desktop active thread rows can open a matching attachable bound canonical terminal session in the existing Terminal tab model and selected desktop threads now hydrate `AgentThreadSnapshotSchema` through trusted main-process IPC for safe metadata and event timeline rendering. Desktop approval-request events can submit allowed decisions, and desktop user-input request events can submit bounded answers, through trusted main-process IPC and replace local details with the gateway-returned bounded thread snapshot. Desktop native notification clicks focus the Agents tab and visibly select the bounded coding-agent workspace thread reference in the active thread list. Full file content and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated preview shell UI is not yet integrated.
 
 Current source-of-truth boundaries:
 
@@ -22,7 +22,7 @@ Package: `packages/contracts/src/index.ts`
 Implemented coding-agent schemas:
 
 - IDs and bounds: `RuntimeIdSchema`, `ProviderIdSchema`, `ProjectIdSchema`, `TaskIdSchema`, `ThreadIdSchema`, `EventIdSchema`, `ApprovalIdSchema`, `RequestIdSchema`, `CorrelationIdSchema`, `TerminalSessionIdSchema`, `WorktreeIdSchema`, `CursorSchema`, `IsoTimestampSchema`, `SafeDisplayStringSchema`, `SafeClientErrorSchema`.
-- Runtime summary: `RuntimeTargetSchema`, `RuntimeCapabilitySchema`, `RuntimeLimitsSchema`, `RuntimeSummarySchema`.
+- Runtime summary: `RuntimeTargetSchema`, `RuntimeCapabilitySchema`, `RuntimeLimitsSchema`, `RuntimeSummarySchema` with bounded `activeThreads` and separate bounded `attentionThreads`.
 - Providers: `AgentProviderSummarySchema`, provider availability/install/auth enums, `AgentModeSchema`, `ApprovalPolicySchema`, `SandboxModeSchema`, `SafeSetupActionSchema`.
 - Threads: `CreateAgentThreadRequestSchema`, `AgentThreadSummarySchema`, `AgentThreadStatusSchema`, `AgentAttachmentSchema`, `AgentThreadSnapshotSchema`.
 - Events: `AgentThreadEventSchema` discriminated union with lifecycle, text delta, tool activity, approval/input, file change, review ready, terminal bound, safe error, and completion event variants.
@@ -98,13 +98,14 @@ Current summary sources:
 - Capability flags.
 - Provider summaries from the coding-agent provider registry.
 - Active thread summaries from the thread store when present.
+- Attention thread summaries from the thread store when present, including failed or waiting threads without changing the active-thread list semantics.
 - Terminal session summaries from the existing terminal registry adapter.
 - Bounded list metadata and runtime limits.
 
 Safe degradation:
 
 - Optional dependency failures return partial safe summaries.
-- Summary tests assert caps, stable sort, and no sensitive fields.
+- Summary tests assert caps, stable sort, attention list separation, and no sensitive fields.
 
 Focused tests:
 
@@ -365,5 +366,5 @@ git diff --check
 - File/review/preview shell surfaces: read-only review summaries now have coding-agent contracts/routes/desktop IPC/mobile clients plus desktop and mobile read-only review panels. A read-only review snapshot route now exposes bounded diff hunk metadata and capped hunk line bodies from safe owner worktrees plus partial findings-derived fallback metadata for later shell diff panels. Full file contents and previews are not implemented yet.
 - Approval/input shell actions: desktop approval decisions and user-input answers now have trusted IPC, main-process gateway submission, bounded UI controls, and focused tests. Remaining work: mobile approval/input action sheets and cross-shell resolved-state refresh tests.
 - Browser shell entry point: Canvas-first placement is still undecided.
-- Notifications/attention routing: desktop notification IPC exists and notification clicks focus the coding-agent workspace thread in the Agents tab with a visible current-thread marker. Mobile now shows in-app active-thread attention badges and thread-detail banners from gateway-owned thread attention state. Remaining work: OS-level thread attention notifications are not yet wired end-to-end from gateway events, and failed-thread list surfacing still needs a gateway summary model beyond active threads.
+- Notifications/attention routing: desktop notification IPC exists and notification clicks focus the coding-agent workspace thread in the Agents tab with a visible current-thread marker. Gateway runtime summaries now expose bounded `attentionThreads` separately from `activeThreads`, allowing failed or waiting attention to be surfaced without reclassifying terminal threads as active. Mobile now shows in-app active-thread attention badges and thread-detail banners from gateway-owned thread attention state. Remaining work: OS-level thread attention notifications are not yet wired end-to-end from gateway events, and desktop/mobile dashboards do not yet render the new `attentionThreads` list directly.
 - Public docs: public Matrix OS docs should be updated once the user-facing coding-agent shell flow is stable enough to document.

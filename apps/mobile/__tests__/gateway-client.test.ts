@@ -250,6 +250,11 @@ describe("GatewayClient", () => {
         hasMore: false,
         limit: 20,
       },
+      attentionThreads: {
+        items: [],
+        hasMore: false,
+        limit: 20,
+      },
       terminalSessions: {
         items: [],
         limit: 20,
