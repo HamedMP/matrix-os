@@ -5,6 +5,7 @@ import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchResponse, FileWriteRequest, PreviewSessionSummary, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
+import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
 import { isSafeShellSessionName } from "@/lib/terminal-state";
@@ -133,6 +134,11 @@ const NOTIFICATION_TOGGLES: { key: NotificationPreferenceKey; label: string; det
   { key: "input", label: "Input request alerts", detail: "Runs waiting for a response" },
   { key: "failed", label: "Failed run alerts", detail: "Runs that need recovery" },
 ];
+const AGENT_WORKSPACE_CONNECTION_LABELS = {
+  connecting: "Connecting to agent workspace",
+  disconnected: "Agent workspace offline",
+  error: "Agent workspace reconnecting",
+} as const;
 const MAX_RECENT_WORK_ITEMS = 6;
 
 const INITIAL_FILE_CONTENT_STATE: FileContentState = {
@@ -356,7 +362,7 @@ function ReviewDiffLines({ lines }: { lines: ReviewSnapshotLine[] }) {
 export default function AgentsScreen() {
   const { theme } = useUnistyles();
   const router = useRouter();
-  const { client } = useGateway();
+  const { client, connectionState } = useGateway();
   const [state, setState] = useState<ScreenState>(INITIAL_STATE);
   const [notificationPreferencesState, setNotificationPreferencesState] = useState<NotificationPreferencesState>(INITIAL_NOTIFICATION_PREFERENCES_STATE);
   const [reviewState, setReviewState] = useState<ReviewState>(INITIAL_REVIEW_STATE);
@@ -823,6 +829,12 @@ export default function AgentsScreen() {
       accessibilityLabel="Refresh agent workspace"
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.forest} />}
     >
+      <ConnectionBanner
+        state={connectionState}
+        queueCount={0}
+        onRetry={() => client?.connect()}
+        labels={AGENT_WORKSPACE_CONNECTION_LABELS}
+      />
       <View style={styles.header}>
         <View style={styles.headerIcon}>
           <Ionicons name="sparkles-outline" size={22} color={theme.colors.forest} />

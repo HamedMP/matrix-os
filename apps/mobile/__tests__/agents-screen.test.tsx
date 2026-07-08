@@ -578,6 +578,58 @@ describe("AgentsScreen", () => {
     expect(screen.getAllByText("matrix-abc1234").length).toBeGreaterThan(0);
   });
 
+  it("shows an agent workspace offline banner without hiding the hydrated summary", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "disconnected",
+    }));
+
+    render(<AgentsScreen />);
+
+    expect(await screen.findByText("Agent workspace offline")).toBeTruthy();
+    expect(screen.getAllByText("Repair mobile route").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/token|bearer|secret|\/home\/matrix/i)).toBeNull();
+  });
+
+  it("offers a safe reconnect action from the agent workspace banner", async () => {
+    const connect = jest.fn();
+    const client = {
+      connect,
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "error",
+    }));
+
+    render(<AgentsScreen />);
+
+    expect(await screen.findByText("Agent workspace reconnecting")).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByText("Retry"));
+    });
+
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/token|bearer|secret|\/home\/matrix/i)).toBeNull();
+  });
+
   it("hydrates and updates notification preferences", async () => {
     const client = {
       getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({

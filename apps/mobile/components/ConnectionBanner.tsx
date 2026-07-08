@@ -7,6 +7,7 @@ interface ConnectionBannerProps {
   state: ConnectionState;
   queueCount: number;
   onRetry?: () => void;
+  labels?: Partial<Record<Exclude<ConnectionState, "connected">, string>>;
 }
 
 const STATE_CONFIG: Record<ConnectionState, { label: string; icon: keyof typeof Ionicons.glyphMap } | null> = {
@@ -16,16 +17,17 @@ const STATE_CONFIG: Record<ConnectionState, { label: string; icon: keyof typeof 
   error: { label: "Chat reconnecting", icon: "radio-outline" },
 };
 
-export function ConnectionBanner({ state, queueCount, onRetry }: ConnectionBannerProps) {
+export function ConnectionBanner({ state, queueCount, onRetry, labels }: ConnectionBannerProps) {
   const { theme } = useUnistyles();
-  const config = STATE_CONFIG[state];
-  if (!config) return null;
+  if (state === "connected") return null;
+  const config = STATE_CONFIG[state]!;
+  const label = labels?.[state] ?? config.label;
 
   return (
     <View style={styles.container}>
       <Ionicons name={config.icon} size={14} color={theme.colors.forest} />
       <Text style={styles.label}>
-        {config.label}
+        {label}
         {queueCount > 0 ? ` (${queueCount} queued)` : ""}
       </Text>
       {state === "error" && onRetry && (
