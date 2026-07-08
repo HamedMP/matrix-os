@@ -28,7 +28,7 @@ describe("workspace startup recovery", () => {
       agentSessionManager: {
         reconcileStartup: vi.fn(async () => {
           calls.push("runtime-sessions");
-          return { checked: 1, degraded: 0, releasedLeases: 0 };
+          return { checked: 1, degraded: 0, releasedLeases: 0, stoppedSessions: [] };
         }),
         listSessions: vi.fn(async () => {
           calls.push("session-records");
@@ -106,5 +106,61 @@ describe("workspace startup recovery", () => {
       expect.objectContaining({ name: "previews", status: "ok", previews: 1 }),
     ]);
     expect(JSON.stringify(result)).not.toContain("/home/matrixos");
+  });
+
+  it("routes degraded startup agent sessions through the session stopped publisher", async () => {
+    const stoppedSession = {
+      id: "sess_abc123",
+      ownerId: "owner_user",
+      kind: "agent" as const,
+      projectSlug: "repo",
+      taskId: "task_abc123",
+      worktreeId: "wt_abc123def456",
+      pr: 42,
+      agent: "codex",
+      runtime: { type: "zellij" as const, status: "degraded" as const, fallbackReason: "zellij_unavailable" },
+      terminalSessionId: "term_sess_abc123",
+      transcriptPath: "/home/matrix/home/system/session-output/sess_abc123.jsonl",
+      attachedClients: 0,
+      writeMode: "closed" as const,
+      startedAt: "2026-04-26T00:00:00.000Z",
+      lastActivityAt: "2026-04-26T00:00:00.000Z",
+    };
+    const publishSessionStopped = vi.fn(async () => undefined);
+
+    const result = await runWorkspaceStartupRecovery({
+      stateOps: { recoverOperations: vi.fn(async () => ({ cleanedStaging: [] })) },
+      projectManager: { listManagedProjects: vi.fn(async () => ({ projects: [{ slug: "repo" }], nextCursor: null })) },
+      worktreeManager: { listWorktrees: vi.fn(async () => ({ ok: true, worktrees: [] })) },
+      agentSessionManager: {
+        reconcileStartup: vi.fn(async () => ({
+          checked: 1,
+          degraded: 1,
+          releasedLeases: 1,
+          stoppedSessions: [stoppedSession],
+        })),
+        listSessions: vi.fn(async () => ({ ok: true, sessions: [], nextCursor: null })),
+      },
+      eventPublisher: { publishSessionStopped },
+      transcriptManager: {
+        rehydrate: vi.fn(async () => ({ ok: true })),
+        applyRetention: vi.fn(async () => ({ deleted: [], truncated: [] })),
+      },
+      reviewStore: { listReviews: vi.fn(async () => ({ ok: true, reviews: [], nextCursor: null })) },
+      agentSandbox: {
+        status: vi.fn(async () => ({ available: true, enforced: true, requiresAdminOverride: false, reason: "ok" })),
+      },
+      browserIde: { status: vi.fn(async () => ({ enabled: true, configured: true })) },
+      previewManager: { listPreviews: vi.fn(async () => ({ ok: true, previews: [], nextCursor: null })) },
+      logger: { warn: vi.fn() },
+    });
+
+    expect(result.steps).toContainEqual(expect.objectContaining({
+      name: "runtimeSessions",
+      status: "ok",
+      checked: 1,
+      degraded: 1,
+    }));
+    expect(publishSessionStopped).toHaveBeenCalledWith(stoppedSession);
   });
 });

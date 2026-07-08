@@ -72,6 +72,13 @@ type Failure = {
   holderId?: string;
 };
 
+export type AgentSessionStartupReconciliation = {
+  checked: number;
+  degraded: number;
+  releasedLeases: number;
+  stoppedSessions: WorkspaceSessionView[];
+};
+
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
 const TaskIdSchema = z.string().regex(/^task_[A-Za-z0-9_-]{1,128}$/);
 const SlugSchema = z.string().regex(PROJECT_SLUG_REGEX);
@@ -482,17 +489,18 @@ export function createAgentSessionManager(options: {
       return { ok: true, session: decorateSession(updated, options.zellijRuntime) };
     },
 
-    async reconcileStartup(): Promise<{ checked: number; degraded: number; releasedLeases: number }> {
+    async reconcileStartup(): Promise<AgentSessionStartupReconciliation> {
       const sessions = await readAllSessions(homePath);
       let degraded = 0;
       let releasedLeases = 0;
+      const stoppedSessions: WorkspaceSessionView[] = [];
       for (const session of sessions) {
         if (!isActive(session) || session.runtime.type !== "zellij") continue;
         const health = await options.zellijRuntime.health();
         if (health.status !== "degraded") continue;
         degraded += 1;
         if (session.projectSlug && session.worktreeId && await releaseSessionLease(options.worktreeManager, session)) releasedLeases += 1;
-        await writeSession(homePath, {
+        const stoppedSession: WorkspaceSession = {
           ...session,
           runtime: {
             ...session.runtime,
@@ -501,9 +509,11 @@ export function createAgentSessionManager(options: {
           },
           writeMode: "closed",
           lastActivityAt: nowIso(options.now),
-        });
+        };
+        await writeSession(homePath, stoppedSession);
+        stoppedSessions.push(decorateSession(stoppedSession, options.zellijRuntime));
       }
-      return { checked: sessions.length, degraded, releasedLeases };
+      return { checked: sessions.length, degraded, releasedLeases, stoppedSessions };
     },
   };
 }

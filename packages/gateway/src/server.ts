@@ -2756,7 +2756,10 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/symphony", createElixirSymphonyProxyRoutes({
     upstreamOrigin: symphonyUpstreamOriginForPort(initialSymphonyPort),
   }));
-  const workspaceStartupRecovery = await createWorkspaceStartupRecovery({ homePath }).run();
+  const workspaceStartupRecovery = await createWorkspaceStartupRecovery({
+    homePath,
+    eventPublisher: workspaceEventPublisher,
+  }).run();
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");
   }

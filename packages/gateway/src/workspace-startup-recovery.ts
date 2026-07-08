@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { createAgentLauncher } from "./agent-launcher.js";
 import { createAgentSandbox } from "./agent-sandbox.js";
-import { createAgentSessionManager, type WorkspaceSessionView } from "./agent-session-manager.js";
+import { createAgentSessionManager, type AgentSessionStartupReconciliation, type WorkspaceSessionView } from "./agent-session-manager.js";
 import { createPreviewManager } from "./preview-manager.js";
 import { createProjectManager, type ProjectConfig } from "./project-manager.js";
 import { createReviewStore } from "./review-store.js";
@@ -61,8 +61,11 @@ export interface WorkspaceStartupRecoveryDeps {
     listWorktrees: (projectSlug: string) => Promise<{ ok: true; worktrees: unknown[] } | MaybeFailure>;
   };
   agentSessionManager: {
-    reconcileStartup: () => Promise<{ checked: number; degraded: number; releasedLeases: number }>;
+    reconcileStartup: () => Promise<AgentSessionStartupReconciliation>;
     listSessions: (input?: unknown) => Promise<{ ok: true; sessions: WorkspaceSessionView[]; nextCursor: string | null } | MaybeFailure>;
+  };
+  eventPublisher?: {
+    publishSessionStopped: (session: WorkspaceSessionView) => Promise<void>;
   };
   bridgeRecovery?: {
     recoverStartup: (sessions: WorkspaceSessionView[]) => Promise<{ checked: number }>;
@@ -138,6 +141,9 @@ export async function runWorkspaceStartupRecovery(
 
   await step(steps, "runtimeSessions", logger, async () => {
     const reconciled = await deps.agentSessionManager.reconcileStartup();
+    for (const session of reconciled.stoppedSessions) {
+      await deps.eventPublisher?.publishSessionStopped(session);
+    }
     const listed = await deps.agentSessionManager.listSessions({});
     if (!listed.ok) {
       return {
@@ -203,7 +209,10 @@ export async function runWorkspaceStartupRecovery(
   };
 }
 
-export function createWorkspaceStartupRecovery(options: { homePath: string }) {
+export function createWorkspaceStartupRecovery(options: {
+  homePath: string;
+  eventPublisher?: WorkspaceStartupRecoveryDeps["eventPublisher"];
+}) {
   const homePath = resolve(options.homePath);
   const stateOps = createStateOps({ homePath });
   const projectManager = createProjectManager({ homePath });
@@ -223,6 +232,7 @@ export function createWorkspaceStartupRecovery(options: { homePath: string }) {
       projectManager,
       worktreeManager,
       agentSessionManager,
+      eventPublisher: options.eventPublisher,
       transcriptManager: createSessionTranscriptManager({ homePath }),
       reviewStore: createReviewStore({ homePath }),
       agentSandbox: createAgentSandbox({ homePath }),
