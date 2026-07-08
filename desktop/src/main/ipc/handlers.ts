@@ -37,6 +37,9 @@ export interface HandlerContext {
   submitApprovalDecision: (
     request: InvokeRequest<"runtime:submit-approval-decision">,
   ) => Promise<z.infer<typeof AgentThreadSnapshotSchema>>;
+  submitInputAnswer: (
+    request: InvokeRequest<"runtime:submit-input-answer">,
+  ) => Promise<z.infer<typeof AgentThreadSnapshotSchema>>;
   createAgentThread: (
     request: CreateAgentThreadRequest,
   ) => Promise<z.infer<typeof AgentThreadSnapshotSchema>>;
@@ -100,6 +103,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("runtime:get-review-snapshot", (request) => ctx.fetchReviewSnapshot(request));
   handle("runtime:get-thread-snapshot", (request) => ctx.fetchThreadSnapshot(request));
   handle("runtime:submit-approval-decision", (request) => ctx.submitApprovalDecision(request));
+  handle("runtime:submit-input-answer", (request) => ctx.submitInputAnswer(request));
   handle("runtime:create-thread", (request) => ctx.createAgentThread(request));
 
   handle("state:get", async ({ key }) => ({

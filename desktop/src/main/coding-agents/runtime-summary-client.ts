@@ -8,6 +8,7 @@ import {
   type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
+  type UserInputAnswerRequest,
   boundedListSchema,
 } from "@matrix-os/contracts";
 import type { z } from "zod/v4";
@@ -19,6 +20,7 @@ const REVIEW_SNAPSHOT_TIMEOUT_MS = 10_000;
 const THREAD_CREATE_TIMEOUT_MS = 15_000;
 const THREAD_SNAPSHOT_TIMEOUT_MS = 10_000;
 const APPROVAL_DECISION_TIMEOUT_MS = 10_000;
+const INPUT_ANSWER_TIMEOUT_MS = 10_000;
 
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 type AgentThreadSnapshot = z.infer<typeof AgentThreadSnapshotSchema>;
@@ -163,6 +165,42 @@ export async function submitCodingAgentApprovalDecision(
   const parsed = AgentThreadSnapshotSchema.safeParse(body);
   if (!parsed.success) {
     throw new Error("approval unavailable");
+  }
+  return parsed.data;
+}
+
+export async function submitCodingAgentInputAnswer(
+  auth: AuthService,
+  options: { threadId: string; inputRequestId: string; request: UserInputAnswerRequest },
+  fetchFn: FetchFn = fetch,
+): Promise<AgentThreadSnapshot> {
+  const token = auth.getToken();
+  if (!token) {
+    throw new Error("input unavailable");
+  }
+
+  const url = new URL(
+    `/api/coding-agents/threads/${encodeURIComponent(options.threadId)}/inputs/${encodeURIComponent(options.inputRequestId)}/answer`,
+    auth.getGatewayOrigin(),
+  );
+  const res = await fetchFn(url.toString(), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(options.request),
+    signal: AbortSignal.timeout(INPUT_ANSWER_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error("input unavailable");
+  }
+
+  const body = await res.json();
+  const parsed = AgentThreadSnapshotSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new Error("input unavailable");
   }
   return parsed.data;
 }

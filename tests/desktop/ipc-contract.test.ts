@@ -15,6 +15,7 @@ describe("IPC contract", () => {
       "auth:sign-out",
       "runtime:create-thread",
       "runtime:submit-approval-decision",
+      "runtime:submit-input-answer",
       "runtime:get-thread-snapshot",
       "runtime:get-review-snapshot",
       "runtime:get-reviews",
@@ -150,6 +151,47 @@ describe("IPC contract", () => {
             occurredAt: "2026-07-06T00:02:00.000Z",
             approvalId: "appr_desktop_1",
             decision: "approve",
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    }).success).toBe(true);
+  });
+
+  it("validates runtime:submit-input-answer requests and responses", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:submit-input-answer"].request;
+    const responseSchema = INVOKE_CHANNELS["runtime:submit-input-answer"].response;
+    const request = {
+      threadId: "thread_desktop_1",
+      inputRequestId: "req_input_desktop_1",
+      answer: "Run the focused desktop test.",
+      correlationId: "corr_input_desktop_1",
+      clientRequestId: "req_desktop_1",
+    };
+
+    expect(requestSchema.safeParse(request).success).toBe(true);
+    expect(requestSchema.safeParse({ ...request, providerToken: "secret" }).success).toBe(false);
+    expect(requestSchema.safeParse({ ...request, inputRequestId: "../secret" }).success).toBe(false);
+    expect(responseSchema.safeParse({
+      thread: {
+        id: "thread_desktop_1",
+        providerId: "codex",
+        title: "Fix desktop notifications",
+        status: "running",
+        attention: "none",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:03:00.000Z",
+      },
+      events: {
+        items: [
+          {
+            type: "user_input.answered",
+            eventId: "evt_input_2",
+            threadId: "thread_desktop_1",
+            occurredAt: "2026-07-06T00:03:00.000Z",
+            requestId: "req_input_desktop_1",
+            correlationId: "corr_input_desktop_1",
           },
         ],
         hasMore: false,

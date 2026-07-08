@@ -11,7 +11,7 @@ import {
 } from "@matrix-os/contracts";
 import { Button, EmptyState, StatusDot } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
-import { codingAgentApprovalActionKey, useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { codingAgentApprovalActionKey, codingAgentInputActionKey, useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useTabs } from "../../stores/tabs";
 
 const STATUS_COLOR: Record<string, string> = {
@@ -436,6 +436,9 @@ function ThreadSnapshotPanel({
     );
   }
   if (!snapshot) return null;
+  const answeredInputRequestKeys = new Set(snapshot.events.items
+    .filter((event) => event.type === "user_input.answered")
+    .map((event) => codingAgentInputActionKey(event.threadId, event.requestId)));
 
   return (
     <article
@@ -477,7 +480,7 @@ function ThreadSnapshotPanel({
       </dl>
       <div className="grid gap-2">
         {snapshot.events.items.map((event) => (
-          <ThreadEventRow key={event.eventId} event={event} />
+          <ThreadEventRow key={event.eventId} event={event} answeredInputRequestKeys={answeredInputRequestKeys} />
         ))}
         {snapshot.events.items.length === 0 ? (
           <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
@@ -489,15 +492,25 @@ function ThreadSnapshotPanel({
   );
 }
 
-function ThreadEventRow({ event }: { event: AgentThreadEvent }) {
+function ThreadEventRow({ event, answeredInputRequestKeys }: { event: AgentThreadEvent; answeredInputRequestKeys: ReadonlySet<string> }) {
   const copy = describeThreadEvent(event);
   const pendingApprovalKeys = useCodingAgentWorkspace((s) => s.pendingApprovalKeys);
   const approvalActionErrors = useCodingAgentWorkspace((s) => s.approvalActionErrors);
   const submitApprovalDecision = useCodingAgentWorkspace((s) => s.submitApprovalDecision);
+  const pendingInputRequestKeys = useCodingAgentWorkspace((s) => s.pendingInputRequestKeys);
+  const inputActionErrors = useCodingAgentWorkspace((s) => s.inputActionErrors);
+  const submitInputAnswer = useCodingAgentWorkspace((s) => s.submitInputAnswer);
+  const [inputAnswer, setInputAnswer] = useState("");
   const approval = event.type === "approval.requested" ? event.approval : null;
+  const inputRequest = event.type === "user_input.requested" ? event.request : null;
   const approvalKey = approval ? codingAgentApprovalActionKey(approval.threadId, approval.approvalId) : null;
   const approvalPending = approvalKey ? pendingApprovalKeys.includes(approvalKey) : false;
   const approvalActionError = approvalKey ? approvalActionErrors[approvalKey] : undefined;
+  const inputKey = inputRequest ? codingAgentInputActionKey(inputRequest.threadId, inputRequest.requestId) : null;
+  const inputPending = inputKey ? pendingInputRequestKeys.includes(inputKey) : false;
+  const inputActionError = inputKey ? inputActionErrors[inputKey] : undefined;
+  const inputAnswered = inputKey ? answeredInputRequestKeys.has(inputKey) : false;
+  const trimmedInputAnswer = inputAnswer.trim();
   return (
     <div
       className="grid gap-1 rounded-md border px-3 py-2"
@@ -537,6 +550,43 @@ function ThreadEventRow({ event }: { event: AgentThreadEvent }) {
               {approvalActionError}
             </span>
           ) : null}
+        </div>
+      ) : null}
+      {inputRequest && !inputAnswered ? (
+        <div className="grid gap-2 pt-1">
+          <textarea
+            aria-label={`Answer ${inputRequest.title}`}
+            className="min-h-20 resize-y rounded-md border px-3 py-2 text-sm outline-none"
+            maxLength={8000}
+            placeholder={inputRequest.placeholder ?? "Answer"}
+            style={{
+              borderColor: "var(--border-subtle)",
+              background: "var(--bg-surface)",
+              color: "var(--text-primary)",
+            }}
+            value={inputAnswer}
+            onChange={(e) => setInputAnswer(e.currentTarget.value)}
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              aria-label={`Send ${inputRequest.title}`}
+              variant="primary"
+              disabled={inputPending || (inputRequest.required && trimmedInputAnswer.length === 0)}
+              onClick={() => void submitInputAnswer({
+                threadId: inputRequest.threadId,
+                inputRequestId: inputRequest.requestId,
+                answer: inputAnswer,
+                correlationId: inputRequest.correlationId,
+              })}
+            >
+              {inputPending ? "Sending..." : "Send"}
+            </Button>
+            {inputActionError ? (
+              <span className="text-xs" style={{ color: "var(--danger)" }}>
+                {inputActionError}
+              </span>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </div>
