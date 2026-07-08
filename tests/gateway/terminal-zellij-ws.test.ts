@@ -107,6 +107,46 @@ describe("zellij terminal WebSocket", () => {
     expect(replayWs.sent).not.toContainEqual({ type: "output", seq: 0, data: raw });
   });
 
+  it("rewrites persisted Codex replay and keeps detection active for later live output", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const append = vi.fn(async () => undefined);
+    const banner = "OpenAI Codex (v0.142.5)\n";
+    const rawReplayPrompt = "\x1b[7mold prompt\x1b[27m";
+    const rawLivePrompt = "\x1b[7mlive prompt\x1b[27m";
+    const readableReplayPrompt = "\x1b[38;2;214;216;221;48;2;48;54;61mold prompt\x1b[39;49m";
+    const readableLivePrompt = "\x1b[38;2;214;216;221;48;2;48;54;61mlive prompt\x1b[39;49m";
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => pty),
+      },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => 41),
+        readSince: vi.fn(async () => [
+          { type: "output", seq: 40, data: banner },
+          { type: "output", seq: 41, data: rawReplayPrompt },
+        ]),
+        append,
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+    });
+
+    await handler.open({ ws, session: "main", fromSeq: 40 });
+    pty.emitData(rawLivePrompt);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(ws.sent).toContainEqual({ type: "output", seq: 40, data: banner });
+    expect(ws.sent).toContainEqual({ type: "output", seq: 41, data: readableReplayPrompt });
+    expect(ws.sent).not.toContainEqual({ type: "output", seq: 41, data: rawReplayPrompt });
+    expect(ws.sent).toContainEqual({ type: "output", seq: 42, data: readableLivePrompt });
+    expect(append).toHaveBeenCalledWith("main", [{ type: "output", seq: 42, data: readableLivePrompt }]);
+  });
+
   it("keeps non-Codex reverse-video output unchanged", async () => {
     const pty = new FakePty();
     const ws = socket();

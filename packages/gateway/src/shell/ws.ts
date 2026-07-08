@@ -186,14 +186,24 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       fromSeq: effectiveFromSeq,
     });
 
+    const outputCompat = createTerminalOutputCompatStream({ sessionName: safeName });
     for (const event of await replayBuffer.replayFromSeq(effectiveFromSeq)) {
       if (event.type === "replay-evicted") {
+        continue;
+      }
+      if (event.type === "output") {
+        const data = outputCompat.write(event.data);
+        if (data.length > 0) {
+          sendJson(ws, { ...event, data });
+        }
+        // A replay chunk can contain only the start of an escape sequence. The
+        // compat stream buffers it and emits bytes with the later completing
+        // chunk, matching the live-output path even when delivered seqs skip.
         continue;
       }
       sendJson(ws, event);
     }
 
-    const outputCompat = createTerminalOutputCompatStream({ sessionName: safeName });
     const persistOutput = async (data: string) => {
       if (data.length === 0) {
         return;
