@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Linking, Pressable, Text, View } from "react-native";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -60,6 +60,7 @@ export default function AgentPreviewRoute() {
     preview: null,
     error: null,
   });
+  const [externalOpenError, setExternalOpenError] = useState<string | null>(null);
 
   const loadPreview = useCallback(async (cancelled: () => boolean = () => false) => {
     const generation = requestGeneration.current + 1;
@@ -70,6 +71,7 @@ export default function AgentPreviewRoute() {
       setState({ status: "error", preview: null, error: "Preview unavailable" });
       return;
     }
+    setExternalOpenError(null);
     setState({ status: "loading", preview: null, error: null });
     let result;
     try {
@@ -144,6 +146,15 @@ export default function AgentPreviewRoute() {
   }
 
   const { preview } = state;
+  const openPreviewExternally = () => {
+    if (!isHttpsUrl(preview.origin)) return;
+    setExternalOpenError(null);
+    void Linking.openURL(preview.origin).catch(() => {
+      console.warn("[agents-preview] external preview open failed");
+      setExternalOpenError("Preview could not be opened. Try again.");
+    });
+  };
+
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ title: preview.label }} />
@@ -163,7 +174,23 @@ export default function AgentPreviewRoute() {
           <Text numberOfLines={1} style={styles.title}>{preview.label}</Text>
           <Text numberOfLines={1} style={styles.body}>{preview.status}</Text>
         </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open preview in browser"
+          onPress={openPreviewExternally}
+          style={({ pressed }) => [
+            styles.headerButton,
+            pressed ? styles.buttonPressed : null,
+          ]}
+        >
+          <Ionicons name="open-outline" size={20} color={theme.colors.foreground} />
+        </Pressable>
       </View>
+      {externalOpenError ? (
+        <View style={styles.inlineError}>
+          <Text style={styles.inlineErrorText}>{externalOpenError}</Text>
+        </View>
+      ) : null}
       <AppRuntimeFrame
         url={preview.origin}
         title={preview.label}
@@ -239,6 +266,19 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: theme.fonts.sansSemiBold,
     fontSize: 15,
     color: theme.colors.primaryForeground,
+  },
+  inlineError: {
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    backgroundColor: theme.colors.secondary,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
+  },
+  inlineErrorText: {
+    fontFamily: theme.fonts.sans,
+    fontSize: 13,
+    lineHeight: 18,
+    color: theme.colors.foreground,
   },
   buttonPressed: {
     opacity: 0.82,

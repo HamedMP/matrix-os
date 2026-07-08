@@ -14,7 +14,8 @@ jest.mock("expo-router", () => ({
 }));
 
 import React from "react";
-import { render, screen } from "@testing-library/react-native";
+import { Linking } from "react-native";
+import { fireEvent, render, screen } from "@testing-library/react-native";
 import AgentPreviewRoute from "../app/agents/preview";
 import { useGateway } from "@/app/_layout";
 import {
@@ -25,6 +26,7 @@ import type { GatewayClient } from "../lib/gateway-client";
 
 const useGatewayMock = useGateway as jest.MockedFunction<typeof useGateway>;
 type GatewayContextValue = ReturnType<typeof useGateway>;
+const openURLMock = jest.spyOn(Linking, "openURL");
 
 function gatewayContext(overrides: Partial<GatewayContextValue>): GatewayContextValue {
   return {
@@ -85,6 +87,8 @@ describe("AgentPreviewRoute", () => {
   beforeEach(() => {
     resetWebViewMock();
     mockRouterBack.mockReset();
+    openURLMock.mockReset();
+    openURLMock.mockResolvedValue(undefined);
     useGatewayMock.mockReset();
     for (const key of Object.keys(routeParams)) delete routeParams[key];
   });
@@ -109,6 +113,52 @@ describe("AgentPreviewRoute", () => {
     expect(await screen.findByText("Secure mobile preview")).toBeTruthy();
     expect(client.getCodingAgentRuntimeSummary).toHaveBeenCalledTimes(1);
     expect(latestWebViewSource).toEqual({ uri: "https://preview.matrix-os.test" });
+  });
+
+  it("opens the authoritative HTTPS preview origin externally", async () => {
+    Object.assign(routeParams, {
+      id: "prev_mobile_secure",
+    });
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentPreviewRoute />);
+
+    fireEvent.press(await screen.findByLabelText("Open preview in browser"));
+
+    expect(openURLMock).toHaveBeenCalledWith("https://preview.matrix-os.test");
+  });
+
+  it("shows a generic message when the external preview handoff fails", async () => {
+    Object.assign(routeParams, {
+      id: "prev_mobile_secure",
+    });
+    openURLMock.mockRejectedValue(new Error("blocked intent for private host"));
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentPreviewRoute />);
+
+    fireEvent.press(await screen.findByLabelText("Open preview in browser"));
+
+    expect(await screen.findByText("Preview could not be opened. Try again.")).toBeTruthy();
+    expect(screen.queryByText("blocked intent for private host")).toBeNull();
   });
 
   it("rejects non-HTTPS preview origins without rendering the raw origin", async () => {
