@@ -31,6 +31,12 @@ export interface Tab {
   closable: boolean;
 }
 
+export const AGENTS_WORKSPACE_TAB_SPEC = {
+  kind: "agents" as const,
+  title: "Agents",
+  slug: "agents",
+};
+
 const MAX_TABS = 24;
 
 function identityKey(

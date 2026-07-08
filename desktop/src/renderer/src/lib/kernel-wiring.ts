@@ -11,7 +11,7 @@ import {
 import { useConnection } from "../stores/connection";
 import { useHermesChat } from "../stores/hermes-chat";
 import { useCodingAgentWorkspace } from "../stores/coding-agent-workspace";
-import { useTabs } from "../stores/tabs";
+import { AGENTS_WORKSPACE_TAB_SPEC, useTabs } from "../stores/tabs";
 import { useThreads } from "../stores/threads";
 
 const KERNEL_CHAT_EVENT_TYPES = new Set([
@@ -142,7 +142,7 @@ export function wireKernel(): () => void {
   const offNotificationClick = onEvent("notification:clicked", ({ threadId }) => {
     useThreads.getState().setActiveThread(threadId);
     useCodingAgentWorkspace.setState({ activeThreadId: threadId });
-    useTabs.getState().openTab({ kind: "agents", title: "Agents" });
+    useTabs.getState().openTab(AGENTS_WORKSPACE_TAB_SPEC);
   });
 
   activeSocket.connect();
