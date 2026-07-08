@@ -37,6 +37,10 @@ export default function AgentThreadRoute() {
   const streamSubscriptionRef = useRef<{ detach(): void } | null>(null);
   const streamGenerationRef = useRef(0);
 
+  const invalidateSnapshotRequests = useCallback(() => {
+    requestGeneration.current += 1;
+  }, []);
+
   const attachThreadStream = useCallback((snapshot: AgentThreadSnapshot) => {
     streamGenerationRef.current += 1;
     const streamGeneration = streamGenerationRef.current;
@@ -116,15 +120,17 @@ export default function AgentThreadRoute() {
   }, [loadSnapshot]);
 
   useEffect(() => {
+    let cancelled = false;
     const subscription = AppState.addEventListener("change", (nextState) => {
-      if (nextState === "active") {
-        void loadSnapshot();
+      if (nextState === "active" && client) {
+        void loadSnapshot(() => cancelled);
       }
     });
     return () => {
+      cancelled = true;
       subscription?.remove?.();
     };
-  }, [loadSnapshot]);
+  }, [client, loadSnapshot]);
 
   useEffect(() => () => {
     streamGenerationRef.current += 1;
@@ -157,6 +163,7 @@ export default function AgentThreadRoute() {
       return next;
     });
     if (result.ok) {
+      invalidateSnapshotRequests();
       setState((current) => current.status === "ready"
         ? { ...current, snapshot: result.snapshot, error: null, refreshing: false }
         : current);
@@ -166,7 +173,7 @@ export default function AgentThreadRoute() {
       ...current,
       [actionId]: "Approval could not be sent. Try again.",
     }));
-  }, [client, state]);
+  }, [client, invalidateSnapshotRequests, state]);
 
   const setInputAnswer = useCallback((requestId: string, answer: string) => {
     setInputAnswers((current) => ({
@@ -201,6 +208,7 @@ export default function AgentThreadRoute() {
       return next;
     });
     if (result.ok) {
+      invalidateSnapshotRequests();
       setInputAnswers((current) => {
         const next = { ...current };
         delete next[event.request.requestId];
@@ -215,7 +223,7 @@ export default function AgentThreadRoute() {
       ...current,
       [actionId]: "Input could not be sent. Try again.",
     }));
-  }, [client, inputAnswers, state]);
+  }, [client, inputAnswers, invalidateSnapshotRequests, state]);
 
   const boundTerminalSessionId = state.status === "ready" ? state.snapshot.thread.terminalSessionId ?? null : null;
   const openBoundTerminal = useCallback(async () => {
