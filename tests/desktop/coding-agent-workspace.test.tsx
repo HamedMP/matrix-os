@@ -692,6 +692,7 @@ describe("AgentWorkspace", () => {
       pendingInputRequestKeys: [],
       inputActionErrors: {},
       activeThreadId: null,
+      createdThreadHandles: [],
     });
     useConnection.setState({
       status: "signed-in",
@@ -2769,6 +2770,134 @@ describe("AgentWorkspace", () => {
       );
     });
     expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_desktop_1");
+    expect(await screen.findByText("Thread details")).toBeTruthy();
+    expect(useTabs.getState().tabs.some((tab) => tab.kind === "thread")).toBe(false);
+  });
+
+  it("keeps a desktop-created thread detail when the active summary window drops it", async () => {
+    let summary = summaryFixture({ threadCreate: true });
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summary);
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:create-thread") {
+        return Promise.resolve({
+          thread: {
+            id: "thread_created_handle",
+            providerId: "codex",
+            title: "Investigate retained workspace handle",
+            status: "queued",
+            attention: "none",
+            createdAt: "2026-07-06T00:00:00.000Z",
+            updatedAt: "2026-07-06T00:00:00.000Z",
+          },
+          events: {
+            items: [],
+            hasMore: false,
+            limit: 200,
+          },
+        });
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByLabelText("Agent run prompt");
+    fireEvent.change(screen.getByLabelText("Agent run prompt"), {
+      target: { value: "Investigate retained workspace handle" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+    expect(await screen.findByText("Investigate retained workspace handle")).toBeTruthy();
+
+    summary = {
+      ...summary,
+      activeThreads: {
+        ...summary.activeThreads,
+        items: [],
+      },
+      attentionThreads: {
+        ...summary.attentionThreads,
+        items: [],
+      },
+    };
+    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+
+    await waitFor(() => {
+      expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_created_handle");
+    });
+    expect(screen.getByText("Thread details")).toBeTruthy();
+    expect(screen.getAllByText("Investigate retained workspace handle").length).toBeGreaterThan(0);
+    expect(useTabs.getState().tabs.some((tab) => tab.kind === "thread")).toBe(false);
+  });
+
+  it("renders a desktop-created thread reopen handle after another thread is selected", async () => {
+    let summary = summaryFixture({ threadCreate: true });
+    const createdSnapshot = {
+      thread: {
+        id: "thread_created_handle",
+        providerId: "codex",
+        title: "Investigate retained workspace handle",
+        status: "queued",
+        attention: "none",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+      },
+      events: {
+        items: [],
+        hasMore: false,
+        limit: 200,
+      },
+    };
+    window.operator.invoke = vi.fn((channel: string, payload?: unknown) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summary);
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:create-thread") return Promise.resolve(createdSnapshot);
+      if (channel === "runtime:get-thread-snapshot") {
+        const threadId = (payload as { threadId?: string } | undefined)?.threadId;
+        return Promise.resolve(threadId === "thread_created_handle" ? createdSnapshot : threadSnapshotFixture());
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByLabelText("Agent run prompt");
+    fireEvent.change(screen.getByLabelText("Agent run prompt"), {
+      target: { value: "Investigate retained workspace handle" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+    expect(await screen.findByText("Investigate retained workspace handle")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open details for Fix settings route" }));
+    await waitFor(() => {
+      expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_alpha");
+    });
+
+    summary = {
+      ...summary,
+      activeThreads: {
+        ...summary.activeThreads,
+        items: [],
+      },
+      attentionThreads: {
+        ...summary.attentionThreads,
+        items: [],
+      },
+    };
+    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+
+    expect(await screen.findByText("Created Runs")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open created run Investigate retained workspace handle" }));
+
+    await waitFor(() => {
+      expect(window.operator.invoke).toHaveBeenCalledWith(
+        "runtime:get-thread-snapshot",
+        { threadId: "thread_created_handle" },
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getAllByText("Investigate retained workspace handle").length).toBeGreaterThan(0);
+    });
+    expect(useTabs.getState().tabs.some((tab) => tab.kind === "thread")).toBe(false);
   });
 
   it("focuses the desktop composer prompt when a new-run focus request arrives", async () => {

@@ -41,6 +41,8 @@ type ReviewSummaryList = {
   limit: number;
 };
 
+const MAX_LOCAL_CREATED_THREAD_HANDLES = 10;
+
 interface CodingAgentWorkspaceState {
   status: WorkspaceStatus;
   summary: RuntimeSummary | null;
@@ -85,6 +87,7 @@ interface CodingAgentWorkspaceState {
   pendingInputRequestKeys: string[];
   inputActionErrors: Record<string, string>;
   activeThreadId: string | null;
+  createdThreadHandles: AgentThreadSummary[];
   refresh: () => Promise<void>;
   loadNotificationPreferences: () => Promise<void>;
   updateNotificationPreferences: (request: { attentionPush: Partial<AttentionPushPreferences> }) => Promise<void>;
@@ -462,6 +465,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   pendingInputRequestKeys: [],
   inputActionErrors: {},
   activeThreadId: null,
+  createdThreadHandles: [],
 
   refresh: async () => {
     const seq = ++refreshSeq;
@@ -472,9 +476,14 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
     try {
       const summary = await invoke("runtime:get-summary", {});
       if (seq !== refreshSeq) return;
-      const activeThreadId = useCodingAgentWorkspace.getState().activeThreadId;
+      const workspaceState = useCodingAgentWorkspace.getState();
+      const activeThreadId = workspaceState.activeThreadId;
+      const localCreatedThreadStillSelected = activeThreadId
+        ? workspaceState.createdThreadHandles.some((thread) => thread.id === activeThreadId)
+          && workspaceState.threadSnapshot?.thread.id === activeThreadId
+        : false;
       const activeThreadStillPresent = activeThreadId
-        ? summaryIncludesThread(summary, activeThreadId)
+        ? summaryIncludesThread(summary, activeThreadId) || localCreatedThreadStillSelected
         : true;
       if (!activeThreadStillPresent) {
         detachActiveThreadEventStream();
@@ -993,11 +1002,16 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
       const snapshot = await invoke("runtime:create-thread", built.request);
       const thread = snapshot.thread;
       set((state) => {
+        const createdThreadHandles = [
+          thread,
+          ...state.createdThreadHandles.filter((candidate) => candidate.id !== thread.id),
+        ].slice(0, MAX_LOCAL_CREATED_THREAD_HANDLES);
         const currentSummary = state.summary;
         if (!currentSummary) {
           return {
             createStatus: "idle",
             activeThreadId: thread.id,
+            createdThreadHandles,
             threadSnapshotStatus: "ready",
             threadSnapshot: snapshot,
             threadSnapshotError: null,
@@ -1012,6 +1026,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         return {
           createStatus: "idle",
           activeThreadId: thread.id,
+          createdThreadHandles,
           threadSnapshotStatus: "ready",
           threadSnapshot: snapshot,
           threadSnapshotError: null,
