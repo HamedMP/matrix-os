@@ -9,9 +9,13 @@ import {
   ProviderIdSchema,
   RequestIdSchema,
   SafeClientErrorSchema,
+  type AgentProviderSummary,
   type AgentThreadEvent,
   type AgentThreadSummary,
+  type ApprovalDecisionRequest,
   type CreateAgentThreadRequest,
+  type SafeSetupAction,
+  type UserInputAnswerRequest,
 } from "@matrix-os/contracts";
 import { atomicWriteJson } from "../state-ops.js";
 import type { RequestPrincipal } from "../request-principal.js";
@@ -50,9 +54,45 @@ type ThreadEventSink = (input: {
 
 export interface CodingAgentProviderAdapter {
   providerId: string;
+  getSummary?(input: {
+    principal: RequestPrincipal;
+    now: () => Date;
+  }): Promise<AgentProviderSummary> | AgentProviderSummary;
+  healthCheck?(input: {
+    principal: RequestPrincipal;
+    now: () => Date;
+  }): Promise<{ ok: boolean }> | { ok: boolean };
+  buildSetupAction?(input: {
+    principal: RequestPrincipal;
+    now: () => Date;
+  }): Promise<SafeSetupAction[]> | SafeSetupAction[];
   startThread(input: {
+    principal: RequestPrincipal;
     thread: AgentThreadSummary;
     request: CreateAgentThreadRequest;
+    now: () => Date;
+    nextEventId: () => string;
+  }): Promise<AgentThreadEvent[]> | AgentThreadEvent[];
+  abortThread?(input: {
+    principal: RequestPrincipal;
+    thread: AgentThreadSummary;
+    clientRequestId: string;
+    now: () => Date;
+    nextEventId: () => string;
+  }): Promise<AgentThreadEvent[]> | AgentThreadEvent[];
+  submitApproval?(input: {
+    principal: RequestPrincipal;
+    thread: AgentThreadSummary;
+    approvalId: string;
+    request: ApprovalDecisionRequest;
+    now: () => Date;
+    nextEventId: () => string;
+  }): Promise<AgentThreadEvent[]> | AgentThreadEvent[];
+  submitInput?(input: {
+    principal: RequestPrincipal;
+    thread: AgentThreadSummary;
+    inputRequestId: string;
+    request: UserInputAnswerRequest;
     now: () => Date;
     nextEventId: () => string;
   }): Promise<AgentThreadEvent[]> | AgentThreadEvent[];
@@ -87,6 +127,27 @@ export function createFakeCodingAgentProvider(options: { providerId: string; del
   const deltaCount = Math.max(1, Math.min(options.deltaCount ?? 1, 300));
   return {
     providerId,
+    getSummary({ now }) {
+      const checkedAt = now().toISOString();
+      return {
+        id: providerId,
+        displayName: providerId === "codex" ? "Codex" : "Coding agent",
+        kind: providerId === "codex" ? "codex" : "custom",
+        availability: "available",
+        installStatus: "installed",
+        authStatus: "authenticated",
+        supportedModes: ["default", "review"],
+        defaultMode: "default",
+        setupActions: [],
+        lastCheckedAt: checkedAt,
+      };
+    },
+    healthCheck() {
+      return { ok: true };
+    },
+    buildSetupAction() {
+      return [];
+    },
     startThread({ thread, now, nextEventId }) {
       return [
         {
@@ -105,6 +166,15 @@ export function createFakeCodingAgentProvider(options: { providerId: string; del
           delta: index === 0 ? "Agent run started." : `Agent event ${index + 1}.`,
         } satisfies AgentThreadEvent)),
       ];
+    },
+    abortThread({ thread, now, nextEventId }) {
+      return defaultAbortEvents(thread.id, now, nextEventId);
+    },
+    submitApproval() {
+      return [];
+    },
+    submitInput() {
+      return [];
     },
   };
 }
@@ -221,6 +291,65 @@ function terminalThread(thread: StoredThread): boolean {
   return !activeThread(thread);
 }
 
+function safeProviderRunFailureEvents(threadId: string, now: () => Date, eventId: () => string): AgentThreadEvent[] {
+  return [
+    AgentThreadEventSchema.parse({
+      type: "thread.error",
+      eventId: eventId(),
+      threadId,
+      occurredAt: now().toISOString(),
+      error: SafeClientErrorSchema.parse({
+        code: "provider_run_failed",
+        safeMessage: "Agent run could not continue. Try again.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      }),
+    }),
+    AgentThreadEventSchema.parse({
+      type: "thread.completed",
+      eventId: eventId(),
+      threadId,
+      occurredAt: now().toISOString(),
+      outcome: "failed",
+    }),
+  ];
+}
+
+function defaultAbortEvents(threadId: string, now: () => Date, eventId: () => string): AgentThreadEvent[] {
+  return [
+    AgentThreadEventSchema.parse({
+      type: "thread.status",
+      eventId: eventId(),
+      threadId,
+      occurredAt: now().toISOString(),
+      status: "aborted",
+    }),
+    AgentThreadEventSchema.parse({
+      type: "thread.completed",
+      eventId: eventId(),
+      threadId,
+      occurredAt: now().toISOString(),
+      outcome: "aborted",
+    }),
+  ];
+}
+
+function parseProviderEvents(events: AgentThreadEvent[], threadId: string): AgentThreadEvent[] {
+  const parsed = events.map((event) => AgentThreadEventSchema.parse(event));
+  if (parsed.some((event) => event.threadId !== threadId)) {
+    throw new Error("Provider emitted event for another thread");
+  }
+  return parsed;
+}
+
+function includesAbortedCompletion(events: AgentThreadEvent[]): boolean {
+  return events.some((event) => event.type === "thread.completed" && event.outcome === "aborted");
+}
+
+function includesNonAbortedCompletion(events: AgentThreadEvent[]): boolean {
+  return events.some((event) => event.type === "thread.completed" && event.outcome !== "aborted");
+}
+
 export function safeThreadError(code: CodingAgentThreadError["code"]) {
   if (code === "provider_unavailable") {
     return SafeClientErrorSchema.parse({
@@ -324,13 +453,20 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
           occurredAt: createdAt,
           thread: stripOwner(thread),
         });
-        const providerEvents = await provider.startThread({
-          thread: stripOwner(thread),
-          request,
-          now,
-          nextEventId,
-        });
-        const events = [createdEvent, ...providerEvents.map((event) => AgentThreadEventSchema.parse(event))];
+        let providerEvents: AgentThreadEvent[];
+        try {
+          providerEvents = parseProviderEvents(await provider.startThread({
+            principal,
+            thread: stripOwner(thread),
+            request,
+            now,
+            nextEventId,
+          }), thread.id);
+        } catch (err: unknown) {
+          console.warn("[coding-agents] provider start failed:", err instanceof Error ? err.message : String(err));
+          providerEvents = safeProviderRunFailureEvents(thread.id, now, nextEventId);
+        }
+        const events = [createdEvent, ...providerEvents];
         for (const event of events.slice(1)) {
           thread = applyEvent(thread, event);
         }
@@ -375,34 +511,50 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
         if (thread.abortClientRequestIds.includes(clientRequestId) || terminalThread(thread)) {
           return { state, result: { snapshot: snapshotFor(thread, state.events), eventsToPublish: [] } };
         }
-        const occurredAt = now().toISOString();
-        const statusEvent = AgentThreadEventSchema.parse({
-          type: "thread.status",
-          eventId: nextEventId(),
-          threadId,
-          occurredAt,
-          status: "aborted",
-        });
-        const completedEvent = AgentThreadEventSchema.parse({
-          type: "thread.completed",
-          eventId: nextEventId(),
-          threadId,
-          occurredAt: now().toISOString(),
-          outcome: "aborted",
-        });
-        let nextThread = applyEvent(thread, statusEvent);
+        const provider = providers.find((candidate) => candidate.providerId === thread.providerId);
+        let abortEvents: AgentThreadEvent[];
+        if (provider?.abortThread) {
+          try {
+            abortEvents = parseProviderEvents(await provider.abortThread({
+              principal,
+              thread: stripOwner(thread),
+              clientRequestId,
+              now,
+              nextEventId,
+            }), threadId);
+            if (abortEvents.length === 0 || includesNonAbortedCompletion(abortEvents)) {
+              abortEvents = defaultAbortEvents(threadId, now, nextEventId);
+            }
+          } catch (err: unknown) {
+            console.warn("[coding-agents] provider abort failed:", err instanceof Error ? err.message : String(err));
+            abortEvents = defaultAbortEvents(threadId, now, nextEventId);
+          }
+        } else {
+          abortEvents = defaultAbortEvents(threadId, now, nextEventId);
+        }
+        let nextThread = thread;
+        for (const event of abortEvents) {
+          nextThread = applyEvent(nextThread, event);
+        }
+        if (nextThread.status !== "aborted" || !includesAbortedCompletion(abortEvents)) {
+          const fallbackEvents = defaultAbortEvents(threadId, now, nextEventId);
+          abortEvents = [...abortEvents, ...fallbackEvents];
+          for (const event of fallbackEvents) {
+            nextThread = applyEvent(nextThread, event);
+          }
+        }
         nextThread = {
-          ...applyEvent(nextThread, completedEvent),
+          ...nextThread,
           abortClientRequestIds: [...nextThread.abortClientRequestIds, clientRequestId].slice(-MAX_ABORT_REQUEST_IDS),
         };
         const nextState = {
           version: 1 as const,
           threads: state.threads.map((candidate) => candidate.id === thread.id ? nextThread : candidate),
-          events: [...state.events, statusEvent, completedEvent],
+          events: [...state.events, ...abortEvents],
         };
         return {
           state: nextState,
-          result: { snapshot: snapshotFor(nextThread, nextState.events), eventsToPublish: [statusEvent, completedEvent] },
+          result: { snapshot: snapshotFor(nextThread, nextState.events), eventsToPublish: abortEvents },
         };
       });
       publish(principal.userId, threadId, result.eventsToPublish);

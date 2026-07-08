@@ -13,6 +13,7 @@ import { createCodingAgentRuntimeSummaryService } from "../../packages/gateway/s
 import {
   createCodingAgentThreadStore,
   createFakeCodingAgentProvider,
+  type CodingAgentProviderAdapter,
 } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
@@ -258,6 +259,257 @@ describe("coding agent thread lifecycle", () => {
     expect(duplicate.events.items.map((event) => event.eventId)).toEqual(
       aborted.events.items.map((event) => event.eventId),
     );
+  });
+
+  it("records a safe failed thread when a provider start fails", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [
+        {
+          providerId: "codex",
+          startThread() {
+            throw new Error("Postgres constraint failed in /home/matrix/private/provider.log");
+          },
+        },
+      ],
+    });
+
+    const created = await threads.createThread(ownerPrincipal, createBody);
+
+    expect(created.snapshot.thread).toMatchObject({
+      status: "failed",
+      attention: "failed",
+    });
+    expect(created.snapshot.events.items.map((event) => event.type)).toEqual([
+      "thread.created",
+      "thread.error",
+      "thread.completed",
+    ]);
+    expect(created.snapshot.events.items[1]).toMatchObject({
+      type: "thread.error",
+      error: {
+        code: "provider_run_failed",
+        safeMessage: "Agent run could not continue. Try again.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    });
+    expect(JSON.stringify(created.snapshot)).not.toMatch(/Postgres|\/home\/matrix|provider\.log/);
+  });
+
+  it("delegates abort to the provider adapter once and stores normalized abort events", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    let abortCalls = 0;
+    const provider: CodingAgentProviderAdapter = {
+      providerId: "codex",
+      startThread({ thread, now: providerNow, nextEventId }) {
+        return [
+          AgentThreadEventSchema.parse({
+            type: "thread.status",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            status: "running",
+          }),
+        ];
+      },
+      abortThread({ thread, now: providerNow, nextEventId, clientRequestId }) {
+        abortCalls += 1;
+        expect(clientRequestId).toBe("req_abort_provider");
+        return [
+          AgentThreadEventSchema.parse({
+            type: "thread.status",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            status: "aborted",
+          }),
+          AgentThreadEventSchema.parse({
+            type: "assistant.text.completed",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            messageId: "msg_abort_ack",
+          }),
+          AgentThreadEventSchema.parse({
+            type: "thread.completed",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            outcome: "aborted",
+          }),
+        ];
+      },
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [provider],
+    });
+    const created = await threads.createThread(ownerPrincipal, createBody);
+
+    const aborted = await threads.abortThread(ownerPrincipal, created.snapshot.thread.id, "req_abort_provider");
+    const duplicate = await threads.abortThread(ownerPrincipal, created.snapshot.thread.id, "req_abort_provider");
+
+    expect(abortCalls).toBe(1);
+    expect(aborted.thread.status).toBe("aborted");
+    expect(aborted.events.items.map((event) => event.type)).toEqual([
+      "thread.created",
+      "thread.status",
+      "thread.status",
+      "assistant.text.completed",
+      "thread.completed",
+    ]);
+    expect(aborted.events.items.at(-2)).toMatchObject({
+      type: "assistant.text.completed",
+      messageId: "msg_abort_ack",
+    });
+    expect(duplicate.events.items.map((event) => event.eventId)).toEqual(
+      aborted.events.items.map((event) => event.eventId),
+    );
+  });
+
+  it("forces provider abort output to finish with an aborted thread", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    const provider: CodingAgentProviderAdapter = {
+      providerId: "codex",
+      startThread({ thread, now: providerNow, nextEventId }) {
+        return [
+          AgentThreadEventSchema.parse({
+            type: "thread.status",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            status: "running",
+          }),
+        ];
+      },
+      abortThread({ thread, now: providerNow, nextEventId }) {
+        return [
+          AgentThreadEventSchema.parse({
+            type: "thread.status",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            status: "running",
+          }),
+        ];
+      },
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [provider],
+    });
+    const created = await threads.createThread(ownerPrincipal, createBody);
+
+    const aborted = await threads.abortThread(ownerPrincipal, created.snapshot.thread.id, "req_abort_nonterminal");
+
+    expect(aborted.thread.status).toBe("aborted");
+    expect(aborted.events.items.at(-1)).toMatchObject({
+      type: "thread.completed",
+      outcome: "aborted",
+      threadId: created.snapshot.thread.id,
+    });
+  });
+
+  it("replaces provider abort output that reports a completed terminal outcome", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    const provider: CodingAgentProviderAdapter = {
+      providerId: "codex",
+      startThread({ thread, now: providerNow, nextEventId }) {
+        return [
+          AgentThreadEventSchema.parse({
+            type: "thread.status",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            status: "running",
+          }),
+        ];
+      },
+      abortThread({ thread, now: providerNow, nextEventId }) {
+        return [
+          AgentThreadEventSchema.parse({
+            type: "thread.completed",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            outcome: "completed",
+          }),
+        ];
+      },
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [provider],
+    });
+    const created = await threads.createThread(ownerPrincipal, createBody);
+
+    const aborted = await threads.abortThread(ownerPrincipal, created.snapshot.thread.id, "req_abort_completed_output");
+
+    expect(aborted.thread.status).toBe("aborted");
+    expect(aborted.events.items).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
+    ]));
+    expect(aborted.events.items.at(-1)).toMatchObject({
+      type: "thread.completed",
+      outcome: "aborted",
+      threadId: created.snapshot.thread.id,
+    });
+  });
+
+  it("rejects provider events for the wrong thread before storing them", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    let wrongThreadId = "thread_other";
+    const provider: CodingAgentProviderAdapter = {
+      providerId: "codex",
+      startThread({ thread, now: providerNow, nextEventId }) {
+        return [
+          AgentThreadEventSchema.parse({
+            type: "thread.status",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            status: "running",
+          }),
+        ];
+      },
+      abortThread({ now: providerNow, nextEventId }) {
+        return [
+          AgentThreadEventSchema.parse({
+            type: "thread.completed",
+            eventId: nextEventId(),
+            threadId: wrongThreadId,
+            occurredAt: providerNow().toISOString(),
+            outcome: "aborted",
+          }),
+        ];
+      },
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [provider],
+    });
+    const created = await threads.createThread(ownerPrincipal, createBody);
+    const other = await threads.createThread(ownerPrincipal, {
+      ...createBody,
+      clientRequestId: "req_create_other",
+    });
+    wrongThreadId = other.snapshot.thread.id;
+    const rawBefore = JSON.parse(await readFile(join(homePath, "system", "coding-agents", "threads.json"), "utf-8"));
+    const wrongThreadEventCount = rawBefore.events.filter((event: { threadId?: string }) => event.threadId === wrongThreadId).length;
+
+    const aborted = await threads.abortThread(ownerPrincipal, created.snapshot.thread.id, "req_abort_wrong_thread");
+    const rawAfter = JSON.parse(await readFile(join(homePath, "system", "coding-agents", "threads.json"), "utf-8"));
+
+    expect(aborted.thread.status).toBe("aborted");
+    expect(aborted.events.items.every((event) => event.threadId === created.snapshot.thread.id)).toBe(true);
+    expect(rawAfter.events.filter((event: { threadId?: string }) => event.threadId === wrongThreadId)).toHaveLength(wrongThreadEventCount);
   });
 
   it("rejects unauthenticated, oversized, invalid provider, and unsafe route input", async () => {
