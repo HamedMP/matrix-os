@@ -20,6 +20,8 @@ Current source-of-truth boundaries:
 
 Package: `packages/contracts/src/index.ts`
 
+Internal developer guide: `docs/dev/coding-agent-shells.md`
+
 Implemented coding-agent schemas:
 
 - IDs and bounds: `RuntimeIdSchema`, `ProviderIdSchema`, `ProjectIdSchema`, `TaskIdSchema`, `ThreadIdSchema`, `EventIdSchema`, `ApprovalIdSchema`, `RequestIdSchema`, `CorrelationIdSchema`, `TerminalSessionIdSchema`, `WorktreeIdSchema`, `CursorSchema`, `IsoTimestampSchema`, `SafeDisplayStringSchema`, `SafeClientErrorSchema`.
