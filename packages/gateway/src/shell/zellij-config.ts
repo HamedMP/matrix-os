@@ -135,6 +135,12 @@ if [ -z "\${MATRIX_TERMINAL_PROMPT:-}" ]; then
   fi
 fi
 
+if [ "$#" -gt 0 ]; then
+  set +e
+  ( "$@" )
+  set -e
+fi
+
 exec bash --noprofile --rcfile ${shellSingleQuote(bashrcPath)} -i
 `;
 }
