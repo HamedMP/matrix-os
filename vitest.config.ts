@@ -7,8 +7,21 @@ export default defineConfig({
       name: "chess-app-test-mock",
       enforce: "pre",
       resolveId(source, importer) {
-        if (source !== "chess.js" || !importer) return null;
+        if (!importer) return null;
         const normalized = importer.split(path.sep).join("/");
+        if (
+          source === "@tiptap/react" &&
+          normalized.endsWith("/home/apps/notes/src/RichEditor.tsx")
+        ) {
+          return path.resolve(__dirname, "tests/default-apps/mocks/tiptap-react.ts");
+        }
+        if (
+          source === "@tiptap/starter-kit" &&
+          normalized.endsWith("/home/apps/notes/src/RichEditor.tsx")
+        ) {
+          return path.resolve(__dirname, "tests/default-apps/mocks/tiptap-starter-kit.ts");
+        }
+        if (source !== "chess.js") return null;
         // Keep FakeChess scoped to the chess app integration test and the
         // component it renders so lower-level chess unit tests opt in explicitly.
         if (
@@ -28,6 +41,7 @@ export default defineConfig({
       "@desktop": path.resolve(__dirname, "desktop/src"),
       "@renderer": path.resolve(__dirname, "desktop/src/renderer/src"),
       "@matrix-os/brand": path.resolve(__dirname, "packages/brand/src/index.ts"),
+      "@matrix-os/contracts": path.resolve(__dirname, "packages/contracts/src/index.ts"),
       "@matrix-os/observability/client": path.resolve(
         __dirname,
         "packages/observability/src/client.ts",
