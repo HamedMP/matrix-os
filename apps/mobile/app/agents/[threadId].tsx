@@ -403,7 +403,9 @@ function createTimelineItems(events: AgentThreadEvent[]): TimelineItem[] {
       if (group) {
         group.push(event);
         const item = items.find((candidate) => candidate.kind === "tool" && candidate.key === `tool:${event.toolCallId}`);
-        if (item) item.order = order;
+        if (item && (event.type === "tool.completed" || !group.some((toolEvent) => toolEvent.type === "tool.completed"))) {
+          item.order = order;
+        }
         continue;
       }
       const eventsForTool = [event];
