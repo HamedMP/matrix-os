@@ -74,6 +74,15 @@ function restoreColorParams(state: SgrColorState): string[] {
 }
 
 function applyColorParamToState(param: string, state: SgrColorState): void {
+  if (param.startsWith("38:")) {
+    state.foreground = [param];
+    return;
+  }
+  if (param.startsWith("48:")) {
+    state.background = [param];
+    return;
+  }
+
   const value = Number.parseInt(param, 10);
   if ((value >= 30 && value <= 37) || (value >= 90 && value <= 97)) {
     state.foreground = [param];

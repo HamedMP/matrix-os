@@ -67,6 +67,14 @@ describe("terminal output compatibility stream", () => {
     );
   });
 
+  it("preserves colon-form extended colors set while reverse video is active", () => {
+    const stream = createTerminalOutputCompatStream({ sessionName: "codex-backend" });
+
+    expect(stream.write("\x1b[7;38:2::100:200:100mselected\x1b[27mstill colored")).toBe(
+      "\x1b[38;2;214;216;221;48;2;48;54;61m\x1b[38:2::100:200:100mselected\x1b[38:2::100:200:100;49mstill colored",
+    );
+  });
+
   it("tracks color state before manual Codex detection activates", () => {
     const stream = createTerminalOutputCompatStream({ sessionName: "main" });
 
