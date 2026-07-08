@@ -68,7 +68,9 @@ export interface CodingAgentRuntimeSummaryOptions {
     files?: boolean;
     sourceControl?: boolean;
   };
+  providerIds?: readonly string[];
   terminalOwnerId?: string;
+  filesOwnerId?: string;
   now?: () => Date;
   runtime?: {
     id?: string;
@@ -93,6 +95,11 @@ function safeDisplayLabel(value: string, fallback: string): { label: string; san
 
 function canReadTerminalSessions(principal: RequestPrincipal, terminalOwnerId: string | undefined): boolean {
   if (terminalOwnerId) return principal.userId === terminalOwnerId;
+  return principal.source === "configured-container" || principal.source === "dev-default";
+}
+
+function canReadOwnerResource(principal: RequestPrincipal, ownerId: string | undefined): boolean {
+  if (ownerId) return principal.userId === ownerId;
   return principal.source === "configured-container" || principal.source === "dev-default";
 }
 
@@ -175,12 +182,15 @@ function kindForAgent(agent: AgentId): AgentProviderSummary["kind"] {
 async function readProviders(
   service: Pick<AgentCredentialStatusService, "getStatus"> | undefined,
   principal: RequestPrincipal,
+  providerIds: readonly string[] | undefined,
 ): Promise<AgentProviderSummary[]> {
   if (!service) return [];
   try {
     const status: AgentCredentialStatusResponse = await service.getStatus(principal.userId);
+    const registeredProviderIds = providerIds ? new Set(providerIds) : null;
     return status.agents
       .filter((agent) => agent.agent !== "hermes")
+      .filter((agent) => !registeredProviderIds || registeredProviderIds.has(agent.agent))
       .map(statusToProviderSummary);
   } catch (err: unknown) {
     console.warn("[coding-agents] provider summary unavailable:", err instanceof Error ? err.message : String(err));
@@ -284,7 +294,7 @@ export function createCodingAgentRuntimeSummaryService(
         principal,
         options.terminalOwnerId,
       );
-      const providers = await readProviders(options.agentCredentials, principal);
+      const providers = await readProviders(options.agentCredentials, principal, options.providerIds);
       const activeThreads = await readActiveThreads(options.threads, principal);
       const attentionThreads = await readAttentionThreads(options.threads, principal);
       const previewSessions = readPreviewSessions(options.previews, principal, summaryOptions);
@@ -293,7 +303,7 @@ export function createCodingAgentRuntimeSummaryService(
       const approvalsEnabled = threadsEnabled && options.capabilities?.approvals === true;
       const reviewEnabled = options.capabilities?.review === true;
       const previewEnabled = Boolean(options.previews) && options.capabilities?.preview === true;
-      const filesEnabled = options.capabilities?.files === true;
+      const filesEnabled = options.capabilities?.files === true && canReadOwnerResource(principal, options.filesOwnerId);
       const sourceControlEnabled = options.capabilities?.sourceControl === true;
       const terminalEnabled = Boolean(options.terminalRegistry) &&
         canReadTerminalSessions(principal, options.terminalOwnerId);

@@ -43,8 +43,8 @@ function terminalSessionIdFor(session: {
   id?: unknown;
 }): string {
   const candidates = [
-    session.terminalSessionId,
     session.runtime?.zellijSession,
+    session.terminalSessionId,
     session.id,
   ];
   for (const candidate of candidates) {

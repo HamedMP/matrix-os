@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, link, lstat, open, opendir, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+import { TextDecoder } from "node:util";
 import {
   FileBrowseRequestSchema,
   FileBrowseResponseSchema,
@@ -31,6 +32,7 @@ const MAX_FILE_BROWSE_INSPECTED = 500;
 const MAX_FILE_SEARCH_DIRECTORIES = 512;
 const MAX_FILE_SEARCH_ENTRIES = 2_000;
 const SKIPPED_SEARCH_DIRS = new Set([".git", "node_modules", ".next", "dist", "build", ".expo"]);
+const fatalUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
 type FileReadErrorCode = "file_not_found" | "not_file" | "file_unavailable";
 type FileWriteErrorCode = "file_not_found" | "not_file" | "file_conflict" | "invalid_request" | "file_unavailable";
@@ -90,6 +92,20 @@ function etagDigest(input: { size: number; mtimeMs: number; hash: ReturnType<typ
 
 function fsErrorCode(err: unknown): string {
   return typeof err === "object" && err !== null && "code" in err ? String(err.code) : "";
+}
+
+function validUtf8Prefix(buffer: Buffer): Buffer {
+  for (let end = buffer.length; end >= 0; end -= 1) {
+    const candidate = buffer.subarray(0, end);
+    try {
+      fatalUtf8Decoder.decode(candidate);
+      return candidate;
+    } catch (err: unknown) {
+      if (!(err instanceof TypeError)) throw err;
+      // Trim only incomplete trailing code units from the bounded byte slice.
+    }
+  }
+  return Buffer.alloc(0);
 }
 
 async function readDirectoryNamesBounded(path: string, maxEntries: number): Promise<{
@@ -413,7 +429,7 @@ export function createCodingAgentFileStore(options: {
         const readBuffer = Buffer.alloc(readLimitBytes + 1);
         const { bytesRead } = await handle.read(readBuffer, 0, readBuffer.length, 0);
         const truncated = bytesRead > readLimitBytes || stats.size > readLimitBytes;
-        const contentBuffer = readBuffer.subarray(0, Math.min(bytesRead, readLimitBytes));
+        const contentBuffer = validUtf8Prefix(readBuffer.subarray(0, Math.min(bytesRead, readLimitBytes)));
         const content = contentBuffer.toString("utf8");
         return FileReadResponseSchema.parse({
           metadata: {

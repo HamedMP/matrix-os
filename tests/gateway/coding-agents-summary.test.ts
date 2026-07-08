@@ -128,6 +128,46 @@ describe("coding agent runtime summary", () => {
     expect(JSON.stringify(summary)).not.toMatch(/\/home\/matrix|\/bin\/bash|token|secret|Postgres/i);
   });
 
+  it("only advertises providers registered for coding-agent thread starts", async () => {
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      agentCredentials: {
+        getStatus: async () => ({
+          systemAgent: "hermes",
+          activeAgents: ["claude", "codex", "hermes"],
+          routingExplanation: "Codex is available for coding-agent starts.",
+          agents: [
+            {
+              agent: "claude",
+              status: "available",
+              coordinationRole: "coding_specialist",
+              workflows: ["coding"],
+              degradedWorkflows: [],
+              verifiedAt: now.toISOString(),
+              nextAction: null,
+            },
+            {
+              agent: "codex",
+              status: "available",
+              coordinationRole: "coding_specialist",
+              workflows: ["coding"],
+              degradedWorkflows: [],
+              verifiedAt: now.toISOString(),
+              nextAction: null,
+            },
+          ],
+        }),
+        verifyAgent: vi.fn(),
+      },
+      providerIds: ["codex"],
+      now: () => now,
+    });
+
+    const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
+
+    expect(summary.providers.map((provider) => provider.id)).toEqual(["codex"]);
+  });
+
   it("withholds owner-local terminal sessions from other principals", async () => {
     const service = createCodingAgentRuntimeSummaryService({
       homePath: "/home/matrix/home",
@@ -286,6 +326,20 @@ describe("coding agent runtime summary", () => {
     expect(capability(summary, "codingAgentsDesktopWorkspace")).toMatchObject({ enabled: false });
     expect(capability(summary, "codingAgentsMobileWorkspace")).toMatchObject({ enabled: false });
     expect(capability(summary, "codingAgentsApprovals")).toMatchObject({ enabled: false });
+  });
+
+  it("withholds file capability from principals outside the file owner allowlist", async () => {
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      capabilities: { files: true },
+      filesOwnerId: "owner_user",
+      now: () => now,
+    });
+    const otherPrincipal: RequestPrincipal = { userId: "other_user", source: "jwt" };
+
+    const summary = RuntimeSummarySchema.parse(await service.getSummary(otherPrincipal));
+
+    expect(capability(summary, "codingAgentsFiles")).toMatchObject({ enabled: false });
   });
 
   it("exposes bounded attention threads separately from active threads", async () => {
@@ -1615,7 +1669,11 @@ describe("coding agent runtime summary", () => {
 
   it("allows validated jwt review readers even when the configured owner id uses another owner identifier", async () => {
     const store = createCodingAgentReviewSummaryStore({
-      listReviews: async () => ({ ok: true, reviews: [reviewRecord()], nextCursor: null }),
+      listReviews: async () => ({
+        ok: true,
+        reviews: [reviewRecord({ ownerId: "owner_user" })],
+        nextCursor: null,
+      }),
     } as ReviewLoopStore, { ownerId: "owner_user", principalOwnerIds: ["clerk_owner_subject"] });
     const jwtPrincipal: RequestPrincipal = { userId: "clerk_owner_subject", source: "jwt" };
 
@@ -1637,6 +1695,26 @@ describe("coding agent runtime summary", () => {
       hasMore: false,
       limit: 50,
     });
+  });
+
+  it("filters legacy ownerless and other-owner review summaries before returning them", async () => {
+    const store = createCodingAgentReviewSummaryStore({
+      listReviews: async () => ({
+        ok: true,
+        reviews: [
+          reviewRecord({ id: "rev_owner", ownerId: "owner_user" }),
+          reviewRecord({ id: "rev_ownerless" }),
+          reviewRecord({ id: "rev_other", ownerId: "other_user" }),
+        ],
+        nextCursor: null,
+      }),
+    } as ReviewLoopStore, { ownerId: "owner_user", principalOwnerIds: ["clerk_owner_subject"] });
+    const jwtPrincipal: RequestPrincipal = { userId: "clerk_owner_subject", source: "jwt" };
+
+    const result = await store.listReviews(jwtPrincipal);
+
+    expect(result.items.map((item) => item.id)).toEqual(["rev_owner"]);
+    expect(result.hasMore).toBe(false);
   });
 
   it("does not report more review pages only because malformed records were dropped", async () => {

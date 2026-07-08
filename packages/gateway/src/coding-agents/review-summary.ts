@@ -668,6 +668,7 @@ export function createCodingAgentReviewSummaryStore(
         }
         validSummaries.push(
           ...result.reviews
+            .filter((review) => ownerIds.length === 0 || reviewOwnerMatchesPrincipal(review, principal, ownerIds))
             .map(toReviewSummary)
             .filter((summary): summary is ReviewSummary => summary !== null),
         );

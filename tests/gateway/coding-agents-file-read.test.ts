@@ -213,6 +213,32 @@ describe("coding agent file read route", () => {
     }
   });
 
+  it("truncates file reads at a valid utf8 boundary", async () => {
+    const harness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+      readLimitBytes: 5,
+    });
+    try {
+      await writeFile(join(harness.worktreeRoot, "src", "unicode.txt"), "abcdé next");
+
+      const res = await harness.app.request(
+        `/api/coding-agents/files/read?projectId=${projectId}&worktreeId=${worktreeId}&path=src%2Funicode.txt`,
+      );
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body).toMatchObject({
+        content: "abcd",
+        encoding: "utf8",
+        truncated: true,
+        limitBytes: 5,
+      });
+      expect(body.content).not.toContain("\uFFFD");
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
   it("rejects traversal and symlink reads without leaking filesystem paths", async () => {
     const harness = await createRouteHarness({
       ownerIds: [testPrincipal.userId],

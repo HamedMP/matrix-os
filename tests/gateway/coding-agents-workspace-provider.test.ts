@@ -87,7 +87,7 @@ describe("coding agent workspace provider", () => {
       providerId: "codex",
       projectId: "repo-main",
       taskId: "task_abc123",
-      terminalSessionId: "term_sess_workspace_1",
+      terminalSessionId: "matrix-agent-workspace-1",
       status: "running",
       attention: "none",
     });
