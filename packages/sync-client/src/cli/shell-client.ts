@@ -99,6 +99,7 @@ export { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ };
 const BRACKETED_PASTE_OPEN = "\u001b[200~";
 const BRACKETED_PASTE_CLOSE = "\u001b[201~";
 const SHELL_ATTACH_MAX_PENDING_BRACKETED_PASTE_CHARS = 1024 * 1024;
+const BRACKETED_PASTE_INCOMPLETE_TIMEOUT_MS = 250;
 const SHELL_INPUT_FRAME_MAX_BYTES = 60_000;
 const DEFAULT_RUN_TIMEOUT_MS = 10 * 60 * 1000;
 const RUN_RESPONSE_GRACE_MS = 30_000;
@@ -129,6 +130,7 @@ const SAFE_SHELL_SERVER_ERROR_CODES = new Set([
   "zellij_failed",
 ]);
 const RICH_PASTE_UPLOAD_FAILED_MESSAGE = "Image paste failed: upload did not complete.";
+const INCOMPLETE_BRACKETED_PASTE_MESSAGE = "Image paste failed: paste did not complete.";
 
 type MaybeTtyStream = NodeJS.ReadStream & {
   isTTY?: boolean;
@@ -349,13 +351,44 @@ function splitTerminalInputFrames(data: string): string[] {
   return frames;
 }
 
-function createBracketedPasteStreamParser() {
+function createBracketedPasteStreamParser(options: {
+  onIncompletePaste?: () => void;
+  incompletePasteTimeoutMs?: number;
+} = {}) {
   let pending = "";
+  let incompletePasteTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const clearIncompletePasteTimer = () => {
+    clearTimeout(incompletePasteTimer);
+    incompletePasteTimer = undefined;
+  };
+
+  const discardIncompletePaste = () => {
+    if (pending.startsWith(BRACKETED_PASTE_OPEN)) {
+      options.onIncompletePaste?.();
+    }
+    pending = "";
+    clearIncompletePasteTimer();
+  };
+
+  const setPending = (value: string) => {
+    pending = value;
+    clearIncompletePasteTimer();
+    if (!pending.startsWith(BRACKETED_PASTE_OPEN)) {
+      return;
+    }
+    const timeoutMs = options.incompletePasteTimeoutMs ?? BRACKETED_PASTE_INCOMPLETE_TIMEOUT_MS;
+    if (timeoutMs < 1) {
+      return;
+    }
+    incompletePasteTimer = setTimeout(discardIncompletePaste, timeoutMs);
+    incompletePasteTimer.unref?.();
+  };
 
   return {
     push(chunk: string): RichPasteInputSegment[] {
       const input = pending + chunk;
-      pending = "";
+      setPending("");
       const segments: RichPasteInputSegment[] = [];
       let cursor = 0;
 
@@ -368,7 +401,7 @@ function createBracketedPasteStreamParser() {
           if (ready.length > 0) {
             segments.push({ text: ready, observablePaste: false });
           }
-          pending = tail.slice(tail.length - heldLength);
+          setPending(tail.slice(tail.length - heldLength));
           break;
         }
 
@@ -379,7 +412,7 @@ function createBracketedPasteStreamParser() {
         const contentStart = start + BRACKETED_PASTE_OPEN.length;
         const end = input.indexOf(BRACKETED_PASTE_CLOSE, contentStart);
         if (end === -1) {
-          pending = input.slice(start);
+          setPending(input.slice(start));
           break;
         }
 
@@ -391,13 +424,14 @@ function createBracketedPasteStreamParser() {
       }
 
       if (pending.length > SHELL_ATTACH_MAX_PENDING_BRACKETED_PASTE_CHARS) {
-        pending = "";
+        discardIncompletePaste();
       }
 
       return segments;
     },
     reset() {
       pending = "";
+      clearIncompletePasteTimer();
     },
   };
 }
@@ -628,7 +662,11 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         resetLocalInputModes,
       });
       const controlDropper = createUnsupportedTerminalControlDropper();
-      const bracketedPasteParser = createBracketedPasteStreamParser();
+      const bracketedPasteParser = createBracketedPasteStreamParser({
+        onIncompletePaste: () => {
+          errorOutput.write(`\r\n${INCOMPLETE_BRACKETED_PASTE_MESSAGE}\r\n`);
+        },
+      });
       const richPasteEnabled = attachOptions.noRichPaste !== true && attachOptions.richPaste?.enabled !== false;
       const richPasteRewriter: RichPasteRewriter | undefined = richPasteEnabled
         ? attachOptions.richPaste?.rewriter ?? createRichPasteRewriter({

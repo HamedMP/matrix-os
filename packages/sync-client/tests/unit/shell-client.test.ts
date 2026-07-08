@@ -386,6 +386,63 @@ describe("createShellClient attachSession", () => {
     await expect(attach).resolves.toEqual({ detached: false });
   });
 
+  it("recovers after an incomplete bracketed paste without forwarding paste control bytes", async () => {
+    vi.useFakeTimers();
+    try {
+      const input = new PassThrough() as PassThrough & {
+        isTTY: true;
+        rows: number;
+        columns: number;
+        setRawMode: ReturnType<typeof vi.fn>;
+        pause: ReturnType<typeof vi.fn>;
+      };
+      input.isTTY = true;
+      input.rows = 24;
+      input.columns = 80;
+      input.setRawMode = vi.fn();
+      input.pause = vi.fn();
+      const errorOutput = new PassThrough();
+      const errors: string[] = [];
+      errorOutput.on("data", (chunk) => errors.push(String(chunk)));
+
+      const rewriter = {
+        rewrite: vi.fn(async () => ({
+          status: "rewritten" as const,
+          outgoingText: "remote paste text",
+          assets: [],
+        })),
+      };
+      const client = createShellClient({
+        gatewayUrl: "https://matrix.example",
+        token: "token-123",
+        timeoutMs: 100,
+      });
+      const attach = client.attachSession("main", {
+        input,
+        output: new PassThrough(),
+        errorOutput: errorOutput as NodeJS.WriteStream,
+        WebSocketImpl: FakeWebSocket as never,
+        richPaste: { rewriter },
+      });
+
+      FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+      input.write("\u001b[200~/var/folders/t5/screen.png");
+      await vi.advanceTimersByTimeAsync(300);
+      input.write("pwd\r");
+
+      expect(errors.join("")).toContain("Image paste failed: paste did not complete.");
+      expect(rewriter.rewrite).not.toHaveBeenCalled();
+      expect(sentInputData()).toEqual(["pwd\r"]);
+      expect(FakeWebSocket.last?.sent.join("\n")).not.toContain("\u001b[200~");
+      expect(FakeWebSocket.last?.sent.join("\n")).not.toContain("/var/folders/t5");
+
+      FakeWebSocket.last?.emit("message", JSON.stringify({ type: "exit" }));
+      await expect(attach).resolves.toEqual({ detached: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("uses observable empty bracketed paste events for image-only clipboard fallback", async () => {
     const input = new PassThrough() as PassThrough & {
       isTTY: true;
