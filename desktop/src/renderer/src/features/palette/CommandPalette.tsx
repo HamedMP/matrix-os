@@ -1,14 +1,19 @@
 import { Command } from "cmdk";
 import { useEffect } from "react";
-import { Bot, Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, Sparkles, SquareTerminal } from "lucide-react";
+import type { ReviewSummary } from "@matrix-os/contracts";
+import { Bot, ClipboardCheck, Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, Sparkles, SquareTerminal } from "lucide-react";
 import { appIconUrl, useApps } from "../../stores/apps";
 import { useBoard } from "../../stores/board";
+import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
 import { useShellSessions } from "../../stores/shell-sessions";
 import { useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
+
+const EMPTY_REVIEWS: ReviewSummary[] = [];
+const MAX_PALETTE_REVIEWS = 10;
 
 export default function CommandPalette() {
   const open = useUi((s) => s.paletteOpen);
@@ -28,6 +33,8 @@ export default function CommandPalette() {
   const apps = useApps((s) => s.apps);
   const appsError = useApps((s) => s.error);
   const loadApps = useApps((s) => s.load);
+  const reviews = useCodingAgentWorkspace((s) => s.reviews);
+  const selectReview = useCodingAgentWorkspace((s) => s.selectReview);
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
 
@@ -44,6 +51,7 @@ export default function CommandPalette() {
 
   const cards = activeSlug ? (cardsByProject[activeSlug] ?? []) : [];
   const otherTabs = tabs.filter((t) => t.id !== activeTabId);
+  const reviewCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? (reviews?.items ?? EMPTY_REVIEWS).slice(0, MAX_PALETTE_REVIEWS) : EMPTY_REVIEWS;
 
   const run = (fn: () => void) => {
     setOpen(false);
@@ -133,6 +141,24 @@ export default function CommandPalette() {
                   icon={<Kanban size={14} />}
                   label={card.title}
                   onSelect={() => run(() => openTab({ kind: "task", taskId: card.id, projectSlug: card.projectSlug, title: card.title }))}
+                />
+              ))}
+            </Command.Group>
+          ) : null}
+
+          {reviewCommands.length > 0 ? (
+            <Command.Group heading="Reviews" style={{ color: "var(--text-tertiary)" }}>
+              {reviewCommands.map((review) => (
+                <PaletteItem
+                  key={review.id}
+                  icon={<ClipboardCheck size={14} />}
+                  label={`Open review PR #${review.pullRequestNumber}`}
+                  onSelect={() =>
+                    run(() => {
+                      openTab({ kind: "agents", title: "Agents" });
+                      void selectReview(review.id);
+                    })
+                  }
                 />
               ))}
             </Command.Group>

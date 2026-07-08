@@ -16,6 +16,7 @@ import { useSessions } from "../../desktop/src/renderer/src/stores/sessions";
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 
 describe("CommandPalette", () => {
   beforeEach(() => {
@@ -35,6 +36,13 @@ describe("CommandPalette", () => {
     useSessions.setState({ sessions: [] });
     useShellSessions.setState({ ...useShellSessions.getInitialState(), load: vi.fn().mockResolvedValue(undefined) }, true);
     useTabs.setState({ tabs: [], activeTabId: null, openTab: vi.fn() });
+    useCodingAgentWorkspace.setState({
+      reviewsStatus: "idle",
+      reviews: null,
+      reviewsError: null,
+      selectedReviewId: null,
+      selectReview: vi.fn().mockResolvedValue(undefined),
+    });
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -100,5 +108,44 @@ describe("CommandPalette", () => {
       kind: "agents",
       title: "Agents",
     });
+  });
+
+  it("opens loaded coding-agent reviews from the command palette", async () => {
+    const openTab = vi.fn();
+    const selectReview = vi.fn().mockResolvedValue(undefined);
+    useTabs.setState({ openTab });
+    useCodingAgentWorkspace.setState({
+      reviewsStatus: "ready",
+      reviews: {
+        items: [
+          {
+            id: "rev_desktop_1",
+            projectId: "matrix-os",
+            worktreeId: "wt_desktop_1",
+            status: "reviewing",
+            pullRequestNumber: 758,
+            round: 2,
+            maxRounds: 3,
+            reviewer: "matrix-reviewer",
+            implementer: "matrix-implementer",
+            findings: { total: 3, high: 1, medium: 1, low: 1 },
+            updatedAt: "2026-07-06T00:02:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 50,
+      },
+      selectReview,
+    });
+
+    render(<CommandPalette />);
+
+    fireEvent.click(screen.getByText("Open review PR #758"));
+
+    expect(openTab).toHaveBeenCalledWith({
+      kind: "agents",
+      title: "Agents",
+    });
+    expect(selectReview).toHaveBeenCalledWith("rev_desktop_1");
   });
 });
