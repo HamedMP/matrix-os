@@ -205,6 +205,13 @@ function previewSummaryFixture() {
           status: "starting",
           updatedAt: "2026-07-06T00:03:00.000Z",
         },
+        {
+          id: "prev_mobile_secure",
+          label: "Secure mobile preview",
+          status: "running",
+          origin: "https://preview.matrix-os.test",
+          updatedAt: "2026-07-06T00:05:00.000Z",
+        },
       ],
       hasMore: false,
       limit: 50,
@@ -523,6 +530,37 @@ describe("AgentsScreen", () => {
     expect(screen.getByText("Internal preview")).toBeTruthy();
     expect(screen.getByText("No local origin")).toBeTruthy();
     expect(screen.queryByText(/internal\.preview|token=secret|\/home\/matrix/i)).toBeNull();
+  });
+
+  it("opens mobile preview rows through a bounded preview route", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: previewSummaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    const previewButton = await screen.findByLabelText("Open preview Secure mobile preview");
+    await act(async () => {
+      fireEvent.press(previewButton);
+    });
+
+    expect(mockRouterPush).toHaveBeenCalledWith({
+      pathname: "/agents/preview",
+      params: {
+        id: "prev_mobile_secure",
+      },
+    });
   });
 
   it("renders read-only review summaries", async () => {

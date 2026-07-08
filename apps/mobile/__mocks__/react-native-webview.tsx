@@ -47,4 +47,4 @@ export const WebView = React.forwardRef(function WebView(
   return <View testID="terminal-webview" />;
 });
 
-export default { WebView };
+export default WebView;
