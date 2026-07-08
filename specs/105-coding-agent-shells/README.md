@@ -1,6 +1,6 @@
 # 105 - Coding Agent Shells
 
-**Status**: Draft
+**Status**: Implementation checkpoint
 **Created**: 2026-07-06
 **Branch**: `chore/mobile-expo-sdk-57`
 **Scope**: Desktop and mobile shell upgrade for multi-agent coding work on the user's Matrix computer.
@@ -11,6 +11,8 @@
 - [plan.md](./plan.md) - Rollout strategy, sequencing, PR slices, risks, and decision gates.
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - System architecture, contracts, runtime model, client patterns, state rules, and implementation guidance.
 - [tasks.md](./tasks.md) - Phase-by-phase implementation checklist for coding agents.
+- [current-state.md](./current-state.md) - Current route, contract, client, shell, and test inventory.
+- [completion-audit.md](./completion-audit.md) - Evidence-based completion audit for the landed implementation checkpoint.
 
 ## Intent
 

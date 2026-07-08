@@ -1,8 +1,10 @@
 # Current State: Coding Agent Shells
 
-**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-desktop-new-run-palette`
+**Branch stack**: implementation merged to `main` through PR #861 (`87ce9e8cc2a6357a122ea0fd9120487702ea9323`)
 **Updated**: 2026-07-08
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
+
+For the evidence-based checkpoint audit, see [completion-audit.md](./completion-audit.md).
 
 ## Summary
 
