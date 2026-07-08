@@ -196,6 +196,9 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
         if (data.length > 0) {
           sendJson(ws, { ...event, data });
         }
+        // A replay chunk can contain only the start of an escape sequence. The
+        // compat stream buffers it and emits bytes with the later completing
+        // chunk, matching the live-output path even when delivered seqs skip.
         continue;
       }
       sendJson(ws, event);
