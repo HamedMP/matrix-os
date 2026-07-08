@@ -345,6 +345,37 @@ function threadSnapshotFixture() {
   };
 }
 
+function reviewReadyThreadSnapshotFixture() {
+  const base = threadSnapshotFixture();
+  return {
+    ...base,
+    thread: {
+      ...base.thread,
+      status: "running",
+      attention: "none",
+    },
+    events: {
+      ...base.events,
+      items: [
+        ...base.events.items,
+        {
+          type: "review.ready",
+          eventId: "evt_review_desktop_1",
+          threadId: "thread_alpha",
+          reviewId: "rev_desktop_1",
+          summary: {
+            changedFileCount: 2,
+            additions: 12,
+            deletions: 4,
+            partial: true,
+          },
+          occurredAt: "2026-07-06T00:04:00.000Z",
+        },
+      ],
+    },
+  };
+}
+
 function attentionThreadSnapshotFixture() {
   return {
     ...threadSnapshotFixture(),
@@ -1006,6 +1037,34 @@ describe("AgentWorkspace", () => {
     expect(screen.getByText("Run the focused desktop tests.")).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-thread-snapshot", { threadId: "thread_alpha" });
+  });
+
+  it("opens review-ready thread events through trusted review IPC", async () => {
+    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-notification-preferences") {
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true } });
+      }
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(reviewReadyThreadSnapshotFixture());
+      if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    expect(await screen.findByText("Review ready")).toBeTruthy();
+    expect(screen.getByText("2 files changed, +12 -4, partial")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open review from thread" }));
+
+    await waitFor(() => {
+      expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-review-snapshot", {
+        reviewId: "rev_desktop_1",
+      });
+    });
+    expect(await screen.findByText("PR #758 review details")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
   });
 
   it("submits approval decisions through trusted IPC and refreshes the thread details", async () => {

@@ -1,6 +1,7 @@
 import { Bell, Bot, ChevronDown, ChevronRight, ChevronUp, ClipboardCheck, ExternalLink, FileText, FolderOpen, GitBranch, GitCommitHorizontal, GitPullRequest, Monitor, Play, RefreshCw, Save, Search, Server, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
+  ReviewIdSchema,
   defaultAgentThreadComposerDraft,
   type AgentThreadEvent,
   type AgentThreadSnapshot,
@@ -755,6 +756,7 @@ function ThreadEventRow({ event, answeredInputRequestKeys }: { event: AgentThrea
   const pendingInputRequestKeys = useCodingAgentWorkspace((s) => s.pendingInputRequestKeys);
   const inputActionErrors = useCodingAgentWorkspace((s) => s.inputActionErrors);
   const submitInputAnswer = useCodingAgentWorkspace((s) => s.submitInputAnswer);
+  const selectReview = useCodingAgentWorkspace((s) => s.selectReview);
   const [inputAnswer, setInputAnswer] = useState("");
   const approval = event.type === "approval.requested" ? event.approval : null;
   const inputRequest = event.type === "user_input.requested" ? event.request : null;
@@ -766,6 +768,7 @@ function ThreadEventRow({ event, answeredInputRequestKeys }: { event: AgentThrea
   const inputActionError = inputKey ? inputActionErrors[inputKey] : undefined;
   const inputAnswered = inputKey ? answeredInputRequestKeys.has(inputKey) : false;
   const trimmedInputAnswer = inputAnswer.trim();
+  const reviewReadyId = event.type === "review.ready" ? ReviewIdSchema.safeParse(event.reviewId) : null;
   return (
     <div
       className="grid gap-1 rounded-md border px-3 py-2"
@@ -782,6 +785,18 @@ function ThreadEventRow({ event, answeredInputRequestKeys }: { event: AgentThrea
       <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
         {copy.detail}
       </p>
+      {reviewReadyId?.success ? (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <Button
+            aria-label="Open review from thread"
+            variant="subtle"
+            onClick={() => void selectReview(reviewReadyId.data)}
+          >
+            <GitPullRequest size={14} />
+            Open review
+          </Button>
+        </div>
+      ) : null}
       {approval ? (
         <div className="flex flex-wrap items-center gap-2 pt-1">
           {approval.allowedDecisions.map((decision) => (
