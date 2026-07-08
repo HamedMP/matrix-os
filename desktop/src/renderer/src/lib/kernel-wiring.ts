@@ -10,6 +10,7 @@ import {
 } from "../stores/board";
 import { useConnection } from "../stores/connection";
 import { useHermesChat } from "../stores/hermes-chat";
+import { useCodingAgentWorkspace } from "../stores/coding-agent-workspace";
 import { useTabs } from "../stores/tabs";
 import { useThreads } from "../stores/threads";
 
@@ -126,6 +127,7 @@ export function wireKernel(): () => void {
   // Clicking a native notification focuses the thread in the Agents tab.
   const offNotificationClick = onEvent("notification:clicked", ({ threadId }) => {
     useThreads.getState().setActiveThread(threadId);
+    useCodingAgentWorkspace.setState({ activeThreadId: threadId });
     useTabs.getState().openTab({ kind: "agents", title: "Agents" });
   });
 

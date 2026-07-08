@@ -336,6 +336,7 @@ function AgentComposer({ summary, seed }: { summary: RuntimeSummary; seed: Compo
 
 function ThreadList({ summary }: { summary: RuntimeSummary }) {
   const openTab = useTabs((s) => s.openTab);
+  const activeThreadId = useCodingAgentWorkspace((s) => s.activeThreadId);
   const findAttachableSessionName = (sessionId: string): string | null =>
     summary.terminalSessions.items.find((session) => session.id === sessionId && session.attachable)?.name ?? null;
 
@@ -346,12 +347,18 @@ function ThreadList({ summary }: { summary: RuntimeSummary }) {
           const terminalSessionName = thread.terminalSessionId
             ? findAttachableSessionName(thread.terminalSessionId)
             : null;
+          const active = activeThreadId === thread.id;
 
           return (
             <article
               key={thread.id}
+              aria-current={active ? "true" : undefined}
+              aria-label={active ? `Active thread ${thread.title}` : `Thread ${thread.title}`}
               className="flex items-center justify-between gap-3 rounded-md border p-3"
-              style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+              style={{
+                borderColor: active ? "var(--accent)" : "var(--border-subtle)",
+                background: active ? "var(--accent-muted)" : "var(--bg-surface)",
+              }}
             >
               <div className="flex min-w-0 items-center gap-2">
                 <GitBranch size={15} style={{ color: "var(--text-tertiary)" }} />

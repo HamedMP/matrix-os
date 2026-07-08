@@ -246,6 +246,15 @@ describe("AgentWorkspace", () => {
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-summary", {});
   });
 
+  it("marks the active coding-agent thread as current in the thread list", async () => {
+    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+
+    render(<AgentWorkspace />);
+
+    const activeThread = await screen.findByLabelText("Active thread Fix settings route");
+    expect(activeThread.getAttribute("aria-current")).toBe("true");
+  });
+
   it("opens a bound thread terminal in the existing terminal tab model", async () => {
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") {
