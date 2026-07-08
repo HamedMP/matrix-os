@@ -17,6 +17,9 @@ type TimelineItem =
   | { kind: "event"; event: AgentThreadEvent; order: number }
   | { kind: "tool"; key: string; events: ToolTimelineEvent[]; order: number };
 
+const ASSISTANT_PREVIEW_MAX_CHARS = 240;
+const UNSAFE_ASSISTANT_PREVIEW_PATTERN = /(?:stack trace|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+|token|secret|private key)/i;
+
 export default function AgentThreadRoute() {
   const { theme } = useUnistyles();
   const params = useLocalSearchParams<{ threadId?: string }>();
@@ -786,15 +789,32 @@ function AssistantTimelineItem({ events }: { events: AssistantTimelineEvent[] })
 function describeAssistantTimeline(events: AssistantTimelineEvent[]): { icon: keyof typeof Ionicons.glyphMap; title: string; detail: string } {
   const deltas = events.filter((event): event is Extract<AssistantTimelineEvent, { type: "assistant.text.delta" }> => event.type === "assistant.text.delta");
   const completed = events.some((event) => event.type === "assistant.text.completed");
+  const preview = formatAssistantPreview(deltas);
   if (deltas.length === 1 && !completed) {
-    return { icon: "chatbubble-ellipses-outline", title: "Assistant update", detail: "Text update received" };
+    return { icon: "chatbubble-ellipses-outline", title: "Assistant update", detail: preview ?? "Text update received" };
   }
   const updates = `${deltas.length} ${deltas.length === 1 ? "text update" : "text updates"} received`;
+  const statusDetail = completed ? `${updates}, complete` : updates;
   return {
     icon: completed ? "checkmark-circle-outline" : "chatbubble-ellipses-outline",
     title: completed ? "Assistant message" : "Assistant updates",
-    detail: completed ? `${updates}, complete` : updates,
+    detail: preview ? completed ? `${statusDetail}. ${preview}` : preview : statusDetail,
   };
+}
+
+function formatAssistantPreview(deltas: Extract<AssistantTimelineEvent, { type: "assistant.text.delta" }>[]): string | null {
+  const preview = deltas
+    .map((event) => event.delta)
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!preview || UNSAFE_ASSISTANT_PREVIEW_PATTERN.test(preview)) {
+    return null;
+  }
+  if (preview.length <= ASSISTANT_PREVIEW_MAX_CHARS) {
+    return preview;
+  }
+  return `${preview.slice(0, ASSISTANT_PREVIEW_MAX_CHARS).trimEnd()}...`;
 }
 
 function ToolTimelineItem({ events }: { events: ToolTimelineEvent[] }) {
@@ -891,7 +911,7 @@ function describeThreadEvent(event: AgentThreadEvent): { icon: keyof typeof Ioni
     case "assistant.text.delta":
       return { icon: "chatbubble-ellipses-outline", title: "Assistant update", detail: "Text update received" };
     case "assistant.text.completed":
-      return { icon: "checkmark-circle-outline", title: "Assistant message complete", detail: event.messageId };
+      return { icon: "checkmark-circle-outline", title: "Assistant message complete", detail: "Text complete" };
     case "tool.started":
       return { icon: "hammer-outline", title: "Tool started", detail: event.displayName };
     case "tool.output":

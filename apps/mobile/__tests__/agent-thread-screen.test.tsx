@@ -1419,6 +1419,131 @@ describe("AgentThreadRoute", () => {
     expect(textValues.indexOf("File updated")).toBeLessThan(textValues.indexOf("Assistant message"));
   });
 
+  it("shows bounded safe assistant transcript previews without exposing message ids", async () => {
+    const longSafeDelta = "Reviewed the failing shard and found the route test. ".repeat(8);
+    const expectedPreview = `1 text update received, complete. ${longSafeDelta.slice(0, 240).trimEnd()}...`;
+    const snapshot = {
+      ...threadSnapshotFixture(),
+      events: {
+        ...threadSnapshotFixture().events,
+        items: [
+          ...threadSnapshotFixture().events.items,
+          {
+            eventId: "evt_mobile_assistant_safe_delta",
+            threadId: "thread_mobile",
+            type: "assistant.text.delta",
+            messageId: "msg_mobile_safe_preview",
+            delta: longSafeDelta,
+            occurredAt: "2026-07-06T00:02:00.000Z",
+          },
+          {
+            eventId: "evt_mobile_assistant_safe_completed",
+            threadId: "thread_mobile",
+            type: "assistant.text.completed",
+            messageId: "msg_mobile_safe_preview",
+            occurredAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+      },
+    };
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot,
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Assistant message")).toBeTruthy();
+    expect(screen.getByText(expectedPreview)).toBeTruthy();
+    expect(screen.queryByText("msg_mobile_safe_preview")).toBeNull();
+    expect(screen.queryByText(/route test\. Reviewed the failing shard and found the route test\.$/)).toBeNull();
+  });
+
+  it("falls back to assistant update counts for unsafe preview text", async () => {
+    const snapshot = {
+      ...threadSnapshotFixture(),
+      events: {
+        ...threadSnapshotFixture().events,
+        items: [
+          ...threadSnapshotFixture().events.items,
+          {
+            eventId: "evt_mobile_assistant_unsafe_delta",
+            threadId: "thread_mobile",
+            type: "assistant.text.delta",
+            messageId: "msg_mobile_unsafe_preview",
+            delta: "Stack trace saved in /tmp/debug.log with key sk-ant-test",
+            occurredAt: "2026-07-06T00:02:00.000Z",
+          },
+          {
+            eventId: "evt_mobile_assistant_unsafe_completed",
+            threadId: "thread_mobile",
+            type: "assistant.text.completed",
+            messageId: "msg_mobile_unsafe_preview",
+            occurredAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+      },
+    };
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot,
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Assistant message")).toBeTruthy();
+    expect(screen.getByText("1 text update received, complete")).toBeTruthy();
+    expect(screen.queryByText(/stack trace|\/tmp|sk-ant/i)).toBeNull();
+  });
+
+  it("does not render message ids for completion-only assistant events", async () => {
+    const snapshot = {
+      ...threadSnapshotFixture(),
+      events: {
+        ...threadSnapshotFixture().events,
+        items: [
+          ...threadSnapshotFixture().events.items,
+          {
+            eventId: "evt_mobile_assistant_completed_only",
+            threadId: "thread_mobile",
+            type: "assistant.text.completed",
+            messageId: "msg_mobile_completed_only",
+            occurredAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+      },
+    };
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot,
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Assistant message")).toBeTruthy();
+    expect(screen.getByText("0 text updates received, complete")).toBeTruthy();
+    expect(screen.queryByText("msg_mobile_completed_only")).toBeNull();
+    expect(screen.queryByText("Assistant message complete")).toBeNull();
+  });
+
   it("groups bounded tool activity without exposing raw tool output", async () => {
     const snapshot = {
       ...threadSnapshotFixture(),
