@@ -130,7 +130,17 @@ describe("zellij terminal WebSocket", () => {
 
   it("flushes partial Codex compatibility escape bytes before attach close", async () => {
     const pty = new FakePty();
-    const ws = socket();
+    const ws: ShellWsSocket & { sent: unknown[]; closed: boolean } = {
+      sent: [],
+      closed: false,
+      send(data: string) {
+        this.sent.push(JSON.parse(data));
+      },
+      close() {
+        this.closed = true;
+        this.sent.push({ type: "closed" });
+      },
+    };
     const handler = createShellWsHandler({
       registry: {
         list: vi.fn(async () => [{ name: "codex-main", status: "active" }]),
@@ -144,11 +154,16 @@ describe("zellij terminal WebSocket", () => {
     const session = await handler.open({ ws, session: "codex-main", fromSeq: 0 });
     pty.emitData("prompt\x1b[");
     await new Promise((resolve) => setTimeout(resolve, 0));
-    session.onClose();
+    session.onMessage(JSON.stringify({ type: "detach" }));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(ws.sent).toContainEqual({ type: "output", seq: 0, data: "prompt" });
     expect(ws.sent).toContainEqual({ type: "output", seq: 1, data: "\x1b[" });
+    const flushedIndex = ws.sent.findIndex((event) => JSON.stringify(event) === JSON.stringify({ type: "output", seq: 1, data: "\x1b[" }));
+    const closedIndex = ws.sent.findIndex((event) => JSON.stringify(event) === JSON.stringify({ type: "closed" }));
+    expect(flushedIndex).toBeGreaterThan(-1);
+    expect(closedIndex).toBeGreaterThan(-1);
+    expect(flushedIndex).toBeLessThan(closedIndex);
   });
 
   it("attaches to a named session, replays from seq, forwards input, and cleans up", async () => {
@@ -175,6 +190,7 @@ describe("zellij terminal WebSocket", () => {
     session.onMessage(JSON.stringify({ type: "input", data: "pwd\r" }));
     session.onMessage(JSON.stringify({ type: "resize", cols: 100, rows: 30 }));
     session.onClose();
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(ws.sent).toContainEqual({ type: "attached", session: "main", state: "running", fromSeq: 0 });
     expect(ws.sent).toContainEqual({ type: "output", seq: 0, data: "hello" });
@@ -235,6 +251,7 @@ describe("zellij terminal WebSocket", () => {
 
     const session = await handler.open({ ws, session: "main", fromSeq: 0 });
     session.onMessage(JSON.stringify({ type: "destroy" }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(pty.killed).toBe(true);
     expect(ws.closed).toBe(true);

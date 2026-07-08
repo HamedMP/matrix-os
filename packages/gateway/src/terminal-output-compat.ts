@@ -17,6 +17,7 @@ interface CodexTuiCompatTheme {
 }
 
 interface CodexTuiCompatTransform {
+  observe(data: string): void;
   write(data: string): string;
   flush(): string;
 }
@@ -97,6 +98,28 @@ function applyColorGroupToState(group: string[], state: SgrColorState): void {
     state.foreground = [...group];
   } else if (target === "48") {
     state.background = [...group];
+  }
+}
+
+function observeSgr(sequence: string, colorState: SgrColorState): void {
+  const body = sequence.slice(2, -1);
+  const params = body.length === 0 ? ["0"] : body.split(";");
+
+  for (let index = 0; index < params.length; index += 1) {
+    const colorGroupLength = sgrColorGroupLength(params, index);
+    if (colorGroupLength > 0) {
+      applyColorGroupToState(params.slice(index, index + colorGroupLength), colorState);
+      index += colorGroupLength - 1;
+      continue;
+    }
+
+    const param = params[index] ?? "";
+    if (param === "0" || param === "") {
+      colorState.foreground = null;
+      colorState.background = null;
+      continue;
+    }
+    applyColorParamToState(param, colorState);
   }
 }
 
@@ -183,10 +206,57 @@ function findOscTerminator(value: string, start: number): number | null {
 
 function createCodexTuiCompatTransform(theme: CodexTuiCompatTheme): CodexTuiCompatTransform {
   let pending = "";
+  let trackingPending = "";
   const colorState: SgrColorState = { foreground: null, background: null };
   const reverseSnapshot: { current: SgrColorState | null } = { current: null };
 
   return {
+    observe(data: string): void {
+      const input = trackingPending + data;
+      trackingPending = "";
+      let index = 0;
+
+      while (index < input.length) {
+        const escapeIndex = input.indexOf("\x1b", index);
+        if (escapeIndex === -1) {
+          break;
+        }
+
+        if (escapeIndex + 1 >= input.length) {
+          trackingPending = input.slice(escapeIndex);
+          break;
+        }
+
+        const next = input[escapeIndex + 1];
+        if (next === "[") {
+          let finalIndex = escapeIndex + 2;
+          while (finalIndex < input.length && !CSI_FINAL_BYTE.test(input[finalIndex] ?? "")) {
+            finalIndex += 1;
+          }
+          if (finalIndex >= input.length) {
+            trackingPending = input.slice(escapeIndex);
+            break;
+          }
+          if (input[finalIndex] === "m") {
+            observeSgr(input.slice(escapeIndex, finalIndex + 1), colorState);
+          }
+          index = finalIndex + 1;
+          continue;
+        }
+
+        if (next === "]") {
+          const terminator = findOscTerminator(input, escapeIndex + 2);
+          index = terminator ?? input.length;
+          continue;
+        }
+
+        index = escapeIndex + 2;
+      }
+
+      if (trackingPending.length > MAX_PENDING_ESCAPE_BYTES) {
+        trackingPending = "";
+      }
+    },
     write(data: string): string {
       const input = pending + data;
       pending = "";
@@ -249,6 +319,7 @@ function createCodexTuiCompatTransform(theme: CodexTuiCompatTheme): CodexTuiComp
     flush(): string {
       const output = pending;
       pending = "";
+      trackingPending = "";
       return output;
     },
   };
@@ -334,6 +405,9 @@ export function createTerminalOutputCompatStream(options: {
       if (!codexTuiActive) {
         detectionText = trimDetectionText(detectionText + stripAnsiForDetection(data));
         codexTuiActive = detectionText.includes(CODEX_TUI_BANNER);
+        if (!codexTuiActive) {
+          codexTuiTransform.observe(data);
+        }
       }
       return codexTuiActive ? codexTuiTransform.write(data) : data;
     },

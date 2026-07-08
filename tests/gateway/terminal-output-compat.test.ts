@@ -59,6 +59,16 @@ describe("terminal output compatibility stream", () => {
     );
   });
 
+  it("tracks color state before manual Codex detection activates", () => {
+    const stream = createTerminalOutputCompatStream({ sessionName: "main" });
+
+    expect(stream.write("\x1b[32mgreen shell output\n")).toBe("\x1b[32mgreen shell output\n");
+    expect(stream.write("OpenAI Codex (v0.142.5)\n")).toBe("OpenAI Codex (v0.142.5)\n");
+    expect(stream.write("\x1b[7mprompt\x1b[27mstill green")).toBe(
+      "\x1b[38;2;214;216;221;48;2;48;54;61mprompt\x1b[32;49mstill green",
+    );
+  });
+
   it("flushes partial escape bytes so terminal replay is not truncated", () => {
     const stream = createTerminalOutputCompatStream({ sessionName: "codex-backend" });
 

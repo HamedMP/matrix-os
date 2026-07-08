@@ -224,12 +224,12 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     dataDisposable = child.onData(onData);
     exitDisposable = child.onExit(onExit);
 
-    const closeSession = () => {
+    const closeSession = async () => {
       if (closed) {
         return;
       }
       closed = true;
-      void persistOutput(outputCompat.flush());
+      await persistOutput(outputCompat.flush());
       abortController.abort();
       cleanupProcessListeners();
       child.kill();
@@ -258,8 +258,9 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           return;
         }
         if (msg.type === "detach" || msg.type === "destroy") {
-          closeSession();
-          ws.close?.();
+          void closeSession().finally(() => {
+            ws.close?.();
+          });
           return;
         }
         if (msg.type === "input") {
@@ -270,7 +271,9 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           child.resize(msg.cols, msg.rows);
         }
       },
-      onClose: closeSession,
+      onClose() {
+        void closeSession();
+      },
     };
   }
 
