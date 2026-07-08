@@ -1,5 +1,6 @@
 import {
   buildCreateAgentThreadRequestFromComposer,
+  type ApprovalDecisionRequest,
   type AgentThreadSnapshot,
   type AgentThreadComposerDraft,
   type ReviewSnapshot,
@@ -12,6 +13,7 @@ import { invoke } from "../lib/operator";
 type WorkspaceStatus = "idle" | "loading" | "ready" | "error";
 type ReviewStatus = "idle" | "loading" | "ready" | "error";
 type CreateStatus = "idle" | "submitting";
+type ActionStatus = "idle" | "submitting";
 type ReviewSummaryList = {
   items: ReviewSummary[];
   hasMore: boolean;
@@ -35,10 +37,21 @@ interface CodingAgentWorkspaceState {
   threadSnapshotError: string | null;
   createStatus: CreateStatus;
   createError: string | null;
+  approvalActionStatus: ActionStatus;
+  pendingApprovalId: string | null;
+  approvalActionError: string | null;
+  pendingApprovalKeys: string[];
+  approvalActionErrors: Record<string, string>;
   activeThreadId: string | null;
   refresh: () => Promise<void>;
   selectReview: (reviewId: string) => Promise<void>;
   loadThreadSnapshot: (threadId: string) => Promise<void>;
+  submitApprovalDecision: (input: {
+    threadId: string;
+    approvalId: string;
+    decision: ApprovalDecisionRequest["decision"];
+    correlationId: string;
+  }) => Promise<void>;
   createThread: (draft: AgentThreadComposerDraft) => Promise<string | null>;
 }
 
@@ -47,6 +60,7 @@ let reviewsSeq = 0;
 let reviewSnapshotSeq = 0;
 let threadSnapshotSeq = 0;
 let createRequestSeq = 0;
+let actionRequestSeq = 0;
 
 function clearReviewSelectionState() {
   reviewSnapshotSeq += 1;
@@ -72,6 +86,20 @@ function nextCreateRequestId(): string {
   return `req_desktop_${Date.now().toString(36)}_${createRequestSeq}`;
 }
 
+function nextActionRequestId(): string {
+  actionRequestSeq += 1;
+  return `req_desktop_${Date.now().toString(36)}_${actionRequestSeq}`;
+}
+
+function withoutRecordKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  const { [key]: _removed, ...rest } = record;
+  return rest;
+}
+
+export function codingAgentApprovalActionKey(threadId: string, approvalId: string): string {
+  return `${threadId}:${approvalId}`;
+}
+
 export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set) => ({
   status: "idle",
   summary: null,
@@ -88,6 +116,11 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   threadSnapshotError: null,
   createStatus: "idle",
   createError: null,
+  approvalActionStatus: "idle",
+  pendingApprovalId: null,
+  approvalActionError: null,
+  pendingApprovalKeys: [],
+  approvalActionErrors: {},
   activeThreadId: null,
 
   refresh: async () => {
@@ -223,6 +256,75 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         threadSnapshotStatus: "error",
         threadSnapshot: null,
         threadSnapshotError: "Thread state unavailable",
+      });
+    }
+  },
+
+  submitApprovalDecision: async ({ threadId, approvalId, decision, correlationId }) => {
+    const approvalKey = codingAgentApprovalActionKey(threadId, approvalId);
+    const { pendingApprovalKeys } = useCodingAgentWorkspace.getState();
+    if (pendingApprovalKeys.includes(approvalKey)) return;
+
+    set((state) => ({
+      approvalActionStatus: "submitting",
+      pendingApprovalId: approvalId,
+      approvalActionError: null,
+      pendingApprovalKeys: [...state.pendingApprovalKeys, approvalKey],
+      approvalActionErrors: withoutRecordKey(state.approvalActionErrors, approvalKey),
+    }));
+    try {
+      const snapshot = await invoke("runtime:submit-approval-decision", {
+        threadId,
+        approvalId,
+        decision,
+        correlationId,
+        clientRequestId: nextActionRequestId(),
+      });
+      set((state) => {
+        const currentSummary = state.summary;
+        const nextPendingApprovalKeys = state.pendingApprovalKeys.filter((key) => key !== approvalKey);
+        const visibleThreadStillSelected = state.activeThreadId === snapshot.thread.id;
+        const summary = currentSummary
+          ? {
+              ...currentSummary,
+              activeThreads: {
+                ...currentSummary.activeThreads,
+                items: currentSummary.activeThreads.items.map((thread) =>
+                  thread.id === snapshot.thread.id ? snapshot.thread : thread,
+                ),
+              },
+            }
+          : currentSummary;
+        return {
+          approvalActionStatus: nextPendingApprovalKeys.length > 0 ? "submitting" : "idle",
+          pendingApprovalId: null,
+          approvalActionError: null,
+          pendingApprovalKeys: nextPendingApprovalKeys,
+          approvalActionErrors: withoutRecordKey(state.approvalActionErrors, approvalKey),
+          summary,
+          ...(visibleThreadStillSelected
+            ? {
+                threadSnapshotStatus: "ready" as const,
+                threadSnapshot: snapshot,
+                threadSnapshotError: null,
+              }
+            : {}),
+        };
+      });
+    } catch {
+      console.warn("[coding-agents] approval decision failed");
+      set((state) => {
+        const nextPendingApprovalKeys = state.pendingApprovalKeys.filter((key) => key !== approvalKey);
+        return {
+          approvalActionStatus: nextPendingApprovalKeys.length > 0 ? "submitting" : "idle",
+          pendingApprovalId: null,
+          approvalActionError: "Approval could not be sent. Try again.",
+          pendingApprovalKeys: nextPendingApprovalKeys,
+          approvalActionErrors: {
+            ...state.approvalActionErrors,
+            [approvalKey]: "Approval could not be sent. Try again.",
+          },
+        };
       });
     }
   },

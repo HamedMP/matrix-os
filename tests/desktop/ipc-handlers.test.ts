@@ -40,6 +40,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     fetchReviewSummaries: vi.fn(),
     fetchReviewSnapshot: vi.fn(),
     fetchThreadSnapshot: vi.fn(),
+    submitApprovalDecision: vi.fn(),
     createAgentThread: vi.fn(),
     ...overrides,
   } as unknown as HandlerContext;
@@ -316,6 +317,67 @@ describe("registerIpcHandlers", () => {
 
     await expect(harness.invoke("runtime:get-thread-snapshot", { threadId: "thread_desktop_1" })).rejects.toThrow("internal error");
     await expect(harness.invoke("runtime:get-thread-snapshot", { threadId: "thread_desktop_1" })).rejects.not.toThrow("/home/matrix");
+  });
+
+  it("submits approval decisions through trusted-core IPC without exposing credentials", async () => {
+    const snapshot = {
+      thread: {
+        id: "thread_desktop_1",
+        providerId: "codex",
+        title: "Fix desktop notifications",
+        status: "running",
+        attention: "none",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:02:00.000Z",
+      },
+      events: {
+        items: [
+          {
+            type: "approval.resolved",
+            eventId: "evt_approval_2",
+            threadId: "thread_desktop_1",
+            occurredAt: "2026-07-06T00:02:00.000Z",
+            approvalId: "appr_desktop_1",
+            decision: "approve",
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    };
+    const submitApprovalDecision = vi.fn().mockResolvedValue(snapshot);
+    const harness = makeHarness({ submitApprovalDecision } as Partial<HandlerContext>);
+    const request = {
+      threadId: "thread_desktop_1",
+      approvalId: "appr_desktop_1",
+      decision: "approve",
+      correlationId: "corr_desktop_1",
+      clientRequestId: "req_desktop_1",
+    };
+
+    await expect(harness.invoke("runtime:submit-approval-decision", request)).resolves.toEqual(snapshot);
+    expect(submitApprovalDecision).toHaveBeenCalledWith(request);
+    await expect(harness.invoke("runtime:submit-approval-decision", {
+      ...request,
+      providerToken: "secret",
+    })).rejects.toThrow("invalid request");
+  });
+
+  it("maps approval decision failures to a generic IPC error", async () => {
+    const submitApprovalDecision = vi
+      .fn()
+      .mockRejectedValue(new Error("provider approval failed at /home/matrix/home with token secret"));
+    const harness = makeHarness({ submitApprovalDecision } as Partial<HandlerContext>);
+    const request = {
+      threadId: "thread_desktop_1",
+      approvalId: "appr_desktop_1",
+      decision: "approve",
+      correlationId: "corr_desktop_1",
+      clientRequestId: "req_desktop_1",
+    };
+
+    await expect(harness.invoke("runtime:submit-approval-decision", request)).rejects.toThrow("internal error");
+    await expect(harness.invoke("runtime:submit-approval-decision", request)).rejects.not.toThrow("/home/matrix");
   });
 
   it("creates agent threads through trusted-core IPC without exposing credentials", async () => {

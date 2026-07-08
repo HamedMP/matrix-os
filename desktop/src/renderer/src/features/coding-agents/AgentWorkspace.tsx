@@ -11,7 +11,7 @@ import {
 } from "@matrix-os/contracts";
 import { Button, EmptyState, StatusDot } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
-import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { codingAgentApprovalActionKey, useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useTabs } from "../../stores/tabs";
 
 const STATUS_COLOR: Record<string, string> = {
@@ -491,6 +491,13 @@ function ThreadSnapshotPanel({
 
 function ThreadEventRow({ event }: { event: AgentThreadEvent }) {
   const copy = describeThreadEvent(event);
+  const pendingApprovalKeys = useCodingAgentWorkspace((s) => s.pendingApprovalKeys);
+  const approvalActionErrors = useCodingAgentWorkspace((s) => s.approvalActionErrors);
+  const submitApprovalDecision = useCodingAgentWorkspace((s) => s.submitApprovalDecision);
+  const approval = event.type === "approval.requested" ? event.approval : null;
+  const approvalKey = approval ? codingAgentApprovalActionKey(approval.threadId, approval.approvalId) : null;
+  const approvalPending = approvalKey ? pendingApprovalKeys.includes(approvalKey) : false;
+  const approvalActionError = approvalKey ? approvalActionErrors[approvalKey] : undefined;
   return (
     <div
       className="grid gap-1 rounded-md border px-3 py-2"
@@ -507,8 +514,52 @@ function ThreadEventRow({ event }: { event: AgentThreadEvent }) {
       <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
         {copy.detail}
       </p>
+      {approval ? (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          {approval.allowedDecisions.map((decision) => (
+            <Button
+              key={decision}
+              aria-label={`${approvalDecisionLabel(decision)} ${approval.title}`}
+              variant={approvalDecisionVariant(decision)}
+              disabled={approvalPending}
+              onClick={() => void submitApprovalDecision({
+                threadId: approval.threadId,
+                approvalId: approval.approvalId,
+                decision,
+                correlationId: approval.correlationId,
+              })}
+            >
+              {approvalPending ? "Sending..." : approvalDecisionLabel(decision)}
+            </Button>
+          ))}
+          {approvalActionError ? (
+            <span className="text-xs" style={{ color: "var(--danger)" }}>
+              {approvalActionError}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function approvalDecisionLabel(decision: string): string {
+  switch (decision) {
+    case "approve":
+      return "Approve";
+    case "approve_for_session":
+      return "Approve for session";
+    case "decline":
+      return "Decline";
+    case "cancel":
+      return "Cancel";
+    default:
+      return "Decide";
+  }
+}
+
+function approvalDecisionVariant(decision: string): "primary" | "danger" | "subtle" {
+  return decision === "approve" || decision === "approve_for_session" ? "primary" : "danger";
 }
 
 function describeThreadEvent(event: AgentThreadEvent): { title: string; detail: string } {

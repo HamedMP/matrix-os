@@ -3,6 +3,7 @@ import {
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
+  type ApprovalDecisionRequest,
   type CreateAgentThreadRequest,
   type ReviewSnapshot,
   type ReviewSummary,
@@ -17,6 +18,7 @@ const REVIEW_SUMMARY_TIMEOUT_MS = 10_000;
 const REVIEW_SNAPSHOT_TIMEOUT_MS = 10_000;
 const THREAD_CREATE_TIMEOUT_MS = 15_000;
 const THREAD_SNAPSHOT_TIMEOUT_MS = 10_000;
+const APPROVAL_DECISION_TIMEOUT_MS = 10_000;
 
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 type AgentThreadSnapshot = z.infer<typeof AgentThreadSnapshotSchema>;
@@ -125,6 +127,42 @@ export async function fetchCodingAgentThreadSnapshot(
   const parsed = AgentThreadSnapshotSchema.safeParse(body);
   if (!parsed.success) {
     throw new Error("thread state unavailable");
+  }
+  return parsed.data;
+}
+
+export async function submitCodingAgentApprovalDecision(
+  auth: AuthService,
+  options: { threadId: string; approvalId: string; request: ApprovalDecisionRequest },
+  fetchFn: FetchFn = fetch,
+): Promise<AgentThreadSnapshot> {
+  const token = auth.getToken();
+  if (!token) {
+    throw new Error("approval unavailable");
+  }
+
+  const url = new URL(
+    `/api/coding-agents/threads/${encodeURIComponent(options.threadId)}/approvals/${encodeURIComponent(options.approvalId)}/decision`,
+    auth.getGatewayOrigin(),
+  );
+  const res = await fetchFn(url.toString(), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(options.request),
+    signal: AbortSignal.timeout(APPROVAL_DECISION_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error("approval unavailable");
+  }
+
+  const body = await res.json();
+  const parsed = AgentThreadSnapshotSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new Error("approval unavailable");
   }
   return parsed.data;
 }
