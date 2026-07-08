@@ -1,6 +1,6 @@
 # Completion Audit: Coding Agent Shells
 
-**Audited commit**: `87ce9e8cc2a6357a122ea0fd9120487702ea9323`
+**Audited commit**: `b437ef39b0dfe3ee0b5bc3238e3597be85205c12`
 **Date**: 2026-07-08
 **Scope**: Evidence review for the Matrix OS coding-agent desktop, mobile, browser, and gateway shell implementation checkpoint.
 
@@ -26,7 +26,7 @@ This audit records current evidence. It does not mark the full rollout complete 
 
 ## Validation Evidence
 
-GitHub CI for `87ce9e8cc2a6357a122ea0fd9120487702ea9323` completed successfully:
+GitHub CI for `b437ef39b0dfe3ee0b5bc3238e3597be85205c12` completed successfully:
 
 - Pattern Scan
 - React Doctor
@@ -37,16 +37,14 @@ GitHub CI for `87ce9e8cc2a6357a122ea0fd9120487702ea9323` completed successfully:
 - E2E Tests
 - CI Results
 
-Platform Cloud Run completed successfully for the same commit.
+Docker Tests and Host Bundle Release completed successfully for the same commit. The Host Bundle Release built the bundle, published the release, and triggered the exact-version VPS deploy job.
 
-Host Bundle Release was still in progress and Docker Tests were still queued when this audit PR was prepared. Treat those as release-readiness gates that still need live workflow evidence.
+Platform Cloud Run completed successfully for the implementation checkpoint commit `87ce9e8cc2a6357a122ea0fd9120487702ea9323`.
 
 ## Remaining Validation
 
 - Run manual desktop smoke for sign-in, runtime switch, settings, menu/palette entry points, terminal attach, review/file/preview paths, and notification click-through.
 - Run manual mobile SDK 57 device smoke for chat, mission control, terminal, apps, agents workspace, thread detail, review/file/preview paths, approvals/input, notification tap routing, offline/reconnect state, and persisted safe references.
-- Confirm Host Bundle Release and Docker Tests complete for the checkpoint commit before broad rollout.
-- If runtime managers add autonomous process-exit detection beyond explicit workspace `session.stopped` events, route those events through the existing completion reconciliation path.
 - Keep `docs/dev/coding-agent-shells.md`, `www/content/docs/coding-agents.mdx`, and this audit synchronized when provider/runtime behavior changes.
 
 ## Security Notes
