@@ -89,6 +89,8 @@ import { createToolPackRoutes } from "./onboarding/tool-pack-routes.js";
 import type { CodingSetupStatus } from "./onboarding/coding-setup.js";
 import { createAgentCredentialStatusService } from "./onboarding/agent-credential-status.js";
 import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
+import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-summary.js";
+import { createCodingAgentRoutes } from "./coding-agents/routes.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -459,6 +461,12 @@ export async function createGateway(config: GatewayConfig) {
         missing: status?.installed === false,
       };
     },
+  });
+  const codingAgentRuntimeSummaryService = createCodingAgentRuntimeSummaryService({
+    homePath,
+    terminalRegistry: zellijShellRegistry,
+    agentCredentials: agentCredentialService,
+    terminalOwnerId: process.env.MATRIX_USER_ID,
   });
   const integrationCapabilityService = createIntegrationCapabilityService({
     getConnectedCapabilityIds,
@@ -1474,6 +1482,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
   app.route("/api/onboarding", createToolPackRoutes({ service: toolPackService }));
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
+  app.route("/api/coding-agents", createCodingAgentRoutes({ service: codingAgentRuntimeSummaryService }));
   app.route("/api/integrations", createIntegrationCapabilityRoutes({
     service: integrationCapabilityService,
     audit: agentActionAuditService,

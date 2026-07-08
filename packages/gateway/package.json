@@ -31,6 +31,7 @@
     "@hono/node-server": "^1.19.9",
     "@hono/node-ws": "^1.3.1",
     "@finnaai/matrix": "workspace:*",
+    "@matrix-os/contracts": "workspace:*",
     "@matrix-os/kernel": "workspace:*",
     "@matrix-os/observability": "workspace:*",
     "@pipedream/sdk": "^2.4.3",
