@@ -141,6 +141,12 @@ type MaybeTtyStream = NodeJS.ReadStream & {
   pause?: () => unknown;
 };
 
+type AttachWriter = (data: string, options?: { allowAfterSettled?: boolean }) => boolean;
+
+function isEpipeError(err: unknown): boolean {
+  return err instanceof Error && "code" in err && (err as { code?: unknown }).code === "EPIPE";
+}
+
 function terminalSize(input: MaybeTtyStream, output: NodeJS.WriteStream): {
   cols: number;
   rows: number;
@@ -672,8 +678,30 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       const input = (attachOptions.input ?? process.stdin) as MaybeTtyStream;
       const detachSequence = attachOptions.detachSequence ?? "\u001c\u001c";
       const dropMouse = attachOptions.mouse === false;
+      let writeAttachOutput: AttachWriter = (data: string) => {
+        try {
+          output.write(data);
+          return true;
+        } catch (err: unknown) {
+          if (!isEpipeError(err)) {
+            console.warn("[shell] failed to write attach output:", err instanceof Error ? err.message : String(err));
+          }
+          return false;
+        }
+      };
+      let writeAttachError: AttachWriter = (data: string) => {
+        try {
+          errorOutput.write(data);
+          return true;
+        } catch (err: unknown) {
+          if (!isEpipeError(err)) {
+            console.warn("[shell] failed to write attach error output:", err instanceof Error ? err.message : String(err));
+          }
+          return false;
+        }
+      };
       const resetLocalInputModes = () => {
-        output.write(LOCAL_TERMINAL_INPUT_RESET);
+        writeAttachOutput(LOCAL_TERMINAL_INPUT_RESET, { allowAfterSettled: true });
       };
       const inputFilter = createTerminalInputFilter({
         dropMouse,
@@ -682,7 +710,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       const controlDropper = createUnsupportedTerminalControlDropper();
       const bracketedPasteParser = createBracketedPasteStreamParser({
         onIncompletePaste: () => {
-          errorOutput.write(`\r\n${INCOMPLETE_BRACKETED_PASTE_MESSAGE}\r\n`);
+          writeAttachError(`\r\n${INCOMPLETE_BRACKETED_PASTE_MESSAGE}\r\n`);
         },
       });
       const richPasteEnabled = attachOptions.noRichPaste !== true && attachOptions.richPaste?.enabled !== false;
@@ -725,6 +753,59 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         let heartbeatPending = false;
         let missedHeartbeats = 0;
         let reconnectNoticeVisible = false;
+        const detachForClosedLocalPipe = () => {
+          if (settled) {
+            return;
+          }
+          const wsToClose = currentWs;
+          if (socketOpen) {
+            try {
+              wsToClose?.send(JSON.stringify({ type: "detach" }));
+            } catch (err: unknown) {
+              console.warn("[shell] failed to send detach after local pipe closed:", err instanceof Error ? err.message : String(err));
+            }
+          }
+          settle(() => resolve({ detached: true }));
+          wsToClose?.close();
+        };
+        const handleLocalStreamError = (err: unknown) => {
+          if (isEpipeError(err)) {
+            detachForClosedLocalPipe();
+            return;
+          }
+          const wsToClose = currentWs;
+          settle(() => reject(Object.assign(new Error("Request failed"), { code: "attach_failed" })));
+          wsToClose?.close();
+        };
+        const writeOutput: AttachWriter = (data, writeOptions = {}) => {
+          if (settled && !writeOptions.allowAfterSettled) {
+            return false;
+          }
+          try {
+            output.write(data);
+            return true;
+          } catch (err: unknown) {
+            handleLocalStreamError(err);
+            return false;
+          }
+        };
+        const writeError: AttachWriter = (data, writeOptions = {}) => {
+          if (settled && !writeOptions.allowAfterSettled) {
+            return false;
+          }
+          try {
+            errorOutput.write(data);
+            return true;
+          } catch (err: unknown) {
+            handleLocalStreamError(err);
+            return false;
+          }
+        };
+        writeAttachOutput = writeOutput;
+        writeAttachError = writeError;
+        const onLocalStreamError = (err: unknown) => {
+          handleLocalStreamError(err);
+        };
         const cleanup = () => {
           clearTimeout(attachTimeout);
           clearTimeout(reconnectTimer);
@@ -735,6 +816,8 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           process.off("SIGINT", onSignal);
           process.off("SIGTERM", onSignal);
           process.off("exit", onProcessExit);
+          output.off?.("error", onLocalStreamError);
+          errorOutput.off?.("error", onLocalStreamError);
           pendingInput = "";
           inputFilter.reset();
           controlDropper.reset();
@@ -856,8 +939,8 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             return;
           }
           if (!reconnecting) {
-            errorOutput.write("\r\nConnection lost. Reconnecting...\r\n");
-            output.write(SHELL_ATTACH_RECONNECT_NOTICE);
+            writeError("\r\nConnection lost. Reconnecting...\r\n");
+            writeOutput(SHELL_ATTACH_RECONNECT_NOTICE);
             reconnectNoticeVisible = true;
           }
           reconnecting = true;
@@ -889,7 +972,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           if (!socketOpen) {
             const nextQueuedBytes = queuedFrameBytes + Buffer.byteLength(frame, "utf8");
             if (nextQueuedBytes > SHELL_ATTACH_MAX_QUEUED_BYTES) {
-              errorOutput.write("Shell attach failed\n");
+              writeError("Shell attach failed\n");
               currentWs?.close();
               settle(() => reject(Object.assign(new Error("Request failed"), {
                 code: "attach_failed",
@@ -907,7 +990,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
               currentWs?.close();
               return;
             }
-            errorOutput.write("Shell attach failed\n");
+            writeError("Shell attach failed\n");
             settle(() => reject(Object.assign(new Error("Request failed"), {
               code: err instanceof Error ? "attach_failed" : "request_failed",
             })));
@@ -925,7 +1008,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           wsToClose?.close();
         };
         const handleInputFailure = (err: unknown) => {
-          errorOutput.write("Shell attach failed\n");
+          writeError("Shell attach failed\n");
           settle(() => reject(Object.assign(new Error("Request failed"), {
             code: err instanceof Error && "code" in err ? (err as { code?: string }).code ?? "attach_failed" : "attach_failed",
           })));
@@ -947,14 +1030,14 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
               return;
             }
             if (result.status === "failed") {
-              errorOutput.write(`\r\n${result.localMessage}\r\n`);
+              writeError(`\r\n${result.localMessage}\r\n`);
               return;
             }
             sendInputData(result.outgoingText);
           }).catch((err: unknown) => {
             if (!settled) {
-              errorOutput.write(`\r\n${RICH_PASTE_UPLOAD_FAILED_MESSAGE}\r\n`);
-              errorOutput.write(`[debug] rich paste rewrite failed: ${err instanceof Error ? err.name : typeof err}\r\n`);
+              writeError(`\r\n${RICH_PASTE_UPLOAD_FAILED_MESSAGE}\r\n`);
+              writeError(`[debug] rich paste rewrite failed: ${err instanceof Error ? err.name : typeof err}\r\n`);
             }
           });
         };
@@ -1109,9 +1192,9 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             startHeartbeat();
             if (reconnecting) {
               reconnecting = false;
-              errorOutput.write("\r\nConnection restored.\r\n");
+              writeError("\r\nConnection restored.\r\n");
               if (reconnectNoticeVisible) {
-                output.write(SHELL_ATTACH_RECONNECT_NOTICE_CLEAR);
+                writeOutput(SHELL_ATTACH_RECONNECT_NOTICE_CLEAR);
                 reconnectNoticeVisible = false;
               }
             }
@@ -1122,7 +1205,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             }
             noteRemoteActivity();
             inputFilter.noteRemoteOutput();
-            output.write(msg.data);
+            writeOutput(msg.data);
           } else if (msg.type === "pong") {
             noteRemoteActivity();
           } else if (msg.type === "error") {
@@ -1152,7 +1235,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             currentWs?.close();
             return;
           }
-          errorOutput.write("Shell attach failed\n");
+          writeError("Shell attach failed\n");
           settle(() => reject(Object.assign(new Error("Request failed"), {
             code: err instanceof Error ? "attach_failed" : "request_failed",
           })));
@@ -1168,6 +1251,8 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         process.once("SIGINT", onSignal);
         process.once("SIGTERM", onSignal);
         process.once("exit", onProcessExit);
+        output.on?.("error", onLocalStreamError);
+        errorOutput.on?.("error", onLocalStreamError);
         input.on?.("data", onInput);
         connect();
       });

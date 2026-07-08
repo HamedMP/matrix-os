@@ -522,6 +522,29 @@ describe("SessionRegistry", () => {
       expect(received).not.toContainEqual({ type: "output", data: raw, seq: 0 });
     });
 
+    it("rewrites detected Codex explicit prompt backgrounds for subscribers and replay", () => {
+      const mockPty = createMockPty();
+      const mockSpawn = createMockSpawn(mockPty);
+      const registry = createRegistry({}, mockSpawn);
+      const id = registry.create("/home");
+
+      const handle = registry.attach(id)!;
+      const received: PtyServerMessage[] = [];
+      handle.subscribe((msg) => received.push(msg));
+
+      const raw = "OpenAI Codex (v0.142.5)\n\x1b[39m\x1b[48;2;240;240;239mprompt\x1b[39;49m";
+      const readable = "OpenAI Codex (v0.142.5)\n\x1b[39m\x1b[38;2;214;216;221;48;2;48;54;61mprompt\x1b[38;2;214;216;221;49m";
+      const dataCb = mockPty.onData.mock.calls[0][0];
+      dataCb(raw);
+
+      expect(received).toContainEqual({ type: "output", data: readable, seq: 0 });
+
+      received.length = 0;
+      handle.replay(0);
+      expect(received).toContainEqual({ type: "output", data: readable, seq: 0 });
+      expect(received).not.toContainEqual({ type: "output", data: raw, seq: 0 });
+    });
+
     it("keeps non-Codex reverse-video PTY output unchanged", () => {
       const mockPty = createMockPty();
       const mockSpawn = createMockSpawn(mockPty);

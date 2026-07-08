@@ -107,6 +107,48 @@ describe("zellij terminal WebSocket", () => {
     expect(replayWs.sent).not.toContainEqual({ type: "output", seq: 0, data: raw });
   });
 
+  it("rewrites detected Codex explicit prompt background before send and replay persistence", async () => {
+    const pty = new FakePty();
+    const secondPty = new FakePty();
+    const ws = socket();
+    const append = vi.fn(async () => undefined);
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn()
+          .mockReturnValueOnce(pty)
+          .mockReturnValueOnce(secondPty),
+      },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => null),
+        readSince: vi.fn(async () => []),
+        append,
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+    });
+    const raw = "OpenAI Codex (v0.142.5)\n\x1b[39m\x1b[48;2;240;240;239mprompt\x1b[39;49m";
+    const readable = "OpenAI Codex (v0.142.5)\n\x1b[39m\x1b[38;2;214;216;221;48;2;48;54;61mprompt\x1b[38;2;214;216;221;49m";
+
+    const first = await handler.open({ ws, session: "main", fromSeq: 0 });
+    pty.emitData(raw);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    first.onClose();
+
+    expect(ws.sent).toContainEqual({ type: "output", seq: 0, data: readable });
+    expect(append).toHaveBeenCalledWith("main", [{ type: "output", seq: 0, data: readable }]);
+
+    const replayWs = socket();
+    const second = await handler.open({ ws: replayWs, session: "main", fromSeq: 0 });
+    second.onClose();
+
+    expect(replayWs.sent).toContainEqual({ type: "output", seq: 0, data: readable });
+    expect(replayWs.sent).not.toContainEqual({ type: "output", seq: 0, data: raw });
+  });
+
   it("rewrites persisted Codex replay and keeps detection active for later live output", async () => {
     const pty = new FakePty();
     const ws = socket();

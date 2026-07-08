@@ -3,6 +3,8 @@ import { createTerminalOutputCompatStream } from "../../packages/gateway/src/ter
 
 const READABLE_PROMPT = "\x1b[38;2;214;216;221;48;2;48;54;61mprompt\x1b[39;49m";
 const RAW_PROMPT = "\x1b[7mprompt\x1b[27m";
+const RAW_EXPLICIT_PROMPT_BG = "\x1b[39m\x1b[48;2;240;240;239mprompt\x1b[39;49m";
+const READABLE_EXPLICIT_PROMPT_BG = "\x1b[39m\x1b[38;2;214;216;221;48;2;48;54;61mprompt\x1b[38;2;214;216;221;49m";
 
 describe("terminal output compatibility stream", () => {
   it("leaves ordinary reverse-video output unchanged before Codex detection", () => {
@@ -17,6 +19,12 @@ describe("terminal output compatibility stream", () => {
     expect(stream.write(RAW_PROMPT)).toBe(READABLE_PROMPT);
   });
 
+  it("rewrites Codex prompt rows with explicit light RGB backgrounds immediately", () => {
+    const stream = createTerminalOutputCompatStream({ sessionName: "codex-backend" });
+
+    expect(stream.write(RAW_EXPLICIT_PROMPT_BG)).toBe(READABLE_EXPLICIT_PROMPT_BG);
+  });
+
   it("detects manual Codex launches from a later banner chunk", () => {
     const stream = createTerminalOutputCompatStream({ sessionName: "main" });
 
@@ -25,11 +33,27 @@ describe("terminal output compatibility stream", () => {
     expect(stream.write(RAW_PROMPT)).toBe(READABLE_PROMPT);
   });
 
+  it("rewrites explicit light prompt backgrounds only after manual Codex detection", () => {
+    const stream = createTerminalOutputCompatStream({ sessionName: "main" });
+
+    expect(stream.write(RAW_EXPLICIT_PROMPT_BG)).toBe(RAW_EXPLICIT_PROMPT_BG);
+    expect(stream.write("OpenAI Codex (v0.142.5)\n")).toBe("OpenAI Codex (v0.142.5)\n");
+    expect(stream.write(RAW_EXPLICIT_PROMPT_BG)).toBe(READABLE_EXPLICIT_PROMPT_BG);
+  });
+
   it("detects Codex and rewrites reverse video in the same chunk", () => {
     const stream = createTerminalOutputCompatStream({ sessionName: "main" });
 
     expect(stream.write(`OpenAI Codex (v0.142.5)\n${RAW_PROMPT}`)).toBe(
       `OpenAI Codex (v0.142.5)\n${READABLE_PROMPT}`,
+    );
+  });
+
+  it("detects Codex and rewrites explicit light prompt backgrounds in the same chunk", () => {
+    const stream = createTerminalOutputCompatStream({ sessionName: "main" });
+
+    expect(stream.write(`OpenAI Codex (v0.142.5)\n${RAW_EXPLICIT_PROMPT_BG}`)).toBe(
+      `OpenAI Codex (v0.142.5)\n${READABLE_EXPLICIT_PROMPT_BG}`,
     );
   });
 
@@ -49,6 +73,29 @@ describe("terminal output compatibility stream", () => {
     expect(stream.write("7")).toBe("");
     expect(stream.write("mprompt\x1b[2")).toBe("\x1b[38;2;214;216;221;48;2;48;54;61mprompt");
     expect(stream.write("7m")).toBe("\x1b[39;49m");
+  });
+
+  it("handles chunked explicit light RGB background SGR once Codex compatibility is active", () => {
+    const stream = createTerminalOutputCompatStream({ sessionName: "codex-backend" });
+
+    expect(stream.write("\x1b[48;2;240;")).toBe("");
+    expect(stream.write("240;239mprompt\x1b[39m")).toBe(
+      "\x1b[38;2;214;216;221;48;2;48;54;61mprompt\x1b[38;2;214;216;221m",
+    );
+  });
+
+  it("keeps non-Codex explicit light RGB backgrounds unchanged", () => {
+    const stream = createTerminalOutputCompatStream({ sessionName: "main" });
+
+    expect(stream.write(RAW_EXPLICIT_PROMPT_BG)).toBe(RAW_EXPLICIT_PROMPT_BG);
+  });
+
+  it("preserves explicit non-default foregrounds set with prompt background", () => {
+    const stream = createTerminalOutputCompatStream({ sessionName: "codex-backend" });
+
+    expect(stream.write("\x1b[32;48;2;240;240;239mselected\x1b[39mstill band")).toBe(
+      "\x1b[32;48;2;48;54;61mselected\x1b[38;2;214;216;221mstill band",
+    );
   });
 
   it("restores the pre-reverse color state when reverse video turns off", () => {
