@@ -162,6 +162,7 @@ export default function AgentThreadRoute() {
         ...savedState,
         mode: "terminal",
         lastActiveTerminalSessionId: boundTerminalSessionId,
+        terminalHandoffSessionId: boundTerminalSessionId,
         updatedAt: new Date().toISOString(),
       });
     } catch {
