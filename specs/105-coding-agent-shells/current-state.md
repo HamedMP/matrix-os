@@ -245,7 +245,7 @@ Renderer:
 
 Current behavior:
 
-- Read-only dashboard renders providers, gateway-owned attention threads, active threads, and terminals. The desktop command palette opens the same Agents tab through the existing tab store when the desktop coding-agent workspace flag is enabled.
+- Read-only dashboard renders providers, gateway-owned attention threads, active threads, and terminals. The desktop command palette and app menu open the same Agents tab through the existing tab store when the desktop coding-agent workspace flag is enabled.
 - Notification controls render approval, input, and failed-run attention push preferences, load them through trusted IPC, and submit full replacement updates through trusted IPC with generic error states.
 - Attention thread rows read only from `RuntimeSummarySchema.attentionThreads`, show safe attention labels such as approval/input/failed, and open the existing bounded thread detail path through trusted IPC.
 - Active thread rows with a matching attachable `terminalSessionId` can open the existing desktop Terminal tab for that canonical session; stale or unavailable terminal bindings do not render an action.
