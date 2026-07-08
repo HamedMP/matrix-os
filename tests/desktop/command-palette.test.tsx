@@ -3,6 +3,11 @@
 import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../../desktop/src/renderer/src/lib/feature-flags", () => ({
+  CODING_AGENTS_DESKTOP_WORKSPACE: true,
+}));
+
 import CommandPalette from "../../desktop/src/renderer/src/features/palette/CommandPalette";
 import { useApps } from "../../desktop/src/renderer/src/stores/apps";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
@@ -80,6 +85,20 @@ describe("CommandPalette", () => {
       kind: "terminal",
       sessionName: "matrix-main",
       title: "matrix-main",
+    });
+  });
+
+  it("opens the coding-agent workspace from the command palette", async () => {
+    const openTab = vi.fn();
+    useTabs.setState({ openTab });
+
+    render(<CommandPalette />);
+
+    fireEvent.click(screen.getByText("Open Agents"));
+
+    expect(openTab).toHaveBeenCalledWith({
+      kind: "agents",
+      title: "Agents",
     });
   });
 });
