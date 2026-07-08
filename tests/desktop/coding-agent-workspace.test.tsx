@@ -736,7 +736,7 @@ describe("AgentWorkspace", () => {
             eventId: "evt_desktop_tool_completed",
             threadId: "thread_alpha",
             toolCallId: "tool_desktop_grouped",
-            outcome: "success",
+            outcome: "failed",
             occurredAt: "2026-07-06T00:02:30.000Z",
           },
           {
@@ -774,11 +774,13 @@ describe("AgentWorkspace", () => {
     expect(screen.getByText("2 text updates received, complete")).toBeTruthy();
     expect(screen.queryByText("Assistant message complete")).toBeNull();
     expect(screen.getByText("Tool activity")).toBeTruthy();
-    expect(screen.getByText("Read completed successfully after receiving output")).toBeTruthy();
+    expect(screen.getByText("Read completed with errors after receiving output")).toBeTruthy();
     expect(screen.queryByText("Tool output")).toBeNull();
     expect(screen.queryByText("msg_desktop_grouped")).toBeNull();
     expect(screen.queryByText("tool_desktop_grouped")).toBeNull();
     expect(screen.queryByText(/home\/matrix|token|secret local output|private credentials/i)).toBeNull();
+    const bodyText = document.body.textContent ?? "";
+    expect(bodyText.indexOf("Assistant message")).toBeLessThan(bodyText.indexOf("Tool activity"));
   });
 
   it("hydrates and updates notification preferences through trusted IPC", async () => {

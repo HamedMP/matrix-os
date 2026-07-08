@@ -785,10 +785,6 @@ function createThreadTimelineItems(events: AgentThreadEvent[]): ThreadTimelineIt
       const group = assistantGroups.get(event.messageId);
       if (group) {
         group.push(event);
-        const item = items.find((candidate) => candidate.kind === "assistant" && candidate.key === `assistant:${event.messageId}`);
-        if (item && (event.type === "assistant.text.completed" || !group.some((assistantEvent) => assistantEvent.type === "assistant.text.completed"))) {
-          item.order = order;
-        }
         continue;
       }
       const eventsForMessage = [event];
@@ -800,10 +796,6 @@ function createThreadTimelineItems(events: AgentThreadEvent[]): ThreadTimelineIt
       const group = toolGroups.get(event.toolCallId);
       if (group) {
         group.push(event);
-        const item = items.find((candidate) => candidate.kind === "tool" && candidate.key === `tool:${event.toolCallId}`);
-        if (item && (event.type === "tool.completed" || !group.some((toolEvent) => toolEvent.type === "tool.completed"))) {
-          item.order = order;
-        }
         continue;
       }
       const eventsForTool = [event];
@@ -859,7 +851,7 @@ function describeToolTimeline(events: ToolTimelineEvent[]): { title: string; det
 
 function describeToolOutcome(outcome: string): string {
   if (outcome === "success") return "successfully";
-  if (outcome === "error") return "with errors";
+  if (outcome === "failed") return "with errors";
   if (outcome === "cancelled") return "cancelled";
   return outcome.replace(/_/g, " ");
 }
