@@ -6,8 +6,10 @@ jest.mock("@/lib/feature-flags", () => ({
   CODING_AGENTS_MOBILE_WORKSPACE: true,
 }));
 
-jest.mock("@react-navigation/elements", () => ({
-  useHeaderHeight: () => 88,
+let mockSafeAreaInsets = { top: 24, right: 0, bottom: 0, left: 0 };
+
+jest.mock("react-native-safe-area-context", () => ({
+  useSafeAreaInsets: () => mockSafeAreaInsets,
 }));
 
 const mockRouterPush = jest.fn();
@@ -128,6 +130,7 @@ describe("AgentComposerScreen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockSearchParams = {};
+    mockSafeAreaInsets = { top: 24, right: 0, bottom: 0, left: 0 };
   });
 
   it("requires a prompt before creating a run", async () => {
@@ -499,7 +502,7 @@ describe("AgentComposerScreen", () => {
     const view = render(<AgentComposerScreen />);
 
     expect(await screen.findByLabelText("Agent composer keyboard area")).toBeTruthy();
-    expect(view.UNSAFE_getByType(KeyboardAvoidingView).props.keyboardVerticalOffset).toBe(88);
+    expect(view.UNSAFE_getByType(KeyboardAvoidingView).props.keyboardVerticalOffset).toBe(24);
     expect(screen.getByLabelText("Agent run prompt")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Start run" })).toBeTruthy();
   });
