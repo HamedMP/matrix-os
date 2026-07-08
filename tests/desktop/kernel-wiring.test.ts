@@ -13,6 +13,49 @@ type MockKernelSocket = {
   dispose: ReturnType<typeof vi.fn>;
 };
 
+function codingAgentAttentionSummaryFixture() {
+  return {
+    runtime: { id: "rt_primary", label: "Primary", status: "available" },
+    capabilities: [],
+    providers: [],
+    projects: { items: [], hasMore: false, limit: 20 },
+    activeThreads: { items: [], hasMore: false, limit: 20 },
+    attentionThreads: {
+      items: [
+        {
+          id: "thread_approval",
+          providerId: "codex",
+          title: "Approve deployment",
+          status: "waiting_for_approval",
+          attention: "approval_required",
+          createdAt: "2026-07-06T00:00:00.000Z",
+          updatedAt: "2026-07-06T00:01:00.000Z",
+        },
+        {
+          id: "thread_failed",
+          providerId: "codex",
+          title: "Repair failed run",
+          status: "failed",
+          attention: "failed",
+          createdAt: "2026-07-06T00:00:00.000Z",
+          updatedAt: "2026-07-06T00:02:00.000Z",
+        },
+      ],
+      hasMore: false,
+      limit: 20,
+    },
+    terminalSessions: { items: [], hasMore: false, limit: 20 },
+    recentActivity: { items: [], hasMore: false, limit: 20 },
+    limits: {
+      maxPromptBytes: 16384,
+      maxAttachmentCount: 8,
+      maxTerminalInputBytes: 8192,
+      maxListItems: 20,
+    },
+    serverTime: "2026-07-06T00:03:00.000Z",
+  };
+}
+
 const kernelSocketMocks = vi.hoisted(() => ({
   instances: [] as MockKernelSocket[],
 }));
@@ -83,6 +126,48 @@ describe("kernel wiring", () => {
     expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_alpha");
     const tabs = useTabs.getState();
     expect(tabs.tabs.find((tab) => tab.id === tabs.activeTabId)?.kind).toBe("agents");
+
+    cleanup();
+  });
+
+  it("includes gateway-owned coding-agent attention in the desktop badge count", () => {
+    const cleanup = wireKernel();
+    const invoke = window.operator.invoke as ReturnType<typeof vi.fn>;
+
+    useCodingAgentWorkspace.setState({
+      summary: codingAgentAttentionSummaryFixture(),
+    });
+
+    expect(invoke).toHaveBeenLastCalledWith("badge:set", { count: 2 });
+
+    useCodingAgentWorkspace.setState({
+      summary: {
+        ...codingAgentAttentionSummaryFixture(),
+        attentionThreads: { items: [], hasMore: false, limit: 20 },
+      },
+    });
+
+    expect(invoke).toHaveBeenLastCalledWith("badge:set", { count: 0 });
+
+    cleanup();
+  });
+
+  it("uses the desktop badge cap for truncated coding-agent attention summaries", () => {
+    const cleanup = wireKernel();
+    const invoke = window.operator.invoke as ReturnType<typeof vi.fn>;
+    const summary = codingAgentAttentionSummaryFixture();
+
+    useCodingAgentWorkspace.setState({
+      summary: {
+        ...summary,
+        attentionThreads: {
+          ...summary.attentionThreads,
+          hasMore: true,
+        },
+      },
+    });
+
+    expect(invoke).toHaveBeenLastCalledWith("badge:set", { count: 999 });
 
     cleanup();
   });
