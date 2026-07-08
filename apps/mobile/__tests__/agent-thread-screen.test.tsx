@@ -17,11 +17,12 @@ jest.mock("expo-router", () => ({
 
 import React from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Text } from "react-native";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import AgentThreadRoute from "../app/agents/[threadId]";
 import { useGateway } from "@/app/_layout";
 import { MOBILE_SHELL_STATE_STORAGE_KEY } from "../lib/mobile-shell-state";
-import type { GatewayClient } from "../lib/gateway-client";
+import type { CodingAgentThreadEventSubscriptionOptions, GatewayClient } from "../lib/gateway-client";
 
 const useGatewayMock = useGateway as jest.MockedFunction<typeof useGateway>;
 type GatewayContextValue = ReturnType<typeof useGateway>;
@@ -292,6 +293,301 @@ describe("AgentThreadRoute", () => {
     expect(screen.getAllByText("matrix-abc1234").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("2 events")).toBeTruthy();
     expect(client.getCodingAgentThreadSnapshot).toHaveBeenCalledWith({ threadId: "thread_mobile" });
+  });
+
+  it("merges bounded live thread stream events into the timeline", async () => {
+    let streamOptions: CodingAgentThreadEventSubscriptionOptions | null = null;
+    const detach = jest.fn();
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: threadSnapshotFixture(),
+      }),
+      subscribeCodingAgentThreadEvents: jest.fn().mockImplementation((options: CodingAgentThreadEventSubscriptionOptions) => {
+        streamOptions = options;
+        return Promise.resolve({ detach });
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Repair mobile route")).toBeTruthy();
+    await waitFor(() => {
+      expect(client.subscribeCodingAgentThreadEvents).toHaveBeenCalledWith(expect.objectContaining({
+        threadId: "thread_mobile",
+        onEvent: expect.any(Function),
+      }));
+    });
+
+    await act(async () => {
+      streamOptions?.onEvent({
+        eventId: "evt_mobile_stream_1",
+        threadId: "thread_mobile",
+        type: "assistant.text.delta",
+        messageId: "msg_mobile_stream_1",
+        delta: "Reading /home/matrix/secret and token_sk_live_123.",
+        occurredAt: "2026-07-06T00:02:00.000Z",
+      });
+    });
+
+    expect(screen.getByText("3 events")).toBeTruthy();
+    expect(screen.getByText("Assistant update")).toBeTruthy();
+    expect(screen.getByText("Text update received")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("applies live thread stream events to safe thread metadata", async () => {
+    let streamOptions: CodingAgentThreadEventSubscriptionOptions | null = null;
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: threadSnapshotFixture(),
+      }),
+      subscribeCodingAgentThreadEvents: jest.fn().mockImplementation((options: CodingAgentThreadEventSubscriptionOptions) => {
+        streamOptions = options;
+        return Promise.resolve({ detach: jest.fn() });
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Repair mobile route")).toBeTruthy();
+    await waitFor(() => expect(streamOptions).not.toBeNull());
+
+    await act(async () => {
+      streamOptions?.onEvent({
+        eventId: "evt_mobile_terminal_stream",
+        threadId: "thread_mobile",
+        type: "terminal.bound",
+        terminalSessionId: "matrix-new5678",
+        occurredAt: "2026-07-06T00:02:00.000Z",
+      });
+      streamOptions?.onEvent({
+        eventId: "evt_mobile_completed_stream",
+        threadId: "thread_mobile",
+        type: "thread.completed",
+        outcome: "completed",
+        occurredAt: "2026-07-06T00:03:00.000Z",
+      });
+    });
+
+    expect(screen.getAllByText("completed").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("matrix-new5678").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("2026-07-06T00:03:00.000Z")).toBeTruthy();
+  });
+
+  it("keeps the thread visible with a generic error when stream startup fails", async () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: threadSnapshotFixture(),
+      }),
+      subscribeCodingAgentThreadEvents: jest.fn().mockRejectedValue(new Error("socket leaked /home/matrix/token")),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Repair mobile route")).toBeTruthy();
+    expect(await screen.findByText("Thread state unavailable")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|socket leaked/i)).toBeNull();
+    warnSpy.mockRestore();
+  });
+
+  it("orders live thread events by occurrence time instead of delivery order", async () => {
+    let streamOptions: CodingAgentThreadEventSubscriptionOptions | null = null;
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: threadSnapshotFixture(),
+      }),
+      subscribeCodingAgentThreadEvents: jest.fn().mockImplementation((options: CodingAgentThreadEventSubscriptionOptions) => {
+        streamOptions = options;
+        return Promise.resolve({ detach: jest.fn() });
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    const rendered = render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Repair mobile route")).toBeTruthy();
+    await waitFor(() => expect(streamOptions).not.toBeNull());
+
+    await act(async () => {
+      streamOptions?.onEvent({
+        eventId: "evt_mobile_late_complete",
+        threadId: "thread_mobile",
+        type: "thread.completed",
+        outcome: "completed",
+        occurredAt: "2026-07-06T00:04:00.000Z",
+      });
+      streamOptions?.onEvent({
+        eventId: "evt_mobile_early_approval",
+        threadId: "thread_mobile",
+        type: "approval.requested",
+        approval: {
+          approvalId: "appr_mobile_ordering",
+          threadId: "thread_mobile",
+          title: "Review streamed command",
+          safeDescription: "Review the streamed command before it runs.",
+          risk: "low",
+          actionKind: "command",
+          allowedDecisions: ["approve", "decline"],
+          correlationId: "corr_mobile_ordering",
+        },
+        occurredAt: "2026-07-06T00:02:00.000Z",
+      });
+    });
+
+    const textValues = rendered.UNSAFE_queryAllByType(Text)
+      .map((node) => node.props.children)
+      .filter((value): value is string => typeof value === "string");
+    expect(textValues.indexOf("Approval needed")).toBeLessThan(textValues.indexOf("Thread completed"));
+  });
+
+  it("keeps same-timestamp resolved approvals from reopening thread attention", async () => {
+    let streamOptions: CodingAgentThreadEventSubscriptionOptions | null = null;
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: threadSnapshotFixture(),
+      }),
+      subscribeCodingAgentThreadEvents: jest.fn().mockImplementation((options: CodingAgentThreadEventSubscriptionOptions) => {
+        streamOptions = options;
+        return Promise.resolve({ detach: jest.fn() });
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Repair mobile route")).toBeTruthy();
+    await waitFor(() => expect(streamOptions).not.toBeNull());
+
+    await act(async () => {
+      streamOptions?.onEvent({
+        eventId: "evt_a_resolved_same_time",
+        threadId: "thread_mobile",
+        type: "approval.resolved",
+        approvalId: "appr_mobile_same_time",
+        decision: "approve",
+        occurredAt: "2026-07-06T00:02:00.000Z",
+      });
+      streamOptions?.onEvent({
+        eventId: "evt_z_requested_same_time",
+        threadId: "thread_mobile",
+        type: "approval.requested",
+        approval: {
+          approvalId: "appr_mobile_same_time",
+          threadId: "thread_mobile",
+          title: "Same timestamp approval",
+          safeDescription: "Review same timestamp approval.",
+          risk: "low",
+          actionKind: "command",
+          allowedDecisions: ["approve", "decline"],
+          correlationId: "corr_mobile_same_time",
+        },
+        occurredAt: "2026-07-06T00:02:00.000Z",
+      });
+    });
+
+    expect(screen.queryByText("waiting for approval")).toBeNull();
+    expect(screen.queryByText("Review the request and choose a safe decision.")).toBeNull();
+    expect(screen.queryByLabelText("Approve Same timestamp approval")).toBeNull();
+  });
+
+  it("keeps existing blocked attention when unrelated live events arrive outside the request window", async () => {
+    let streamOptions: CodingAgentThreadEventSubscriptionOptions | null = null;
+    const snapshot = attentionThreadSnapshotFixture("approval_required");
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot,
+      }),
+      subscribeCodingAgentThreadEvents: jest.fn().mockImplementation((options: CodingAgentThreadEventSubscriptionOptions) => {
+        streamOptions = options;
+        return Promise.resolve({ detach: jest.fn() });
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Approval needed")).toBeTruthy();
+    await waitFor(() => expect(streamOptions).not.toBeNull());
+
+    await act(async () => {
+      streamOptions?.onEvent({
+        eventId: "evt_mobile_unrelated_stream",
+        threadId: "thread_mobile",
+        type: "assistant.text.delta",
+        messageId: "msg_mobile_unrelated_stream",
+        delta: "Still working.",
+        occurredAt: "2026-07-06T00:03:00.000Z",
+      });
+    });
+
+    expect(screen.getByText("waiting for approval")).toBeTruthy();
+    expect(screen.getByText("Review the request and choose a safe decision.")).toBeTruthy();
+  });
+
+  it("applies late resolution events as running summary state", async () => {
+    let streamOptions: CodingAgentThreadEventSubscriptionOptions | null = null;
+    const snapshot = attentionThreadSnapshotFixture("failed");
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot,
+      }),
+      subscribeCodingAgentThreadEvents: jest.fn().mockImplementation((options: CodingAgentThreadEventSubscriptionOptions) => {
+        streamOptions = options;
+        return Promise.resolve({ detach: jest.fn() });
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Run failed")).toBeTruthy();
+    await waitFor(() => expect(streamOptions).not.toBeNull());
+
+    await act(async () => {
+      streamOptions?.onEvent({
+        eventId: "evt_mobile_late_resolution",
+        threadId: "thread_mobile",
+        type: "approval.resolved",
+        approvalId: "appr_mobile_late_resolution",
+        decision: "approve",
+        occurredAt: "2026-07-06T00:03:00.000Z",
+      });
+    });
+
+    expect(screen.getAllByText("running").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("Run failed")).toBeNull();
   });
 
   it("opens the bound terminal through the existing terminal tab and safe resume state", async () => {
