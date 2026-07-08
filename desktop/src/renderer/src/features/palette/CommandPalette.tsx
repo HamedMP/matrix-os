@@ -1,6 +1,6 @@
 import { Command } from "cmdk";
 import { useEffect, useState } from "react";
-import type { AgentProviderSummary, AgentThreadSummary, ReviewSummary, SafeSetupAction } from "@matrix-os/contracts";
+import type { AgentProviderSummary, AgentThreadSummary, ReviewSummary, SafeSetupAction, TerminalSessionSummary } from "@matrix-os/contracts";
 import { Bot, ClipboardCheck, GitBranch, Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, Sparkles, SquareTerminal } from "lucide-react";
 import { appIconUrl, useApps } from "../../stores/apps";
 import { useBoard } from "../../stores/board";
@@ -17,9 +17,10 @@ const EMPTY_REVIEWS: ReviewSummary[] = [];
 const EMPTY_PROVIDERS: AgentProviderSummary[] = [];
 const MAX_PALETTE_REVIEWS = 10;
 const MAX_PALETTE_THREADS = 20;
+const MAX_PALETTE_TERMINALS = 20;
 const MAX_PALETTE_SETUP_ACTIONS = 10;
 const TERMINAL_REVIEW_STATUSES: ReviewSummary["status"][] = ["approved", "converged", "stopped"];
-const SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
+const SESSION_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?$/;
 const SETUP_DISCONNECTED_ERROR = "Connect to your Matrix computer before opening setup.";
 const SETUP_TERMINAL_ERROR = "Could not open setup terminal. Try again from Terminal.";
 
@@ -63,6 +64,28 @@ function paletteThreadCommands(summary: { activeThreads: { items: AgentThreadSum
     seen.add(thread.id);
     commands.push(thread);
     if (commands.length >= MAX_PALETTE_THREADS) break;
+  }
+  return commands;
+}
+
+function paletteTerminalCommands(
+  summary: { terminalSessions?: { items: TerminalSessionSummary[] } } | null,
+  shellSessions: Array<{ name: string }>,
+): TerminalSessionSummary[] {
+  if (!summary?.terminalSessions) return [];
+  const shellSessionNames = new Set(shellSessions.map((session) => session.name));
+  const commands: TerminalSessionSummary[] = [];
+  const seen = new Set<string>();
+  for (const session of summary.terminalSessions.items) {
+    if (
+      !session.attachable
+      || !SESSION_NAME_PATTERN.test(session.name)
+      || shellSessionNames.has(session.name)
+      || seen.has(session.name)
+    ) continue;
+    seen.add(session.name);
+    commands.push(session);
+    if (commands.length >= MAX_PALETTE_TERMINALS) break;
   }
   return commands;
 }
@@ -184,6 +207,7 @@ export default function CommandPalette() {
   const otherTabs = tabs.filter((t) => t.id !== activeTabId);
   const reviewCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteReviewCommands(reviews?.items ?? EMPTY_REVIEWS) : EMPTY_REVIEWS;
   const threadCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteThreadCommands(summary) : [];
+  const terminalCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteTerminalCommands(summary, shellSessions) : [];
   const setupCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? providerSetupCommands(summary?.providers ?? EMPTY_PROVIDERS) : [];
 
   const run = (fn: () => void) => {
@@ -353,6 +377,21 @@ export default function CommandPalette() {
                       openTab(AGENTS_WORKSPACE_TAB_SPEC);
                       void loadThreadSnapshot(thread.id);
                     })
+                  }
+                />
+              ))}
+            </Command.Group>
+          ) : null}
+
+          {terminalCommands.length > 0 ? (
+            <Command.Group heading="Agent terminals" style={{ color: "var(--text-tertiary)" }}>
+              {terminalCommands.map((session) => (
+                <PaletteItem
+                  key={session.id}
+                  icon={<SquareTerminal size={14} />}
+                  label={`Open terminal ${session.name}`}
+                  onSelect={() =>
+                    run(() => openTab({ kind: "terminal", sessionName: session.name, title: session.name }))
                   }
                 />
               ))}
