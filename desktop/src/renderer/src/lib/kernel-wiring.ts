@@ -38,6 +38,17 @@ function isTaskEvent(msg: KernelServerMessage): msg is BoardTaskEvent {
   );
 }
 
+function legacyThreadAttentionCount(): number {
+  return useThreads.getState().threads.reduce(
+    (sum, thread) => sum + (thread.unread || thread.status === "needs-attention" ? 1 : 0),
+    0,
+  );
+}
+
+function codingAgentAttentionCount(): number {
+  return useCodingAgentWorkspace.getState().summary?.attentionThreads.items.length ?? 0;
+}
+
 export function getKernelSocket(): KernelSocket | null {
   return socket;
 }
@@ -108,11 +119,8 @@ export function wireKernel(): () => void {
   });
 
   let lastBadge = -1;
-  const unsubscribeBadge = useThreads.subscribe((state) => {
-    const count = state.threads.reduce(
-      (sum, t) => sum + (t.unread || t.status === "needs-attention" ? 1 : 0),
-      0,
-    );
+  const updateBadge = () => {
+    const count = legacyThreadAttentionCount() + codingAgentAttentionCount();
     if (count !== lastBadge) {
       lastBadge = count;
       void invoke("badge:set", { count: Math.min(count, 999) }).catch((err: unknown) => {
@@ -122,7 +130,10 @@ export function wireKernel(): () => void {
         );
       });
     }
-  });
+  };
+  const unsubscribeBadge = useThreads.subscribe(updateBadge);
+  const unsubscribeCodingAgentBadge = useCodingAgentWorkspace.subscribe(updateBadge);
+  updateBadge();
 
   // Clicking a native notification focuses the thread in the Agents tab.
   const offNotificationClick = onEvent("notification:clicked", ({ threadId }) => {
@@ -139,6 +150,7 @@ export function wireKernel(): () => void {
     cleaned = true;
     unsubscribeMessages();
     unsubscribeBadge();
+    unsubscribeCodingAgentBadge();
     offNotificationClick();
     activeSocket.dispose();
     if (socket === activeSocket) socket = null;
