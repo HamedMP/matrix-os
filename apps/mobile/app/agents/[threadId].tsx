@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ActivityIndicator, AppState, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ReviewIdSchema, type AgentThreadEvent, type AgentThreadSnapshot, type AgentThreadSummary, type ApprovalDecisionRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
@@ -23,6 +24,23 @@ type TimelineItem =
   | { kind: "assistant"; key: string; events: AssistantTimelineEvent[]; order: number }
   | { kind: "event"; event: AgentThreadEvent; order: number }
   | { kind: "tool"; key: string; events: ToolTimelineEvent[]; order: number };
+type PendingAcceptedThreadAction = {
+  threadId: string;
+  snapshotKey: string;
+  inputRequestId: string | null;
+};
+
+function notifySuccessfulThreadAction(): void {
+  void Promise.resolve(Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success))
+    .catch((err: unknown) => {
+      console.warn("[mobile] thread action haptic failed", err instanceof Error ? err.message : String(err));
+    });
+}
+
+function threadSnapshotFeedbackKey(snapshot: AgentThreadSnapshot): string {
+  const lastEventId = snapshot.events.items.at(-1)?.eventId ?? "none";
+  return `${snapshot.thread.id}:${snapshot.thread.updatedAt}:${snapshot.events.items.length}:${lastEventId}`;
+}
 
 export default function AgentThreadRoute() {
   const { theme } = useUnistyles();
@@ -43,9 +61,28 @@ export default function AgentThreadRoute() {
   const streamSubscriptionRef = useRef<{ detach(): void } | null>(null);
   const streamGenerationRef = useRef(0);
   const pendingActionKeysRef = useRef<Record<string, true>>({});
+  const mountedRef = useRef(true);
+  const routeThreadIdRef = useRef(threadId);
+  const pendingAcceptedActionRef = useRef<PendingAcceptedThreadAction | null>(null);
+  routeThreadIdRef.current = threadId;
 
-  const invalidateSnapshotRequests = useCallback(() => {
-    requestGeneration.current += 1;
+  const applyThreadActionSnapshot = useCallback((
+    snapshot: AgentThreadSnapshot,
+    options: { inputRequestId?: string } = {},
+  ) => {
+    if (!mountedRef.current || routeThreadIdRef.current !== snapshot.thread.id) return;
+    setState((current) => {
+      if (!mountedRef.current || current.status !== "ready" || current.snapshot.thread.id !== snapshot.thread.id) {
+        return current;
+      }
+      requestGeneration.current += 1;
+      pendingAcceptedActionRef.current = {
+        threadId: snapshot.thread.id,
+        snapshotKey: threadSnapshotFeedbackKey(snapshot),
+        inputRequestId: options.inputRequestId ?? null,
+      };
+      return { ...current, snapshot, error: null, refreshing: false };
+    });
   }, []);
 
   const attachThreadStream = useCallback((snapshot: AgentThreadSnapshot) => {
@@ -139,7 +176,35 @@ export default function AgentThreadRoute() {
     };
   }, [client, loadSnapshot]);
 
+  useEffect(() => {
+    const pending = pendingAcceptedActionRef.current;
+    if (!pending) {
+      return;
+    }
+    if (routeThreadIdRef.current !== pending.threadId) {
+      pendingAcceptedActionRef.current = null;
+      return;
+    }
+    if (state.status !== "ready" || state.snapshot.thread.id !== pending.threadId) return;
+    if (threadSnapshotFeedbackKey(state.snapshot) !== pending.snapshotKey) {
+      pendingAcceptedActionRef.current = null;
+      return;
+    }
+    pendingAcceptedActionRef.current = null;
+    if (pending.inputRequestId) {
+      const inputRequestId = pending.inputRequestId;
+      setInputAnswers((current) => {
+        const next = { ...current };
+        delete next[inputRequestId];
+        return next;
+      });
+    }
+    notifySuccessfulThreadAction();
+  }, [state]);
+
   useEffect(() => () => {
+    mountedRef.current = false;
+    pendingAcceptedActionRef.current = null;
     streamGenerationRef.current += 1;
     streamSubscriptionRef.current?.detach();
     streamSubscriptionRef.current = null;
@@ -180,17 +245,14 @@ export default function AgentThreadRoute() {
       delete pendingActionKeysRef.current[actionGroupId];
     }
     if (result.ok) {
-      invalidateSnapshotRequests();
-      setState((current) => current.status === "ready"
-        ? { ...current, snapshot: result.snapshot, error: null, refreshing: false }
-        : current);
+      applyThreadActionSnapshot(result.snapshot);
       return;
     }
     setThreadActionErrors((current) => ({
       ...current,
       [actionId]: "Approval could not be sent. Try again.",
     }));
-  }, [client, invalidateSnapshotRequests, state]);
+  }, [applyThreadActionSnapshot, client, state]);
 
   const setInputAnswer = useCallback((requestId: string, answer: string) => {
     setInputAnswers((current) => ({
@@ -235,22 +297,14 @@ export default function AgentThreadRoute() {
       delete pendingActionKeysRef.current[actionGroupId];
     }
     if (result.ok) {
-      invalidateSnapshotRequests();
-      setInputAnswers((current) => {
-        const next = { ...current };
-        delete next[event.request.requestId];
-        return next;
-      });
-      setState((current) => current.status === "ready"
-        ? { ...current, snapshot: result.snapshot, error: null, refreshing: false }
-        : current);
+      applyThreadActionSnapshot(result.snapshot, { inputRequestId: event.request.requestId });
       return;
     }
     setThreadActionErrors((current) => ({
       ...current,
       [actionId]: "Input could not be sent. Try again.",
     }));
-  }, [client, inputAnswers, invalidateSnapshotRequests, state]);
+  }, [applyThreadActionSnapshot, client, inputAnswers, state]);
 
   const boundTerminalSessionId = state.status === "ready" ? state.snapshot.thread.terminalSessionId ?? null : null;
   const openBoundTerminal = useCallback(async () => {

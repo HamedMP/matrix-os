@@ -17,6 +17,7 @@ jest.mock("expo-router", () => ({
 
 import React from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Haptics from "expo-haptics";
 import { AppState, Text } from "react-native";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import AgentThreadRoute from "../app/agents/[threadId]";
@@ -71,6 +72,25 @@ function threadSnapshotFixture() {
       ],
       hasMore: false,
       limit: 200,
+    },
+  };
+}
+
+function otherThreadSnapshotFixture() {
+  return {
+    ...threadSnapshotFixture(),
+    thread: {
+      ...threadSnapshotFixture().thread,
+      id: "thread_other",
+      title: "Repair another route",
+      updatedAt: "2026-07-06T00:04:00.000Z",
+    },
+    events: {
+      ...threadSnapshotFixture().events,
+      items: threadSnapshotFixture().events.items.map((event) => ({
+        ...event,
+        threadId: "thread_other",
+      })),
     },
   };
 }
@@ -675,6 +695,7 @@ describe("AgentThreadRoute", () => {
       clientRequestId: expect.stringMatching(/^req_mobile_/),
     }));
     expect(await screen.findByText("Approval resolved")).toBeTruthy();
+    expect(Haptics.notificationAsync).toHaveBeenCalledWith(Haptics.NotificationFeedbackType.Success);
     expect(screen.queryByText("Run the focused mobile thread test command.")).toBeNull();
   });
 
@@ -746,6 +767,154 @@ describe("AgentThreadRoute", () => {
     });
   });
 
+  it("does not confirm approval success after the thread route unmounts", async () => {
+    const pendingDecision = deferred<{ ok: true; snapshot: ReturnType<typeof approvalResolvedSnapshotFixture> }>();
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: approvalRequestedSnapshotFixture(),
+      }),
+      submitCodingAgentApprovalDecision: jest.fn().mockImplementation(() => pendingDecision.promise),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    const rendered = render(<AgentThreadRoute />);
+
+    expect(await screen.findByLabelText("Approve current action Run focused tests")).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Approve current action Run focused tests"));
+    });
+    rendered.unmount();
+
+    await act(async () => {
+      pendingDecision.resolve({ ok: true, snapshot: approvalResolvedSnapshotFixture() });
+      await pendingDecision.promise;
+    });
+
+    expect(Haptics.notificationAsync).not.toHaveBeenCalled();
+  });
+
+  it("does not confirm approval success after a newer route snapshot wins", async () => {
+    const nextRouteSnapshot = deferred<{ ok: true; snapshot: ReturnType<typeof otherThreadSnapshotFixture> }>();
+    const pendingDecision = deferred<{ ok: true; snapshot: ReturnType<typeof approvalResolvedSnapshotFixture> }>();
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          snapshot: approvalRequestedSnapshotFixture(),
+        })
+        .mockImplementationOnce(() => nextRouteSnapshot.promise),
+      submitCodingAgentApprovalDecision: jest.fn().mockImplementation(() => pendingDecision.promise),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    const rendered = render(<AgentThreadRoute />);
+
+    expect(await screen.findByLabelText("Approve current action Run focused tests")).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Approve current action Run focused tests"));
+    });
+
+    mockParams.threadId = "thread_other";
+    rendered.rerender(<AgentThreadRoute />);
+    await act(async () => {
+      nextRouteSnapshot.resolve({ ok: true, snapshot: otherThreadSnapshotFixture() });
+      await nextRouteSnapshot.promise;
+      pendingDecision.resolve({ ok: true, snapshot: approvalResolvedSnapshotFixture() });
+      await pendingDecision.promise;
+    });
+
+    expect(await screen.findByText("Repair another route")).toBeTruthy();
+    expect(Haptics.notificationAsync).not.toHaveBeenCalled();
+  });
+
+  it("does not confirm approval success when the route changes before accepted feedback runs", async () => {
+    const nextRouteSnapshot = deferred<{ ok: true; snapshot: ReturnType<typeof otherThreadSnapshotFixture> }>();
+    const pendingDecision = deferred<{ ok: true; snapshot: ReturnType<typeof approvalResolvedSnapshotFixture> }>();
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          snapshot: approvalRequestedSnapshotFixture(),
+        })
+        .mockImplementationOnce(() => nextRouteSnapshot.promise),
+      submitCodingAgentApprovalDecision: jest.fn().mockImplementation(() => pendingDecision.promise),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    const rendered = render(<AgentThreadRoute />);
+
+    expect(await screen.findByLabelText("Approve current action Run focused tests")).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Approve current action Run focused tests"));
+    });
+
+    await act(async () => {
+      pendingDecision.resolve({ ok: true, snapshot: approvalResolvedSnapshotFixture() });
+      await pendingDecision.promise;
+      mockParams.threadId = "thread_other";
+      rendered.rerender(<AgentThreadRoute />);
+      nextRouteSnapshot.resolve({ ok: true, snapshot: otherThreadSnapshotFixture() });
+      await nextRouteSnapshot.promise;
+    });
+
+    expect(await screen.findByText("Repair another route")).toBeTruthy();
+    expect(Haptics.notificationAsync).not.toHaveBeenCalled();
+  });
+
+  it("does not confirm approval success when a same-thread refresh wins before accepted feedback runs", async () => {
+    const refreshSnapshot = deferred<{ ok: true; snapshot: ReturnType<typeof threadSnapshotFixture> }>();
+    const pendingDecision = deferred<{ ok: true; snapshot: ReturnType<typeof approvalResolvedSnapshotFixture> }>();
+    const refreshedThread = {
+      ...threadSnapshotFixture(),
+      thread: {
+        ...threadSnapshotFixture().thread,
+        title: "Refreshed mobile route",
+        updatedAt: "2026-07-06T00:04:00.000Z",
+      },
+    };
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          snapshot: approvalRequestedSnapshotFixture(),
+        })
+        .mockImplementationOnce(() => refreshSnapshot.promise),
+      submitCodingAgentApprovalDecision: jest.fn().mockImplementation(() => pendingDecision.promise),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByLabelText("Approve current action Run focused tests")).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Approve current action Run focused tests"));
+    });
+
+    await act(async () => {
+      pendingDecision.resolve({ ok: true, snapshot: approvalResolvedSnapshotFixture() });
+      await pendingDecision.promise;
+      fireEvent.press(screen.getByLabelText("Refresh thread"));
+      refreshSnapshot.resolve({ ok: true, snapshot: refreshedThread });
+      await refreshSnapshot.promise;
+    });
+
+    expect(await screen.findByText("Refreshed mobile route")).toBeTruthy();
+    expect(Haptics.notificationAsync).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["approval_required", "Approval needed", "Review the request and choose a safe decision."],
     ["input_required", "Input needed", "Answer the prompt to keep this run moving."],
@@ -801,7 +970,77 @@ describe("AgentThreadRoute", () => {
       clientRequestId: expect.stringMatching(/^req_mobile_/),
     }));
     expect(await screen.findByText("Input answered")).toBeTruthy();
+    expect(Haptics.notificationAsync).toHaveBeenCalledWith(Haptics.NotificationFeedbackType.Success);
     expect(screen.queryByLabelText("Answer Clarify command")).toBeNull();
+  });
+
+  it("does not confirm input success after the thread route unmounts", async () => {
+    const pendingAnswer = deferred<{ ok: true; snapshot: ReturnType<typeof inputAnsweredSnapshotFixture> }>();
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: inputRequestedSnapshotFixture(),
+      }),
+      submitCodingAgentInputAnswer: jest.fn().mockImplementation(() => pendingAnswer.promise),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    const rendered = render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Input needed")).toBeTruthy();
+    fireEvent.changeText(screen.getByLabelText("Answer current action Clarify command"), "Run the focused mobile screen test.");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Send current action Clarify command"));
+    });
+    rendered.unmount();
+
+    await act(async () => {
+      pendingAnswer.resolve({ ok: true, snapshot: inputAnsweredSnapshotFixture() });
+      await pendingAnswer.promise;
+    });
+
+    expect(Haptics.notificationAsync).not.toHaveBeenCalled();
+  });
+
+  it("does not confirm input success after a newer route snapshot wins", async () => {
+    const nextRouteSnapshot = deferred<{ ok: true; snapshot: ReturnType<typeof otherThreadSnapshotFixture> }>();
+    const pendingAnswer = deferred<{ ok: true; snapshot: ReturnType<typeof inputAnsweredSnapshotFixture> }>();
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          snapshot: inputRequestedSnapshotFixture(),
+        })
+        .mockImplementationOnce(() => nextRouteSnapshot.promise),
+      submitCodingAgentInputAnswer: jest.fn().mockImplementation(() => pendingAnswer.promise),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    const rendered = render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Input needed")).toBeTruthy();
+    fireEvent.changeText(screen.getByLabelText("Answer current action Clarify command"), "Run the focused mobile screen test.");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Send current action Clarify command"));
+    });
+
+    mockParams.threadId = "thread_other";
+    rendered.rerender(<AgentThreadRoute />);
+    await act(async () => {
+      nextRouteSnapshot.resolve({ ok: true, snapshot: otherThreadSnapshotFixture() });
+      await nextRouteSnapshot.promise;
+      pendingAnswer.resolve({ ok: true, snapshot: inputAnsweredSnapshotFixture() });
+      await pendingAnswer.promise;
+    });
+
+    expect(await screen.findByText("Repair another route")).toBeTruthy();
+    expect(Haptics.notificationAsync).not.toHaveBeenCalled();
   });
 
   it("surfaces a current input action before the timeline", async () => {
