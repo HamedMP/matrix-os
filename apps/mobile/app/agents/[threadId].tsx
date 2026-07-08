@@ -3,7 +3,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ActivityIndicator, AppState, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type { AgentThreadEvent, AgentThreadSnapshot, AgentThreadSummary, ApprovalDecisionRequest } from "@matrix-os/contracts";
+import { ReviewIdSchema, type AgentThreadEvent, type AgentThreadSnapshot, type AgentThreadSummary, type ApprovalDecisionRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
 import { isSafeShellSessionName } from "@/lib/terminal-state";
@@ -288,6 +288,15 @@ export default function AgentThreadRoute() {
     });
   }, [router, state]);
 
+  const openReview = useCallback((event: Extract<AgentThreadEvent, { type: "review.ready" }>) => {
+    const parsedReviewId = ReviewIdSchema.safeParse(event.reviewId);
+    if (!parsedReviewId.success) return;
+    router.push({
+      pathname: "/agents",
+      params: { reviewId: parsedReviewId.data },
+    });
+  }, [router]);
+
   if (state.status === "loading") {
     return (
       <View style={styles.centered}>
@@ -423,6 +432,7 @@ export default function AgentThreadRoute() {
               onInputAnswerChange={setInputAnswer}
               onInputAnswerSubmit={submitInputAnswer}
               onApprovalDecision={submitApprovalDecision}
+              onOpenReview={openReview}
             />
           ))}
         </View>
@@ -734,6 +744,7 @@ function ThreadEventItem({
   onInputAnswerChange,
   onInputAnswerSubmit,
   onApprovalDecision,
+  onOpenReview,
 }: {
   event: AgentThreadEvent;
   pendingActionIds: Record<string, true>;
@@ -746,6 +757,7 @@ function ThreadEventItem({
     event: Extract<AgentThreadEvent, { type: "approval.requested" }>,
     decision: ApprovalDecisionRequest["decision"],
   ) => void;
+  onOpenReview: (event: Extract<AgentThreadEvent, { type: "review.ready" }>) => void;
 }) {
   const { theme } = useUnistyles();
   const copy = describeThreadEvent(event);
@@ -757,6 +769,18 @@ function ThreadEventItem({
       <View style={styles.eventText}>
         <Text style={styles.eventTitle}>{copy.title}</Text>
         <Text selectable style={styles.eventDetail}>{copy.detail}</Text>
+        {event.type === "review.ready" ? (
+          <View style={styles.inlineActionGroup}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open review from thread"
+              onPress={() => onOpenReview(event)}
+              style={styles.inlineSecondaryButton}
+            >
+              <Text style={styles.inlineSecondaryButtonText}>Open review</Text>
+            </Pressable>
+          </View>
+        ) : null}
         {event.type === "approval.requested" && !resolved ? (
           <View style={styles.inlineActionGroup}>
             {event.approval.allowedDecisions.map((decision) => {
