@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } 
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type { RuntimeSummary } from "@matrix-os/contracts";
+import type { ReviewSummary, RuntimeSummary } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 
@@ -14,6 +14,14 @@ type ScreenState =
 
 const INITIAL_STATE: ScreenState = { status: "loading", summary: null, error: null };
 
+type ReviewState =
+  | { status: "idle"; reviews: null; error: null }
+  | { status: "loading"; reviews: null; error: null }
+  | { status: "ready"; reviews: { items: ReviewSummary[]; hasMore: boolean; nextCursor?: string; limit: number }; error: null }
+  | { status: "error"; reviews: null; error: "Review state unavailable" };
+
+const INITIAL_REVIEW_STATE: ReviewState = { status: "idle", reviews: null, error: null };
+
 function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
   return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
 }
@@ -23,6 +31,7 @@ export default function AgentsScreen() {
   const router = useRouter();
   const { client } = useGateway();
   const [state, setState] = useState<ScreenState>(INITIAL_STATE);
+  const [reviewState, setReviewState] = useState<ReviewState>(INITIAL_REVIEW_STATE);
   const [refreshing, setRefreshing] = useState(false);
   const requestGeneration = useRef(0);
 
@@ -31,19 +40,34 @@ export default function AgentsScreen() {
     requestGeneration.current = generation;
     if (!CODING_AGENTS_MOBILE_WORKSPACE) {
       setState({ status: "error", summary: null, error: "Runtime summary unavailable" });
+      setReviewState(INITIAL_REVIEW_STATE);
       return;
     }
     if (!client) {
       setState({ status: "error", summary: null, error: "Runtime summary unavailable" });
+      setReviewState(INITIAL_REVIEW_STATE);
       return;
     }
     const result = await client.getCodingAgentRuntimeSummary();
     if (generation !== requestGeneration.current) return;
     if (result.ok) {
       setState({ status: "ready", summary: result.summary, error: null });
+      if (!capabilityEnabled(result.summary, "codingAgentsReview")) {
+        setReviewState(INITIAL_REVIEW_STATE);
+        return;
+      }
+      setReviewState((current) => (current.reviews ? current : { status: "loading", reviews: null, error: null }));
+      const reviewsResult = await client.getCodingAgentReviews();
+      if (generation !== requestGeneration.current) return;
+      if (reviewsResult.ok) {
+        setReviewState({ status: "ready", reviews: reviewsResult.reviews, error: null });
+        return;
+      }
+      setReviewState({ status: "error", reviews: null, error: "Review state unavailable" });
       return;
     }
     setState({ status: "error", summary: null, error: "Runtime summary unavailable" });
+    setReviewState(INITIAL_REVIEW_STATE);
   }, [client]);
 
   useEffect(() => {
@@ -158,7 +182,44 @@ export default function AgentsScreen() {
           </View>
         ))}
       </Section>
+
+      {capabilityEnabled(summary, "codingAgentsReview") ? <ReviewSection state={reviewState} /> : null}
     </ScrollView>
+  );
+}
+
+function reviewStatusLabel(status: ReviewSummary["status"]): string {
+  return status.replace(/_/g, " ");
+}
+
+function ReviewSection({ state }: { state: ReviewState }) {
+  const { theme } = useUnistyles();
+  const items = state.reviews?.items ?? [];
+
+  return (
+    <Section title="Review" count={items.length}>
+      {state.status === "error" ? <Text style={styles.reviewError}>{state.error}</Text> : null}
+      {items.length === 0 && state.status !== "loading" && state.status !== "error" ? <EmptyText>No reviews.</EmptyText> : null}
+      {items.map((review) => (
+        <View key={review.id} style={styles.row}>
+          <View style={styles.rowIcon}>
+            <Ionicons name="checkmark-done-outline" size={18} color={theme.colors.moss} />
+          </View>
+          <View style={styles.rowText}>
+            <Text style={styles.rowTitle}>{review.projectId}</Text>
+            <Text style={styles.rowSubtitle}>{`PR #${review.pullRequestNumber} - Round ${review.round} of ${review.maxRounds}`}</Text>
+          </View>
+          <View style={styles.reviewMeta}>
+            <Text style={styles.rowMeta}>{reviewStatusLabel(review.status)}</Text>
+            {review.findings ? (
+              <Text style={[styles.reviewHigh, review.findings.high > 0 ? styles.reviewHighActive : null]}>
+                {review.findings.high} high
+              </Text>
+            ) : null}
+          </View>
+        </View>
+      ))}
+    </Section>
   );
 }
 
@@ -333,6 +394,28 @@ const styles = StyleSheet.create((theme, rt) => ({
     fontSize: 12,
     color: theme.colors.moss,
     textTransform: "capitalize",
+  },
+  reviewMeta: {
+    alignItems: "flex-end",
+    gap: 2,
+  },
+  reviewHigh: {
+    fontFamily: theme.fonts.sansMedium,
+    fontSize: 12,
+    color: theme.colors.mutedForeground,
+  },
+  reviewHighActive: {
+    color: theme.colors.destructive,
+  },
+  reviewError: {
+    borderRadius: 14,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    padding: theme.spacing.md,
+    fontFamily: theme.fonts.sans,
+    color: theme.colors.destructive,
   },
   emptyText: {
     borderRadius: 14,

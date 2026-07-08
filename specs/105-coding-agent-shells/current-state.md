@@ -6,7 +6,7 @@
 
 ## Summary
 
-The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, and a desktop read-only review summary panel. File diff and preview coding-agent surfaces are contract-only or existing workspace routes; mobile review UI is not yet integrated into the coding-agent shell UI.
+The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, and desktop/mobile read-only review summary panels. File diff and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated diff and preview coding-agent shell UI is not yet integrated.
 
 Current source-of-truth boundaries:
 
@@ -221,6 +221,8 @@ Screen:
 - `apps/mobile/app/agents/new.tsx`
 - `apps/mobile/app/agents/[threadId].tsx`
 - Read-only phone-first dashboard with providers, active threads, and terminal sessions.
+- When the runtime advertises `codingAgentsReview`, the dashboard fetches bounded review summaries through the authenticated gateway client and renders project, PR, round, status, and high-severity count.
+- Safe generic review error state if review summaries are unavailable; review failures do not drop the runtime summary dashboard.
 - Composer route for creating accepted coding-agent threads; thread route is a bounded placeholder until replay/review surfaces are wired.
 - Flag: `apps/mobile/lib/feature-flags.ts` with `EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE === "1"`.
 
@@ -249,7 +251,7 @@ Relevant existing browser shell paths:
 
 Open follow-up: decide whether a browser-shell coding-agent entry belongs in Canvas, Developer mode, or both after desktop/mobile read-only shells settle.
 
-Public docs note: public docs remain deferred for this desktop review-summary slice because the cross-shell review flow still lacks mobile review UI, file diffs, and preview integration. Update `www/content/docs/` when the file/review/preview surfaces become stable in desktop, mobile, or browser shell navigation.
+Public docs note: public docs remain deferred for these review-summary slices because the cross-shell review flow still lacks file diffs and preview integration. Update `www/content/docs/` when the file/review/preview surfaces become stable in desktop, mobile, or browser shell navigation.
 
 ## Feature Flags
 
@@ -323,7 +325,7 @@ git diff --check
 ## Open Questions And Deferred Work
 
 - Session completion reconciliation: implemented for workspace `session.stopped` events that carry owner id, workspace session id, and bound `terminalSessionId`; the gateway thread store marks matching active coding-agent threads completed or failed server-side without matching unrelated owners or reused terminal ids. Remaining work: if runtime managers add autonomous process-exit detection beyond explicit workspace stop events, route those through the same `session.stopped` publisher path.
-- File/review/preview shell surfaces: read-only review summaries now have coding-agent contracts/routes/desktop IPC/mobile clients plus a desktop read-only review panel. File diffs, previews, and mobile review UI integration are not implemented yet.
+- File/review/preview shell surfaces: read-only review summaries now have coding-agent contracts/routes/desktop IPC/mobile clients plus desktop and mobile read-only review panels. File diffs and previews are not implemented yet.
 - Browser shell entry point: Canvas-first placement is still undecided.
 - Notifications/attention routing: desktop notification IPC exists, but thread attention notifications are not yet wired end-to-end from gateway events.
 - Public docs: public Matrix OS docs should be updated once the user-facing coding-agent shell flow is stable enough to document.
