@@ -17,6 +17,10 @@ type TerminalOpenError = "Terminal session unavailable. Try again.";
 type ThreadActionError =
   | "Approval could not be sent. Try again."
   | "Input could not be sent. Try again.";
+type ToolTimelineEvent = Extract<AgentThreadEvent, { type: "tool.started" | "tool.output" | "tool.completed" }>;
+type TimelineItem =
+  | { kind: "event"; event: AgentThreadEvent }
+  | { kind: "tool"; key: string; events: ToolTimelineEvent[] };
 
 export default function AgentThreadRoute() {
   const { theme } = useUnistyles();
@@ -281,6 +285,7 @@ export default function AgentThreadRoute() {
   }
 
   const { thread, events } = state.snapshot;
+  const timelineItems = createTimelineItems(events.items);
   const terminalSessionId = thread.terminalSessionId ?? "No terminal bound";
   const attention = threadAttentionCopy(thread.attention);
   const resolvedApprovalIds = new Set(events.items
@@ -366,16 +371,18 @@ export default function AgentThreadRoute() {
       {events.items.length > 0 ? (
         <View style={styles.timeline}>
           <Text style={styles.sectionTitle}>Activity timeline</Text>
-          {events.items.map((event) => (
+          {timelineItems.map((item) => item.kind === "tool" ? (
+            <ToolTimelineItem key={item.key} events={item.events} />
+          ) : (
             <ThreadEventItem
-              key={event.eventId}
-              event={event}
+              key={item.event.eventId}
+              event={item.event}
               pendingActionIds={pendingActionIds}
               actionErrors={threadActionErrors}
-              resolved={event.type === "approval.requested"
-                ? resolvedApprovalIds.has(event.approval.approvalId)
-                : event.type === "user_input.requested" && answeredInputRequestIds.has(event.request.requestId)}
-              inputAnswer={event.type === "user_input.requested" ? inputAnswers[event.request.requestId] ?? "" : ""}
+              resolved={item.event.type === "approval.requested"
+                ? resolvedApprovalIds.has(item.event.approval.approvalId)
+                : item.event.type === "user_input.requested" && answeredInputRequestIds.has(item.event.request.requestId)}
+              inputAnswer={item.event.type === "user_input.requested" ? inputAnswers[item.event.request.requestId] ?? "" : ""}
               onInputAnswerChange={setInputAnswer}
               onInputAnswerSubmit={submitInputAnswer}
               onApprovalDecision={submitApprovalDecision}
@@ -385,6 +392,30 @@ export default function AgentThreadRoute() {
       ) : null}
     </ScrollView>
   );
+}
+
+function createTimelineItems(events: AgentThreadEvent[]): TimelineItem[] {
+  const toolGroups = new Map<string, ToolTimelineEvent[]>();
+  const items: TimelineItem[] = [];
+  for (const event of events) {
+    if (isToolTimelineEvent(event)) {
+      const group = toolGroups.get(event.toolCallId);
+      if (group) {
+        group.push(event);
+        continue;
+      }
+      const eventsForTool = [event];
+      toolGroups.set(event.toolCallId, eventsForTool);
+      items.push({ kind: "tool", key: `tool:${event.toolCallId}`, events: eventsForTool });
+      continue;
+    }
+    items.push({ kind: "event", event });
+  }
+  return items;
+}
+
+function isToolTimelineEvent(event: AgentThreadEvent): event is ToolTimelineEvent {
+  return event.type === "tool.started" || event.type === "tool.output" || event.type === "tool.completed";
 }
 
 function mergeLiveThreadEvent(snapshot: AgentThreadSnapshot, event: AgentThreadEvent): AgentThreadSnapshot {
@@ -613,6 +644,44 @@ function ThreadEventItem({
   );
 }
 
+function ToolTimelineItem({ events }: { events: ToolTimelineEvent[] }) {
+  const { theme } = useUnistyles();
+  const copy = describeToolTimeline(events);
+  return (
+    <View style={styles.eventRow}>
+      <View style={styles.eventIcon}>
+        <Ionicons name={copy.icon} size={14} color={theme.colors.moss} />
+      </View>
+      <View style={styles.eventText}>
+        <Text style={styles.eventTitle}>{copy.title}</Text>
+        <Text selectable style={styles.eventDetail}>{copy.detail}</Text>
+      </View>
+    </View>
+  );
+}
+
+function describeToolTimeline(events: ToolTimelineEvent[]): { icon: keyof typeof Ionicons.glyphMap; title: string; detail: string } {
+  const started = events.find((event): event is Extract<ToolTimelineEvent, { type: "tool.started" }> => event.type === "tool.started");
+  const completed = events.findLast((event): event is Extract<ToolTimelineEvent, { type: "tool.completed" }> => event.type === "tool.completed");
+  const outputs = events.filter((event): event is Extract<ToolTimelineEvent, { type: "tool.output" }> => event.type === "tool.output");
+  const outputDetail = outputs.length > 0
+    ? outputs.some((event) => event.truncated) ? "partial output received" : "output received"
+    : "no output received";
+  const title = started?.displayName ?? "Tool activity";
+  if (!completed) {
+    return {
+      icon: "hammer-outline",
+      title,
+      detail: outputs.length > 0 ? `Running, ${outputDetail}` : "Running",
+    };
+  }
+  return {
+    icon: completed.outcome === "success" ? "checkmark-done-outline" : "warning-outline",
+    title,
+    detail: `${formatToolOutcome(completed.outcome)}, ${outputDetail}`,
+  };
+}
+
 function describeThreadEvent(event: AgentThreadEvent): { icon: keyof typeof Ionicons.glyphMap; title: string; detail: string } {
   switch (event.type) {
     case "thread.created":
@@ -662,6 +731,17 @@ function describeThreadEvent(event: AgentThreadEvent): { icon: keyof typeof Ioni
       };
     case "thread.completed":
       return { icon: "flag-outline", title: "Thread completed", detail: event.outcome };
+  }
+}
+
+function formatToolOutcome(outcome: Extract<ToolTimelineEvent, { type: "tool.completed" }>["outcome"]): string {
+  switch (outcome) {
+    case "success":
+      return "Completed successfully";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+      return "Cancelled";
   }
 }
 
