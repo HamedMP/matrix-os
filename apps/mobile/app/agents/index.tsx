@@ -63,6 +63,7 @@ type SourcePullRequestState =
 
 type FileReference = Pick<FileReadRequest, "projectId" | "worktreeId" | "path">;
 type FileBrowserStatus = "idle" | "loading" | "ready" | "error";
+type SummaryProvider = RuntimeSummary["providers"][number];
 type SummaryThread = RuntimeSummary["activeThreads"]["items"][number];
 type SummaryTerminalSession = RuntimeSummary["terminalSessions"]["items"][number];
 type TerminalOpenError = "Terminal session unavailable. Try again.";
@@ -238,6 +239,28 @@ function recentWorkItems(summary: RuntimeSummary): RecentWorkItem[] {
     ...threadItems.slice(0, threadLimit),
     ...terminalItems,
   ].slice(0, MAX_RECENT_WORK_ITEMS);
+}
+
+function providerStatusLabel(value: string): string {
+  return value.replace(/_/g, " ");
+}
+
+function providerNeedsSetup(provider: SummaryProvider): boolean {
+  const ready = provider.availability === "available"
+    && provider.installStatus === "installed"
+    && provider.authStatus === "authenticated";
+  if (ready) return false;
+  return provider.setupActions.length > 0
+    || provider.availability === "setup_required"
+    || provider.availability === "auth_required"
+    || provider.installStatus === "missing"
+    || provider.installStatus === "failed"
+    || provider.authStatus === "missing"
+    || provider.authStatus === "expired";
+}
+
+function setupRequiredProviders(summary: RuntimeSummary): SummaryProvider[] {
+  return summary.providers.filter(providerNeedsSetup);
 }
 
 function safeFindingSummary(summary: string): string {
@@ -866,6 +889,8 @@ export default function AgentsScreen() {
         onOpenTerminal={(session) => void openTerminalSession(session)}
       />
 
+      <ProviderSetupSection summary={summary} />
+
       <Section title="Providers" count={summary.providers.length}>
         {summary.providers.length === 0 ? <EmptyText>No providers are ready.</EmptyText> : null}
         {summary.providers.map((provider) => (
@@ -875,9 +900,9 @@ export default function AgentsScreen() {
             </View>
             <View style={styles.rowText}>
               <Text style={styles.rowTitle}>{provider.displayName}</Text>
-              <Text style={styles.rowSubtitle}>{provider.availability.replace(/_/g, " ")}</Text>
+              <Text style={styles.rowSubtitle}>{providerStatusLabel(provider.availability)}</Text>
             </View>
-            <Text style={styles.rowMeta}>{provider.authStatus.replace(/_/g, " ")}</Text>
+            <Text style={styles.rowMeta}>{providerStatusLabel(provider.authStatus)}</Text>
           </View>
         ))}
       </Section>
@@ -1083,6 +1108,45 @@ function RecentWorkSection({
         );
       })}
       {terminalOpenError ? <Text style={styles.notificationError}>{terminalOpenError}</Text> : null}
+    </Section>
+  );
+}
+
+function ProviderSetupSection({ summary }: { summary: RuntimeSummary }) {
+  const { theme } = useUnistyles();
+  const providers = setupRequiredProviders(summary);
+  if (providers.length === 0) return null;
+
+  return (
+    <Section title="Provider Setup" count={providers.length}>
+      {providers.map((provider) => (
+        <View
+          key={provider.id}
+          accessible
+          accessibilityLabel={`Provider setup needed for ${provider.displayName}, ${providerStatusLabel(provider.availability)}`}
+          style={styles.row}
+        >
+          <View style={styles.rowIcon}>
+            <Ionicons name="warning-outline" size={18} color={theme.colors.moss} />
+          </View>
+          <View style={styles.rowText}>
+            <Text style={styles.rowTitle}>{provider.displayName}</Text>
+            <Text style={styles.rowSubtitle}>
+              {`${providerStatusLabel(provider.availability)} - ${providerStatusLabel(provider.installStatus)} / ${providerStatusLabel(provider.authStatus)}`}
+            </Text>
+            {provider.setupActions.length > 0 ? (
+              <View style={styles.providerSetupActions}>
+                {provider.setupActions.map((action, index) => (
+                  <Text key={`${provider.id}:${index}:${action.id}:${action.kind}`} style={styles.attentionBadge}>
+                    {action.label}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+          </View>
+          <Text style={styles.rowMeta}>Setup</Text>
+        </View>
+      ))}
     </Section>
   );
 }
@@ -2081,6 +2145,11 @@ const styles = StyleSheet.create((theme, rt) => ({
     fontFamily: theme.fonts.sansSemiBold,
     fontSize: 11,
     color: theme.colors.moss,
+  },
+  providerSetupActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing.xs,
   },
   reviewError: {
     borderRadius: 14,
