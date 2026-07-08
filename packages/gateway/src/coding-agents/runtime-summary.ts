@@ -66,6 +66,7 @@ export interface CodingAgentRuntimeSummaryOptions {
     review?: boolean;
     preview?: boolean;
     files?: boolean;
+    sourceControl?: boolean;
   };
   terminalOwnerId?: string;
   now?: () => Date;
@@ -293,6 +294,7 @@ export function createCodingAgentRuntimeSummaryService(
       const reviewEnabled = options.capabilities?.review === true;
       const previewEnabled = Boolean(options.previews) && options.capabilities?.preview === true;
       const filesEnabled = options.capabilities?.files === true;
+      const sourceControlEnabled = options.capabilities?.sourceControl === true;
       const terminalEnabled = Boolean(options.terminalRegistry) &&
         canReadTerminalSessions(principal, options.terminalOwnerId);
 
@@ -313,6 +315,7 @@ export function createCodingAgentRuntimeSummaryService(
           capability({ id: "codingAgentsReview", enabled: reviewEnabled }),
           capability({ id: "codingAgentsPreview", enabled: previewEnabled }),
           capability({ id: "codingAgentsFiles", enabled: filesEnabled }),
+          capability({ id: "codingAgentsSourceControl", enabled: sourceControlEnabled }),
           capability({ id: "codingAgentsNativeMobileTerminal", enabled: terminalEnabled }),
         ],
         providers,

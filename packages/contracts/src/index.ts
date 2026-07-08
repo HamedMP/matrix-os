@@ -113,6 +113,7 @@ export const RuntimeCapabilityIdSchema = z.enum([
   "codingAgentsReview",
   "codingAgentsPreview",
   "codingAgentsFiles",
+  "codingAgentsSourceControl",
   "codingAgentsNativeMobileTerminal",
 ]);
 
@@ -722,6 +723,48 @@ export const FileWriteResponseSchema = z.object({
 }).strict();
 export type FileWriteRequest = z.infer<typeof FileWriteRequestSchema>;
 export type FileWriteResponse = z.infer<typeof FileWriteResponseSchema>;
+
+const SourceControlCommitShaSchema = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i, "Invalid commit sha");
+const SourceControlCommitMessageSchema = z.string()
+  .min(1)
+  .max(4096)
+  .refine((value) => value.trim().length > 0, { message: "Commit message is required" })
+  .refine((value) => !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(value), {
+    message: "Commit message contains unsupported characters",
+  });
+const SourceControlBranchSchema = z.string()
+  .min(1)
+  .max(1024)
+  .refine((value) => value === "detached" || (
+    !value.startsWith("/") &&
+    !value.endsWith("/") &&
+    !value.includes("//") &&
+    !value.includes("..") &&
+    !value.includes("@{") &&
+    !value.endsWith(".lock") &&
+    !/[~^:?*[\]\\\s\u0000-\u001F\u007F]/.test(value)
+  ), { message: "Invalid branch name" });
+
+export const SourceControlPrepareCommitRequestSchema = z.object({
+  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
+    message: "Invalid project id",
+  }),
+  worktreeId: WorktreeIdSchema,
+  message: SourceControlCommitMessageSchema,
+  paths: z.array(FilePathSchema).min(1).max(100).optional(),
+  clientRequestId: RequestIdSchema,
+}).strict();
+
+export const SourceControlPrepareCommitResponseSchema = z.object({
+  status: z.literal("committed"),
+  commitSha: SourceControlCommitShaSchema,
+  branch: SourceControlBranchSchema,
+  changedFileCount: z.number().int().min(1).max(1000),
+  safeMessage: SafeDisplayStringSchema,
+}).strict();
+
+export type SourceControlPrepareCommitRequest = z.infer<typeof SourceControlPrepareCommitRequestSchema>;
+export type SourceControlPrepareCommitResponse = z.infer<typeof SourceControlPrepareCommitResponseSchema>;
 
 export const ReviewFileDiffSchema = z.object({
   path: FilePathSchema,

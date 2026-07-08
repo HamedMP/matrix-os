@@ -21,6 +21,8 @@ import {
   ReviewIdSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
+  SourceControlPrepareCommitRequestSchema,
+  SourceControlPrepareCommitResponseSchema,
 } from "@matrix-os/contracts";
 import {
   isRequestPrincipalError,
@@ -43,12 +45,17 @@ import {
   CodingAgentFileWriteError,
   type CodingAgentFileStore,
 } from "./file-read.js";
+import {
+  CodingAgentSourceControlError,
+  type CodingAgentSourceControlStore,
+} from "./source-control.js";
 
 export interface CodingAgentRouteDeps {
   service: CodingAgentRuntimeSummaryService;
   threads?: CodingAgentThreadStore;
   reviews?: CodingAgentReviewSummaryStore;
   files?: CodingAgentFileStore;
+  sourceControl?: CodingAgentSourceControlStore;
   getPrincipal?: (c: Context) => RequestPrincipal;
 }
 
@@ -57,6 +64,7 @@ const THREAD_ABORT_BODY_LIMIT = 1024;
 const THREAD_APPROVAL_BODY_LIMIT = 8 * 1024;
 const THREAD_INPUT_BODY_LIMIT = 40 * 1024;
 const FILE_WRITE_BODY_LIMIT = 512 * 1024;
+const SOURCE_CONTROL_BODY_LIMIT = 256 * 1024;
 
 const AbortThreadBodySchema = z.object({
   clientRequestId: RequestIdSchema,
@@ -106,6 +114,31 @@ function filesUnavailable() {
   });
 }
 
+function sourceControlUnavailable() {
+  return SafeClientErrorSchema.parse({
+    code: "source_control_unavailable",
+    safeMessage: "Source control is temporarily unavailable. Try again.",
+    retryable: true,
+    recoveryActions: ["retry"],
+  });
+}
+
+function sourceControlNotFound() {
+  return SafeClientErrorSchema.parse({
+    code: "source_control_not_found",
+    safeMessage: "Source control is unavailable for this workspace. Refresh and try again.",
+    retryable: false,
+  });
+}
+
+function sourceControlNoChanges() {
+  return SafeClientErrorSchema.parse({
+    code: "source_control_no_changes",
+    safeMessage: "No source changes are ready to commit.",
+    retryable: false,
+  });
+}
+
 function reviewNotFound() {
   return SafeClientErrorSchema.parse({
     code: "review_not_found",
@@ -134,7 +167,7 @@ function fileConflict() {
 function bodyTooLarge() {
   return SafeClientErrorSchema.parse({
     code: "payload_too_large",
-    safeMessage: "Request is too large. Reduce the file content and try again.",
+    safeMessage: "Request is too large. Reduce the content and try again.",
     retryable: false,
   });
 }
@@ -176,6 +209,10 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
   const threadInputBodyLimit = bodyLimit({ maxSize: THREAD_INPUT_BODY_LIMIT });
   const fileWriteBodyLimit = bodyLimit({
     maxSize: FILE_WRITE_BODY_LIMIT,
+    onError: (c) => c.json({ error: bodyTooLarge() }, 413),
+  });
+  const sourceControlBodyLimit = bodyLimit({
+    maxSize: SOURCE_CONTROL_BODY_LIMIT,
     onError: (c) => c.json({ error: bodyTooLarge() }, 413),
   });
 
@@ -375,6 +412,38 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         }
         console.warn("[coding-agents] file write route failed:", err instanceof Error ? err.message : String(err));
         return c.json({ error: filesUnavailable() }, 503);
+      }
+    });
+  }
+
+  if (deps.sourceControl) {
+    app.post("/source-control/prepare-commit", sourceControlBodyLimit, async (c) => {
+      try {
+        const principal = principalFor(c);
+        const request = SourceControlPrepareCommitRequestSchema.parse(await c.req.json());
+        const response = SourceControlPrepareCommitResponseSchema.parse(
+          await deps.sourceControl!.prepareCommit(principal, request),
+        );
+        return c.json(response, 201);
+      } catch (err: unknown) {
+        if (isBodyLimitError(err)) {
+          return c.json({ error: bodyTooLarge() }, 413);
+        }
+        if (isRequestPrincipalError(err)) {
+          const mapped = mapRequestPrincipalError(err);
+          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+        }
+        if (err instanceof z.ZodError || err instanceof SyntaxError) {
+          return c.json({ error: validationFailed() }, 400);
+        }
+        if (err instanceof CodingAgentSourceControlError) {
+          if (err.code === "source_control_not_found") return c.json({ error: sourceControlNotFound() }, 404);
+          if (err.code === "source_control_no_changes") return c.json({ error: sourceControlNoChanges() }, 409);
+          if (err.code === "invalid_request") return c.json({ error: validationFailed() }, 400);
+          return c.json({ error: sourceControlUnavailable() }, 503);
+        }
+        console.warn("[coding-agents] source-control route failed:", err instanceof Error ? err.message : String(err));
+        return c.json({ error: sourceControlUnavailable() }, 503);
       }
     });
   }
