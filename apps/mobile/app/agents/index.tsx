@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { RuntimeSummary } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
@@ -13,8 +14,13 @@ type ScreenState =
 
 const INITIAL_STATE: ScreenState = { status: "loading", summary: null, error: null };
 
+function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
+  return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
+}
+
 export default function AgentsScreen() {
   const { theme } = useUnistyles();
+  const router = useRouter();
   const { client } = useGateway();
   const [state, setState] = useState<ScreenState>(INITIAL_STATE);
   const [refreshing, setRefreshing] = useState(false);
@@ -77,6 +83,7 @@ export default function AgentsScreen() {
   }
 
   const summary = state.summary;
+  const canCreate = capabilityEnabled(summary, "codingAgentsThreadCreate");
   return (
     <ScrollView
       style={styles.container}
@@ -91,6 +98,17 @@ export default function AgentsScreen() {
           <Text style={styles.title}>Agent workspace</Text>
           <Text style={styles.subtitle}>{summary.runtime.label}</Text>
         </View>
+        {canCreate ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="New run"
+            onPress={() => router.push("/agents/new" as any)}
+            style={styles.newRunButton}
+          >
+            <Ionicons name="add" size={18} color={theme.colors.background} />
+            <Text style={styles.newRunText}>New</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <Section title="Providers" count={summary.providers.length}>
@@ -229,6 +247,21 @@ const styles = StyleSheet.create((theme, rt) => ({
   headerText: {
     flex: 1,
     minWidth: 0,
+  },
+  newRunButton: {
+    minHeight: 38,
+    borderRadius: 19,
+    paddingHorizontal: theme.spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing.xs,
+    backgroundColor: theme.colors.forest,
+  },
+  newRunText: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 13,
+    color: theme.colors.background,
   },
   title: {
     fontFamily: theme.fonts.displaySemiBold,
