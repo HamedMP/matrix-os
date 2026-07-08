@@ -145,6 +145,7 @@ export interface RichPasteUploadClientOptions {
   token?: string;
   fetch?: typeof fetch;
   timeoutMs?: number;
+  cwd?: string;
 }
 
 export interface RichPasteInputSegment {
@@ -209,47 +210,47 @@ export function createRichPasteUploadClient(options: RichPasteUploadClientOption
 
   return {
     async uploadPasteAssets(input) {
-      const form = new FormData();
-      form.set("transactionId", input.transactionId);
-      for (const asset of input.assets) {
-        form.append(
-          "asset",
-          new Blob([Buffer.from(asset.bytes)], { type: asset.mimeType }),
-          asset.name,
-        );
-      }
-      const headers: Record<string, string> = {};
-      if (options.token) {
-        headers.Authorization = `Bearer ${options.token}`;
-      }
+      const uploaded: RemotePasteAsset[] = [];
+      for (const [index, asset] of input.assets.entries()) {
+        const headers: Record<string, string> = {
+          "Content-Type": asset.mimeType,
+          "X-Matrix-Filename": asset.name,
+        };
+        if (options.token) {
+          headers.Authorization = `Bearer ${options.token}`;
+        }
+        const body = Buffer.from(asset.bytes);
+        const query = options.cwd ? `?${new URLSearchParams({ cwd: options.cwd }).toString()}` : "";
 
-      let res: Response;
-      try {
-        res = await fetchImpl(
-          `${base}/api/terminal/sessions/${encodeURIComponent(input.sessionName)}/paste-assets`,
-          {
-            method: "POST",
-            headers,
-            body: form,
-            signal: AbortSignal.timeout(timeoutMs),
-          },
-        );
-      } catch (err: unknown) {
-        throw codedError("Image paste failed", "upload_failed", err);
-      }
+        let res: Response;
+        try {
+          res = await fetchImpl(
+            `${base}/api/terminal/sessions/${encodeURIComponent(input.sessionName)}/paste-assets${query}`,
+            {
+              method: "POST",
+              headers,
+              body,
+              signal: AbortSignal.timeout(timeoutMs),
+            },
+          );
+        } catch (err: unknown) {
+          throw codedError("Image paste failed", "upload_failed", err);
+        }
 
-      if (!res.ok) {
-        throw codedError("Image paste failed", "upload_failed");
-      }
+        if (!res.ok) {
+          throw codedError("Image paste failed", "upload_failed");
+        }
 
-      let payload: unknown;
-      try {
-        payload = await res.json();
-      } catch (err: unknown) {
-        throw codedError("Image paste failed", "upload_failed", err);
-      }
+        let payload: unknown;
+        try {
+          payload = await res.json();
+        } catch (err: unknown) {
+          throw codedError("Image paste failed", "upload_failed", err);
+        }
 
-      return parseUploadResponse(payload);
+        uploaded.push(parseUploadResponse(payload, index));
+      }
+      return uploaded;
     },
   };
 }
@@ -614,41 +615,31 @@ function sniffImageMimeType(bytes: Uint8Array): RichPasteImageMimeType | null {
   return null;
 }
 
-function parseUploadResponse(payload: unknown): RemotePasteAsset[] {
+function parseUploadResponse(payload: unknown, index: number): RemotePasteAsset {
   if (
     typeof payload !== "object" ||
-    payload === null ||
-    !("assets" in payload) ||
-    !Array.isArray((payload as { assets: unknown }).assets)
+    payload === null
   ) {
     throw codedError("Image paste failed", "upload_failed");
   }
 
-  const assets: RemotePasteAsset[] = [];
-  for (const item of (payload as { assets: unknown[] }).assets) {
-    if (typeof item !== "object" || item === null) {
-      throw codedError("Image paste failed", "upload_failed");
-    }
-    const candidate = item as Record<string, unknown>;
-    if (
-      typeof candidate.assetId !== "string" ||
-      typeof candidate.path !== "string" ||
-      typeof candidate.homeRelativePath !== "string" ||
-      typeof candidate.mimeType !== "string" ||
-      typeof candidate.size !== "number" ||
-      !isSupportedMimeType(candidate.mimeType)
-    ) {
-      throw codedError("Image paste failed", "upload_failed");
-    }
-    assets.push({
-      assetId: candidate.assetId,
-      path: candidate.path,
-      homeRelativePath: candidate.homeRelativePath,
-      mimeType: candidate.mimeType,
-      size: candidate.size,
-    });
+  const candidate = payload as Record<string, unknown>;
+  if (
+    typeof candidate.terminalPath !== "string" ||
+    typeof candidate.path !== "string" ||
+    typeof candidate.mimeType !== "string" ||
+    typeof candidate.size !== "number" ||
+    !isSupportedMimeType(candidate.mimeType)
+  ) {
+    throw codedError("Image paste failed", "upload_failed");
   }
-  return assets;
+  return {
+    assetId: `paste_${index}`,
+    path: candidate.terminalPath,
+    homeRelativePath: candidate.path,
+    mimeType: candidate.mimeType,
+    size: candidate.size,
+  };
 }
 
 function isSupportedMimeType(value: string): value is RichPasteImageMimeType {

@@ -46,6 +46,7 @@ export interface ShellClient {
   applyLayout(session: string, layout: string): Promise<Record<string, unknown>>;
   dumpLayout(session: string): Promise<Record<string, unknown>>;
   createAttachUrl(name: string, options?: { fromSeq?: number; token?: string }): string;
+  sendInput(name: string, data: string): Promise<void>;
   attachSession(name: string, options?: ShellAttachOptions): Promise<{ detached: boolean }>;
 }
 
@@ -89,10 +90,13 @@ export interface ShellAttachOptions {
     uploadClient?: RichPasteUploadClient;
     clipboardReader?: ClipboardImageReader;
   };
+  noRichPaste?: boolean;
+  cwd?: string;
 }
 
 export const SHELL_ATTACH_MAX_QUEUED_BYTES = 65_536;
 export { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ };
+const SHELL_INPUT_FRAME_MAX_BYTES = 60_000;
 const DEFAULT_RUN_TIMEOUT_MS = 10 * 60 * 1000;
 const RUN_RESPONSE_GRACE_MS = 30_000;
 const SHELL_ATTACH_HEARTBEAT_INTERVAL_MS = 20_000;
@@ -260,6 +264,88 @@ function createTerminalInputFilter(options: {
   };
 }
 
+function createUnsupportedTerminalControlDropper() {
+  let dropping: "osc" | "string" | null = null;
+  let pendingEsc = false;
+
+  return {
+    filter(chunk: string): string {
+      let output = "";
+      for (let i = 0; i < chunk.length; i += 1) {
+        const char = chunk[i] ?? "";
+        const next = chunk[i + 1];
+
+        if (dropping) {
+          if (dropping === "osc" && char === "\u0007") {
+            dropping = null;
+            continue;
+          }
+          if (char === "\u001b" && next === "\\") {
+            dropping = null;
+            i += 1;
+          }
+          continue;
+        }
+
+        if (pendingEsc) {
+          pendingEsc = false;
+          if (startsUnsupportedStringControl(char)) {
+            dropping = char === "]" ? "osc" : "string";
+            continue;
+          }
+          output += `\u001b${char}`;
+          continue;
+        }
+
+        if (char !== "\u001b") {
+          output += char;
+          continue;
+        }
+
+        if (next === undefined) {
+          pendingEsc = true;
+          continue;
+        }
+        if (startsUnsupportedStringControl(next)) {
+          dropping = next === "]" ? "osc" : "string";
+          i += 1;
+          continue;
+        }
+        output += char;
+      }
+      return output;
+    },
+    reset() {
+      dropping = null;
+      pendingEsc = false;
+    },
+  };
+}
+
+function startsUnsupportedStringControl(char: string | undefined): boolean {
+  return char === "]" || char === "P" || char === "_" || char === "^" || char === "X";
+}
+
+function splitTerminalInputFrames(data: string): string[] {
+  const frames: string[] = [];
+  let current = "";
+  let currentBytes = 0;
+  for (const char of Array.from(data)) {
+    const charBytes = Buffer.byteLength(char, "utf8");
+    if (current && currentBytes + charBytes > SHELL_INPUT_FRAME_MAX_BYTES) {
+      frames.push(current);
+      current = "";
+      currentBytes = 0;
+    }
+    current += char;
+    currentBytes += charBytes;
+  }
+  if (current) {
+    frames.push(current);
+  }
+  return frames;
+}
+
 export function createShellClient(options: ShellClientOptions): ShellClient {
   const fetchImpl = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? 10_000;
@@ -282,9 +368,17 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
 
   async function request(path: string, init: RequestInit = {}, requestTimeoutMs = timeoutMs): Promise<unknown> {
     const headers: Record<string, string> = {};
-    new Headers(init.headers).forEach((value, key) => {
-      headers[key] = value;
-    });
+    if (init.headers instanceof Headers) {
+      init.headers.forEach((value, key) => {
+        headers[key] = value;
+      });
+    } else if (Array.isArray(init.headers)) {
+      for (const [key, value] of init.headers) {
+        headers[key] = value;
+      }
+    } else if (init.headers) {
+      Object.assign(headers, init.headers);
+    }
     if (options.token) {
       headers.Authorization = `Bearer ${options.token}`;
     }
@@ -440,6 +534,12 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       return (await request(`${terminalSessionsPath}/${encodeURIComponent(session)}/layout`)) as Record<string, unknown>;
     },
     createAttachUrl,
+    async sendInput(name, data) {
+      await request(`${terminalSessionsPath}/${encodeURIComponent(name)}/input`, {
+        method: "POST",
+        body: JSON.stringify({ data }),
+      });
+    },
     async attachSession(name, attachOptions = {}) {
       const WebSocketImpl =
         attachOptions.WebSocketImpl ??
@@ -461,13 +561,15 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         dropMouse,
         resetLocalInputModes,
       });
-      const richPasteEnabled = attachOptions.richPaste?.enabled !== false;
+      const controlDropper = createUnsupportedTerminalControlDropper();
+      const richPasteEnabled = attachOptions.noRichPaste !== true && attachOptions.richPaste?.enabled !== false;
       const richPasteRewriter: RichPasteRewriter | undefined = richPasteEnabled
         ? attachOptions.richPaste?.rewriter ?? createRichPasteRewriter({
           uploadClient: attachOptions.richPaste?.uploadClient ?? createRichPasteUploadClient({
             gatewayUrl: base,
             token: options.token,
             fetch: fetchImpl,
+            cwd: attachOptions.cwd,
           }),
           clipboardReader: attachOptions.richPaste?.clipboardReader ?? createMacOsClipboardImageReader(),
         })
@@ -479,6 +581,8 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       const reconnectBaseDelayMs = attachOptions.reconnectBaseDelayMs ?? SHELL_ATTACH_RECONNECT_BASE_DELAY_MS;
       const reconnectMaxDelayMs = attachOptions.reconnectMaxDelayMs ?? SHELL_ATTACH_RECONNECT_MAX_DELAY_MS;
       let pendingInput = "";
+      let inputQueue = Promise.resolve();
+      let queuedAsyncInputs = 0;
 
       return new Promise<{ detached: boolean }>((resolve, reject) => {
         let settled = false;
@@ -510,6 +614,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           process.off("exit", onProcessExit);
           pendingInput = "";
           inputFilter.reset();
+          controlDropper.reset();
           resetLocalInputModes();
           if (rawModeEnabled) {
             input.setRawMode?.(false);
@@ -684,21 +789,32 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             })));
           }
         };
+        const sendInputData = (data: string) => {
+          for (const frameData of splitTerminalInputFrames(data)) {
+            sendFrame(JSON.stringify({ type: "input", data: frameData }));
+          }
+        };
         const detachLocal = () => {
           const wsToClose = currentWs;
           sendFrame(JSON.stringify({ type: "detach" }));
           settle(() => resolve({ detached: true }));
           wsToClose?.close();
         };
-        const sendInputFrame = (data: string, observablePaste: boolean) => {
+        const handleInputFailure = (err: unknown) => {
+          errorOutput.write("Shell attach failed\n");
+          settle(() => reject(Object.assign(new Error("Request failed"), {
+            code: err instanceof Error && "code" in err ? (err as { code?: string }).code ?? "attach_failed" : "attach_failed",
+          })));
+        };
+        const sendInputFrame = (data: string, observablePaste: boolean): Promise<void> | void => {
           const shouldRewrite = observablePaste
             ? data.length === 0 || shouldProcessRichPasteText(data)
             : shouldProcessRichPasteText(data);
           if (!richPasteRewriter || !shouldRewrite) {
-            sendFrame(JSON.stringify({ type: "input", data }));
+            sendInputData(data);
             return;
           }
-          void richPasteRewriter.rewrite({
+          return richPasteRewriter.rewrite({
             sessionName: name,
             text: data,
             observablePaste,
@@ -710,24 +826,31 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
               errorOutput.write(`\r\n${result.localMessage}\r\n`);
               return;
             }
-            sendFrame(JSON.stringify({ type: "input", data: result.outgoingText }));
+            sendInputData(result.outgoingText);
           }).catch(() => {
             if (!settled) {
               errorOutput.write(`\r\n${RICH_PASTE_UPLOAD_FAILED_MESSAGE}\r\n`);
             }
           });
         };
-        const processInputData = (data: string, observablePaste: boolean) => {
+        const processInputData = (data: string, observablePaste: boolean): Promise<void> | void => {
           let outbound = "";
+          const writes: Array<Promise<void>> = [];
+          const enqueueInputFrame = (frameData: string, frameObservablePaste: boolean) => {
+            const maybeWrite = sendInputFrame(frameData, frameObservablePaste);
+            if (maybeWrite) {
+              writes.push(maybeWrite);
+            }
+          };
           for (const char of data) {
             pendingInput += char;
             if (pendingInput === detachSequence) {
               pendingInput = "";
               if (outbound.length > 0) {
-                sendInputFrame(outbound, false);
+                enqueueInputFrame(outbound, false);
               }
               detachLocal();
-              return;
+              return writes.length > 0 ? Promise.all(writes).then(() => undefined) : undefined;
             }
             if (detachSequence.startsWith(pendingInput)) {
               continue;
@@ -738,26 +861,62 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             }
           }
           if (outbound.length > 0 || observablePaste) {
-            sendInputFrame(outbound, observablePaste);
+            enqueueInputFrame(outbound, observablePaste);
           }
+          return writes.length > 0 ? Promise.all(writes).then(() => undefined) : undefined;
         };
-        const onInput = (chunk: Buffer | string) => {
+        const processInput = (chunk: Buffer | string): Promise<void> | void => {
           const rawData = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
           if (rawModeEnabled && !everAttached && rawData.includes("\u0003")) {
             detachLocal();
             return;
           }
-          const bracketedSegments = splitBracketedPasteInput(rawData);
+          const droppedControls = controlDropper.filter(rawData);
+          const bracketedSegments = splitBracketedPasteInput(droppedControls);
           if (bracketedSegments) {
+            let sequence = Promise.resolve();
             for (const segment of bracketedSegments) {
-              processInputData(
+              sequence = sequence.then(() => Promise.resolve(processInputData(
                 segment.observablePaste ? segment.text : inputFilter.filter(segment.text),
                 segment.observablePaste,
-              );
+              )));
             }
+            return sequence;
+          }
+          return processInputData(inputFilter.filter(droppedControls), false);
+        };
+        const onInput = (chunk: Buffer | string) => {
+          const run = () => {
+            try {
+              const result = processInput(chunk);
+              return Promise.resolve(result);
+            } catch (err: unknown) {
+              return Promise.reject(err);
+            }
+          };
+          if (queuedAsyncInputs > 0) {
+            queuedAsyncInputs += 1;
+            inputQueue = inputQueue
+              .then(run)
+              .catch(handleInputFailure)
+              .finally(() => {
+                queuedAsyncInputs -= 1;
+              });
             return;
           }
-          processInputData(inputFilter.filter(rawData), false);
+          try {
+            const result = processInput(chunk);
+            if (result && typeof (result as Promise<void>).then === "function") {
+              queuedAsyncInputs = 1;
+              inputQueue = Promise.resolve(result)
+                .catch(handleInputFailure)
+                .finally(() => {
+                  queuedAsyncInputs -= 1;
+                });
+            }
+          } catch (err: unknown) {
+            handleInputFailure(err);
+          }
         };
         const sendResizeFrame = () => {
           const size = terminalSize(input, output);

@@ -208,7 +208,6 @@ import {
   LayoutStore,
   ScrollbackStore,
   ShellPreferencesStore,
-  createTerminalPasteAssetService,
   createPendingTerminalInputQueue,
   createShellCommandRunner,
   createShellWsHandler,
@@ -1483,8 +1482,8 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/company-brain", createCompanyBrainRoutes({ service: companyBrainService }));
   app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
   const shellSessionCreateRateLimiter = createRateLimiter(SHELL_SESSION_CREATE_RATE_LIMIT);
-  const terminalPasteAssets = createTerminalPasteAssetService({ homePath });
   const shellRouteDeps = {
+    homePath,
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,
     workspace: zellijAdapter,
@@ -1492,7 +1491,7 @@ export async function createGateway(config: GatewayConfig) {
     shellBackend: zellijAdapter,
     shellThemeConfig: zellijAdapter,
     commandRunner: createShellCommandRunner({ homePath }),
-    pasteAssets: terminalPasteAssets,
+    terminalInput: zellijAdapter,
     sessionCreateRateLimiter: shellSessionCreateRateLimiter,
   };
   const systemActivityCandidates = new CleanupCandidateRegistry();
@@ -3868,7 +3867,6 @@ export async function createGateway(config: GatewayConfig) {
       cronService.stop();
       drainReconnectableAbortEntries(reconnectableAbortControllers);
       if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);
-      terminalPasteAssets.close();
       canvasSubscriptionHub?.close();
       systemActivityCandidates.clear();
       await channelManager.stop();

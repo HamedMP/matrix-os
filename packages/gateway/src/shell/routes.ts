@@ -5,21 +5,19 @@ import { createRateLimiter, type RateLimiter } from "../security/rate-limiter.js
 import { toShellError } from "./errors.js";
 import { SESSION_NAME_PATTERN } from "./names.js";
 import {
+  saveTerminalPasteAsset,
+  TERMINAL_PASTE_ASSET_BODY_LIMIT,
+} from "./paste-assets.js";
+import {
   ShellPreferencesSchema,
   type ShellThemeId,
   type ShellPreferencesStore,
 } from "./preferences.js";
 import type { ShellCommandRunner } from "./command-runner.js";
-import {
-  TERMINAL_PASTE_ASSET_BODY_LIMIT_BYTES,
-  TERMINAL_PASTE_ASSET_FIELD,
-  TERMINAL_PASTE_ASSET_TRANSACTION_FIELD,
-  TerminalPasteAssetError,
-  type TerminalPasteAssetService,
-} from "./paste-assets.js";
 
 interface SessionRegistryRoutes {
   list(): Promise<unknown[]>;
+  get?(name: string): Promise<unknown>;
   create(input: {
     name: string;
     cwd?: string;
@@ -77,7 +75,12 @@ interface ShellThemeConfigRoutes {
   setShellTheme(themeId: ShellThemeId): Promise<void>;
 }
 
+interface TerminalInputRoutes {
+  sendInput(name: string, data: string): Promise<void>;
+}
+
 export interface ShellRouteDeps {
+  homePath?: string;
   registry: SessionRegistryRoutes;
   preferences?: ShellPreferencesStore;
   workspace?: ShellWorkspaceRoutes;
@@ -85,7 +88,7 @@ export interface ShellRouteDeps {
   shellBackend?: ShellBackendHealthRoutes;
   shellThemeConfig?: ShellThemeConfigRoutes;
   commandRunner?: ShellCommandRunner;
-  pasteAssets?: TerminalPasteAssetService;
+  terminalInput?: TerminalInputRoutes;
   sessionCreateRateLimiter?: RateLimiter;
 }
 
@@ -125,6 +128,12 @@ const RunBodySchema = z.object({
   cwd: SafeCwdSchema.optional(),
   timeoutMs: z.number().int().positive().max(30 * 60 * 1000).optional(),
 });
+const TerminalInputBodySchema = z.object({
+  data: z.string().min(1).max(65_536),
+}).strict();
+const PasteAssetQuerySchema = z.object({
+  cwd: SafeCwdSchema.default("projects"),
+}).strict();
 const SessionUiStateBodySchema = z.object({
   placement: z.enum(["active", "background"]).optional(),
   lastSeenSeq: z.number().int().nonnegative().nullable().optional(),
@@ -156,12 +165,10 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   const layoutBodyLimit = bodyLimit({ maxSize: 128_000 });
   const deleteBodyLimit = bodyLimit({ maxSize: 512 });
   const runBodyLimit = bodyLimit({ maxSize: 16_384 });
-  const pasteAssetBodyLimit = bodyLimit({
-    maxSize: TERMINAL_PASTE_ASSET_BODY_LIMIT_BYTES,
-    onError: (c) => c.json(
-      { error: { code: "payload_too_large", message: "Request failed" } },
-      413,
-    ),
+  const terminalInputBodyLimit = bodyLimit({ maxSize: 70_000 });
+  const terminalPasteAssetBodyLimit = bodyLimit({
+    maxSize: TERMINAL_PASTE_ASSET_BODY_LIMIT,
+    onError: bodyTooLarge,
   });
 
   app.get("/health", async (c) => {
@@ -294,18 +301,37 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     }
   });
 
-  app.post("/sessions/:name/paste-assets", pasteAssetBodyLimit, async (c) => {
+  app.post("/sessions/:name/input", terminalInputBodyLimit, async (c) => {
     try {
-      if (!deps.pasteAssets) return unavailable(c, "paste_assets_unavailable");
-      const sessionName = SafeSessionNameSchema.parse(c.req.param("name"));
-      const form = await c.req.formData();
-      const transactionIdValue = form.get(TERMINAL_PASTE_ASSET_TRANSACTION_FIELD);
-      const transactionId = typeof transactionIdValue === "string" ? transactionIdValue : undefined;
-      const files = form.getAll(TERMINAL_PASTE_ASSET_FIELD).filter(isUploadFile);
-      const result = await deps.pasteAssets.upload({
-        sessionName,
-        transactionId,
-        files,
+      if (!deps.terminalInput) return unavailable(c, "terminal_input_unavailable");
+      const name = SafeSessionNameSchema.parse(c.req.param("name"));
+      const body = TerminalInputBodySchema.parse(await c.req.json());
+      await assertSessionExists(deps.registry, name);
+      await deps.terminalInput.sendInput(name, body.data);
+      return c.json({ ok: true });
+    } catch (err) {
+      return safeError(c, err);
+    }
+  });
+
+  app.post("/sessions/:name/paste-assets", terminalPasteAssetBodyLimit, async (c) => {
+    try {
+      if (!deps.homePath) return unavailable(c, "paste_assets_unavailable");
+      const name = SafeSessionNameSchema.parse(c.req.param("name"));
+      const query = PasteAssetQuerySchema.parse({
+        cwd: c.req.query("cwd") ?? "projects",
+      });
+      const bytes = new Uint8Array(await c.req.arrayBuffer());
+      if (bytes.byteLength > TERMINAL_PASTE_ASSET_BODY_LIMIT) {
+        return c.json({ error: { code: "payload_too_large", message: "Request too large" } }, 413);
+      }
+      await assertSessionExists(deps.registry, name);
+      const result = await saveTerminalPasteAsset({
+        homePath: deps.homePath,
+        cwd: query.cwd,
+        contentType: c.req.header("Content-Type"),
+        filename: c.req.header("X-Matrix-Filename"),
+        bytes,
       });
       return c.json(result, 201);
     } catch (err) {
@@ -516,10 +542,35 @@ function unavailable(c: Context, code: string) {
   return c.json({ error: { code, message: "Request failed" } }, 503);
 }
 
+function bodyTooLarge(c: Context) {
+  return c.json({ error: { code: "payload_too_large", message: "Request too large" } }, 413);
+}
+
+async function assertSessionExists(registry: SessionRegistryRoutes, name: string): Promise<void> {
+  if (registry.get) {
+    await registry.get(name);
+    return;
+  }
+  const sessions = await registry.list();
+  if (sessions.some((session) => (
+    typeof session === "object" &&
+    session !== null &&
+    "name" in session &&
+    (session as { name?: unknown }).name === name
+  ))) {
+    return;
+  }
+  throw toShellError(Object.assign(new Error("Session not found"), {
+    code: "session_not_found",
+    safeMessage: "Session not found",
+    status: 404,
+  }));
+}
+
 function safeError(c: Context, err: unknown) {
   if (hasHttpStatus(err, 413) || isBodyLimitError(err)) {
     return c.json(
-      { error: { code: "payload_too_large", message: "Request failed" } },
+      { error: { code: "payload_too_large", message: "Request too large" } },
       413,
     );
   }
@@ -527,17 +578,6 @@ function safeError(c: Context, err: unknown) {
     return c.json(
       { error: { code: "invalid_request", message: "Invalid request" } },
       400,
-    );
-  }
-  if (err instanceof TerminalPasteAssetError) {
-    return c.json(
-      {
-        error: {
-          code: err.code,
-          message: err.code === "invalid_request" ? "Invalid request" : "Request failed",
-        },
-      },
-      err.status as 500,
     );
   }
   const shellErr = toShellError(err);
@@ -553,19 +593,6 @@ function safeError(c: Context, err: unknown) {
   return c.json(
     { error: { code: shellErr.code, message: shellErr.safeMessage } },
     (shellErr.status ?? 500) as 500,
-  );
-}
-
-function isUploadFile(value: FormDataEntryValue): value is File {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "arrayBuffer" in value &&
-    typeof (value as { arrayBuffer?: unknown }).arrayBuffer === "function" &&
-    "size" in value &&
-    typeof (value as { size?: unknown }).size === "number" &&
-    "type" in value &&
-    typeof (value as { type?: unknown }).type === "string"
   );
 }
 

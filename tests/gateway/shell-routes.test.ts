@@ -1,21 +1,15 @@
-import { lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createShellRoutes } from "../../packages/gateway/src/shell/routes.js";
+import { shellError } from "../../packages/gateway/src/shell/errors.js";
 import { ShellRegistry } from "../../packages/gateway/src/shell/registry.js";
 import { createRateLimiter } from "../../packages/gateway/src/security/rate-limiter.js";
-import {
-  createTerminalPasteAssetService,
-  TERMINAL_PASTE_ASSET_MAX_FILE_BYTES,
-} from "../../packages/gateway/src/shell/paste-assets.js";
 
 const roots: string[] = [];
-const pngBytes = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-  0x00, 0x00, 0x00, 0x0d,
-]);
+const PNG_BYTES = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
 
 async function tempRoot() {
   const root = await mkdtemp(join(tmpdir(), "matrix-shell-routes-"));
@@ -30,14 +24,15 @@ afterEach(async () => {
 describe("gateway shell routes", () => {
   function appWithRegistry(registry: {
     list: () => Promise<unknown[]>;
+    get?: (name: string) => Promise<unknown>;
     create: (input: unknown) => Promise<unknown>;
     delete: (name: string, options?: { force?: boolean }) => Promise<void>;
     rename?: (name: string, nextName: string) => Promise<unknown>;
     reorder?: (order: string[]) => Promise<unknown[]>;
-  }, shellBackend?: { health: () => Promise<{ ok: boolean; code: string }> }) {
+  }, shellBackend?: { health: () => Promise<{ ok: boolean; code: string }> }, extraDeps: Record<string, unknown> = {}) {
     const app = new Hono();
-    app.route("/api/terminal", createShellRoutes({ registry, shellBackend }));
-    app.route("/api", createShellRoutes({ registry, shellBackend }));
+    app.route("/api/terminal", createShellRoutes({ registry, shellBackend, ...extraDeps }));
+    app.route("/api", createShellRoutes({ registry, shellBackend, ...extraDeps }));
     return app;
   }
 
@@ -241,183 +236,152 @@ describe("gateway shell routes", () => {
     expect(commandRunner.run).toHaveBeenCalledWith({ command: ["ls"], cwd: "projects/app" });
   });
 
-  it("uploads terminal paste image assets with server-generated owner-scoped paths", async () => {
+  it("uploads pasted terminal image assets into the project-local paste directory", async () => {
     const root = await tempRoot();
+    await mkdir(join(root, "projects", "app"), { recursive: true });
     const registry = {
       list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      get: vi.fn(async () => ({ name: "main", status: "active" })),
       create: vi.fn(),
       delete: vi.fn(),
     };
-    const app = new Hono();
-    app.route("/api/terminal", createShellRoutes({
-      registry,
-      pasteAssets: createTerminalPasteAssetService({
-        homePath: root,
-        now: () => new Date("2026-07-08T12:00:00.000Z"),
-      }),
-    }));
-    const form = new FormData();
-    form.append("transactionId", "txn-1");
-    form.append("asset", new Blob([pngBytes], { type: "image/png" }), "Screenshot 2026-07-08 at 10.31.00.png");
+    const app = appWithRegistry(registry, undefined, { homePath: root });
 
-    const res = await app.request("/api/terminal/sessions/main/paste-assets", {
+    const res = await app.request("/api/terminal/sessions/main/paste-assets?cwd=projects/app", {
       method: "POST",
-      body: form,
+      headers: {
+        "Content-Type": "image/png",
+        "X-Matrix-Filename": "Screenshot 2026-07-07 at 6.50.39 PM.png",
+      },
+      body: PNG_BYTES,
     });
 
     expect(res.status).toBe(201);
-    const payload = await res.json() as {
-      assets: Array<{
-        assetId: string;
-        path: string;
-        homeRelativePath: string;
-        mimeType: string;
-        size: number;
-      }>;
+    const body = await res.json() as {
+      path: string;
+      terminalPath: string;
+      size: number;
+      mimeType: string;
     };
-    expect(payload.assets).toHaveLength(1);
-    expect(payload.assets[0]).toMatchObject({
+    expect(body).toMatchObject({
+      size: PNG_BYTES.length,
       mimeType: "image/png",
-      size: pngBytes.byteLength,
     });
-    expect(payload.assets[0].assetId).toMatch(/^paste_/);
-    expect(payload.assets[0].homeRelativePath).toMatch(
-      /^projects\/\.matrix-terminal-pastes\/main\/2026-07-08\/paste_[a-zA-Z0-9_-]+\.png$/,
-    );
-    expect(payload.assets[0].path).toBe(join(root, payload.assets[0].homeRelativePath));
-    expect(payload.assets[0].path).not.toContain("Screenshot");
-    await expect(readFile(payload.assets[0].path)).resolves.toEqual(pngBytes);
-    const entries = await readdir(join(root, "projects", ".matrix-terminal-pastes", "main", "2026-07-08"));
-    expect(entries.some((entry) => entry.endsWith(".tmp"))).toBe(false);
+    expect(body.path).toMatch(/^projects\/app\/\.matrix-terminal-pastes\/\d{4}-\d{2}-\d{2}\//);
+    expect(body.path.endsWith(".png")).toBe(true);
+    expect(body.terminalPath).toBe(join(root, body.path));
+    await expect(readFile(body.terminalPath)).resolves.toEqual(Buffer.from(PNG_BYTES));
+    expect(registry.get).toHaveBeenCalledWith("main");
   });
 
-  it("enforces paste asset body, session, type, count, and size limits with generic responses", async () => {
+  it("rejects unsafe terminal paste uploads with generic client errors", async () => {
     const root = await tempRoot();
+    await mkdir(join(root, "projects", "app"), { recursive: true });
     const registry = {
       list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      get: vi.fn(async () => ({ name: "main", status: "active" })),
       create: vi.fn(),
       delete: vi.fn(),
     };
-    const app = new Hono();
-    app.route("/api/terminal", createShellRoutes({
-      registry,
-      pasteAssets: createTerminalPasteAssetService({ homePath: root }),
-    }));
+    const app = appWithRegistry(registry, undefined, { homePath: root });
 
-    const tooLargeBody = await app.request("/api/terminal/sessions/main/paste-assets", {
+    const unsupportedMagic = await app.request("/api/terminal/sessions/main/paste-assets?cwd=projects/app", {
       method: "POST",
-      headers: { "Content-Type": "application/octet-stream", "Content-Length": String(60 * 1024 * 1024) },
-      body: "x",
+      headers: { "Content-Type": "image/png" },
+      body: "<svg><script>alert(1)</script></svg>",
     });
-    const invalidSession = await app.request("/api/terminal/sessions/Main/paste-assets", {
+    const traversalCwd = await app.request("/api/terminal/sessions/main/paste-assets?cwd=../outside", {
       method: "POST",
-      body: new FormData(),
+      headers: { "Content-Type": "image/png" },
+      body: PNG_BYTES,
     });
-    const invalidTypeForm = new FormData();
-    invalidTypeForm.append("asset", new Blob(["not image"], { type: "text/plain" }), "notes.txt");
-    const invalidType = await app.request("/api/terminal/sessions/main/paste-assets", {
+    const unsafeFilename = await app.request("/api/terminal/sessions/main/paste-assets?cwd=projects/app", {
       method: "POST",
-      body: invalidTypeForm,
+      headers: {
+        "Content-Type": "image/png",
+        "X-Matrix-Filename": "../bad.png",
+      },
+      body: PNG_BYTES,
     });
-    const tooManyForm = new FormData();
-    for (let index = 0; index < 6; index += 1) {
-      tooManyForm.append("asset", new Blob([pngBytes], { type: "image/png" }), `screen-${index}.png`);
-    }
-    const tooMany = await app.request("/api/terminal/sessions/main/paste-assets", {
+    const missingSession = await appWithRegistry({
+      list: vi.fn(async () => []),
+      get: vi.fn(async () => {
+        throw shellError("session_not_found", "Session not found", 404);
+      }),
+      create: vi.fn(),
+      delete: vi.fn(),
+    }, undefined, { homePath: root }).request("/api/terminal/sessions/missing/paste-assets?cwd=projects/app", {
       method: "POST",
-      body: tooManyForm,
-    });
-    const oversizedForm = new FormData();
-    oversizedForm.append(
-      "asset",
-      new Blob([Buffer.alloc(TERMINAL_PASTE_ASSET_MAX_FILE_BYTES + 1)], { type: "image/png" }),
-      "huge.png",
-    );
-    const oversized = await app.request("/api/terminal/sessions/main/paste-assets", {
-      method: "POST",
-      body: oversizedForm,
+      headers: { "Content-Type": "image/png" },
+      body: PNG_BYTES,
     });
 
-    expect(tooLargeBody.status).toBe(413);
-    await expect(tooLargeBody.json()).resolves.toEqual({
-      error: { code: "payload_too_large", message: "Request failed" },
+    expect(unsupportedMagic.status).toBe(400);
+    await expect(unsupportedMagic.json()).resolves.toEqual({
+      error: { code: "unsupported_media_type", message: "Invalid request" },
     });
-    expect(invalidSession.status).toBe(400);
-    await expect(invalidSession.json()).resolves.toEqual({
+    expect(traversalCwd.status).toBe(400);
+    await expect(traversalCwd.json()).resolves.toEqual({
       error: { code: "invalid_request", message: "Invalid request" },
     });
-    expect(invalidType.status).toBe(400);
-    await expect(invalidType.json()).resolves.toEqual({
+    expect(unsafeFilename.status).toBe(400);
+    await expect(unsafeFilename.json()).resolves.toEqual({
       error: { code: "invalid_request", message: "Invalid request" },
     });
-    expect(tooMany.status).toBe(400);
-    await expect(tooMany.json()).resolves.toEqual({
-      error: { code: "invalid_request", message: "Invalid request" },
-    });
-    expect(oversized.status).toBe(413);
-    await expect(oversized.json()).resolves.toEqual({
-      error: { code: "payload_too_large", message: "Request failed" },
+    expect(missingSession.status).toBe(404);
+    await expect(missingSession.json()).resolves.toEqual({
+      error: { code: "session_not_found", message: "Session not found" },
     });
   });
 
-  it("maps paste asset service failures to generic responses", async () => {
+  it("applies the 10 MiB body limit before terminal paste upload handling", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, "projects", "app"), { recursive: true });
     const registry = {
       list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      get: vi.fn(async () => ({ name: "main", status: "active" })),
       create: vi.fn(),
       delete: vi.fn(),
     };
-    const app = new Hono();
-    app.route("/api/terminal", createShellRoutes({
-      registry,
-      pasteAssets: {
-        upload: vi.fn(async () => {
-          throw new Error("/home/matrix/home/projects/.matrix-terminal-pastes leaked");
-        }),
-        sweepExpired: vi.fn(),
-        close: vi.fn(),
-      },
-    }));
-    const form = new FormData();
-    form.append("asset", new Blob([pngBytes], { type: "image/png" }), "screen.png");
+    const app = appWithRegistry(registry, undefined, { homePath: root });
+    const oversized = new Uint8Array(10 * 1024 * 1024 + 1);
+    oversized.set(PNG_BYTES, 0);
 
-    const res = await app.request("/api/terminal/sessions/main/paste-assets", {
+    const res = await app.request("/api/terminal/sessions/main/paste-assets?cwd=projects/app", {
       method: "POST",
-      body: form,
+      headers: { "Content-Type": "image/png" },
+      body: oversized,
     });
 
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(413);
     await expect(res.json()).resolves.toEqual({
-      error: { code: "shell_failed", message: "Request failed" },
+      error: { code: "payload_too_large", message: "Request too large" },
     });
+    expect(registry.get).not.toHaveBeenCalled();
   });
 
-  it("sweeps expired paste assets without following symlinks", async () => {
-    const root = await tempRoot();
-    const service = createTerminalPasteAssetService({
-      homePath: root,
-      cleanupPolicy: {
-        maxAgeMs: 60_000,
-        maxAssetsPerSession: 10,
-        cleanupIntervalMs: 0,
-      },
-      now: () => new Date("2026-07-08T12:00:00.000Z"),
+  it("sends one-shot terminal input without attaching a subscriber", async () => {
+    const registry = {
+      list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      get: vi.fn(async () => ({ name: "main", status: "active" })),
+      create: vi.fn(),
+      delete: vi.fn(),
+    };
+    const terminalInput = {
+      sendInput: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry, undefined, { terminalInput });
+
+    const res = await app.request("/api/terminal/sessions/main/input", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data: "pwd\r" }),
     });
-    const pasteDir = join(root, "projects", ".matrix-terminal-pastes", "main", "2026-07-08");
-    await mkdir(pasteDir, { recursive: true });
-    const expired = join(pasteDir, "expired.png");
-    const current = join(pasteDir, "current.png");
-    const link = join(pasteDir, "link.png");
-    await writeFile(expired, pngBytes);
-    await writeFile(current, pngBytes);
-    await symlink(expired, link);
-    await utimes(expired, new Date("2026-07-08T11:00:00.000Z"), new Date("2026-07-08T11:00:00.000Z"));
-    await utimes(current, new Date("2026-07-08T12:00:00.000Z"), new Date("2026-07-08T12:00:00.000Z"));
 
-    await service.sweepExpired();
-
-    await expect(readFile(expired)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(readFile(current)).resolves.toEqual(pngBytes);
-    expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ ok: true });
+    expect(registry.get).toHaveBeenCalledWith("main");
+    expect(terminalInput.sendInput).toHaveBeenCalledWith("main", "pwd\r");
   });
 
   it("allows digit-leading session names consistently across create and route params", async () => {

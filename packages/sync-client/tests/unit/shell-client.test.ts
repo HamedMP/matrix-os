@@ -496,4 +496,30 @@ describe("createShellClient attachSession", () => {
     expect(input.setRawMode).toHaveBeenCalledWith(false);
     expect(input.pause).toHaveBeenCalled();
   });
+
+  it("sends one-shot input over HTTP without opening a websocket attach", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
+    const client = createShellClient({
+      gatewayUrl: "https://matrix.example",
+      token: "token-123",
+      fetch: fetchImpl,
+      timeoutMs: 100,
+    });
+
+    await expect(client.sendInput("main", "\x1b[200~~/data/terminal-paste/paste.png\x1b[201~")).resolves.toBeUndefined();
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://matrix.example/api/terminal/sessions/main/input",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer token-123",
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify({ data: "\x1b[200~~/data/terminal-paste/paste.png\x1b[201~" }),
+      }),
+    );
+    expect(FakeWebSocket.instances).toHaveLength(0);
+  });
+
 });

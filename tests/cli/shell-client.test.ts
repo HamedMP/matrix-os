@@ -1,4 +1,7 @@
 import { EventEmitter } from "node:events";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   createShellClient,
@@ -7,6 +10,8 @@ import {
 } from "../../packages/sync-client/src/cli/shell-client.js";
 
 const LOCAL_TERMINAL_INPUT_RESET = "\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1006l\u001b[?1015l\u001b[?1004l\u001b[?2004l\u001b[>4;0m\u001b[<1u";
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+const roots: string[] = [];
 
 class ControlledWebSocket {
   static last: ControlledWebSocket | null = null;
@@ -76,6 +81,7 @@ describe("shell REST client", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    return Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
   it("lists sessions with bearer auth, JSON parsing, and fetch timeout", async () => {
@@ -199,6 +205,30 @@ describe("shell REST client", () => {
     expect(client.createAttachUrl("main", { token: "query-token" })).toBe(
       "wss://gateway.example/ws/terminal/session?session=main&token=query-token",
     );
+  });
+
+  it("sends one-shot input over HTTP without opening a websocket attach", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
+    const client = createShellClient({
+      gatewayUrl: "http://gateway",
+      token: "tok",
+      fetch: fetchImpl,
+    });
+
+    await expect(client.sendInput("main", "pwd\r")).resolves.toBeUndefined();
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://gateway/api/terminal/sessions/main/input",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer tok",
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify({ data: "pwd\r" }),
+      }),
+    );
+    expect(ControlledWebSocket.instances).toHaveLength(0);
   });
 
   it("times out terminal websocket attach attempts", async () => {
@@ -677,6 +707,153 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
     await expect(attached).resolves.toEqual({ detached: false });
+  });
+
+  it("uploads a pasted quoted macOS screenshot path and sends the VPS terminal path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "matrix-shell-rich-paste-"));
+    roots.push(root);
+    const imagePath = join(root, "Screenshot 2026-07-07 at 6.50.39 PM.png");
+    await writeFile(imagePath, PNG_BYTES, { flag: "wx" });
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "http://gateway/api/terminal/sessions/main/paste-assets?cwd=projects%2Fapp") {
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toEqual(expect.objectContaining({
+          Authorization: "Bearer tok",
+          "Content-Type": "image/png",
+          "X-Matrix-Filename": "Screenshot 2026-07-07 at 6.50.39 PM.png",
+        }));
+        expect(Buffer.from(init?.body as BodyInit as ArrayBuffer)).toEqual(PNG_BYTES);
+        return new Response(JSON.stringify({
+          path: "projects/.matrix-terminal-pastes/2026-07-07/upload.png",
+          terminalPath: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/upload.png",
+          size: PNG_BYTES.length,
+          mimeType: "image/png",
+        }));
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const client = createShellClient({
+      gatewayUrl: "http://gateway",
+      token: "tok",
+      fetch: fetchImpl,
+      timeoutMs: 50,
+    });
+    const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;
+    const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+      cwd: "projects/app",
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    input.emit("data", `"${imagePath}"`);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+
+    await expect(attached).resolves.toEqual({ detached: false });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toContainEqual({
+      type: "input",
+      data: "\"/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/upload.png\"",
+    });
+    expect(ControlledWebSocket.last?.sent.join("")).not.toContain(imagePath);
+  });
+
+  it("does not intercept local image paths when rich paste is disabled", async () => {
+    const root = await mkdtemp(join(tmpdir(), "matrix-shell-no-rich-paste-"));
+    roots.push(root);
+    const imagePath = join(root, "Screenshot 2026-07-07 at 6.50.39 PM.png");
+    await writeFile(imagePath, PNG_BYTES, { flag: "wx" });
+    const fetchImpl = vi.fn(async () => {
+      throw new Error("rich paste upload should not run");
+    });
+    const client = createShellClient({
+      gatewayUrl: "http://gateway",
+      token: "tok",
+      fetch: fetchImpl,
+      timeoutMs: 50,
+    });
+    const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;
+    const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+      noRichPaste: true,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    input.emit("data", `"${imagePath}"`);
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+
+    await expect(attached).resolves.toEqual({ detached: false });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toContainEqual({
+      type: "input",
+      data: `"${imagePath}"`,
+    });
+  });
+
+  it("chunks oversized terminal input frames below the gateway input cap", async () => {
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;
+    const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const largeInput = "x".repeat(140_000);
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    input.emit("data", largeInput);
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+
+    await expect(attached).resolves.toEqual({ detached: false });
+    const inputFrames = ControlledWebSocket.last!.sent
+      .map((frame) => JSON.parse(frame))
+      .filter((frame) => frame.type === "input") as Array<{ data: string }>;
+    expect(inputFrames.length).toBeGreaterThan(1);
+    expect(inputFrames.every((frame) => frame.data.length < 65_536)).toBe(true);
+    expect(inputFrames.map((frame) => frame.data).join("")).toBe(largeInput);
+  });
+
+  it("drops pasted OSC and APC image/control sequences instead of forwarding them as keystrokes", async () => {
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;
+    const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    input.emit("data", "a\u001b]1337;File=name=x.png;inline=1:AAAA\u0007b\u001b_Gf=100;AAAA\u001b\\c");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+
+    await expect(attached).resolves.toEqual({ detached: false });
+    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toContainEqual({
+      type: "input",
+      data: "abc",
+    });
+    expect(ControlledWebSocket.last?.sent.join("")).not.toContain("1337;File");
+    expect(ControlledWebSocket.last?.sent.join("")).not.toContain("_Gf=100");
   });
 
   it("rejects when pre-open stdin exceeds the queued frame cap", async () => {
