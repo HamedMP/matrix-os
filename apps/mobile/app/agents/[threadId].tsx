@@ -42,6 +42,7 @@ export default function AgentThreadRoute() {
   const [inputAnswers, setInputAnswers] = useState<Record<string, string>>({});
   const streamSubscriptionRef = useRef<{ detach(): void } | null>(null);
   const streamGenerationRef = useRef(0);
+  const pendingActionKeysRef = useRef<Record<string, true>>({});
 
   const invalidateSnapshotRequests = useCallback(() => {
     requestGeneration.current += 1;
@@ -149,6 +150,9 @@ export default function AgentThreadRoute() {
     decision: ApprovalDecisionRequest["decision"],
   ) => {
     if (!client || state.status !== "ready") return;
+    const actionGroupId = `approval:${event.approval.approvalId}`;
+    if (pendingActionKeysRef.current[actionGroupId]) return;
+    pendingActionKeysRef.current[actionGroupId] = true;
     const actionId = `${event.approval.approvalId}:${decision}`;
     setPendingActionIds((current) => ({ ...current, [actionId]: true }));
     setThreadActionErrors((current) => {
@@ -156,18 +160,25 @@ export default function AgentThreadRoute() {
       delete next[actionId];
       return next;
     });
-    const result = await client.submitCodingAgentApprovalDecision({
-      threadId: state.snapshot.thread.id,
-      approvalId: event.approval.approvalId,
-      decision,
-      correlationId: event.approval.correlationId,
-      clientRequestId: createMobileClientRequestId(),
-    });
-    setPendingActionIds((current) => {
-      const next = { ...current };
-      delete next[actionId];
-      return next;
-    });
+    let result: Awaited<ReturnType<NonNullable<typeof client>["submitCodingAgentApprovalDecision"]>>;
+    try {
+      result = await client.submitCodingAgentApprovalDecision({
+        threadId: state.snapshot.thread.id,
+        approvalId: event.approval.approvalId,
+        decision,
+        correlationId: event.approval.correlationId,
+        clientRequestId: createMobileClientRequestId(),
+      });
+    } catch {
+      result = { ok: false, error: "Approval could not be sent. Try again." };
+    } finally {
+      setPendingActionIds((current) => {
+        const next = { ...current };
+        delete next[actionId];
+        return next;
+      });
+      delete pendingActionKeysRef.current[actionGroupId];
+    }
     if (result.ok) {
       invalidateSnapshotRequests();
       setState((current) => current.status === "ready"
@@ -194,6 +205,9 @@ export default function AgentThreadRoute() {
     if (!client || state.status !== "ready") return;
     const answer = inputAnswers[event.request.requestId] ?? "";
     if (!answer.trim()) return;
+    const actionGroupId = `input:${event.request.requestId}`;
+    if (pendingActionKeysRef.current[actionGroupId]) return;
+    pendingActionKeysRef.current[actionGroupId] = true;
     const actionId = `${event.request.requestId}:answer`;
     setPendingActionIds((current) => ({ ...current, [actionId]: true }));
     setThreadActionErrors((current) => {
@@ -201,18 +215,25 @@ export default function AgentThreadRoute() {
       delete next[actionId];
       return next;
     });
-    const result = await client.submitCodingAgentInputAnswer({
-      threadId: state.snapshot.thread.id,
-      inputRequestId: event.request.requestId,
-      answer,
-      correlationId: event.request.correlationId,
-      clientRequestId: createMobileClientRequestId(),
-    });
-    setPendingActionIds((current) => {
-      const next = { ...current };
-      delete next[actionId];
-      return next;
-    });
+    let result: Awaited<ReturnType<NonNullable<typeof client>["submitCodingAgentInputAnswer"]>>;
+    try {
+      result = await client.submitCodingAgentInputAnswer({
+        threadId: state.snapshot.thread.id,
+        inputRequestId: event.request.requestId,
+        answer,
+        correlationId: event.request.correlationId,
+        clientRequestId: createMobileClientRequestId(),
+      });
+    } catch {
+      result = { ok: false, error: "Input could not be sent. Try again." };
+    } finally {
+      setPendingActionIds((current) => {
+        const next = { ...current };
+        delete next[actionId];
+        return next;
+      });
+      delete pendingActionKeysRef.current[actionGroupId];
+    }
     if (result.ok) {
       invalidateSnapshotRequests();
       setInputAnswers((current) => {
@@ -296,6 +317,7 @@ export default function AgentThreadRoute() {
   const answeredInputRequestIds = new Set(events.items
     .filter((event): event is Extract<AgentThreadEvent, { type: "user_input.answered" }> => event.type === "user_input.answered")
     .map((event) => event.requestId));
+  const currentActionEvent = findCurrentActionEvent(events.items, resolvedApprovalIds, answeredInputRequestIds);
 
   return (
     <ScrollView
@@ -331,6 +353,17 @@ export default function AgentThreadRoute() {
               <Text style={styles.attentionDetail}>{attention.detail}</Text>
             </View>
           </View>
+        ) : null}
+        {currentActionEvent ? (
+          <CurrentActionPanel
+            actionErrors={threadActionErrors}
+            event={currentActionEvent}
+            inputAnswer={currentActionEvent.type === "user_input.requested" ? inputAnswers[currentActionEvent.request.requestId] ?? "" : ""}
+            onApprovalDecision={submitApprovalDecision}
+            onInputAnswerChange={setInputAnswer}
+            onInputAnswerSubmit={submitInputAnswer}
+            pendingActionIds={pendingActionIds}
+          />
         ) : null}
         {state.error ? (
           <Text style={styles.inlineError}>{state.error}</Text>
@@ -398,6 +431,116 @@ export default function AgentThreadRoute() {
   );
 }
 
+function CurrentActionPanel({
+  event,
+  pendingActionIds,
+  actionErrors,
+  inputAnswer,
+  onInputAnswerChange,
+  onInputAnswerSubmit,
+  onApprovalDecision,
+}: {
+  event: Extract<AgentThreadEvent, { type: "approval.requested" | "user_input.requested" }>;
+  pendingActionIds: Record<string, true>;
+  actionErrors: Record<string, ThreadActionError>;
+  inputAnswer: string;
+  onInputAnswerChange: (requestId: string, answer: string) => void;
+  onInputAnswerSubmit: (event: Extract<AgentThreadEvent, { type: "user_input.requested" }>) => void;
+  onApprovalDecision: (
+    event: Extract<AgentThreadEvent, { type: "approval.requested" }>,
+    decision: ApprovalDecisionRequest["decision"],
+  ) => void;
+}) {
+  const { theme } = useUnistyles();
+  if (event.type === "approval.requested") {
+    const rowPending = event.approval.allowedDecisions.some((decision) =>
+      Boolean(pendingActionIds[`${event.approval.approvalId}:${decision}`]));
+    return (
+      <View style={styles.currentActionPanel}>
+        <View style={styles.currentActionHeader}>
+          <Ionicons name="shield-checkmark-outline" size={16} color={theme.colors.moss} />
+          <Text style={styles.currentActionEyebrow}>Current action</Text>
+        </View>
+        <Text style={styles.currentActionTitle}>{event.approval.title}</Text>
+        <Text style={styles.currentActionDetail}>{event.approval.safeDescription}</Text>
+        <View style={styles.inlineActionGroup}>
+          {event.approval.allowedDecisions.map((decision) => {
+            const label = formatApprovalDecision(decision);
+            const actionId = `${event.approval.approvalId}:${decision}`;
+            const pending = Boolean(pendingActionIds[actionId]);
+            return (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`${label} current action ${event.approval.title}`}
+                disabled={rowPending}
+                key={decision}
+                onPress={() => onApprovalDecision(event, decision)}
+                style={[
+                  decision === "approve" || decision === "approve_for_session"
+                    ? styles.inlinePrimaryButton
+                    : styles.inlineSecondaryButton,
+                  pending || rowPending ? styles.inlineButtonDisabled : null,
+                ]}
+              >
+                <Text
+                  style={decision === "approve" || decision === "approve_for_session"
+                    ? styles.inlinePrimaryButtonText
+                    : styles.inlineSecondaryButtonText}
+                >
+                  {pending ? "Sending" : label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        {findApprovalActionError(event, actionErrors) ? (
+          <Text style={styles.inlineError}>{findApprovalActionError(event, actionErrors)}</Text>
+        ) : null}
+      </View>
+    );
+  }
+
+  const actionId = `${event.request.requestId}:answer`;
+  const pending = Boolean(pendingActionIds[actionId]);
+  return (
+    <View style={styles.currentActionPanel}>
+      <View style={styles.currentActionHeader}>
+        <Ionicons name="create-outline" size={16} color={theme.colors.moss} />
+        <Text style={styles.currentActionEyebrow}>Current action</Text>
+      </View>
+      <Text style={styles.currentActionTitle}>{event.request.title}</Text>
+      <Text style={styles.currentActionDetail}>{event.request.safeDescription}</Text>
+      <View style={styles.inputComposer}>
+        <TextInput
+          accessibilityLabel={`Answer current action ${event.request.title}`}
+          multiline
+          numberOfLines={3}
+          onChangeText={(value) => onInputAnswerChange(event.request.requestId, value)}
+          placeholder={event.request.placeholder ?? "Answer"}
+          placeholderTextColor={theme.colors.mutedForeground}
+          style={styles.inputField}
+          value={inputAnswer}
+        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Send current action ${event.request.title}`}
+          disabled={pending || !inputAnswer.trim()}
+          onPress={() => onInputAnswerSubmit(event)}
+          style={[
+            styles.inlinePrimaryButton,
+            pending || !inputAnswer.trim() ? styles.inlineButtonDisabled : null,
+          ]}
+        >
+          <Text style={styles.inlinePrimaryButtonText}>{pending ? "Sending" : "Send"}</Text>
+        </Pressable>
+        {actionErrors[actionId] ? (
+          <Text style={styles.inlineError}>{actionErrors[actionId]}</Text>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 function createTimelineItems(events: AgentThreadEvent[]): TimelineItem[] {
   const assistantGroups = new Map<string, AssistantTimelineEvent[]>();
   const toolGroups = new Map<string, ToolTimelineEvent[]>();
@@ -444,6 +587,23 @@ function isAssistantTimelineEvent(event: AgentThreadEvent): event is AssistantTi
 
 function isToolTimelineEvent(event: AgentThreadEvent): event is ToolTimelineEvent {
   return event.type === "tool.started" || event.type === "tool.output" || event.type === "tool.completed";
+}
+
+function findCurrentActionEvent(
+  events: AgentThreadEvent[],
+  resolvedApprovalIds: ReadonlySet<string>,
+  answeredInputRequestIds: ReadonlySet<string>,
+): Extract<AgentThreadEvent, { type: "approval.requested" | "user_input.requested" }> | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.type === "approval.requested" && !resolvedApprovalIds.has(event.approval.approvalId)) {
+      return event;
+    }
+    if (event.type === "user_input.requested" && !answeredInputRequestIds.has(event.request.requestId)) {
+      return event;
+    }
+  }
+  return null;
 }
 
 function mergeLiveThreadEvent(snapshot: AgentThreadSnapshot, event: AgentThreadEvent): AgentThreadSnapshot {
@@ -1014,6 +1174,37 @@ const styles = StyleSheet.create((theme, rt) => ({
   attentionDetail: {
     fontFamily: theme.fonts.sans,
     fontSize: 12,
+    color: theme.colors.mutedForeground,
+  },
+  currentActionPanel: {
+    marginTop: theme.spacing.md,
+    borderRadius: 14,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    padding: theme.spacing.md,
+    gap: theme.spacing.sm,
+  },
+  currentActionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing.xs,
+  },
+  currentActionEyebrow: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 12,
+    color: theme.colors.moss,
+    textTransform: "uppercase",
+  },
+  currentActionTitle: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 15,
+    color: theme.colors.foreground,
+  },
+  currentActionDetail: {
+    fontFamily: theme.fonts.sans,
+    fontSize: 13,
     color: theme.colors.mutedForeground,
   },
   timeline: {

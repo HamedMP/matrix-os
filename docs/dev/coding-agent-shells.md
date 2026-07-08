@@ -81,6 +81,7 @@ Approval and input requests are gateway-owned lifecycle events.
 
 - The provider emits an approval or input event with bounded preview text.
 - Desktop/mobile render the request from the thread snapshot or stream.
+- Mobile thread details pin the newest unresolved approval or input request above the timeline while keeping the timeline as the audit trail.
 - A shell submits a decision or answer with a bounded `clientRequestId`.
 - Gateway applies the first valid decision idempotently, appends the resolution event, and broadcasts it.
 - Other shells update from the returned snapshot or stream event.
