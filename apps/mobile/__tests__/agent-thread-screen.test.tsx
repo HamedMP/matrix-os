@@ -18,7 +18,7 @@ jest.mock("expo-router", () => ({
 import React from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
-import { AppState, Text } from "react-native";
+import { AppState, ScrollView, Text } from "react-native";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import AgentThreadRoute from "../app/agents/[threadId]";
 import { useGateway } from "@/app/_layout";
@@ -1329,6 +1329,29 @@ describe("AgentThreadRoute", () => {
     expect(screen.getByText("Thread needs attention")).toBeTruthy();
     expect(screen.getByText("Refresh the thread or check the runtime.")).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|leaked|\.ssh|id_rsa/i)).toBeNull();
+  });
+
+  it("can jump to the latest activity in a non-empty thread timeline", async () => {
+    const scrollToEnd = jest.spyOn(ScrollView.prototype, "scrollToEnd").mockImplementation(() => {});
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: threadSnapshotFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Activity timeline")).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Jump to latest activity"));
+    });
+
+    expect(scrollToEnd).toHaveBeenCalledWith({ animated: true });
   });
 
   it("groups assistant message activity without exposing raw text", async () => {
