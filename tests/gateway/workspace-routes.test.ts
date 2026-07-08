@@ -359,7 +359,11 @@ describe("workspace API routes", () => {
     expect(agentSessionManager.startSession).toHaveBeenCalledWith(expect.objectContaining({
       agent: "codex",
       ownerId: "user_workspace",
-      sandbox: { enabled: true, writableRoots: [homePath] },
+      sandbox: expect.objectContaining({
+        enabled: true,
+        mode: "workspace-write",
+        writableRoots: [homePath],
+      }),
     }));
 
     await expect((await app.request("/api/sessions?projectSlug=repo&limit=10")).json()).resolves.toMatchObject({
