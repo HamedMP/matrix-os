@@ -1207,6 +1207,87 @@ describe("AgentThreadRoute", () => {
     expect(screen.queryByText(/home\/matrix|token|stdout leaked/i)).toBeNull();
   });
 
+  it("collapses grouped tool activity details until the user expands them", async () => {
+    const snapshot = {
+      ...threadSnapshotFixture(),
+      events: {
+        ...threadSnapshotFixture().events,
+        items: [
+          ...threadSnapshotFixture().events.items,
+          {
+            eventId: "evt_mobile_collapsed_tool_started",
+            threadId: "thread_mobile",
+            type: "tool.started",
+            toolCallId: "tool_mobile_collapsed",
+            displayName: "Run grouped checks",
+            kind: "command",
+            occurredAt: "2026-07-06T00:02:00.000Z",
+          },
+          {
+            eventId: "evt_mobile_collapsed_tool_output_1",
+            threadId: "thread_mobile",
+            type: "tool.output",
+            toolCallId: "tool_mobile_collapsed",
+            text: "first stdout leaked /home/matrix/private and token_sk_live_123",
+            truncated: false,
+            occurredAt: "2026-07-06T00:02:30.000Z",
+          },
+          {
+            eventId: "evt_mobile_collapsed_tool_output_2",
+            threadId: "thread_mobile",
+            type: "tool.output",
+            toolCallId: "tool_mobile_collapsed",
+            text: "second stdout leaked /home/matrix/private and token_sk_live_456",
+            truncated: true,
+            occurredAt: "2026-07-06T00:02:45.000Z",
+          },
+          {
+            eventId: "evt_mobile_collapsed_tool_completed",
+            threadId: "thread_mobile",
+            type: "tool.completed",
+            toolCallId: "tool_mobile_collapsed",
+            outcome: "success",
+            occurredAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+      },
+    };
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot,
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Run grouped checks")).toBeTruthy();
+    expect(screen.getByText("Completed successfully, partial output received")).toBeTruthy();
+    expect(screen.getByText("2 outputs")).toBeTruthy();
+    expect(screen.queryByText("Started command")).toBeNull();
+    expect(screen.queryByText("Output 1")).toBeNull();
+    expect(screen.queryByText("Output 2")).toBeNull();
+    expect(screen.queryByText(/home\/matrix|token|stdout leaked/i)).toBeNull();
+
+    fireEvent.press(screen.getByLabelText("Expand tool activity Run grouped checks"));
+
+    expect(await screen.findByText("Started command")).toBeTruthy();
+    expect(screen.getByText("Output 1")).toBeTruthy();
+    expect(screen.getByText("Output received")).toBeTruthy();
+    expect(screen.getByText("Output 2")).toBeTruthy();
+    expect(screen.getByText("Output received, partial")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|stdout leaked/i)).toBeNull();
+
+    fireEvent.press(screen.getByLabelText("Collapse tool activity Run grouped checks"));
+
+    expect(screen.queryByText("Started command")).toBeNull();
+    expect(screen.queryByText("Output 1")).toBeNull();
+  });
+
   it("keeps grouped tool outcomes ordered after interleaved events", async () => {
     const snapshot = {
       ...threadSnapshotFixture(),

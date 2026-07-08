@@ -865,6 +865,11 @@ function describeAssistantTimeline(events: AssistantTimelineEvent[]): { icon: ke
 function ToolTimelineItem({ events }: { events: ToolTimelineEvent[] }) {
   const { theme } = useUnistyles();
   const copy = describeToolTimeline(events);
+  const [expanded, setExpanded] = useState(false);
+  const started = events.find((event): event is Extract<ToolTimelineEvent, { type: "tool.started" }> => event.type === "tool.started");
+  const completed = events.findLast((event): event is Extract<ToolTimelineEvent, { type: "tool.completed" }> => event.type === "tool.completed");
+  const outputs = events.filter((event): event is Extract<ToolTimelineEvent, { type: "tool.output" }> => event.type === "tool.output");
+  const outputCount = `${outputs.length} ${outputs.length === 1 ? "output" : "outputs"}`;
   return (
     <View style={styles.eventRow}>
       <View style={styles.eventIcon}>
@@ -873,7 +878,49 @@ function ToolTimelineItem({ events }: { events: ToolTimelineEvent[] }) {
       <View style={styles.eventText}>
         <Text style={styles.eventTitle}>{copy.title}</Text>
         <Text selectable style={styles.eventDetail}>{copy.detail}</Text>
+        <View style={styles.toolSummaryRow}>
+          <Text style={styles.toolSummaryCount}>{outputCount}</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${expanded ? "Collapse" : "Expand"} tool activity ${copy.title}`}
+            onPress={() => setExpanded((value) => !value)}
+            style={styles.toolToggle}
+          >
+            <Ionicons
+              name={expanded ? "chevron-up-outline" : "chevron-down-outline"}
+              size={14}
+              color={theme.colors.forest}
+            />
+            <Text style={styles.toolToggleText}>{expanded ? "Hide details" : "Show details"}</Text>
+          </Pressable>
+        </View>
+        {expanded ? (
+          <View style={styles.toolDetailList}>
+            {started ? (
+              <ToolDetailRow title={`Started ${started.kind}`} detail="Tool run started" />
+            ) : null}
+            {outputs.map((event, index) => (
+              <ToolDetailRow
+                detail={event.truncated ? "Output received, partial" : "Output received"}
+                key={event.eventId}
+                title={`Output ${index + 1}`}
+              />
+            ))}
+            {completed ? (
+              <ToolDetailRow title="Completed" detail={formatToolOutcome(completed.outcome)} />
+            ) : null}
+          </View>
+        ) : null}
       </View>
+    </View>
+  );
+}
+
+function ToolDetailRow({ title, detail }: { title: string; detail: string }) {
+  return (
+    <View style={styles.toolDetailRow}>
+      <Text style={styles.toolDetailTitle}>{title}</Text>
+      <Text style={styles.toolDetailText}>{detail}</Text>
     </View>
   );
 }
@@ -1246,6 +1293,59 @@ const styles = StyleSheet.create((theme, rt) => ({
   },
   eventDetail: {
     fontFamily: theme.fonts.mono,
+    fontSize: 12,
+    color: theme.colors.mutedForeground,
+  },
+  toolSummaryRow: {
+    marginTop: theme.spacing.xs,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing.sm,
+  },
+  toolSummaryCount: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 12,
+    color: theme.colors.moss,
+  },
+  toolToggle: {
+    minHeight: 32,
+    borderRadius: 16,
+    paddingHorizontal: theme.spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    backgroundColor: theme.colors.background,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  toolToggleText: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 12,
+    color: theme.colors.forest,
+  },
+  toolDetailList: {
+    marginTop: theme.spacing.sm,
+    gap: theme.spacing.xs,
+  },
+  toolDetailRow: {
+    borderRadius: 10,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: theme.spacing.xs,
+    gap: 2,
+  },
+  toolDetailTitle: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 12,
+    color: theme.colors.foreground,
+  },
+  toolDetailText: {
+    fontFamily: theme.fonts.sans,
     fontSize: 12,
     color: theme.colors.mutedForeground,
   },
