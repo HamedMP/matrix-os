@@ -51,6 +51,12 @@ type ComposerSeed = {
   draft: AgentThreadComposerDraft;
 };
 type NotificationPreferenceKey = "approval" | "input" | "failed";
+type AssistantTimelineEvent = Extract<AgentThreadEvent, { type: "assistant.text.delta" | "assistant.text.completed" }>;
+type ToolTimelineEvent = Extract<AgentThreadEvent, { type: "tool.started" | "tool.output" | "tool.completed" }>;
+type ThreadTimelineItem =
+  | { kind: "assistant"; key: string; events: AssistantTimelineEvent[]; order: number }
+  | { kind: "event"; event: AgentThreadEvent; order: number }
+  | { kind: "tool"; key: string; events: ToolTimelineEvent[]; order: number };
 type SelectedReviewHunk = {
   key: string;
   file: ReviewSnapshotFile;
@@ -582,6 +588,7 @@ function ThreadSnapshotPanel({
   const answeredInputRequestKeys = new Set(snapshot.events.items
     .filter((event) => event.type === "user_input.answered")
     .map((event) => codingAgentInputActionKey(event.threadId, event.requestId)));
+  const timelineItems = createThreadTimelineItems(snapshot.events.items);
 
   return (
     <article
@@ -622,8 +629,20 @@ function ThreadSnapshotPanel({
         </div>
       </dl>
       <div className="grid gap-2">
-        {snapshot.events.items.map((event) => (
-          <ThreadEventRow key={event.eventId} event={event} answeredInputRequestKeys={answeredInputRequestKeys} />
+        {timelineItems.map((item) => item.kind === "assistant" ? (
+          <ThreadTimelineSummaryRow
+            key={item.key}
+            occurredAt={item.events[0]?.occurredAt ?? snapshot.thread.updatedAt}
+            {...describeAssistantTimeline(item.events)}
+          />
+        ) : item.kind === "tool" ? (
+          <ThreadTimelineSummaryRow
+            key={item.key}
+            occurredAt={item.events[0]?.occurredAt ?? snapshot.thread.updatedAt}
+            {...describeToolTimeline(item.events)}
+          />
+        ) : (
+          <ThreadEventRow key={item.event.eventId} event={item.event} answeredInputRequestKeys={answeredInputRequestKeys} />
         ))}
         {snapshot.events.items.length === 0 ? (
           <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
@@ -632,6 +651,27 @@ function ThreadSnapshotPanel({
         ) : null}
       </div>
     </article>
+  );
+}
+
+function ThreadTimelineSummaryRow({ title, detail, occurredAt }: { title: string; detail: string; occurredAt: string }) {
+  return (
+    <div
+      className="grid gap-1 rounded-md border px-3 py-2"
+      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+          {title}
+        </p>
+        <span className="shrink-0 text-xs" style={{ color: "var(--text-tertiary)" }}>
+          {occurredAt}
+        </span>
+      </div>
+      <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
+        {detail}
+      </p>
+    </div>
   );
 }
 
@@ -734,6 +774,86 @@ function ThreadEventRow({ event, answeredInputRequestKeys }: { event: AgentThrea
       ) : null}
     </div>
   );
+}
+
+function createThreadTimelineItems(events: AgentThreadEvent[]): ThreadTimelineItem[] {
+  const assistantGroups = new Map<string, AssistantTimelineEvent[]>();
+  const toolGroups = new Map<string, ToolTimelineEvent[]>();
+  const items: ThreadTimelineItem[] = [];
+  for (const [order, event] of events.entries()) {
+    if (isAssistantTimelineEvent(event)) {
+      const group = assistantGroups.get(event.messageId);
+      if (group) {
+        group.push(event);
+        continue;
+      }
+      const eventsForMessage = [event];
+      assistantGroups.set(event.messageId, eventsForMessage);
+      items.push({ kind: "assistant", key: `assistant:${event.messageId}`, events: eventsForMessage, order });
+      continue;
+    }
+    if (isToolTimelineEvent(event)) {
+      const group = toolGroups.get(event.toolCallId);
+      if (group) {
+        group.push(event);
+        continue;
+      }
+      const eventsForTool = [event];
+      toolGroups.set(event.toolCallId, eventsForTool);
+      items.push({ kind: "tool", key: `tool:${event.toolCallId}`, events: eventsForTool, order });
+      continue;
+    }
+    items.push({ kind: "event", event, order });
+  }
+  return items.sort((a, b) => a.order - b.order);
+}
+
+function isAssistantTimelineEvent(event: AgentThreadEvent): event is AssistantTimelineEvent {
+  return event.type === "assistant.text.delta" || event.type === "assistant.text.completed";
+}
+
+function isToolTimelineEvent(event: AgentThreadEvent): event is ToolTimelineEvent {
+  return event.type === "tool.started" || event.type === "tool.output" || event.type === "tool.completed";
+}
+
+function describeAssistantTimeline(events: AssistantTimelineEvent[]): { title: string; detail: string } {
+  const deltas = events.filter((event): event is Extract<AssistantTimelineEvent, { type: "assistant.text.delta" }> => event.type === "assistant.text.delta");
+  const completed = events.some((event) => event.type === "assistant.text.completed");
+  if (deltas.length === 1 && !completed) {
+    return { title: "Assistant update", detail: "Text update received" };
+  }
+  const updates = `${deltas.length} ${deltas.length === 1 ? "text update" : "text updates"} received`;
+  return {
+    title: completed ? "Assistant message" : "Assistant updates",
+    detail: completed ? `${updates}, complete` : updates,
+  };
+}
+
+function describeToolTimeline(events: ToolTimelineEvent[]): { title: string; detail: string } {
+  const started = events.find((event): event is Extract<ToolTimelineEvent, { type: "tool.started" }> => event.type === "tool.started");
+  const outputs = events.filter((event): event is Extract<ToolTimelineEvent, { type: "tool.output" }> => event.type === "tool.output");
+  const completed = events.find((event): event is Extract<ToolTimelineEvent, { type: "tool.completed" }> => event.type === "tool.completed");
+  const displayName = started?.displayName ?? "Tool";
+  if (!completed) {
+    return {
+      title: "Tool activity",
+      detail: outputs.length > 0 ? `${displayName} running with output received` : `${displayName} running`,
+    };
+  }
+  const outputState = outputs.length > 0
+    ? outputs.some((event) => event.truncated) ? " after receiving partial output" : " after receiving output"
+    : " without captured output";
+  return {
+    title: "Tool activity",
+    detail: `${displayName} completed ${describeToolOutcome(completed.outcome)}${outputState}`,
+  };
+}
+
+function describeToolOutcome(outcome: string): string {
+  if (outcome === "success") return "successfully";
+  if (outcome === "failed") return "with errors";
+  if (outcome === "cancelled") return "cancelled";
+  return outcome.replace(/_/g, " ");
 }
 
 function approvalDecisionLabel(decision: string): string {
