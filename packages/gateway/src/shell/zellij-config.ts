@@ -137,7 +137,7 @@ fi
 
 if [ "$#" -gt 0 ]; then
   set +e
-  "$@"
+  ( "$@" )
   set -e
 fi
 

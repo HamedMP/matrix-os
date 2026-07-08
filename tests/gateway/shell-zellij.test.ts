@@ -355,7 +355,7 @@ describe("zellij adapter", () => {
       expect(config).toContain(`default_shell ${JSON.stringify(shellPath)}`);
       expect(shell).toContain(`exec bash --noprofile --rcfile '${bashrcPath}' -i`);
       expect(shell).toContain('if [ "$#" -gt 0 ]; then');
-      expect(shell).toContain('  set +e\n  "$@"\n  set -e');
+      expect(shell).toContain('  set +e\n  ( "$@" )\n  set -e');
       expect(shell).toContain(`node '${promptLabelPath}'`);
       expect(shell).not.toContain("/bin/bash");
       expect(shellMode & 0o700).toBe(0o700);
@@ -647,7 +647,7 @@ describe("zellij adapter", () => {
     const script = matrixTerminalShellScript(path, promptLabelPath);
 
     expect(script).toContain(`exec bash --noprofile --rcfile '/tmp/matrix "owner"/it'\\''works/bashrc' -i`);
-    expect(script).toContain('  "$@"');
+    expect(script).toContain('  ( "$@" )');
     expect(script).toContain(`node '/tmp/matrix "owner"/it'\\''works/prompt-label.mjs'`);
     expect(script).not.toContain("/bin/bash");
   });
