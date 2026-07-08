@@ -308,11 +308,11 @@ describe("IPC contract", () => {
     const updateRequestSchema = INVOKE_CHANNELS["runtime:update-notification-preferences"].request;
     const updateResponseSchema = INVOKE_CHANNELS["runtime:update-notification-preferences"].response;
 
-    expect(getSchema.safeParse({ attentionPush: { approval: true, input: true, failed: false } }).success).toBe(true);
-    expect(getSchema.safeParse({ attentionPush: { approval: true, input: true, failed: false }, accessToken: "secret" }).success).toBe(false);
-    expect(updateRequestSchema.safeParse({ attentionPush: { approval: false, input: true, failed: true } }).success).toBe(true);
-    expect(updateRequestSchema.safeParse({ attentionPush: { approval: false, input: true, failed: true }, bearerToken: "secret" }).success).toBe(false);
-    expect(updateResponseSchema.safeParse({ attentionPush: { approval: false, input: true, failed: true } }).success).toBe(true);
+    expect(getSchema.safeParse({ attentionPush: { approval: true, input: true, failed: false, completed: true } }).success).toBe(true);
+    expect(getSchema.safeParse({ attentionPush: { approval: true, input: true, failed: false, completed: true }, accessToken: "secret" }).success).toBe(false);
+    expect(updateRequestSchema.safeParse({ attentionPush: { approval: false, input: true, failed: true, completed: true } }).success).toBe(true);
+    expect(updateRequestSchema.safeParse({ attentionPush: { approval: false, input: true, failed: true, completed: true }, bearerToken: "secret" }).success).toBe(false);
+    expect(updateResponseSchema.safeParse({ attentionPush: { approval: false, input: true, failed: true, completed: true } }).success).toBe(true);
   });
 
   it("validates runtime:get-reviews responses and rejects credential leakage shapes", () => {

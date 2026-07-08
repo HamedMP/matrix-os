@@ -19,6 +19,7 @@ export const DEFAULT_CODING_AGENT_NOTIFICATION_PREFERENCES: CodingAgentNotificat
       approval: true,
       input: true,
       failed: true,
+      completed: true,
     },
   });
 

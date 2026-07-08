@@ -118,6 +118,23 @@ function failedProvider(): CodingAgentProviderAdapter {
   };
 }
 
+function completedProvider(): CodingAgentProviderAdapter {
+  return {
+    providerId: "codex",
+    startThread({ thread, nextEventId }) {
+      return [
+        AgentThreadEventSchema.parse({
+          type: "thread.completed",
+          eventId: nextEventId(),
+          threadId: thread.id,
+          occurredAt: now.toISOString(),
+          outcome: "completed",
+        }),
+      ];
+    },
+  };
+}
+
 describe("coding agent attention notifications", () => {
   it("emits a safe push notification when a thread starts waiting for approval", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-attention-notifications-"));
@@ -198,6 +215,35 @@ describe("coding agent attention notifications", () => {
     expect(send).toHaveBeenCalledWith(expect.objectContaining({
       ownerId: principal.userId,
       text: "Agent run needs attention.",
+      metadata: {
+        category: "agent",
+        threadId: created.snapshot.thread.id,
+      },
+    }));
+
+    subscription.dispose();
+  });
+
+  it("emits a safe push notification when a thread completes successfully", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-attention-notifications-"));
+    const send = vi.fn<(reply: ChannelReply) => Promise<void>>().mockResolvedValue(undefined);
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => now,
+      providers: [completedProvider()],
+    });
+    const subscription = registerCodingAgentAttentionNotifications({ threads, send });
+
+    const created = await threads.createThread(principal, {
+      providerId: "codex",
+      prompt: "Finish the task.",
+      clientRequestId: "req_completed_push",
+    });
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      ownerId: principal.userId,
+      text: "Agent run completed.",
       metadata: {
         category: "agent",
         threadId: created.snapshot.thread.id,

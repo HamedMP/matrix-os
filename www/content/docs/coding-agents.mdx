@@ -120,7 +120,7 @@ Threads may need attention when an agent:
 - fails and needs review;
 - finishes with results to inspect.
 
-Attention appears in the workspace and can route you to the matching thread. Mobile notification taps and desktop notification clicks use bounded thread references and rehydrate the current thread state before rendering. Desktop and mobile can also turn approval, input, and failed-run push alerts on or off from the coding workspace. Matrix applies those preferences on the gateway before sending attention alerts.
+Attention appears in the workspace and can route you to the matching thread. Mobile notification taps and desktop notification clicks use bounded thread references and rehydrate the current thread state before rendering. Desktop and mobile can also turn approval, input, failed-run, and completion push alerts on or off from the coding workspace. Matrix applies those preferences on the gateway before sending attention alerts.
 
 When a push alert is enabled, Matrix sends it to the owner's newest active registered mobile devices with bounded fanout. Stale device registrations expire, duplicate token values are collapsed, and the notification payload carries only generic copy plus the safe thread reference.
 

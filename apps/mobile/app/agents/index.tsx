@@ -133,6 +133,7 @@ const NOTIFICATION_TOGGLES: { key: NotificationPreferenceKey; label: string; det
   { key: "approval", label: "Approval alerts", detail: "Approval-required runs" },
   { key: "input", label: "Input request alerts", detail: "Runs waiting for a response" },
   { key: "failed", label: "Failed run alerts", detail: "Runs that need recovery" },
+  { key: "completed", label: "Completion alerts", detail: "Runs that finish successfully" },
 ];
 const AGENT_WORKSPACE_CONNECTION_LABELS = {
   connecting: "Connecting to agent workspace",

@@ -40,6 +40,9 @@ function notificationKindFor(events: AgentThreadEvent[]): CodingAgentAttentionNo
     if (event.type === "thread.completed" && event.outcome === "failed") {
       return CodingAgentAttentionNotificationKindSchema.parse("failed");
     }
+    if (event.type === "thread.completed" && event.outcome === "completed") {
+      return CodingAgentAttentionNotificationKindSchema.parse("completed");
+    }
   }
   return null;
 }
@@ -47,6 +50,7 @@ function notificationKindFor(events: AgentThreadEvent[]): CodingAgentAttentionNo
 function bodyFor(kind: CodingAgentAttentionNotificationKind): string {
   if (kind === "approval") return "Agent needs approval.";
   if (kind === "input") return "Agent needs input.";
+  if (kind === "completed") return "Agent run completed.";
   return "Agent run needs attention.";
 }
 

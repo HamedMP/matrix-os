@@ -646,15 +646,15 @@ describe("AgentsScreen", () => {
       getCodingAgentNotificationPreferences: jest.fn()
         .mockResolvedValueOnce({
           ok: true,
-          preferences: { attentionPush: { approval: true, input: true, failed: false } },
+          preferences: { attentionPush: { approval: true, input: true, failed: false, completed: true } },
         })
         .mockResolvedValueOnce({
           ok: true,
-          preferences: { attentionPush: { approval: false, input: true, failed: false } },
+          preferences: { attentionPush: { approval: false, input: true, failed: false, completed: true } },
         }),
       updateCodingAgentNotificationPreferences: jest.fn().mockResolvedValue({
         ok: true,
-        preferences: { attentionPush: { approval: false, input: true, failed: true } },
+        preferences: { attentionPush: { approval: false, input: true, failed: true, completed: true } },
       }),
     };
     useGatewayMock.mockReturnValue(gatewayContext({
@@ -671,7 +671,7 @@ describe("AgentsScreen", () => {
 
     await waitFor(() => {
       expect(client.updateCodingAgentNotificationPreferences).toHaveBeenCalledWith({
-        attentionPush: { approval: false, input: true, failed: true },
+        attentionPush: { approval: false, input: true, failed: true, completed: true },
       });
     });
     expect((await screen.findByRole("switch", { name: "Failed run alerts" })).props.value).toBe(true);
