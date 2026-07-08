@@ -284,12 +284,14 @@ describe("coding agent contracts", () => {
         approval: true,
         input: false,
         failed: true,
+        completed: true,
       },
     })).toEqual({
       attentionPush: {
         approval: true,
         input: false,
         failed: true,
+        completed: true,
       },
     });
 
@@ -298,8 +300,9 @@ describe("coding agent contracts", () => {
         approval: false,
         input: false,
         failed: false,
+        completed: false,
       },
-    }).attentionPush.approval).toBe(false);
+    }).attentionPush.completed).toBe(false);
 
     expect(() =>
       CodingAgentNotificationPreferencesSchema.parse({
@@ -307,6 +310,7 @@ describe("coding agent contracts", () => {
           approval: true,
           input: true,
           failed: true,
+          completed: true,
           provider: "raw",
         },
       }),

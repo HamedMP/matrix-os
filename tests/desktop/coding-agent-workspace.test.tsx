@@ -707,7 +707,7 @@ describe("AgentWorkspace", () => {
         if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
         if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
         if (channel === "runtime:get-notification-preferences") {
-          return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true } });
+          return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
         }
         if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());
         if (channel === "runtime:get-thread-snapshot") return Promise.resolve(threadSnapshotFixture());
@@ -805,7 +805,7 @@ describe("AgentWorkspace", () => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
       if (channel === "runtime:get-notification-preferences") {
-        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true } });
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
       }
       if (channel === "runtime:get-thread-snapshot") return Promise.resolve(snapshot);
       return Promise.reject(new Error(`unexpected channel ${channel}`));
@@ -879,7 +879,7 @@ describe("AgentWorkspace", () => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
       if (channel === "runtime:get-notification-preferences") {
-        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true } });
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
       }
       if (channel === "runtime:get-thread-snapshot") return Promise.resolve(snapshot);
       return Promise.reject(new Error(`unexpected channel ${channel}`));
@@ -918,11 +918,11 @@ describe("AgentWorkspace", () => {
       if (channel === "runtime:get-notification-preferences") {
         preferenceReads += 1;
         return Promise.resolve(preferenceReads === 1
-          ? { attentionPush: { approval: true, input: true, failed: false } }
-          : { attentionPush: { approval: false, input: true, failed: false } });
+          ? { attentionPush: { approval: true, input: true, failed: false, completed: true } }
+          : { attentionPush: { approval: false, input: true, failed: false, completed: true } });
       }
       if (channel === "runtime:update-notification-preferences") {
-        return Promise.resolve({ attentionPush: { approval: false, input: true, failed: true } });
+        return Promise.resolve({ attentionPush: { approval: false, input: true, failed: true, completed: true } });
       }
       return Promise.reject(new Error(`unexpected channel ${channel}`));
     });
@@ -936,7 +936,7 @@ describe("AgentWorkspace", () => {
 
     await waitFor(() => {
       expect(window.operator.invoke).toHaveBeenCalledWith("runtime:update-notification-preferences", {
-        attentionPush: { approval: false, input: true, failed: true },
+        attentionPush: { approval: false, input: true, failed: true, completed: true },
       });
     });
     expect((await screen.findByRole("checkbox", { name: "Failed run alerts" }) as HTMLInputElement).checked).toBe(true);
@@ -1057,7 +1057,7 @@ describe("AgentWorkspace", () => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
       if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
       if (channel === "runtime:get-notification-preferences") {
-        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true } });
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
       }
       if (channel === "runtime:get-thread-snapshot") return Promise.resolve(reviewReadyThreadSnapshotFixture());
       if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());

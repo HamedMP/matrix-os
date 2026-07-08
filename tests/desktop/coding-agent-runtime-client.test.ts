@@ -191,14 +191,14 @@ function threadSnapshotBody() {
 describe("coding agent desktop runtime client", () => {
   it("fetches and updates notification preferences with bearer auth", async () => {
     const fetchFn = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ preferences: { attentionPush: { approval: true, input: true, failed: false } } }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ preferences: { attentionPush: { approval: true, input: true, failed: true } } }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ preferences: { attentionPush: { approval: true, input: true, failed: false, completed: true } } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ preferences: { attentionPush: { approval: true, input: true, failed: true, completed: true } } }), { status: 200 }));
 
     await expect(fetchCodingAgentNotificationPreferences(auth(), fetchFn)).resolves.toEqual({
-      attentionPush: { approval: true, input: true, failed: false },
+      attentionPush: { approval: true, input: true, failed: false, completed: true },
     });
-    await expect(updateCodingAgentNotificationPreferences(auth(), { attentionPush: { approval: true, input: true, failed: true } }, fetchFn)).resolves.toEqual({
-      attentionPush: { approval: true, input: true, failed: true },
+    await expect(updateCodingAgentNotificationPreferences(auth(), { attentionPush: { approval: true, input: true, failed: true, completed: true } }, fetchFn)).resolves.toEqual({
+      attentionPush: { approval: true, input: true, failed: true, completed: true },
     });
     expect(fetchFn).toHaveBeenNthCalledWith(1, "https://runtime.test/api/coding-agents/notification-preferences", expect.objectContaining({
       method: "GET",
@@ -208,7 +208,7 @@ describe("coding agent desktop runtime client", () => {
     expect(fetchFn).toHaveBeenNthCalledWith(2, "https://runtime.test/api/coding-agents/notification-preferences", expect.objectContaining({
       method: "PUT",
       headers: expect.objectContaining({ Authorization: "Bearer desktop-token" }),
-      body: JSON.stringify({ attentionPush: { approval: true, input: true, failed: true } }),
+      body: JSON.stringify({ attentionPush: { approval: true, input: true, failed: true, completed: true } }),
       signal: expect.any(Object),
     }));
   });
@@ -216,7 +216,7 @@ describe("coding agent desktop runtime client", () => {
   it("rejects unsafe notification preference payloads with generic errors", async () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       preferences: {
-        attentionPush: { approval: true, input: true, failed: false },
+        attentionPush: { approval: true, input: true, failed: false, completed: true },
         token: "secret",
       },
     }), { status: 200 }));

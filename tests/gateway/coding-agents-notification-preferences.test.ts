@@ -51,6 +51,38 @@ describe("coding agent notification preferences", () => {
           approval: true,
           input: true,
           failed: true,
+          completed: true,
+        },
+      },
+    });
+  });
+
+  it("upgrades legacy owner-scoped notification preferences with completion alerts enabled", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-notification-prefs-"));
+    const { app } = appWithStore(homePath);
+    await mkdir(join(homePath, "system", "coding-agents", "notification-preferences"), { recursive: true });
+    await writeFile(
+      join(homePath, "system", "coding-agents", "notification-preferences", "owner_user.json"),
+      JSON.stringify({
+        attentionPush: {
+          approval: false,
+          input: true,
+          failed: false,
+        },
+      }),
+      "utf-8",
+    );
+
+    const res = await app.request("/api/coding-agents/notification-preferences");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      preferences: {
+        attentionPush: {
+          approval: false,
+          input: true,
+          failed: false,
+          completed: true,
         },
       },
     });
@@ -65,6 +97,7 @@ describe("coding agent notification preferences", () => {
         approval: false,
         input: true,
         failed: false,
+        completed: true,
       },
     }));
 
@@ -75,6 +108,7 @@ describe("coding agent notification preferences", () => {
           approval: false,
           input: true,
           failed: false,
+          completed: true,
         },
       },
     });
@@ -88,6 +122,7 @@ describe("coding agent notification preferences", () => {
         approval: false,
         input: true,
         failed: false,
+        completed: true,
       },
     });
   });
@@ -101,6 +136,7 @@ describe("coding agent notification preferences", () => {
         approval: false,
         input: false,
         failed: false,
+        completed: false,
       },
     }));
     expect(ownerUpdate.status).toBe(200);
@@ -115,6 +151,7 @@ describe("coding agent notification preferences", () => {
           approval: true,
           input: true,
           failed: true,
+          completed: true,
         },
       },
     });
@@ -129,6 +166,7 @@ describe("coding agent notification preferences", () => {
         approval: true,
         input: true,
         failed: true,
+        completed: true,
         rawProviderSetting: "/home/matrix/provider.log",
       },
     }));
@@ -143,7 +181,7 @@ describe("coding agent notification preferences", () => {
     const oversized = await app.request(new Request("http://localhost/api/coding-agents/notification-preferences", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ attentionPush: { approval: true, input: true, failed: true }, padding: "x".repeat(10_000) }),
+      body: JSON.stringify({ attentionPush: { approval: true, input: true, failed: true, completed: true }, padding: "x".repeat(10_000) }),
     }));
     expect(oversized.status).toBe(413);
     await expect(oversized.json()).resolves.toMatchObject({

@@ -51,7 +51,7 @@ type ComposerSeed = {
   seedId: number;
   draft: AgentThreadComposerDraft;
 };
-type NotificationPreferenceKey = "approval" | "input" | "failed";
+type NotificationPreferenceKey = "approval" | "input" | "failed" | "completed";
 type AssistantTimelineEvent = Extract<AgentThreadEvent, { type: "assistant.text.delta" | "assistant.text.completed" }>;
 type ToolTimelineEvent = Extract<AgentThreadEvent, { type: "tool.started" | "tool.output" | "tool.completed" }>;
 type ThreadTimelineItem =
@@ -130,6 +130,7 @@ const NOTIFICATION_TOGGLES: Array<{ key: NotificationPreferenceKey; label: strin
   { key: "approval", label: "Approval alerts", detail: "Approval-required runs" },
   { key: "input", label: "Input request alerts", detail: "Runs waiting for a response" },
   { key: "failed", label: "Failed run alerts", detail: "Runs that need recovery" },
+  { key: "completed", label: "Completion alerts", detail: "Runs that finish successfully" },
 ];
 
 function NotificationPreferencesPanel() {
@@ -142,7 +143,7 @@ function NotificationPreferencesPanel() {
   return (
     <Section title="Notifications">
       <div
-        className="grid gap-2 rounded-md border p-3 md:grid-cols-3"
+        className="grid gap-2 rounded-md border p-3 md:grid-cols-4"
         style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
       >
         {NOTIFICATION_TOGGLES.map((item) => (

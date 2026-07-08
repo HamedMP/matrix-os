@@ -138,13 +138,14 @@ export const RuntimeLimitsSchema = z.object({
   maxListItems: z.number().int().min(1).max(200),
 }).strict();
 
-export const CodingAgentAttentionNotificationKindSchema = z.enum(["approval", "input", "failed"]);
+export const CodingAgentAttentionNotificationKindSchema = z.enum(["approval", "input", "failed", "completed"]);
 
 export const CodingAgentNotificationPreferencesSchema = z.object({
   attentionPush: z.object({
     approval: z.boolean(),
     input: z.boolean(),
     failed: z.boolean(),
+    completed: z.boolean().default(true),
   }).strict(),
 }).strict();
 
