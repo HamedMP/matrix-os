@@ -5,12 +5,15 @@ import { resolve } from "node:path";
 
 const desktopUpdateChannel =
   process.env.MATRIX_DESKTOP_UPDATE_CHANNEL || process.env.OPERATOR_UPDATE_CHANNEL || "";
+const codingAgentsDesktopWorkspace =
+  process.env.VITE_CODING_AGENTS_DESKTOP_WORKSPACE !== "0";
 
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
     define: {
       __MATRIX_DESKTOP_UPDATE_CHANNEL__: JSON.stringify(desktopUpdateChannel),
+      __CODING_AGENTS_DESKTOP_WORKSPACE__: JSON.stringify(codingAgentsDesktopWorkspace),
     },
     build: {
       rollupOptions: {

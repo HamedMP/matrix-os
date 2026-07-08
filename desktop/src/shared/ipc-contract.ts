@@ -321,7 +321,7 @@ export const EVENT_CHANNELS = {
   "menu:action": z
     .object({ action: z.enum(["new-task", "new-thread", "palette", "quick-open"]) })
     .strict(),
-  "menu:navigate": z.object({ kind: z.enum(["settings", "board"]) }).strict(),
+  "menu:navigate": z.object({ kind: z.enum(["settings", "board", "agents"]) }).strict(),
 } as const;
 
 export type InvokeChannel = keyof typeof INVOKE_CHANNELS;

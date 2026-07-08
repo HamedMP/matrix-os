@@ -107,6 +107,15 @@ describe("handleMenuNavigate", () => {
     });
   });
 
+  it("opens the coding-agent workspace from menu navigation", () => {
+    handleMenuNavigate("agents");
+
+    expect(useTabs.getState().tabs[0]).toMatchObject({
+      kind: "agents",
+      title: "Agents",
+    });
+  });
+
   it("falls back to home and logs unsupported menu kinds", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 

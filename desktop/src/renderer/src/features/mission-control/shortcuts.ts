@@ -27,6 +27,10 @@ export function handleMenuNavigate(kind: string): void {
     useTabs.getState().openTab({ kind: "settings", title: "Settings" });
     return;
   }
+  if (kind === "agents") {
+    useTabs.getState().openTab({ kind: "agents", title: "Agents" });
+    return;
+  }
   if (kind === "board") {
     const { activeProjectSlug, projects } = useBoard.getState();
     const project = projects.find((candidate) => candidate.slug === activeProjectSlug) ?? projects[0];
