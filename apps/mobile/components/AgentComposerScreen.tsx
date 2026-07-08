@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useHeaderHeight } from "@react-navigation/elements";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { z } from "zod/v4";
@@ -215,6 +216,7 @@ function mergeSeededDraft(
 
 export default function AgentComposerScreen() {
   const { theme } = useUnistyles();
+  const headerHeight = useHeaderHeight();
   const router = useRouter();
   const routeParams = useLocalSearchParams();
   const { client } = useGateway();
@@ -376,116 +378,127 @@ export default function AgentComposerScreen() {
   }
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
+    <KeyboardAvoidingView
+      accessibilityLabel="Agent composer keyboard area"
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Math.max(0, headerHeight)}
+      style={styles.keyboardArea}
     >
-      <View style={styles.header}>
-        <View style={styles.headerIcon}>
-          <Ionicons name="sparkles-outline" size={22} color={theme.colors.forest} />
-        </View>
-        <View style={styles.headerText}>
-          <Text style={styles.title}>New agent run</Text>
-          <Text style={styles.subtitle}>{summary.runtime.label}</Text>
-        </View>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Provider</Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Provider ${selectedProvider?.displayName ?? "None"}`}
-          disabled={!canCreate}
-          onPress={() => setPickerOpen((open) => !open)}
-          style={styles.providerButton}
-        >
-          <View style={styles.rowText}>
-            <Text style={styles.rowTitle}>{selectedProvider?.displayName ?? "Choose provider"}</Text>
-            <Text style={styles.rowSubtitle}>{selectedProvider?.availability.replace(/_/g, " ") ?? "Not selected"}</Text>
+      <ScrollView
+        style={styles.container}
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.header}>
+          <View style={styles.headerIcon}>
+            <Ionicons name="sparkles-outline" size={22} color={theme.colors.forest} />
           </View>
-          <Ionicons name={pickerOpen ? "chevron-up" : "chevron-down"} size={18} color={theme.colors.moss} />
-        </Pressable>
-        {pickerOpen ? (
-          <View accessibilityLabel="Provider picker" style={styles.pickerSheet}>
-            {summary.providers.map((provider) => (
+          <View style={styles.headerText}>
+            <Text style={styles.title}>New agent run</Text>
+            <Text style={styles.subtitle}>{summary.runtime.label}</Text>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Provider</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Provider ${selectedProvider?.displayName ?? "None"}`}
+            disabled={!canCreate}
+            onPress={() => setPickerOpen((open) => !open)}
+            style={styles.providerButton}
+          >
+            <View style={styles.rowText}>
+              <Text style={styles.rowTitle}>{selectedProvider?.displayName ?? "Choose provider"}</Text>
+              <Text style={styles.rowSubtitle}>{selectedProvider?.availability.replace(/_/g, " ") ?? "Not selected"}</Text>
+            </View>
+            <Ionicons name={pickerOpen ? "chevron-up" : "chevron-down"} size={18} color={theme.colors.moss} />
+          </Pressable>
+          {pickerOpen ? (
+            <View accessibilityLabel="Provider picker" style={styles.pickerSheet}>
+              {summary.providers.map((provider) => (
+                <Pressable
+                  key={provider.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={provider.displayName}
+                  disabled={!providerReady(provider)}
+                  onPress={() => chooseProvider(provider)}
+                  style={[
+                    styles.providerOption,
+                    provider.id === draft.providerId && styles.providerOptionActive,
+                    !providerReady(provider) && styles.providerOptionDisabled,
+                  ]}
+                >
+                  <Text style={styles.rowTitle}>{provider.displayName}</Text>
+                  <Text style={styles.rowSubtitle}>
+                    {provider.authStatus.replace(/_/g, " ")}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Mode</Text>
+          <View style={styles.modeRow}>
+            {modes.map((mode) => (
               <Pressable
-                key={provider.id}
+                key={mode}
                 accessibilityRole="button"
-                accessibilityLabel={provider.displayName}
-                disabled={!providerReady(provider)}
-                onPress={() => chooseProvider(provider)}
-                style={[
-                  styles.providerOption,
-                  provider.id === draft.providerId && styles.providerOptionActive,
-                  !providerReady(provider) && styles.providerOptionDisabled,
-                ]}
+                accessibilityLabel={`Mode ${mode}`}
+                onPress={() => setDraft((current) => current ? { ...current, mode } : current)}
+                style={[styles.modeButton, draft.mode === mode && styles.modeButtonActive]}
               >
-                <Text style={styles.rowTitle}>{provider.displayName}</Text>
-                <Text style={styles.rowSubtitle}>
-                  {provider.authStatus.replace(/_/g, " ")}
+                <Text style={[styles.modeText, draft.mode === mode && styles.modeTextActive]}>
+                  {mode.replace(/_/g, " ")}
                 </Text>
               </Pressable>
             ))}
           </View>
-        ) : null}
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Mode</Text>
-        <View style={styles.modeRow}>
-          {modes.map((mode) => (
-            <Pressable
-              key={mode}
-              accessibilityRole="button"
-              accessibilityLabel={`Mode ${mode}`}
-              onPress={() => setDraft((current) => current ? { ...current, mode } : current)}
-              style={[styles.modeButton, draft.mode === mode && styles.modeButtonActive]}
-            >
-              <Text style={[styles.modeText, draft.mode === mode && styles.modeTextActive]}>
-                {mode.replace(/_/g, " ")}
-              </Text>
-            </Pressable>
-          ))}
         </View>
-      </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Prompt</Text>
-        <TextInput
-          accessibilityLabel="Agent run prompt"
-          multiline
-          value={draft.prompt}
-          editable={canCreate}
-          onChangeText={(prompt) => setDraft((current) => current ? { ...current, prompt } : current)}
-          placeholder="Describe the work to run"
-          placeholderTextColor={theme.colors.mutedForeground}
-          style={styles.promptInput}
-        />
-      </View>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Prompt</Text>
+          <TextInput
+            accessibilityLabel="Agent run prompt"
+            multiline
+            value={draft.prompt}
+            editable={canCreate}
+            onChangeText={(prompt) => setDraft((current) => current ? { ...current, prompt } : current)}
+            placeholder="Describe the work to run"
+            placeholderTextColor={theme.colors.mutedForeground}
+            style={styles.promptInput}
+          />
+        </View>
 
-      {createError ? <Text selectable style={styles.errorText}>{createError}</Text> : null}
-      {!canCreate ? (
-        <Text selectable style={styles.errorText}>Agent runs are not available on this runtime yet.</Text>
-      ) : null}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Start run"
-        disabled={!canCreate || submitStatus === "submitting"}
-        onPress={() => void submit()}
-        style={[styles.startButton, (!canCreate || submitStatus === "submitting") && styles.startButtonDisabled]}
-      >
-        <Ionicons name="play-outline" size={18} color={theme.colors.background} />
-        <Text style={styles.startButtonText}>
-          {submitStatus === "submitting" ? "Starting" : "Start run"}
-        </Text>
-      </Pressable>
-    </ScrollView>
+        {createError ? <Text selectable style={styles.errorText}>{createError}</Text> : null}
+        {!canCreate ? (
+          <Text selectable style={styles.errorText}>Agent runs are not available on this runtime yet.</Text>
+        ) : null}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Start run"
+          disabled={!canCreate || submitStatus === "submitting"}
+          onPress={() => void submit()}
+          style={[styles.startButton, (!canCreate || submitStatus === "submitting") && styles.startButtonDisabled]}
+        >
+          <Ionicons name="play-outline" size={18} color={theme.colors.background} />
+          <Text style={styles.startButtonText}>
+            {submitStatus === "submitting" ? "Starting" : "Start run"}
+          </Text>
+        </Pressable>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create((theme, rt) => ({
+  keyboardArea: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+  },
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
