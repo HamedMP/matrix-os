@@ -12,6 +12,10 @@ type PublishFailure = {
   status: number;
   error: WorkspaceError;
 };
+type SessionLifecyclePick = Pick<
+  WorkspaceSessionView,
+  "id" | "kind" | "projectSlug" | "taskId" | "worktreeId" | "pr" | "agent" | "runtime" | "terminalSessionId" | "ownerId"
+>;
 
 function isPublishFailure(result: unknown): result is PublishFailure {
   return typeof result === "object" &&
@@ -27,6 +31,7 @@ function isPublishFailure(result: unknown): result is PublishFailure {
 
 export function createWorkspaceEventPublisher(options: {
   eventStore: WorkspaceEventStore;
+  onSessionStopped?: (session: SessionLifecyclePick) => Promise<void> | void;
 }) {
   async function publish(input: PublishEventInput): Promise<void> {
     try {
@@ -39,6 +44,24 @@ export function createWorkspaceEventPublisher(options: {
         "[workspace-event-publisher] Unexpected workspace event publish error:",
         err instanceof Error ? err.message : String(err),
       );
+    }
+  }
+
+  function logSessionStoppedHookFailure(err: unknown): void {
+    console.warn(
+      "[workspace-event-publisher] Session stopped hook failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
+  function notifySessionStopped(session: SessionLifecyclePick): void {
+    try {
+      const result = options.onSessionStopped?.(session);
+      if (result && typeof result === "object" && "then" in result) {
+        void Promise.resolve(result).catch(logSessionStoppedHookFailure);
+      }
+    } catch (err: unknown) {
+      logSessionStoppedHookFailure(err);
     }
   }
 
@@ -93,10 +116,7 @@ export function createWorkspaceEventPublisher(options: {
       });
     },
 
-    async publishSessionStarted(session: Pick<
-      WorkspaceSessionView,
-      "id" | "kind" | "projectSlug" | "taskId" | "worktreeId" | "pr" | "agent" | "runtime" | "terminalSessionId"
-    >): Promise<void> {
+    async publishSessionStarted(session: SessionLifecyclePick): Promise<void> {
       await publish({
         type: "session.started",
         scope: { projectSlug: session.projectSlug, taskId: session.taskId, sessionId: session.id },
@@ -111,10 +131,7 @@ export function createWorkspaceEventPublisher(options: {
       });
     },
 
-    async publishSessionStopped(session: Pick<
-      WorkspaceSessionView,
-      "id" | "kind" | "projectSlug" | "taskId" | "worktreeId" | "pr" | "agent" | "runtime" | "terminalSessionId"
-    >): Promise<void> {
+    async publishSessionStopped(session: SessionLifecyclePick): Promise<void> {
       await publish({
         type: "session.stopped",
         scope: { projectSlug: session.projectSlug, taskId: session.taskId, sessionId: session.id },
@@ -127,6 +144,7 @@ export function createWorkspaceEventPublisher(options: {
           worktreeId: session.worktreeId,
         },
       });
+      notifySessionStopped(session);
     },
   };
 }

@@ -41,6 +41,8 @@ import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createAgentSandbox } from "./agent-sandbox.js";
 import { createWorktreeManager } from "./worktree-manager.js";
 import { createWorkspaceSessionOrchestrator } from "./workspace-session-orchestrator.js";
+import { createWorkspaceEventStore } from "./workspace-events.js";
+import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
@@ -95,9 +97,10 @@ import { createAgentCredentialStatusService } from "./onboarding/agent-credentia
 import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
 import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-summary.js";
 import { createCodingAgentRoutes } from "./coding-agents/routes.js";
-import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type CodingAgentProviderAdapter } from "./coding-agents/thread-store.js";
+import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type CodingAgentProviderAdapter, type CodingAgentThreadStore } from "./coding-agents/thread-store.js";
 import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./coding-agents/thread-stream.js";
 import { createWorkspaceCodingAgentProvider } from "./coding-agents/workspace-provider.js";
+import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -469,6 +472,13 @@ export async function createGateway(config: GatewayConfig) {
       };
     },
   });
+  let codingAgentThreadStore: CodingAgentThreadStore | undefined;
+  const codingAgentSessionStopReconciler = createCodingAgentSessionStopReconciler();
+  const workspaceEventStore = createWorkspaceEventStore({ homePath });
+  const workspaceEventPublisher = createWorkspaceEventPublisher({
+    eventStore: workspaceEventStore,
+    onSessionStopped: (session) => codingAgentSessionStopReconciler.handleSessionStopped(session),
+  });
   const codingAgentProviders: CodingAgentProviderAdapter[] = [];
   if (process.env.MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER === "1") {
     const codingAgentWorktreeManager = createWorktreeManager({ homePath });
@@ -484,6 +494,7 @@ export async function createGateway(config: GatewayConfig) {
       agentSessionManager: codingAgentSessionManager,
       agentSandbox: createAgentSandbox({ homePath }),
       sessionRuntimeBridge: workspaceSessionRuntimeBridge,
+      eventPublisher: workspaceEventPublisher,
     });
     codingAgentProviders.push(createWorkspaceCodingAgentProvider({
       providerId: "codex",
@@ -493,13 +504,18 @@ export async function createGateway(config: GatewayConfig) {
   } else if (process.env.MATRIX_CODING_AGENTS_FAKE_PROVIDER === "1") {
     codingAgentProviders.push(createFakeCodingAgentProvider({ providerId: "codex" }));
   }
-  const codingAgentThreadStore = codingAgentProviders.length > 0
+  codingAgentThreadStore = codingAgentProviders.length > 0
     ? createCodingAgentThreadStore({
       homePath,
       providers: codingAgentProviders,
     })
     : undefined;
   const codingAgentWorkspaceEnabled = Boolean(codingAgentThreadStore);
+  if (codingAgentThreadStore) {
+    void codingAgentSessionStopReconciler.attachThreadStore(codingAgentThreadStore).catch((err: unknown) => {
+      console.warn("[coding-agents] Failed to flush pending session stops:", err instanceof Error ? err.message : String(err));
+    });
+  }
   const codingAgentThreadStream = codingAgentThreadStore
     ? createCodingAgentThreadStream({ threads: codingAgentThreadStore })
     : undefined;
@@ -2667,6 +2683,8 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     zellijRuntime: workspaceZellijRuntime,
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
+    eventStore: workspaceEventStore,
+    eventPublisher: workspaceEventPublisher,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   }));
   app.route("/api/symphony", createElixirSymphonyProxyRoutes({
@@ -4030,6 +4048,7 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       codingAgentThreadStream?.shutdown();
+      codingAgentSessionStopReconciler.dispose();
       drainReconnectableAbortEntries(reconnectableAbortControllers);
       if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);
       canvasSubscriptionHub?.close();

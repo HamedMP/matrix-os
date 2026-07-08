@@ -74,6 +74,10 @@ const createBody = {
   clientRequestId: "req_create_1",
 };
 
+function workspaceSessionIdForThread(threadId: string): string {
+  return `sess_${threadId.slice("thread_".length)}`;
+}
+
 describe("coding agent thread lifecycle", () => {
   it("creates a thread idempotently and replays fake-provider events", async () => {
     const { app } = await createHarness();
@@ -259,6 +263,168 @@ describe("coding agent thread lifecycle", () => {
     expect(duplicate.events.items.map((event) => event.eventId)).toEqual(
       aborted.events.items.map((event) => event.eventId),
     );
+  });
+
+  it("reconciles active threads when the bound terminal session exits", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    const published: Array<{ ownerId: string; threadId: string; events: unknown[] }> = [];
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [createFakeCodingAgentProvider({ providerId: "codex" })],
+    });
+    threads.registerEventSink((event) => {
+      published.push(event);
+    });
+    const created = await threads.createThread(ownerPrincipal, createBody);
+
+    const reconciled = await threads.reconcileTerminalSessionStopped({
+      ownerId: ownerPrincipal.userId,
+      terminalSessionId: "main",
+      runtimeStatus: "exited",
+    });
+    const duplicate = await threads.reconcileTerminalSessionStopped({
+      ownerId: ownerPrincipal.userId,
+      terminalSessionId: "main",
+      runtimeStatus: "exited",
+    });
+
+    expect(reconciled).toHaveLength(1);
+    expect(reconciled[0]?.thread).toMatchObject({
+      id: created.snapshot.thread.id,
+      status: "completed",
+      attention: "none",
+    });
+    expect(reconciled[0]?.events.items.at(-2)).toMatchObject({
+      type: "thread.status",
+      status: "completed",
+    });
+    expect(reconciled[0]?.events.items.at(-1)).toMatchObject({
+      type: "thread.completed",
+      outcome: "completed",
+    });
+    expect(duplicate).toEqual([]);
+    expect(published.at(-1)).toMatchObject({
+      ownerId: ownerPrincipal.userId,
+      threadId: created.snapshot.thread.id,
+      events: [
+        expect.objectContaining({ type: "thread.status", status: "completed" }),
+        expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
+      ],
+    });
+  });
+
+  it("reconciles stopped terminal sessions only for the matching owner and workspace session", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [createFakeCodingAgentProvider({ providerId: "codex" })],
+    });
+    const ownerThread = await threads.createThread(ownerPrincipal, createBody);
+    const otherThread = await threads.createThread(otherPrincipal, {
+      ...createBody,
+      clientRequestId: "req_create_other_owner",
+    });
+
+    const reconciled = await threads.reconcileTerminalSessionStopped({
+      ownerId: otherPrincipal.userId,
+      workspaceSessionId: workspaceSessionIdForThread(otherThread.snapshot.thread.id),
+      terminalSessionId: "main",
+      runtimeStatus: "exited",
+    });
+
+    expect(reconciled).toHaveLength(1);
+    expect(reconciled[0]?.thread).toMatchObject({
+      id: otherThread.snapshot.thread.id,
+      status: "completed",
+    });
+    expect(await threads.getThread(ownerPrincipal, ownerThread.snapshot.thread.id)).toMatchObject({
+      thread: {
+        id: ownerThread.snapshot.thread.id,
+        status: "running",
+      },
+    });
+  });
+
+  it("retains pending stops for reused terminal ids when the workspace session id is different", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [createFakeCodingAgentProvider({ providerId: "codex" })],
+    });
+    const created = await threads.createThread(ownerPrincipal, createBody);
+    await threads.reconcileTerminalSessionStopped({
+      ownerId: ownerPrincipal.userId,
+      workspaceSessionId: workspaceSessionIdForThread(created.snapshot.thread.id),
+      terminalSessionId: "main",
+      runtimeStatus: "exited",
+    });
+
+    const reused = await threads.reconcileTerminalSessionStopped({
+      ownerId: ownerPrincipal.userId,
+      workspaceSessionId: "sess_reused_terminal",
+      terminalSessionId: "main",
+      runtimeStatus: "failed",
+    });
+    const raw = JSON.parse(await readFile(join(homePath, "system", "coding-agents", "threads.json"), "utf-8"));
+
+    expect(reused).toEqual([]);
+    expect(raw.pendingTerminalStops).toEqual([
+      expect.objectContaining({
+        ownerId: ownerPrincipal.userId,
+        workspaceSessionId: "sess_reused_terminal",
+        terminalSessionId: "main",
+        runtimeStatus: "failed",
+      }),
+    ]);
+  });
+
+  it("applies a pending terminal stop when a later thread binds the same terminal", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [createFakeCodingAgentProvider({ providerId: "codex" })],
+    });
+
+    const early = await threads.reconcileTerminalSessionStopped({
+      ownerId: ownerPrincipal.userId,
+      terminalSessionId: "main",
+      runtimeStatus: "failed",
+    });
+    const created = await threads.createThread(ownerPrincipal, createBody);
+    const duplicate = await threads.reconcileTerminalSessionStopped({
+      ownerId: ownerPrincipal.userId,
+      terminalSessionId: "main",
+      runtimeStatus: "failed",
+    });
+    const later = await threads.createThread(ownerPrincipal, {
+      ...createBody,
+      clientRequestId: "req_create_after_duplicate_stop",
+    });
+
+    expect(early).toEqual([]);
+    expect(created.snapshot.thread).toMatchObject({
+      status: "failed",
+      attention: "failed",
+      terminalSessionId: "main",
+    });
+    expect(created.snapshot.events.items.at(-2)).toMatchObject({
+      type: "thread.status",
+      status: "failed",
+    });
+    expect(created.snapshot.events.items.at(-1)).toMatchObject({
+      type: "thread.completed",
+      outcome: "failed",
+    });
+    expect(duplicate).toEqual([]);
+    expect(later.snapshot.thread).toMatchObject({
+      status: "running",
+      attention: "none",
+      terminalSessionId: "main",
+    });
   });
 
   it("submits approval decisions idempotently through the provider adapter", async () => {

@@ -303,7 +303,7 @@ git diff --check
 
 ## Open Questions And Deferred Work
 
-- Session completion reconciliation: workspace-backed sessions need a runtime event path that marks coding-agent threads completed/failed when the underlying workspace session exits without a user abort.
+- Session completion reconciliation: implemented for workspace `session.stopped` events that carry a bound `terminalSessionId`; the gateway thread store marks matching active coding-agent threads completed or failed server-side. Remaining work: if runtime managers add autonomous process-exit detection beyond explicit workspace stop events, route those through the same `session.stopped` publisher path.
 - File/review/preview shell surfaces: contracts exist and workspace routes exist, but coding-agent-specific UI integration is not implemented yet.
 - Browser shell entry point: Canvas-first placement is still undecided.
 - Notifications/attention routing: desktop notification IPC exists, but thread attention notifications are not yet wired end-to-end from gateway events.
