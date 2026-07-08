@@ -92,6 +92,7 @@ import { createAgentCredentialRoutes } from "./onboarding/agent-credential-route
 import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-summary.js";
 import { createCodingAgentRoutes } from "./coding-agents/routes.js";
 import { createCodingAgentThreadStore, createFakeCodingAgentProvider } from "./coding-agents/thread-store.js";
+import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./coding-agents/thread-stream.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -468,6 +469,9 @@ export async function createGateway(config: GatewayConfig) {
       homePath,
       providers: [createFakeCodingAgentProvider({ providerId: "codex" })],
     })
+    : undefined;
+  const codingAgentThreadStream = codingAgentThreadStore
+    ? createCodingAgentThreadStream({ threads: codingAgentThreadStore })
     : undefined;
   const codingAgentRuntimeSummaryService = createCodingAgentRuntimeSummaryService({
     homePath,
@@ -2078,6 +2082,112 @@ export async function createGateway(config: GatewayConfig) {
       };
     }),
   );
+
+  if (codingAgentThreadStream) {
+    app.get(
+      "/ws/coding-agents/thread/:threadId",
+      upgradeWebSocket((c) => {
+        const threadId = c.req.param("threadId") ?? "";
+        const cursor = c.req.query("cursor");
+        let streamHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
+        let socketClosed = false;
+        const pendingFrames: string[] = [];
+        const pendingLimit = 8;
+
+        return {
+          onOpen(_evt, ws) {
+            let principal;
+            try {
+              principal = requireRequestPrincipal(c);
+            } catch (err: unknown) {
+              logBestEffortFailure("Coding agent thread stream principal rejected", err);
+              try {
+                ws.send(JSON.stringify({
+                  type: "thread.stream.error",
+                  error: {
+                    code: "thread_stream_unavailable",
+                    safeMessage: "Thread stream is temporarily unavailable. Try again.",
+                    retryable: true,
+                    recoveryActions: ["retry"],
+                  },
+                }));
+              } catch (sendErr: unknown) {
+                logUnexpectedWsSendFailure("Coding agent thread WebSocket rejected error send failed", sendErr);
+              }
+              ws.close();
+              return;
+            }
+
+            void codingAgentThreadStream.open({
+              ws,
+              principal,
+              threadId,
+              cursor,
+            }).then((session) => {
+              if (socketClosed) {
+                session.onClose();
+                return;
+              }
+              streamHandle = session;
+              for (const frame of pendingFrames.splice(0)) {
+                session.onMessage(frame);
+              }
+            }).catch((err: unknown) => {
+              logBestEffortFailure("Coding agent thread stream attach failed", err);
+              pendingFrames.splice(0);
+              if (socketClosed) return;
+              try {
+                ws.send(JSON.stringify({
+                  type: "thread.stream.error",
+                  error: {
+                    code: "thread_stream_unavailable",
+                    safeMessage: "Thread stream is temporarily unavailable. Try again.",
+                    retryable: true,
+                    recoveryActions: ["retry"],
+                  },
+                }));
+              } catch (sendErr: unknown) {
+                logUnexpectedWsSendFailure("Coding agent thread WebSocket send failed", sendErr);
+              }
+              ws.close();
+            });
+          },
+          onMessage(evt, ws) {
+            const raw = threadStreamFrameDataToString(evt.data);
+            if (raw === null) return;
+            if (streamHandle) {
+              streamHandle.onMessage(raw);
+              return;
+            }
+            if (pendingFrames.length >= pendingLimit) {
+              try {
+                ws.send(JSON.stringify({
+                  type: "thread.stream.error",
+                  error: {
+                    code: "invalid_frame",
+                    safeMessage: "Stream message was invalid. Refresh and try again.",
+                    retryable: true,
+                    recoveryActions: ["retry"],
+                  },
+                }));
+              } catch (sendErr: unknown) {
+                logUnexpectedWsSendFailure("Coding agent thread WebSocket send failed", sendErr);
+              }
+              ws.close();
+              return;
+            }
+            pendingFrames.push(raw);
+          },
+          onClose() {
+            socketClosed = true;
+            pendingFrames.splice(0);
+            streamHandle?.onClose();
+            streamHandle = null;
+          },
+        };
+      }),
+    );
+  }
 
   app.get(
     "/ws/terminal",
@@ -3885,6 +3995,7 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
+      codingAgentThreadStream?.shutdown();
       drainReconnectableAbortEntries(reconnectableAbortControllers);
       if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);
       canvasSubscriptionHub?.close();
