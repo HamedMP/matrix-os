@@ -176,6 +176,7 @@ type LocalValidationResult =
       status: "failed";
       failureCode: RichPasteFailureCode;
       allowClipboardFallback: boolean;
+      retryable: boolean;
     };
 
 const IMAGE_EXTENSIONS = Object.values(RICH_PASTE_IMAGE_TYPES)
@@ -583,19 +584,27 @@ function createRawCandidate(input: {
 function normalizeTerminalLocalPath(rawPath: string): string {
   const decodedPath = decodeTerminalPathEscapes(rawPath);
   if (decodedPath.startsWith("file://")) {
-    try {
-      const url = new URL(decodedPath);
-      if (url.protocol === "file:") {
-        return fileURLToPath(url);
-      }
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        return decodedPath;
-      }
+    if (!URL.canParse(decodedPath)) {
       return decodedPath;
     }
+    const url = new URL(decodedPath);
+    if (url.protocol === "file:") {
+      return safeFileUrlToPath(url) ?? decodedPath;
+    }
+    return decodedPath;
   }
   return expandLocalPath(decodedPath);
+}
+
+function safeFileUrlToPath(url: URL): string | undefined {
+  try {
+    return fileURLToPath(url);
+  } catch (err: unknown) {
+    if (err instanceof Error) {
+      return undefined;
+    }
+    throw err;
+  }
 }
 
 function decodeTerminalPathEscapes(value: string): string {
@@ -651,7 +660,7 @@ async function validateLocalCandidate(
     if (
       result.status !== "failed" ||
       result.failureCode !== "local_read_failed" ||
-      !result.allowClipboardFallback ||
+      !result.retryable ||
       nextRetry >= options.retryDelaysMs.length
     ) {
       return result;
@@ -682,6 +691,7 @@ async function validateLocalCandidateOnce(
         status: "failed",
         failureCode: "image_too_large",
         allowClipboardFallback: false,
+        retryable: false,
       };
     }
     const [stats, bytes, resolvedRealPath] = await Promise.all([
@@ -697,6 +707,7 @@ async function validateLocalCandidateOnce(
         status: "failed",
         failureCode: "image_too_large",
         allowClipboardFallback: false,
+        retryable: false,
       };
     }
     const sniffedMimeType = sniffImageMimeType(bytes);
@@ -724,6 +735,7 @@ function localReadFailed(reason: LocalReadFailureReason): LocalValidationResult 
     status: "failed",
     failureCode: "local_read_failed",
     allowClipboardFallback: reason === "not_found" || reason === "permission_denied",
+    retryable: reason === "not_found",
   };
 }
 

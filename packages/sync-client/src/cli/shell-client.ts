@@ -1043,7 +1043,9 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
               writeError(`\r\n${result.localMessage}\r\n`);
               return;
             }
-            writeError(`\r\n${RICH_PASTE_INSERTED_MESSAGE}\r\n`);
+            if (result.status === "rewritten") {
+              writeError(`\r\n${RICH_PASTE_INSERTED_MESSAGE}\r\n`);
+            }
             sendInputData(result.outgoingText);
           }).catch((err: unknown) => {
             if (!settled) {

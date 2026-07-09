@@ -789,6 +789,61 @@ describe("createShellClient attachSession", () => {
     await expect(attach).resolves.toEqual({ detached: false });
   });
 
+  it("does not print inserted feedback when rich paste passes text through", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY: true;
+      rows: number;
+      columns: number;
+      setRawMode: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+    };
+    input.isTTY = true;
+    input.rows = 24;
+    input.columns = 80;
+    input.setRawMode = vi.fn();
+    input.pause = vi.fn();
+    const errorOutput = new PassThrough();
+    const errors: string[] = [];
+    errorOutput.on("data", (chunk) => errors.push(String(chunk)));
+    const rewriter = {
+      rewrite: vi.fn(async () => ({
+        status: "passthrough" as const,
+        outgoingText: "/tmp/not-uploaded.png",
+        assets: [],
+      })),
+    };
+    const client = createShellClient({
+      gatewayUrl: "https://matrix.example",
+      token: "token-123",
+      timeoutMs: 100,
+    });
+    const attach = client.attachSession("main", {
+      input,
+      output: new PassThrough(),
+      errorOutput: errorOutput as NodeJS.WriteStream,
+      WebSocketImpl: FakeWebSocket as never,
+      richPaste: { rewriter },
+    });
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    input.write("/tmp/not-uploaded.png");
+
+    const deadline = Date.now() + 250;
+    while (sentInputData().length < 1) {
+      if (Date.now() > deadline) break;
+      await new Promise((resolve) => {
+        setTimeout(resolve, 1);
+      });
+    }
+
+    expect(errors.join("")).toContain("Image paste: reading/uploading...");
+    expect(errors.join("")).not.toContain("Image paste: inserted.");
+    expect(sentInputData()).toEqual(["/tmp/not-uploaded.png"]);
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "exit" }));
+    await expect(attach).resolves.toEqual({ detached: false });
+  });
+
   it("uses live tail by default so attach does not replay stale full-screen frames", async () => {
     const client = createShellClient({
       gatewayUrl: "https://matrix.example",
