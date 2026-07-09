@@ -12,7 +12,7 @@ export interface CodingAgentDiagnostic {
 
 const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi;
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
-const SECRET_ASSIGNMENT_PATTERN = /\b((?:[A-Za-z][A-Za-z0-9]*[_-])*(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|password|passwd|secret))(\s*[:=]\s*)(?:(?:Basic|Bearer|Digest)\s+[^\s"'<>]+|"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s"'<>]+)/gi;
+const ASSIGNMENT_PATTERN = /\b([A-Za-z][A-Za-z0-9_-]{0,127})(\s*[:=]\s*)(?:(?:Basic|Bearer|Digest)\s+[^\s"'<>]+|"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s"'<>]+)/gi;
 const KNOWN_SECRET_PREFIX_PATTERN = /\b(?:sk|sk_live|sk_test|ghp|github_pat|xoxb|xoxp|xoxa|xoxr|glpat|hf)[_-][A-Za-z0-9._-]{4,}\b/gi;
 const OWNER_PATH_PATTERN = /(?:^|[\s"'(:])(?:\/(?:home|Users|private|tmp|var|opt|etc|root|run)\/[^\s"'<>)]*)/g;
 const WINDOWS_PATH_PATTERN = /\b[A-Za-z]:\\[^\s"'<>)]*/g;
@@ -30,13 +30,30 @@ function normalizeDiagnosticText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function isSecretAssignmentKey(key: string): boolean {
+  const segments = key.toLowerCase().split(/[_-]+/);
+  if (segments.some((segment) => ["authorization", "credential", "credentials", "passwd", "password", "secret", "token"].includes(segment))) {
+    return true;
+  }
+
+  const flattened = segments.join("");
+  if (["apikey", "accesstoken", "authtoken", "pgpassword", "refreshtoken"].includes(flattened)) {
+    return true;
+  }
+
+  return segments.some(
+    (segment, index) => ["access", "api", "private"].includes(segment) && segments[index + 1] === "key",
+  );
+}
+
 export function redactCodingAgentDiagnosticText(value: unknown): string {
   const raw = normalizeDiagnosticText(typeof value === "string" ? value : String(value));
   if (!raw) return "unavailable";
   const redacted = raw
     .replace(URL_PATTERN, "[url]")
     .replace(BEARER_PATTERN, "Bearer [token]")
-    .replace(SECRET_ASSIGNMENT_PATTERN, (_match, key: string, separator: string) => {
+    .replace(ASSIGNMENT_PATTERN, (match, key: string, separator: string) => {
+      if (!isSecretAssignmentKey(key)) return match;
       return `${key}${separator.trim()} [token]`;
     })
     .replace(KNOWN_SECRET_PREFIX_PATTERN, "[token]")

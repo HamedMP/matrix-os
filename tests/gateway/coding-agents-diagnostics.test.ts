@@ -47,6 +47,17 @@ describe("coding agent diagnostics", () => {
     expect(redacted).not.toMatch(/abc|def|abcd|hunter2|dXNlcjpwYXNz|abc123/i);
   });
 
+  it("redacts compound credential environment assignments", () => {
+    const redacted = redactCodingAgentDiagnosticText(
+      `AWS_SECRET_ACCESS_KEY=awsvalue S3_ACCESS_KEY_ID=s3value R2_SECRET_ACCESS_KEY="r2value" PGPASSWORD=pgvalue MONKEY=banana STATUS=healthy`,
+    );
+
+    expect(redacted).toBe(
+      "AWS_SECRET_ACCESS_KEY= [token] S3_ACCESS_KEY_ID= [token] R2_SECRET_ACCESS_KEY= [token] PGPASSWORD= [token] MONKEY=banana STATUS=healthy",
+    );
+    expect(redacted).not.toMatch(/awsvalue|s3value|r2value|pgvalue/i);
+  });
+
   it("redacts link-local and private IPv6 hosts", () => {
     const redacted = redactCodingAgentDiagnosticText(
       "metadata 169.254.169.254 loopback ::1 link-local fe80::1 private fd12:3456::1",
