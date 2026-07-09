@@ -132,6 +132,8 @@ const SAFE_SHELL_SERVER_ERROR_CODES = new Set([
 ]);
 const RICH_PASTE_UPLOAD_FAILED_MESSAGE = "Image paste failed: upload did not complete.";
 const INCOMPLETE_BRACKETED_PASTE_MESSAGE = "Image paste failed: paste did not complete.";
+const RICH_PASTE_PROGRESS_MESSAGE = "Image paste: reading/uploading...";
+const RICH_PASTE_INSERTED_MESSAGE = "Image paste: inserted.";
 
 type MaybeTtyStream = NodeJS.ReadStream & {
   isTTY?: boolean;
@@ -1028,6 +1030,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             sendInputData(data);
             return;
           }
+          writeError(`\r\n${RICH_PASTE_PROGRESS_MESSAGE}\r\n`);
           return richPasteRewriter.rewrite({
             sessionName: name,
             text: options.manualClipboardPaste ? "" : data,
@@ -1040,6 +1043,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
               writeError(`\r\n${result.localMessage}\r\n`);
               return;
             }
+            writeError(`\r\n${RICH_PASTE_INSERTED_MESSAGE}\r\n`);
             sendInputData(result.outgoingText);
           }).catch((err: unknown) => {
             if (!settled) {

@@ -600,7 +600,7 @@ describe("createShellClient attachSession", () => {
     input.write("\u001cv");
 
     const deadline = Date.now() + 250;
-    while (!errors.join("").includes("Image paste")) {
+    while (!errors.join("").includes("Image paste is not supported")) {
       if (Date.now() > deadline) break;
       await new Promise((resolve) => {
         setTimeout(resolve, 1);
@@ -781,6 +781,7 @@ describe("createShellClient attachSession", () => {
       });
     }
 
+    expect(errors.join("")).toContain("Image paste: reading/uploading...");
     expect(errors.join("")).toContain("Image paste failed: upload did not complete.");
     expect(FakeWebSocket.last?.sent.join("\n")).not.toContain("/var/folders/t5");
 

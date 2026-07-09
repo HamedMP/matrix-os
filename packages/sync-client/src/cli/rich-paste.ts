@@ -2,11 +2,13 @@ import { randomUUID } from "node:crypto";
 import { lstat, readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ClipboardImageReader } from "./clipboard-image.js";
 
 export const RICH_PASTE_MAX_ASSETS = 5;
 export const RICH_PASTE_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 export const RICH_PASTE_UPLOAD_TIMEOUT_MS = 30_000;
+const DEFAULT_LOCAL_IMAGE_READ_RETRY_DELAYS_MS = [50, 100, 200, 300, 400, 450] as const;
 
 export const RICH_PASTE_LOCAL_FAILURE_MESSAGES = {
   local_read_failed: "Image paste failed: local image could not be read.",
@@ -138,6 +140,7 @@ export interface RichPasteRewriter {
 export interface ProcessRichPasteTransactionInput extends RichPasteRewriteInput {
   uploadClient: RichPasteUploadClient;
   clipboardReader?: ClipboardImageReader;
+  localReadRetryDelaysMs?: readonly number[];
 }
 
 export interface RichPasteUploadClientOptions {
@@ -157,6 +160,23 @@ type InternalCandidate = LocalImageCandidate & {
   quote?: "\"" | "'";
   uploadIndex?: number;
 };
+
+type LocalReadFailureReason =
+  | "not_found"
+  | "permission_denied"
+  | "symlink"
+  | "not_file"
+  | "magic_mismatch"
+  | "unknown";
+
+type LocalValidationResult =
+  | { status: "ok"; candidate: InternalCandidate }
+  | { status: "skip" }
+  | {
+      status: "failed";
+      failureCode: RichPasteFailureCode;
+      allowClipboardFallback: boolean;
+    };
 
 const IMAGE_EXTENSIONS = Object.values(RICH_PASTE_IMAGE_TYPES)
   .flatMap((type) => type.extensions);
@@ -275,9 +295,11 @@ export async function processRichPasteTransaction(
     return { status: "passthrough", outgoingText: input.text, assets: [] };
   }
 
-  const validation = await collectLocalImageCandidates(input.text);
+  const validation = await collectLocalImageCandidates(input.text, {
+    retryDelaysMs: input.localReadRetryDelaysMs ?? DEFAULT_LOCAL_IMAGE_READ_RETRY_DELAYS_MS,
+  });
   if (validation.status === "failed") {
-    if (input.observablePaste && validation.clipboardFallbackCandidate) {
+    if (validation.clipboardFallbackCandidate) {
       const fallback = await processClipboardPaste(input, {
         candidateToReplace: validation.clipboardFallbackCandidate,
         unsupportedFailureCode: validation.failureCode,
@@ -379,7 +401,10 @@ async function processClipboardPaste(
   };
 }
 
-async function collectLocalImageCandidates(text: string): Promise<
+async function collectLocalImageCandidates(
+  text: string,
+  options: { retryDelaysMs: readonly number[] },
+): Promise<
   | { status: "ok"; candidates: InternalCandidate[] }
   | {
       status: "failed";
@@ -392,7 +417,9 @@ async function collectLocalImageCandidates(text: string): Promise<
   const clipboardFallbackCandidate = singlePathOnlyCandidate(text, rawCandidates);
 
   for (const raw of rawCandidates) {
-    const result = await validateLocalCandidate(raw);
+    const result = await validateLocalCandidate(raw, {
+      retryDelaysMs: raw === clipboardFallbackCandidate ? options.retryDelaysMs : [],
+    });
     if (result.status === "skip") {
       continue;
     }
@@ -400,7 +427,7 @@ async function collectLocalImageCandidates(text: string): Promise<
       return {
         status: "failed",
         failureCode: result.failureCode,
-        clipboardFallbackCandidate: result.failureCode === "local_read_failed"
+        clipboardFallbackCandidate: result.allowClipboardFallback && raw === clipboardFallbackCandidate
           ? clipboardFallbackCandidate
           : undefined,
       };
@@ -414,6 +441,7 @@ async function collectLocalImageCandidates(text: string): Promise<
 function findRawCandidates(text: string): InternalCandidate[] {
   const candidates: InternalCandidate[] = [];
   const occupiedRanges: PasteTextRange[] = [];
+  const wholeInputCandidate = createWholeInputCandidate(text);
 
   for (const match of text.matchAll(QUOTED_PATH_PATTERN)) {
     const fullMatch = match[0];
@@ -455,6 +483,16 @@ function findRawCandidates(text: string): InternalCandidate[] {
     }));
   }
 
+  if (
+    wholeInputCandidate &&
+    !candidates.some((candidate) => rangesOverlap(
+      wholeInputCandidate.sourceTextRange,
+      candidate.sourceTextRange,
+    ))
+  ) {
+    candidates.push(wholeInputCandidate);
+  }
+
   return candidates.sort((left, right) => left.sourceTextRange.start - right.sourceTextRange.start);
 }
 
@@ -469,6 +507,58 @@ function singlePathOnlyCandidate(text: string, candidates: InternalCandidate[]):
   return candidate;
 }
 
+function createWholeInputCandidate(text: string): InternalCandidate | undefined {
+  const leadingWhitespace = text.match(/^\s*/u)?.[0].length ?? 0;
+  const trailingWhitespace = text.match(/\s*$/u)?.[0].length ?? 0;
+  const start = leadingWhitespace;
+  const end = text.length - trailingWhitespace;
+  if (start >= end) {
+    return undefined;
+  }
+
+  const displayText = text.slice(start, end);
+  const quotedPath = unwrapQuotedPath(displayText);
+  const rawPath = quotedPath?.rawPath ?? displayText;
+  if (!isPotentialLocalPathText(rawPath)) {
+    return undefined;
+  }
+
+  const localPath = normalizeTerminalLocalPath(rawPath);
+  if (!mimeTypeFromExtension(localPath)) {
+    return undefined;
+  }
+
+  return createRawCandidate({
+    text,
+    start,
+    end,
+    displayText,
+    rawPath,
+    quote: quotedPath?.quote,
+  });
+}
+
+function unwrapQuotedPath(value: string): { quote: "\"" | "'"; rawPath: string } | undefined {
+  if (value.length < 2) {
+    return undefined;
+  }
+  const quote = value[0];
+  if ((quote !== "\"" && quote !== "'") || value[value.length - 1] !== quote) {
+    return undefined;
+  }
+  return {
+    quote,
+    rawPath: value.slice(1, -1),
+  };
+}
+
+function isPotentialLocalPathText(rawPath: string): boolean {
+  return rawPath.startsWith("/") ||
+    rawPath.startsWith("~/") ||
+    rawPath.startsWith("file://") ||
+    decodeTerminalPathEscapes(rawPath).startsWith("/");
+}
+
 function createRawCandidate(input: {
   text: string;
   start: number;
@@ -477,7 +567,7 @@ function createRawCandidate(input: {
   rawPath: string;
   quote?: "\"" | "'";
 }): InternalCandidate {
-  const localPath = expandLocalPath(input.rawPath);
+  const localPath = normalizeTerminalLocalPath(input.rawPath);
   return {
     kind: "local-path",
     sourceTextRange: { start: input.start, end: input.end },
@@ -485,28 +575,114 @@ function createRawCandidate(input: {
     localPath,
     dedupeKey: localPath,
     sizeBytes: 0,
-    mimeType: mimeTypeFromExtension(input.rawPath) ?? "image/png",
+    mimeType: mimeTypeFromExtension(localPath) ?? "image/png",
     quote: input.quote,
   };
 }
 
-async function validateLocalCandidate(candidate: InternalCandidate): Promise<
-  | { status: "ok"; candidate: InternalCandidate }
-  | { status: "skip" }
-  | { status: "failed"; failureCode: RichPasteFailureCode }
-> {
+function normalizeTerminalLocalPath(rawPath: string): string {
+  const decodedPath = decodeTerminalPathEscapes(rawPath);
+  if (decodedPath.startsWith("file://")) {
+    try {
+      const url = new URL(decodedPath);
+      if (url.protocol === "file:") {
+        return fileURLToPath(url);
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        return decodedPath;
+      }
+      return decodedPath;
+    }
+  }
+  return expandLocalPath(decodedPath);
+}
+
+function decodeTerminalPathEscapes(value: string): string {
+  return value.replace(
+    /\\u([0-9a-fA-F]{4})|\\(.)/gu,
+    (match, hex: string | undefined, escaped: string | undefined) => {
+      if (hex) {
+        return String.fromCharCode(Number.parseInt(hex, 16));
+      }
+      if (escaped && TERMINAL_PATH_ESCAPED_CHARS.has(escaped)) {
+        return escaped;
+      }
+      return match;
+    },
+  );
+}
+
+const TERMINAL_PATH_ESCAPED_CHARS = new Set([
+  " ",
+  "\\",
+  "\"",
+  "'",
+  "(",
+  ")",
+  "[",
+  "]",
+  "{",
+  "}",
+  "&",
+  ";",
+  "#",
+  "$",
+  "!",
+  "?",
+  "*",
+  "|",
+  "<",
+  ">",
+]);
+
+async function validateLocalCandidate(
+  candidate: InternalCandidate,
+  options: { retryDelaysMs: readonly number[] },
+): Promise<LocalValidationResult> {
   const extensionMimeType = mimeTypeFromExtension(candidate.localPath);
   if (!extensionMimeType) {
     return { status: "skip" };
   }
 
+  let nextRetry = 0;
+  while (true) {
+    const result = await validateLocalCandidateOnce(candidate, extensionMimeType);
+    if (
+      result.status !== "failed" ||
+      result.failureCode !== "local_read_failed" ||
+      !result.allowClipboardFallback ||
+      nextRetry >= options.retryDelaysMs.length
+    ) {
+      return result;
+    }
+
+    const delayMs = options.retryDelaysMs[nextRetry] ?? 0;
+    nextRetry += 1;
+    if (delayMs > 0) {
+      await delay(delayMs);
+    }
+  }
+}
+
+async function validateLocalCandidateOnce(
+  candidate: InternalCandidate,
+  extensionMimeType: RichPasteImageMimeType,
+): Promise<LocalValidationResult> {
   try {
     const linkStats = await lstat(candidate.localPath);
-    if (linkStats.isSymbolicLink() || !linkStats.isFile()) {
-      return { status: "failed", failureCode: "local_read_failed" };
+    if (linkStats.isSymbolicLink()) {
+      return localReadFailed("symlink");
+    }
+    if (!linkStats.isFile()) {
+      return localReadFailed("not_file");
     }
     if (linkStats.size > RICH_PASTE_MAX_IMAGE_BYTES) {
-      return { status: "failed", failureCode: "image_too_large" };
+      return {
+        status: "failed",
+        failureCode: "image_too_large",
+        allowClipboardFallback: false,
+      };
     }
     const [stats, bytes, resolvedRealPath] = await Promise.all([
       stat(candidate.localPath),
@@ -514,14 +690,18 @@ async function validateLocalCandidate(candidate: InternalCandidate): Promise<
       realpath(candidate.localPath),
     ]);
     if (!stats.isFile()) {
-      return { status: "failed", failureCode: "local_read_failed" };
+      return localReadFailed("not_file");
     }
     if (bytes.byteLength > RICH_PASTE_MAX_IMAGE_BYTES) {
-      return { status: "failed", failureCode: "image_too_large" };
+      return {
+        status: "failed",
+        failureCode: "image_too_large",
+        allowClipboardFallback: false,
+      };
     }
     const sniffedMimeType = sniffImageMimeType(bytes);
     if (!sniffedMimeType || sniffedMimeType !== extensionMimeType) {
-      return { status: "failed", failureCode: "local_read_failed" };
+      return localReadFailed("magic_mismatch");
     }
     return {
       status: "ok",
@@ -535,11 +715,36 @@ async function validateLocalCandidate(candidate: InternalCandidate): Promise<
       },
     };
   } catch (err: unknown) {
-    if (err instanceof Error) {
-      return { status: "failed", failureCode: "local_read_failed" };
-    }
-    return { status: "failed", failureCode: "local_read_failed" };
+    return localReadFailed(localReadFailureReasonFromError(err));
   }
+}
+
+function localReadFailed(reason: LocalReadFailureReason): LocalValidationResult {
+  return {
+    status: "failed",
+    failureCode: "local_read_failed",
+    allowClipboardFallback: reason === "not_found" || reason === "permission_denied",
+  };
+}
+
+function localReadFailureReasonFromError(err: unknown): LocalReadFailureReason {
+  if (!(err instanceof Error) || !("code" in err)) {
+    return "unknown";
+  }
+  const code = (err as { code?: unknown }).code;
+  if (code === "ENOENT" || code === "ENOTDIR") {
+    return "not_found";
+  }
+  if (code === "EACCES" || code === "EPERM") {
+    return "permission_denied";
+  }
+  return "unknown";
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolveDelay) => {
+    setTimeout(resolveDelay, ms);
+  });
 }
 
 function dedupeCandidates(candidates: InternalCandidate[]): InternalCandidate[] {
