@@ -83,6 +83,24 @@ describe("mobile coding-agent diagnostics", () => {
     expect(redacted).not.toMatch(/\/home\/matrix|private\.ts|internal-runtime|localhost/);
   });
 
+  it("redacts backtick-quoted owner paths", () => {
+    const redacted = redactMobileCodingAgentDiagnosticText(
+      "open `/home/matrix/home/project/file.ts` failed",
+    );
+
+    expect(redacted).toBe("open `[path]` failed");
+    expect(redacted).not.toMatch(/\/home\/matrix|project|file\.ts/);
+  });
+
+  it("redacts single-label hosts in network errors", () => {
+    const redacted = redactMobileCodingAgentDiagnosticText(
+      "getaddrinfo ENOTFOUND internal-runtime connect ECONNREFUSED matrix-vps",
+    );
+
+    expect(redacted).toBe("getaddrinfo ENOTFOUND [host] connect ECONNREFUSED [host]");
+    expect(redacted).not.toMatch(/internal-runtime|matrix-vps/);
+  });
+
   it("bounds long diagnostic text", () => {
     const redacted = redactMobileCodingAgentDiagnosticText(`status ${"x".repeat(220)}`);
 

@@ -16,11 +16,12 @@ const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
 const AUTHORIZATION_ASSIGNMENT_PATTERN = /\b(authorization)(\s*[:=]\s*)[^\r\n]+/gi;
 const ASSIGNMENT_PATTERN = /\b([A-Za-z][A-Za-z0-9_-]{0,127})(\s*[:=]\s*)(?:(?:Basic|Bearer|Digest)\s+[^\s"'<>]+|"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s"'<>]+)/gi;
 const KNOWN_SECRET_PREFIX_PATTERN = /\b(?:sk|sk_live|sk_test|ghp|github_pat|xoxb|xoxp|xoxa|xoxr|glpat|hf)[_-][A-Za-z0-9._-]{4,}\b/gi;
-const OWNER_PATH_PATTERN = /(?:^|[\s"'(:=])(?:\/(?:home|Users|private|tmp|var|opt|etc|root|run)\/[^\s"'<>)]*)/g;
-const WINDOWS_PATH_PATTERN = /\b[A-Za-z]:\\[^\s"'<>)]*/g;
+const OWNER_PATH_PATTERN = /(?:^|[\s"'`(:=])(?:\/(?:home|Users|private|tmp|var|opt|etc|root|run)\/[^\s"'`<>)]*)/g;
+const WINDOWS_PATH_PATTERN = /\b[A-Za-z]:\\[^\s"'`<>)]*/g;
 const PRIVATE_IPV4_PATTERN = /\b(?:(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}|169\.254\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/g;
 const PRIVATE_IPV6_PATTERN = /(^|[^A-Fa-f0-9:])(?:::1|(?:f[cd][A-Fa-f0-9]{2}|fe[89ab][A-Fa-f0-9])(?::[A-Fa-f0-9]{0,4}){1,7})(?:%[A-Za-z0-9_.-]+)?(?=$|[^A-Fa-f0-9:])/gi;
 const PRIVATE_HOSTNAME_PATTERN = /\b(?:(?=[A-Za-z0-9.-]{1,253}\b)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,62})?\.)+(?:local|internal|lan|home|localhost)|localhost)\b/gi;
+const NETWORK_ERROR_SINGLE_LABEL_HOST_PATTERN = /\b((?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED|EHOSTUNREACH|ETIMEDOUT)\s+)(?=[A-Za-z0-9-]{1,63}(?![A-Za-z0-9.-]))(?=[A-Za-z0-9-]*[A-Za-z])[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?![A-Za-z0-9.-])/gi;
 const HOST_VALUE_PATTERN = /\b(?:host|hostname|url)\s*[:=]?\s*[A-Za-z0-9.-]*(?:\.local|\.internal|\.lan|\.home|runtime|matrix|vps)[A-Za-z0-9.-]*/gi;
 const DATABASE_PATTERN = /\b(?:postgres(?:ql)?|kysely|database|db)\b/gi;
 
@@ -72,6 +73,7 @@ export function redactMobileCodingAgentDiagnosticText(value: unknown): string {
     .replace(PRIVATE_IPV4_PATTERN, "[host]")
     .replace(PRIVATE_IPV6_PATTERN, (_match, prefix: string) => `${prefix}[host]`)
     .replace(PRIVATE_HOSTNAME_PATTERN, "[host]")
+    .replace(NETWORK_ERROR_SINGLE_LABEL_HOST_PATTERN, "$1[host]")
     .replace(HOST_VALUE_PATTERN, (match) => {
       const prefix = match.match(/^(host|hostname|url)\s*[:=]?/i)?.[0] ?? "host ";
       return `${prefix}[host]`;

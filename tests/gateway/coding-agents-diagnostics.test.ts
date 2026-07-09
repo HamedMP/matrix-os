@@ -95,6 +95,24 @@ describe("coding agent diagnostics", () => {
     expect(redacted).not.toMatch(/\/home\/matrix|\/opt\/matrix|private\.ts|release\.json/);
   });
 
+  it("redacts backtick-quoted owner paths", () => {
+    const redacted = redactCodingAgentDiagnosticText(
+      "open `/home/matrix/home/project/file.ts` failed",
+    );
+
+    expect(redacted).toBe("open `[path]` failed");
+    expect(redacted).not.toMatch(/\/home\/matrix|project|file\.ts/);
+  });
+
+  it("redacts single-label hosts in network errors", () => {
+    const redacted = redactCodingAgentDiagnosticText(
+      "getaddrinfo ENOTFOUND internal-runtime connect ECONNREFUSED matrix-vps",
+    );
+
+    expect(redacted).toBe("getaddrinfo ENOTFOUND [host] connect ECONNREFUSED [host]");
+    expect(redacted).not.toMatch(/internal-runtime|matrix-vps/);
+  });
+
   it("formats non-error diagnostics and unsafe names safely", () => {
     const unknown = formatCodingAgentDiagnostic("token=sk_live_private /tmp/private-file");
     const unsafeNameError = new Error("failed");
