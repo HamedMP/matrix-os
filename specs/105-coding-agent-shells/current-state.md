@@ -22,6 +22,7 @@ Post-merge checkpoint updates:
 
 - PR #868 confirmed mobile thread detail terminal handoff persists the bounded canonical terminal session reference needed by the Terminal route without persisting terminal output or transcript data.
 - PR #869 confirmed the desktop command-palette Agents entry still opens after terminal interaction, and menu-template tests cover the native Agents accelerator used to focus the same workspace.
+- PR #877 confirms the mobile Agents workspace persists and reconciles only bounded selected thread and terminal session references, including attention-thread selections, and does not save a terminal workspace reference when terminal handoff persistence fails.
 
 ## Shared Contracts
 
@@ -344,7 +345,8 @@ Persisted UI references:
 
 - `apps/mobile/lib/agent-workspace-state.ts` stores only `selectedThreadId`, `selectedTerminalSessionId`, and `updatedAt`.
 - `apps/mobile/lib/mobile-shell-state.ts` stores only the current shell mode plus safe bounded app or terminal session references, including canonical named shell sessions such as `main` or `matrix-abc1234`.
-- Agent workspace state reconciles stale references against runtime summary items.
+- Agent workspace state loads through schema validation, reconciles stale selected thread references against both `activeThreads` and `attentionThreads`, reconciles stale selected terminal references against runtime terminal summaries, and skips background reconcile writes if a user selection starts concurrently.
+- Terminal workspace handoff references are saved only after the existing mobile shell terminal handoff state is accepted.
 - Does not store transcripts, terminal output, file contents, diffs, credentials, approvals payloads, file write payloads, or launch tokens.
 
 Focused tests:

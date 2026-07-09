@@ -20,6 +20,7 @@ As of the `056b3da668ed6d1753712120316d2d5accfafdcf` main checkpoint:
 - PR #866 desktop operator e2e smoke validation now covers the stubbed sign-in/device-auth flow, project board hydration, canonical terminal attach and echo, the current Agents workspace summary/create path, Terminal Shells, Apps, Settings, Chat, and hosted-shell detach behavior.
 - PR #868 mobile validation now confirms thread detail terminal handoff persists the bounded canonical terminal session reference needed by the mobile Terminal route without persisting terminal output or transcript data.
 - PR #869 desktop validation now confirms the command-palette Agents entry still opens after terminal interaction, and menu-template tests cover the native Agents accelerator used to focus the same workspace.
+- PR #877 mobile validation now confirms the Agents workspace persists and reconciles only bounded selected thread and terminal session references, including attention-thread selections, without storing transcripts, terminal output, file contents, diffs, credentials, approval payloads, or launch tokens.
 - Remaining work is validation and rollout hardening: real-runtime desktop smoke, mobile SDK 57 device smoke, and continued docs sync as later provider/runtime behavior changes.
 
 ## Agent Instructions

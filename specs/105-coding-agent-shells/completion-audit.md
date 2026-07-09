@@ -1,10 +1,10 @@
 # Completion Audit: Coding Agent Shells
 
 **Audited commit**: `056b3da668ed6d1753712120316d2d5accfafdcf`
-**Date**: 2026-07-08
+**Date**: 2026-07-09
 **Scope**: Evidence review for the Matrix OS coding-agent desktop, mobile, browser, and gateway shell implementation checkpoint.
 
-This audit records current evidence through the desktop operator palette smoke and mobile terminal handoff checkpoint. It does not mark the full rollout complete while real-device smoke and broader cross-shell validation remain outstanding.
+This audit records current evidence through the desktop operator palette smoke, mobile terminal handoff checkpoint, and mobile workspace reference-persistence checkpoint. It does not mark the full rollout complete while real-device smoke and broader cross-shell validation remain outstanding.
 
 ## Evidence Matrix
 
@@ -21,7 +21,7 @@ This audit records current evidence through the desktop operator palette smoke a
 | File, review, diff, preview, and source-control surfaces remain gateway-owned with bounded shell clients | Gateway route inventory plus desktop/mobile review tests listed in `current-state.md` | Implemented |
 | Notifications and attention routing use safe owner-scoped payloads and preferences | `packages/gateway/src/coding-agents/attention-notifications.ts`; `packages/gateway/src/coding-agents/notification-preferences.ts`; related gateway, desktop, and mobile tests listed in `current-state.md` | Implemented |
 | Desktop renderer does not receive raw bearer/provider credentials | Trusted IPC and main-process client inventory in `current-state.md`; desktop runtime client tests | Implemented by architecture and tests |
-| Mobile persistent state stores only bounded UI references | `apps/mobile/lib/agent-workspace-state.ts`; `apps/mobile/lib/mobile-shell-state.ts`; mobile state tests listed in `current-state.md` | Implemented |
+| Mobile persistent state stores only bounded UI references | `apps/mobile/lib/agent-workspace-state.ts`; `apps/mobile/lib/mobile-shell-state.ts`; `apps/mobile/__tests__/agent-workspace-state.test.ts`; mobile state tests listed in `current-state.md` | Implemented |
 | Public and internal docs | `docs/dev/coding-agent-shells.md`; `www/content/docs/coding-agents.mdx`; `current-state.md` | Implemented and must stay synchronized |
 
 ## Validation Evidence
@@ -64,6 +64,15 @@ The mobile terminal handoff checkpoint in PR #868 added and passed focused PR va
 - `bun run check:patterns`
 
 That mobile validation confirms a coding-agent thread detail handoff persists both the last active terminal session and the explicit terminal handoff reference without storing terminal output or transcript data.
+
+The mobile workspace reference-persistence checkpoint in PR #877 added and passed focused PR validation:
+
+- `pnpm --filter matrix-os-mobile exec jest __tests__/agent-workspace-state.test.ts __tests__/agents-screen.test.tsx --runInBand`
+- `pnpm --filter matrix-os-mobile exec tsc --noEmit`
+- `pnpm --filter matrix-os-mobile run lint`
+- `bun run check:patterns`
+
+That mobile validation confirms the Agents workspace persists only bounded selected thread and terminal session ids, reconciles selected threads against active and attention summaries, drops stale references, skips saving terminal workspace handoff refs when the canonical mobile shell terminal handoff write fails, and avoids a background reconcile write overriding an in-flight user selection.
 
 The desktop palette and menu-entry checkpoint in PR #869 added and passed focused PR validation:
 
