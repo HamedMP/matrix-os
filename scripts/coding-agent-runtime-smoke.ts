@@ -117,7 +117,7 @@ export async function runCodingAgentRuntimeSmoke(options: SmokeOptions): Promise
     timeoutMs,
   });
 
-  const notificationPreferences = await requestJson({
+  await requestJson({
     label: "notification preferences",
     schema: NotificationPreferencesResponseSchema,
     fetchFn,
@@ -193,7 +193,7 @@ export async function runCodingAgentRuntimeSmoke(options: SmokeOptions): Promise
       terminalSessionCount: summary.terminalSessions.items.length,
       previewSessionCount: summary.previewSessions.items.length,
       reviewCount: reviews.items.length,
-      notificationPreferencesReachable: Boolean(notificationPreferences.preferences),
+      notificationPreferencesReachable: true,
       checkedThreadSnapshot,
       createdThreadStatus,
     },
@@ -258,6 +258,7 @@ async function requestJson<TSchema extends z.ZodType>(options: {
       },
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
       signal: AbortSignal.timeout(options.timeoutMs),
+      redirect: "error",
     });
   } catch {
     throw new Error(`${options.label} unavailable`);

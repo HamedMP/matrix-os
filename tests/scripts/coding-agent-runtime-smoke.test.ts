@@ -161,6 +161,7 @@ describe("coding-agent runtime smoke", () => {
     expect(report.ok).toBe(true);
     expect(report.summary.activeThreadCount).toBe(1);
     expect(report.summary.createdThreadStatus).toBeNull();
+    expect(fetchFn.mock.calls.every(([, init]) => init?.redirect === "error")).toBe(true);
     expect(fetchFn.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
     expect(JSON.stringify(report)).not.toContain("secret-token");
   });
