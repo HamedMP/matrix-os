@@ -38,13 +38,13 @@ describe("coding agent diagnostics", () => {
 
   it("fully redacts colon-containing and quoted secret assignments", () => {
     const redacted = redactCodingAgentDiagnosticText(
-      `token=abc:def apiKey="abcd" password: 'hunter2' Authorization: Basic dXNlcjpwYXNz TWILIO_AUTH_TOKEN=abc123`,
+      `token=abc:def apiKey="abcd" password: 'hunter2' Authorization: Basic dXNlcjpwYXNz Authorization: Token tokenpayload TWILIO_AUTH_TOKEN=abc123`,
     );
 
     expect(redacted).toBe(
-      "token= [token] apiKey= [token] password: [token] Authorization: [token] TWILIO_AUTH_TOKEN= [token]",
+      "token= [token] apiKey= [token] password: [token] Authorization: [token] Authorization: [token] TWILIO_AUTH_TOKEN= [token]",
     );
-    expect(redacted).not.toMatch(/abc|def|abcd|hunter2|dXNlcjpwYXNz|abc123/i);
+    expect(redacted).not.toMatch(/abc|def|abcd|hunter2|dXNlcjpwYXNz|tokenpayload|abc123/i);
   });
 
   it("redacts compound credential environment assignments", () => {
@@ -60,11 +60,13 @@ describe("coding agent diagnostics", () => {
 
   it("redacts link-local and private IPv6 hosts", () => {
     const redacted = redactCodingAgentDiagnosticText(
-      "metadata 169.254.169.254 loopback ::1 link-local fe80::1 private fd12:3456::1",
+      "metadata 169.254.169.254 loopback ::1 link-local fe80::1 private fd12:3456::1 getaddrinfo ENOTFOUND internal-runtime.local connect ECONNREFUSED matrix-vps.internal localhost",
     );
 
-    expect(redacted).toBe("metadata [host] loopback [host] link-local [host] private [host]");
-    expect(redacted).not.toMatch(/169\.254|::1|fe80|fd12/i);
+    expect(redacted).toBe(
+      "metadata [host] loopback [host] link-local [host] private [host] getaddrinfo ENOTFOUND [host] connect ECONNREFUSED [host] [host]",
+    );
+    expect(redacted).not.toMatch(/169\.254|::1|fe80|fd12|internal-runtime|matrix-vps|localhost/i);
   });
 
   it("formats non-error diagnostics and unsafe names safely", () => {
