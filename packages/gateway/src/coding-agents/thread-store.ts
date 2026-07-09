@@ -85,14 +85,17 @@ export interface CodingAgentProviderAdapter {
   getSummary?(input: {
     principal: RequestPrincipal;
     now: () => Date;
+    signal: AbortSignal;
   }): Promise<AgentProviderSummary> | AgentProviderSummary;
   healthCheck?(input: {
     principal: RequestPrincipal;
     now: () => Date;
+    signal: AbortSignal;
   }): Promise<{ ok: boolean }> | { ok: boolean };
   buildSetupAction?(input: {
     principal: RequestPrincipal;
     now: () => Date;
+    signal: AbortSignal;
   }): Promise<SafeSetupAction[]> | SafeSetupAction[];
   startThread(input: {
     principal: RequestPrincipal;

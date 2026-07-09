@@ -63,6 +63,8 @@ Provider-specific behavior belongs behind the gateway provider adapter interface
 - Use foreground terminal setup actions when user interaction is required.
 - Avoid provider-specific branches in shell components unless the shared contract explicitly exposes safe metadata.
 
+The gateway provider registry owns shell-facing provider projections. It validates the bounded configured adapter set at startup, combines adapter metadata with owner-scoped credential state, passes timeout signals to adapter read calls, and keeps only coarse health booleans in a capped owner/provider TTL cache with LRU eviction. Invalid summaries or setup actions degrade to generic safe state; raw health output and credentials never enter the runtime summary.
+
 When adding a provider:
 
 1. Add a provider summary state through the provider registry.

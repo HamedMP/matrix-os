@@ -105,6 +105,7 @@ import { createWorkspaceCodingAgentProvider } from "./coding-agents/workspace-pr
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
 import { createCodingAgentPreviewSummaryStore } from "./coding-agents/preview-summary.js";
+import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
@@ -549,6 +550,10 @@ export async function createGateway(config: GatewayConfig) {
       providers: codingAgentProviders,
     })
     : undefined;
+  const codingAgentProviderRegistry = createCodingAgentProviderRegistry({
+    providers: codingAgentProviders,
+    agentCredentials: agentCredentialService,
+  });
   const codingAgentWorkspaceEnabled = Boolean(codingAgentThreadStore);
   if (codingAgentThreadStore) {
     void codingAgentSessionStopReconciler.attachThreadStore(codingAgentThreadStore).catch((err: unknown) => {
@@ -569,8 +574,7 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentRuntimeSummaryService = createCodingAgentRuntimeSummaryService({
     homePath,
     terminalRegistry: zellijShellRegistry,
-    agentCredentials: agentCredentialService,
-    providerIds: codingAgentProviders.map((provider) => provider.providerId),
+    providerRegistry: codingAgentProviderRegistry,
     threads: codingAgentThreadStore,
     previews: codingAgentPreviewSummaryStore,
     capabilities: {

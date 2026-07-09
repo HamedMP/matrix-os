@@ -17,6 +17,7 @@ import type {
 } from "../onboarding/activation-contracts.js";
 import type { AgentCredentialStatusService } from "../onboarding/agent-credential-status.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
+import type { CodingAgentProviderRegistry } from "./provider-registry.js";
 
 const TERMINAL_SUMMARY_LIMIT = 20;
 const PREVIEW_SUMMARY_LIMIT = 50;
@@ -58,6 +59,7 @@ export interface CodingAgentPreviewSummaryStore {
 export interface CodingAgentRuntimeSummaryOptions {
   homePath: string;
   terminalRegistry?: CodingAgentTerminalSessionRegistry;
+  providerRegistry?: Pick<CodingAgentProviderRegistry, "listProviders">;
   agentCredentials?: Pick<AgentCredentialStatusService, "getStatus">;
   threads?: CodingAgentThreadSummaryStore;
   previews?: CodingAgentPreviewSummaryStore;
@@ -199,6 +201,18 @@ async function readProviders(
   }
 }
 
+async function readRegisteredProviders(
+  registry: Pick<CodingAgentProviderRegistry, "listProviders">,
+  principal: RequestPrincipal,
+): Promise<AgentProviderSummary[]> {
+  try {
+    return await registry.listProviders(principal);
+  } catch (err: unknown) {
+    logCodingAgentWarning("provider registry unavailable", err);
+    return [];
+  }
+}
+
 async function readActiveThreads(
   store: CodingAgentThreadSummaryStore | undefined,
   principal: RequestPrincipal,
@@ -295,7 +309,9 @@ export function createCodingAgentRuntimeSummaryService(
         principal,
         options.terminalOwnerId,
       );
-      const providers = await readProviders(options.agentCredentials, principal, options.providerIds);
+      const providers = options.providerRegistry
+        ? await readRegisteredProviders(options.providerRegistry, principal)
+        : await readProviders(options.agentCredentials, principal, options.providerIds);
       const activeThreads = await readActiveThreads(options.threads, principal);
       const attentionThreads = await readAttentionThreads(options.threads, principal);
       const previewSessions = readPreviewSessions(options.previews, principal, summaryOptions);
