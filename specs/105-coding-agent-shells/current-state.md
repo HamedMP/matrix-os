@@ -1,7 +1,7 @@
 # Current State: Coding Agent Shells
 
-**Branch stack**: implementation checkpoint merged to `main` through PR #869 (`056b3da668ed6d1753712120316d2d5accfafdcf`)
-**Updated**: 2026-07-08
+**Branch stack**: implementation checkpoint merged to `main` through PR #871 (`7ca8ae8875a7b0e13edebd607d7ff71ca8a1a876`)
+**Updated**: 2026-07-09
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
 For the evidence-based checkpoint audit, see [completion-audit.md](./completion-audit.md).
@@ -22,6 +22,8 @@ Post-merge checkpoint updates:
 
 - PR #868 confirmed mobile thread detail terminal handoff persists the bounded canonical terminal session reference needed by the Terminal route without persisting terminal output or transcript data.
 - PR #869 confirmed the desktop command-palette Agents entry still opens after terminal interaction, and menu-template tests cover the native Agents accelerator used to focus the same workspace.
+- PR #871 confirmed the Expo SDK 57 mobile composer route graph exports successfully with `EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE=1` after keeping navigation imports in SDK-accepted static shapes, and preserved iOS keyboard avoidance through safe-area-aware offset handling.
+- The #871 post-merge checkpoint completed GitHub CI, Docker Tests, Host Bundle build, R2 publish, and exact-version VPS deploy on `7ca8ae8875a7b0e13edebd607d7ff71ca8a1a876`.
 
 ## Shared Contracts
 
