@@ -115,11 +115,11 @@ describe("coding agent diagnostics", () => {
 
   it("redacts complete scheme-less host values", () => {
     const redacted = redactCodingAgentDiagnosticText(
-      "probe host=internal-runtime.local/api?token=secret hostname=matrix-vps/private?credential=value",
+      "probe host=internal-runtime.local/api?token=secret hostname=matrix-vps/private?credential=value url=runtime.internal/review?access_key=private",
     );
 
-    expect(redacted).toBe("probe host=[host] hostname=[host]");
-    expect(redacted).not.toMatch(/internal-runtime|matrix-vps|\/api|\/private|secret|credential|value/);
+    expect(redacted).toBe("probe host=[host] hostname=[host] url=[host]");
+    expect(redacted).not.toMatch(/internal-runtime|matrix-vps|runtime\.internal|\/api|\/private|\/review|secret|credential|access_key|value/);
   });
 
   it("formats non-error diagnostics and unsafe names safely", () => {
