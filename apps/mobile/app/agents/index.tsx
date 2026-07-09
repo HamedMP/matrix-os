@@ -6,6 +6,12 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ReviewIdSchema, type CodingAgentNotificationPreferences, type CodingAgentNotificationPreferencesUpdate, type FileBrowseResponse, type FileReadRequest, type FileReadResponse, type FileSearchResponse, type FileWriteRequest, type PreviewSessionSummary, type ReviewSnapshot, type ReviewSummary, type RuntimeSummary, type SourceControlCreatePullRequestRequest, type SourceControlCreatePullRequestResponse, type SourceControlPrepareCommitRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
+import {
+  loadAgentWorkspaceState,
+  reconcileAgentWorkspaceState,
+  saveAgentWorkspaceState,
+  type AgentWorkspaceState,
+} from "@/lib/agent-workspace-state";
 import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
 import { isSafeShellSessionName } from "@/lib/terminal-state";
@@ -288,6 +294,11 @@ function fileReferenceMatches(left: FileReference | null, right: FileReference):
   return left?.projectId === right.projectId && left.worktreeId === right.worktreeId && left.path === right.path;
 }
 
+function agentWorkspaceStateEquals(left: AgentWorkspaceState, right: AgentWorkspaceState): boolean {
+  return left.selectedThreadId === right.selectedThreadId
+    && left.selectedTerminalSessionId === right.selectedTerminalSessionId;
+}
+
 function formatHunkRange(hunk: ReviewSnapshotHunk): string {
   return `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
 }
@@ -393,6 +404,45 @@ export default function AgentsScreen() {
   const selectedReviewIdRef = useRef<string | null>(null);
   const selectedFileReferenceRef = useRef<FileReference | null>(null);
   const activeFileSaveReferenceRef = useRef<FileReference | null>(null);
+  const agentWorkspaceUserWriteGenerationRef = useRef(0);
+  const activeAgentWorkspaceUserWritesRef = useRef(0);
+
+  const reconcilePersistedAgentWorkspaceState = useCallback(async (summary: RuntimeSummary) => {
+    const writeGeneration = agentWorkspaceUserWriteGenerationRef.current;
+    if (activeAgentWorkspaceUserWritesRef.current > 0) return;
+    try {
+      const savedState = await loadAgentWorkspaceState();
+      const reconciled = reconcileAgentWorkspaceState(savedState, summary);
+      if (
+        activeAgentWorkspaceUserWritesRef.current > 0
+        || agentWorkspaceUserWriteGenerationRef.current !== writeGeneration
+      ) {
+        return;
+      }
+      if (!agentWorkspaceStateEquals(savedState, reconciled)) {
+        await saveAgentWorkspaceState(reconciled);
+      }
+    } catch (err) {
+      console.warn("[mobile] failed to reconcile agent workspace state", err);
+    }
+  }, []);
+
+  const rememberAgentWorkspaceReference = useCallback(async (patch: Partial<AgentWorkspaceState>) => {
+    agentWorkspaceUserWriteGenerationRef.current += 1;
+    activeAgentWorkspaceUserWritesRef.current += 1;
+    try {
+      const savedState = await loadAgentWorkspaceState();
+      await saveAgentWorkspaceState({
+        ...savedState,
+        ...patch,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.warn("[mobile] failed to save agent workspace state", err);
+    } finally {
+      activeAgentWorkspaceUserWritesRef.current = Math.max(0, activeAgentWorkspaceUserWritesRef.current - 1);
+    }
+  }, []);
 
   const clearFileContent = useCallback(() => {
     fileContentGeneration.current += 1;
@@ -628,6 +678,7 @@ export default function AgentsScreen() {
     if (generation !== requestGeneration.current) return;
     if (result.ok) {
       setState({ status: "ready", summary: result.summary, error: null });
+      void reconcilePersistedAgentWorkspaceState(result.summary);
       if (!capabilityEnabled(result.summary, "codingAgentsReview")) {
         setReviewState(INITIAL_REVIEW_STATE);
         clearReviewSnapshot();
@@ -654,7 +705,7 @@ export default function AgentsScreen() {
     setState({ status: "error", summary: null, error: "Runtime summary unavailable" });
     setReviewState(INITIAL_REVIEW_STATE);
     clearReviewSnapshot();
-  }, [clearReviewSnapshot, client, loadReviewSnapshot]);
+  }, [clearReviewSnapshot, client, loadReviewSnapshot, reconcilePersistedAgentWorkspaceState]);
 
   const loadNotificationPreferences = useCallback(async () => {
     const generation = notificationPreferencesGeneration.current + 1;
@@ -809,8 +860,14 @@ export default function AgentsScreen() {
       setTerminalOpenError("Terminal session unavailable. Try again.");
       return;
     }
+    await rememberAgentWorkspaceReference({ selectedTerminalSessionId: session.name });
     router.push("/terminal");
-  }, [router]);
+  }, [rememberAgentWorkspaceReference, router]);
+
+  const openThread = useCallback(async (thread: SummaryThread) => {
+    await rememberAgentWorkspaceReference({ selectedThreadId: thread.id });
+    router.push(`/agents/${thread.id}` as any);
+  }, [rememberAgentWorkspaceReference, router]);
 
   const selectReview = useCallback((reviewId: string) => {
     void loadReviewSnapshot(reviewId);
@@ -916,7 +973,7 @@ export default function AgentsScreen() {
         canCreate={canCreate}
         terminalOpenError={terminalOpenError}
         onCreate={() => router.push("/agents/new")}
-        onOpenThread={(thread) => router.push(`/agents/${thread.id}` as any)}
+        onOpenThread={(thread) => void openThread(thread)}
         onOpenTerminal={(session) => void openTerminalSession(session)}
       />
 
@@ -948,7 +1005,7 @@ export default function AgentsScreen() {
               key={thread.id}
               accessibilityRole="button"
               accessibilityLabel={`Open attention thread ${thread.title}, ${attentionLabel}`}
-              onPress={() => router.push(`/agents/${thread.id}` as any)}
+              onPress={() => void openThread(thread)}
               style={styles.row}
             >
               <View style={styles.rowIcon}>
@@ -977,7 +1034,7 @@ export default function AgentsScreen() {
               accessibilityLabel={attentionLabel
                 ? `Open thread ${thread.title}, ${attentionLabel}`
                 : `Open thread ${thread.title}`}
-              onPress={() => router.push(`/agents/${thread.id}` as any)}
+              onPress={() => void openThread(thread)}
               style={styles.row}
             >
               <View style={styles.rowIcon}>
