@@ -14,7 +14,7 @@ const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi;
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
 const SECRET_ASSIGNMENT_PATTERN = /\b(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret)\s*[:=]\s*[^\s"'<>]+/gi;
 const KNOWN_SECRET_PREFIX_PATTERN = /\b(?:sk|sk_live|sk_test|ghp|github_pat|xoxb|xoxp|xoxa|xoxr|glpat|hf)[_-][A-Za-z0-9._-]{4,}\b/gi;
-const OWNER_PATH_PATTERN = /(?:^|[\s"'(:])(?:\/(?:home|Users|private|tmp|var|opt|etc|root)\/[^\s"'<>)]*)/g;
+const OWNER_PATH_PATTERN = /(?:^|[\s"'(:])(?:\/(?:home|Users|private|tmp|var|opt|etc|root|run)\/[^\s"'<>)]*)/g;
 const WINDOWS_PATH_PATTERN = /\b[A-Za-z]:\\[^\s"'<>)]*/g;
 const PRIVATE_IPV4_PATTERN = /\b(?:(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/g;
 const HOST_VALUE_PATTERN = /\b(?:host|hostname)\s*[:=]?\s*[A-Za-z0-9.-]*(?:\.local|\.internal|\.lan|\.home|runtime|matrix|vps)[A-Za-z0-9.-]*/gi;
@@ -57,6 +57,10 @@ function safeDiagnosticName(name: string): string {
   return normalized || "Error";
 }
 
+function safeDiagnosticScope(scope: string): string {
+  return capDiagnosticText(normalizeDiagnosticText(scope) || "warning");
+}
+
 export function formatCodingAgentDiagnostic(err: unknown): CodingAgentDiagnostic {
   if (err instanceof Error) {
     return {
@@ -75,5 +79,5 @@ export function logCodingAgentWarning(
   err: unknown,
   logger: CodingAgentDiagnosticLogger = console,
 ): void {
-  logger.warn(`[coding-agents] ${redactCodingAgentDiagnosticText(scope)}`, formatCodingAgentDiagnostic(err));
+  logger.warn(`[coding-agents] ${safeDiagnosticScope(scope)}`, formatCodingAgentDiagnostic(err));
 }

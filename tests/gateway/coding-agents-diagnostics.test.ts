@@ -12,7 +12,10 @@ describe("coding agent diagnostics", () => {
       "token=sk_live_51_private_secret",
       "Authorization: Bearer ghp_privatevalue1234567890",
       "postgres://matrix:password@10.0.0.5:5432/runtime",
+      "socket /run/matrix/gateway.sock",
+      "windows C:\\Users\\alice\\matrix\\token.txt",
       "host internal-runtime.local",
+      "probe 10.0.0.5",
       "ENOENT",
     ].join(" ");
 
@@ -23,7 +26,29 @@ describe("coding agent diagnostics", () => {
     expect(redacted).toContain("[url]");
     expect(redacted).toContain("[host]");
     expect(redacted.length).toBeLessThanOrEqual(180);
-    expect(redacted).not.toMatch(/\/home\/matrix|private-app|sk_live|ghp_|postgres|10\.0\.0\.5|internal-runtime/i);
+    expect(redacted).not.toMatch(/\/home\/matrix|\/run\/matrix|C:\\Users|alice|private-app|sk_live|ghp_|postgres|10\.0\.0\.5|internal-runtime/i);
+  });
+
+  it("bounds long diagnostic text", () => {
+    const redacted = redactCodingAgentDiagnosticText(`status ${"x".repeat(220)}`);
+
+    expect(redacted).toHaveLength(180);
+    expect(redacted.endsWith("...")).toBe(true);
+  });
+
+  it("formats non-error diagnostics and unsafe names safely", () => {
+    const unknown = formatCodingAgentDiagnostic("token=sk_live_private /tmp/private-file");
+    const unsafeNameError = new Error("failed");
+    unsafeNameError.name = "!!!";
+
+    expect(unknown).toEqual({
+      name: "Unknown",
+      message: "token= [token] [path]",
+    });
+    expect(formatCodingAgentDiagnostic(unsafeNameError)).toEqual({
+      name: "Error",
+      message: "failed",
+    });
   });
 
   it("formats bounded error diagnostics without leaking raw values", () => {
@@ -42,14 +67,14 @@ describe("coding agent diagnostics", () => {
     const warn = vi.fn();
 
     logCodingAgentWarning(
-      "summary route failed",
+      "database summary route failed",
       new Error("raw path /opt/matrix/release.json leaked token=secret-value"),
       { warn },
     );
 
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(
-      "[coding-agents] summary route failed",
+      "[coding-agents] database summary route failed",
       expect.objectContaining({
         name: "Error",
         message: expect.stringContaining("[path]"),
