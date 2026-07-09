@@ -114,6 +114,86 @@ describe("coding-agent provider registry", () => {
     },
   );
 
+  it("fails closed when credential status cannot be read", async () => {
+    const healthCheck = vi.fn(() => ({ ok: true }));
+    const buildSetupAction = vi.fn(() => [{
+      id: "codex_login",
+      kind: "foreground_terminal" as const,
+      label: "Connect Codex",
+      command: "codex login",
+    }]);
+    const registry = createCodingAgentProviderRegistry({
+      providers: [adapter({ healthCheck, buildSetupAction })],
+      agentCredentials: {
+        getStatus: vi.fn(async () => {
+          throw new Error("credential backend unavailable");
+        }),
+      },
+      now: () => baseNow,
+    });
+
+    const [summary] = await registry.listProviders(owner);
+
+    expect(summary).toMatchObject({
+      id: "codex",
+      availability: "unavailable",
+      installStatus: "unknown",
+      authStatus: "unknown",
+      setupActions: [],
+      lastCheckedAt: baseNow.toISOString(),
+    });
+    expect(healthCheck).not.toHaveBeenCalled();
+    expect(buildSetupAction).not.toHaveBeenCalled();
+  });
+
+  it("keeps credential-known providers without execution adapters in the summary", async () => {
+    const registry = createCodingAgentProviderRegistry({
+      providers: [adapter()],
+      agentCredentials: {
+        getStatus: vi.fn(async () => ({
+          systemAgent: "hermes" as const,
+          activeAgents: ["claude", "codex", "hermes"] as const,
+          routingExplanation: "Provider state is runtime-owned.",
+          agents: [
+            {
+              agent: "claude" as const,
+              status: "available" as const,
+              coordinationRole: "coding_specialist" as const,
+              workflows: ["coding" as const],
+              degradedWorkflows: [],
+              verifiedAt: baseNow.toISOString(),
+              nextAction: null,
+            },
+            {
+              agent: "codex" as const,
+              status: "available" as const,
+              coordinationRole: "coding_specialist" as const,
+              workflows: ["coding" as const],
+              degradedWorkflows: [],
+              verifiedAt: baseNow.toISOString(),
+              nextAction: null,
+            },
+          ],
+        })),
+      },
+      now: () => baseNow,
+    });
+
+    const summaries = await registry.listProviders(owner);
+
+    expect(summaries.map((summary) => summary.id)).toEqual(["claude", "codex"]);
+    expect(summaries[0]).toMatchObject({
+      id: "claude",
+      displayName: "Claude",
+      kind: "claude",
+      availability: "available",
+      installStatus: "installed",
+      authStatus: "authenticated",
+      setupActions: [],
+      lastCheckedAt: baseNow.toISOString(),
+    });
+  });
+
   it("times out provider health checks and aborts their signal", async () => {
     let aborted = false;
     const healthCheck = vi.fn(({ signal }: { signal: AbortSignal }) => {

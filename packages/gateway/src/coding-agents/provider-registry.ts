@@ -5,8 +5,10 @@ import {
   type AgentProviderSummary,
   type SafeSetupAction,
 } from "@matrix-os/contracts";
-import type {
-  AgentCredentialSummary,
+import {
+  AgentCredentialStatusResponseSchema,
+  type AgentCredentialSummary,
+  type AgentId,
 } from "../onboarding/activation-contracts.js";
 import type { AgentCredentialStatusService } from "../onboarding/agent-credential-status.js";
 import type { RequestPrincipal } from "../request-principal.js";
@@ -14,6 +16,7 @@ import { logCodingAgentWarning } from "./diagnostics.js";
 import type { CodingAgentProviderAdapter } from "./thread-store.js";
 
 const MAX_PROVIDERS = 8;
+const MAX_CREDENTIAL_PROVIDERS = 3;
 const DEFAULT_HEALTH_TIMEOUT_MS = 2_000;
 const DEFAULT_CACHE_TTL_MS = 30_000;
 const DEFAULT_MAX_CACHE_ENTRIES = 256;
@@ -26,6 +29,11 @@ interface HealthCacheEntry {
   expiresAt: number;
   ok: boolean;
 }
+
+type CredentialReadResult =
+  | { state: "unconfigured"; agents: AgentCredentialSummary[] }
+  | { state: "available"; agents: AgentCredentialSummary[] }
+  | { state: "failed"; agents: [] };
 
 export interface CodingAgentProviderRegistry {
   listProviders(principal: RequestPrincipal): Promise<AgentProviderSummary[]>;
@@ -65,6 +73,57 @@ function fallbackSummary(providerId: string, checkedAt?: string): AgentProviderS
     defaultMode: "default",
     setupActions: [],
     lastCheckedAt: checkedAt,
+  });
+}
+
+function displayNameForAgent(agent: AgentId): string {
+  if (agent === "claude") return "Claude";
+  if (agent === "codex") return "Codex";
+  return "Hermes";
+}
+
+function kindForAgent(agent: AgentId): AgentProviderSummary["kind"] {
+  if (agent === "claude") return "claude";
+  if (agent === "codex") return "codex";
+  return "custom";
+}
+
+function summaryFromCredential(credential: AgentCredentialSummary): AgentProviderSummary {
+  const isAvailable = credential.status === "available";
+  const isMissing = credential.status === "missing";
+  const isExpired = credential.status === "expired" || credential.status === "revoked";
+  const failed = credential.status === "failed";
+  return AgentProviderSummarySchema.parse({
+    id: credential.agent,
+    displayName: displayNameForAgent(credential.agent),
+    kind: kindForAgent(credential.agent),
+    availability: isAvailable
+      ? "available"
+      : isExpired
+        ? "auth_required"
+        : isMissing
+          ? "setup_required"
+          : failed
+            ? "unavailable"
+            : "unknown",
+    installStatus: isAvailable || isExpired
+      ? "installed"
+      : isMissing
+        ? "missing"
+        : failed
+          ? "failed"
+          : "unknown",
+    authStatus: isAvailable
+      ? "authenticated"
+      : isExpired
+        ? "expired"
+        : isMissing
+          ? "missing"
+          : "unknown",
+    supportedModes: ["default", "review"],
+    defaultMode: "default",
+    setupActions: [],
+    lastCheckedAt: credential.verifiedAt ?? undefined,
   });
 }
 
@@ -181,13 +240,22 @@ export function createCodingAgentProviderRegistry(
     healthCache.set(key, entry);
   }
 
-  async function readCredentials(principal: RequestPrincipal): Promise<AgentCredentialSummary[]> {
-    if (!options.agentCredentials) return [];
+  async function readCredentials(principal: RequestPrincipal): Promise<CredentialReadResult> {
+    if (!options.agentCredentials) return { state: "unconfigured", agents: [] };
     try {
-      return (await options.agentCredentials.getStatus(principal.userId)).agents;
+      const status = AgentCredentialStatusResponseSchema.parse(
+        await options.agentCredentials.getStatus(principal.userId),
+      );
+      const agents: AgentCredentialSummary[] = [];
+      for (const credential of status.agents) {
+        if (agents.some((candidate) => candidate.agent === credential.agent)) continue;
+        agents.push(credential);
+        if (agents.length >= MAX_CREDENTIAL_PROVIDERS) break;
+      }
+      return { state: "available", agents };
     } catch (err: unknown) {
       logCodingAgentWarning("provider credential summary unavailable", err);
-      return [];
+      return { state: "failed", agents: [] };
     }
   }
 
@@ -269,9 +337,12 @@ export function createCodingAgentProviderRegistry(
   async function summaryForProvider(
     provider: CodingAgentProviderAdapter,
     principal: RequestPrincipal,
-    credentials: AgentCredentialSummary[],
+    credentials: CredentialReadResult,
   ): Promise<AgentProviderSummary> {
     const checkedAt = now();
+    if (credentials.state === "failed") {
+      return fallbackSummary(provider.providerId, checkedAt.toISOString());
+    }
     const base = await readBaseSummary(provider, principal, checkedAt);
     if (!base.valid) return base.summary;
 
@@ -281,7 +352,7 @@ export function createCodingAgentProviderRegistry(
       checkedAt,
       base.summary.setupActions,
     );
-    const credential = credentials.find((candidate) => candidate.agent === provider.providerId);
+    const credential = credentials.agents.find((candidate) => candidate.agent === provider.providerId);
     const normalized = applyCredentialState({ ...base.summary, setupActions }, credential);
     if (!shouldCheckHealth(normalized)) return AgentProviderSummarySchema.parse(normalized);
 
@@ -299,6 +370,13 @@ export function createCodingAgentProviderRegistry(
       const summaries = await Promise.all(
         providers.map((provider) => summaryForProvider(provider, principal, credentials)),
       );
+      if (credentials.state === "available") {
+        for (const credential of credentials.agents) {
+          if (credential.agent === "hermes") continue;
+          if (summaries.some((summary) => summary.id === credential.agent)) continue;
+          summaries.push(summaryFromCredential(credential));
+        }
+      }
       return summaries.sort((left, right) => left.id.localeCompare(right.id));
     },
     invalidate(ownerId, providerId) {
