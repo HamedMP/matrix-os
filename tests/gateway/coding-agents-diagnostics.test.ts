@@ -38,11 +38,13 @@ describe("coding agent diagnostics", () => {
 
   it("fully redacts colon-containing and quoted secret assignments", () => {
     const redacted = redactCodingAgentDiagnosticText(
-      `token=abc:def apiKey="abcd" password: 'hunter2'`,
+      `token=abc:def apiKey="abcd" password: 'hunter2' Authorization: Basic dXNlcjpwYXNz TWILIO_AUTH_TOKEN=abc123`,
     );
 
-    expect(redacted).toBe("token= [token] apiKey= [token] password: [token]");
-    expect(redacted).not.toMatch(/abc|def|abcd|hunter2/i);
+    expect(redacted).toBe(
+      "token= [token] apiKey= [token] password: [token] Authorization: [token] TWILIO_AUTH_TOKEN= [token]",
+    );
+    expect(redacted).not.toMatch(/abc|def|abcd|hunter2|dXNlcjpwYXNz|abc123/i);
   });
 
   it("redacts link-local and private IPv6 hosts", () => {

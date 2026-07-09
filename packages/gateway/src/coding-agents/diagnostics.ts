@@ -12,7 +12,7 @@ export interface CodingAgentDiagnostic {
 
 const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi;
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
-const SECRET_ASSIGNMENT_PATTERN = /\b(authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret)(\s*[:=]\s*)(?:"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s"'<>]+)/gi;
+const SECRET_ASSIGNMENT_PATTERN = /\b((?:[A-Za-z][A-Za-z0-9]*[_-])*(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|password|passwd|secret))(\s*[:=]\s*)(?:(?:Basic|Bearer|Digest)\s+[^\s"'<>]+|"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s"'<>]+)/gi;
 const KNOWN_SECRET_PREFIX_PATTERN = /\b(?:sk|sk_live|sk_test|ghp|github_pat|xoxb|xoxp|xoxa|xoxr|glpat|hf)[_-][A-Za-z0-9._-]{4,}\b/gi;
 const OWNER_PATH_PATTERN = /(?:^|[\s"'(:])(?:\/(?:home|Users|private|tmp|var|opt|etc|root|run)\/[^\s"'<>)]*)/g;
 const WINDOWS_PATH_PATTERN = /\b[A-Za-z]:\\[^\s"'<>)]*/g;
