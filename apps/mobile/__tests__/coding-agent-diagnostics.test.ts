@@ -1,4 +1,5 @@
 import {
+  formatMobileCodingAgentDiagnostic,
   logMobileCodingAgentWarning,
   redactMobileCodingAgentDiagnosticText,
 } from "../lib/coding-agent-diagnostics";
@@ -10,6 +11,8 @@ describe("mobile coding-agent diagnostics", () => {
       "Authorization: Bearer ghp_privatevalue1234567890",
       "url=https://internal-runtime.local/api?token=secret",
       "host=internal-runtime.local probe 10.0.0.8",
+      "socket /run/matrix/gateway.sock",
+      "windows C:\\Users\\alice\\matrix\\token.txt",
       "postgres://matrix:secret@10.0.0.8:5432/runtime",
     ].join(" ");
 
@@ -20,7 +23,29 @@ describe("mobile coding-agent diagnostics", () => {
     expect(redacted).toContain("[url]");
     expect(redacted).toContain("[host]");
     expect(redacted.length).toBeLessThanOrEqual(180);
-    expect(redacted).not.toMatch(/\/home\/matrix|private-app|ghp_|internal-runtime|postgres|10\.0\.0\.8|secret/i);
+    expect(redacted).not.toMatch(/\/home\/matrix|\/run\/matrix|C:\\Users|alice|private-app|ghp_|internal-runtime|postgres|10\.0\.0\.8|secret/i);
+  });
+
+  it("bounds long diagnostic text", () => {
+    const redacted = redactMobileCodingAgentDiagnosticText(`status ${"x".repeat(220)}`);
+
+    expect(redacted).toHaveLength(180);
+    expect(redacted.endsWith("...")).toBe(true);
+  });
+
+  it("formats non-error diagnostics and unsafe names safely", () => {
+    const unknown = formatMobileCodingAgentDiagnostic("token=sk_live_private /tmp/private-file");
+    const unsafeNameError = new Error("failed");
+    unsafeNameError.name = "!!!";
+
+    expect(unknown).toEqual({
+      name: "Unknown",
+      message: "token= [token] [path]",
+    });
+    expect(formatMobileCodingAgentDiagnostic(unsafeNameError)).toEqual({
+      name: "Error",
+      message: "failed",
+    });
   });
 
   it("logs bounded scope and redacted metadata only", () => {
@@ -40,5 +65,17 @@ describe("mobile coding-agent diagnostics", () => {
       }),
     );
     expect(JSON.stringify(warn.mock.calls)).not.toMatch(/alice|id_rsa|sk_live_secret/i);
+  });
+
+  it("redacts exported scope labels defensively", () => {
+    const warn = jest.fn();
+
+    logMobileCodingAgentWarning("database probe /home/matrix/home token=ghp_private123", "status 500", { warn });
+
+    expect(warn).toHaveBeenCalledWith(
+      "[mobile] [database] probe [path] token= [token]",
+      expect.objectContaining({ message: "status 500" }),
+    );
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/\/home\/matrix|ghp_private123/i);
   });
 });
