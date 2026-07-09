@@ -86,10 +86,52 @@ describe("coding agent diagnostics", () => {
     expect(redacted).not.toMatch(/169\.254|::1|fe80|fd12|internal-runtime|matrix-vps|localhost/i);
   });
 
+  it("redacts assignment-prefixed owner paths", () => {
+    const redacted = redactCodingAgentDiagnosticText(
+      "read path=/home/matrix/private.ts file=/opt/matrix/release.json",
+    );
+
+    expect(redacted).toBe("read path=[path] file=[path]");
+    expect(redacted).not.toMatch(/\/home\/matrix|\/opt\/matrix|private\.ts|release\.json/);
+  });
+
+  it("redacts backtick-quoted owner paths", () => {
+    const redacted = redactCodingAgentDiagnosticText(
+      "open `/home/matrix/home/project/file.ts` failed",
+    );
+
+    expect(redacted).toBe("open `[path]` failed");
+    expect(redacted).not.toMatch(/\/home\/matrix|project|file\.ts/);
+  });
+
+  it("redacts single-label hosts in network errors", () => {
+    const redacted = redactCodingAgentDiagnosticText(
+      "getaddrinfo ENOTFOUND internal-runtime connect ECONNREFUSED matrix-vps",
+    );
+
+    expect(redacted).toBe("getaddrinfo ENOTFOUND [host] connect ECONNREFUSED [host]");
+    expect(redacted).not.toMatch(/internal-runtime|matrix-vps/);
+  });
+
+  it("redacts complete scheme-less host values", () => {
+    const redacted = redactCodingAgentDiagnosticText(
+      "probe host=internal-runtime.local/api?token=secret hostname=matrix-vps/private?credential=value url=runtime.internal/review?access_key=private",
+    );
+
+    expect(redacted).toBe("probe host=[host] hostname=[host] url=[host]");
+    expect(redacted).not.toMatch(/internal-runtime|matrix-vps|runtime\.internal|\/api|\/private|\/review|secret|credential|access_key|value/);
+  });
+
   it("formats non-error diagnostics and unsafe names safely", () => {
     const unknown = formatCodingAgentDiagnostic("token=sk_live_private /tmp/private-file");
     const unsafeNameError = new Error("failed");
+    const tokenNameError = new Error("failed");
+    const pathNameError = new Error("failed");
+    const hostNameError = new Error("failed");
     unsafeNameError.name = "!!!";
+    tokenNameError.name = "sk_live_private_name";
+    pathNameError.name = "/home/matrix/private-error";
+    hostNameError.name = "internal-runtime.local";
 
     expect(unknown).toEqual({
       name: "Unknown",
@@ -99,6 +141,9 @@ describe("coding agent diagnostics", () => {
       name: "Error",
       message: "failed",
     });
+    expect(formatCodingAgentDiagnostic(tokenNameError).name).toBe("token");
+    expect(formatCodingAgentDiagnostic(pathNameError).name).toBe("path");
+    expect(formatCodingAgentDiagnostic(hostNameError).name).toBe("host");
   });
 
   it("formats bounded error diagnostics without leaking raw values", () => {

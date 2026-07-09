@@ -80,6 +80,7 @@ Security and ownership:
 - Mutating routes use Hono `bodyLimit`.
 - Route errors are mapped to safe client errors and log details server-side only.
 - Gateway coding-agent route, summary, stream, provider lifecycle, and attention-notification failure diagnostics use the bounded redacted helper in `packages/gateway/src/coding-agents/diagnostics.ts` instead of raw `err.message` logging.
+- Mobile gateway-client warnings use `apps/mobile/lib/coding-agent-diagnostics.ts` to log only bounded warning scopes and redacted metadata for status, parse, stream detach/close, and catch paths without raw response bodies, filesystem paths, tokens, private hosts, or database details.
 - Thread store state is owner-scoped in the existing owner file convention at `system/coding-agents/threads.json`; no new embedded DB was added.
 
 Related workspace routes in `packages/gateway/src/workspace-routes.ts`:
@@ -294,6 +295,7 @@ Focused tests:
 Gateway client:
 
 - `apps/mobile/lib/gateway-client.ts`
+- `apps/mobile/lib/coding-agent-diagnostics.ts`
 - `getCodingAgentRuntimeSummary()` calls `GET /api/coding-agents/summary`, validates `RuntimeSummarySchema`, and returns the safe `"Runtime summary unavailable"` error on failure.
 - `getCodingAgentNotificationPreferences()` calls `GET /api/coding-agents/notification-preferences`, validates the gateway `{ preferences }` envelope with `CodingAgentNotificationPreferencesSchema`, and returns the safe `"Notification settings unavailable"` error on failure.
 - `updateCodingAgentNotificationPreferences()` sends a full `CodingAgentNotificationPreferencesUpdateSchema` body to `PUT /api/coding-agents/notification-preferences`, validates the gateway `{ preferences }` envelope, and returns the safe `"Notification settings could not be saved. Try again."` error on failure.
@@ -351,6 +353,7 @@ Persisted UI references:
 Focused tests:
 
 - `apps/mobile/__tests__/gateway-client.test.ts`
+- `apps/mobile/__tests__/coding-agent-diagnostics.test.ts`
 - `apps/mobile/__tests__/agents-screen.test.tsx`
 - `apps/mobile/__tests__/agents-preview-screen.test.tsx`
 - `apps/mobile/__tests__/agent-thread-screen.test.tsx`
@@ -431,6 +434,12 @@ Mobile focused Jest:
 
 ```bash
 pnpm --filter matrix-os-mobile exec jest __tests__/gateway-client.test.ts __tests__/apps-screen.test.tsx __tests__/agents-screen.test.tsx __tests__/agent-thread-screen.test.tsx __tests__/agent-workspace-state.test.ts --runInBand
+```
+
+Mobile diagnostics:
+
+```bash
+pnpm --filter matrix-os-mobile exec jest __tests__/coding-agent-diagnostics.test.ts __tests__/gateway-client.test.ts --runInBand
 ```
 
 Desktop typecheck:

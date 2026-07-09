@@ -1536,6 +1536,7 @@ describe("GatewayClient", () => {
 
   it("refreshes expired websocket tokens before reconnecting", async () => {
     jest.useFakeTimers();
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     const OriginalWebSocket = global.WebSocket;
     const sockets: Array<{
       readyState: number;
@@ -1573,9 +1574,18 @@ describe("GatewayClient", () => {
     const client = new GatewayClient("https://app.matrix-os.com", "clerk-token");
     client.setWebSocketToken("expired-ws-token", Date.now() - 1000);
     client.connect();
-    sockets[0]?.onclose?.({ code: 1006, reason: "" });
+    sockets[0]?.onclose?.({ code: 1006, reason: "/home/matrix/home token=ghp_privatevalue1234567890" });
 
     await jest.runOnlyPendingTimersAsync();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[mobile] websocket closed",
+      expect.objectContaining({
+        name: "Unknown",
+        message: expect.stringContaining("[path]"),
+      }),
+    );
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toMatch(/\/home\/matrix|ghp_privatevalue/i);
 
     expect(fetchMock).toHaveBeenCalledWith("https://app.matrix-os.com/api/auth/ws-token", expect.objectContaining({
       headers: expect.objectContaining({ Authorization: "Bearer clerk-token" }),
@@ -1587,6 +1597,7 @@ describe("GatewayClient", () => {
     );
 
     fetchMock.mockRestore();
+    warnSpy.mockRestore();
     global.WebSocket = OriginalWebSocket;
     jest.useRealTimers();
   });
@@ -1610,13 +1621,44 @@ describe("GatewayClient", () => {
   it("returns a safe fallback when app inventory fetch fails", async () => {
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     const fetchMock = jest.spyOn(global, "fetch").mockRejectedValueOnce(
-      new Error("network unavailable"),
+      new Error("network unavailable /var/run/provider.sock token=sk_live_private"),
     );
 
     const client = new GatewayClient("http://localhost:4000");
     await expect(client.getApps()).resolves.toEqual([]);
 
-    expect(warnSpy).toHaveBeenCalledWith("[mobile] /api/apps unavailable", "network unavailable");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[mobile] /api/apps unavailable",
+      expect.objectContaining({
+        name: "Error",
+        message: expect.stringContaining("[path]"),
+      }),
+    );
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toMatch(/\/var\/run|sk_live_private/i);
+
+    fetchMock.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it("does not log raw app inventory error bodies", async () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      text: jest.fn().mockResolvedValueOnce("raw /home/matrix/home token=ghp_privatevalue1234567890"),
+    } as unknown as Response);
+
+    const client = new GatewayClient("http://localhost:4000");
+    await expect(client.getApps()).resolves.toEqual([]);
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[mobile] /api/apps unavailable",
+      expect.objectContaining({
+        name: "Unknown",
+        message: "status 503",
+      }),
+    );
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toMatch(/\/home\/matrix|ghp_privatevalue|raw/i);
 
     fetchMock.mockRestore();
     warnSpy.mockRestore();
@@ -1634,7 +1676,13 @@ describe("GatewayClient", () => {
       error: "Gateway unavailable",
     });
 
-    expect(warnSpy).toHaveBeenCalledWith("[mobile] gateway health check unavailable");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[mobile] gateway health check unavailable",
+      expect.objectContaining({
+        name: "Unknown",
+        message: "unavailable",
+      }),
+    );
 
     fetchMock.mockRestore();
     warnSpy.mockRestore();

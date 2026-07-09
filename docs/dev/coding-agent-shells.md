@@ -148,6 +148,11 @@ Use this checklist for every coding-agent shell PR:
 - Server diagnostics for coding-agent routes, summary adapters, streams,
   provider lifecycle, and notification bridges use the bounded redacted
   diagnostic helper instead of raw `err.message` logging.
+- Mobile coding-agent gateway client diagnostics use
+  `apps/mobile/lib/coding-agent-diagnostics.ts` for bounded warning scope and
+  redacted metadata. Do not log raw gateway response bodies, filesystem paths,
+  private hosts, bearer tokens, provider errors, or database details from mobile
+  gateway clients.
 - Desktop renderer never receives bearer credentials or provider credentials.
 - Mobile AsyncStorage contains only bounded safe references.
 - Terminal/session behavior reuses canonical Matrix terminal primitives.
