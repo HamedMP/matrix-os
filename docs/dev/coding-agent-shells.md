@@ -319,7 +319,9 @@ Add `--require-thread-snapshot`, `--min-active-threads`,
 `--min-terminal-sessions`, `--min-preview-sessions`, or `--min-reviews` only
 when the manual scenario requires an existing live resource. These assertions
 fail with generic recovery-oriented output; collect detailed runtime evidence
-from server-side logs, not from the shell or CLI report.
+from server-side logs, not from the shell or CLI report. Active-thread,
+terminal-session, and preview-session minimums are capped to the summary page
+size. Review minimums follow review cursors when the gateway includes them.
 
 ## Validation Commands
 

@@ -15,7 +15,10 @@ import { z } from "zod/v4";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_PROMPT = "Matrix coding-agent runtime smoke";
+const MAX_SUMMARY_COUNT_ASSERTION = 50;
+const MAX_REVIEW_PAGES = 20;
 const ReviewSummaryListSchema = boundedListSchema(ReviewSummarySchema, 50);
+type ReviewSummaryList = z.infer<typeof ReviewSummaryListSchema>;
 const NotificationPreferencesResponseSchema = z.object({
   preferences: CodingAgentNotificationPreferencesSchema,
 }).strict();
@@ -114,9 +117,9 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
     }
     else if (arg === "--require-ready-provider") options.requireReadyProvider = true;
     else if (arg === "--require-thread-snapshot") options.requireThreadSnapshot = true;
-    else if (arg === "--min-active-threads") options.minActiveThreads = parseMinimumCount(readValue(), "min-active-threads");
-    else if (arg === "--min-terminal-sessions") options.minTerminalSessions = parseMinimumCount(readValue(), "min-terminal-sessions");
-    else if (arg === "--min-preview-sessions") options.minPreviewSessions = parseMinimumCount(readValue(), "min-preview-sessions");
+    else if (arg === "--min-active-threads") options.minActiveThreads = parseSummaryMinimumCount(readValue(), "min-active-threads");
+    else if (arg === "--min-terminal-sessions") options.minTerminalSessions = parseSummaryMinimumCount(readValue(), "min-terminal-sessions");
+    else if (arg === "--min-preview-sessions") options.minPreviewSessions = parseSummaryMinimumCount(readValue(), "min-preview-sessions");
     else if (arg === "--min-reviews") options.minReviews = parseMinimumCount(readValue(), "min-reviews");
     else if (arg === "--json") options.json = true;
     else throw new Error(`Unknown argument: ${arg}`);
@@ -153,11 +156,21 @@ export async function runCodingAgentRuntimeSmoke(options: SmokeOptions): Promise
     timeoutMs,
   });
 
+  const reviewsUrl = buildRuntimeUrl({ origin: options.origin, path: "/api/coding-agents/reviews", runtime: options.runtime });
   const reviews = await requestJson({
     label: "review summaries",
     schema: ReviewSummaryListSchema,
     fetchFn,
-    url: buildRuntimeUrl({ origin: options.origin, path: "/api/coding-agents/reviews", runtime: options.runtime }),
+    url: reviewsUrl,
+    token: options.token,
+    timeoutMs,
+  });
+  const reviewCount = await countReviewsForMinimum({
+    initial: reviews,
+    minReviews: options.minReviews,
+    origin: options.origin,
+    runtime: options.runtime,
+    fetchFn,
     token: options.token,
     timeoutMs,
   });
@@ -179,6 +192,13 @@ export async function runCodingAgentRuntimeSmoke(options: SmokeOptions): Promise
     });
     checkedThreadSnapshot = true;
   }
+
+  const assertionsChecked = evaluateRequirements({
+    summary,
+    reviewCount,
+    checkedThreadSnapshot,
+    request: options,
+  });
 
   let createdThreadStatus: AgentThreadSnapshot["thread"]["status"] | null = null;
   if (options.createThread) {
@@ -204,13 +224,6 @@ export async function runCodingAgentRuntimeSmoke(options: SmokeOptions): Promise
     createdThreadStatus = created.thread.status;
   }
 
-  const assertionsChecked = evaluateRequirements({
-    summary,
-    reviewCount: reviews.items.length,
-    checkedThreadSnapshot,
-    request: options,
-  });
-
   return {
     ok: true,
     summary: {
@@ -222,7 +235,7 @@ export async function runCodingAgentRuntimeSmoke(options: SmokeOptions): Promise
       attentionThreadCount: summary.attentionThreads.items.length,
       terminalSessionCount: summary.terminalSessions.items.length,
       previewSessionCount: summary.previewSessions.items.length,
-      reviewCount: reviews.items.length,
+      reviewCount,
       notificationPreferencesReachable: true,
       checkedThreadSnapshot,
       assertionsChecked,
@@ -256,6 +269,14 @@ function parseMinimumCount(value: string, label: string): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 1000) {
     throw new Error(`${label} must be a positive integer up to 1000`);
+  }
+  return parsed;
+}
+
+function parseSummaryMinimumCount(value: string, label: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > MAX_SUMMARY_COUNT_ASSERTION) {
+    throw new Error(`${label} must be a positive integer up to ${MAX_SUMMARY_COUNT_ASSERTION}`);
   }
   return parsed;
 }
@@ -305,6 +326,46 @@ function assertMinimum(actual: number, expected: number | undefined, fail: () =>
   if (expected === undefined) return 0;
   if (actual < expected) fail();
   return 1;
+}
+
+async function countReviewsForMinimum(options: {
+  initial: ReviewSummaryList;
+  minReviews: number | undefined;
+  origin: string;
+  runtime?: string;
+  fetchFn: typeof fetch;
+  token: string;
+  timeoutMs: number;
+}): Promise<number> {
+  let count = options.initial.items.length;
+  let hasMore = options.initial.hasMore;
+  let nextCursor = options.initial.nextCursor;
+  let pagesRead = 1;
+
+  while (
+    options.minReviews !== undefined &&
+    count < options.minReviews &&
+    hasMore &&
+    nextCursor &&
+    pagesRead < MAX_REVIEW_PAGES
+  ) {
+    const url = buildRuntimeUrl({ origin: options.origin, path: "/api/coding-agents/reviews", runtime: options.runtime });
+    url.searchParams.set("cursor", nextCursor);
+    const page = await requestJson({
+      label: "review summaries",
+      schema: ReviewSummaryListSchema,
+      fetchFn: options.fetchFn,
+      url,
+      token: options.token,
+      timeoutMs: options.timeoutMs,
+    });
+    count += page.items.length;
+    hasMore = page.hasMore;
+    nextCursor = page.nextCursor;
+    pagesRead += 1;
+  }
+
+  return count;
 }
 
 function selectProviderId(summary: RuntimeSummary): string {
@@ -378,12 +439,12 @@ Options:
   --require-thread-snapshot
                          Require the smoke to validate at least one existing thread snapshot.
   --min-active-threads <count>
-                         Require at least this many active threads.
+                         Require at least this many active threads from the summary page, max ${MAX_SUMMARY_COUNT_ASSERTION}.
   --min-terminal-sessions <count>
-                         Require at least this many terminal sessions.
+                         Require at least this many terminal sessions from the summary page, max ${MAX_SUMMARY_COUNT_ASSERTION}.
   --min-preview-sessions <count>
-                         Require at least this many preview sessions.
-  --min-reviews <count>  Require at least this many review summaries.
+                         Require at least this many preview sessions from the summary page, max ${MAX_SUMMARY_COUNT_ASSERTION}.
+  --min-reviews <count>  Require at least this many review summaries; follows review cursors when present.
   --json                 Print JSON summary.
 
 Environment:

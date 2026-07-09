@@ -112,9 +112,9 @@ function threadSnapshot(threadId = "thread_smoke_1") {
   };
 }
 
-function reviewSummary() {
+function reviewSummary(id = "review_smoke") {
   return {
-    id: "review_smoke",
+    id,
     projectId: "project-smoke",
     worktreeId: "wt_123456789abc",
     status: "reviewing",
@@ -208,8 +208,14 @@ describe("coding-agent runtime smoke", () => {
         parseArgs(["--origin", "https://app.matrix-os.com", "--min-active-threads", value], {
           MATRIX_CODING_AGENTS_SMOKE_TOKEN: "secret-token",
         }),
-      ).toThrow("min-active-threads must be a positive integer up to 1000");
+      ).toThrow("min-active-threads must be a positive integer up to 50");
     }
+
+    expect(() =>
+      parseArgs(["--origin", "https://app.matrix-os.com", "--min-active-threads", "51"], {
+        MATRIX_CODING_AGENTS_SMOKE_TOKEN: "secret-token",
+      }),
+    ).toThrow("min-active-threads must be a positive integer up to 50");
   });
 
   it("requires bearer tokens through the environment instead of CLI args", () => {
@@ -301,6 +307,38 @@ describe("coding-agent runtime smoke", () => {
     expect(report.summary.assertionsChecked).toBe(8);
   });
 
+  it("paginates review summaries until the requested minimum is verified", async () => {
+    const firstPage = Array.from({ length: 50 }, (_, index) => reviewSummary(`review_smoke_${index}`));
+    const secondPage = [reviewSummary("review_smoke_50")];
+    const fetchFn = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === "/api/coding-agents/summary") return jsonResponse(runtimeSummary());
+      if (url.pathname === "/api/coding-agents/notification-preferences") {
+        return jsonResponse({ preferences: { attentionPush: { approval: true, input: true, failed: true, completed: true } } });
+      }
+      if (url.pathname === "/api/coding-agents/reviews" && url.searchParams.get("cursor") === "review_cursor_2") {
+        return jsonResponse({ items: secondPage, hasMore: false, limit: 50 });
+      }
+      if (url.pathname === "/api/coding-agents/reviews") {
+        return jsonResponse({ items: firstPage, hasMore: true, nextCursor: "review_cursor_2", limit: 50 });
+      }
+      if (url.pathname === "/api/coding-agents/threads/thread_smoke_1") return jsonResponse(threadSnapshot());
+      throw new Error(`unexpected request ${input}`);
+    });
+
+    const report = await runCodingAgentRuntimeSmoke({
+      origin: "https://app.matrix-os.com",
+      token: "secret-token",
+      fetchFn,
+      timeoutMs: 1000,
+      minReviews: 51,
+    });
+
+    expect(report.summary.reviewCount).toBe(51);
+    expect(report.summary.assertionsChecked).toBe(1);
+    expect(fetchFn.mock.calls.some(([input]) => String(input).endsWith("/api/coding-agents/reviews?cursor=review_cursor_2"))).toBe(true);
+  });
+
   it("fails with generic messages when required capabilities are disabled", async () => {
     await expect(
       runCodingAgentRuntimeSmoke({
@@ -318,6 +356,39 @@ describe("coding-agent runtime smoke", () => {
         requiredCapabilities: ["codingAgentsPreview"],
       }),
     ).rejects.toThrow("coding-agent runtime requirements unavailable");
+  });
+
+  it("checks assertions before creating a smoke thread", async () => {
+    const fetchFn = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.endsWith("/api/coding-agents/summary")) {
+        return jsonResponse(runtimeSummary({
+          capabilities: [
+            { id: "codingAgentsRuntimeSummary", enabled: true },
+            { id: "codingAgentsPreview", enabled: false, reason: "Not enabled yet" },
+          ],
+        }));
+      }
+      if (input.endsWith("/api/coding-agents/notification-preferences")) {
+        return jsonResponse({ preferences: { attentionPush: { approval: true, input: true, failed: true, completed: true } } });
+      }
+      if (input.endsWith("/api/coding-agents/reviews")) return jsonResponse({ items: [], hasMore: false, limit: 50 });
+      if (input.endsWith("/api/coding-agents/threads/thread_smoke_1")) return jsonResponse(threadSnapshot());
+      if (input.endsWith("/api/coding-agents/threads")) return jsonResponse(threadSnapshot("thread_created_smoke"));
+      throw new Error(`unexpected request ${input}`);
+    });
+
+    await expect(
+      runCodingAgentRuntimeSmoke({
+        origin: "https://app.matrix-os.com",
+        token: "secret-token",
+        fetchFn,
+        timeoutMs: 1000,
+        createThread: true,
+        requiredCapabilities: ["codingAgentsPreview"],
+      }),
+    ).rejects.toThrow("coding-agent runtime requirements unavailable");
+
+    expect(fetchFn.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
   });
 
   it("fails with generic messages when a ready provider is required but unavailable", async () => {
