@@ -4,6 +4,7 @@ import {
   parseShellSessions,
   type MobileTerminalSession,
 } from "@/lib/terminal-state";
+import { logMobileCodingAgentWarning } from "@/lib/coding-agent-diagnostics";
 import {
   AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
@@ -244,6 +245,19 @@ const ThreadStreamServerFrameSchema = z.discriminatedUnion("type", [
 ]);
 
 const WS_OPEN = 1;
+
+function logCodingAgentStatusWarning(scope: string, status: number): void {
+  logMobileCodingAgentWarning(scope, `status ${status}`);
+}
+
+function logCodingAgentParseWarning(scope: string): void {
+  logMobileCodingAgentWarning(scope, "invalid payload");
+}
+
+function logCodingAgentCatchWarning(scope: string, err: unknown): void {
+  const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : err;
+  logMobileCodingAgentWarning(scope, reason);
+}
 
 export class GatewayClient {
   private ws: WebSocket | null = null;
@@ -550,12 +564,12 @@ export class GatewayClient {
       try {
         parsedJson = JSON.parse(event.data);
       } catch {
-        console.warn("[mobile] coding-agent thread stream sent invalid JSON");
+        logMobileCodingAgentWarning("coding-agent thread stream sent invalid JSON", "invalid json");
         return;
       }
       const frame = ThreadStreamServerFrameSchema.safeParse(parsedJson);
       if (!frame.success) {
-        console.warn("[mobile] coding-agent thread stream sent invalid frame");
+        logCodingAgentParseWarning("coding-agent thread stream sent invalid frame");
         return;
       }
       if (frame.data.type === "thread.event") {
@@ -583,14 +597,14 @@ export class GatewayClient {
         if (ws.readyState === WS_OPEN) {
           try {
             ws.send(JSON.stringify({ type: "detach" }));
-          } catch {
-            console.warn("[mobile] coding-agent thread stream detach failed");
+          } catch (err: unknown) {
+            logCodingAgentCatchWarning("coding-agent thread stream detach failed", err);
           }
         }
         try {
           ws.close();
-        } catch {
-          console.warn("[mobile] coding-agent thread stream close failed");
+        } catch (err: unknown) {
+          logCodingAgentCatchWarning("coding-agent thread stream close failed", err);
         }
       },
     };
@@ -737,18 +751,18 @@ export class GatewayClient {
     try {
       const res = await this.fetchGateway("/api/coding-agents/summary");
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/summary unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/summary unavailable", res.status);
         return { ok: false, error: "Runtime summary unavailable" };
       }
       const body = await res.json();
       const parsed = RuntimeSummarySchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/summary returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/summary returned invalid payload");
         return { ok: false, error: "Runtime summary unavailable" };
       }
       return { ok: true, summary: parsed.data };
-    } catch {
-      console.warn("[mobile] /api/coding-agents/summary unavailable");
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/summary unavailable", err);
       return { ok: false, error: "Runtime summary unavailable" };
     }
   }
@@ -757,18 +771,18 @@ export class GatewayClient {
     try {
       const res = await this.fetchGateway("/api/coding-agents/notification-preferences");
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/notification-preferences unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/notification-preferences unavailable", res.status);
         return { ok: false, error: "Notification settings unavailable" };
       }
       const body = await res.json();
       const parsed = CodingAgentNotificationPreferencesRouteResponseSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/notification-preferences returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/notification-preferences returned invalid payload");
         return { ok: false, error: "Notification settings unavailable" };
       }
       return { ok: true, preferences: parsed.data.preferences };
-    } catch {
-      console.warn("[mobile] /api/coding-agents/notification-preferences unavailable");
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/notification-preferences unavailable", err);
       return { ok: false, error: "Notification settings unavailable" };
     }
   }
@@ -786,18 +800,18 @@ export class GatewayClient {
         body: JSON.stringify(parsedRequest.data),
       });
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/notification-preferences update unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/notification-preferences update unavailable", res.status);
         return { ok: false, error: "Notification settings could not be saved. Try again." };
       }
       const body = await res.json();
       const parsed = CodingAgentNotificationPreferencesRouteResponseSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/notification-preferences update returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/notification-preferences update returned invalid payload");
         return { ok: false, error: "Notification settings could not be saved. Try again." };
       }
       return { ok: true, preferences: parsed.data.preferences };
-    } catch {
-      console.warn("[mobile] /api/coding-agents/notification-preferences update unavailable");
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/notification-preferences update unavailable", err);
       return { ok: false, error: "Notification settings could not be saved. Try again." };
     }
   }
@@ -811,18 +825,18 @@ export class GatewayClient {
         body: JSON.stringify(request),
       });
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/threads unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/threads unavailable", res.status);
         return { ok: false, error: "Agent run could not be started. Try again." };
       }
       const body = await res.json();
       const parsed = AgentThreadSnapshotSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/threads returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/threads returned invalid payload");
         return { ok: false, error: "Agent run could not be started. Try again." };
       }
       return { ok: true, snapshot: parsed.data };
-    } catch {
-      console.warn("[mobile] /api/coding-agents/threads unavailable");
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/threads unavailable", err);
       return { ok: false, error: "Agent run could not be started. Try again." };
     }
   }
@@ -837,18 +851,18 @@ export class GatewayClient {
       }
       const res = await this.fetchGateway(`/api/coding-agents/threads/${encodeURIComponent(parsedThreadId.data)}`);
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/threads/:threadId unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/threads/:threadId unavailable", res.status);
         return { ok: false, error: "Thread state unavailable" };
       }
       const body = await res.json();
       const parsed = AgentThreadSnapshotSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/threads/:threadId returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/threads/:threadId returned invalid payload");
         return { ok: false, error: "Thread state unavailable" };
       }
       return { ok: true, snapshot: parsed.data };
-    } catch {
-      console.warn("[mobile] /api/coding-agents/threads/:threadId unavailable");
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/threads/:threadId unavailable", err);
       return { ok: false, error: "Thread state unavailable" };
     }
   }
@@ -879,18 +893,18 @@ export class GatewayClient {
         },
       );
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/threads/:threadId/approvals/:approvalId/decision unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/threads/:threadId/approvals/:approvalId/decision unavailable", res.status);
         return { ok: false, error: "Approval could not be sent. Try again." };
       }
       const body = await res.json();
       const parsed = AgentThreadSnapshotSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/threads/:threadId/approvals/:approvalId/decision returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/threads/:threadId/approvals/:approvalId/decision returned invalid payload");
         return { ok: false, error: "Approval could not be sent. Try again." };
       }
       return { ok: true, snapshot: parsed.data };
-    } catch {
-      console.warn("[mobile] /api/coding-agents/threads/:threadId/approvals/:approvalId/decision unavailable");
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/threads/:threadId/approvals/:approvalId/decision unavailable", err);
       return { ok: false, error: "Approval could not be sent. Try again." };
     }
   }
@@ -921,18 +935,18 @@ export class GatewayClient {
         },
       );
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer unavailable", res.status);
         return { ok: false, error: "Input could not be sent. Try again." };
       }
       const body = await res.json();
       const parsed = AgentThreadSnapshotSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer returned invalid payload");
         return { ok: false, error: "Input could not be sent. Try again." };
       }
       return { ok: true, snapshot: parsed.data };
-    } catch {
-      console.warn("[mobile] /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer unavailable");
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer unavailable", err);
       return { ok: false, error: "Input could not be sent. Try again." };
     }
   }
@@ -949,18 +963,18 @@ export class GatewayClient {
       }
       const res = await this.fetchGateway(path);
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/reviews unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/reviews unavailable", res.status);
         return { ok: false, error: "Review state unavailable" };
       }
       const body = await res.json();
       const parsed = CodingAgentReviewListSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/reviews returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/reviews returned invalid payload");
         return { ok: false, error: "Review state unavailable" };
       }
       return { ok: true, reviews: parsed.data };
-    } catch {
-      console.warn("[mobile] /api/coding-agents/reviews unavailable");
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/reviews unavailable", err);
       return { ok: false, error: "Review state unavailable" };
     }
   }
@@ -974,19 +988,18 @@ export class GatewayClient {
       }
       const res = await this.fetchGateway(`/api/coding-agents/reviews/${encodeURIComponent(options.reviewId)}`);
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/reviews/:reviewId unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/reviews/:reviewId unavailable", res.status);
         return { ok: false, error: "Review details unavailable" };
       }
       const body = await res.json();
       const parsed = ReviewSnapshotSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/reviews/:reviewId returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/reviews/:reviewId returned invalid payload");
         return { ok: false, error: "Review details unavailable" };
       }
       return { ok: true, snapshot: parsed.data };
     } catch (err: unknown) {
-      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
-      console.warn(`[mobile] /api/coding-agents/reviews/:reviewId ${reason}`);
+      logCodingAgentCatchWarning("/api/coding-agents/reviews/:reviewId unavailable", err);
       return { ok: false, error: "Review details unavailable" };
     }
   }
@@ -1006,19 +1019,18 @@ export class GatewayClient {
       });
       const res = await this.fetchGateway(`/api/coding-agents/files/read?${query.toString()}`);
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/files/read unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/files/read unavailable", res.status);
         return { ok: false, error: "File content unavailable" };
       }
       const body = await res.json();
       const parsed = FileReadResponseSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/files/read returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/files/read returned invalid payload");
         return { ok: false, error: "File content unavailable" };
       }
       return { ok: true, file: parsed.data };
     } catch (err: unknown) {
-      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
-      console.warn(`[mobile] /api/coding-agents/files/read ${reason}`);
+      logCodingAgentCatchWarning("/api/coding-agents/files/read unavailable", err);
       return { ok: false, error: "File content unavailable" };
     }
   }
@@ -1041,19 +1053,18 @@ export class GatewayClient {
       query.set("limit", String(parsedRequest.data.limit));
       const res = await this.fetchGateway(`/api/coding-agents/files/browse?${query.toString()}`);
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/files/browse unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/files/browse unavailable", res.status);
         return { ok: false, error: "File list unavailable" };
       }
       const body = await res.json();
       const parsed = FileBrowseResponseSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/files/browse returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/files/browse returned invalid payload");
         return { ok: false, error: "File list unavailable" };
       }
       return { ok: true, browse: parsed.data };
     } catch (err: unknown) {
-      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
-      console.warn(`[mobile] /api/coding-agents/files/browse ${reason}`);
+      logCodingAgentCatchWarning("/api/coding-agents/files/browse unavailable", err);
       return { ok: false, error: "File list unavailable" };
     }
   }
@@ -1077,19 +1088,18 @@ export class GatewayClient {
       query.set("limit", String(parsedRequest.data.limit));
       const res = await this.fetchGateway(`/api/coding-agents/files/search?${query.toString()}`);
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/files/search unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/files/search unavailable", res.status);
         return { ok: false, error: "File search unavailable" };
       }
       const body = await res.json();
       const parsed = FileSearchResponseSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/files/search returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/files/search returned invalid payload");
         return { ok: false, error: "File search unavailable" };
       }
       return { ok: true, search: parsed.data };
     } catch (err: unknown) {
-      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
-      console.warn(`[mobile] /api/coding-agents/files/search ${reason}`);
+      logCodingAgentCatchWarning("/api/coding-agents/files/search unavailable", err);
       return { ok: false, error: "File search unavailable" };
     }
   }
@@ -1107,19 +1117,18 @@ export class GatewayClient {
         body: JSON.stringify(parsedRequest.data),
       });
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/files/write unavailable");
+        logCodingAgentStatusWarning("/api/coding-agents/files/write unavailable", res.status);
         return { ok: false, error: "File could not be saved. Refresh and try again." };
       }
       const body = await res.json();
       const parsed = FileWriteResponseSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/files/write returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/files/write returned invalid payload");
         return { ok: false, error: "File could not be saved. Refresh and try again." };
       }
       return { ok: true, file: parsed.data };
     } catch (err: unknown) {
-      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
-      console.warn(`[mobile] /api/coding-agents/files/write ${reason}`);
+      logCodingAgentCatchWarning("/api/coding-agents/files/write unavailable", err);
       return { ok: false, error: "File could not be saved. Refresh and try again." };
     }
   }
@@ -1137,19 +1146,18 @@ export class GatewayClient {
         body: JSON.stringify(parsedRequest.data),
       });
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/source-control/prepare-commit unavailable");
+        logCodingAgentStatusWarning("/api/coding-agents/source-control/prepare-commit unavailable", res.status);
         return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
       }
       const body = await res.json();
       const parsed = SourceControlPrepareCommitResponseSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/source-control/prepare-commit returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/source-control/prepare-commit returned invalid payload");
         return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
       }
       return { ok: true, commit: parsed.data };
     } catch (err: unknown) {
-      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
-      console.warn(`[mobile] /api/coding-agents/source-control/prepare-commit ${reason}`);
+      logCodingAgentCatchWarning("/api/coding-agents/source-control/prepare-commit unavailable", err);
       return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
     }
   }
@@ -1167,19 +1175,18 @@ export class GatewayClient {
         body: JSON.stringify(parsedRequest.data),
       });
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/source-control/pull-requests unavailable");
+        logCodingAgentStatusWarning("/api/coding-agents/source-control/pull-requests unavailable", res.status);
         return { ok: false, error: "Pull request could not be created. Refresh and try again." };
       }
       const body = await res.json();
       const parsed = SourceControlCreatePullRequestResponseSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/source-control/pull-requests returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/source-control/pull-requests returned invalid payload");
         return { ok: false, error: "Pull request could not be created. Refresh and try again." };
       }
       return { ok: true, pullRequest: parsed.data };
     } catch (err: unknown) {
-      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
-      console.warn(`[mobile] /api/coding-agents/source-control/pull-requests ${reason}`);
+      logCodingAgentCatchWarning("/api/coding-agents/source-control/pull-requests unavailable", err);
       return { ok: false, error: "Pull request could not be created. Refresh and try again." };
     }
   }
