@@ -588,10 +588,7 @@ function normalizeTerminalLocalPath(rawPath: string): string {
       return decodedPath;
     }
     const url = new URL(decodedPath);
-    if (url.protocol === "file:") {
-      return safeFileUrlToPath(url) ?? decodedPath;
-    }
-    return decodedPath;
+    return safeFileUrlToPath(url) ?? decodedPath;
   }
   return expandLocalPath(decodedPath);
 }

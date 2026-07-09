@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -344,6 +344,46 @@ describe("cli/rich-paste", () => {
     expect(result.failureCode).toBe("local_read_failed");
     expect(clipboardReader.readImage).not.toHaveBeenCalled();
     expect(client.uploadPasteAssets).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the clipboard without retry delay for a single permission-denied image path", async () => {
+    const lockedDir = join(tempDir, "locked");
+    await mkdir(lockedDir);
+    const localPath = join(lockedDir, "screen.png");
+    await writeFile(localPath, pngBytes);
+    await chmod(lockedDir, 0o000);
+    const client = uploadClient(["/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/clipboard.png"]);
+    const clipboardReader = {
+      readImage: vi.fn(async () => ({
+        status: "available" as const,
+        candidate: {
+          kind: "clipboard" as const,
+          capturedAt: new Date("2026-07-08T10:31:00Z"),
+          sizeBytes: pngBytes.byteLength,
+          mimeType: "image/png" as const,
+          bytes: new Uint8Array(pngBytes),
+        },
+      })),
+    };
+
+    try {
+      const startedAt = Date.now();
+      const result = await processRichPasteTransaction({
+        sessionName: "main",
+        text: localPath,
+        observablePaste: false,
+        uploadClient: client,
+        clipboardReader,
+        localReadRetryDelaysMs: [1_000],
+      });
+
+      expect(result.status).toBe("rewritten");
+      expect(result.outgoingText).toBe("/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/clipboard.png");
+      expect(clipboardReader.readImage).toHaveBeenCalledTimes(1);
+      expect(Date.now() - startedAt).toBeLessThan(500);
+    } finally {
+      await chmod(lockedDir, 0o700);
+    }
   });
 
   it("fails locally for unreadable non-file image paths", async () => {
