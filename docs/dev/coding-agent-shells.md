@@ -282,6 +282,47 @@ Before enabling a mobile coding-agent shell change broadly:
 5. Confirm Chat, Apps, Terminal, and Settings tabs still open.
 6. Keep the existing terminal fallback. Do not land native terminal replacement behavior without separate device validation.
 
+### Live Runtime Smoke Assertions
+
+Use the runtime smoke command before manual desktop or mobile checks when you need
+to prove the selected Matrix computer exposes the gateway-owned coding-agent
+surfaces that the shell will hydrate. The command reads the bearer token only
+from `MATRIX_CODING_AGENTS_SMOKE_TOKEN`; do not pass tokens as CLI arguments or
+paste them into reports.
+
+Read-only desktop preflight:
+
+```bash
+MATRIX_CODING_AGENTS_SMOKE_TOKEN=<token> pnpm run smoke:coding-agents -- \
+  --origin https://app.matrix-os.com \
+  --require-capability codingAgentsRuntimeSummary \
+  --require-capability codingAgentsDesktopWorkspace \
+  --require-capability codingAgentsThreadCreate \
+  --require-capability codingAgentsReview \
+  --require-capability codingAgentsFiles \
+  --require-ready-provider
+```
+
+Read-only mobile SDK 57 preflight:
+
+```bash
+MATRIX_CODING_AGENTS_SMOKE_TOKEN=<token> pnpm run smoke:coding-agents -- \
+  --origin https://app.matrix-os.com \
+  --require-capability codingAgentsRuntimeSummary \
+  --require-capability codingAgentsMobileWorkspace \
+  --require-capability codingAgentsNativeMobileTerminal \
+  --require-capability codingAgentsReview \
+  --require-ready-provider
+```
+
+Add `--require-thread-snapshot`, `--min-active-threads`,
+`--min-terminal-sessions`, `--min-preview-sessions`, or `--min-reviews` only
+when the manual scenario requires an existing live resource. These assertions
+fail with generic recovery-oriented output; collect detailed runtime evidence
+from server-side logs, not from the shell or CLI report. Active-thread,
+terminal-session, and preview-session minimums are capped to the summary page
+size. Review minimums follow review cursors when the gateway includes them.
+
 ## Validation Commands
 
 Run the smallest focused tests for the touched surface, then the shared gates that apply:

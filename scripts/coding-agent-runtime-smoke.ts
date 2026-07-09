@@ -5,6 +5,7 @@ import {
   CodingAgentNotificationPreferencesSchema,
   CreateAgentThreadRequestSchema,
   ReviewSummarySchema,
+  RuntimeCapabilityIdSchema,
   RuntimeSummarySchema,
   boundedListSchema,
   type AgentThreadSnapshot,
@@ -14,7 +15,10 @@ import { z } from "zod/v4";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_PROMPT = "Matrix coding-agent runtime smoke";
+const MAX_SUMMARY_COUNT_ASSERTION = 50;
+const MAX_REVIEW_PAGES = 20;
 const ReviewSummaryListSchema = boundedListSchema(ReviewSummarySchema, 50);
+type ReviewSummaryList = z.infer<typeof ReviewSummaryListSchema>;
 const NotificationPreferencesResponseSchema = z.object({
   preferences: CodingAgentNotificationPreferencesSchema,
 }).strict();
@@ -27,6 +31,13 @@ export interface SmokeOptions {
   createThread?: boolean;
   providerId?: string;
   prompt?: string;
+  requiredCapabilities?: Array<z.infer<typeof RuntimeCapabilityIdSchema>>;
+  requireReadyProvider?: boolean;
+  requireThreadSnapshot?: boolean;
+  minActiveThreads?: number;
+  minTerminalSessions?: number;
+  minPreviewSessions?: number;
+  minReviews?: number;
   json?: boolean;
   fetchFn?: typeof fetch;
 }
@@ -45,6 +56,7 @@ export interface SmokeReport {
     reviewCount: number;
     notificationPreferencesReachable: boolean;
     checkedThreadSnapshot: boolean;
+    assertionsChecked: number;
     createdThreadStatus: AgentThreadSnapshot["thread"]["status"] | null;
   };
 }
@@ -74,6 +86,9 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
       : DEFAULT_TIMEOUT_MS,
     createThread: false,
     prompt: DEFAULT_PROMPT,
+    requiredCapabilities: [],
+    requireReadyProvider: false,
+    requireThreadSnapshot: false,
     json: false,
   };
 
@@ -95,6 +110,17 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
     else if (arg === "--create-thread") options.createThread = true;
     else if (arg === "--provider") options.providerId = readValue();
     else if (arg === "--prompt") options.prompt = readValue();
+    else if (arg === "--require-capability") {
+      const parsed = RuntimeCapabilityIdSchema.safeParse(readValue());
+      if (!parsed.success) throw new Error("Invalid required capability");
+      options.requiredCapabilities = [...(options.requiredCapabilities ?? []), parsed.data];
+    }
+    else if (arg === "--require-ready-provider") options.requireReadyProvider = true;
+    else if (arg === "--require-thread-snapshot") options.requireThreadSnapshot = true;
+    else if (arg === "--min-active-threads") options.minActiveThreads = parseSummaryMinimumCount(readValue(), "min-active-threads");
+    else if (arg === "--min-terminal-sessions") options.minTerminalSessions = parseSummaryMinimumCount(readValue(), "min-terminal-sessions");
+    else if (arg === "--min-preview-sessions") options.minPreviewSessions = parseSummaryMinimumCount(readValue(), "min-preview-sessions");
+    else if (arg === "--min-reviews") options.minReviews = parseMinimumCount(readValue(), "min-reviews");
     else if (arg === "--json") options.json = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -130,11 +156,21 @@ export async function runCodingAgentRuntimeSmoke(options: SmokeOptions): Promise
     timeoutMs,
   });
 
+  const reviewsUrl = buildRuntimeUrl({ origin: options.origin, path: "/api/coding-agents/reviews", runtime: options.runtime });
   const reviews = await requestJson({
     label: "review summaries",
     schema: ReviewSummaryListSchema,
     fetchFn,
-    url: buildRuntimeUrl({ origin: options.origin, path: "/api/coding-agents/reviews", runtime: options.runtime }),
+    url: reviewsUrl,
+    token: options.token,
+    timeoutMs,
+  });
+  const reviewCount = await countReviewsForMinimum({
+    initial: reviews,
+    minReviews: options.minReviews,
+    origin: options.origin,
+    runtime: options.runtime,
+    fetchFn,
     token: options.token,
     timeoutMs,
   });
@@ -156,6 +192,13 @@ export async function runCodingAgentRuntimeSmoke(options: SmokeOptions): Promise
     });
     checkedThreadSnapshot = true;
   }
+
+  const assertionsChecked = evaluateRequirements({
+    summary,
+    reviewCount,
+    checkedThreadSnapshot,
+    request: options,
+  });
 
   let createdThreadStatus: AgentThreadSnapshot["thread"]["status"] | null = null;
   if (options.createThread) {
@@ -192,9 +235,10 @@ export async function runCodingAgentRuntimeSmoke(options: SmokeOptions): Promise
       attentionThreadCount: summary.attentionThreads.items.length,
       terminalSessionCount: summary.terminalSessions.items.length,
       previewSessionCount: summary.previewSessions.items.length,
-      reviewCount: reviews.items.length,
+      reviewCount,
       notificationPreferencesReachable: true,
       checkedThreadSnapshot,
+      assertionsChecked,
       createdThreadStatus,
     },
   };
@@ -221,10 +265,107 @@ function parsePositiveInteger(value: string, label: string): number {
   return parsed;
 }
 
+function parseMinimumCount(value: string, label: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 1000) {
+    throw new Error(`${label} must be a positive integer up to 1000`);
+  }
+  return parsed;
+}
+
+function parseSummaryMinimumCount(value: string, label: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > MAX_SUMMARY_COUNT_ASSERTION) {
+    throw new Error(`${label} must be a positive integer up to ${MAX_SUMMARY_COUNT_ASSERTION}`);
+  }
+  return parsed;
+}
+
 function isReadyProvider(provider: RuntimeSummary["providers"][number]): boolean {
   return provider.availability === "available" &&
     provider.installStatus === "installed" &&
     provider.authStatus === "authenticated";
+}
+
+function evaluateRequirements(options: {
+  summary: RuntimeSummary;
+  reviewCount: number;
+  checkedThreadSnapshot: boolean;
+  request: SmokeOptions;
+}): number {
+  let checked = 0;
+  const fail = () => {
+    throw new Error("coding-agent runtime requirements unavailable");
+  };
+  const capabilities = new Map(options.summary.capabilities.map((capability) => [capability.id, capability.enabled]));
+
+  for (const capabilityId of options.request.requiredCapabilities ?? []) {
+    checked += 1;
+    if (capabilities.get(capabilityId) !== true) fail();
+  }
+
+  if (options.request.requireReadyProvider) {
+    checked += 1;
+    if (!options.summary.providers.some(isReadyProvider)) fail();
+  }
+
+  if (options.request.requireThreadSnapshot) {
+    checked += 1;
+    if (!options.checkedThreadSnapshot) fail();
+  }
+
+  checked += assertMinimum(options.summary.activeThreads.items.length, options.request.minActiveThreads, fail);
+  checked += assertMinimum(options.summary.terminalSessions.items.length, options.request.minTerminalSessions, fail);
+  checked += assertMinimum(options.summary.previewSessions.items.length, options.request.minPreviewSessions, fail);
+  checked += assertMinimum(options.reviewCount, options.request.minReviews, fail);
+
+  return checked;
+}
+
+function assertMinimum(actual: number, expected: number | undefined, fail: () => never): number {
+  if (expected === undefined) return 0;
+  if (actual < expected) fail();
+  return 1;
+}
+
+async function countReviewsForMinimum(options: {
+  initial: ReviewSummaryList;
+  minReviews: number | undefined;
+  origin: string;
+  runtime?: string;
+  fetchFn: typeof fetch;
+  token: string;
+  timeoutMs: number;
+}): Promise<number> {
+  let count = options.initial.items.length;
+  let hasMore = options.initial.hasMore;
+  let nextCursor = options.initial.nextCursor;
+  let pagesRead = 1;
+
+  while (
+    options.minReviews !== undefined &&
+    count < options.minReviews &&
+    hasMore &&
+    nextCursor &&
+    pagesRead < MAX_REVIEW_PAGES
+  ) {
+    const url = buildRuntimeUrl({ origin: options.origin, path: "/api/coding-agents/reviews", runtime: options.runtime });
+    url.searchParams.set("cursor", nextCursor);
+    const page = await requestJson({
+      label: "review summaries",
+      schema: ReviewSummaryListSchema,
+      fetchFn: options.fetchFn,
+      url,
+      token: options.token,
+      timeoutMs: options.timeoutMs,
+    });
+    count += page.items.length;
+    hasMore = page.hasMore;
+    nextCursor = page.nextCursor;
+    pagesRead += 1;
+  }
+
+  return count;
 }
 
 function selectProviderId(summary: RuntimeSummary): string {
@@ -291,6 +432,19 @@ Options:
   --create-thread        Also create one smoke thread. Read-only by default.
   --provider <id>        Provider id for --create-thread. Defaults to first ready provider.
   --prompt <text>        Prompt for --create-thread.
+  --require-capability <id>
+                         Require a runtime capability to be enabled. Repeatable.
+  --require-ready-provider
+                         Require at least one installed and authenticated provider.
+  --require-thread-snapshot
+                         Require the smoke to validate at least one existing thread snapshot.
+  --min-active-threads <count>
+                         Require at least this many active threads from the summary page, max ${MAX_SUMMARY_COUNT_ASSERTION}.
+  --min-terminal-sessions <count>
+                         Require at least this many terminal sessions from the summary page, max ${MAX_SUMMARY_COUNT_ASSERTION}.
+  --min-preview-sessions <count>
+                         Require at least this many preview sessions from the summary page, max ${MAX_SUMMARY_COUNT_ASSERTION}.
+  --min-reviews <count>  Require at least this many review summaries; follows review cursors when present.
   --json                 Print JSON summary.
 
 Environment:
@@ -313,6 +467,7 @@ function printReport(report: SmokeReport, json: boolean): void {
   console.log(`previews: ${report.summary.previewSessionCount}`);
   console.log(`reviews: ${report.summary.reviewCount}`);
   console.log(`thread snapshot checked: ${report.summary.checkedThreadSnapshot ? "yes" : "no"}`);
+  console.log(`assertions checked: ${report.summary.assertionsChecked}`);
   if (report.summary.createdThreadStatus) {
     console.log(`created thread status: ${report.summary.createdThreadStatus}`);
   }
