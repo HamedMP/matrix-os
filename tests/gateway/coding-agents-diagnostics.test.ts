@@ -36,6 +36,24 @@ describe("coding agent diagnostics", () => {
     expect(redacted.endsWith("...")).toBe(true);
   });
 
+  it("fully redacts colon-containing and quoted secret assignments", () => {
+    const redacted = redactCodingAgentDiagnosticText(
+      `token=abc:def apiKey="abcd" password: 'hunter2'`,
+    );
+
+    expect(redacted).toBe("token= [token] apiKey= [token] password: [token]");
+    expect(redacted).not.toMatch(/abc|def|abcd|hunter2/i);
+  });
+
+  it("redacts link-local and private IPv6 hosts", () => {
+    const redacted = redactCodingAgentDiagnosticText(
+      "metadata 169.254.169.254 loopback ::1 link-local fe80::1 private fd12:3456::1",
+    );
+
+    expect(redacted).toBe("metadata [host] loopback [host] link-local [host] private [host]");
+    expect(redacted).not.toMatch(/169\.254|::1|fe80|fd12/i);
+  });
+
   it("formats non-error diagnostics and unsafe names safely", () => {
     const unknown = formatCodingAgentDiagnostic("token=sk_live_private /tmp/private-file");
     const unsafeNameError = new Error("failed");
