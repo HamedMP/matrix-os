@@ -101,6 +101,15 @@ describe("mobile coding-agent diagnostics", () => {
     expect(redacted).not.toMatch(/internal-runtime|matrix-vps/);
   });
 
+  it("redacts complete scheme-less host and url values", () => {
+    const redacted = redactMobileCodingAgentDiagnosticText(
+      "probe url=internal-runtime.local/api?token=secret host=matrix-vps/private?credential=value",
+    );
+
+    expect(redacted).toBe("probe url=[host] host=[host]");
+    expect(redacted).not.toMatch(/internal-runtime|matrix-vps|\/api|\/private|secret|credential|value/);
+  });
+
   it("bounds long diagnostic text", () => {
     const redacted = redactMobileCodingAgentDiagnosticText(`status ${"x".repeat(220)}`);
 

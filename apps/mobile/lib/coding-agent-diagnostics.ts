@@ -22,7 +22,7 @@ const PRIVATE_IPV4_PATTERN = /\b(?:(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}|169\.25
 const PRIVATE_IPV6_PATTERN = /(^|[^A-Fa-f0-9:])(?:::1|(?:f[cd][A-Fa-f0-9]{2}|fe[89ab][A-Fa-f0-9])(?::[A-Fa-f0-9]{0,4}){1,7})(?:%[A-Za-z0-9_.-]+)?(?=$|[^A-Fa-f0-9:])/gi;
 const PRIVATE_HOSTNAME_PATTERN = /\b(?:(?=[A-Za-z0-9.-]{1,253}\b)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,62})?\.)+(?:local|internal|lan|home|localhost)|localhost)\b/gi;
 const NETWORK_ERROR_SINGLE_LABEL_HOST_PATTERN = /\b((?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED|EHOSTUNREACH|ETIMEDOUT)\s+)(?=[A-Za-z0-9-]{1,63}(?![A-Za-z0-9.-]))(?=[A-Za-z0-9-]*[A-Za-z])[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?![A-Za-z0-9.-])/gi;
-const HOST_VALUE_PATTERN = /\b(?:host|hostname|url)\s*[:=]?\s*[A-Za-z0-9.-]*(?:\.local|\.internal|\.lan|\.home|runtime|matrix|vps)[A-Za-z0-9.-]*/gi;
+const HOST_VALUE_PATTERN = /\b(hostname|host|url)(\s*[:=]\s*|\s+)(?:"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s"'<>]+)/gi;
 const DATABASE_PATTERN = /\b(?:postgres(?:ql)?|kysely|database|db)\b/gi;
 
 function normalize(value: string): string {
@@ -74,9 +74,8 @@ export function redactMobileCodingAgentDiagnosticText(value: unknown): string {
     .replace(PRIVATE_IPV6_PATTERN, (_match, prefix: string) => `${prefix}[host]`)
     .replace(PRIVATE_HOSTNAME_PATTERN, "[host]")
     .replace(NETWORK_ERROR_SINGLE_LABEL_HOST_PATTERN, "$1[host]")
-    .replace(HOST_VALUE_PATTERN, (match) => {
-      const prefix = match.match(/^(host|hostname|url)\s*[:=]?/i)?.[0] ?? "host ";
-      return `${prefix}[host]`;
+    .replace(HOST_VALUE_PATTERN, (_match, key: string, separator: string) => {
+      return `${key}${separator}[host]`;
     })
     .replace(DATABASE_PATTERN, "[database]");
   return cap(normalize(redacted) || "unavailable");
