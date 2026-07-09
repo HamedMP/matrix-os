@@ -5,6 +5,7 @@ import {
   CodingAgentNotificationPreferencesSchema,
   CreateAgentThreadRequestSchema,
   ReviewSummarySchema,
+  RuntimeCapabilityIdSchema,
   RuntimeSummarySchema,
   boundedListSchema,
   type AgentThreadSnapshot,
@@ -27,6 +28,13 @@ export interface SmokeOptions {
   createThread?: boolean;
   providerId?: string;
   prompt?: string;
+  requiredCapabilities?: Array<z.infer<typeof RuntimeCapabilityIdSchema>>;
+  requireReadyProvider?: boolean;
+  requireThreadSnapshot?: boolean;
+  minActiveThreads?: number;
+  minTerminalSessions?: number;
+  minPreviewSessions?: number;
+  minReviews?: number;
   json?: boolean;
   fetchFn?: typeof fetch;
 }
@@ -45,6 +53,7 @@ export interface SmokeReport {
     reviewCount: number;
     notificationPreferencesReachable: boolean;
     checkedThreadSnapshot: boolean;
+    assertionsChecked: number;
     createdThreadStatus: AgentThreadSnapshot["thread"]["status"] | null;
   };
 }
@@ -74,6 +83,9 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
       : DEFAULT_TIMEOUT_MS,
     createThread: false,
     prompt: DEFAULT_PROMPT,
+    requiredCapabilities: [],
+    requireReadyProvider: false,
+    requireThreadSnapshot: false,
     json: false,
   };
 
@@ -95,6 +107,17 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
     else if (arg === "--create-thread") options.createThread = true;
     else if (arg === "--provider") options.providerId = readValue();
     else if (arg === "--prompt") options.prompt = readValue();
+    else if (arg === "--require-capability") {
+      const parsed = RuntimeCapabilityIdSchema.safeParse(readValue());
+      if (!parsed.success) throw new Error("Invalid required capability");
+      options.requiredCapabilities = [...(options.requiredCapabilities ?? []), parsed.data];
+    }
+    else if (arg === "--require-ready-provider") options.requireReadyProvider = true;
+    else if (arg === "--require-thread-snapshot") options.requireThreadSnapshot = true;
+    else if (arg === "--min-active-threads") options.minActiveThreads = parseNonNegativeInteger(readValue(), "min-active-threads");
+    else if (arg === "--min-terminal-sessions") options.minTerminalSessions = parseNonNegativeInteger(readValue(), "min-terminal-sessions");
+    else if (arg === "--min-preview-sessions") options.minPreviewSessions = parseNonNegativeInteger(readValue(), "min-preview-sessions");
+    else if (arg === "--min-reviews") options.minReviews = parseNonNegativeInteger(readValue(), "min-reviews");
     else if (arg === "--json") options.json = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -181,6 +204,13 @@ export async function runCodingAgentRuntimeSmoke(options: SmokeOptions): Promise
     createdThreadStatus = created.thread.status;
   }
 
+  const assertionsChecked = evaluateRequirements({
+    summary,
+    reviewCount: reviews.items.length,
+    checkedThreadSnapshot,
+    request: options,
+  });
+
   return {
     ok: true,
     summary: {
@@ -195,6 +225,7 @@ export async function runCodingAgentRuntimeSmoke(options: SmokeOptions): Promise
       reviewCount: reviews.items.length,
       notificationPreferencesReachable: true,
       checkedThreadSnapshot,
+      assertionsChecked,
       createdThreadStatus,
     },
   };
@@ -221,10 +252,59 @@ function parsePositiveInteger(value: string, label: string): number {
   return parsed;
 }
 
+function parseNonNegativeInteger(value: string, label: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 1000) {
+    throw new Error(`${label} must be a non-negative integer up to 1000`);
+  }
+  return parsed;
+}
+
 function isReadyProvider(provider: RuntimeSummary["providers"][number]): boolean {
   return provider.availability === "available" &&
     provider.installStatus === "installed" &&
     provider.authStatus === "authenticated";
+}
+
+function evaluateRequirements(options: {
+  summary: RuntimeSummary;
+  reviewCount: number;
+  checkedThreadSnapshot: boolean;
+  request: SmokeOptions;
+}): number {
+  let checked = 0;
+  const fail = () => {
+    throw new Error("coding-agent runtime requirements unavailable");
+  };
+  const capabilities = new Map(options.summary.capabilities.map((capability) => [capability.id, capability.enabled]));
+
+  for (const capabilityId of options.request.requiredCapabilities ?? []) {
+    checked += 1;
+    if (capabilities.get(capabilityId) !== true) fail();
+  }
+
+  if (options.request.requireReadyProvider) {
+    checked += 1;
+    if (!options.summary.providers.some(isReadyProvider)) fail();
+  }
+
+  if (options.request.requireThreadSnapshot) {
+    checked += 1;
+    if (!options.checkedThreadSnapshot) fail();
+  }
+
+  checked += assertMinimum(options.summary.activeThreads.items.length, options.request.minActiveThreads, fail);
+  checked += assertMinimum(options.summary.terminalSessions.items.length, options.request.minTerminalSessions, fail);
+  checked += assertMinimum(options.summary.previewSessions.items.length, options.request.minPreviewSessions, fail);
+  checked += assertMinimum(options.reviewCount, options.request.minReviews, fail);
+
+  return checked;
+}
+
+function assertMinimum(actual: number, expected: number | undefined, fail: () => never): number {
+  if (expected === undefined) return 0;
+  if (actual < expected) fail();
+  return 1;
 }
 
 function selectProviderId(summary: RuntimeSummary): string {
@@ -291,6 +371,19 @@ Options:
   --create-thread        Also create one smoke thread. Read-only by default.
   --provider <id>        Provider id for --create-thread. Defaults to first ready provider.
   --prompt <text>        Prompt for --create-thread.
+  --require-capability <id>
+                         Require a runtime capability to be enabled. Repeatable.
+  --require-ready-provider
+                         Require at least one installed and authenticated provider.
+  --require-thread-snapshot
+                         Require the smoke to validate at least one existing thread snapshot.
+  --min-active-threads <count>
+                         Require at least this many active threads.
+  --min-terminal-sessions <count>
+                         Require at least this many terminal sessions.
+  --min-preview-sessions <count>
+                         Require at least this many preview sessions.
+  --min-reviews <count>  Require at least this many review summaries.
   --json                 Print JSON summary.
 
 Environment:
@@ -313,6 +406,7 @@ function printReport(report: SmokeReport, json: boolean): void {
   console.log(`previews: ${report.summary.previewSessionCount}`);
   console.log(`reviews: ${report.summary.reviewCount}`);
   console.log(`thread snapshot checked: ${report.summary.checkedThreadSnapshot ? "yes" : "no"}`);
+  console.log(`assertions checked: ${report.summary.assertionsChecked}`);
   if (report.summary.createdThreadStatus) {
     console.log(`created thread status: ${report.summary.createdThreadStatus}`);
   }

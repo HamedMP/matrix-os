@@ -126,7 +126,26 @@ describe("coding-agent runtime smoke", () => {
 
   it("parses args from flags and environment", () => {
     expect(
-      parseArgs(["--", "--origin", "https://app.matrix-os.com", "--json"], {
+      parseArgs([
+        "--",
+        "--origin",
+        "https://app.matrix-os.com",
+        "--json",
+        "--require-capability",
+        "codingAgentsPreview",
+        "--require-capability",
+        "codingAgentsFiles",
+        "--require-ready-provider",
+        "--require-thread-snapshot",
+        "--min-active-threads",
+        "1",
+        "--min-terminal-sessions",
+        "1",
+        "--min-preview-sessions",
+        "1",
+        "--min-reviews",
+        "1",
+      ], {
         MATRIX_CODING_AGENTS_SMOKE_TOKEN: "secret-token",
       }),
     ).toMatchObject({
@@ -134,7 +153,28 @@ describe("coding-agent runtime smoke", () => {
       token: "secret-token",
       json: true,
       createThread: false,
+      requiredCapabilities: ["codingAgentsPreview", "codingAgentsFiles"],
+      requireReadyProvider: true,
+      requireThreadSnapshot: true,
+      minActiveThreads: 1,
+      minTerminalSessions: 1,
+      minPreviewSessions: 1,
+      minReviews: 1,
     });
+  });
+
+  it("rejects unsafe assertion arguments before making requests", () => {
+    expect(() =>
+      parseArgs(["--origin", "https://app.matrix-os.com", "--require-capability", "codingAgentsSecrets"], {
+        MATRIX_CODING_AGENTS_SMOKE_TOKEN: "secret-token",
+      }),
+    ).toThrow("Invalid required capability");
+
+    expect(() =>
+      parseArgs(["--origin", "https://app.matrix-os.com", "--min-active-threads", "-1"], {
+        MATRIX_CODING_AGENTS_SMOKE_TOKEN: "secret-token",
+      }),
+    ).toThrow("min-active-threads must be a non-negative integer up to 1000");
   });
 
   it("requires bearer tokens through the environment instead of CLI args", () => {
@@ -169,9 +209,116 @@ describe("coding-agent runtime smoke", () => {
     expect(report.ok).toBe(true);
     expect(report.summary.activeThreadCount).toBe(1);
     expect(report.summary.createdThreadStatus).toBeNull();
+    expect(report.summary.assertionsChecked).toBe(0);
     expect(fetchFn.mock.calls.every(([, init]) => init?.redirect === "error")).toBe(true);
     expect(fetchFn.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
     expect(JSON.stringify(report)).not.toContain("secret-token");
+  });
+
+  it("checks requested capability and count assertions against the live summary", async () => {
+    const fetchFn = vi.fn(async (input: string) => {
+      if (input.endsWith("/api/coding-agents/summary")) {
+        return jsonResponse(runtimeSummary({
+          capabilities: [
+            { id: "codingAgentsRuntimeSummary", enabled: true },
+            { id: "codingAgentsPreview", enabled: true },
+            { id: "codingAgentsFiles", enabled: true },
+          ],
+          previewSessions: {
+            items: [
+              {
+                id: "preview_smoke",
+                label: "Smoke preview",
+                status: "running",
+                origin: "https://preview.example.com",
+                updatedAt: NOW,
+              },
+            ],
+            hasMore: false,
+            limit: 50,
+          },
+        }));
+      }
+      if (input.endsWith("/api/coding-agents/notification-preferences")) {
+        return jsonResponse({ preferences: { attentionPush: { approval: true, input: true, failed: true, completed: true } } });
+      }
+      if (input.endsWith("/api/coding-agents/reviews")) {
+        return jsonResponse({
+          items: [
+            {
+              id: "review_smoke",
+              projectId: "project-smoke",
+              worktreeId: "wt_123456789abc",
+              status: "reviewing",
+              pullRequestNumber: 874,
+              round: 1,
+              maxRounds: 3,
+              reviewer: "codex",
+              implementer: "codex",
+              findings: { total: 1, high: 0, medium: 1, low: 0 },
+              updatedAt: NOW,
+            },
+          ],
+          hasMore: false,
+          limit: 50,
+        });
+      }
+      if (input.endsWith("/api/coding-agents/threads/thread_smoke_1")) return jsonResponse(threadSnapshot());
+      throw new Error(`unexpected request ${input}`);
+    });
+
+    const report = await runCodingAgentRuntimeSmoke({
+      origin: "https://app.matrix-os.com",
+      token: "secret-token",
+      fetchFn,
+      timeoutMs: 1000,
+      requiredCapabilities: ["codingAgentsPreview", "codingAgentsFiles"],
+      requireReadyProvider: true,
+      requireThreadSnapshot: true,
+      minActiveThreads: 1,
+      minTerminalSessions: 1,
+      minPreviewSessions: 1,
+      minReviews: 1,
+    });
+
+    expect(report.summary.assertionsChecked).toBe(8);
+  });
+
+  it("fails with generic messages when requested smoke assertions are unmet", async () => {
+    const fetchFn = vi.fn(async (input: string) => {
+      if (input.endsWith("/api/coding-agents/summary")) {
+        return jsonResponse(runtimeSummary({
+          capabilities: [
+            { id: "codingAgentsRuntimeSummary", enabled: true },
+            { id: "codingAgentsPreview", enabled: false, reason: "Not enabled yet" },
+          ],
+          providers: [],
+          activeThreads: { items: [], hasMore: false, limit: 50 },
+          terminalSessions: { items: [], hasMore: false, limit: 50 },
+        }));
+      }
+      if (input.endsWith("/api/coding-agents/notification-preferences")) {
+        return jsonResponse({ preferences: { attentionPush: { approval: true, input: true, failed: true, completed: true } } });
+      }
+      if (input.endsWith("/api/coding-agents/reviews")) return jsonResponse({ items: [], hasMore: false, limit: 50 });
+      throw new Error(`unexpected request ${input}`);
+    });
+
+    await expect(
+      runCodingAgentRuntimeSmoke({
+        origin: "https://app.matrix-os.com",
+        token: "secret-token",
+        fetchFn,
+        timeoutMs: 1000,
+        requiredCapabilities: ["codingAgentsPreview"],
+        requireReadyProvider: true,
+        requireThreadSnapshot: true,
+        minActiveThreads: 1,
+        minTerminalSessions: 1,
+        minPreviewSessions: 1,
+        minReviews: 1,
+      }),
+    ).rejects.toThrow("coding-agent runtime requirements unavailable");
   });
 
   it("can create a thread only when explicitly requested", async () => {
