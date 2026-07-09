@@ -114,10 +114,10 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
     }
     else if (arg === "--require-ready-provider") options.requireReadyProvider = true;
     else if (arg === "--require-thread-snapshot") options.requireThreadSnapshot = true;
-    else if (arg === "--min-active-threads") options.minActiveThreads = parseNonNegativeInteger(readValue(), "min-active-threads");
-    else if (arg === "--min-terminal-sessions") options.minTerminalSessions = parseNonNegativeInteger(readValue(), "min-terminal-sessions");
-    else if (arg === "--min-preview-sessions") options.minPreviewSessions = parseNonNegativeInteger(readValue(), "min-preview-sessions");
-    else if (arg === "--min-reviews") options.minReviews = parseNonNegativeInteger(readValue(), "min-reviews");
+    else if (arg === "--min-active-threads") options.minActiveThreads = parseMinimumCount(readValue(), "min-active-threads");
+    else if (arg === "--min-terminal-sessions") options.minTerminalSessions = parseMinimumCount(readValue(), "min-terminal-sessions");
+    else if (arg === "--min-preview-sessions") options.minPreviewSessions = parseMinimumCount(readValue(), "min-preview-sessions");
+    else if (arg === "--min-reviews") options.minReviews = parseMinimumCount(readValue(), "min-reviews");
     else if (arg === "--json") options.json = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -252,10 +252,10 @@ function parsePositiveInteger(value: string, label: string): number {
   return parsed;
 }
 
-function parseNonNegativeInteger(value: string, label: string): number {
+function parseMinimumCount(value: string, label: string): number {
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 1000) {
-    throw new Error(`${label} must be a non-negative integer up to 1000`);
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 1000) {
+    throw new Error(`${label} must be a positive integer up to 1000`);
   }
   return parsed;
 }
