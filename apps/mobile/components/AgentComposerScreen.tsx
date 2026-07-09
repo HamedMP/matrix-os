@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useHeaderHeight } from "@react-navigation/elements";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { z } from "zod/v4";
 import {
@@ -216,10 +216,10 @@ function mergeSeededDraft(
 
 export default function AgentComposerScreen() {
   const { theme } = useUnistyles();
-  const headerHeight = useHeaderHeight();
   const router = useRouter();
   const routeParams = useLocalSearchParams();
   const { client } = useGateway();
+  const insets = useSafeAreaInsets();
   const reviewIdParam = firstRouteParam(routeParams.reviewId);
   const projectIdParam = firstRouteParam(routeParams.projectId);
   const pullRequestNumberParam = firstRouteParam(routeParams.pullRequestNumber);
@@ -381,7 +381,7 @@ export default function AgentComposerScreen() {
     <KeyboardAvoidingView
       accessibilityLabel="Agent composer keyboard area"
       behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={Math.max(0, headerHeight)}
+      keyboardVerticalOffset={Platform.OS === "ios" ? Math.max(0, insets.top) : 0}
       style={styles.keyboardArea}
     >
       <ScrollView
