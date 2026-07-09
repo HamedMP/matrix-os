@@ -80,7 +80,7 @@ Security and ownership:
 - Mutating routes use Hono `bodyLimit`.
 - Route errors are mapped to safe client errors and log details server-side only.
 - Gateway coding-agent route, summary, stream, provider lifecycle, and attention-notification failure diagnostics use the bounded redacted helper in `packages/gateway/src/coding-agents/diagnostics.ts` instead of raw `err.message` logging.
-- Mobile coding-agent gateway-client warnings use `apps/mobile/lib/coding-agent-diagnostics.ts` to log only bounded warning scopes and redacted metadata for status, parse, stream detach/close, and catch paths.
+- Mobile gateway-client warnings use `apps/mobile/lib/coding-agent-diagnostics.ts` to log only bounded warning scopes and redacted metadata for status, parse, stream detach/close, and catch paths without raw response bodies, filesystem paths, tokens, private hosts, or database details.
 - Thread store state is owner-scoped in the existing owner file convention at `system/coding-agents/threads.json`; no new embedded DB was added.
 
 Related workspace routes in `packages/gateway/src/workspace-routes.ts`:

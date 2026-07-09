@@ -11,6 +11,7 @@ describe("mobile coding-agent diagnostics", () => {
       "Authorization: Bearer ghp_privatevalue1234567890",
       "url=https://internal-runtime.local/api?token=secret",
       "host=internal-runtime.local probe 10.0.0.8",
+      "link-local 169.254.10.20",
       "socket /run/matrix/gateway.sock",
       "windows C:\\Users\\alice\\matrix\\token.txt",
       "postgres://matrix:secret@10.0.0.8:5432/runtime",
@@ -23,7 +24,13 @@ describe("mobile coding-agent diagnostics", () => {
     expect(redacted).toContain("[url]");
     expect(redacted).toContain("[host]");
     expect(redacted.length).toBeLessThanOrEqual(180);
-    expect(redacted).not.toMatch(/\/home\/matrix|\/run\/matrix|C:\\Users|alice|private-app|ghp_|internal-runtime|postgres|10\.0\.0\.8|secret/i);
+    expect(redacted).not.toMatch(/\/home\/matrix|\/run\/matrix|C:\\Users|alice|private-app|ghp_|internal-runtime|postgres|10\.0\.0\.8|169\.254\.10\.20|secret/i);
+  });
+
+  it("avoids duplicate token placeholders for authorization headers", () => {
+    const redacted = redactMobileCodingAgentDiagnosticText("Authorization: Bearer ghp_privatevalue1234567890");
+
+    expect(redacted).toBe("Authorization: [token]");
   });
 
   it("bounds long diagnostic text", () => {
@@ -36,7 +43,9 @@ describe("mobile coding-agent diagnostics", () => {
   it("formats non-error diagnostics and unsafe names safely", () => {
     const unknown = formatMobileCodingAgentDiagnostic("token=sk_live_private /tmp/private-file");
     const unsafeNameError = new Error("failed");
+    const tokenNameError = new Error("failed");
     unsafeNameError.name = "!!!";
+    tokenNameError.name = "sk_live_private_name";
 
     expect(unknown).toEqual({
       name: "Unknown",
@@ -44,6 +53,10 @@ describe("mobile coding-agent diagnostics", () => {
     });
     expect(formatMobileCodingAgentDiagnostic(unsafeNameError)).toEqual({
       name: "Error",
+      message: "failed",
+    });
+    expect(formatMobileCodingAgentDiagnostic(tokenNameError)).toEqual({
+      name: "token",
       message: "failed",
     });
   });

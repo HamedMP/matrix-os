@@ -259,6 +259,19 @@ function logCodingAgentCatchWarning(scope: string, err: unknown): void {
   logMobileCodingAgentWarning(scope, reason);
 }
 
+function logGatewayStatusWarning(scope: string, status: number): void {
+  logMobileCodingAgentWarning(scope, `status ${status}`);
+}
+
+function logGatewayCatchWarning(scope: string, err: unknown): void {
+  const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : err;
+  logMobileCodingAgentWarning(scope, reason);
+}
+
+function logGatewayWarning(scope: string, detail: unknown): void {
+  logMobileCodingAgentWarning(scope, detail);
+}
+
 export class GatewayClient {
   private ws: WebSocket | null = null;
   private baseUrl: string;
@@ -395,7 +408,7 @@ export class GatewayClient {
 
     this.ws.onclose = (evt) => {
       const closeEvent = evt as CloseEvent;
-      console.warn("[mobile] websocket closed", closeEvent.code, closeEvent.reason || "");
+      logGatewayWarning("websocket closed", `code ${closeEvent.code}${closeEvent.reason ? ` ${closeEvent.reason}` : ""}`);
       this.ws = null;
       this.setState("disconnected");
       this.scheduleReconnect();
@@ -455,7 +468,7 @@ export class GatewayClient {
       this.reconnectTimer = null;
       this.refreshWebSocketTokenForReconnect()
         .catch((err: unknown) => {
-          console.warn("[mobile] websocket token refresh before reconnect failed", err instanceof Error ? err.message : String(err));
+          logGatewayCatchWarning("websocket token refresh before reconnect failed", err);
         })
         .finally(() => this.connect());
     }, delay);
@@ -467,7 +480,7 @@ export class GatewayClient {
       const nextToken = await this.tokenProvider();
       this.token = nextToken ?? undefined;
     } catch (err: unknown) {
-      console.warn("[mobile] Clerk session token refresh failed", err instanceof Error ? err.message : String(err));
+      logGatewayCatchWarning("Clerk session token refresh failed", err);
       this.token = undefined;
     }
     return this.token;
@@ -617,7 +630,7 @@ export class GatewayClient {
       const data = await res.json();
       return { ok: true, data };
     } catch {
-      console.warn("[mobile] gateway health check unavailable");
+      logGatewayWarning("gateway health check unavailable", "unavailable");
       return { ok: false, error: "Gateway unavailable" };
     }
   }
@@ -626,19 +639,19 @@ export class GatewayClient {
     try {
       const res = await this.fetchGateway("/api/auth/ws-token");
       if (!res.ok) {
-        console.warn("[mobile] /api/auth/ws-token unavailable", res.status);
+        logGatewayStatusWarning("/api/auth/ws-token unavailable", res.status);
         return null;
       }
       const data = (await res.json()) as { token?: unknown; expiresAt?: unknown };
       if (data.token == null) return null;
       if (typeof data.token !== "string") {
-        console.warn("[mobile] /api/auth/ws-token returned invalid token");
+        logGatewayWarning("/api/auth/ws-token returned invalid token", "invalid payload");
         return null;
       }
       this.setWebSocketToken(data.token, typeof data.expiresAt === "number" ? data.expiresAt : undefined);
       return data.token;
     } catch {
-      console.warn("[mobile] /api/auth/ws-token network error");
+      logGatewayWarning("/api/auth/ws-token network error", "unavailable");
       return null;
     }
   }
@@ -717,16 +730,16 @@ export class GatewayClient {
     try {
       const res = await this.fetchGateway("/api/apps");
       if (!res.ok) {
-        const body = await res.text().catch((err: unknown) => {
-          console.warn("[mobile] failed to read /api/apps error body", err instanceof Error ? err.message : String(err));
+        await res.text().catch((err: unknown) => {
+          logGatewayCatchWarning("failed to read /api/apps error body", err);
           return "";
         });
-        console.warn("[mobile] /api/apps unavailable", res.status, body.slice(0, 160));
+        logGatewayStatusWarning("/api/apps unavailable", res.status);
         return [];
       }
       return res.json();
     } catch (err: unknown) {
-      console.warn("[mobile] /api/apps unavailable", err instanceof Error ? err.message : String(err));
+      logGatewayCatchWarning("/api/apps unavailable", err);
       return [];
     }
   }
@@ -735,14 +748,17 @@ export class GatewayClient {
     try {
       const res = await this.fetchGateway("/api/terminal/sessions");
       if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        console.warn("[mobile] /api/terminal/sessions unavailable", res.status, body.slice(0, 160));
+        await res.text().catch((err: unknown) => {
+          logGatewayCatchWarning("failed to read /api/terminal/sessions error body", err);
+          return "";
+        });
+        logGatewayStatusWarning("/api/terminal/sessions unavailable", res.status);
         return [];
       }
       const body = (await res.json()) as { sessions?: unknown };
       return parseShellSessions(body?.sessions ?? body);
     } catch (err: unknown) {
-      console.warn("[mobile] /api/terminal/sessions unavailable", err instanceof Error ? err.message : String(err));
+      logGatewayCatchWarning("/api/terminal/sessions unavailable", err);
       return [];
     }
   }
@@ -1201,15 +1217,18 @@ export class GatewayClient {
         headers: { "Content-Type": "application/json" },
       });
       if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        console.warn("[mobile] terminal session create failed", res.status, body.slice(0, 160));
+        await res.text().catch((err: unknown) => {
+          logGatewayCatchWarning("failed to read terminal session create error body", err);
+          return "";
+        });
+        logGatewayStatusWarning("terminal session create failed", res.status);
         return null;
       }
       const body = (await res.json().catch(() => null)) as { name?: unknown } | null;
       const created = typeof body?.name === "string" ? body.name : name;
       return isSafeShellSessionName(created) ? created : null;
     } catch {
-      console.warn("[mobile] terminal session create unavailable");
+      logGatewayWarning("terminal session create unavailable", "unavailable");
       return null;
     }
   }
@@ -1222,10 +1241,10 @@ export class GatewayClient {
         { method: "DELETE" },
       );
       if (res.ok || res.status === 404) return true;
-      console.warn("[mobile] terminal session delete unavailable", res.status);
+      logGatewayStatusWarning("terminal session delete unavailable", res.status);
       return false;
     } catch {
-      console.warn("[mobile] terminal session delete unavailable");
+      logGatewayWarning("terminal session delete unavailable", "unavailable");
       return false;
     }
   }
@@ -1236,7 +1255,7 @@ export class GatewayClient {
       if (!res.ok) return null;
       return res.json();
     } catch {
-      console.warn("[mobile] /api/apps/:slug/manifest unavailable", slug);
+      logGatewayWarning("/api/apps/:slug/manifest unavailable", `slug ${slug}`);
       return null;
     }
   }
@@ -1248,24 +1267,21 @@ export class GatewayClient {
         body: "{}",
       });
       if (!res.ok) {
-        const body = await res.text().catch((err: unknown) => {
-          console.warn(
-            "[mobile] failed to read /api/apps/:slug/session-token error body",
-            err instanceof Error ? err.message : String(err),
-          );
+        await res.text().catch((err: unknown) => {
+          logGatewayCatchWarning("failed to read /api/apps/:slug/session-token error body", err);
           return "";
         });
-        console.warn("[mobile] /api/apps/:slug/session-token unavailable", slug, res.status, body.slice(0, 160));
+        logGatewayWarning("/api/apps/:slug/session-token unavailable", `slug ${slug} status ${res.status}`);
         return null;
       }
       const data = (await res.json()) as { launchUrl?: unknown; expiresAt?: unknown };
       if (typeof data.launchUrl !== "string" || typeof data.expiresAt !== "number") {
-        console.warn("[mobile] /api/apps/:slug/session-token returned invalid payload", slug);
+        logGatewayWarning("/api/apps/:slug/session-token returned invalid payload", `slug ${slug}`);
         return null;
       }
       return { launchUrl: data.launchUrl, expiresAt: data.expiresAt };
     } catch {
-      console.warn("[mobile] /api/apps/:slug/session-token network error", slug);
+      logGatewayWarning("/api/apps/:slug/session-token network error", `slug ${slug}`);
       return null;
     }
   }

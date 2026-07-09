@@ -89,6 +89,6 @@ That automated desktop smoke now also covers opening the Agents workspace from t
 - Mutating gateway routes use body limits, validation, ownership checks, and safe error mapping.
 - WebSocket thread streams authenticate before success, validate frames, cap subscribers, and clean up stale streams.
 - Gateway coding-agent diagnostics are bounded and redacted before logging paths, tokens, URLs, private hosts, database details, or provider/runtime failure text.
-- Mobile coding-agent client diagnostics are bounded and redacted before logging paths, tokens, URLs, private hosts, database details, or gateway/runtime failure text.
+- Mobile gateway-client diagnostics are bounded and redacted before logging paths, tokens, URLs, private hosts, database details, raw response bodies, or gateway/runtime failure text.
 - No new embedded database persistence was added.
 - Gateway/runtime remains the source of truth; desktop, mobile, and browser shells are resumable clients.
