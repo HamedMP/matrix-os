@@ -137,6 +137,14 @@ describe("coding-agent runtime smoke", () => {
     });
   });
 
+  it("requires bearer tokens through the environment instead of CLI args", () => {
+    expect(() => parseArgs(["--origin", "https://app.matrix-os.com", "--token", "secret-token"], {}))
+      .toThrow(/Unknown argument: --token/);
+
+    expect(() => parseArgs(["--origin", "https://app.matrix-os.com"], {}))
+      .toThrow("Missing MATRIX_CODING_AGENTS_SMOKE_TOKEN");
+  });
+
   it("runs read-only smoke by default and validates shared contracts", async () => {
     const fetchFn = vi.fn(async (input: string, init?: RequestInit) => {
       expect(init?.headers).toEqual(expect.objectContaining({ Authorization: "Bearer secret-token" }));

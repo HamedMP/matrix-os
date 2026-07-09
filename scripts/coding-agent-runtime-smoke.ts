@@ -89,7 +89,7 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
     if (arg === "--") continue;
     if (arg === "--help" || arg === "-h") return { ...(options as SmokeOptions), help: true };
     if (arg === "--origin") options.origin = readValue();
-    else if (arg === "--token") options.token = readValue();
+    else if (arg === "--token") throw new Error("Unknown argument: --token");
     else if (arg === "--runtime") options.runtime = readValue();
     else if (arg === "--timeout-ms") options.timeoutMs = parsePositiveInteger(readValue(), "timeout-ms");
     else if (arg === "--create-thread") options.createThread = true;
@@ -100,7 +100,7 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
   }
 
   if (!options.origin) throw new Error("Missing --origin or MATRIX_CODING_AGENTS_SMOKE_ORIGIN");
-  if (!options.token) throw new Error("Missing --token or MATRIX_CODING_AGENTS_SMOKE_TOKEN");
+  if (!options.token) throw new Error("Missing MATRIX_CODING_AGENTS_SMOKE_TOKEN");
   normalizeOrigin(options.origin);
   return options as SmokeOptions;
 }
@@ -283,7 +283,7 @@ async function requestJson<TSchema extends z.ZodType>(options: {
 }
 
 function printHelp(): void {
-  console.log(`Usage: pnpm exec tsx scripts/coding-agent-runtime-smoke.ts --origin <url> --token <token> [options]
+  console.log(`Usage: MATRIX_CODING_AGENTS_SMOKE_TOKEN=<token> pnpm exec tsx scripts/coding-agent-runtime-smoke.ts --origin <url> [options]
 
 Options:
   --runtime <slot>       Runtime slot query value when validating a non-primary runtime.
