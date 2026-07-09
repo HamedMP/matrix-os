@@ -20,7 +20,8 @@ As of the `056b3da668ed6d1753712120316d2d5accfafdcf` main checkpoint:
 - PR #866 desktop operator e2e smoke validation now covers the stubbed sign-in/device-auth flow, project board hydration, canonical terminal attach and echo, the current Agents workspace summary/create path, Terminal Shells, Apps, Settings, Chat, and hosted-shell detach behavior.
 - PR #868 mobile validation now confirms thread detail terminal handoff persists the bounded canonical terminal session reference needed by the mobile Terminal route without persisting terminal output or transcript data.
 - PR #869 desktop validation now confirms the command-palette Agents entry still opens after terminal interaction, and menu-template tests cover the native Agents accelerator used to focus the same workspace.
-- Remaining work is validation and rollout hardening: real-runtime desktop smoke, mobile SDK 57 device smoke, and continued docs sync as later provider/runtime behavior changes.
+- The mobile SDK 57 coding-agent device smoke runbook now lives in `docs/dev/mobile-shell.md`.
+- Remaining work is validation and rollout hardening: real-runtime desktop smoke, manual mobile SDK 57 device smoke, mobile workspace reference persistence wired into the new Agents cockpit, and continued docs sync as later provider/runtime behavior changes.
 
 That checkpoint is not the clarified final product. The active backlog now requires a project-first hierarchy, same-thread conversation turns, tasks with multiple threads, and Conversation/Kanban views. `acceptance-tests.md` is the authoritative test matrix for this follow-up work.
 

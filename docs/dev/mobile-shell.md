@@ -183,3 +183,89 @@ git diff --check
 - Confirm Continue restores the last app where possible.
 - Confirm unavailable apps show a generic fallback, not raw gateway or filesystem errors.
 - Confirm Terminal path, prompt/cursor, command input, and touch controls are visible in portrait and landscape.
+
+## Coding-Agent SDK 57 Device Smoke
+
+Use this checklist before broad rollout of mobile coding-agent shell changes, and
+whenever a release touches Agents workspace routing, terminal handoff, review
+details, previews, approvals, user input, push routing, or mobile persistence.
+Keep all evidence public-safe: do not paste bearer tokens, provider credentials,
+private hostnames, VPS IPs, raw provider output, terminal output, transcripts,
+file contents, diffs, approval payloads, launch tokens, or customer identifiers.
+
+### Automated Preflight
+
+Run the focused mobile coding-agent checks first:
+
+```bash
+pnpm --dir apps/mobile exec jest --runInBand __tests__/agents-screen.test.tsx __tests__/agent-thread-screen.test.tsx __tests__/agents-preview-screen.test.tsx __tests__/agent-workspace-state.test.ts __tests__/gateway-client.test.ts __tests__/push.test.ts
+pnpm --dir apps/mobile exec tsc --noEmit
+pnpm --dir apps/mobile run lint
+```
+
+If the slice touches terminal routing or terminal persistence, also run:
+
+```bash
+pnpm --dir apps/mobile exec jest --runInBand __tests__/terminal-client.test.ts __tests__/terminal-state.test.ts __tests__/terminal-screen.test.tsx __tests__/TerminalControlBar.test.tsx
+```
+
+If the slice touches shared contracts, gateway read models, or shell runtime
+summary behavior, run the matching gateway or contract tests listed in
+`docs/dev/coding-agent-shells.md` before moving to a phone.
+
+### Runtime Preflight
+
+1. Start a Matrix runtime that has coding-agent shell capabilities enabled.
+2. Validate the authenticated `/api/coding-agents/summary` runtime summary
+   using the runtime smoke command documented by the stack under test. Require
+   the mobile workspace capability and any capability changed by the slice.
+3. If the validation requires a running thread, create it from a disposable test
+   workspace first, then run the helper with the thread-snapshot assertion.
+4. Confirm failures are generic and recovery-oriented. Do not capture provider
+   raw errors, internal paths, private hostnames, or terminal output as evidence.
+
+### Phone Flow
+
+1. Launch the Expo SDK 57 dev client using the instructions above, then sign in
+   and select the intended Matrix computer.
+2. Confirm Chat, Mission Control, Terminal, Apps, and Settings still open from
+   the mobile shell.
+3. Open Apps, then open Agents. Confirm provider status, recent work, attention
+   threads, terminal summaries, and preview summaries hydrate from the gateway
+   without raw errors.
+4. Open a thread detail from Recent Work. Confirm the bounded timeline, newest
+   approval or input request, review links, and terminal references render from
+   the gateway snapshot.
+5. If using a disposable run, submit one approval decision or user-input answer
+   and confirm duplicate taps stay disabled while the request is in flight.
+   Confirm failure copy remains generic.
+6. Use a bound terminal action from Agents or thread detail. Confirm it opens the
+   existing Terminal tab and attaches to the canonical Matrix terminal session;
+   leaving Terminal must not end the underlying process.
+7. Open review, file, and preview routes from the thread or summary. Confirm
+   large or unavailable review data shows partial/recoverable UI, file content
+   reloads from the gateway, and preview failures stay generic.
+8. If push credentials are available on the test device, tap an attention
+   notification and confirm it opens the matching Agents route. If a live push
+   is not practical, rely on the mobile push tests and record that manual push
+   tap routing was deferred.
+9. Toggle the phone offline, keep the Agents workspace visible, and confirm the
+   shell shows a reconnecting or offline state while preserving the last
+   hydrated bounded summary. Reconnect and refresh the thread.
+10. Fully close and reopen the app. Confirm only bounded UI references restore,
+    such as selected thread, review, preview, or terminal IDs. Thread snapshots,
+    transcripts, terminal output, file contents, diffs, approval payloads,
+    credentials, and launch tokens must reload from the gateway or remain absent.
+11. Recheck Chat, Apps, Terminal, and Settings after the Agents pass.
+
+### Evidence To Record
+
+- Branch name, commit, device OS version, and whether the dev client was rebuilt
+  or only Metro was reloaded.
+- Exact automated commands and pass/fail results.
+- Runtime preflight result with sanitized capability names and counts only.
+- Manual phone-flow pass/fail notes with screenshots only when they do not show
+  secrets, raw terminal output, file contents, diffs, or private infrastructure
+  details.
+- Any deferred manual step with the reason and the automated test that still
+  covers the behavior.
