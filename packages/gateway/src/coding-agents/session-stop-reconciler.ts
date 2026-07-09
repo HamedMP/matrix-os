@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import { TerminalSessionIdSchema } from "@matrix-os/contracts";
+import { logCodingAgentWarning } from "./diagnostics.js";
 import type { CodingAgentThreadStore } from "./thread-store.js";
 
 const DEFAULT_MAX_PENDING_STOPS = 100;
@@ -63,10 +64,7 @@ export function createCodingAgentSessionStopReconciler(options: {
     retryTimer = setTimeout(() => {
       retryTimer = undefined;
       void drainPendingStops().catch((err: unknown) => {
-        console.warn(
-          "[coding-agents] Retained session stop retry failed:",
-          err instanceof Error ? err.message : String(err),
-        );
+        logCodingAgentWarning("retained session stop retry failed", err);
         scheduleRetry();
       });
     }, retryDelayMs);

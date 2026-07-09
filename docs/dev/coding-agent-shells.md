@@ -56,6 +56,10 @@ Provider-specific behavior belongs behind the gateway provider adapter interface
 - Normalize start, abort, status, tool activity, approvals, input requests, and completion into shared thread events.
 - Enforce timeouts or `AbortSignal` on external calls.
 - Return generic client errors while logging provider details server-side only.
+- Log coding-agent gateway failures through `logCodingAgentWarning()` from
+  `packages/gateway/src/coding-agents/diagnostics.ts` so server diagnostics keep
+  coarse scope and error type while redacting tokens, owner paths, URLs, private
+  hosts, and database details.
 - Use foreground terminal setup actions when user interaction is required.
 - Avoid provider-specific branches in shell components unless the shared contract explicitly exposes safe metadata.
 
@@ -141,6 +145,9 @@ Use this checklist for every coding-agent shell PR:
 - WebSocket auth completes before success frames, frame size is capped, subscribers are capped, stale subscribers are swept, and shutdown drains subscribers.
 - Lists are bounded before response.
 - Errors sent to clients are generic and safe.
+- Server diagnostics for coding-agent routes, summary adapters, streams,
+  provider lifecycle, and notification bridges use the bounded redacted
+  diagnostic helper instead of raw `err.message` logging.
 - Desktop renderer never receives bearer credentials or provider credentials.
 - Mobile AsyncStorage contains only bounded safe references.
 - Terminal/session behavior reuses canonical Matrix terminal primitives.

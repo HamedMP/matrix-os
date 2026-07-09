@@ -16,6 +16,7 @@ import type {
   AgentId,
 } from "../onboarding/activation-contracts.js";
 import type { AgentCredentialStatusService } from "../onboarding/agent-credential-status.js";
+import { logCodingAgentWarning } from "./diagnostics.js";
 
 const TERMINAL_SUMMARY_LIMIT = 20;
 const PREVIEW_SUMMARY_LIMIT = 50;
@@ -193,7 +194,7 @@ async function readProviders(
       .filter((agent) => !registeredProviderIds || registeredProviderIds.has(agent.agent))
       .map(statusToProviderSummary);
   } catch (err: unknown) {
-    console.warn("[coding-agents] provider summary unavailable:", err instanceof Error ? err.message : String(err));
+    logCodingAgentWarning("provider summary unavailable", err);
     return [];
   }
 }
@@ -206,7 +207,7 @@ async function readActiveThreads(
   try {
     return await store.listThreads(principal);
   } catch (err: unknown) {
-    console.warn("[coding-agents] thread summary unavailable:", err instanceof Error ? err.message : String(err));
+    logCodingAgentWarning("thread summary unavailable", err);
     return { items: [], hasMore: false, limit: 20 };
   }
 }
@@ -219,7 +220,7 @@ async function readAttentionThreads(
   try {
     return await store.listAttentionThreads(principal);
   } catch (err: unknown) {
-    console.warn("[coding-agents] attention summary unavailable:", err instanceof Error ? err.message : String(err));
+    logCodingAgentWarning("attention summary unavailable", err);
     return { items: [], hasMore: false, limit: 20 };
   }
 }
@@ -243,7 +244,7 @@ async function readPreviewSessions(
       limit: PREVIEW_SUMMARY_LIMIT,
     };
   } catch (err: unknown) {
-    console.warn("[coding-agents] preview summary unavailable:", err instanceof Error ? err.message : String(err));
+    logCodingAgentWarning("preview summary unavailable", err);
     return { items: [], hasMore: false, limit: PREVIEW_SUMMARY_LIMIT };
   }
 }
@@ -271,7 +272,7 @@ async function readTerminalSessions(
       limit: TERMINAL_SUMMARY_LIMIT,
     };
   } catch (err: unknown) {
-    console.warn("[coding-agents] terminal summary unavailable:", err instanceof Error ? err.message : String(err));
+    logCodingAgentWarning("terminal summary unavailable", err);
     return { items: [], hasMore: false, limit: TERMINAL_SUMMARY_LIMIT };
   }
 }

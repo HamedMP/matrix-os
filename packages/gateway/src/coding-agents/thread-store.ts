@@ -22,6 +22,7 @@ import {
 } from "@matrix-os/contracts";
 import { atomicWriteJson } from "../state-ops.js";
 import type { RequestPrincipal } from "../request-principal.js";
+import { logCodingAgentWarning } from "./diagnostics.js";
 
 const THREAD_STORE_RELATIVE_PATH = ["system", "coding-agents", "threads.json"] as const;
 const THREAD_LIST_LIMIT = 50;
@@ -612,7 +613,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
       try {
         sink({ ownerId, threadId, events });
       } catch (err: unknown) {
-        console.warn("[coding-agents] thread event sink failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("thread event sink failed", err);
       }
     }
   }
@@ -668,7 +669,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
             nextEventId,
           }), thread.id);
         } catch (err: unknown) {
-          console.warn("[coding-agents] provider start failed:", err instanceof Error ? err.message : String(err));
+          logCodingAgentWarning("provider start failed", err);
           providerEvents = safeProviderRunFailureEvents(thread.id, now, nextEventId);
         }
         const events = [createdEvent, ...providerEvents];
@@ -751,7 +752,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
               abortEvents = defaultAbortEvents(threadId, now, nextEventId);
             }
           } catch (err: unknown) {
-            console.warn("[coding-agents] provider abort failed:", err instanceof Error ? err.message : String(err));
+            logCodingAgentWarning("provider abort failed", err);
             abortEvents = defaultAbortEvents(threadId, now, nextEventId);
           }
         } else {
@@ -807,7 +808,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
               nextEventId,
             }), threadId);
           } catch (err: unknown) {
-            console.warn("[coding-agents] provider approval submit failed:", err instanceof Error ? err.message : String(err));
+            logCodingAgentWarning("provider approval submit failed", err);
             throw new CodingAgentThreadError("thread_store_unavailable", "Provider approval submit failed");
           }
         } else {
@@ -862,7 +863,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
               nextEventId,
             }), threadId);
           } catch (err: unknown) {
-            console.warn("[coding-agents] provider input submit failed:", err instanceof Error ? err.message : String(err));
+            logCodingAgentWarning("provider input submit failed", err);
             throw new CodingAgentThreadError("thread_store_unavailable", "Provider input submit failed");
           }
         } else {

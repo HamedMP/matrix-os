@@ -79,6 +79,7 @@ Security and ownership:
 - Path params and query cursors are Zod-validated at the route boundary.
 - Mutating routes use Hono `bodyLimit`.
 - Route errors are mapped to safe client errors and log details server-side only.
+- Gateway coding-agent route, summary, stream, provider lifecycle, and attention-notification failure diagnostics use the bounded redacted helper in `packages/gateway/src/coding-agents/diagnostics.ts` instead of raw `err.message` logging.
 - Thread store state is owner-scoped in the existing owner file convention at `system/coding-agents/threads.json`; no new embedded DB was added.
 
 Related workspace routes in `packages/gateway/src/workspace-routes.ts`:
@@ -412,6 +413,12 @@ Focused gateway/contracts:
 
 ```bash
 pnpm exec vitest run tests/gateway/coding-agents-workspace-provider.test.ts tests/gateway/coding-agents-threads.test.ts tests/gateway/coding-agents-thread-stream.test.ts tests/gateway/coding-agents-summary.test.ts tests/gateway/coding-agents-file-read.test.ts tests/contracts/coding-agents.test.ts tests/gateway/agent-launcher.test.ts tests/gateway/agent-session-manager.test.ts tests/gateway/workspace-session-orchestrator.test.ts tests/observability/process-error-entrypoints.test.ts
+```
+
+Gateway diagnostics:
+
+```bash
+pnpm exec vitest run tests/gateway/coding-agents-diagnostics.test.ts
 ```
 
 Gateway typecheck:
