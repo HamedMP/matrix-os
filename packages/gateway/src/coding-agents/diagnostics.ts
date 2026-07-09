@@ -1,3 +1,4 @@
+const MAX_DIAGNOSTIC_INPUT_LENGTH = 4_096;
 const MAX_DIAGNOSTIC_MESSAGE_LENGTH = 180;
 const MAX_DIAGNOSTIC_NAME_LENGTH = 48;
 
@@ -12,7 +13,7 @@ export interface CodingAgentDiagnostic {
 
 const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi;
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
-const AUTHORIZATION_ASSIGNMENT_PATTERN = /\b(authorization)(\s*[:=]\s*)(?:"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[A-Za-z][A-Za-z0-9._-]{0,31}\s+[^\s"'<>]+|[^\s"'<>]+)/gi;
+const AUTHORIZATION_ASSIGNMENT_PATTERN = /\b(authorization)(\s*[:=]\s*)[^\r\n]+/gi;
 const ASSIGNMENT_PATTERN = /\b([A-Za-z][A-Za-z0-9_-]{0,127})(\s*[:=]\s*)(?:(?:Basic|Bearer|Digest)\s+[^\s"'<>]+|"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s"'<>]+)/gi;
 const KNOWN_SECRET_PREFIX_PATTERN = /\b(?:sk|sk_live|sk_test|ghp|github_pat|xoxb|xoxp|xoxa|xoxr|glpat|hf)[_-][A-Za-z0-9._-]{4,}\b/gi;
 const OWNER_PATH_PATTERN = /(?:^|[\s"'(:])(?:\/(?:home|Users|private|tmp|var|opt|etc|root|run)\/[^\s"'<>)]*)/g;
@@ -33,7 +34,11 @@ function normalizeDiagnosticText(value: string): string {
 }
 
 function isSecretAssignmentKey(key: string): boolean {
-  const segments = key.toLowerCase().split(/[_-]+/);
+  const segments = key
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .toLowerCase()
+    .split(/[_-]+/);
   if (segments.some((segment) => ["authorization", "credential", "credentials", "passwd", "password", "secret", "token"].includes(segment))) {
     return true;
   }
@@ -49,9 +54,9 @@ function isSecretAssignmentKey(key: string): boolean {
 }
 
 export function redactCodingAgentDiagnosticText(value: unknown): string {
-  const raw = normalizeDiagnosticText(typeof value === "string" ? value : String(value));
-  if (!raw) return "unavailable";
-  const redacted = raw
+  const input = (typeof value === "string" ? value : String(value)).slice(0, MAX_DIAGNOSTIC_INPUT_LENGTH);
+  if (!normalizeDiagnosticText(input)) return "unavailable";
+  const redacted = input
     .replace(URL_PATTERN, "[url]")
     .replace(BEARER_PATTERN, "Bearer [token]")
     .replace(AUTHORIZATION_ASSIGNMENT_PATTERN, (_match, key: string, separator: string) => {

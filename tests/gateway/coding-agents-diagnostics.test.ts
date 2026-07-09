@@ -17,7 +17,7 @@ describe("coding agent diagnostics", () => {
       "host internal-runtime.local",
       "probe 10.0.0.5",
       "ENOENT",
-    ].join(" ");
+    ].join("\n");
 
     const redacted = redactCodingAgentDiagnosticText(raw);
 
@@ -38,13 +38,19 @@ describe("coding agent diagnostics", () => {
 
   it("fully redacts colon-containing and quoted secret assignments", () => {
     const redacted = redactCodingAgentDiagnosticText(
-      `token=abc:def apiKey="abcd" password: 'hunter2' Authorization: Basic dXNlcjpwYXNz Authorization: Token tokenpayload TWILIO_AUTH_TOKEN=abc123`,
+      [
+        `token=abc:def apiKey="abcd" password: 'hunter2'`,
+        "Authorization: Basic dXNlcjpwYXNz",
+        "Authorization: Token tokenpayload",
+        `Authorization: Digest username="bob", response="digestsecret"`,
+        "TWILIO_AUTH_TOKEN=abc123",
+      ].join("\n"),
     );
 
     expect(redacted).toBe(
-      "token= [token] apiKey= [token] password: [token] Authorization: [token] Authorization: [token] TWILIO_AUTH_TOKEN= [token]",
+      "token= [token] apiKey= [token] password: [token] Authorization: [token] Authorization: [token] Authorization: [token] TWILIO_AUTH_TOKEN= [token]",
     );
-    expect(redacted).not.toMatch(/abc|def|abcd|hunter2|dXNlcjpwYXNz|tokenpayload|abc123/i);
+    expect(redacted).not.toMatch(/abc|def|abcd|hunter2|dXNlcjpwYXNz|tokenpayload|bob|digestsecret|abc123/i);
   });
 
   it("redacts compound credential environment assignments", () => {
@@ -56,6 +62,17 @@ describe("coding agent diagnostics", () => {
       "AWS_SECRET_ACCESS_KEY= [token] S3_ACCESS_KEY_ID= [token] R2_SECRET_ACCESS_KEY= [token] PGPASSWORD= [token] MONKEY=banana STATUS=healthy",
     );
     expect(redacted).not.toMatch(/awsvalue|s3value|r2value|pgvalue/i);
+  });
+
+  it("redacts camel-case credential assignment keys", () => {
+    const redacted = redactCodingAgentDiagnosticText(
+      "clientSecret=clientvalue privateKey=privatevalue idToken=idvalue awsSecretAccessKey=camelvalue MONKEY=banana",
+    );
+
+    expect(redacted).toBe(
+      "clientSecret= [token] privateKey= [token] idToken= [token] awsSecretAccessKey= [token] MONKEY=banana",
+    );
+    expect(redacted).not.toMatch(/clientvalue|privatevalue|idvalue|camelvalue/i);
   });
 
   it("redacts link-local and private IPv6 hosts", () => {
