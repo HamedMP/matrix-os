@@ -15,7 +15,7 @@ describe("mobile coding-agent diagnostics", () => {
       "socket /run/matrix/gateway.sock",
       "windows C:\\Users\\alice\\matrix\\token.txt",
       "postgres://matrix:secret@10.0.0.8:5432/runtime",
-    ].join(" ");
+    ].join("\n");
 
     const redacted = redactMobileCodingAgentDiagnosticText(text);
 
@@ -33,10 +33,54 @@ describe("mobile coding-agent diagnostics", () => {
     expect(redacted).toBe("Authorization: [token]");
   });
 
-  it("redacts private ipv6 diagnostic hosts", () => {
-    const redacted = redactMobileCodingAgentDiagnosticText("connect ::1 fe80::1 fd12:3456:789a::1");
+  it("redacts complete authorization header values for every auth scheme", () => {
+    const redacted = redactMobileCodingAgentDiagnosticText([
+      "Authorization: Basic dXNlcjpwYXNzd29yZA==",
+      "Authorization: Token private-value",
+      'Authorization: Digest username="alice", response="private-response"',
+    ].join("\n"));
 
-    expect(redacted).toBe("connect [host] [host] [host]");
+    expect(redacted).toBe([
+      "Authorization: [token]",
+      "Authorization: [token]",
+      "Authorization: [token]",
+    ].join(" "));
+    expect(redacted).not.toMatch(/dXNlcj|private-value|alice|private-response/);
+  });
+
+  it("preserves the assignment separator without leaking secret fragments", () => {
+    const redacted = redactMobileCodingAgentDiagnosticText(
+      `token=abc:def apiKey="quoted private value" password: 'hunter2:private'`,
+    );
+
+    expect(redacted).toBe("token= [token] apiKey= [token] password: [token]");
+    expect(redacted).not.toMatch(/abc|def|quoted|private|hunter2/);
+  });
+
+  it("redacts compound secret keys without redacting unrelated assignments", () => {
+    const redacted = redactMobileCodingAgentDiagnosticText(
+      "AWS_SECRET_ACCESS_KEY=aws-private clientSecret=client-private privateKey=key-private idToken=id-private PGPASSWORD=pg-private MONKEY=banana",
+    );
+
+    expect(redacted).toBe(
+      "AWS_SECRET_ACCESS_KEY= [token] clientSecret= [token] privateKey= [token] idToken= [token] PGPASSWORD= [token] MONKEY=banana",
+    );
+    expect(redacted).not.toMatch(/aws-private|client-private|key-private|id-private|pg-private/);
+  });
+
+  it("redacts private ipv6 diagnostic hosts", () => {
+    const redacted = redactMobileCodingAgentDiagnosticText("connect ::1 fe80::1 fe90::2%en0 fd12:3456:789a::1");
+
+    expect(redacted).toBe("connect [host] [host] [host] [host]");
+  });
+
+  it("redacts assignment-prefixed owner paths and unlabeled private hosts", () => {
+    const redacted = redactMobileCodingAgentDiagnosticText(
+      "read path=/home/matrix/private.ts ENOTFOUND internal-runtime.local connect localhost",
+    );
+
+    expect(redacted).toBe("read path=[path] ENOTFOUND [host] connect [host]");
+    expect(redacted).not.toMatch(/\/home\/matrix|private\.ts|internal-runtime|localhost/);
   });
 
   it("bounds long diagnostic text", () => {
