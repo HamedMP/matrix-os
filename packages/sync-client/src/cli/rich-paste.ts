@@ -277,12 +277,22 @@ export async function processRichPasteTransaction(
 
   const validation = await collectLocalImageCandidates(input.text);
   if (validation.status === "failed") {
+    if (input.observablePaste && validation.clipboardFallbackCandidate) {
+      const fallback = await processClipboardPaste(input, {
+        candidateToReplace: validation.clipboardFallbackCandidate,
+        unsupportedFailureCode: validation.failureCode,
+      });
+      // Return fallback success, or a more specific clipboard failure such as image_too_large.
+      if (fallback.status !== "failed" || fallback.failureCode !== validation.failureCode) {
+        return fallback;
+      }
+    }
     return failedResult(validation.failureCode);
   }
   const candidates = validation.candidates;
   if (candidates.length === 0) {
     if (input.observablePaste && input.text.length === 0) {
-      return processClipboardOnlyPaste(input);
+      return processClipboardPaste(input);
     }
     return { status: "passthrough", outgoingText: input.text, assets: [] };
   }
@@ -321,15 +331,20 @@ export async function processRichPasteTransaction(
   };
 }
 
-async function processClipboardOnlyPaste(
+async function processClipboardPaste(
   input: ProcessRichPasteTransactionInput,
+  options: {
+    candidateToReplace?: InternalCandidate;
+    unsupportedFailureCode?: RichPasteFailureCode;
+  } = {},
 ): Promise<RewriteResult> {
+  const unsupportedFailureCode = options.unsupportedFailureCode ?? "unsupported_paste_event";
   if (!input.clipboardReader) {
-    return failedResult("unsupported_paste_event");
+    return failedResult(unsupportedFailureCode);
   }
   const clipboard = await input.clipboardReader.readImage();
   if (clipboard.status !== "available") {
-    return failedResult("unsupported_paste_event");
+    return failedResult(unsupportedFailureCode);
   }
   if (clipboard.candidate.sizeBytes > RICH_PASTE_MAX_IMAGE_BYTES) {
     return failedResult("image_too_large");
@@ -357,17 +372,24 @@ async function processClipboardOnlyPaste(
   }
   return {
     status: "rewritten",
-    outgoingText: `Please inspect this image: ${remoteAssets[0].path}`,
+    outgoingText: options.candidateToReplace
+      ? rewriteText(input.text, [{ ...options.candidateToReplace, uploadIndex: 0 }], remoteAssets)
+      : `Please inspect this image: ${remoteAssets[0].path}`,
     assets: remoteAssets,
   };
 }
 
 async function collectLocalImageCandidates(text: string): Promise<
   | { status: "ok"; candidates: InternalCandidate[] }
-  | { status: "failed"; failureCode: RichPasteFailureCode }
+  | {
+      status: "failed";
+      failureCode: RichPasteFailureCode;
+      clipboardFallbackCandidate?: InternalCandidate;
+    }
 > {
   const rawCandidates = findRawCandidates(text);
   const candidates: InternalCandidate[] = [];
+  const clipboardFallbackCandidate = singlePathOnlyCandidate(text, rawCandidates);
 
   for (const raw of rawCandidates) {
     const result = await validateLocalCandidate(raw);
@@ -375,7 +397,13 @@ async function collectLocalImageCandidates(text: string): Promise<
       continue;
     }
     if (result.status === "failed") {
-      return { status: "failed", failureCode: result.failureCode };
+      return {
+        status: "failed",
+        failureCode: result.failureCode,
+        clipboardFallbackCandidate: result.failureCode === "local_read_failed"
+          ? clipboardFallbackCandidate
+          : undefined,
+      };
     }
     candidates.push(result.candidate);
   }
@@ -428,6 +456,17 @@ function findRawCandidates(text: string): InternalCandidate[] {
   }
 
   return candidates.sort((left, right) => left.sourceTextRange.start - right.sourceTextRange.start);
+}
+
+function singlePathOnlyCandidate(text: string, candidates: InternalCandidate[]): InternalCandidate | undefined {
+  if (candidates.length !== 1) {
+    return undefined;
+  }
+  const candidate = candidates[0];
+  if (!candidate || text.trim() !== candidate.displayText.trim()) {
+    return undefined;
+  }
+  return candidate;
 }
 
 function createRawCandidate(input: {

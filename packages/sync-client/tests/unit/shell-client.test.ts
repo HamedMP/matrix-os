@@ -501,6 +501,238 @@ describe("createShellClient attachSession", () => {
     await expect(attach).resolves.toEqual({ detached: false });
   });
 
+  it("uses Ctrl-backslash v as an explicit clipboard image paste command", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY: true;
+      rows: number;
+      columns: number;
+      setRawMode: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+    };
+    input.isTTY = true;
+    input.rows = 24;
+    input.columns = 80;
+    input.setRawMode = vi.fn();
+    input.pause = vi.fn();
+
+    const rewriter = {
+      rewrite: vi.fn(async () => ({
+        status: "rewritten" as const,
+        outgoingText: "Please inspect this image: /home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/clipboard.png",
+        assets: [],
+      })),
+    };
+    const client = createShellClient({
+      gatewayUrl: "https://matrix.example",
+      token: "token-123",
+      timeoutMs: 100,
+    });
+    const attach = client.attachSession("main", {
+      input,
+      output: new PassThrough(),
+      WebSocketImpl: FakeWebSocket as never,
+      richPaste: { rewriter },
+    });
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    input.write("\u001cv");
+
+    const deadline = Date.now() + 250;
+    while (!FakeWebSocket.last?.sent.some((frame) => frame.includes("Please inspect this image"))) {
+      if (Date.now() > deadline) break;
+      await new Promise((resolve) => {
+        setTimeout(resolve, 1);
+      });
+    }
+
+    expect(rewriter.rewrite).toHaveBeenCalledWith({
+      sessionName: "main",
+      text: "",
+      observablePaste: true,
+    });
+    expect(sentInputData()).toEqual([
+      "Please inspect this image: /home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/clipboard.png",
+    ]);
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "exit" }));
+    await expect(attach).resolves.toEqual({ detached: false });
+  });
+
+  it("prints local feedback when the explicit clipboard image paste command is unavailable", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY: true;
+      rows: number;
+      columns: number;
+      setRawMode: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+    };
+    input.isTTY = true;
+    input.rows = 24;
+    input.columns = 80;
+    input.setRawMode = vi.fn();
+    input.pause = vi.fn();
+    const errorOutput = new PassThrough();
+    const errors: string[] = [];
+    errorOutput.on("data", (chunk) => errors.push(String(chunk)));
+
+    const rewriter = {
+      rewrite: vi.fn(async () => ({
+        status: "failed" as const,
+        assets: [],
+        failureCode: "unsupported_paste_event" as const,
+        localMessage: "Image paste is not supported by this terminal paste event.",
+      })),
+    };
+    const client = createShellClient({
+      gatewayUrl: "https://matrix.example",
+      token: "token-123",
+      timeoutMs: 100,
+    });
+    const attach = client.attachSession("main", {
+      input,
+      output: new PassThrough(),
+      errorOutput: errorOutput as NodeJS.WriteStream,
+      WebSocketImpl: FakeWebSocket as never,
+      richPaste: { rewriter },
+    });
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    input.write("\u001cv");
+
+    const deadline = Date.now() + 250;
+    while (!errors.join("").includes("Image paste")) {
+      if (Date.now() > deadline) break;
+      await new Promise((resolve) => {
+        setTimeout(resolve, 1);
+      });
+    }
+
+    expect(rewriter.rewrite).toHaveBeenCalledWith({
+      sessionName: "main",
+      text: "",
+      observablePaste: true,
+    });
+    expect(errors.join("")).toContain("Image paste is not supported by this terminal paste event.");
+    expect(sentInputData()).toEqual([]);
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "exit" }));
+    await expect(attach).resolves.toEqual({ detached: false });
+  });
+
+  it("forwards raw Ctrl-V so readline quoted-insert keeps working", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY: true;
+      rows: number;
+      columns: number;
+      setRawMode: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+    };
+    input.isTTY = true;
+    input.rows = 24;
+    input.columns = 80;
+    input.setRawMode = vi.fn();
+    input.pause = vi.fn();
+
+    const rewriter = {
+      rewrite: vi.fn(async () => ({
+        status: "rewritten" as const,
+        outgoingText: "unexpected clipboard paste",
+        assets: [],
+      })),
+    };
+    const client = createShellClient({
+      gatewayUrl: "https://matrix.example",
+      token: "token-123",
+      timeoutMs: 100,
+    });
+    const attach = client.attachSession("main", {
+      input,
+      output: new PassThrough(),
+      WebSocketImpl: FakeWebSocket as never,
+      richPaste: { rewriter },
+    });
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    input.write("\u0016");
+
+    expect(rewriter.rewrite).not.toHaveBeenCalled();
+    expect(sentInputData()).toEqual(["\u0016"]);
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "exit" }));
+    await expect(attach).resolves.toEqual({ detached: false });
+  });
+
+  it("keeps same-chunk input behind an explicit clipboard image paste command", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY: true;
+      rows: number;
+      columns: number;
+      setRawMode: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+    };
+    input.isTTY = true;
+    input.rows = 24;
+    input.columns = 80;
+    input.setRawMode = vi.fn();
+    input.pause = vi.fn();
+
+    let finishRewrite!: (value: {
+      status: "rewritten";
+      outgoingText: string;
+      assets: [];
+    }) => void;
+    const rewritePromise = new Promise<{
+      status: "rewritten";
+      outgoingText: string;
+      assets: [];
+    }>((resolve) => {
+      finishRewrite = resolve;
+    });
+    const rewriter = {
+      rewrite: vi.fn(() => rewritePromise),
+    };
+    const client = createShellClient({
+      gatewayUrl: "https://matrix.example",
+      token: "token-123",
+      timeoutMs: 100,
+    });
+    const attach = client.attachSession("main", {
+      input,
+      output: new PassThrough(),
+      WebSocketImpl: FakeWebSocket as never,
+      richPaste: { rewriter },
+    });
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    input.write("\u001cv\t");
+    await new Promise((resolve) => {
+      setTimeout(resolve, 10);
+    });
+
+    expect(sentInputData()).toEqual([]);
+
+    finishRewrite({
+      status: "rewritten",
+      outgoingText: "/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/clipboard.png",
+      assets: [],
+    });
+    const deadline = Date.now() + 250;
+    while (sentInputData().length < 2) {
+      if (Date.now() > deadline) break;
+      await new Promise((resolve) => {
+        setTimeout(resolve, 1);
+      });
+    }
+
+    expect(sentInputData()).toEqual([
+      "/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/clipboard.png",
+      "\t",
+    ]);
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "exit" }));
+    await expect(attach).resolves.toEqual({ detached: false });
+  });
+
   it("prints safe local feedback and sends no local image path when rich paste fails", async () => {
     const input = new PassThrough() as PassThrough & {
       isTTY: true;

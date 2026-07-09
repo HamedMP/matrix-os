@@ -142,7 +142,7 @@ Attached CLI sessions rewrite pasted local screenshots before the prompt reaches
 
 the CLI uploads the image to `~/projects/.matrix-terminal-pastes/` on your Matrix computer and replaces the local path with the remote path. Repeated references in the same paste are uploaded once, and surrounding text and line breaks are preserved.
 
-Pure image clipboard paste is supported only when the terminal provides an observable paste event. On macOS, install `pngpaste` for image-only clipboard capture. When the terminal emits no bytes or paste boundary, there is nothing for the CLI to read, so no stale clipboard image is inserted.
+Pure image clipboard paste is supported when the terminal provides an observable paste event. On macOS, install `pngpaste` for image-only clipboard capture. If `Cmd-V` emits no bytes for an image-only clipboard, press `Ctrl-\` then `v` while attached to explicitly ask the local CLI to read the current clipboard image. When neither path is observable, the CLI will not insert stale clipboard data.
 
 ### Tabs
 
