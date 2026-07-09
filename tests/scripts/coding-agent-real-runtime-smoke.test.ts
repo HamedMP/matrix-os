@@ -105,6 +105,23 @@ const reviewSummary = {
   updatedAt: "2026-07-09T10:02:00Z",
 };
 
+const threadSnapshot = {
+  thread: runtimeSummary.activeThreads.items[0],
+  events: {
+    items: [
+      {
+        eventId: "evt_live_smoke_1",
+        threadId: "thread_live_smoke",
+        type: "thread.status",
+        status: "running",
+        occurredAt: "2026-07-09T10:01:00.000Z",
+      },
+    ],
+    hasMore: false,
+    limit: 200,
+  },
+};
+
 describe("coding-agent real runtime smoke helper", () => {
   it("normalizes runtime URLs to an HTTP(S) base path and rejects unsafe protocols", () => {
     expect(normalizeRuntimeUrl("https://app.matrix-os.com/vm/test?token=secret").toString()).toBe(
@@ -145,6 +162,51 @@ describe("coding-agent real runtime smoke helper", () => {
       token: "abc",
       projectId: "proj_1",
     });
+  });
+
+  it("creates config for read-only runtime assertions", () => {
+    expect(
+      createSmokeConfig(
+        [
+          "--url",
+          "https://runtime.test",
+          "--require-capability",
+          "codingAgentsRuntimeSummary",
+          "--require-capability",
+          "codingAgentsMobileWorkspace",
+          "--require-ready-provider",
+          "--require-thread-snapshot",
+          "--min-active-threads",
+          "1",
+          "--min-terminal-sessions",
+          "1",
+          "--min-preview-sessions",
+          "1",
+          "--min-reviews",
+          "2",
+        ],
+        { MATRIX_RUNTIME_TOKEN: "abc" },
+      ),
+    ).toMatchObject({
+      requiredCapabilities: ["codingAgentsRuntimeSummary", "codingAgentsMobileWorkspace"],
+      requireReadyProvider: true,
+      requireThreadSnapshot: true,
+      minActiveThreads: 1,
+      minTerminalSessions: 1,
+      minPreviewSessions: 1,
+      minReviews: 2,
+    });
+
+    expect(() =>
+      createSmokeConfig(["--url", "https://runtime.test", "--min-active-threads", "0"], {
+        MATRIX_RUNTIME_TOKEN: "abc",
+      }),
+    ).toThrow(/positive integer/);
+    expect(() =>
+      createSmokeConfig(["--url", "https://runtime.test", "--require-capability", "unknown"], {
+        MATRIX_RUNTIME_TOKEN: "abc",
+      }),
+    ).toThrow(/Invalid required capability/);
   });
 
   it("validates the summary, thread list, review list, and preferences without exposing body content", async () => {
@@ -197,6 +259,345 @@ describe("coding-agent real runtime smoke helper", () => {
       "https://runtime.test/api/coding-agents/reviews",
       "https://runtime.test/api/coding-agents/notification-preferences",
     ]);
+  });
+
+  it("validates read-only runtime assertions, review pagination, and thread snapshots", async () => {
+    const calls: string[] = [];
+    const summaryWithPreview = {
+      ...runtimeSummary,
+      previewSessions: {
+        items: [
+          {
+            id: "preview_live_smoke",
+            projectId: "proj_1",
+            label: "Preview",
+            status: "running",
+            origin: "https://preview.example.com",
+            updatedAt: "2026-07-09T10:02:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 50,
+      },
+    };
+    const fetchImpl = vi.fn(async (url: URL | string) => {
+      calls.push(String(url));
+      if (String(url).endsWith("/api/coding-agents/summary")) return jsonResponse(summaryWithPreview);
+      if (String(url).endsWith("/api/coding-agents/threads")) {
+        return jsonResponse({ items: runtimeSummary.activeThreads.items, hasMore: false, limit: 50 });
+      }
+      if (String(url).endsWith("/api/coding-agents/reviews")) {
+        return jsonResponse({ items: [reviewSummary], hasMore: true, nextCursor: "next_1", limit: 50 });
+      }
+      if (String(url).endsWith("/api/coding-agents/reviews?cursor=next_1")) {
+        return jsonResponse({
+          items: [{ ...reviewSummary, id: "rev_live_smoke_2", pullRequestNumber: 880 }],
+          hasMore: false,
+          limit: 50,
+        });
+      }
+      if (String(url).endsWith("/api/coding-agents/threads/thread_live_smoke")) return jsonResponse(threadSnapshot);
+      if (String(url).endsWith("/api/coding-agents/notification-preferences")) {
+        return jsonResponse({
+          preferences: {
+            attentionPush: {
+              approval: true,
+              input: true,
+              failed: true,
+              completed: true,
+            },
+          },
+        });
+      }
+      throw new Error(`unexpected URL ${String(url)}`);
+    });
+
+    const result = await runRuntimeSmoke({
+      runtimeUrl: new URL("https://runtime.test/"),
+      token: "secret-token",
+      fetchImpl,
+      requiredCapabilities: ["codingAgentsRuntimeSummary", "codingAgentsMobileWorkspace"],
+      requireReadyProvider: true,
+      requireThreadSnapshot: true,
+      minActiveThreads: 1,
+      minTerminalSessions: 1,
+      minPreviewSessions: 1,
+      minReviews: 2,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.checks.map((check) => check.name)).toEqual([
+      "runtime summary",
+      "thread list",
+      "review list",
+      "review pagination",
+      "notification preferences",
+      "thread snapshot",
+      "runtime requirements",
+    ]);
+    expect(result.checks.find((check) => check.name === "review pagination")).toMatchObject({
+      detail: "2 reviews checked",
+    });
+    expect(result.checks.find((check) => check.name === "runtime requirements")).toMatchObject({
+      detail: "8 read-only assertions checked",
+    });
+    expect(calls).toContain("https://runtime.test/api/coding-agents/reviews?cursor=next_1");
+    expect(calls).toContain("https://runtime.test/api/coding-agents/threads/thread_live_smoke");
+  });
+
+  it("fails read-only runtime assertions with generic recovery text", async () => {
+    const unavailableSummary = {
+      ...runtimeSummary,
+      capabilities: [{ id: "codingAgentsRuntimeSummary", enabled: false }],
+      providers: [
+        {
+          ...runtimeSummary.providers[0],
+          availability: "auth_required",
+          authStatus: "missing",
+        },
+      ],
+    };
+    const fetchImpl = vi.fn(async (url: URL | string) => {
+      if (String(url).endsWith("/api/coding-agents/summary")) return jsonResponse(unavailableSummary);
+      if (String(url).endsWith("/api/coding-agents/threads")) {
+        return jsonResponse({ items: runtimeSummary.activeThreads.items, hasMore: false, limit: 50 });
+      }
+      if (String(url).endsWith("/api/coding-agents/reviews")) {
+        return jsonResponse({ items: [], hasMore: false, limit: 50 });
+      }
+      if (String(url).endsWith("/api/coding-agents/notification-preferences")) {
+        return jsonResponse({
+          preferences: {
+            attentionPush: {
+              approval: true,
+              input: true,
+              failed: true,
+              completed: true,
+            },
+          },
+        });
+      }
+      throw new Error(`unexpected URL ${String(url)}`);
+    });
+
+    await expect(
+      runRuntimeSmoke({
+        runtimeUrl: new URL("https://runtime.test/"),
+        token: "secret-token",
+        fetchImpl,
+        requiredCapabilities: ["codingAgentsRuntimeSummary"],
+        requireReadyProvider: true,
+      }),
+    ).rejects.toMatchObject({
+      name: "SmokeFailure",
+      safeMessage: "runtime requirements unavailable. Refresh runtime state and try again.",
+    });
+  });
+
+  it("fails safely when a required thread snapshot is malformed", async () => {
+    const fetchImpl = vi.fn(async (url: URL | string) => {
+      if (String(url).endsWith("/api/coding-agents/summary")) return jsonResponse(runtimeSummary);
+      if (String(url).endsWith("/api/coding-agents/threads")) {
+        return jsonResponse({ items: runtimeSummary.activeThreads.items, hasMore: false, limit: 50 });
+      }
+      if (String(url).endsWith("/api/coding-agents/reviews")) {
+        return jsonResponse({ items: [], hasMore: false, limit: 50 });
+      }
+      if (String(url).endsWith("/api/coding-agents/threads/thread_live_smoke")) {
+        return jsonResponse({ thread: { id: "../unsafe" }, events: { items: [], hasMore: false, limit: 200 } });
+      }
+      if (String(url).endsWith("/api/coding-agents/notification-preferences")) {
+        return jsonResponse({
+          preferences: {
+            attentionPush: {
+              approval: true,
+              input: true,
+              failed: true,
+              completed: true,
+            },
+          },
+        });
+      }
+      throw new Error(`unexpected URL ${String(url)}`);
+    });
+
+    await expect(
+      runRuntimeSmoke({
+        runtimeUrl: new URL("https://runtime.test/"),
+        token: "secret-token",
+        fetchImpl,
+        requireThreadSnapshot: true,
+      }),
+    ).rejects.toMatchObject({
+      name: "SmokeFailure",
+      safeMessage: "Thread snapshot response did not match the Matrix coding-agent contract.",
+    });
+  });
+
+  it("keeps thread snapshot request descriptions aligned with the client contract", async () => {
+    const snapshotWithOverlongApproval = {
+      ...threadSnapshot,
+      events: {
+        items: [
+          {
+            eventId: "evt_live_smoke_2",
+            threadId: "thread_live_smoke",
+            type: "approval.requested",
+            occurredAt: "2026-07-09T10:01:00.000Z",
+            approval: {
+              approvalId: "appr_live_smoke",
+              threadId: "thread_live_smoke",
+              title: "Approve",
+              safeDescription: "a".repeat(601),
+              risk: "low",
+              actionKind: "command",
+              allowedDecisions: ["approve", "decline"],
+              correlationId: "corr_live_smoke",
+            },
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    };
+    const fetchImpl = vi.fn(async (url: URL | string) => {
+      if (String(url).endsWith("/api/coding-agents/summary")) return jsonResponse(runtimeSummary);
+      if (String(url).endsWith("/api/coding-agents/threads")) {
+        return jsonResponse({ items: runtimeSummary.activeThreads.items, hasMore: false, limit: 50 });
+      }
+      if (String(url).endsWith("/api/coding-agents/reviews")) {
+        return jsonResponse({ items: [], hasMore: false, limit: 50 });
+      }
+      if (String(url).endsWith("/api/coding-agents/threads/thread_live_smoke")) {
+        return jsonResponse(snapshotWithOverlongApproval);
+      }
+      if (String(url).endsWith("/api/coding-agents/notification-preferences")) {
+        return jsonResponse({
+          preferences: {
+            attentionPush: {
+              approval: true,
+              input: true,
+              failed: true,
+              completed: true,
+            },
+          },
+        });
+      }
+      throw new Error(`unexpected URL ${String(url)}`);
+    });
+
+    await expect(
+      runRuntimeSmoke({
+        runtimeUrl: new URL("https://runtime.test/"),
+        token: "secret-token",
+        fetchImpl,
+        requireThreadSnapshot: true,
+      }),
+    ).rejects.toMatchObject({
+      name: "SmokeFailure",
+      safeMessage: "Thread snapshot response did not match the Matrix coding-agent contract.",
+    });
+  });
+
+  it("rejects uppercase safe error codes in thread snapshot events", async () => {
+    const snapshotWithSafeError = {
+      ...threadSnapshot,
+      events: {
+        items: [
+          {
+            eventId: "evt_live_smoke_3",
+            threadId: "thread_live_smoke",
+            type: "thread.error",
+            occurredAt: "2026-07-09T10:01:00.000Z",
+            error: {
+              code: "NOT_FOUND",
+              safeMessage: "Thread state unavailable",
+              retryable: true,
+              recoveryActions: ["retry"],
+            },
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    };
+    const fetchImpl = vi.fn(async (url: URL | string) => {
+      if (String(url).endsWith("/api/coding-agents/summary")) return jsonResponse(runtimeSummary);
+      if (String(url).endsWith("/api/coding-agents/threads")) {
+        return jsonResponse({ items: runtimeSummary.activeThreads.items, hasMore: false, limit: 50 });
+      }
+      if (String(url).endsWith("/api/coding-agents/reviews")) {
+        return jsonResponse({ items: [], hasMore: false, limit: 50 });
+      }
+      if (String(url).endsWith("/api/coding-agents/threads/thread_live_smoke")) return jsonResponse(snapshotWithSafeError);
+      if (String(url).endsWith("/api/coding-agents/notification-preferences")) {
+        return jsonResponse({
+          preferences: {
+            attentionPush: {
+              approval: true,
+              input: true,
+              failed: true,
+              completed: true,
+            },
+          },
+        });
+      }
+      throw new Error(`unexpected URL ${String(url)}`);
+    });
+
+    await expect(
+      runRuntimeSmoke({
+        runtimeUrl: new URL("https://runtime.test/"),
+        token: "secret-token",
+        fetchImpl,
+        requireThreadSnapshot: true,
+      }),
+    ).rejects.toMatchObject({
+      name: "SmokeFailure",
+      safeMessage: "Thread snapshot response did not match the Matrix coding-agent contract.",
+    });
+  });
+
+  it("explains when a required snapshot has no active or attention thread", async () => {
+    const summaryWithoutThreads = {
+      ...runtimeSummary,
+      activeThreads: { items: [], hasMore: false, limit: 50 },
+      attentionThreads: { items: [], hasMore: false, limit: 50 },
+    };
+    const fetchImpl = vi.fn(async (url: URL | string) => {
+      if (String(url).endsWith("/api/coding-agents/summary")) return jsonResponse(summaryWithoutThreads);
+      if (String(url).endsWith("/api/coding-agents/threads")) {
+        return jsonResponse({ items: [], hasMore: false, limit: 50 });
+      }
+      if (String(url).endsWith("/api/coding-agents/reviews")) {
+        return jsonResponse({ items: [], hasMore: false, limit: 50 });
+      }
+      if (String(url).endsWith("/api/coding-agents/notification-preferences")) {
+        return jsonResponse({
+          preferences: {
+            attentionPush: {
+              approval: true,
+              input: true,
+              failed: true,
+              completed: true,
+            },
+          },
+        });
+      }
+      throw new Error(`unexpected URL ${String(url)}`);
+    });
+
+    await expect(
+      runRuntimeSmoke({
+        runtimeUrl: new URL("https://runtime.test/"),
+        token: "secret-token",
+        fetchImpl,
+        requireThreadSnapshot: true,
+      }),
+    ).rejects.toMatchObject({
+      name: "SmokeFailure",
+      safeMessage: "thread snapshot unavailable because no active or attention thread is available. Start or select a thread and try again.",
+    });
   });
 
   it("checks coding-agent routes under an explicit runtime base path", async () => {
