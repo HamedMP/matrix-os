@@ -11,6 +11,7 @@ import {
   safeThreadError,
   type CodingAgentThreadStore,
 } from "./thread-store.js";
+import { logCodingAgentWarning } from "./diagnostics.js";
 
 const MAX_INBOUND_FRAME_BYTES = 4096;
 const DEFAULT_MAX_SUBSCRIBERS = 64;
@@ -71,7 +72,7 @@ function sendJson(ws: CodingAgentThreadStreamSocket, frame: unknown): boolean {
     ws.send(JSON.stringify(frame));
     return true;
   } catch (err: unknown) {
-    console.warn("[coding-agents] thread stream send failed:", err instanceof Error ? err.message : String(err));
+    logCodingAgentWarning("thread stream send failed", err);
     return false;
   }
 }
@@ -80,7 +81,7 @@ function closeSocket(ws: CodingAgentThreadStreamSocket): void {
   try {
     ws.close?.();
   } catch (err: unknown) {
-    console.warn("[coding-agents] thread stream close failed:", err instanceof Error ? err.message : String(err));
+    logCodingAgentWarning("thread stream close failed", err);
   }
 }
 
@@ -225,7 +226,7 @@ export function createCodingAgentThreadStream(options: CodingAgentThreadStreamOp
             parsed = JSON.parse(raw);
           } catch (err: unknown) {
             if (!(err instanceof SyntaxError)) {
-              console.warn("[coding-agents] thread stream JSON parse failed:", err instanceof Error ? err.message : String(err));
+              logCodingAgentWarning("thread stream JSON parse failed", err);
             }
             sendJson(input.ws, { type: "thread.stream.error", error: invalidFrameError() });
             return;
@@ -258,7 +259,7 @@ export function createCodingAgentThreadStream(options: CodingAgentThreadStreamOp
           recoveryActions: ["retry"],
         });
       if (!(err instanceof CodingAgentThreadError)) {
-        console.warn("[coding-agents] thread stream open failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("thread stream open failed", err);
       }
       sendJson(input.ws, { type: "thread.stream.error", error: safeError });
       closeSocket(input.ws);

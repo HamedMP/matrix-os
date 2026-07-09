@@ -58,6 +58,7 @@ import {
   type CodingAgentSourceControlStore,
 } from "./source-control.js";
 import type { CodingAgentNotificationPreferenceStore } from "./notification-preferences.js";
+import { logCodingAgentWarning } from "./diagnostics.js";
 
 export interface CodingAgentRouteDeps {
   service: CodingAgentRuntimeSummaryService;
@@ -216,7 +217,7 @@ function mapThreadRouteError(c: Context, err: unknown) {
   if (err instanceof z.ZodError) {
     return c.json({ error: validationFailed() }, 400);
   }
-  console.warn("[coding-agents] thread route failed:", err instanceof Error ? err.message : String(err));
+  logCodingAgentWarning("thread route failed", err);
   return c.json({ error: threadsUnavailable() }, 503);
 }
 
@@ -253,7 +254,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
       if (err instanceof z.ZodError) {
         return c.json({ error: validationFailed() }, 400);
       }
-      console.warn("[coding-agents] summary route failed:", err instanceof Error ? err.message : String(err));
+      logCodingAgentWarning("summary route failed", err);
       return c.json({ error: summaryUnavailable() }, 503);
     }
   });
@@ -352,7 +353,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         if (err instanceof z.ZodError) {
           return c.json({ error: validationFailed() }, 400);
         }
-        console.warn("[coding-agents] review route failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("review route failed", err);
         return c.json({ error: reviewsUnavailable() }, 503);
       }
     });
@@ -377,7 +378,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           const status = err.code === "review_not_found" ? 404 : 503;
           return c.json({ error: err.code === "review_not_found" ? reviewNotFound() : reviewsUnavailable() }, status);
         }
-        console.warn("[coding-agents] review snapshot route failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("review snapshot route failed", err);
         return c.json({ error: reviewsUnavailable() }, 503);
       }
     });
@@ -407,7 +408,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           if (err.code === "not_file") return c.json({ error: validationFailed() }, 400);
           return c.json({ error: filesUnavailable() }, 503);
         }
-        console.warn("[coding-agents] file browse route failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("file browse route failed", err);
         return c.json({ error: filesUnavailable() }, 503);
       }
     });
@@ -434,7 +435,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           if (err.code === "not_file") return c.json({ error: validationFailed() }, 400);
           return c.json({ error: filesUnavailable() }, 503);
         }
-        console.warn("[coding-agents] file read route failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("file read route failed", err);
         return c.json({ error: filesUnavailable() }, 503);
       }
     });
@@ -463,7 +464,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           if (err.code === "not_file") return c.json({ error: validationFailed() }, 400);
           return c.json({ error: filesUnavailable() }, 503);
         }
-        console.warn("[coding-agents] file search route failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("file search route failed", err);
         return c.json({ error: filesUnavailable() }, 503);
       }
     });
@@ -491,7 +492,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           if (err.code === "not_file" || err.code === "invalid_request") return c.json({ error: validationFailed() }, 400);
           return c.json({ error: filesUnavailable() }, 503);
         }
-        console.warn("[coding-agents] file write route failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("file write route failed", err);
         return c.json({ error: filesUnavailable() }, 503);
       }
     });
@@ -523,7 +524,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           if (err.code === "invalid_request") return c.json({ error: validationFailed() }, 400);
           return c.json({ error: sourceControlUnavailable() }, 503);
         }
-        console.warn("[coding-agents] source-control route failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("source-control route failed", err);
         return c.json({ error: sourceControlUnavailable() }, 503);
       }
     });
@@ -553,7 +554,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           if (err.code === "invalid_request") return c.json({ error: validationFailed() }, 400);
           return c.json({ error: sourceControlUnavailable() }, 503);
         }
-        console.warn("[coding-agents] source-control pull request route failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("source-control pull request route failed", err);
         return c.json({ error: sourceControlUnavailable() }, 503);
       }
     });
@@ -572,7 +573,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           const mapped = mapRequestPrincipalError(err);
           return c.json(mapped.body, mapped.status as ContentfulStatusCode);
         }
-        console.warn("[coding-agents] notification preferences route failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("notification preferences route failed", err);
         return c.json({ error: notificationPreferencesUnavailable() }, 503);
       }
     });
@@ -596,7 +597,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         if (err instanceof z.ZodError || err instanceof SyntaxError) {
           return c.json({ error: validationFailed() }, 400);
         }
-        console.warn("[coding-agents] notification preferences update failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("notification preferences update failed", err);
         return c.json({ error: notificationPreferencesUnavailable() }, 503);
       }
     });

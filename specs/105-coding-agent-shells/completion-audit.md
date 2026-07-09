@@ -20,6 +20,7 @@ This audit records current evidence through the desktop operator palette smoke a
 | Browser shell remains Canvas-first and read-only for coding-agent state | `shell/src/components/workspace/WorkspaceApp.tsx`; `tests/shell/workspace-app.test.tsx`; browser section in `current-state.md` | Implemented |
 | File, review, diff, preview, and source-control surfaces remain gateway-owned with bounded shell clients | Gateway route inventory plus desktop/mobile review tests listed in `current-state.md` | Implemented |
 | Notifications and attention routing use safe owner-scoped payloads and preferences | `packages/gateway/src/coding-agents/attention-notifications.ts`; `packages/gateway/src/coding-agents/notification-preferences.ts`; related gateway, desktop, and mobile tests listed in `current-state.md` | Implemented |
+| Redacted diagnostics for coding-agent gateway/runtime failure paths | `packages/gateway/src/coding-agents/diagnostics.ts`; `tests/gateway/coding-agents-diagnostics.test.ts`; route/summary/thread-stream/thread-store/attention-notification callers | Implemented |
 | Desktop renderer does not receive raw bearer/provider credentials | Trusted IPC and main-process client inventory in `current-state.md`; desktop runtime client tests | Implemented by architecture and tests |
 | Mobile persistent state stores only bounded UI references | `apps/mobile/lib/agent-workspace-state.ts`; `apps/mobile/lib/mobile-shell-state.ts`; mobile state tests listed in `current-state.md` | Implemented |
 | Public and internal docs | `docs/dev/coding-agent-shells.md`; `www/content/docs/coding-agents.mdx`; `current-state.md` | Implemented and must stay synchronized |
@@ -87,5 +88,6 @@ That automated desktop smoke now also covers opening the Agents workspace from t
 - New shell routes and clients use shared Zod 4 contracts at the boundary.
 - Mutating gateway routes use body limits, validation, ownership checks, and safe error mapping.
 - WebSocket thread streams authenticate before success, validate frames, cap subscribers, and clean up stale streams.
+- Gateway coding-agent diagnostics are bounded and redacted before logging paths, tokens, URLs, private hosts, database details, or provider/runtime failure text.
 - No new embedded database persistence was added.
 - Gateway/runtime remains the source of truth; desktop, mobile, and browser shells are resumable clients.

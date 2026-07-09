@@ -12,6 +12,7 @@ import type {
   CodingAgentPreviewSummaryStore,
   CodingAgentRuntimeSummaryRequestOptions,
 } from "./runtime-summary.js";
+import { logCodingAgentWarning } from "./diagnostics.js";
 
 type PreviewListResult =
   | { ok: true; previews: PreviewRecord[]; nextCursor: string | null }
@@ -75,7 +76,7 @@ function localPreviewOrigin(rawUrl: string): string | undefined {
     return local ? url.origin : undefined;
   } catch (err: unknown) {
     if (err instanceof TypeError) return undefined;
-    console.warn("[coding-agents] preview origin parse failed:", err instanceof Error ? err.message : String(err));
+    logCodingAgentWarning("preview origin parse failed", err);
     return undefined;
   }
 }
