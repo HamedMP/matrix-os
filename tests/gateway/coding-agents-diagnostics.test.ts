@@ -86,10 +86,25 @@ describe("coding agent diagnostics", () => {
     expect(redacted).not.toMatch(/169\.254|::1|fe80|fd12|internal-runtime|matrix-vps|localhost/i);
   });
 
+  it("redacts assignment-prefixed owner paths", () => {
+    const redacted = redactCodingAgentDiagnosticText(
+      "read path=/home/matrix/private.ts file=/opt/matrix/release.json",
+    );
+
+    expect(redacted).toBe("read path=[path] file=[path]");
+    expect(redacted).not.toMatch(/\/home\/matrix|\/opt\/matrix|private\.ts|release\.json/);
+  });
+
   it("formats non-error diagnostics and unsafe names safely", () => {
     const unknown = formatCodingAgentDiagnostic("token=sk_live_private /tmp/private-file");
     const unsafeNameError = new Error("failed");
+    const tokenNameError = new Error("failed");
+    const pathNameError = new Error("failed");
+    const hostNameError = new Error("failed");
     unsafeNameError.name = "!!!";
+    tokenNameError.name = "sk_live_private_name";
+    pathNameError.name = "/home/matrix/private-error";
+    hostNameError.name = "internal-runtime.local";
 
     expect(unknown).toEqual({
       name: "Unknown",
@@ -99,6 +114,9 @@ describe("coding agent diagnostics", () => {
       name: "Error",
       message: "failed",
     });
+    expect(formatCodingAgentDiagnostic(tokenNameError).name).toBe("token");
+    expect(formatCodingAgentDiagnostic(pathNameError).name).toBe("path");
+    expect(formatCodingAgentDiagnostic(hostNameError).name).toBe("host");
   });
 
   it("formats bounded error diagnostics without leaking raw values", () => {
