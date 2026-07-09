@@ -298,6 +298,86 @@ Checks:
 4. Runtime or project switches should clear stale preview rows before new data loads.
 5. If a preview is stale, refresh the runtime summary rather than trusting a persisted client reference.
 
+### Desktop Validation
+
+Before enabling a desktop coding-agent shell change broadly:
+
+1. Run the touched desktop unit or renderer tests and `pnpm --filter desktop run typecheck`.
+2. When the slice touches shared shell, gateway, or contract behavior, also run the matching gateway Vitest tests, shell typecheck, and desktop operator smoke listed below.
+3. Confirm desktop renderer state and IPC payloads contain only validated summaries, snapshots, and bounded UI references. Bearer credentials, provider credentials, raw provider errors, terminal output, file contents beyond transient editor state, and unbounded transcripts must stay out of renderer persistence.
+4. Run the Manual Desktop Real-Runtime Smoke checklist below when the slice touches runtime switching, native menu or command-palette entry points, Agents workspace routing, provider setup actions, thread detail, approval/input controls, review/file/preview routes, notification click-through, desktop badge counts, or terminal binding.
+5. Confirm Terminal Shells, Apps, Settings, Chat, hosted shell embeds, updater entry points, deep links, and window/menu behavior still work after the Agents pass.
+
+#### Automated Desktop Preflight
+
+Use the smallest focused set for the touched surface first. These are the current desktop coding-agent gates:
+
+```bash
+pnpm exec vitest run tests/desktop/coding-agent-runtime-client.test.ts tests/desktop/coding-agent-thread-stream.test.ts tests/desktop/coding-agent-workspace.test.tsx tests/desktop/ipc-contract.test.ts
+pnpm exec vitest run tests/desktop/menu-template.test.ts tests/desktop/shortcuts.test.ts tests/desktop/command-palette.test.tsx
+pnpm --filter desktop run typecheck
+```
+
+If the slice changes the desktop end-to-end shell path, also run:
+
+```bash
+xvfb-run -a bun run test:e2e tests/e2e/desktop/operator.e2e.test.ts
+```
+
+For release-parity packaging or trusted main-process changes, add:
+
+```bash
+bun run build:desktop
+```
+
+### Manual Desktop Real-Runtime Smoke
+
+Use this checklist against a real Matrix computer before broad rollout of
+desktop coding-agent shell changes. Keep evidence public-safe: do not paste
+bearer tokens, provider credentials, private hostnames, VPS IPs, raw provider
+output, terminal output, transcripts, file contents, diffs, approval payloads,
+launch tokens, or customer identifiers.
+
+1. Launch the desktop app from the branch or packaged artifact under test, sign
+   in, and select the intended Matrix computer. If multiple runtimes are
+   available, switch runtimes once and confirm Agents rehydrates from the newly
+   selected runtime.
+2. Open Agents from the sidebar, command palette, and native menu or shortcut.
+   Confirm each entry point focuses the same gateway-backed workspace instead
+   of a legacy local composer.
+3. Confirm the workspace hydrates provider status, active threads, attention
+   threads, terminal summaries, review summaries, and preview summaries from
+   the gateway without raw errors.
+4. If a provider requires setup, use the foreground setup action. Confirm it
+   opens a canonical terminal session and does not expose setup commands,
+   credentials, or provider raw errors in renderer state or screenshots.
+5. Open an existing thread, or create a disposable test thread only when a
+   provider is ready. Confirm the detail snapshot loads, event grouping is
+   bounded, stream updates do not duplicate replayed events, and unresolved
+   approval/input controls stay idempotent while a request is in flight.
+6. Use a bound terminal action from Agents or thread detail. Confirm it opens
+   the existing Terminal tab/model for the canonical Matrix terminal session;
+   detaching or leaving the tab must not terminate the underlying process.
+7. Open review, file, and preview surfaces. Confirm review/file content loads
+   through trusted IPC, file edits remain transient until saved through the
+   gateway, large/partial data shows recoverable UI, HTTPS previews open through
+   safe desktop open paths, and failures remain generic.
+8. Trigger or simulate a coding-agent attention notification with a bounded
+   thread reference. Confirm clicking the native notification focuses the
+   Agents workspace and visibly selects the matching thread. Confirm the badge
+   count reflects bounded gateway-owned attention state and uses overflow
+   behavior when the list is truncated.
+9. Put the runtime in an unavailable or offline state, or switch away from it,
+   then return. Confirm stale thread, terminal, review, and preview references
+   are dropped or shown as recoverable, and the UI rehydrates from the gateway
+   instead of trusting local renderer state.
+10. Recheck Terminal Shells, Apps, Settings, Chat, hosted shell embeds, updater
+    entry points, deep links, native menus, shortcuts, and window restore after
+    the Agents pass.
+11. Record branch, commit, desktop app build type, selected validation commands,
+    pass/fail notes, and any deferred manual step with the automated or manual
+    coverage that still applies.
+
 ### Mobile Validation
 
 Before enabling a mobile coding-agent shell change broadly:

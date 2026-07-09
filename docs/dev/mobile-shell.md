@@ -256,7 +256,8 @@ summary behavior, run the matching gateway or contract tests listed in
     such as selected thread, review, preview, or terminal IDs. Thread snapshots,
     transcripts, terminal output, file contents, diffs, approval payloads,
     credentials, and launch tokens must reload from the gateway or remain absent.
-11. Recheck Chat, Apps, Terminal, and Settings after the Agents pass.
+11. Recheck Chat, Mission Control, Terminal, Apps, and Settings after the Agents
+    pass.
 
 ### Evidence To Record
 
