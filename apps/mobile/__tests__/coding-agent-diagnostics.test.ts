@@ -33,6 +33,12 @@ describe("mobile coding-agent diagnostics", () => {
     expect(redacted).toBe("Authorization: [token]");
   });
 
+  it("redacts private ipv6 diagnostic hosts", () => {
+    const redacted = redactMobileCodingAgentDiagnosticText("connect ::1 fe80::1 fd12:3456:789a::1");
+
+    expect(redacted).toBe("connect [host] [host] [host]");
+  });
+
   it("bounds long diagnostic text", () => {
     const redacted = redactMobileCodingAgentDiagnosticText(`status ${"x".repeat(220)}`);
 
