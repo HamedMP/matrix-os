@@ -150,6 +150,28 @@ Use this checklist for every coding-agent shell PR:
 
 Use this section when a coding-agent shell surface is enabled but a user cannot continue work from desktop or mobile. Keep support notes public-safe: do not paste customer identifiers, bearer tokens, provider credentials, private hostnames, VPS IPs, or raw provider output into GitHub, docs, or PR comments.
 
+### Runtime Smoke Command
+
+Before a manual desktop or mobile smoke, validate the selected Matrix computer's coding-agent contract surface with the read-only runtime smoke:
+
+```bash
+MATRIX_CODING_AGENTS_SMOKE_ORIGIN="https://app.matrix-os.com" \
+MATRIX_CODING_AGENTS_SMOKE_TOKEN="<operator-auth-token>" \
+pnpm run smoke:coding-agents
+```
+
+The command validates the authenticated runtime summary, notification preferences, review summaries, and one existing thread snapshot when a thread is present. It parses every response through the shared contracts and prints only aggregate counts and statuses. It does not print bearer tokens, provider credentials, terminal output, transcripts, file contents, diffs, private hostnames, or raw gateway/provider errors.
+
+The command is read-only by default. To create one smoke agent run after the read-only checks pass, opt in explicitly:
+
+```bash
+MATRIX_CODING_AGENTS_SMOKE_ORIGIN="https://app.matrix-os.com" \
+MATRIX_CODING_AGENTS_SMOKE_TOKEN="<operator-auth-token>" \
+pnpm run smoke:coding-agents -- --create-thread --prompt "Matrix coding-agent runtime smoke"
+```
+
+Use `--runtime <slot>` only when validating a non-primary runtime slot. Record pass/fail status and aggregate counts in the PR or release note; keep the origin, token, owner handle, private hostnames, and raw response bodies out of public artifacts.
+
 ### Provider Setup Failure
 
 Symptoms:
