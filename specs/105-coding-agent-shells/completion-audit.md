@@ -1,10 +1,10 @@
 # Completion Audit: Coding Agent Shells
 
-**Audited commit**: `056b3da668ed6d1753712120316d2d5accfafdcf`
-**Date**: 2026-07-08
+**Audited commit**: `7ca8ae8875a7b0e13edebd607d7ff71ca8a1a876`
+**Date**: 2026-07-09
 **Scope**: Evidence review for the Matrix OS coding-agent desktop, mobile, browser, and gateway shell implementation checkpoint.
 
-This audit records current evidence through the desktop operator palette smoke and mobile terminal handoff checkpoint. It does not mark the full rollout complete while real-device smoke and broader cross-shell validation remain outstanding.
+This audit records current evidence through the desktop operator palette smoke, mobile terminal handoff, Expo SDK 57 composer export, and post-merge host-bundle deployment checkpoints. It does not mark the full rollout complete while real-runtime desktop smoke, real-device mobile smoke, and broader cross-shell validation remain outstanding.
 
 ## Evidence Matrix
 
@@ -25,6 +25,21 @@ This audit records current evidence through the desktop operator palette smoke a
 | Public and internal docs | `docs/dev/coding-agent-shells.md`; `www/content/docs/coding-agents.mdx`; `current-state.md` | Implemented and must stay synchronized |
 
 ## Validation Evidence
+
+GitHub CI for `7ca8ae8875a7b0e13edebd607d7ff71ca8a1a876` completed successfully after rerunning an unrelated Clock app test flake:
+
+- Pattern Scan
+- React Doctor
+- Type Check
+- Shell Production Build
+- Sync Client Package
+- Unit Tests shards 1/4, 2/4, 3/4, and 4/4
+- E2E Tests
+- CI Results
+
+Docker Tests completed successfully for `7ca8ae8875a7b0e13edebd607d7ff71ca8a1a876`, including Docker image build, smoke coverage, and scenario jobs for fresh install, upgrade, customized files, channels, and recovery.
+
+Host Bundle Release completed successfully for `7ca8ae8875a7b0e13edebd607d7ff71ca8a1a876`; the workflow built the host bundle, uploaded the artifact, published to R2, and triggered exact-version VPS deploy.
 
 GitHub CI for `87bc72d0fdd9067fcec395c479de80fcaccfe641` completed successfully:
 
@@ -75,6 +90,16 @@ The desktop palette and menu-entry checkpoint in PR #869 added and passed focuse
 - `bun run check:patterns`
 
 That automated desktop smoke now also covers opening the Agents workspace from the command palette after the terminal smoke path, and unit coverage confirms the native Agents menu accelerator matches the renderer shortcut.
+
+The mobile SDK 57 composer export checkpoint in PR #871 added and passed focused PR validation:
+
+- `pnpm --filter matrix-os-mobile exec jest __tests__/agent-composer-sdk57.test.ts __tests__/agent-composer-screen.test.tsx --runInBand`
+- `pnpm --filter matrix-os-mobile run lint`
+- `pnpm --filter matrix-os-mobile exec tsc --noEmit`
+- `bun run check:patterns`
+- `EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE=1 pnpm --filter matrix-os-mobile exec expo export --platform web --clear`
+
+That mobile validation confirms the coding-agent composer route graph exports under Expo SDK 57, avoids rejected dynamic route imports, and keeps iOS keyboard avoidance safe-area aware.
 
 ## Remaining Validation
 

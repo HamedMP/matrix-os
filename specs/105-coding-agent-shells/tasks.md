@@ -1,7 +1,7 @@
 # Tasks: Coding Agent Shells
 
 **Status**: Implementation checkpoint
-**Branch**: merged implementation checkpoint through `main` commit `056b3da668ed6d1753712120316d2d5accfafdcf`
+**Branch**: merged implementation checkpoint through `main` commit `7ca8ae8875a7b0e13edebd607d7ff71ca8a1a876`
 **Rule**: Preserve all existing desktop and mobile functionality. Add coding-agent capabilities incrementally behind contracts, tests, and feature flags.
 
 ## Implementation Checkpoint
@@ -10,16 +10,19 @@ The phase checklist below is the original implementation plan. The authoritative
 landed-state inventory is now `current-state.md`, and the requirement/evidence
 matrix is `completion-audit.md`.
 
-As of the `056b3da668ed6d1753712120316d2d5accfafdcf` main checkpoint:
+As of the `7ca8ae8875a7b0e13edebd607d7ff71ca8a1a876` main checkpoint:
 
 - Shared contracts, gateway summary/routes, provider/thread/review/file/preview/source-control contracts, desktop shell surfaces, mobile SDK 57 surfaces, browser Workspace handoff, notification preferences, and public/internal docs are implemented and inventoried in `current-state.md`.
 - Startup/runtime degradation recovery now routes closed coding-agent sessions through the same workspace `session.stopped` publisher path used by live session completion reconciliation.
+- GitHub CI for `7ca8ae8875a7b0e13edebd607d7ff71ca8a1a876` completed successfully after rerunning an unrelated Clock app test flake; the rerun passed all CI jobs, including typecheck, pattern scan, shell production build, sync-client package checks, all four unit shards, E2E, and the aggregate CI Results job.
+- Docker Tests and Host Bundle Release completed successfully for `7ca8ae8875a7b0e13edebd607d7ff71ca8a1a876`; Host Bundle Release built the bundle, published it to R2, and triggered exact-version VPS deploy.
 - GitHub CI for the `87bc72d0fdd9067fcec395c479de80fcaccfe641` implementation checkpoint completed successfully, including pattern scan, React Doctor, typecheck, shell production build, sync-client package checks, all four unit shards, and E2E.
 - Docker Tests and Host Bundle Release completed successfully for the `87bc72d0fdd9067fcec395c479de80fcaccfe641` implementation checkpoint; Host Bundle Release built the bundle, published the release, and triggered exact-version VPS deploy.
 - Platform Cloud Run completed successfully for the browser Workspace implementation checkpoint commit `87ce9e8cc2a6357a122ea0fd9120487702ea9323`; the later `87bc72d0fdd9067fcec395c479de80fcaccfe641` checkpoint changed gateway/spec state and did not require a platform app-shell deploy.
 - PR #866 desktop operator e2e smoke validation now covers the stubbed sign-in/device-auth flow, project board hydration, canonical terminal attach and echo, the current Agents workspace summary/create path, Terminal Shells, Apps, Settings, Chat, and hosted-shell detach behavior.
 - PR #868 mobile validation now confirms thread detail terminal handoff persists the bounded canonical terminal session reference needed by the mobile Terminal route without persisting terminal output or transcript data.
 - PR #869 desktop validation now confirms the command-palette Agents entry still opens after terminal interaction, and menu-template tests cover the native Agents accelerator used to focus the same workspace.
+- PR #871 mobile validation confirms the Expo SDK 57 web export accepts the coding-agent composer route graph after removing the rejected dynamic navigation import path.
 - Remaining work is validation and rollout hardening: real-runtime desktop smoke, mobile SDK 57 device smoke, and continued docs sync as later provider/runtime behavior changes.
 
 ## Agent Instructions
