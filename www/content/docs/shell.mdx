@@ -53,7 +53,7 @@ The Terminal is a persistent shell that keeps running after you close the browse
 
 When attached from the CLI, pasted local screenshot paths are copied into the same Matrix home used by the web Terminal. The CLI replaces local paths with files under `~/projects/.matrix-terminal-pastes/` before sending input to the shared session, so browser and CLI users see a remote path the Matrix computer can read.
 
-This rich paste behavior is scoped to CLI attach. Browser and desktop terminals already run inside the Matrix shell context, while the CLI is the surface that can read local macOS files or, when a terminal exposes an observable paste event, a macOS image clipboard through `pngpaste`.
+This rich paste behavior is scoped to CLI attach. Browser and desktop terminals already run inside the Matrix shell context, while the CLI is the surface that can read local macOS files or, when a terminal exposes an observable paste event or attached-session `Ctrl-\` then `v`, a macOS image clipboard through `pngpaste`.
 
 ## GitHub auth
 

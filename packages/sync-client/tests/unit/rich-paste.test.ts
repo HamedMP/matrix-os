@@ -159,6 +159,71 @@ describe("cli/rich-paste", () => {
     expect(client.uploadPasteAssets).not.toHaveBeenCalled();
   });
 
+  it("falls back to the clipboard image for a single unreadable observable pasted image path", async () => {
+    const localPath = join(tempDir, "missing.png");
+    const client = uploadClient(["/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/clipboard.png"]);
+    const clipboardReader = {
+      readImage: vi.fn(async () => ({
+        status: "available" as const,
+        candidate: {
+          kind: "clipboard" as const,
+          capturedAt: new Date("2026-07-08T10:31:00Z"),
+          sizeBytes: pngBytes.byteLength,
+          mimeType: "image/png" as const,
+          bytes: new Uint8Array(pngBytes),
+        },
+      })),
+    };
+
+    const result = await processRichPasteTransaction({
+      sessionName: "main",
+      text: localPath,
+      observablePaste: true,
+      uploadClient: client,
+      clipboardReader,
+    });
+
+    expect(result.status).toBe("rewritten");
+    expect(result.outgoingText).toBe("/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/clipboard.png");
+    expect(result.outgoingText).not.toContain(localPath);
+    expect(clipboardReader.readImage).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(client.uploadPasteAssets).mock.calls[0]?.[0].assets).toEqual([{
+      name: "clipboard.png",
+      mimeType: "image/png",
+      bytes: new Uint8Array(pngBytes),
+    }]);
+  });
+
+  it("does not use clipboard fallback for prose with an unreadable image path", async () => {
+    const localPath = join(tempDir, "missing.png");
+    const client = uploadClient([]);
+    const clipboardReader = {
+      readImage: vi.fn(async () => ({
+        status: "available" as const,
+        candidate: {
+          kind: "clipboard" as const,
+          capturedAt: new Date("2026-07-08T10:31:00Z"),
+          sizeBytes: pngBytes.byteLength,
+          mimeType: "image/png" as const,
+          bytes: new Uint8Array(pngBytes),
+        },
+      })),
+    };
+
+    const result = await processRichPasteTransaction({
+      sessionName: "main",
+      text: `inspect ${localPath}`,
+      observablePaste: true,
+      uploadClient: client,
+      clipboardReader,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureCode).toBe("local_read_failed");
+    expect(clipboardReader.readImage).not.toHaveBeenCalled();
+    expect(client.uploadPasteAssets).not.toHaveBeenCalled();
+  });
+
   it("fails locally for unreadable non-file image paths", async () => {
     const localPath = join(tempDir, "directory.png");
     await mkdir(localPath);

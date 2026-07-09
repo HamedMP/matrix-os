@@ -98,6 +98,7 @@ export const SHELL_ATTACH_MAX_QUEUED_BYTES = 65_536;
 export { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ };
 const BRACKETED_PASTE_OPEN = "\u001b[200~";
 const BRACKETED_PASTE_CLOSE = "\u001b[201~";
+const LOCAL_CLIPBOARD_IMAGE_PASTE_SUFFIX = "v";
 const SHELL_ATTACH_MAX_PENDING_BRACKETED_PASTE_CHARS = 1024 * 1024;
 const BRACKETED_PASTE_INCOMPLETE_TIMEOUT_MS = 250;
 const SHELL_INPUT_FRAME_MAX_BYTES = 60_000;
@@ -677,6 +678,8 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       const errorOutput = attachOptions.errorOutput ?? process.stderr;
       const input = (attachOptions.input ?? process.stdin) as MaybeTtyStream;
       const detachSequence = attachOptions.detachSequence ?? "\u001c\u001c";
+      const localCommandPrefix = detachSequence[0] ?? "\u001c";
+      const clipboardPasteSequence = `${localCommandPrefix}${LOCAL_CLIPBOARD_IMAGE_PASTE_SUFFIX}`;
       const dropMouse = attachOptions.mouse === false;
       let writeAttachOutput: AttachWriter = (data: string) => {
         try {
@@ -1013,18 +1016,22 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             code: err instanceof Error && "code" in err ? (err as { code?: string }).code ?? "attach_failed" : "attach_failed",
           })));
         };
-        const sendInputFrame = (data: string, observablePaste: boolean): Promise<void> | void => {
-          const shouldRewrite = observablePaste
+        const sendInputFrame = (
+          data: string,
+          observablePaste: boolean,
+          options: { manualClipboardPaste?: boolean } = {},
+        ): Promise<void> | void => {
+          const shouldRewrite = options.manualClipboardPaste || (observablePaste
             ? data.length === 0 || shouldProcessRichPasteText(data)
-            : shouldProcessRichPasteText(data);
+            : shouldProcessRichPasteText(data));
           if (!richPasteRewriter || !shouldRewrite) {
             sendInputData(data);
             return;
           }
           return richPasteRewriter.rewrite({
             sessionName: name,
-            text: data,
-            observablePaste,
+            text: options.manualClipboardPaste ? "" : data,
+            observablePaste: options.manualClipboardPaste ? true : observablePaste,
           }).then((result) => {
             if (settled) {
               return;
@@ -1043,35 +1050,57 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         };
         const processInputData = (data: string, observablePaste: boolean): Promise<void> | void => {
           let outbound = "";
-          const writes: Array<Promise<void>> = [];
-          const enqueueInputFrame = (frameData: string, frameObservablePaste: boolean) => {
-            const maybeWrite = sendInputFrame(frameData, frameObservablePaste);
+          let sequence: Promise<void> | undefined;
+          const enqueueInputFrame = (
+            frameData: string,
+            frameObservablePaste: boolean,
+            frameOptions: { manualClipboardPaste?: boolean } = {},
+          ) => {
+            const run = () => Promise.resolve(sendInputFrame(frameData, frameObservablePaste, frameOptions));
+            if (sequence) {
+              sequence = sequence.then(run);
+              return;
+            }
+            const maybeWrite = sendInputFrame(frameData, frameObservablePaste, frameOptions);
             if (maybeWrite) {
-              writes.push(maybeWrite);
+              sequence = Promise.resolve(maybeWrite);
             }
           };
           for (const char of data) {
             pendingInput += char;
+            if (!observablePaste && pendingInput === clipboardPasteSequence) {
+              pendingInput = "";
+              if (outbound.length > 0) {
+                enqueueInputFrame(outbound, false);
+                outbound = "";
+              }
+              enqueueInputFrame("", false, { manualClipboardPaste: true });
+              continue;
+            }
+            if (!observablePaste && clipboardPasteSequence.startsWith(pendingInput)) {
+              continue;
+            }
             if (pendingInput === detachSequence) {
               pendingInput = "";
               if (outbound.length > 0) {
                 enqueueInputFrame(outbound, false);
               }
               detachLocal();
-              return writes.length > 0 ? Promise.all(writes).then(() => undefined) : undefined;
+              return sequence;
             }
             if (detachSequence.startsWith(pendingInput)) {
               continue;
             }
             while (pendingInput.length > 0 && !detachSequence.startsWith(pendingInput)) {
-              outbound += pendingInput[0];
+              const nextChar = pendingInput[0] ?? "";
               pendingInput = pendingInput.slice(1);
+              outbound += nextChar;
             }
           }
           if (outbound.length > 0 || observablePaste) {
             enqueueInputFrame(outbound, observablePaste);
           }
-          return writes.length > 0 ? Promise.all(writes).then(() => undefined) : undefined;
+          return sequence;
         };
         const processInput = (chunk: Buffer | string): Promise<void> | void => {
           const rawData = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
