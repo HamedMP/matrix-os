@@ -126,7 +126,7 @@ Post-merge checkpoint updates:
 
 - PR #868 confirmed mobile thread detail terminal handoff persists the bounded canonical terminal session reference needed by the Terminal route without persisting terminal output or transcript data.
 - PR #869 confirmed the desktop command-palette Agents entry still opens after terminal interaction, and menu-template tests cover the native Agents accelerator used to focus the same workspace.
-- PR #879 adds an opt-in real-runtime smoke helper at `scripts/coding-agents/real-runtime-smoke.mjs` that validates deployed `/api/coding-agents/summary`, `/threads`, `/reviews`, and `/notification-preferences` responses through bounded Zod schemas without writing runtime state. This is rollout hardening only; deployed desktop/mobile visual smoke remains a separate manual validation step.
+- PR #879 adds an opt-in real-runtime smoke helper at `scripts/coding-agents/real-runtime-smoke.mjs` that validates deployed `/api/coding-agents/summary`, `/threads`, `/reviews`, and `/notification-preferences` responses through bounded Zod schemas without writing runtime state. The stacked assertion slice keeps the helper read-only while adding optional capability, ready-provider, minimum summary count, minimum review count, and thread-snapshot assertions for deployed-runtime validation. This is rollout hardening only; deployed desktop/mobile visual smoke remains a separate manual validation step.
 
 ## Shared Contracts
 
@@ -576,6 +576,7 @@ Real-runtime smoke helper:
 
 ```bash
 MATRIX_RUNTIME_URL="https://app.matrix-os.com/vm/<handle>" MATRIX_RUNTIME_TOKEN="<short-lived runtime token>" node scripts/coding-agents/real-runtime-smoke.mjs
+MATRIX_RUNTIME_URL="https://app.matrix-os.com/vm/<handle>" MATRIX_RUNTIME_TOKEN="<short-lived runtime token>" node scripts/coding-agents/real-runtime-smoke.mjs --require-capability codingAgentsRuntimeSummary --require-ready-provider --min-terminal-sessions 1
 ```
 
 Desktop typecheck:

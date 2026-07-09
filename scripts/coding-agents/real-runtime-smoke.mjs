@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 
 export const DEFAULT_TIMEOUT_MS = 10_000;
 export const MAX_JSON_BYTES = 1024 * 1024;
+export const MAX_SUMMARY_COUNT_ASSERTION = 50;
+export const MAX_REVIEW_COUNT_ASSERTION = 1000;
+export const MAX_REVIEW_PAGES = 20;
 
 const SAFE_SLUG = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const SAFE_ERROR_CODE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/;
@@ -17,12 +20,44 @@ const REVIEW_ID = SAFE_REFERENCE;
 const TERMINAL_ID = SAFE_REFERENCE;
 const WORKTREE_ID = /^wt_[a-z0-9]{12,40}$/;
 const EVENT_ID = /^evt_[A-Za-z0-9_-]{1,128}$/;
+const APPROVAL_ID = /^appr_[A-Za-z0-9_-]{1,128}$/;
+const REQUEST_ID = /^req_[A-Za-z0-9_-]{1,128}$/;
+const CORRELATION_ID = /^corr_[A-Za-z0-9_-]{1,128}$/;
 const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+
+const RUNTIME_CAPABILITY_IDS = [
+  "codingAgentsRuntimeSummary",
+  "codingAgentsDesktopWorkspace",
+  "codingAgentsMobileWorkspace",
+  "codingAgentsThreadCreate",
+  "codingAgentsApprovals",
+  "codingAgentsReview",
+  "codingAgentsPreview",
+  "codingAgentsFiles",
+  "codingAgentsSourceControl",
+  "codingAgentsNativeMobileTerminal",
+];
+
+const RuntimeCapabilityIdSchema = z.enum(RUNTIME_CAPABILITY_IDS);
 
 const SafeDisplayStringSchema = z.string()
   .min(1)
   .max(120)
   .refine((value) => !looksInternal(value), "Unsafe display string");
+
+const SafeLongDisplayStringSchema = z.string()
+  .min(1)
+  .max(2000)
+  .refine((value) => !looksInternal(value), "Unsafe display string");
+
+const SafeRequestDescriptionSchema = z.string()
+  .min(1)
+  .max(600)
+  .refine((value) => !looksInternal(value), "Unsafe display string");
+
+const SafeBoundedTextSchema = z.string()
+  .min(1)
+  .max(4000);
 
 const SafeSetupCommandSchema = z.string()
   .min(1)
@@ -58,18 +93,7 @@ const RuntimeTargetSchema = z.object({
 }).strict();
 
 const RuntimeCapabilitySchema = z.object({
-  id: z.enum([
-    "codingAgentsRuntimeSummary",
-    "codingAgentsDesktopWorkspace",
-    "codingAgentsMobileWorkspace",
-    "codingAgentsThreadCreate",
-    "codingAgentsApprovals",
-    "codingAgentsReview",
-    "codingAgentsPreview",
-    "codingAgentsFiles",
-    "codingAgentsSourceControl",
-    "codingAgentsNativeMobileTerminal",
-  ]),
+  id: RuntimeCapabilityIdSchema,
   enabled: z.boolean(),
   reason: SafeDisplayStringSchema.optional(),
 }).strict();
@@ -181,8 +205,167 @@ const ActivityEventSummarySchema = z.object({
   occurredAt: z.string().regex(ISO_DATETIME),
 }).strict();
 
+const BaseThreadEventSchema = z.object({
+  eventId: z.string().regex(EVENT_ID),
+  threadId: z.string().regex(THREAD_ID),
+  occurredAt: z.string().regex(ISO_DATETIME),
+});
+
+const SafeClientErrorSchema = z.object({
+  // Thread event errors mirror the shared client error contract; HTTP envelopes use SAFE_ERROR_CODE below.
+  code: z.string().min(1).max(80).regex(SAFE_SLUG),
+  safeMessage: SafeDisplayStringSchema,
+  retryable: z.boolean(),
+  recoveryActions: z.array(z.enum([
+    "retry",
+    "sign_in",
+    "select_runtime",
+    "open_setup_terminal",
+    "resume",
+    "start_new_session",
+    "return_home",
+  ])).max(6).optional(),
+}).strict();
+
+const ApprovalPreviewSchema = z.object({
+  title: SafeDisplayStringSchema.optional(),
+  body: SafeLongDisplayStringSchema.optional(),
+  truncated: z.boolean().default(false),
+}).strict();
+
+const AgentApprovalRequestSchema = z.object({
+  approvalId: z.string().regex(APPROVAL_ID),
+  threadId: z.string().regex(THREAD_ID),
+  title: SafeDisplayStringSchema,
+  safeDescription: SafeRequestDescriptionSchema,
+  risk: z.enum(["low", "medium", "high"]),
+  actionKind: z.enum(["command", "file_change", "network", "provider", "other"]),
+  preview: ApprovalPreviewSchema.optional(),
+  allowedDecisions: z.array(z.enum(["approve", "approve_for_session", "decline", "cancel"])).min(1).max(4),
+  expiresAt: z.string().regex(ISO_DATETIME).optional(),
+  correlationId: z.string().regex(CORRELATION_ID),
+}).strict();
+
+const UserInputRequestSchema = z.object({
+  requestId: z.string().regex(REQUEST_ID),
+  threadId: z.string().regex(THREAD_ID),
+  title: SafeDisplayStringSchema,
+  safeDescription: SafeRequestDescriptionSchema,
+  placeholder: SafeDisplayStringSchema.optional(),
+  required: z.boolean().default(true),
+  expiresAt: z.string().regex(ISO_DATETIME).optional(),
+  correlationId: z.string().regex(CORRELATION_ID),
+}).strict();
+
+function safeRelativePathSchema(max = 512) {
+  return z.string()
+    .min(1)
+    .max(max)
+    .refine((value) => !value.startsWith("/") && !value.includes("\0"), "Invalid path")
+    .refine((value) => !value.split(/[\\/]+/).some((part) => part === "" || part === "." || part === ".."), {
+      message: "Path traversal is not allowed",
+    });
+}
+
+const AgentThreadEventSchema = z.discriminatedUnion("type", [
+  BaseThreadEventSchema.extend({
+    type: z.literal("thread.created"),
+    thread: AgentThreadSummarySchema,
+  }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("thread.status"),
+    status: z.enum([
+      "queued",
+      "starting",
+      "running",
+      "waiting_for_approval",
+      "waiting_for_input",
+      "completed",
+      "failed",
+      "aborted",
+      "stale",
+      "archived",
+    ]),
+  }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("assistant.text.delta"),
+    messageId: ReferenceIdSchema,
+    delta: SafeBoundedTextSchema.max(4000),
+  }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("assistant.text.completed"),
+    messageId: ReferenceIdSchema,
+  }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("tool.started"),
+    toolCallId: ReferenceIdSchema,
+    displayName: SafeDisplayStringSchema,
+    kind: SafeDisplayStringSchema,
+  }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("tool.output"),
+    toolCallId: ReferenceIdSchema,
+    text: SafeBoundedTextSchema,
+    truncated: z.boolean().optional(),
+  }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("tool.completed"),
+    toolCallId: ReferenceIdSchema,
+    outcome: z.enum(["success", "failed", "cancelled"]),
+  }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("approval.requested"),
+    approval: AgentApprovalRequestSchema,
+  }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("approval.resolved"),
+    approvalId: z.string().regex(APPROVAL_ID),
+    decision: z.enum(["approve", "approve_for_session", "decline", "cancel"]),
+  }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("user_input.requested"),
+    request: UserInputRequestSchema,
+  }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("user_input.answered"),
+    requestId: z.string().regex(REQUEST_ID),
+    correlationId: z.string().regex(CORRELATION_ID),
+  }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("file.changed"),
+    path: safeRelativePathSchema(),
+    changeKind: z.enum(["created", "updated", "deleted", "renamed"]),
+  }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("review.ready"),
+    reviewId: ReferenceIdSchema,
+    summary: z.object({
+      changedFileCount: z.number().int().min(0).max(10_000),
+      additions: z.number().int().min(0).max(1_000_000),
+      deletions: z.number().int().min(0).max(1_000_000),
+      partial: z.boolean(),
+    }).strict(),
+  }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("terminal.bound"),
+    terminalSessionId: z.string().regex(TERMINAL_ID),
+  }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("thread.error"),
+    error: SafeClientErrorSchema,
+  }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("thread.completed"),
+    outcome: z.enum(["completed", "failed", "aborted"]),
+  }).strict(),
+]);
+
 const ThreadListSchema = boundedListSchema(AgentThreadSummarySchema, 50);
 const ReviewListSchema = boundedListSchema(ReviewSummarySchema, 50);
+const AgentThreadSnapshotSchema = z.object({
+  thread: AgentThreadSummarySchema,
+  events: boundedListSchema(AgentThreadEventSchema, 200),
+}).strict();
 
 const RuntimeSummarySchema = z.object({
   runtime: RuntimeTargetSchema,
@@ -278,6 +461,13 @@ export function createSmokeConfig(argv = process.argv.slice(2), env = process.en
     timeoutMs: parsedTimeout,
     projectId: normalizeOptionalProjectId(flags.projectId ?? env.MATRIX_CODING_AGENT_SMOKE_PROJECT_ID),
     json: Boolean(flags.json),
+    requiredCapabilities: flags.requiredCapabilities ?? [],
+    requireReadyProvider: Boolean(flags.requireReadyProvider),
+    requireThreadSnapshot: Boolean(flags.requireThreadSnapshot),
+    minActiveThreads: flags.minActiveThreads,
+    minTerminalSessions: flags.minTerminalSessions,
+    minPreviewSessions: flags.minPreviewSessions,
+    minReviews: flags.minReviews,
   };
 }
 
@@ -338,6 +528,21 @@ export async function runRuntimeSmoke(options) {
     status: "passed",
     detail: `${reviews.items.length} reviews`,
   });
+  const reviewCount = await countReviewsForMinimum({
+    initial: reviews,
+    minReviews: options.minReviews,
+    runtimeUrl,
+    headers,
+    timeoutMs,
+    fetchImpl,
+  });
+  if (reviewCount > reviews.items.length) {
+    checks.push({
+      name: "review pagination",
+      status: "passed",
+      detail: `${reviewCount} reviews checked`,
+    });
+  }
 
   await runCheck({
     name: "notification preferences",
@@ -354,6 +559,47 @@ export async function runRuntimeSmoke(options) {
     status: "passed",
     detail: "owner preferences available",
   });
+
+  const threadId = summary.activeThreads.items[0]?.id ?? summary.attentionThreads.items[0]?.id;
+  let checkedThreadSnapshot = false;
+  if (options.requireThreadSnapshot && !threadId) {
+    throw new SmokeFailure(
+      "thread snapshot",
+      "thread snapshot unavailable because no active or attention thread is available. Start or select a thread and try again.",
+    );
+  }
+  if (options.requireThreadSnapshot && threadId) {
+    await runCheck({
+      name: "thread snapshot",
+      runtimeUrl,
+      path: `/api/coding-agents/threads/${encodeURIComponent(threadId)}`,
+      headers,
+      timeoutMs,
+      fetchImpl,
+      schema: AgentThreadSnapshotSchema,
+      contractName: "Thread snapshot",
+    });
+    checkedThreadSnapshot = true;
+    checks.push({
+      name: "thread snapshot",
+      status: "passed",
+      detail: "latest thread snapshot available",
+    });
+  }
+
+  const assertionsChecked = evaluateRequirements({
+    summary,
+    reviewCount,
+    checkedThreadSnapshot,
+    request: options,
+  });
+  if (assertionsChecked > 0) {
+    checks.push({
+      name: "runtime requirements",
+      status: "passed",
+      detail: `${assertionsChecked} read-only assertions checked`,
+    });
+  }
 
   return { ok: true, checks };
 }
@@ -448,6 +694,38 @@ function parseArgs(argv) {
       flags.projectId = argv[++index];
       continue;
     }
+    if (arg === "--require-capability") {
+      const result = RuntimeCapabilityIdSchema.safeParse(argv[++index]);
+      if (!result.success) {
+        throw new Error("Invalid required capability");
+      }
+      flags.requiredCapabilities = [...(flags.requiredCapabilities ?? []), result.data];
+      continue;
+    }
+    if (arg === "--require-ready-provider") {
+      flags.requireReadyProvider = true;
+      continue;
+    }
+    if (arg === "--require-thread-snapshot") {
+      flags.requireThreadSnapshot = true;
+      continue;
+    }
+    if (arg === "--min-active-threads") {
+      flags.minActiveThreads = parseSummaryMinimumCount(argv[++index], "min-active-threads");
+      continue;
+    }
+    if (arg === "--min-terminal-sessions") {
+      flags.minTerminalSessions = parseSummaryMinimumCount(argv[++index], "min-terminal-sessions");
+      continue;
+    }
+    if (arg === "--min-preview-sessions") {
+      flags.minPreviewSessions = parseSummaryMinimumCount(argv[++index], "min-preview-sessions");
+      continue;
+    }
+    if (arg === "--min-reviews") {
+      flags.minReviews = parseMinimumCount(argv[++index], "min-reviews");
+      continue;
+    }
     if (arg === "--timeout-ms") {
       flags.timeoutMs = argv[++index];
       continue;
@@ -464,6 +742,99 @@ function normalizeOptionalProjectId(value) {
     throw new Error("project id is invalid");
   }
   return result.data;
+}
+
+function parseMinimumCount(value, label) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > MAX_REVIEW_COUNT_ASSERTION) {
+    throw new Error(`${label} must be a positive integer up to ${MAX_REVIEW_COUNT_ASSERTION}`);
+  }
+  return parsed;
+}
+
+function parseSummaryMinimumCount(value, label) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > MAX_SUMMARY_COUNT_ASSERTION) {
+    throw new Error(`${label} must be a positive integer up to ${MAX_SUMMARY_COUNT_ASSERTION}`);
+  }
+  return parsed;
+}
+
+function isReadyProvider(provider) {
+  return provider.availability === "available" &&
+    provider.installStatus === "installed" &&
+    provider.authStatus === "authenticated";
+}
+
+function evaluateRequirements({ summary, reviewCount, checkedThreadSnapshot, request }) {
+  let checked = 0;
+  const fail = () => {
+    throw new SmokeFailure(
+      "runtime requirements",
+      "runtime requirements unavailable. Refresh runtime state and try again.",
+    );
+  };
+  const capabilities = new Map(summary.capabilities.map((capability) => [capability.id, capability.enabled]));
+
+  for (const capabilityId of request.requiredCapabilities ?? []) {
+    checked += 1;
+    if (capabilities.get(capabilityId) !== true) fail();
+  }
+
+  if (request.requireReadyProvider) {
+    checked += 1;
+    if (!summary.providers.some(isReadyProvider)) fail();
+  }
+
+  if (request.requireThreadSnapshot) {
+    checked += 1;
+    if (!checkedThreadSnapshot) fail();
+  }
+
+  checked += assertMinimum(summary.activeThreads.items.length, request.minActiveThreads, fail);
+  checked += assertMinimum(summary.terminalSessions.items.length, request.minTerminalSessions, fail);
+  checked += assertMinimum(summary.previewSessions.items.length, request.minPreviewSessions, fail);
+  checked += assertMinimum(reviewCount, request.minReviews, fail);
+
+  return checked;
+}
+
+function assertMinimum(actual, expected, fail) {
+  if (expected === undefined) return 0;
+  if (actual < expected) fail();
+  return 1;
+}
+
+async function countReviewsForMinimum({ initial, minReviews, runtimeUrl, headers, timeoutMs, fetchImpl }) {
+  let count = initial.items.length;
+  let hasMore = initial.hasMore;
+  let nextCursor = initial.nextCursor;
+  let pagesRead = 1;
+
+  while (
+    minReviews !== undefined &&
+    count < minReviews &&
+    hasMore &&
+    nextCursor &&
+    pagesRead < MAX_REVIEW_PAGES
+  ) {
+    const page = await runCheck({
+      name: "review pagination",
+      runtimeUrl,
+      path: `/api/coding-agents/reviews?cursor=${encodeURIComponent(nextCursor)}`,
+      headers,
+      timeoutMs,
+      fetchImpl,
+      schema: ReviewListSchema,
+      contractName: "Review list",
+    });
+    count += page.items.length;
+    hasMore = page.hasMore;
+    nextCursor = page.nextCursor;
+    pagesRead += 1;
+  }
+
+  return count;
 }
 
 async function readBoundedText(response, name) {
