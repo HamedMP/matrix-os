@@ -12,6 +12,7 @@ import { NativeAppError, type NativeAppSessionService } from "./service.js";
 
 const NATIVE_APP_BODY_LIMIT = 2048;
 const STREAM_FETCH_TIMEOUT_MS = 30_000;
+const STREAM_RESPONSE_BODY_MAX_BYTES = 16 * 1024 * 1024;
 const WS_PENDING_MAX_MESSAGES = 32;
 const WS_PENDING_MAX_BYTES = 256 * 1024;
 const HOP_BY_HOP = new Set([
@@ -255,6 +256,34 @@ function streamRequestHasBody(c: Context): boolean {
   return c.req.raw.body !== null;
 }
 
+async function readBoundedStreamResponseBody(response: Response): Promise<Uint8Array<ArrayBuffer> | null> {
+  if (!response.body) return null;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array<ArrayBuffer>[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > STREAM_RESPONSE_BODY_MAX_BYTES) {
+        await reader.cancel();
+        throw new Error("native app stream response exceeded limit");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
 async function proxyStreamRequest(c: Context, service: NativeAppSessionService): Promise<Response> {
   const parsed = NativeSessionIdSchema.safeParse(c.req.param("sessionId"));
   if (!parsed.success) return c.json({ error: "Invalid request" }, 400);
@@ -285,11 +314,12 @@ async function proxyStreamRequest(c: Context, service: NativeAppSessionService):
     signal: AbortSignal.timeout(STREAM_FETCH_TIMEOUT_MS),
   });
   const headers = sanitizeProxyHeaders(response.headers);
+  const body = await readBoundedStreamResponseBody(response);
   const responseToken = requestPath.capabilityToken ?? bootstrapToken;
   if (responseToken) {
     headers.append("Set-Cookie", nativeStreamCookieHeader(c, service, sessionId, responseToken));
   }
-  return new Response(response.body, {
+  return new Response(body, {
     status: response.status,
     headers,
   });

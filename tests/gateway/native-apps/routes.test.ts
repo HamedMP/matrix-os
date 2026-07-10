@@ -341,6 +341,35 @@ describe("native app routes", () => {
     expect(stream.headers.get("content-length")).toBeNull();
   });
 
+  it("fully consumes xpra responses before handing them to the downstream client", async () => {
+    const { app } = createApp("alice");
+    const launch = await app.request("/api/native-apps/xterm/sessions", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: { "Content-Type": "application/json" },
+    });
+    const scopedCookie = launch.headers.get("set-cookie")?.split(";")[0];
+    let pulls = 0;
+    const chunks = Array.from({ length: 32 }, (_, index) => `chunk-${index}\n`);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({
+      pull(controller) {
+        if (pulls === chunks.length) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(new TextEncoder().encode(chunks[pulls]));
+        pulls++;
+      },
+    }))));
+
+    const stream = await app.request("/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/js/client.js", {
+      headers: { Cookie: scopedCookie ?? "" },
+    });
+
+    expect(pulls).toBe(chunks.length);
+    expect(await stream.text()).toBe(chunks.join(""));
+  });
+
   it("caps proxied stream request bodies before forwarding to xpra", async () => {
     const { app } = createApp("alice");
     const launch = await app.request("/api/native-apps/xterm/sessions", {
