@@ -10,7 +10,7 @@ import type {
 
 export type ProjectWorkspaceSelection = Omit<
   CodingAgentWorkspaceResumeState,
-  "updatedAt"
+  "runtimeScope" | "updatedAt"
 >;
 
 export interface GroupedProjectWorkspaceThreads {

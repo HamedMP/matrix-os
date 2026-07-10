@@ -46,8 +46,13 @@ function currentSelection(
   };
 }
 
-function persistSelection(selection: ProjectWorkspaceSelection): void {
+function persistSelection(
+  selection: ProjectWorkspaceSelection,
+  runtimeScope: string | null,
+): void {
+  if (!runtimeScope) return;
   const value: CodingAgentWorkspaceResumeState = {
+    runtimeScope,
     ...selection,
     updatedAt: new Date().toISOString(),
   };
@@ -56,12 +61,18 @@ function persistSelection(selection: ProjectWorkspaceSelection): void {
   });
 }
 
-async function readPersistedSelection(): Promise<ProjectWorkspaceSelection | null> {
+async function readPersistedSelection(
+  runtimeScope: string,
+): Promise<ProjectWorkspaceSelection | null> {
   try {
     const stored = await invoke("state:get", { key: "codingAgentWorkspace" });
     const parsed = CodingAgentWorkspaceResumeStateSchema.safeParse(stored.value);
-    if (!parsed.success) return null;
-    const { updatedAt: _updatedAt, ...selection } = parsed.data;
+    if (!parsed.success || parsed.data.runtimeScope !== runtimeScope) return null;
+    const {
+      runtimeScope: _runtimeScope,
+      updatedAt: _updatedAt,
+      ...selection
+    } = parsed.data;
     return selection;
   } catch {
     console.warn("[coding-agents] workspace selection could not be loaded");
@@ -98,7 +109,7 @@ async function loadProjectWorkspace(
       error: null,
       ...selection,
     });
-    persistSelection(selection);
+    persistSelection(selection, useCodingAgentProjectWorkspace.getState().runtimeScope);
     return;
   }
 
@@ -117,7 +128,7 @@ async function loadProjectWorkspace(
       error: null,
       ...selection,
     });
-    persistSelection(selection);
+    persistSelection(selection, useCodingAgentProjectWorkspace.getState().runtimeScope);
   } catch {
     if (generation !== hydrationGeneration) return;
     console.warn("[coding-agents] project workspace refresh failed");
@@ -158,7 +169,7 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
         workspace: null,
         error: null,
       });
-      const persisted = sameScope ? null : await readPersistedSelection();
+      const persisted = sameScope ? null : await readPersistedSelection(runtimeScope);
       if (generation !== hydrationGeneration) return;
       const preferred = persisted ?? currentSelection(state);
       await loadProjectWorkspace(summary, preferred, generation, {
@@ -221,7 +232,7 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
         viewMode: state.viewMode,
       } satisfies ProjectWorkspaceSelection;
       set(selection);
-      persistSelection(selection);
+      persistSelection(selection, state.runtimeScope);
     },
 
     selectThread: (threadId) => {
@@ -239,7 +250,7 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
         viewMode: state.viewMode,
       } satisfies ProjectWorkspaceSelection;
       set(selection);
-      persistSelection(selection);
+      persistSelection(selection, state.runtimeScope);
     },
 
     focusExternalThread: async (threadId, relation) => {
@@ -258,7 +269,7 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
           viewMode: state.viewMode,
         } satisfies ProjectWorkspaceSelection;
         set(selection);
-        persistSelection(selection);
+        persistSelection(selection, state.runtimeScope);
         return;
       }
 
@@ -301,7 +312,7 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
       const state = useCodingAgentProjectWorkspace.getState();
       const selection = { ...currentSelection(state), viewMode };
       set({ viewMode });
-      persistSelection(selection);
+      persistSelection(selection, state.runtimeScope);
     },
   }),
 );

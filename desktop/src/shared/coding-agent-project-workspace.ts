@@ -12,6 +12,7 @@ export type CodingAgentWorkspaceViewMode = z.infer<
 >;
 
 export const CodingAgentWorkspaceResumeStateSchema = z.object({
+  runtimeScope: z.string().min(1).max(512).optional(),
   selectedProjectId: ProjectIdSchema.nullable(),
   selectedTaskId: TaskIdSchema.nullable(),
   selectedThreadId: ThreadIdSchema.nullable(),

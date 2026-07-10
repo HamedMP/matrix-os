@@ -94,6 +94,7 @@ describe("coding-agent project workspace store", () => {
       if (channel === "state:get") {
         return {
           value: {
+            runtimeScope: "rt_primary",
             selectedProjectId: "matrix-os",
             selectedTaskId: "task_auth",
             selectedThreadId: "thread_deleted",
@@ -128,6 +129,7 @@ describe("coding-agent project workspace store", () => {
     };
     expect(persisted.key).toBe("codingAgentWorkspace");
     expect(persisted.value).toMatchObject({
+      runtimeScope: "rt_primary",
       selectedProjectId: "matrix-os",
       selectedTaskId: "task_auth",
       selectedThreadId: "thread_plan",
@@ -172,6 +174,48 @@ describe("coding-agent project workspace store", () => {
     expect(useCodingAgentProjectWorkspace.getState().workspace?.project.id).toBe("website");
   });
 
+  it("does not send a persisted project id to a different account scope", async () => {
+    const pagedSummary = summary("rt_primary", "website", "Website");
+    pagedSummary.projects.hasMore = true;
+    const websiteWorkspace = workspace("website", "task_docs", "thread_docs");
+    const invoke = vi.fn(async (channel: string, payload: unknown) => {
+      if (channel === "state:get") {
+        return {
+          value: {
+            runtimeScope: "first-account|https://app.matrix-os.com|primary",
+            selectedProjectId: "matrix-os",
+            selectedTaskId: "task_auth",
+            selectedThreadId: "thread_plan",
+            viewMode: "conversation",
+            updatedAt: NOW,
+          },
+        };
+      }
+      if (channel === "runtime:get-project-workspace") {
+        expect(payload).toEqual({ projectId: "website" });
+        return websiteWorkspace;
+      }
+      if (channel === "state:set") return { ok: true };
+      throw new Error(`unexpected channel ${channel}`);
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+
+    await useCodingAgentProjectWorkspace.getState().hydrate(
+      pagedSummary,
+      "second-account|https://app.matrix-os.com|primary",
+    );
+
+    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
+      status: "ready",
+      selectedProjectId: "website",
+      selectedTaskId: "task_docs",
+      selectedThreadId: "thread_docs",
+    });
+  });
+
   it("restores a persisted project that is outside the bounded summary page", async () => {
     const pagedSummary = summary("rt_primary", "matrix-os", "Matrix OS");
     pagedSummary.projects.hasMore = true;
@@ -180,6 +224,7 @@ describe("coding-agent project workspace store", () => {
       if (channel === "state:get") {
         return {
           value: {
+            runtimeScope: "rt_primary",
             selectedProjectId: "website",
             selectedTaskId: "task_docs",
             selectedThreadId: "thread_docs",
