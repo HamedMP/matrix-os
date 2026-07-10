@@ -78,6 +78,7 @@ export interface CodingAgentRuntimeSummaryOptions {
   previews?: CodingAgentPreviewSummaryStore;
   projects?: CodingAgentProjectSummaryStore;
   capabilities?: {
+    projectWorkspace?: boolean;
     workspace?: boolean;
     approvals?: boolean;
     review?: boolean;
@@ -286,9 +287,12 @@ async function readProjects(
   store: CodingAgentProjectSummaryStore | undefined,
   principal: RequestPrincipal,
   timeoutMs: number,
-): Promise<{ items: ProjectSummary[]; hasMore: boolean; limit: number }> {
+): Promise<{
+  page: { items: ProjectSummary[]; hasMore: boolean; limit: number };
+  available: boolean;
+}> {
   const empty = { items: [], hasMore: false, limit: CODING_AGENT_PROJECT_SUMMARY_LIMIT };
-  if (!store) return empty;
+  if (!store) return { page: empty, available: false };
   try {
     const result = await store.listProjectSummaries(principal, AbortSignal.timeout(timeoutMs));
     const items: ProjectSummary[] = [];
@@ -297,13 +301,16 @@ async function readProjects(
       if (parsed.success) items.push(parsed.data);
     }
     return {
-      items: items.slice(0, CODING_AGENT_PROJECT_SUMMARY_LIMIT),
-      hasMore: result.hasMore || result.items.length > CODING_AGENT_PROJECT_SUMMARY_LIMIT,
-      limit: CODING_AGENT_PROJECT_SUMMARY_LIMIT,
+      page: {
+        items: items.slice(0, CODING_AGENT_PROJECT_SUMMARY_LIMIT),
+        hasMore: result.hasMore || result.items.length > CODING_AGENT_PROJECT_SUMMARY_LIMIT,
+        limit: CODING_AGENT_PROJECT_SUMMARY_LIMIT,
+      },
+      available: true,
     };
   } catch (err: unknown) {
     logCodingAgentWarning("project summary unavailable", err);
-    return empty;
+    return { page: empty, available: false };
   }
 }
 
@@ -393,9 +400,18 @@ export function createCodingAgentRuntimeSummaryService(
           capability({ id: "codingAgentsFiles", enabled: filesEnabled }),
           capability({ id: "codingAgentsSourceControl", enabled: sourceControlEnabled }),
           capability({ id: "codingAgentsNativeMobileTerminal", enabled: terminalEnabled }),
+          ...(options.capabilities?.projectWorkspace === true
+            ? [capability({
+              id: "codingAgentsProjectWorkspace",
+              enabled: projectRead.available,
+              reason: !projectRead.available
+                ? "Project workspace is temporarily unavailable"
+                : undefined,
+            })]
+            : []),
         ],
         providers,
-        projects: projectRead,
+        projects: projectRead.page,
         activeThreads,
         attentionThreads,
         terminalSessions: await terminalSessions,

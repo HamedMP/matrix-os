@@ -1109,12 +1109,12 @@ Tests: `GW-001`, `GW-002`, `GW-003`.
 
 ### 19.2 Project Workspace Projection
 
-- [ ] Add authenticated `GET /api/coding-agents/projects/:projectId/workspace`.
-- [ ] Validate project path param and independent task/thread cursors/limits with Zod 4.
-- [ ] Enforce owner access before reading tasks or threads.
-- [ ] Join canonical tasks with bounded project-level/task-bound thread aggregates.
-- [ ] Support several threads on one task without nested unbounded arrays.
-- [ ] Reject/quarantine stale cross-project relations without mutating during a read.
+- [x] Add authenticated `GET /api/coding-agents/projects/:projectId/workspace`.
+- [x] Validate project path param and independent task/thread cursors/limits with Zod 4.
+- [x] Enforce owner access before reading tasks or threads.
+- [x] Join canonical tasks with bounded project-level/task-bound thread aggregates.
+- [x] Support several threads on one task without nested unbounded arrays.
+- [x] Reject/quarantine stale cross-project relations without mutating during a read.
 
 Tests: `GW-004`, `GW-005`, `GW-006`, `GW-007`, `GW-008`.
 

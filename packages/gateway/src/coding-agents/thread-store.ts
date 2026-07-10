@@ -23,6 +23,12 @@ import {
 import { atomicWriteJson } from "../state-ops.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
+import {
+  CodingAgentProjectWorkspaceError,
+  type CodingAgentProjectThreadProjection,
+  type CodingAgentProjectWorkspaceQuery,
+  type CodingAgentTaskThreadAggregate,
+} from "./project-workspace.js";
 
 const THREAD_STORE_RELATIVE_PATH = ["system", "coding-agents", "threads.json"] as const;
 const THREAD_LIST_LIMIT = 50;
@@ -144,6 +150,12 @@ export interface CodingAgentThreadStore {
     threadCount: number;
     attentionCount: number;
   }>>;
+  getProjectWorkspaceThreads(
+    principal: RequestPrincipal,
+    projectId: string,
+    query: CodingAgentProjectWorkspaceQuery,
+    validTaskIds: readonly string[],
+  ): Promise<CodingAgentProjectThreadProjection>;
   getThread(principal: RequestPrincipal, threadId: string, cursor?: string): Promise<AgentThreadSnapshot>;
   abortThread(principal: RequestPrincipal, threadId: string, clientRequestId: string): Promise<AgentThreadSnapshot>;
   submitApproval(
@@ -377,6 +389,51 @@ function terminalThread(thread: StoredThread): boolean {
 
 function attentionThread(thread: StoredThread): boolean {
   return thread.attention !== "none" && thread.status !== "archived";
+}
+
+function projectThreadPage(
+  threads: StoredThread[],
+  cursor: string | undefined,
+  limit: number,
+): { items: AgentThreadSummary[]; hasMore: boolean; nextCursor?: string; limit: number } {
+  const cursorIndex = cursor ? threads.findIndex((thread) => thread.id === cursor) : -1;
+  if (cursor && cursorIndex < 0) {
+    throw new CodingAgentProjectWorkspaceError("invalid_cursor");
+  }
+  const startIndex = cursor ? cursorIndex + 1 : 0;
+  const items = threads.slice(startIndex, startIndex + limit).map(stripOwner);
+  const hasMore = startIndex + items.length < threads.length;
+  return {
+    items,
+    hasMore,
+    ...(hasMore && items.length > 0 ? { nextCursor: items.at(-1)!.id } : {}),
+    limit,
+  };
+}
+
+function taskThreadAggregates(threads: StoredThread[]): CodingAgentTaskThreadAggregate[] {
+  const aggregates: CodingAgentTaskThreadAggregate[] = [];
+  for (const thread of threads) {
+    if (!thread.taskId) continue;
+    let aggregate = aggregates.find((candidate) => candidate.taskId === thread.taskId);
+    if (!aggregate) {
+      aggregate = {
+        taskId: thread.taskId,
+        threadCount: 0,
+        activeThreadCount: 0,
+        attentionCount: 0,
+        latestThreadAt: thread.updatedAt,
+      };
+      aggregates.push(aggregate);
+    }
+    aggregate.threadCount += 1;
+    if (activeThread(thread)) aggregate.activeThreadCount += 1;
+    if (attentionThread(thread)) aggregate.attentionCount += 1;
+    if (!aggregate.latestThreadAt || thread.updatedAt > aggregate.latestThreadAt) {
+      aggregate.latestThreadAt = thread.updatedAt;
+    }
+  }
+  return aggregates.sort((left, right) => left.taskId.localeCompare(right.taskId));
 }
 
 function stoppedRuntimeStatus(
@@ -746,6 +803,34 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
         if (attentionThread(thread)) count.attentionCount += 1;
       }
       return counts;
+    },
+    async getProjectWorkspaceThreads(principal, projectId, query, validTaskIds) {
+      const state = await readState(options.homePath);
+      const projectThreads = state.threads
+        .filter((thread) =>
+          thread.ownerId === principal.userId &&
+          thread.projectId === projectId &&
+          thread.status !== "archived"
+        )
+        .sort((left, right) =>
+          Date.parse(right.updatedAt) - Date.parse(left.updatedAt) || left.id.localeCompare(right.id)
+        );
+      const unboundThreads = projectThreads.filter((thread) => thread.taskId === undefined);
+      const taskThreads = projectThreads.filter((thread) =>
+        thread.taskId !== undefined && validTaskIds.includes(thread.taskId)
+      );
+      const validProjectThreads = [...unboundThreads, ...taskThreads];
+      return {
+        projectThreads: projectThreadPage(
+          unboundThreads,
+          query.projectThreadCursor,
+          query.projectThreadLimit,
+        ),
+        taskThreads: projectThreadPage(taskThreads, query.taskThreadCursor, query.taskThreadLimit),
+        taskAggregates: taskThreadAggregates(taskThreads),
+        threadCount: validProjectThreads.length,
+        attentionCount: validProjectThreads.filter(attentionThread).length,
+      };
     },
     async getThread(principal, threadId, cursor) {
       const state = await readState(options.homePath);

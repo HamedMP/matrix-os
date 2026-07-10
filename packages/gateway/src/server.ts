@@ -107,6 +107,7 @@ import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
 import { createCodingAgentPreviewSummaryStore } from "./coding-agents/preview-summary.js";
 import { createOwnerCodingAgentProjectSummaryStore } from "./coding-agents/project-summary.js";
+import { createOwnerCodingAgentProjectWorkspaceStore } from "./coding-agents/project-workspace.js";
 import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
@@ -575,6 +576,11 @@ export async function createGateway(config: GatewayConfig) {
     threads: codingAgentThreadStore,
     principalOwnerIds: codingAgentOwnerIds,
   });
+  const codingAgentProjectWorkspaceStore = createOwnerCodingAgentProjectWorkspaceStore({
+    homePath,
+    threads: codingAgentThreadStore,
+    principalOwnerIds: codingAgentOwnerIds,
+  });
   const codingAgentPreviewSummaryStore = createCodingAgentPreviewSummaryStore({
     homePath,
     previewManager: createPreviewManager({ homePath }),
@@ -589,6 +595,7 @@ export async function createGateway(config: GatewayConfig) {
     projects: codingAgentProjectSummaryStore,
     previews: codingAgentPreviewSummaryStore,
     capabilities: {
+      projectWorkspace: true,
       workspace: codingAgentWorkspaceEnabled,
       approvals: false,
       review: true,
@@ -1622,6 +1629,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
   app.route("/api/coding-agents", createCodingAgentRoutes({
     service: codingAgentRuntimeSummaryService,
+    projectWorkspaces: codingAgentProjectWorkspaceStore,
     threads: codingAgentThreadStore,
     reviews: codingAgentReviewSummaryStore,
     files: codingAgentFileStore,
