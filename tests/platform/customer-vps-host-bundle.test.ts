@@ -164,6 +164,7 @@ describe('customer VPS host bundle', () => {
   it('packages an asynchronous developer tools first-boot service', () => {
     const root = process.cwd();
     const unit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-developer-tools.service'), 'utf8');
+    const gatewayUnit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-gateway.service'), 'utf8');
     const codeServerUnit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-code-server.service'), 'utf8');
     const codeUnit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-code.service'), 'utf8');
     const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-developer-tools'), 'utf8');
@@ -171,13 +172,25 @@ describe('customer VPS host bundle', () => {
     expect(unit).toContain('Description=Matrix OS optional developer tools');
     expect(unit).toContain('After=network-online.target matrix-restore.service');
     expect(unit).toContain('EnvironmentFile=/opt/matrix/env/host.env');
-    expect(unit).toContain('ExecStart=/opt/matrix/bin/matrix-install-developer-tools');
+    expect(unit).toContain('ExecStart=/opt/matrix/bin/matrix-install-developer-tools --tools-only');
     expect(unit).toContain('Restart=on-failure');
     expect(installer).toContain('is_tool_installed()');
     expect(installer).toContain('grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]');
     expect(installer).toContain('optional developer tool ${tool} already installed; skipping');
     expect(installer).toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"');
     expect(installer).not.toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS:-codex claude-code opencode pi}"');
+    expect(installer).toContain('ensure_agent_sandbox_runtime()');
+    expect(installer).toContain('apt-get install -y software-properties-common');
+    expect(installer).toContain('add-apt-repository -y universe');
+    expect(installer).toContain('apt-get install -y bubblewrap socat');
+    expect(installer).toContain("cat >/etc/apparmor.d/bwrap <<'EOF'");
+    expect(installer).toContain('systemctl reload apparmor');
+    expect(installer).toContain('ensure_agent_sandbox_runtime');
+    expect(installer).toContain('MODE="${1:-}"');
+    expect(installer).toContain('if [ "$MODE" != "--tools-only" ]; then');
+    expect(installer).toContain('if [ "$MODE" = "--sandbox-only" ]; then');
+    expect(gatewayUnit).toContain('ExecStartPre=+/opt/matrix/bin/matrix-install-developer-tools --sandbox-only');
+    expect(gatewayUnit).toContain('TimeoutStartSec=720');
     expect(codeServerUnit).toContain('Description=Install Matrix OS code-server runtime');
     expect(codeServerUnit).toContain('ConditionPathExists=!/opt/matrix/runtime/code-server/bin/code-server');
     expect(codeServerUnit).toContain('ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server');
@@ -780,12 +793,18 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('sudo systemctl daemon-reload');
     expect(syncAgent).toContain('sudo systemctl enable matrix-code-server.service');
     expect(syncAgent).toContain('sudo systemctl start --no-block matrix-code-server.service || true');
+    expect(syncAgent).toContain('sudo systemctl enable matrix-developer-tools.service');
+    expect(syncAgent).toContain('sudo systemctl start --no-block matrix-developer-tools.service || true');
     expect(syncAgent).toContain('Code-server runtime service enabled');
     expect(syncAgent).toContain('sudo systemctl enable matrix-code.service');
     expect(syncAgent).toContain('sudo systemctl start --no-block matrix-code.service || true');
     expect(syncAgent).toContain('Code editor service enabled');
     expect(syncAgent).toContain('Messaging runtimes missing; units installed but not enabled');
     expect(syncAgent).toContain('sudo systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service');
+    const daemonReload = syncAgent.indexOf('sudo systemctl daemon-reload');
+    const gatewayStart = syncAgent.indexOf('sudo systemctl start matrix-gateway matrix-shell', daemonReload);
+    expect(daemonReload).toBeGreaterThan(-1);
+    expect(gatewayStart).toBeGreaterThan(daemonReload);
   });
 
   it('sync agent periodically cleans stale local bundle artifacts', () => {

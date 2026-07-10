@@ -87,6 +87,7 @@ const AgentSandboxSchema = z.object({
   enabled: z.boolean(),
   mode: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
   writableRoots: z.array(z.string().trim().min(1).max(4096)).max(20).optional(),
+  denyWriteRoots: z.array(z.string().trim().min(1).max(4096)).max(20).optional(),
   adminOverride: z.boolean().optional(),
 }).strict();
 const StartSessionSchema = z.object({

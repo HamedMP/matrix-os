@@ -11,7 +11,9 @@ Group=matrix
 EnvironmentFile=/opt/matrix/env/host.env
 Environment=SYMPHONY_PORT=4766
 WorkingDirectory=/opt/matrix
+ExecStartPre=+/opt/matrix/bin/matrix-install-developer-tools --sandbox-only
 ExecStart=/opt/matrix/bin/matrix-gateway
+TimeoutStartSec=720
 Restart=on-failure
 RestartSec=5
 

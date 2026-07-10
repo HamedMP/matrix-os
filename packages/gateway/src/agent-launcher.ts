@@ -21,6 +21,7 @@ export interface AgentLaunchSandbox {
   enabled: boolean;
   mode?: "read-only" | "workspace-write" | "danger-full-access";
   writableRoots?: string[];
+  denyWriteRoots?: string[];
   adminOverride?: boolean;
 }
 
@@ -106,6 +107,111 @@ function codexSandboxArgs(sandbox?: AgentLaunchSandbox): string[] {
   return args;
 }
 
+const ClaudePermissionModeSchema = z.enum(["default", "dontAsk", "plan", "bypassPermissions"]);
+const ClaudeEditPermissionRuleSchema = z.string()
+  .trim()
+  .min(1)
+  .max(4128)
+  .regex(/^Edit\(\/\/[^)\r\n]+\/\*\*\)$/);
+const ClaudeLaunchSettingsSchema = z.object({
+  permissions: z.object({
+    allow: z.array(ClaudeEditPermissionRuleSchema).max(20).optional(),
+    deny: z.array(z.enum(["Edit", "Write", "NotebookEdit"])).max(3).optional(),
+  }).strict().optional(),
+  sandbox: z.object({
+    enabled: z.boolean(),
+    failIfUnavailable: z.literal(true).optional(),
+    autoAllowBashIfSandboxed: z.boolean().optional(),
+    allowUnsandboxedCommands: z.literal(false).optional(),
+    filesystem: z.object({
+      allowWrite: z.array(z.string().trim().min(1).max(4096)).max(20).optional(),
+      denyWrite: z.array(z.string().trim().min(1).max(4096)).max(20).optional(),
+    }).strict().optional(),
+  }).strict(),
+}).strict();
+
+const ClaudeWritableRootSchema = z.string()
+  .trim()
+  .min(1)
+  .max(4096)
+  .regex(/^\/[^*?[\]{}()\\\u0000\r\n]*$/);
+
+function claudeEditPermissionRule(root: string): string {
+  const absoluteRoot = ClaudeWritableRootSchema.parse(root).replace(/\/+$/, "");
+  if (!absoluteRoot) throw new Error("Claude writable root is invalid");
+  return ClaudeEditPermissionRuleSchema.parse(`Edit(/${absoluteRoot}/**)`);
+}
+
+function claudePermissionMode(input: AgentLaunchInput): z.infer<typeof ClaudePermissionModeSchema> {
+  if (input.mode === "plan" || input.mode === "review") return "plan";
+  if (input.approvalPolicy === "on-failure") {
+    throw new Error("Claude approval policy is unavailable");
+  }
+  if (input.approvalPolicy !== "never") return "default";
+  if (input.sandbox?.mode === "danger-full-access" || input.sandbox?.enabled === false) {
+    return "bypassPermissions";
+  }
+  return "dontAsk";
+}
+
+function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLaunchSettingsSchema> {
+  const sandbox = input.sandbox;
+  if (!sandbox) {
+    throw new Error("Claude sandbox preflight is required");
+  }
+  const readOnlyMode = input.mode === "plan" || input.mode === "review";
+  if (!readOnlyMode && (!sandbox.enabled || sandbox.mode === "danger-full-access")) {
+    return ClaudeLaunchSettingsSchema.parse({ sandbox: { enabled: false } });
+  }
+
+  const mode = readOnlyMode
+    ? "read-only"
+    : sandbox.mode ?? "workspace-write";
+  const noPrompt = input.approvalPolicy === "never" && input.mode !== "plan" && input.mode !== "review";
+  if (mode === "read-only") {
+    return ClaudeLaunchSettingsSchema.parse({
+      permissions: { deny: ["Edit", "Write", "NotebookEdit"] },
+      sandbox: {
+        enabled: true,
+        failIfUnavailable: true,
+        autoAllowBashIfSandboxed: noPrompt,
+        allowUnsandboxedCommands: false,
+        filesystem: { denyWrite: sandbox.denyWriteRoots ?? [input.cwd] },
+      },
+    });
+  }
+
+  return ClaudeLaunchSettingsSchema.parse({
+    ...(noPrompt
+      ? { permissions: { allow: (sandbox.writableRoots ?? []).map(claudeEditPermissionRule) } }
+      : {}),
+    sandbox: {
+      enabled: true,
+      failIfUnavailable: true,
+      autoAllowBashIfSandboxed: noPrompt,
+      allowUnsandboxedCommands: false,
+      filesystem: { allowWrite: sandbox.writableRoots ?? [] },
+    },
+  });
+}
+
+function claudeLaunchArgs(input: AgentLaunchInput): string[] {
+  const permissionMode = ClaudePermissionModeSchema.parse(claudePermissionMode(input));
+  const settings = JSON.stringify(claudeLaunchSettings(input));
+  return [
+    "--setting-sources",
+    "",
+    "--settings",
+    settings,
+    "--permission-mode",
+    permissionMode,
+    "--strict-mcp-config",
+    "--no-chrome",
+    ...(input.prompt ? ["--print"] : []),
+    ...promptArgs(input.prompt),
+  ];
+}
+
 function authStatusArgs(agent: SupportedAgent): string[] {
   return agent === "codex" ? ["login", "status"] : ["auth", "status"];
 }
@@ -126,7 +232,7 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
   const env = agentRuntimeEnv(input.runtimeHome);
   switch (parsed) {
     case "claude":
-      return { command, args: promptArgs(input.prompt), cwd: input.cwd, env };
+      return { command, args: claudeLaunchArgs(input), cwd: input.cwd, env };
     case "codex":
       return {
         command,

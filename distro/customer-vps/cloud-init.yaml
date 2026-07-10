@@ -453,7 +453,18 @@ runcmd:
     add-apt-repository -y universe
     apt_get_update
 
-    DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl sudo unzip
+    DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip
+    install -d -o root -g root -m 0755 /etc/apparmor.d
+    cat >/etc/apparmor.d/bwrap <<'EOF'
+    abi <abi/4.0>,
+    include <tunables/global>
+
+    profile bwrap /usr/bin/bwrap flags=(unconfined) {
+      userns,
+      include if exists <local/bwrap>
+    }
+    EOF
+    systemctl reload apparmor
     curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
     unzip -q /tmp/awscliv2.zip -d /tmp
     /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli

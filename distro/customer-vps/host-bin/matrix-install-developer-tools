@@ -5,6 +5,12 @@ if [ -r /opt/matrix/env/host.env ]; then
   source /opt/matrix/env/host.env
 fi
 
+MODE="${1:-}"
+if [ "$#" -gt 1 ] || { [ -n "$MODE" ] && [ "$MODE" != "--sandbox-only" ] && [ "$MODE" != "--tools-only" ]; }; then
+  printf 'matrix-install-developer-tools: unsupported arguments\n' >&2
+  exit 64
+fi
+
 TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"
 STATE_DIR="${MATRIX_DEVELOPER_TOOLS_STATE_DIR:-/var/lib/matrix-developer-tools}"
 FAILED_FILE="$STATE_DIR/failed-tools"
@@ -12,6 +18,57 @@ INSTALLED_FILE="$STATE_DIR/installed-tools"
 
 log() {
   printf 'matrix-install-developer-tools: %s\n' "$*"
+}
+
+enable_ubuntu_universe() {
+  [ -r /etc/os-release ] || return 0
+  # shellcheck disable=SC1091 -- the host-owned OS metadata is the distro source of truth.
+  . /etc/os-release
+  [ "${ID:-}" = "ubuntu" ] || return 0
+  timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common
+  timeout 60 add-apt-repository -y universe
+}
+
+configure_bwrap_apparmor() {
+  [ -r /etc/os-release ] || return 0
+  # shellcheck disable=SC1091 -- the host-owned OS metadata is the distro source of truth.
+  . /etc/os-release
+  [ "${ID:-}" = "ubuntu" ] || return 0
+  dpkg --compare-versions "$VERSION_ID" ge 24.04 || return 0
+
+  install -d -o root -g root -m 0755 /etc/apparmor.d
+  cat >/etc/apparmor.d/bwrap <<'EOF'
+abi <abi/4.0>,
+include <tunables/global>
+
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/bwrap>
+}
+EOF
+  if systemctl is-active --quiet apparmor; then
+    systemctl reload apparmor
+  fi
+}
+
+ensure_agent_sandbox_runtime() {
+  if ! command -v bwrap >/dev/null 2>&1 || ! command -v socat >/dev/null 2>&1; then
+    command -v apt-get >/dev/null 2>&1 || {
+      log "coding-agent sandbox packages are unavailable"
+      return 1
+    }
+    timeout 300 apt-get update \
+      -o Acquire::Retries=3 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=20
+    enable_ubuntu_universe
+    timeout 300 apt-get update \
+      -o Acquire::Retries=3 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=20
+    timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap socat
+  fi
+  configure_bwrap_apparmor
 }
 
 link_tool() {
@@ -38,6 +95,13 @@ is_tool_installed() {
   bin_name="$(tool_bin_name "$tool")"
   grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]
 }
+
+if [ "$MODE" != "--tools-only" ]; then
+  ensure_agent_sandbox_runtime
+fi
+if [ "$MODE" = "--sandbox-only" ]; then
+  exit 0
+fi
 
 mkdir -p "$STATE_DIR"
 : > "$FAILED_FILE"

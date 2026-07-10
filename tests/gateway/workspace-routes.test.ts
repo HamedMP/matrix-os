@@ -331,6 +331,7 @@ describe("workspace API routes", () => {
     };
     const agentSandbox = {
       preflight: vi.fn(async () => ({ ok: true, sandbox: { enabled: true, writableRoots: [homePath] }, status: { available: true } })),
+      cleanup: vi.fn(async () => undefined),
       status: vi.fn(async () => ({ available: true, enforced: true, requiresAdminOverride: false, reason: "ok" })),
     };
     const sessionRuntimeBridge = {

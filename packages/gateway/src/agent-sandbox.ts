@@ -1,8 +1,15 @@
 import { constants } from "node:fs";
-import { access, mkdir } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { lstat, mkdir, open, realpath, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { z } from "zod/v4";
-import { SupportedAgentSchema, type AgentLaunchSandbox, type SupportedAgent } from "./agent-launcher.js";
+import {
+  buildAgentLaunch,
+  SupportedAgentSchema,
+  type AgentLaunchSandbox,
+  type SupportedAgent,
+} from "./agent-launcher.js";
 import type { WorkspaceError } from "./project-manager.js";
 
 export interface AgentSandboxStatus {
@@ -20,29 +27,97 @@ type Failure = {
 };
 
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
+const ScratchCleanupSchema = z.object({ sessionId: SessionIdSchema }).strict();
 const PreflightSchema = z.object({
   agent: SupportedAgentSchema,
   sessionId: SessionIdSchema,
   worktreePath: z.string().trim().min(1).max(4096),
   adminOverride: z.boolean().optional(),
+  mode: z.enum(["default", "plan", "review", "full_access"]).optional(),
+  approvalPolicy: z.enum(["untrusted", "on-request", "on-failure", "never"]).optional(),
+  sandboxMode: z.enum(["read_only", "workspace_write", "full_access"]).optional(),
 });
+
+type ClaudeSandboxVerifier = (input: {
+  cwd: string;
+  runtimeHome: string;
+  mode?: "default" | "plan" | "review" | "full_access";
+  sandbox: AgentLaunchSandbox;
+  approvalPolicy?: "untrusted" | "on-request" | "on-failure" | "never";
+}) => Promise<void>;
+type GitCommonDirResolver = (worktreePath: string) => Promise<string>;
+
+const execFileAsync = promisify(execFile);
+const CLAUDE_PREFLIGHT_TIMEOUT_MS = 5_000;
+const GIT_METADATA_TIMEOUT_MS = 5_000;
+const SCRATCH_STALE_AFTER_MS = 30 * 60_000;
+const MAX_SESSION_STATE_BYTES = 64 * 1024;
+const SessionStateSchema = z.object({
+  id: SessionIdSchema,
+  runtime: z.object({
+    status: z.enum(["starting", "running", "idle", "waiting", "exited", "failed", "degraded"]),
+  }).passthrough(),
+}).passthrough();
+
+const defaultClaudeSandboxVerifier: ClaudeSandboxVerifier = async (input) => {
+  const launch = buildAgentLaunch({
+    agent: "claude",
+    cwd: input.cwd,
+    runtimeHome: input.runtimeHome,
+    mode: input.mode,
+    sandbox: input.sandbox,
+    approvalPolicy: input.approvalPolicy,
+  });
+  await execFileAsync(launch.command, [...launch.args, "--init-only"], {
+    cwd: launch.cwd,
+    timeout: CLAUDE_PREFLIGHT_TIMEOUT_MS,
+    encoding: "utf-8",
+    maxBuffer: 64 * 1024,
+    env: { ...process.env, ...launch.env },
+  });
+};
+
+const defaultGitCommonDirResolver: GitCommonDirResolver = async (worktreePath) => {
+  const { stdout } = await execFileAsync(
+    "git",
+    ["-C", worktreePath, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+    {
+      cwd: worktreePath,
+      timeout: GIT_METADATA_TIMEOUT_MS,
+      encoding: "utf-8",
+      maxBuffer: 8 * 1024,
+    },
+  );
+  return z.string().trim().min(1).max(4096).parse(stdout);
+};
 
 function failure(status: number, code: string, message: string, sandboxStatus?: AgentSandboxStatus): Failure {
   return { ok: false, status, error: { code, message }, sandboxStatus };
 }
 
 function sandboxRequired(agent: SupportedAgent): boolean {
-  return agent === "codex";
+  return agent === "codex" || agent === "claude";
 }
 
-async function pathExists(path: string): Promise<boolean> {
+function isErrnoCode(err: unknown, code: string): boolean {
+  return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === code;
+}
+
+async function canonicalDirectoryWithinHome(
+  homePath: string,
+  candidatePath: string,
+): Promise<{ kind: "ok"; path: string } | { kind: "missing" } | { kind: "invalid" }> {
   try {
-    await access(path, constants.F_OK);
-    return true;
+    const candidateStat = await lstat(candidatePath);
+    if (!candidateStat.isDirectory() || candidateStat.isSymbolicLink()) return { kind: "invalid" };
+    const [canonicalHome, canonicalCandidate] = await Promise.all([
+      realpath(homePath),
+      realpath(candidatePath),
+    ]);
+    if (!isWithinHome(canonicalHome, canonicalCandidate)) return { kind: "invalid" };
+    return { kind: "ok", path: canonicalCandidate };
   } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-      return false;
-    }
+    if (isErrnoCode(err, "ENOENT")) return { kind: "missing" };
     throw err;
   }
 }
@@ -83,13 +158,116 @@ function isWithinHome(homePath: string, candidatePath: string): boolean {
   return resolved === homePath || resolved.startsWith(`${homePath}/`);
 }
 
+async function sessionMayOwnScratch(homePath: string, sessionId: string): Promise<boolean> {
+  const path = join(homePath, "system", "sessions", `${sessionId}.json`);
+  let handle;
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const fileStat = await handle.stat();
+    if (!fileStat.isFile() || fileStat.size > MAX_SESSION_STATE_BYTES) return true;
+    const parsed = SessionStateSchema.safeParse(JSON.parse(await handle.readFile("utf-8")));
+    if (!parsed.success) return true;
+    return ["starting", "running", "idle", "waiting", "degraded"].includes(parsed.data.runtime.status);
+  } catch (err: unknown) {
+    if (isErrnoCode(err, "ENOENT")) return false;
+    return true;
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function reclaimStaleScratchPath(
+  homePath: string,
+  sessionId: string,
+  nowMs: () => number,
+): Promise<boolean> {
+  const scratchPath = join(homePath, "system", "agent-scratch", sessionId);
+  try {
+    const scratchStat = await lstat(scratchPath);
+    if (!scratchStat.isDirectory() || scratchStat.isSymbolicLink()) return false;
+    if (nowMs() - scratchStat.mtimeMs < SCRATCH_STALE_AFTER_MS) return false;
+    if (await sessionMayOwnScratch(homePath, sessionId)) return false;
+    return cleanupScratchPath(homePath, sessionId);
+  } catch (err: unknown) {
+    if (isErrnoCode(err, "ENOENT")) return true;
+    throw err;
+  }
+}
+
+async function prepareScratchPath(
+  homePath: string,
+  sessionId: string,
+  nowMs: () => number,
+): Promise<string | null> {
+  const scratchRoot = join(homePath, "system", "agent-scratch");
+  await mkdir(scratchRoot, { recursive: true, mode: 0o700 });
+  const rootStat = await lstat(scratchRoot);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null;
+  const [canonicalHome, canonicalScratchRoot] = await Promise.all([
+    realpath(homePath),
+    realpath(scratchRoot),
+  ]);
+  if (canonicalScratchRoot !== join(canonicalHome, "system", "agent-scratch")) return null;
+
+  const scratchPath = join(scratchRoot, sessionId);
+  try {
+    await mkdir(scratchPath, { mode: 0o700 });
+    return scratchPath;
+  } catch (err: unknown) {
+    if (!isErrnoCode(err, "EEXIST")) throw err;
+    if (!await reclaimStaleScratchPath(homePath, sessionId, nowMs)) return null;
+    try {
+      await mkdir(scratchPath, { mode: 0o700 });
+      return scratchPath;
+    } catch (retryErr: unknown) {
+      if (isErrnoCode(retryErr, "EEXIST")) return null;
+      throw retryErr;
+    }
+  }
+}
+
+async function cleanupScratchPath(homePath: string, sessionId: string): Promise<boolean> {
+  const scratchRoot = join(homePath, "system", "agent-scratch");
+  try {
+    const rootStat = await lstat(scratchRoot);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return false;
+    const [canonicalHome, canonicalScratchRoot] = await Promise.all([
+      realpath(homePath),
+      realpath(scratchRoot),
+    ]);
+    if (canonicalScratchRoot !== join(canonicalHome, "system", "agent-scratch")) return false;
+
+    const scratchPath = join(scratchRoot, sessionId);
+    const scratchStat = await lstat(scratchPath);
+    if (!scratchStat.isDirectory() || scratchStat.isSymbolicLink()) return false;
+    if (await realpath(scratchPath) !== join(canonicalScratchRoot, sessionId)) return false;
+    await rm(scratchPath, { recursive: true, force: true });
+    return true;
+  } catch (err: unknown) {
+    if (isErrnoCode(err, "ENOENT")) return true;
+    throw err;
+  }
+}
+
 export function createAgentSandbox(options: {
   homePath: string;
   getUid?: () => number;
+  verifyClaudeSandbox?: ClaudeSandboxVerifier;
+  resolveGitCommonDir?: GitCommonDirResolver;
+  nowMs?: () => number;
 }) {
   const homePath = resolve(options.homePath);
+  const verifyClaudeSandbox = options.verifyClaudeSandbox ?? defaultClaudeSandboxVerifier;
+  const resolveGitCommonDir = options.resolveGitCommonDir ?? defaultGitCommonDirResolver;
+  const nowMs = options.nowMs ?? Date.now;
 
   return {
+    async cleanup(input: unknown): Promise<void> {
+      const parsed = ScratchCleanupSchema.safeParse(input);
+      if (!parsed.success) return;
+      await cleanupScratchPath(homePath, parsed.data.sessionId);
+    },
+
     async status(input?: { agent?: SupportedAgent }): Promise<AgentSandboxStatus> {
       const required = input?.agent ? sandboxRequired(input.agent) : true;
       return statusForUid(currentUid(options.getUid), required);
@@ -116,6 +294,9 @@ export function createAgentSandbox(options: {
       const uid = currentUid(options.getUid);
       const uidStatus = statusForUid(uid, true);
       if (uidStatus.requiresAdminOverride) {
+        if (request.agent === "claude") {
+          return failure(403, "sandbox_unavailable", "Agent sandbox is unavailable", uidStatus);
+        }
         if (request.adminOverride === true) {
           return {
             ok: true,
@@ -135,18 +316,75 @@ export function createAgentSandbox(options: {
       if (!isWithinHome(homePath, resolvedWorktree)) {
         return failure(400, "invalid_worktree_path", "Worktree path is invalid");
       }
-      if (!await pathExists(resolvedWorktree)) {
+      const canonicalWorktree = await canonicalDirectoryWithinHome(homePath, resolvedWorktree);
+      if (canonicalWorktree.kind === "missing") {
         return failure(404, "not_found", "Worktree was not found");
       }
+      if (canonicalWorktree.kind === "invalid") {
+        return failure(400, "invalid_worktree_path", "Worktree path is invalid");
+      }
 
-      const scratchPath = join(homePath, "system", "agent-scratch", request.sessionId);
-      await mkdir(scratchPath, { recursive: true });
+      const sandboxMode = request.sandboxMode ?? "workspace_write";
+      const effectiveReadOnly = sandboxMode === "read_only" ||
+        (request.agent === "claude" && (request.mode === "plan" || request.mode === "review"));
+      let denyWriteRoots: string[] | undefined;
+      if (effectiveReadOnly && request.agent === "claude") {
+        try {
+          const gitCommonPath = resolve(
+            canonicalWorktree.path,
+            await resolveGitCommonDir(canonicalWorktree.path),
+          );
+          const canonicalGitCommon = await canonicalDirectoryWithinHome(homePath, gitCommonPath);
+          if (canonicalGitCommon.kind !== "ok") {
+            return failure(503, "sandbox_unavailable", "Agent sandbox is unavailable", uidStatus);
+          }
+          denyWriteRoots = [...new Set([canonicalWorktree.path, canonicalGitCommon.path])];
+        } catch (err: unknown) {
+          console.warn(
+            "[agent-sandbox] Claude read-only Git metadata preflight failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+          return failure(503, "sandbox_unavailable", "Agent sandbox is unavailable", uidStatus);
+        }
+      }
+
+      const scratchPath = sandboxMode === "workspace_write" && !effectiveReadOnly
+        ? await prepareScratchPath(homePath, request.sessionId, nowMs)
+        : null;
+      if (sandboxMode === "workspace_write" && !effectiveReadOnly && !scratchPath) {
+        return failure(409, "sandbox_unavailable", "Agent sandbox is unavailable", uidStatus);
+      }
+      const sandbox: AgentLaunchSandbox = effectiveReadOnly
+        ? { enabled: true, mode: "read-only", writableRoots: [], denyWriteRoots }
+        : sandboxMode === "full_access"
+          ? { enabled: true, mode: "danger-full-access", writableRoots: [] }
+          : {
+            enabled: true,
+            mode: "workspace-write",
+            writableRoots: [canonicalWorktree.path, scratchPath!],
+          };
+
+      if (request.agent === "claude") {
+        try {
+          await verifyClaudeSandbox({
+            cwd: canonicalWorktree.path,
+            runtimeHome: homePath,
+            mode: request.mode,
+            sandbox,
+            approvalPolicy: request.approvalPolicy,
+          });
+        } catch (err: unknown) {
+          console.warn(
+            "[agent-sandbox] Claude sandbox preflight failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+          if (scratchPath) await cleanupScratchPath(homePath, request.sessionId);
+          return failure(503, "sandbox_unavailable", "Agent sandbox is unavailable", uidStatus);
+        }
+      }
       return {
         ok: true,
-        sandbox: {
-          enabled: true,
-          writableRoots: [resolvedWorktree, scratchPath],
-        },
+        sandbox,
         status: uidStatus,
       };
     },

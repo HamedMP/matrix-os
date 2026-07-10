@@ -321,6 +321,40 @@ apt_get_update() {
     -o Acquire::https::Timeout=20
 }
 
+enable_ubuntu_universe() {
+  [ -r /etc/os-release ] || return 0
+  # shellcheck disable=SC1091 -- the host-owned OS metadata is the distro source of truth.
+  . /etc/os-release
+  [ "${ID:-}" = "ubuntu" ] || return 0
+  timeout 300 apt-get install -y software-properties-common >>"$MATRIX_INSTALL_LOG" 2>&1 \
+    || fail "Ubuntu repository tooling install failed"
+  timeout 60 add-apt-repository -y universe >>"$MATRIX_INSTALL_LOG" 2>&1 \
+    || fail "Ubuntu universe repository setup failed"
+  apt_get_update >>"$MATRIX_INSTALL_LOG" 2>&1 || fail "apt-get update failed after enabling Ubuntu universe"
+}
+
+configure_bwrap_apparmor() {
+  [ -r /etc/os-release ] || return 0
+  # shellcheck disable=SC1091 -- the host-owned OS metadata is the distro source of truth.
+  . /etc/os-release
+  [ "${ID:-}" = "ubuntu" ] || return 0
+  dpkg --compare-versions "$VERSION_ID" ge 24.04 || return 0
+
+  install -d -o root -g root -m 0755 /etc/apparmor.d
+  cat >/etc/apparmor.d/bwrap <<'EOF'
+abi <abi/4.0>,
+include <tunables/global>
+
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/bwrap>
+}
+EOF
+  if systemctl is-active --quiet apparmor; then
+    run_required "reloading AppArmor for bubblewrap" systemctl reload apparmor
+  fi
+}
+
 install_packages() {
   export DEBIAN_FRONTEND=noninteractive
   if command -v apt-get >/dev/null 2>&1; then
@@ -328,8 +362,10 @@ install_packages() {
     : >"$MATRIX_INSTALL_LOG"
     log "Writing apt output to ${MATRIX_INSTALL_LOG}"
     apt_get_update >>"$MATRIX_INSTALL_LOG" 2>&1 || fail "apt-get update failed"
-    apt-get install -y ca-certificates curl docker.io git nginx openssl postgresql-client procps sudo tar >>"$MATRIX_INSTALL_LOG" 2>&1 \
+    enable_ubuntu_universe
+    apt-get install -y bubblewrap ca-certificates curl docker.io git nginx openssl postgresql-client procps socat sudo tar >>"$MATRIX_INSTALL_LOG" 2>&1 \
       || fail "apt-get install failed"
+    configure_bwrap_apparmor
     ok "OS packages installed"
     return
   fi
