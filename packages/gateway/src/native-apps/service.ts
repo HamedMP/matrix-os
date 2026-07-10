@@ -79,6 +79,7 @@ export interface NativeAppSessionServiceOptions {
   commandExistsCacheTtlMs?: number;
   displayPool?: PortPool;
   getuid?: () => number | undefined;
+  killProcess?: (pid: number, signal: NodeJS.Signals) => void;
   maxSessionsTotal?: number;
   maxSessionsPerOwner?: number;
   now?: () => number;
@@ -179,6 +180,7 @@ export class NativeAppSessionService {
   private readonly commandExistsCacheTtlMs: number;
   private readonly displayPool: PortPool;
   private readonly getuid: () => number | undefined;
+  private readonly killProcess: (pid: number, signal: NodeJS.Signals) => void;
   private readonly maxSessionsPerOwner: number;
   private readonly maxSessionsTotal: number;
   private readonly now: () => number;
@@ -200,6 +202,9 @@ export class NativeAppSessionService {
     this.commandExistsCacheTtlMs = options.commandExistsCacheTtlMs ?? COMMAND_CHECK_CACHE_TTL_MS;
     this.displayPool = options.displayPool ?? new PortPool({ min: 100, max: 199, cap: 32 });
     this.getuid = options.getuid ?? (() => process.getuid?.());
+    this.killProcess = options.killProcess ?? ((pid, signal) => {
+      process.kill(pid, signal);
+    });
     this.maxSessionsPerOwner = options.maxSessionsPerOwner ?? 3;
     this.maxSessionsTotal = options.maxSessionsTotal ?? 32;
     this.now = options.now ?? Date.now;
@@ -415,6 +420,7 @@ export class NativeAppSessionService {
       if (stderr) console.warn("[native-apps] child error:", err.message, "stderr:", stderr);
       else console.warn("[native-apps] child error:", err.message);
       record.status = "failed";
+      this.signalProcessGroup(record, "SIGKILL");
       this.releaseRecord(record);
     });
     child.on("exit", (code, signal) => {
@@ -424,6 +430,7 @@ export class NativeAppSessionService {
       }
       if (record.status === "starting") record.status = "failed";
       else if (record.status !== "terminated" && record.status !== "failed") record.status = "exited";
+      this.signalProcessGroup(record, "SIGKILL");
       this.releaseRecord(record);
       this.sessions.delete(record.id);
     });
@@ -524,13 +531,7 @@ export class NativeAppSessionService {
     }
     await new Promise<void>((resolve) => {
       const timer = setTimeout(() => {
-        try {
-          child.kill("SIGKILL");
-        } catch (err: unknown) {
-          if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
-            console.warn("[native-apps] SIGKILL failed:", err instanceof Error ? err.message : String(err));
-          }
-        }
+        if (!this.signalProcessGroup(record, "SIGKILL")) this.signalChild(child, "SIGKILL");
         resolve();
       }, this.stopGraceMs);
       timer.unref?.();
@@ -538,17 +539,36 @@ export class NativeAppSessionService {
         clearTimeout(timer);
         resolve();
       });
-      try {
-        child.kill("SIGTERM");
-      } catch (err: unknown) {
+      if (!this.signalProcessGroup(record, "SIGTERM") && !this.signalChild(child, "SIGTERM")) {
         clearTimeout(timer);
-        if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
-          console.warn("[native-apps] SIGTERM failed:", err instanceof Error ? err.message : String(err));
-        }
         resolve();
       }
     });
     this.releaseRecord(record);
+  }
+
+  private signalProcessGroup(record: NativeAppSessionRecord, signal: NodeJS.Signals): boolean {
+    if (!record.pid || record.pid <= 0) return false;
+    try {
+      this.killProcess(-record.pid, signal);
+      return true;
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
+        console.warn(`[native-apps] process group ${signal} failed:`, err instanceof Error ? err.message : String(err));
+      }
+      return false;
+    }
+  }
+
+  private signalChild(child: NativeAppChildProcess, signal: NodeJS.Signals): boolean {
+    try {
+      return child.kill(signal);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
+        console.warn(`[native-apps] child ${signal} failed:`, err instanceof Error ? err.message : String(err));
+      }
+      return false;
+    }
   }
 
   private releaseRecord(record: NativeAppSessionRecord): void {

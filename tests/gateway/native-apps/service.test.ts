@@ -18,10 +18,14 @@ function createChild(pid = 4321): NativeAppChildProcess & EventEmitter {
 function createService(options: Partial<ConstructorParameters<typeof NativeAppSessionService>[0]> = {}) {
   const launched: Array<{ command: string; args: string[] }> = [];
   const children: Array<NativeAppChildProcess & EventEmitter> = [];
+  const missingProcessGroup = vi.fn(() => {
+    throw Object.assign(new Error("process group not found"), { code: "ESRCH" });
+  });
   const service = new NativeAppSessionService({
     registry: createDefaultNativeAppRegistry(),
     commandExists: vi.fn(async (command) => command === "xpra"),
     getuid: () => 1000,
+    killProcess: missingProcessGroup,
     randomId: vi.fn()
       .mockReturnValueOnce("session_aaaaaaaaaaaaaaaaaaaaaaaa")
       .mockReturnValueOnce("stream_bbbbbbbbbbbbbbbbbbbbbbbb")
@@ -195,6 +199,28 @@ describe("NativeAppSessionService", () => {
 
     expect(portPool.release).toHaveBeenCalledTimes(1);
     expect(displayPool.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("signals the detached xpra process group when terminating a session", async () => {
+    const killProcess = vi.fn();
+    const { service, children } = createService({ killProcess });
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+
+    await service.terminateSession("alice", session.id);
+
+    expect(killProcess).toHaveBeenCalledWith(-(children[0].pid ?? 0), "SIGTERM");
+    expect(killProcess).toHaveBeenCalledWith(-(children[0].pid ?? 0), "SIGKILL");
+    expect(children[0].kill).not.toHaveBeenCalled();
+  });
+
+  it("kills remaining process-group members when the xpra parent exits", async () => {
+    const killProcess = vi.fn();
+    const { service, children } = createService({ killProcess });
+    await service.launchSession({ ownerId: "alice", appId: "xterm" });
+
+    children[0].emit("exit", 1, null);
+
+    expect(killProcess).toHaveBeenCalledWith(-(children[0].pid ?? 0), "SIGKILL");
   });
 
   it("enforces max sessions per owner", async () => {
