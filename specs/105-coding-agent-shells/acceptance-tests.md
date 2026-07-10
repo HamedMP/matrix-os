@@ -1,6 +1,6 @@
 # Acceptance Tests: Project Conversations And Kanban
 
-**Status**: Specification checkpoint - no implementation evidence claimed
+**Status**: Phase 18 contract evidence added; gateway, shell, security, and cross-shell evidence remains planned
 **Updated**: 2026-07-10
 
 This matrix is the executable acceptance contract for the clarified coding-agent shell model. A task checkbox in `tasks.md` is complete only when its named test IDs have current evidence on the exact implementation head. Existing checkpoint tests remain required regressions but do not prove these new cases.
@@ -36,7 +36,7 @@ Every clarified functional requirement and buildable success criterion has at le
 
 | ID | Requirement | Expected Evidence |
 | --- | --- | --- |
-| CT-001 | Project summary is bounded and carries safe task/thread/attention counts. | Zod 4 parse/reject tests in `tests/contracts/coding-agents.test.ts`. |
+| CT-001 | Project summary is bounded and carries safe task/thread/attention counts. | Zod 4 parse/reject tests in `tests/contracts/coding-agent-project-conversations.test.ts`. |
 | CT-002 | Task agent summary uses canonical status/priority values and bounded aggregate counts. | Valid fixture plus negative status/count/title/ID cases. |
 | CT-003 | Project workspace has independent bounded task, project-thread, and task-thread lists with truncation/cursors. | Oversized nested/list fixtures reject; boundary-size fixtures pass. |
 | CT-004 | Thread list filters validate required project and optional task IDs independently. | Valid project-only/task filter plus malformed/cross-field rejection fixtures. |
