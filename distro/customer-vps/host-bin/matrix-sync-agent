@@ -303,6 +303,11 @@ apply_update() {
       sudo systemctl start --no-block matrix-code-server.service || true
       log "Code-server runtime service enabled"
     fi
+    if [ -f "$extract_dir/systemd/matrix-developer-tools.service" ]; then
+      sudo systemctl enable matrix-developer-tools.service
+      sudo systemctl start --no-block matrix-developer-tools.service || true
+      log "Developer tools runtime service enabled"
+    fi
     if [ -f "$extract_dir/systemd/matrix-code.service" ]; then
       sudo systemctl enable matrix-code.service
       sudo systemctl start --no-block matrix-code.service || true

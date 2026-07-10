@@ -17,7 +17,7 @@ type AgentSessionManager = Pick<
   ReturnType<typeof createAgentSessionManager>,
   "startSession" | "listSessions" | "getSession" | "sendInput" | "killSession"
 >;
-type AgentSandbox = Pick<ReturnType<typeof createAgentSandbox>, "preflight">;
+type AgentSandbox = Pick<ReturnType<typeof createAgentSandbox>, "preflight" | "cleanup">;
 type SessionRuntimeBridge = Pick<ReturnType<typeof createSessionRuntimeBridge>, "registerSession">;
 type SessionAttachMode = "observe" | "owner";
 type ListSessionsInput = Parameters<AgentSessionManager["listSessions"]>[0];
@@ -67,17 +67,30 @@ async function resolveRequestedWorktree(
   return worktree ? { ok: true, worktree } : failure(404, "not_found", "Worktree was not found");
 }
 
-async function resolveCodexSandbox(options: {
+function toLaunchApprovalPolicy(
+  policy?: StartWorkspaceSessionRequest["approvalPolicy"],
+): "untrusted" | "on-request" | "on-failure" | "never" | undefined {
+  if (policy === "on_request") return "on-request";
+  if (policy === "on_failure") return "on-failure";
+  return policy;
+}
+
+async function resolveAgentSandbox(options: {
   agentSandbox: AgentSandbox;
+  agent: Extract<SupportedAgent, "claude" | "codex">;
   request: StartWorkspaceSessionRequest;
   sessionId: string;
   worktree: WorktreeRecord;
 }): Promise<{ ok: true; sandbox?: AgentLaunchSandbox } | Failure> {
   const preflight = await options.agentSandbox.preflight({
-    agent: "codex",
+    agent: options.agent,
     sessionId: options.sessionId,
     worktreePath: options.worktree.path,
     adminOverride: options.request.adminSandboxOverride,
+    mode: options.request.mode,
+    approvalPolicy: toLaunchApprovalPolicy(options.request.approvalPolicy) ??
+      (options.agent === "claude" ? "on-request" : "never"),
+    sandboxMode: options.request.sandboxMode ?? "workspace_write",
   });
   if (!preflight.ok) {
     return {
@@ -87,7 +100,11 @@ async function resolveCodexSandbox(options: {
       sandboxStatus: preflight.sandboxStatus,
     };
   }
-  if (options.request.sandboxMode === "read_only" && preflight.sandbox?.enabled) {
+  if (
+    preflight.sandbox?.enabled &&
+    (options.request.sandboxMode === "read_only" ||
+      (options.agent === "claude" && (options.request.mode === "plan" || options.request.mode === "review")))
+  ) {
     return { ok: true, sandbox: { ...preflight.sandbox, mode: "read-only", writableRoots: [] } };
   }
   if (options.request.sandboxMode === "full_access" && preflight.sandbox?.enabled) {
@@ -133,26 +150,42 @@ export function createWorkspaceSessionOrchestrator(options: {
     }
   }
 
+  async function cleanupSessionScratch(sessionId: string): Promise<void> {
+    try {
+      await options.agentSandbox.cleanup({ sessionId });
+    } catch (err: unknown) {
+      console.warn(
+        "[workspace-session-orchestrator] Failed to clean session scratch state:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
   return {
     async startSession(input: StartWorkspaceSessionInput): Promise<
       { ok: true; status: number; session: WorkspaceSessionView } | Failure
     > {
-      const sessionId = input.request.sessionId ?? idGenerator();
+      const request: StartWorkspaceSessionRequest =
+        input.request.kind === "agent" && input.request.agent === "claude"
+        ? { ...input.request, approvalPolicy: input.request.approvalPolicy ?? "on_request" }
+        : input.request;
+      const sessionId = request.sessionId ?? idGenerator();
       let sandbox: AgentLaunchSandbox | undefined;
 
-      if (input.request.agent === "codex") {
-        if (!input.request.projectSlug || !input.request.worktreeId) {
+      if (request.agent === "codex" || request.agent === "claude") {
+        if (!request.projectSlug || !request.worktreeId) {
           return failure(400, "sandbox_unavailable", "Agent sandbox is unavailable");
         }
         const worktree = await resolveRequestedWorktree(
           options.worktreeManager,
-          input.request.projectSlug,
-          input.request.worktreeId,
+          request.projectSlug,
+          request.worktreeId,
         );
         if (!worktree.ok) return worktree;
-        const preflight = await resolveCodexSandbox({
+        const preflight = await resolveAgentSandbox({
           agentSandbox: options.agentSandbox,
-          request: input.request,
+          agent: request.agent,
+          request,
           sessionId,
           worktree: worktree.worktree,
         });
@@ -161,12 +194,15 @@ export function createWorkspaceSessionOrchestrator(options: {
       }
 
       const result = await options.agentSessionManager.startSession({
-        ...input.request,
+        ...request,
         sessionId,
         ownerId: input.ownerScope.id,
         sandbox,
       });
-      if (!result.ok) return result;
+      if (!result.ok) {
+        if (sandbox) await cleanupSessionScratch(sessionId);
+        return result;
+      }
 
       await publishSessionStarted(result.session);
       return result;
@@ -193,6 +229,7 @@ export function createWorkspaceSessionOrchestrator(options: {
     async stopSession(sessionId: string) {
       const result = await options.agentSessionManager.killSession(sessionId);
       if (!result.ok) return result;
+      await cleanupSessionScratch(sessionId);
       await publishSessionStopped(result.session);
       return result;
     },
