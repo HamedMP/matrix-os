@@ -24,6 +24,9 @@ export function AgentProjectWorkspaceShell({
   onNewChat: (projectId: string, taskId?: string) => void;
 }) {
   const status = useCodingAgentProjectWorkspace((state) => state.status);
+  const hydratedRuntimeScope = useCodingAgentProjectWorkspace(
+    (state) => state.runtimeScope,
+  );
   const workspace = useCodingAgentProjectWorkspace((state) => state.workspace);
   const error = useCodingAgentProjectWorkspace((state) => state.error);
   const selectedProjectId = useCodingAgentProjectWorkspace(
@@ -63,6 +66,7 @@ export function AgentProjectWorkspaceShell({
     ].join(":")),
   ].join("|");
   const enabled = capabilityEnabled(summary, "codingAgentsProjectWorkspace");
+  const scopeMatches = hydratedRuntimeScope === runtimeScope;
 
   useEffect(() => {
     if (!enabled) return;
@@ -150,13 +154,13 @@ export function AgentProjectWorkspaceShell({
     <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
       <AgentProjectNavigator
         summary={summary}
-        workspace={workspace}
-        liveThread={activeThread}
-        status={status}
-        error={error}
-        selectedProjectId={selectedProjectId}
-        selectedTaskId={selectedTaskId}
-        selectedThreadId={selectedThreadId}
+        workspace={scopeMatches ? workspace : null}
+        liveThread={scopeMatches ? activeThread : null}
+        status={scopeMatches ? status : "loading"}
+        error={scopeMatches ? error : null}
+        selectedProjectId={scopeMatches ? selectedProjectId : null}
+        selectedTaskId={scopeMatches ? selectedTaskId : null}
+        selectedThreadId={scopeMatches ? selectedThreadId : null}
         canCreate={capabilityEnabled(summary, "codingAgentsThreadCreate")}
         onSelectProject={(projectId) => {
           void selectProject(projectId);
@@ -172,7 +176,15 @@ export function AgentProjectWorkspaceShell({
         onNewChat={onNewChat}
       />
       <main className="flex min-h-0 min-w-[320px] flex-1 flex-col overflow-hidden">
-        {children}
+        {scopeMatches ? children : (
+          <div
+            role="status"
+            className="flex min-h-0 flex-1 items-center justify-center px-6 text-sm"
+            style={{ color: "var(--text-secondary)" }}
+          >
+            Switching computer…
+          </div>
+        )}
       </main>
     </div>
   );

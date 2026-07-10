@@ -2,6 +2,7 @@
 
 import React from "react";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadSnapshot, ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
 import { AgentProjectWorkspaceShell } from "../../desktop/src/renderer/src/features/coding-agents/AgentProjectWorkspaceShell";
@@ -148,6 +149,39 @@ describe("AgentProjectWorkspaceShell", () => {
       expect(invoke.mock.calls.filter(([channel]) => channel === "runtime:get-project-workspace"))
         .toHaveLength(2);
     });
+  });
+
+  it("withholds stale project and conversation content on the first render of a new scope", () => {
+    useCodingAgentProjectWorkspace.setState({
+      status: "ready",
+      runtimeId: "rt_primary",
+      runtimeScope: "first-account|https://app.matrix-os.com|primary",
+      summary: summary(),
+      workspace: workspace(),
+      selectedProjectId: "matrix-os",
+      selectedTaskId: null,
+      selectedThreadId: "thread_project",
+    });
+    useCodingAgentWorkspace.setState({
+      activeThreadId: "thread_project",
+      threadSnapshotStatus: "ready",
+      threadSnapshot: snapshot("thread_project", "matrix-os"),
+    });
+    useConnection.setState({
+      handle: "second-account",
+      platformHost: "https://app.matrix-os.com",
+      runtimeSlot: "primary",
+    });
+
+    const html = renderToString(
+      <AgentProjectWorkspaceShell summary={summary()} onNewChat={vi.fn()}>
+        <div>Prior conversation content</div>
+      </AgentProjectWorkspaceShell>,
+    );
+
+    expect(html).not.toContain("Project chat");
+    expect(html).not.toContain("Prior conversation content");
+    expect(html).toContain("Switching computer");
   });
 
   it("clears prior-scope thread details when the next account workspace fails", async () => {
