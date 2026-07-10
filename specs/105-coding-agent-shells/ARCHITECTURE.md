@@ -1,6 +1,6 @@
 # Architecture: Coding Agent Shells
 
-**Status**: Product-model confirmation checkpoint
+**Status**: Gate 0 confirmed; Phase 18 implementation active
 **Last Updated**: 2026-07-10
 **Audience**: Agents implementing gateway, desktop, mobile, shell, and runtime changes.
 

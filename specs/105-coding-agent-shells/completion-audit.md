@@ -42,7 +42,7 @@ The 2026-07-10 clarification package was checked before implementation:
 - Every clarified functional requirement and buildable success criterion (`FR-006`, `FR-007`, `FR-020`, `FR-026` through `FR-029`, `FR-062`, `FR-066`, `FR-067`, `FR-070`, `FR-075` through `FR-077`, and `SC-011` through `SC-014`) appears in the acceptance requirement-coverage matrix.
 - Relative Markdown links in the spec package resolve.
 - The project/task/thread cardinality, same-thread turn behavior, canonical task-status rule, and Conversation/Kanban terminology agree across `SPEC.md`, `ARCHITECTURE.md`, `plan.md`, `tasks.md`, and `acceptance-tests.md`.
-- Gate 0 remains intentionally open pending explicit product-owner confirmation. These checks prove specification alignment only, not implementation.
+- Gate 0 passed on 2026-07-10 after explicit product-owner confirmation. These checks prove specification alignment only; implementation evidence remains tracked separately below.
 
 ## Validation Evidence
 

@@ -1,6 +1,6 @@
 # 105 - Coding Agent Shells
 
-**Status**: Product-model confirmation checkpoint
+**Status**: Gate 0 confirmed; Phase 18 implementation active
 **Created**: 2026-07-06
 **Lineage**: `spec/coding-agent-shells`, rebased onto the Expo SDK 57 mobile foundation and current `main`
 **Scope**: Desktop and mobile shell upgrade for multi-agent coding work on the user's Matrix computer.

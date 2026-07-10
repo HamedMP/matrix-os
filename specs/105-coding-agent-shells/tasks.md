@@ -1,6 +1,6 @@
 # Tasks: Coding Agent Shells
 
-**Status**: Product-model confirmation checkpoint
+**Status**: Gate 0 confirmed; Phase 18 implementation active
 **Lineage**: foundation merged through the recorded implementation checkpoint; clarified follow-up is specified against current `main`
 **Rule**: Preserve all existing desktop and mobile functionality. Add coding-agent capabilities incrementally behind contracts, tests, and feature flags.
 
@@ -32,10 +32,10 @@ That checkpoint is not the clarified final product. The active backlog now requi
 - [x] Keep canonical Matrix task statuses separate from aggregated thread execution state.
 - [x] Define Conversation and Kanban as two views over one gateway-owned model.
 - [x] Add aligned architecture, phased plan, implementation tasks, and acceptance-test IDs.
-- [ ] Product owner confirms all four product decisions in Gate 0; the two mechanical readiness checks also pass.
-- [ ] Begin implementation only after confirmation.
+- [x] Product owner confirmed all four product decisions in Gate 0 on 2026-07-10; the two mechanical readiness checks also pass.
+- [x] Begin implementation only after confirmation.
 
-No Phase 18+ production code may start while the confirmation checkbox remains open.
+Gate 0 is closed. Phase 18+ work must follow the acceptance IDs and completion gates below.
 
 ## Agent Instructions
 
