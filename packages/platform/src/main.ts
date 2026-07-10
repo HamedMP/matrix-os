@@ -1798,6 +1798,17 @@ async function resolveAppDomainIdentity(opts: {
           }
         }
       }
+      if (bearerToken === appSessionToken && opts.requestedHandle) {
+        const requestedMachine = await getActiveUserMachineByHandle(opts.db, opts.requestedHandle);
+        if (requestedMachine?.clerkUserId === claims.sub) {
+          return {
+            handle: requestedMachine.handle,
+            userId: requestedMachine.clerkUserId,
+            runtimeSlot: requestedMachine.runtimeSlot,
+            source: 'auth',
+          };
+        }
+      }
       const record = opts.legacyContainerRoutingEnabled === false
         ? undefined
         : await getContainer(opts.db, claims.handle);
