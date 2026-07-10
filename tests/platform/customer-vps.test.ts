@@ -384,6 +384,39 @@ describe('platform/customer-vps', () => {
     expect(hetzner.createServer).toHaveBeenCalledTimes(2);
   });
 
+  it('does not adopt a legacy preview slot owned by another preview handle', async () => {
+    let nextId = 0;
+    const ids = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+    ];
+    const { service, hetzner } = createService({
+      machineIdFactory: () => ids[nextId++] ?? ids[1]!,
+    });
+
+    const otherPreview = await service.provision({
+      clerkUserId: 'user_123',
+      handle: 'pr-896',
+      runtimeSlot: 'preview',
+    });
+    const requestedPreview = await service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'pr-897',
+    });
+
+    expect(requestedPreview.machineId).not.toBe(otherPreview.machineId);
+    await expect(getUserMachine(db, otherPreview.machineId)).resolves.toMatchObject({
+      provisioningClass: 'customer',
+      runtimeSlot: 'preview',
+    });
+    await expect(getUserMachine(db, requestedPreview.machineId)).resolves.toMatchObject({
+      provisioningClass: 'preview',
+      runtimeSlot: 'pr-897',
+    });
+    expect(hetzner.createServer).toHaveBeenCalledTimes(2);
+  });
+
   it('counts failed distinct previews until they are retried or deleted', async () => {
     let nextId = 0;
     const ids = [
