@@ -340,8 +340,8 @@ configure_bwrap_apparmor() {
   [ "${ID:-}" = "ubuntu" ] || return 0
   dpkg --compare-versions "$VERSION_ID" ge 24.04 || return 0
 
-  install -d -o root -g root -m 0755 /etc/apparmor.d
-  cat >/etc/apparmor.d/bwrap <<'EOF'
+  install -d -o root -g root -m 0755 /etc/apparmor.d || fail "AppArmor profile directory setup failed"
+  cat >/etc/apparmor.d/bwrap <<'EOF' || fail "AppArmor bubblewrap profile write failed"
 abi <abi/4.0>,
 include <tunables/global>
 

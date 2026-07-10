@@ -156,7 +156,12 @@ describe("self-host server installer", () => {
     expect(script).toContain("apt-get install -y bubblewrap ca-certificates curl docker.io git nginx openssl postgresql-client procps socat sudo tar >>\"$MATRIX_INSTALL_LOG\" 2>&1");
     expect(script).toContain("configure_bwrap_apparmor");
     expect(script).toContain("dpkg --compare-versions \"$VERSION_ID\" ge 24.04");
-    expect(script).toContain("cat >/etc/apparmor.d/bwrap <<'EOF'");
+    expect(script).toContain(
+      'install -d -o root -g root -m 0755 /etc/apparmor.d || fail "AppArmor profile directory setup failed"',
+    );
+    expect(script).toContain(
+      "cat >/etc/apparmor.d/bwrap <<'EOF' || fail \"AppArmor bubblewrap profile write failed\"",
+    );
     expect(script).toContain("profile bwrap /usr/bin/bwrap flags=(unconfined)");
     expect(script).toContain('run_required "reloading AppArmor for bubblewrap" systemctl reload apparmor');
     expect(script.indexOf("add-apt-repository -y universe")).toBeLessThan(
