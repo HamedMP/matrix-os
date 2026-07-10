@@ -2624,6 +2624,31 @@ describe("AgentWorkspace", () => {
     expect(draft.projectId).toBeUndefined();
   });
 
+  it("applies navigator project context without appending an empty seed prompt", () => {
+    const draft = mergeComposerSeed(
+      {
+        providerId: "codex",
+        prompt: "Keep my in-progress instructions.",
+        mode: "default",
+        approvalPolicy: "on_request",
+        sandboxMode: "workspace_write",
+      },
+      {
+        providerId: "codex",
+        prompt: "",
+        mode: "default",
+        approvalPolicy: "on_request",
+        sandboxMode: "workspace_write",
+        projectId: "matrix-os",
+        taskId: "task_auth",
+      },
+    );
+
+    expect(draft.prompt).toBe("Keep my in-progress instructions.");
+    expect(draft.projectId).toBe("matrix-os");
+    expect(draft.taskId).toBe("task_auth");
+  });
+
   it("preserves user attachments when clearing failed desktop follow-up launch context", () => {
     const cleaned = clearComposerLaunchContext({
       providerId: "codex",

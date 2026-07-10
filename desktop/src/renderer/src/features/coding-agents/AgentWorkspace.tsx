@@ -285,9 +285,11 @@ export function mergeComposerSeed(current: AgentThreadComposerDraft, seeded: Age
     mode: current.mode ?? seeded.mode,
     approvalPolicy: current.approvalPolicy ?? seeded.approvalPolicy,
     sandboxMode: current.sandboxMode ?? seeded.sandboxMode,
-    prompt: currentPrompt && currentPrompt !== seededPrompt
-      ? `${current.prompt.trimEnd()}\n\n---\n\n${seeded.prompt}`
-      : seeded.prompt,
+    prompt: !seededPrompt
+      ? current.prompt
+      : currentPrompt && currentPrompt !== seededPrompt
+        ? `${current.prompt.trimEnd()}\n\n---\n\n${seeded.prompt}`
+        : seeded.prompt,
     attachments,
   };
 }
