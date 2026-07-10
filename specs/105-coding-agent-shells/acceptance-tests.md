@@ -66,6 +66,7 @@ Every clarified functional requirement and buildable success criterion has at le
 | GW-016 | Sequential turns resume one provider conversation. | Fake adapter receives two distinct persisted turns for one thread and one unchanged server-only conversation identity in `tests/gateway/coding-agents-turn-dispatch.test.ts`; workspace-provider coverage proves input delivery settles the turn while the canonical running session keeps the thread active. |
 | GW-017 | Completion/failure/abort releases active-turn ownership. | Sequential completion, timeout failure, explicit abort, and persisted startup reconciliation each allow a later valid turn in `tests/gateway/coding-agents-turn-dispatch.test.ts`. |
 | GW-018 | Provider timeout/abort maps to bounded safe thread state. | Timeout, shutdown abort, registry cap, saturated idempotent retry, terminal request-body cleanup, safe persisted failure, and raw resume-identity exclusion assertions in `tests/gateway/coding-agents-turn-dispatch.test.ts`. |
+| GW-019 | Legacy adoption and project/task/thread projection updates are explicit, idempotent, and post-persistence. | Contract, auth, body-limit, owner/relation, exact-retry, publish-after-write, projection-failure isolation, and ordinary turn lifecycle assertions in `tests/gateway/coding-agents-thread-adoption.test.ts`, `tests/gateway/coding-agents-thread-projection.test.ts`, and `tests/gateway/coding-agents-turn-dispatch.test.ts`. |
 
 ## Desktop Tests
 

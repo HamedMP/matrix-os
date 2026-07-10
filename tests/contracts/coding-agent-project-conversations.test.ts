@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   AgentThreadEventSchema,
   AgentThreadListFilterSchema,
+  AdoptAgentThreadRequestSchema,
+  AdoptAgentThreadResponseSchema,
   AgentTurnLifecycleEventSchema,
   AgentTurnIdSchema,
   CreateAgentTurnErrorSchema,
@@ -197,6 +199,35 @@ describe("coding agent project conversation contracts", () => {
       },
     ]) {
       expect(() => CreateAgentTurnRequestSchema.parse(invalid)).toThrow();
+    }
+  });
+
+  it("CT-009 validates explicit legacy thread adoption contracts", () => {
+    expect(AdoptAgentThreadRequestSchema.parse({
+      projectId: "matrix-os",
+      taskId: "task_auth_0",
+      clientRequestId: "req_adopt_auth_1",
+    })).toEqual({
+      projectId: "matrix-os",
+      taskId: "task_auth_0",
+      clientRequestId: "req_adopt_auth_1",
+    });
+    expect(AdoptAgentThreadResponseSchema.parse({
+      thread: thread(1, "task_auth_0"),
+      status: "adopted",
+    })).toMatchObject({
+      thread: { projectId: "matrix-os", taskId: "task_auth_0" },
+      status: "adopted",
+    });
+
+    for (const invalid of [
+      { taskId: "task_auth_0", clientRequestId: "req_adopt_auth_1" },
+      { projectId: "../matrix-os", clientRequestId: "req_adopt_auth_1" },
+      { projectId: "matrix-os", taskId: "auth", clientRequestId: "req_adopt_auth_1" },
+      { projectId: "matrix-os", clientRequestId: "turn_auth_1" },
+      { projectId: "matrix-os", clientRequestId: "req_adopt_auth_1", extra: true },
+    ]) {
+      expect(() => AdoptAgentThreadRequestSchema.parse(invalid)).toThrow();
     }
   });
 

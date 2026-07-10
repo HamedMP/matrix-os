@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
 import {
+  AdoptAgentThreadResponseSchema,
   AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
   AgentThreadSummarySchema,
@@ -18,6 +19,8 @@ import {
   TerminalSessionIdSchema,
   type AgentThreadEvent,
   type AgentThreadSummary,
+  type AdoptAgentThreadRequest,
+  type AdoptAgentThreadResponse,
   type ApprovalDecisionRequest,
   type CreateAgentThreadRequest,
   type CreateAgentTurnRequest,
@@ -45,6 +48,16 @@ import {
   type CodingAgentProviderResumeState,
 } from "./provider-adapter.js";
 import { createCodingAgentTurnDispatcher } from "./turn-dispatcher.js";
+import {
+  deriveThreadProjectionChanges,
+  publishThreadProjectionChanges,
+  type CodingAgentThreadProjectionPublisher,
+} from "./thread-projection.js";
+
+export type {
+  CodingAgentThreadProjectionChange,
+  CodingAgentThreadProjectionPublisher,
+} from "./thread-projection.js";
 
 export type {
   CodingAgentProviderAdapter,
@@ -142,6 +155,7 @@ export interface CodingAgentThreadStoreOptions {
   now?: () => Date;
   providers: CodingAgentProviderAdapter[];
   relationValidator?: CodingAgentThreadRelationValidator;
+  projectionPublisher?: CodingAgentThreadProjectionPublisher;
   maxTurnDispatches?: number;
   turnDispatchTimeoutMs?: number;
 }
@@ -149,6 +163,11 @@ export interface CodingAgentThreadStoreOptions {
 export interface CodingAgentThreadStore {
   createThread(principal: RequestPrincipal, request: CreateAgentThreadRequest): Promise<ThreadCreateResult>;
   createShellThread(principal: RequestPrincipal, request: CreateAgentThreadRequest): Promise<ThreadCreateResult>;
+  adoptLegacyThread(
+    principal: RequestPrincipal,
+    threadId: string,
+    request: AdoptAgentThreadRequest,
+  ): Promise<AdoptAgentThreadResponse>;
   listThreads(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
   listAttentionThreads(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
   listProjectCounts(principal: RequestPrincipal): Promise<Array<{
@@ -707,7 +726,17 @@ export function createCodingAgentThreadStore(
     const run = queue.then(async () => {
       const current = await readState(options.homePath);
       const { state, result } = await fn(current);
-      await writeState(options.homePath, trimState(state));
+      const persisted = trimState(state);
+      await writeState(options.homePath, persisted);
+      await publishThreadProjectionChanges({
+        changes: deriveThreadProjectionChanges({
+          previous: current.threads,
+          next: persisted.threads,
+          toSummary: stripOwner,
+        }),
+        publisher: options.projectionPublisher,
+        logFailure: (err) => logCodingAgentWarning("thread projection publish failed", err),
+      });
       return result;
     });
     queue = run.then(() => undefined, () => undefined);
@@ -1037,6 +1066,52 @@ export function createCodingAgentThreadStore(
         throw new CodingAgentThreadRelationError("validation_unavailable");
       }
       return createThreadInternal(principal, request, options.relationValidator);
+    },
+    async adoptLegacyThread(principal, threadId, request) {
+      const relationValidator = options.relationValidator?.validateThread;
+      if (!relationValidator) {
+        throw new CodingAgentThreadRelationError("validation_unavailable");
+      }
+      return mutate(async (state) => {
+        const thread = state.threads.find((candidate) =>
+          candidate.ownerId === principal.userId && candidate.id === threadId
+        );
+        if (!thread) {
+          throw new CodingAgentThreadError("thread_not_found", "Thread not found");
+        }
+        if (thread.projectId === request.projectId && thread.taskId === request.taskId) {
+          return {
+            state,
+            result: AdoptAgentThreadResponseSchema.parse({
+              thread: stripOwner(thread),
+              status: "already_adopted",
+            }),
+          };
+        }
+        if (thread.projectId !== undefined || thread.taskId !== undefined) {
+          throw new CodingAgentThreadRelationError("invalid_relation");
+        }
+        await relationValidator(principal, {
+          projectId: request.projectId,
+          taskId: request.taskId,
+        });
+        const nextThread: StoredThread = {
+          ...thread,
+          projectId: request.projectId,
+          taskId: request.taskId,
+          updatedAt: now().toISOString(),
+        };
+        return {
+          state: {
+            ...state,
+            threads: state.threads.map((candidate) => candidate === thread ? nextThread : candidate),
+          },
+          result: AdoptAgentThreadResponseSchema.parse({
+            thread: stripOwner(nextThread),
+            status: "adopted",
+          }),
+        };
+      });
     },
     async acceptTurn(principal, threadId, request) {
       const relationValidator = options.relationValidator?.validateThread;

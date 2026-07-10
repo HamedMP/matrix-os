@@ -940,12 +940,15 @@ Current canonical routes under `/api/coding-agents`:
 
 - `GET /api/coding-agents/summary`
 - `POST /api/coding-agents/threads`
+- `POST /api/coding-agents/threads/:threadId/adopt`
 - `GET /api/coding-agents/threads`
 - `GET /api/coding-agents/threads/:threadId`
 - `GET /api/coding-agents/threads/:threadId/events`
 - `POST /api/coding-agents/threads/:threadId/abort`
 - `POST /api/coding-agents/threads/:threadId/approvals/:approvalId/decision`
 - `POST /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer`
+- `POST /api/coding-agents/threads/:threadId/turns`
+- `GET /api/coding-agents/projects/:projectId/workspace`
 - `GET /api/coding-agents/reviews`
 - `GET /api/coding-agents/reviews/:reviewId`
 - `GET /api/coding-agents/files/browse`
@@ -957,16 +960,13 @@ Current canonical routes under `/api/coding-agents`:
 - `GET /api/coding-agents/notification-preferences`
 - `PUT /api/coding-agents/notification-preferences`
 
-Planned additive routes after Gate 0:
-
-- `GET /api/coding-agents/projects/:projectId/workspace` returns `ProjectAgentWorkspaceSchema`; validates the owner-scoped project path param plus independent bounded task/thread cursors and limits before reading canonical project/task/thread services.
-- `POST /api/coding-agents/threads/:threadId/turns` accepts `CreateAgentTurnRequestSchema` and returns `CreateAgentTurnResponseSchema`; applies auth, `bodyLimit`, path/body validation, ownership/project/task checks, persisted idempotency, atomic active-turn ownership, and safe turn error mapping.
+The project workspace route returns `ProjectAgentWorkspaceSchema` after validating the owner-scoped project path plus independent bounded task/thread cursors and limits. The turns route accepts `CreateAgentTurnRequestSchema` and applies auth, `bodyLimit`, path/body validation, ownership/project/task checks, persisted idempotency, atomic active-turn ownership, and safe error mapping. The adoption route is compatibility-only: it can attach a fully unassigned legacy thread to one validated project/task relation but cannot move an assigned thread.
 
 Current canonical coding-agent WebSocket:
 
 - `/ws/coding-agents/thread/:threadId`
 
-Project/task summary updates should reuse the existing authenticated workspace event path or a separately specified bounded runtime projection stream. Do not add `/ws/coding-agents/runtime` without its own schemas, auth registration, subscriber caps, stale cleanup, shutdown drain, and tests.
+Project/task/thread summary changes publish bounded events through the existing authenticated workspace event path after owner-file persistence succeeds. Do not add `/ws/coding-agents/runtime` without its own schemas, auth registration, subscriber caps, stale cleanup, shutdown drain, and tests.
 
 Compatibility:
 

@@ -1,3 +1,4 @@
+import { AgentThreadSummarySchema, type AgentThreadSummary } from "@matrix-os/contracts";
 import type { PreviewRecord } from "./preview-manager.js";
 import type { WorkspaceError } from "./project-manager.js";
 import type { TaskRecord } from "./task-manager.js";
@@ -67,6 +68,25 @@ export function createWorkspaceEventPublisher(options: {
 
   return {
     publish,
+
+    async publishCodingAgentThreadProjection(change: {
+      type: "created" | "updated" | "removed";
+      thread: AgentThreadSummary;
+    }): Promise<void> {
+      const thread = AgentThreadSummarySchema.parse(change.thread);
+      if (!thread.projectId) return;
+      await publish({
+        type: `coding-agent.thread.${change.type}`,
+        scope: { projectSlug: thread.projectId, taskId: thread.taskId },
+        payload: {
+          attention: thread.attention,
+          providerId: thread.providerId,
+          status: thread.status,
+          threadId: thread.id,
+          updatedAt: thread.updatedAt,
+        },
+      });
+    },
 
     async publishTaskCreated(task: Pick<TaskRecord, "id" | "projectSlug" | "title" | "status">): Promise<void> {
       await publish({

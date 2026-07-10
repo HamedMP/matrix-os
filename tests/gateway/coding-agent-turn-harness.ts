@@ -7,6 +7,7 @@ import { createCodingAgentRoutes } from "../../packages/gateway/src/coding-agent
 import {
   createCodingAgentThreadStore,
   type CodingAgentProviderAdapter,
+  type CodingAgentThreadProjectionPublisher,
 } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 
@@ -32,6 +33,7 @@ export async function createTurnHarness(options: {
   provider?: CodingAgentProviderAdapter;
   maxTurnDispatches?: number;
   turnDispatchTimeoutMs?: number;
+  projectionPublisher?: CodingAgentThreadProjectionPublisher;
 } = {}) {
   const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-turns-"));
   const validateThread = vi.fn(async () => undefined);
@@ -60,6 +62,7 @@ export async function createTurnHarness(options: {
       validateCreate: async () => undefined,
       validateThread,
     },
+    projectionPublisher: options.projectionPublisher,
     maxTurnDispatches: options.maxTurnDispatches,
     turnDispatchTimeoutMs: options.turnDispatchTimeoutMs,
     now: () => turnNow,
