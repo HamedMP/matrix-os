@@ -1,88 +1,17 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
-import {
-  AgentThreadSnapshotSchema,
-  CreateAgentTurnResponseSchema,
-} from "../../packages/contracts/src/index.js";
-import { createCodingAgentRoutes } from "../../packages/gateway/src/coding-agents/routes.js";
-import {
-  createCodingAgentThreadStore,
-  type CodingAgentProviderAdapter,
-} from "../../packages/gateway/src/coding-agents/thread-store.js";
+import { CreateAgentTurnResponseSchema } from "../../packages/contracts/src/index.js";
+import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import { CodingAgentThreadRelationError } from "../../packages/gateway/src/coding-agents/thread-relations.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
-
-const ownerPrincipal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
-const otherPrincipal: RequestPrincipal = { userId: "other_user", source: "jwt" };
-const now = new Date("2026-07-10T12:00:00.000Z");
-
-function post(path: string, body: unknown): Request {
-  return new Request(`http://localhost${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-const turnBody = {
-  message: "Continue with the smallest safe implementation.",
-  clientRequestId: "req_turn_continue_1",
-};
-
-async function createHarness(options: { initialOutcome?: "completed" | "aborted" } = {}) {
-  const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-turns-"));
-  const validateThread = vi.fn(async () => undefined);
-  const provider: CodingAgentProviderAdapter = {
-    providerId: "codex",
-    startThread({ thread, now: providerNow, nextEventId }) {
-      return [{
-        type: "thread.completed",
-        eventId: nextEventId(),
-        threadId: thread.id,
-        occurredAt: providerNow().toISOString(),
-        outcome: options.initialOutcome ?? "completed",
-      }];
-    },
-  };
-  const threads = createCodingAgentThreadStore({
-    homePath,
-    providers: [provider],
-    relationValidator: {
-      validateCreate: async () => undefined,
-      validateThread,
-    },
-    now: () => now,
-  });
-  const created = await threads.createThread(ownerPrincipal, {
-    providerId: "codex",
-    prompt: "Start the implementation.",
-    projectId: "matrix-os",
-    taskId: "task_auth",
-    clientRequestId: "req_thread_turn_fixture",
-  });
-  let principal = ownerPrincipal;
-  const app = new Hono();
-  app.route("/api/coding-agents", createCodingAgentRoutes({
-    service: { getSummary: vi.fn() },
-    threads,
-    turns: threads,
-    getPrincipal: () => principal,
-  }));
-  return {
-    app,
-    homePath,
-    threadId: created.snapshot.thread.id,
-    threads,
-    validateThread,
-    setPrincipal(value: RequestPrincipal) {
-      principal = value;
-    },
-  };
-}
+import {
+  createTurnHarness as createHarness,
+  otherPrincipal,
+  ownerPrincipal,
+  postTurn as post,
+  turnBody,
+  turnNow as now,
+} from "./coding-agent-turn-harness.js";
 
 describe("coding agent same-thread turns", () => {
   it("GW-012 GW-013 accepts and replays one bounded user turn", async () => {
@@ -112,7 +41,7 @@ describe("coding agent same-thread turns", () => {
         taskId: "task_auth",
       });
     } finally {
-      await rm(harness.homePath, { recursive: true, force: true });
+      await harness.cleanup();
     }
   });
 
@@ -130,7 +59,7 @@ describe("coding agent same-thread turns", () => {
         status: "accepted",
       });
     } finally {
-      await rm(harness.homePath, { recursive: true, force: true });
+      await harness.cleanup();
     }
   });
 
@@ -163,7 +92,7 @@ describe("coding agent same-thread turns", () => {
       expect(reloadedDuplicate).toEqual(duplicateBody);
       expect(harness.validateThread).toHaveBeenCalledTimes(1);
     } finally {
-      await rm(harness.homePath, { recursive: true, force: true });
+      await harness.cleanup();
     }
   });
 
@@ -187,7 +116,7 @@ describe("coding agent same-thread turns", () => {
         },
       });
     } finally {
-      await rm(harness.homePath, { recursive: true, force: true });
+      await harness.cleanup();
     }
   });
 
@@ -239,7 +168,7 @@ describe("coding agent same-thread turns", () => {
       expect(unauthenticated.status).toBe(401);
       expect(JSON.stringify(await otherOwner.json())).not.toMatch(/owner_user|matrix-os|task_auth/);
     } finally {
-      await rm(harness.homePath, { recursive: true, force: true });
+      await harness.cleanup();
     }
   });
 });

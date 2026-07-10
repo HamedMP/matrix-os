@@ -16,14 +16,12 @@ import {
   RequestIdSchema,
   SafeClientErrorSchema,
   TerminalSessionIdSchema,
-  type AgentProviderSummary,
   type AgentThreadEvent,
   type AgentThreadSummary,
   type ApprovalDecisionRequest,
   type CreateAgentThreadRequest,
   type CreateAgentTurnRequest,
   type CreateAgentTurnResponse,
-  type SafeSetupAction,
   type UserInputAnswerRequest,
 } from "@matrix-os/contracts";
 import { atomicWriteJson } from "../state-ops.js";
@@ -39,6 +37,20 @@ import {
   CodingAgentThreadRelationError,
   type CodingAgentThreadRelationValidator,
 } from "./thread-relations.js";
+import {
+  CodingAgentProviderResumeStateSchema,
+  parseCodingAgentProviderEvents,
+  parseCodingAgentProviderRunResult,
+  type CodingAgentProviderAdapter,
+  type CodingAgentProviderResumeState,
+} from "./provider-adapter.js";
+import { createCodingAgentTurnDispatcher } from "./turn-dispatcher.js";
+
+export type {
+  CodingAgentProviderAdapter,
+  CodingAgentProviderResumeState,
+  CodingAgentProviderRunResult,
+} from "./provider-adapter.js";
 
 const THREAD_STORE_RELATIVE_PATH = ["system", "coding-agents", "threads.json"] as const;
 const THREAD_LIST_LIMIT = 50;
@@ -64,16 +76,24 @@ const StoredThreadSchema = AgentThreadSummarySchema.extend({
   approvalDecisionClientRequestIds: z.array(RequestIdSchema).max(MAX_APPROVAL_DECISION_REQUEST_IDS).default([]),
   inputAnswerClientRequestIds: z.array(RequestIdSchema).max(MAX_INPUT_ANSWER_REQUEST_IDS).default([]),
   activeTurnId: AgentTurnIdSchema.optional(),
+  providerResumeState: CodingAgentProviderResumeStateSchema.optional(),
 }).strict();
 
-const StoredTurnSchema = CreateAgentTurnRequestSchema.extend({
+const StoredTurnSchema = z.object({
+  message: CreateAgentTurnRequestSchema.shape.message.optional(),
+  attachments: CreateAgentTurnRequestSchema.shape.attachments,
+  clientRequestId: CreateAgentTurnRequestSchema.shape.clientRequestId,
   ownerId: OwnerIdSchema,
   threadId: AgentThreadSummarySchema.shape.id,
   turnId: AgentTurnIdSchema,
   status: AgentTurnStatusSchema,
   acceptedAt: IsoTimestampSchema,
   updatedAt: IsoTimestampSchema,
-}).strict();
+}).strict().superRefine((turn, context) => {
+  if ((turn.status === "accepted" || turn.status === "running") && !turn.message) {
+    context.addIssue({ code: "custom", message: "Active turns require a message" });
+  }
+});
 
 const TerminalSessionStoppedReconciliationSchema = z.object({
   ownerId: OwnerIdSchema,
@@ -101,6 +121,11 @@ const StoredThreadStateSchema = z.object({
 type StoredThread = z.infer<typeof StoredThreadSchema>;
 type StoredThreadState = z.infer<typeof StoredThreadStateSchema>;
 type StoredTurn = z.infer<typeof StoredTurnSchema>;
+type TurnAcceptMutationResult = {
+  response: CreateAgentTurnResponse;
+  eventsToPublish: AgentThreadEvent[];
+  dispatch?: { thread: StoredThread; turn: StoredTurn };
+};
 type PendingTerminalStop = z.infer<typeof PendingTerminalStopSchema>;
 type AgentThreadSnapshot = z.infer<typeof AgentThreadSnapshotSchema>;
 type ThreadCreateResult = { snapshot: AgentThreadSnapshot; existing: boolean };
@@ -112,60 +137,13 @@ type ThreadEventSink = (input: {
   events: AgentThreadEvent[];
 }) => void;
 
-export interface CodingAgentProviderAdapter {
-  providerId: string;
-  getSummary?(input: {
-    principal: RequestPrincipal;
-    now: () => Date;
-    signal: AbortSignal;
-  }): Promise<AgentProviderSummary> | AgentProviderSummary;
-  healthCheck?(input: {
-    principal: RequestPrincipal;
-    now: () => Date;
-    signal: AbortSignal;
-  }): Promise<{ ok: boolean }> | { ok: boolean };
-  buildSetupAction?(input: {
-    principal: RequestPrincipal;
-    now: () => Date;
-    signal: AbortSignal;
-  }): Promise<SafeSetupAction[]> | SafeSetupAction[];
-  startThread(input: {
-    principal: RequestPrincipal;
-    thread: AgentThreadSummary;
-    request: CreateAgentThreadRequest;
-    now: () => Date;
-    nextEventId: () => string;
-  }): Promise<AgentThreadEvent[]> | AgentThreadEvent[];
-  abortThread?(input: {
-    principal: RequestPrincipal;
-    thread: AgentThreadSummary;
-    clientRequestId: string;
-    now: () => Date;
-    nextEventId: () => string;
-  }): Promise<AgentThreadEvent[]> | AgentThreadEvent[];
-  submitApproval?(input: {
-    principal: RequestPrincipal;
-    thread: AgentThreadSummary;
-    approvalId: string;
-    request: ApprovalDecisionRequest;
-    now: () => Date;
-    nextEventId: () => string;
-  }): Promise<AgentThreadEvent[]> | AgentThreadEvent[];
-  submitInput?(input: {
-    principal: RequestPrincipal;
-    thread: AgentThreadSummary;
-    inputRequestId: string;
-    request: UserInputAnswerRequest;
-    now: () => Date;
-    nextEventId: () => string;
-  }): Promise<AgentThreadEvent[]> | AgentThreadEvent[];
-}
-
 export interface CodingAgentThreadStoreOptions {
   homePath: string;
   now?: () => Date;
   providers: CodingAgentProviderAdapter[];
   relationValidator?: CodingAgentThreadRelationValidator;
+  maxTurnDispatches?: number;
+  turnDispatchTimeoutMs?: number;
 }
 
 export interface CodingAgentThreadStore {
@@ -208,6 +186,8 @@ export interface CodingAgentTurnStore {
     threadId: string,
     request: CreateAgentTurnRequest,
   ): Promise<CreateAgentTurnResponse>;
+  recoverActiveTurns(): Promise<void>;
+  shutdownTurns(): Promise<void>;
 }
 
 export class CodingAgentThreadError extends Error {
@@ -254,8 +234,8 @@ export function createFakeCodingAgentProvider(options: { providerId: string; del
       return [];
     },
     startThread({ thread, now, nextEventId }) {
-      return [
-        {
+      return {
+        events: [{
           type: "thread.status",
           eventId: nextEventId(),
           threadId: thread.id,
@@ -270,7 +250,23 @@ export function createFakeCodingAgentProvider(options: { providerId: string; del
           messageId: "msg_fake_provider_started",
           delta: index === 0 ? "Agent run started." : `Agent event ${index + 1}.`,
         } satisfies AgentThreadEvent)),
-      ];
+        ],
+        resumeState: { conversationId: `conversation_${thread.id}` },
+      };
+    },
+    resumeTurn({ thread, turn, resumeState, now, nextEventId }) {
+      return {
+        events: [AgentThreadEventSchema.parse({
+          type: "assistant.text.delta",
+          eventId: nextEventId(),
+          threadId: thread.id,
+          occurredAt: now().toISOString(),
+          messageId: `msg_${turn.turnId}`,
+          delta: "Agent turn completed.",
+        })],
+        resumeState,
+        outcome: "completed",
+      };
     },
     abortThread({ thread, now, nextEventId }) {
       return defaultAbortEvents(thread.id, now, nextEventId);
@@ -384,6 +380,7 @@ function stripOwner(thread: StoredThread): AgentThreadSummary {
     approvalDecisionClientRequestIds: _approvalDecisionClientRequestIds,
     inputAnswerClientRequestIds: _inputAnswerClientRequestIds,
     activeTurnId: _activeTurnId,
+    providerResumeState: _providerResumeState,
     ...summary
   } = thread;
   return AgentThreadSummarySchema.parse(summary);
@@ -395,26 +392,26 @@ function trimState(state: StoredThreadState): StoredThreadState {
     .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
     .slice(0, MAX_STORED_THREADS);
   const activeThreadIds = threads.map((thread) => thread.id);
-  const latestEvents = state.events
-    .slice()
-    .reverse()
-    .filter((event) => activeThreadIds.includes(event.threadId))
-    .reduce<AgentThreadEvent[]>((kept, event) => {
-      const countForThread = kept.filter((candidate) => candidate.threadId === event.threadId).length;
-      if (countForThread < MAX_EVENTS_PER_THREAD) kept.push(event);
-      return kept;
-    }, []);
+  const eventCounts = Object.create(null) as Record<string, number>;
+  const latestEvents: AgentThreadEvent[] = [];
+  for (const event of state.events.slice().reverse()) {
+    if (!activeThreadIds.includes(event.threadId)) continue;
+    const count = eventCounts[event.threadId] ?? 0;
+    if (count >= MAX_EVENTS_PER_THREAD) continue;
+    eventCounts[event.threadId] = count + 1;
+    latestEvents.push(event);
+  }
   const events = latestEvents.reverse();
-  const turns = state.turns
-    .slice()
-    .reverse()
-    .filter((turn) => activeThreadIds.includes(turn.threadId))
-    .reduce<StoredTurn[]>((kept, turn) => {
-      const countForThread = kept.filter((candidate) => candidate.threadId === turn.threadId).length;
-      if (countForThread < MAX_TURNS_PER_THREAD && kept.length < MAX_STORED_TURNS) kept.push(turn);
-      return kept;
-    }, [])
-    .reverse();
+  const turnCounts = Object.create(null) as Record<string, number>;
+  const latestTurns: StoredTurn[] = [];
+  for (const turn of state.turns.slice().reverse()) {
+    if (!activeThreadIds.includes(turn.threadId) || latestTurns.length >= MAX_STORED_TURNS) continue;
+    const count = turnCounts[turn.threadId] ?? 0;
+    if (count >= MAX_TURNS_PER_THREAD) continue;
+    turnCounts[turn.threadId] = count + 1;
+    latestTurns.push(turn);
+  }
+  const turns = latestTurns.reverse();
   return {
     version: 1,
     threads,
@@ -659,11 +656,7 @@ function defaultInputAnswerEvents(
 }
 
 function parseProviderEvents(events: AgentThreadEvent[], threadId: string): AgentThreadEvent[] {
-  const parsed = events.map((event) => AgentThreadEventSchema.parse(event));
-  if (parsed.some((event) => event.threadId !== threadId)) {
-    throw new Error("Provider emitted event for another thread");
-  }
-  return parsed;
+  return parseCodingAgentProviderEvents(events, threadId);
 }
 
 function includesAbortedCompletion(events: AgentThreadEvent[]): boolean {
@@ -721,6 +714,12 @@ export function createCodingAgentThreadStore(
     return run;
   }
 
+  async function inspect<T>(fn: (state: StoredThreadState) => T): Promise<T> {
+    const run = queue.then(async () => fn(await readState(options.homePath)));
+    queue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
   function providerFor(providerId: string): CodingAgentProviderAdapter {
     const provider = providers.find((candidate) => candidate.providerId === providerId);
     if (!provider) {
@@ -738,6 +737,189 @@ export function createCodingAgentThreadStore(
         logCodingAgentWarning("thread event sink failed", err);
       }
     }
+  }
+
+  function turnStatusEvent(
+    threadId: string,
+    turnId: string,
+    status: "running" | "completed" | "failed" | "aborted",
+  ): AgentThreadEvent {
+    return AgentThreadEventSchema.parse({
+      type: "turn.status",
+      eventId: nextEventId(),
+      threadId,
+      occurredAt: now().toISOString(),
+      turnId,
+      status,
+    });
+  }
+
+  function clearActiveTurn(thread: StoredThread): StoredThread {
+    const { activeTurnId: _activeTurnId, ...cleared } = thread;
+    return cleared;
+  }
+
+  function settledTurn(
+    turn: StoredTurn,
+    status: "completed" | "failed" | "aborted",
+    updatedAt: string,
+  ): StoredTurn {
+    const { message: _message, attachments: _attachments, ...record } = turn;
+    return StoredTurnSchema.parse({ ...record, status, updatedAt });
+  }
+
+  function terminalTurnEvents(
+    threadId: string,
+    turnId: string,
+    outcome: "completed" | "failed" | "aborted",
+  ): AgentThreadEvent[] {
+    const lifecycle = turnStatusEvent(threadId, turnId, outcome);
+    if (outcome === "failed") {
+      return [lifecycle, ...safeProviderRunFailureEvents(threadId, now, nextEventId)];
+    }
+    if (outcome === "aborted") {
+      return [lifecycle, ...defaultAbortEvents(threadId, now, nextEventId)];
+    }
+    return [lifecycle, ...terminalStoppedEvents(threadId, "exited", now, nextEventId)];
+  }
+
+  async function markTurnRunning(ownerId: string, threadId: string, turnId: string): Promise<void> {
+    const result = await mutate(async (state) => {
+      const thread = state.threads.find((candidate) =>
+        candidate.ownerId === ownerId && candidate.id === threadId && candidate.activeTurnId === turnId
+      );
+      if (!thread) return { state, result: [] as AgentThreadEvent[] };
+      const event = turnStatusEvent(threadId, turnId, "running");
+      return {
+        state: {
+          ...state,
+          threads: state.threads.map((candidate) =>
+            candidate === thread ? { ...thread, status: "running", attention: "none", updatedAt: event.occurredAt } : candidate
+          ),
+          events: [...state.events, event],
+          turns: state.turns.map((turn) =>
+            turn.ownerId === ownerId && turn.threadId === threadId && turn.turnId === turnId
+              ? { ...turn, status: "running", updatedAt: event.occurredAt }
+              : turn
+          ),
+        },
+        result: [event],
+      };
+    });
+    publish(ownerId, threadId, result);
+  }
+
+  async function finishTurn(input: {
+    ownerId: string;
+    threadId: string;
+    turnId: string;
+    providerEvents: AgentThreadEvent[];
+    outcome: "completed" | "failed" | "aborted";
+    resumeState?: CodingAgentProviderResumeState;
+  }): Promise<void> {
+    const result = await mutate(async (state) => {
+      const thread = state.threads.find((candidate) =>
+        candidate.ownerId === input.ownerId &&
+        candidate.id === input.threadId &&
+        candidate.activeTurnId === input.turnId
+      );
+      if (!thread) return { state, result: [] as AgentThreadEvent[] };
+      if (input.providerEvents.some((event) =>
+        event.type === "turn.accepted" ||
+        event.type === "turn.status" ||
+        event.type === "thread.created" ||
+        event.type === "thread.completed"
+      )) {
+        throw new Error("Provider emitted reserved lifecycle event");
+      }
+      const events = [
+        ...input.providerEvents,
+        ...terminalTurnEvents(input.threadId, input.turnId, input.outcome),
+      ];
+      let nextThread = thread;
+      for (const event of events) nextThread = applyEvent(nextThread, event);
+      nextThread = clearActiveTurn({
+        ...nextThread,
+        ...(input.resumeState ? { providerResumeState: input.resumeState } : {}),
+      });
+      return {
+        state: {
+          ...state,
+          threads: state.threads.map((candidate) => candidate === thread ? nextThread : candidate),
+          events: [...state.events, ...events],
+          turns: state.turns.map((turn) =>
+            turn.ownerId === input.ownerId && turn.threadId === input.threadId && turn.turnId === input.turnId
+              ? settledTurn(turn, input.outcome, events.at(-1)!.occurredAt)
+              : turn
+          ),
+        },
+        result: events,
+      };
+    });
+    publish(input.ownerId, input.threadId, result);
+  }
+
+  const turnDispatcher = createCodingAgentTurnDispatcher({
+    getProvider: providerFor,
+    markRunning: markTurnRunning,
+    finish: finishTurn,
+    nextEventId,
+    now,
+    logFailure: logCodingAgentWarning,
+    maxDispatches: options.maxTurnDispatches,
+    timeoutMs: options.turnDispatchTimeoutMs,
+  });
+
+  async function recoverActiveTurnsInternal(): Promise<void> {
+    const publications = await mutate(async (state) => {
+      const recovered: Array<{ ownerId: string; threadId: string; events: AgentThreadEvent[] }> = [];
+      let threads = state.threads;
+      let turns = state.turns;
+      let events = state.events;
+      for (const thread of state.threads) {
+        if (!thread.activeTurnId) continue;
+        const recoveryEvents = terminalTurnEvents(thread.id, thread.activeTurnId, "failed");
+        let nextThread = thread;
+        for (const event of recoveryEvents) nextThread = applyEvent(nextThread, event);
+        nextThread = clearActiveTurn(nextThread);
+        threads = threads.map((candidate) => candidate === thread ? nextThread : candidate);
+        turns = turns.map((turn) =>
+          turn.ownerId === thread.ownerId && turn.threadId === thread.id && turn.turnId === thread.activeTurnId
+            ? settledTurn(turn, "failed", recoveryEvents.at(-1)!.occurredAt)
+            : turn
+        );
+        events = [...events, ...recoveryEvents];
+        recovered.push({ ownerId: thread.ownerId, threadId: thread.id, events: recoveryEvents });
+      }
+      return {
+        state: { ...state, threads, turns, events },
+        result: recovered,
+      };
+    });
+    for (const publication of publications) {
+      publish(publication.ownerId, publication.threadId, publication.events);
+    }
+  }
+
+  async function persistedDuplicateTurn(
+    principal: RequestPrincipal,
+    threadId: string,
+    clientRequestId: string,
+  ): Promise<CreateAgentTurnResponse | undefined> {
+    return inspect((state) => {
+      const existing = state.turns.find((turn) =>
+        turn.ownerId === principal.userId &&
+        turn.threadId === threadId &&
+        turn.clientRequestId === clientRequestId
+      );
+      if (!existing) return undefined;
+      return CreateAgentTurnResponseSchema.parse({
+        threadId,
+        turnId: existing.turnId,
+        status: "already_accepted",
+        acceptedAt: existing.acceptedAt,
+      });
+    });
   }
 
   async function createThreadInternal(
@@ -787,14 +969,17 @@ export function createCodingAgentThreadStore(
         thread: stripOwner(thread),
       });
       let providerEvents: AgentThreadEvent[];
+      let providerResumeState: CodingAgentProviderResumeState | undefined;
       try {
-        providerEvents = parseProviderEvents(await provider.startThread({
+        const providerResult = parseCodingAgentProviderRunResult(await provider.startThread({
           principal,
           thread: stripOwner(thread),
           request,
           now,
           nextEventId,
         }), thread.id);
+        providerEvents = providerResult.events;
+        providerResumeState = providerResult.resumeState;
       } catch (err: unknown) {
         logCodingAgentWarning("provider start failed", err);
         providerEvents = safeProviderRunFailureEvents(thread.id, now, nextEventId);
@@ -802,6 +987,9 @@ export function createCodingAgentThreadStore(
       const events = [createdEvent, ...providerEvents];
       for (const event of events.slice(1)) {
         thread = applyEvent(thread, event);
+      }
+      if (providerResumeState) {
+        thread = { ...thread, providerResumeState };
       }
       const pending = consumePendingTerminalStop(state.pendingTerminalStops, thread);
       if (pending.pendingStop && activeThread(thread)) {
@@ -844,84 +1032,124 @@ export function createCodingAgentThreadStore(
     async acceptTurn(principal, threadId, request) {
       const relationValidator = options.relationValidator?.validateThread;
       if (!relationValidator) throw new CodingAgentTurnError("turn_unavailable");
-      const result = await mutate(async (state) => {
-        const thread = state.threads.find((candidate) =>
-          candidate.ownerId === principal.userId && candidate.id === threadId
-        );
-        if (!thread) throw new CodingAgentTurnError("thread_not_found");
-        const existing = state.turns.find((turn) =>
-          turn.ownerId === principal.userId &&
-          turn.threadId === threadId &&
-          turn.clientRequestId === request.clientRequestId
-        );
-        if (existing) {
+      const reservation = turnDispatcher.reserve();
+      if (!reservation) {
+        const duplicate = await persistedDuplicateTurn(principal, threadId, request.clientRequestId);
+        if (duplicate) return duplicate;
+        throw new CodingAgentTurnError("turn_unavailable");
+      }
+      try {
+        const result = await mutate<TurnAcceptMutationResult>(async (state) => {
+          const thread = state.threads.find((candidate) =>
+            candidate.ownerId === principal.userId && candidate.id === threadId
+          );
+          if (!thread) throw new CodingAgentTurnError("thread_not_found");
+          const existing = state.turns.find((turn) =>
+            turn.ownerId === principal.userId &&
+            turn.threadId === threadId &&
+            turn.clientRequestId === request.clientRequestId
+          );
+          if (existing) {
+            return {
+              state,
+              result: {
+                response: CreateAgentTurnResponseSchema.parse({
+                  threadId,
+                  turnId: existing.turnId,
+                  status: "already_accepted",
+                  acceptedAt: existing.acceptedAt,
+                }),
+                eventsToPublish: [] as AgentThreadEvent[],
+              },
+            };
+          }
+          if (thread.activeTurnId || activeThread(thread)) {
+            throw new CodingAgentTurnError("thread_busy");
+          }
+          if (!["completed", "failed", "aborted"].includes(thread.status)) {
+            throw new CodingAgentTurnError("turn_unavailable");
+          }
+          await relationValidator(principal, { projectId: thread.projectId, taskId: thread.taskId });
+          const provider = providerFor(thread.providerId);
+          if (!provider.resumeTurn || !thread.providerResumeState) {
+            throw new CodingAgentTurnError("turn_unavailable");
+          }
+          const acceptedAt = now().toISOString();
+          const turnId = AgentTurnIdSchema.parse(`turn_${randomUUID()}`);
+          const event = AgentThreadEventSchema.parse({
+            type: "turn.accepted",
+            eventId: nextEventId(),
+            threadId,
+            occurredAt: acceptedAt,
+            turnId,
+            clientRequestId: request.clientRequestId,
+            acceptedAt,
+          });
+          const nextThread: StoredThread = {
+            ...thread,
+            activeTurnId: turnId,
+            status: "running",
+            attention: "none",
+            updatedAt: acceptedAt,
+          };
+          const turn = StoredTurnSchema.parse({
+            ...request,
+            ownerId: principal.userId,
+            threadId,
+            turnId,
+            status: "accepted",
+            acceptedAt,
+            updatedAt: acceptedAt,
+          });
           return {
-            state,
+            state: {
+              ...state,
+              threads: state.threads.map((candidate) => candidate === thread ? nextThread : candidate),
+              events: [...state.events, event],
+              turns: [...state.turns, turn],
+            },
             result: {
               response: CreateAgentTurnResponseSchema.parse({
                 threadId,
-                turnId: existing.turnId,
-                status: "already_accepted",
-                acceptedAt: existing.acceptedAt,
+                turnId,
+                status: "accepted",
+                acceptedAt,
               }),
-              eventsToPublish: [] as AgentThreadEvent[],
+              eventsToPublish: [event],
+              dispatch: { thread: nextThread, turn },
             },
           };
-        }
-        if (thread.activeTurnId || activeThread(thread)) {
-          throw new CodingAgentTurnError("thread_busy");
-        }
-        if (!["completed", "failed", "aborted"].includes(thread.status)) {
-          throw new CodingAgentTurnError("turn_unavailable");
-        }
-        await relationValidator(principal, { projectId: thread.projectId, taskId: thread.taskId });
-        const acceptedAt = now().toISOString();
-        const turnId = AgentTurnIdSchema.parse(`turn_${randomUUID()}`);
-        const event = AgentThreadEventSchema.parse({
-          type: "turn.accepted",
-          eventId: nextEventId(),
-          threadId,
-          occurredAt: acceptedAt,
-          turnId,
-          clientRequestId: request.clientRequestId,
-          acceptedAt,
         });
-        const nextThread = {
-          ...thread,
-          activeTurnId: turnId,
-          status: "running" as const,
-          attention: "none" as const,
-          updatedAt: acceptedAt,
-        };
-        const turn = StoredTurnSchema.parse({
-          ...request,
-          ownerId: principal.userId,
-          threadId,
-          turnId,
-          status: "accepted",
-          acceptedAt,
-          updatedAt: acceptedAt,
-        });
-        return {
-          state: {
-            ...state,
-            threads: state.threads.map((candidate) => candidate === thread ? nextThread : candidate),
-            events: [...state.events, event],
-            turns: [...state.turns, turn],
-          },
-          result: {
-            response: CreateAgentTurnResponseSchema.parse({
-              threadId,
-              turnId,
-              status: "accepted",
-              acceptedAt,
-            }),
-            eventsToPublish: [event],
-          },
-        };
-      });
-      publish(principal.userId, threadId, result.eventsToPublish);
-      return result.response;
+        publish(principal.userId, threadId, result.eventsToPublish);
+        if (result.dispatch) {
+          turnDispatcher.start(reservation, {
+            principal,
+            thread: stripOwner(result.dispatch.thread),
+            providerResumeState: result.dispatch.thread.providerResumeState!,
+            turn: {
+              turnId: result.dispatch.turn.turnId,
+              message: result.dispatch.turn.message!,
+              ...(result.dispatch.turn.attachments
+                ? { attachments: result.dispatch.turn.attachments }
+                : {}),
+            },
+          });
+        } else {
+          turnDispatcher.release(reservation);
+        }
+        return result.response;
+      } catch (err: unknown) {
+        turnDispatcher.release(reservation);
+        throw err;
+      }
+    },
+    async recoverActiveTurns() {
+      await recoverActiveTurnsInternal();
+    },
+    async shutdownTurns() {
+      await turnDispatcher.shutdown();
+      await queue;
+      await recoverActiveTurnsInternal();
     },
     async listThreads(principal) {
       const state = await readState(options.homePath);
@@ -998,9 +1226,11 @@ export function createCodingAgentThreadStore(
       const result = await mutate(async (state) => {
         const thread = state.threads.find((candidate) => candidate.ownerId === principal.userId && candidate.id === threadId);
         if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
-        if (thread.abortClientRequestIds.includes(clientRequestId) || terminalThread(thread)) {
+        if (thread.abortClientRequestIds.includes(clientRequestId) || (terminalThread(thread) && !thread.activeTurnId)) {
           return { state, result: { snapshot: snapshotFor(thread, state.events), eventsToPublish: [] } };
         }
+        const activeTurnId = thread.activeTurnId;
+        if (activeTurnId) turnDispatcher.abort(activeTurnId);
         const provider = providers.find((candidate) => candidate.providerId === thread.providerId);
         let abortEvents: AgentThreadEvent[];
         if (provider?.abortThread) {
@@ -1033,6 +1263,10 @@ export function createCodingAgentThreadStore(
             nextThread = applyEvent(nextThread, event);
           }
         }
+        if (activeTurnId) {
+          abortEvents = [turnStatusEvent(threadId, activeTurnId, "aborted"), ...abortEvents];
+          nextThread = clearActiveTurn(nextThread);
+        }
         nextThread = {
           ...nextThread,
           abortClientRequestIds: [...nextThread.abortClientRequestIds, clientRequestId].slice(-MAX_ABORT_REQUEST_IDS),
@@ -1041,7 +1275,13 @@ export function createCodingAgentThreadStore(
           version: 1 as const,
           threads: state.threads.map((candidate) => candidate.id === thread.id ? nextThread : candidate),
           events: [...state.events, ...abortEvents],
-          turns: state.turns,
+          turns: activeTurnId
+            ? state.turns.map((turn) =>
+              turn.ownerId === principal.userId && turn.threadId === threadId && turn.turnId === activeTurnId
+                ? settledTurn(turn, "aborted", abortEvents.at(-1)!.occurredAt)
+                : turn
+            )
+            : state.turns,
           pendingTerminalStops: state.pendingTerminalStops,
         };
         return {
