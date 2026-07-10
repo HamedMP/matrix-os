@@ -907,6 +907,10 @@ function describeToolTimeline(events: ToolTimelineEvent[]): { icon: keyof typeof
 
 function describeThreadEvent(event: AgentThreadEvent): { icon: keyof typeof Ionicons.glyphMap; title: string; detail: string } {
   switch (event.type) {
+    case "turn.accepted":
+      return { icon: "send-outline", title: "Message accepted", detail: "Waiting for the agent run" };
+    case "turn.status":
+      return { icon: "pulse-outline", title: "Message status", detail: event.status };
     case "thread.created":
       return { icon: "sparkles-outline", title: "Thread created", detail: event.thread.title };
     case "thread.status":

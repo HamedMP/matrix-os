@@ -1068,6 +1068,10 @@ function approvalDecisionVariant(decision: string): "primary" | "danger" | "subt
 
 function describeThreadEvent(event: AgentThreadEvent): { title: string; detail: string } {
   switch (event.type) {
+    case "turn.accepted":
+      return { title: "Message accepted", detail: "Waiting for the agent run" };
+    case "turn.status":
+      return { title: "Message status", detail: event.status };
     case "thread.created":
       return { title: "Thread created", detail: event.thread.title };
     case "thread.status":

@@ -1137,15 +1137,17 @@ Goal: sending a message in an existing chat resumes that chat's provider convers
 
 ### 20.1 Turn Store And Route
 
-- [ ] Add authenticated `POST /api/coding-agents/threads/:threadId/turns`.
-- [ ] Apply body limit before JSON parsing and validate all params/body with Zod 4.
-- [ ] Check thread ownership, project/task integrity, and terminal thread state.
-- [ ] Insert user turn/event and idempotency record atomically.
-- [ ] Atomically claim one active normal turn per thread; return safe busy conflict otherwise.
-- [ ] Persist idempotency and active-turn ownership in the existing owner thread store's atomic mutation path; no client or in-memory-only source of truth.
+- [x] Add authenticated `POST /api/coding-agents/threads/:threadId/turns`.
+- [x] Apply body limit before JSON parsing and validate all params/body with Zod 4.
+- [x] Check thread ownership, project/task integrity, and terminal thread state.
+- [x] Insert user turn/event and idempotency record atomically.
+- [x] Atomically claim one active normal turn per thread; return safe busy conflict otherwise.
+- [x] Persist idempotency and active-turn ownership in the existing owner thread store's atomic mutation path; no client or in-memory-only source of truth.
 - [ ] Cap/evict any in-memory idempotency or dispatch registry and drain it on shutdown.
 
 Tests: `GW-012`, `GW-013`, `GW-014`, `GW-015`, `SEC-001`, `SEC-002`.
+
+Maintenance boundary: `thread-store.ts` is already over 1,000 lines. Phase 20.2 must extract the normalized provider adapter boundary and bounded turn-dispatch registry into focused modules; provider dispatch behavior must not be added inline to this store.
 
 ### 20.2 Provider Resume
 

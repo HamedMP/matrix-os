@@ -20,6 +20,10 @@ interface TaskRelationSource {
 
 export interface CodingAgentThreadRelationValidator {
   validateCreate(principal: RequestPrincipal, request: CreateAgentThreadRequest): Promise<void>;
+  validateThread?(
+    principal: RequestPrincipal,
+    relation: { projectId?: string; taskId?: string },
+  ): Promise<void>;
 }
 
 export interface CodingAgentThreadRelationValidatorOptions {
@@ -54,47 +58,57 @@ export function createCodingAgentThreadRelationValidator(
 ): CodingAgentThreadRelationValidator {
   const ownerIds = boundedOwnerIds(options.principalOwnerIds);
 
-  return {
-    async validateCreate(principal, request) {
-      if (!request.projectId || !canCreate(principal, ownerIds)) {
-        throw new CodingAgentThreadRelationError("invalid_relation");
-      }
-      const projectResult = await options.projectManager.getProject(request.projectId);
-      if (!projectResult.ok || projectResult.project.slug !== request.projectId) {
+  async function validateRelation(
+    principal: RequestPrincipal,
+    relation: { projectId?: string; taskId?: string },
+  ): Promise<void> {
+    if (!relation.projectId || !canCreate(principal, ownerIds)) {
+      throw new CodingAgentThreadRelationError("invalid_relation");
+    }
+    const projectResult = await options.projectManager.getProject(relation.projectId);
+    if (!projectResult.ok || projectResult.project.slug !== relation.projectId) {
+      throw new CodingAgentThreadRelationError(
+        !projectResult.ok && projectResult.status >= 500
+          ? "validation_unavailable"
+          : "invalid_relation",
+      );
+    }
+    if (!relation.taskId) return;
+
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_TASK_PAGES; page += 1) {
+      const taskResult = await options.taskManager.listTasks(relation.projectId, {
+        includeArchived: false,
+        limit: TASK_PAGE_LIMIT,
+        ...(cursor ? { cursor } : {}),
+      });
+      if (!taskResult.ok) {
         throw new CodingAgentThreadRelationError(
-          !projectResult.ok && projectResult.status >= 500
-            ? "validation_unavailable"
-            : "invalid_relation",
+          taskResult.status >= 500 ? "validation_unavailable" : "invalid_relation",
         );
       }
-      if (!request.taskId) return;
-
-      let cursor: string | undefined;
-      for (let page = 0; page < MAX_TASK_PAGES; page += 1) {
-        const taskResult = await options.taskManager.listTasks(request.projectId, {
-          includeArchived: false,
-          limit: TASK_PAGE_LIMIT,
-          ...(cursor ? { cursor } : {}),
-        });
-        if (!taskResult.ok) {
-          throw new CodingAgentThreadRelationError(
-            taskResult.status >= 500 ? "validation_unavailable" : "invalid_relation",
-          );
-        }
-        if (taskResult.tasks.some((task) =>
-          task.id === request.taskId && task.projectSlug === request.projectId
-        )) {
-          return;
-        }
-        if (!taskResult.nextCursor) {
-          throw new CodingAgentThreadRelationError("invalid_relation");
-        }
-        if (taskResult.nextCursor === cursor) {
-          throw new CodingAgentThreadRelationError("validation_unavailable");
-        }
-        cursor = taskResult.nextCursor;
+      if (taskResult.tasks.some((task) =>
+        task.id === relation.taskId && task.projectSlug === relation.projectId
+      )) {
+        return;
       }
-      throw new CodingAgentThreadRelationError("invalid_relation");
+      if (!taskResult.nextCursor) {
+        throw new CodingAgentThreadRelationError("invalid_relation");
+      }
+      if (taskResult.nextCursor === cursor) {
+        throw new CodingAgentThreadRelationError("validation_unavailable");
+      }
+      cursor = taskResult.nextCursor;
+    }
+    throw new CodingAgentThreadRelationError("invalid_relation");
+  }
+
+  return {
+    async validateCreate(principal, request) {
+      await validateRelation(principal, request);
+    },
+    async validateThread(principal, relation) {
+      await validateRelation(principal, relation);
     },
   };
 }
