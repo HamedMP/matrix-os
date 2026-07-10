@@ -350,7 +350,7 @@ describe('platform/customer-vps', () => {
     expect(hetzner.createServer).toHaveBeenCalledOnce();
   });
 
-  it('lets the operator path adopt an existing preview-shaped row before excluding it from billing', async () => {
+  it('lets the operator path adopt a legacy preview slot without creating a second server', async () => {
     let nextId = 0;
     const ids = [
       '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
@@ -364,7 +364,7 @@ describe('platform/customer-vps', () => {
     const previewShapedCustomer = await service.provision({
       clerkUserId: 'user_123',
       handle: 'pr-897',
-      runtimeSlot: 'pr-897',
+      runtimeSlot: 'preview',
     });
     await expect(service.provisionPreview({
       clerkUserId: 'user_123',
@@ -373,6 +373,7 @@ describe('platform/customer-vps', () => {
     })).resolves.toEqual(previewShapedCustomer);
     await expect(getUserMachine(db, previewShapedCustomer.machineId)).resolves.toMatchObject({
       provisioningClass: 'preview',
+      runtimeSlot: 'preview',
     });
     await expect(service.provision({
       clerkUserId: 'user_123',

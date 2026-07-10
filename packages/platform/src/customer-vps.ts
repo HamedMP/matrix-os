@@ -1,5 +1,9 @@
 import { randomUUID, randomBytes } from 'node:crypto';
-import type { PlatformDB, UserMachineRecord } from './db.js';
+import type {
+  PlatformDB,
+  UserMachineProvisioningClass,
+  UserMachineRecord,
+} from './db.js';
 import {
   claimUserMachineDelete,
   claimUserMachineRecovery,
@@ -211,6 +215,19 @@ function activeProvisionResponse(row: UserMachineRecord, etaSeconds: number): Pr
     status: row.status,
     etaSeconds,
   };
+}
+
+async function findExistingProvisioningMachine(
+  db: PlatformDB,
+  request: Pick<ProvisionRequest, 'clerkUserId' | 'handle' | 'runtimeSlot'>,
+  provisioningClass: UserMachineProvisioningClass,
+): Promise<UserMachineRecord | undefined> {
+  const exact = await getActiveUserMachineByClerkId(db, request.clerkUserId, request.runtimeSlot);
+  if (exact || provisioningClass !== 'preview' || request.runtimeSlot === 'preview') {
+    return exact;
+  }
+  const legacy = await getActiveUserMachineByClerkId(db, request.clerkUserId, 'preview');
+  return legacy?.handle === request.handle ? legacy : undefined;
 }
 
 function statusResponse(row: UserMachineRecord): StatusResponse {
@@ -570,7 +587,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
 
   async function provision(
     input: ProvisionRequest,
-    provisioningClass: 'customer' | 'preview',
+    provisioningClass: UserMachineProvisioningClass,
   ): Promise<ProvisionResponse> {
     const request = {
       ...input,
@@ -588,10 +605,10 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     // A non-failed active machine (provisioning/running converge; recovering
     // is rejected by activeProvisionResponse). A `failed` row is retryable, so
     // it must NOT short-circuit here — it is retired inside the transaction.
-    const existingBeforeBundleResolve = await getActiveUserMachineByClerkId(
+    const existingBeforeBundleResolve = await findExistingProvisioningMachine(
       deps.db,
-      request.clerkUserId,
-      request.runtimeSlot,
+      request,
+      provisioningClass,
     );
     if (
       existingBeforeBundleResolve
@@ -617,7 +634,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       if (billingContext || provisioningClass === 'preview') {
         await lockUserMachineProvisioning(trx, request.clerkUserId);
       }
-      const existing = await getActiveUserMachineByClerkId(trx, request.clerkUserId, request.runtimeSlot);
+      const existing = await findExistingProvisioningMachine(trx, request, provisioningClass);
       let attempt = 1;
       if (existing) {
         if (existing.status !== 'failed') {

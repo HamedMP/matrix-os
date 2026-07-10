@@ -130,7 +130,9 @@ connect to, CLI betas need a paired shell), and today each is assembled by hand.
   server-owned `preview` provisioning class. Normal customer provisioning always
   writes `customer`, so customer-selected handles or runtime slots cannot bypass
   billing slot enforcement. The authenticated operator path may adopt an existing
-  matching row before excluding it from customer billing.
+  matching row before excluding it from customer billing. Exact per-PR lookup falls
+  back to the same owner's matching legacy `runtimeSlot: preview` row under the
+  owner lock, so migration cannot create a duplicate provider server.
 - `matrix-install-logship`: URL must be `https://`, handle must match
   `^[a-z0-9][a-z0-9-]{1,62}$`, env must be one of `preview|prod|staging`; the Alloy
   binary download is pinned to an exact version and verified against a recorded
