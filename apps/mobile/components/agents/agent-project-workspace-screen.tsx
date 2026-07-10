@@ -55,6 +55,7 @@ export interface AgentConversationIdentity {
   taskId: string | null;
   threadId: string;
 }
+
 interface ReadyWorkspaceState {
   summary: RuntimeSummary;
   workspace: ProjectAgentWorkspace;

@@ -3,6 +3,7 @@ import { Pressable, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useUnistyles } from "react-native-unistyles";
 import type { AgentThreadSummary, ProjectAgentWorkspace } from "@matrix-os/contracts";
+import { countLabel, taskThreads } from "./agent-project-utils";
 import { agentProjectWorkspaceStyles as styles } from "./agent-project-workspace-styles";
 
 export function AgentProjectConversation({
@@ -70,13 +71,6 @@ export function AgentProjectConversation({
   );
 }
 
-export function taskThreads(
-  workspace: ProjectAgentWorkspace,
-  taskId: string,
-): AgentThreadSummary[] {
-  return workspace.taskThreads.items.filter((thread) => thread.taskId === taskId);
-}
-
 function ConversationSection({
   title,
   count,
@@ -125,8 +119,4 @@ function ConversationRow({
       <Ionicons name="chevron-forward" size={17} color={theme.colors.mutedForeground} />
     </Pressable>
   );
-}
-
-function countLabel(count: number, label: string): string {
-  return `${count} ${label}${count === 1 ? "" : "s"}`;
 }

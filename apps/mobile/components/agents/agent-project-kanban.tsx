@@ -7,6 +7,7 @@ import type {
   TaskAgentSummary,
 } from "@matrix-os/contracts";
 import type { AgentWorkspaceViewMode } from "@/lib/agent-workspace-state";
+import { countLabel, taskThreads } from "./agent-project-utils";
 import { agentProjectKanbanStyles as styles } from "./agent-project-kanban-styles";
 
 type CanonicalTaskStatus = TaskAgentSummary["status"];
@@ -83,7 +84,7 @@ export function AgentProjectKanban({
               <KanbanTaskCard
                 key={task.id}
                 task={task}
-                threads={threadsForTask(workspace, task.id)}
+                threads={taskThreads(workspace, task.id)}
                 onNewConversation={() => onNewConversation(task.id)}
                 onOpenThread={onOpenThread}
               />
@@ -206,10 +207,6 @@ function Aggregate({
   );
 }
 
-function threadsForTask(workspace: ProjectAgentWorkspace, taskId: string): AgentThreadSummary[] {
-  return workspace.taskThreads.items.filter((thread) => thread.taskId === taskId);
-}
-
 function taskAccessibilityLabel(task: TaskAgentSummary): string {
   return [
     task.title,
@@ -218,8 +215,4 @@ function taskAccessibilityLabel(task: TaskAgentSummary): string {
     `${task.activeThreadCount} active`,
     `${task.attentionCount} needs attention`,
   ].join(", ");
-}
-
-function countLabel(count: number, label: string): string {
-  return `${count} ${label}${count === 1 ? "" : "s"}`;
 }
