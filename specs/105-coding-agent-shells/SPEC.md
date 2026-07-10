@@ -2,7 +2,7 @@
 
 **Feature Lineage**: `spec/coding-agent-shells`, rebased onto the Expo SDK 57 mobile foundation and current `main`
 **Created**: 2026-07-06
-**Status**: Product clarification checkpoint - awaiting confirmation
+**Status**: Product model confirmed; implementation active
 **Input**: Upgrade Matrix OS desktop and mobile shells into first-class interfaces for managing multiple coding agents on the user's remote Matrix computer, while preserving every existing desktop and mobile capability.
 
 ## Overview
