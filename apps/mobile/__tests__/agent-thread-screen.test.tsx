@@ -764,6 +764,91 @@ describe("AgentThreadRoute", () => {
     expect(mockRouterPush).not.toHaveBeenCalledWith(expect.objectContaining({ pathname: "/agents/new" }));
   });
 
+  it("shows explicit recovery when the accepted turn snapshot refresh throws", async () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: { capabilities: [{ id: "codingAgentsSameThreadTurns", enabled: true }] },
+      }),
+      getCodingAgentThreadSnapshot: jest.fn()
+        .mockResolvedValueOnce({ ok: true, snapshot: threadSnapshotFixture() })
+        .mockRejectedValueOnce(new Error("private refresh failure")),
+      createCodingAgentTurn: jest.fn().mockResolvedValue({
+        ok: true,
+        turn: {
+          threadId: "thread_mobile",
+          turnId: "turn_mobile_refresh_failure",
+          status: "accepted",
+          acceptedAt: "2026-07-06T00:02:00.000Z",
+        },
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    fireEvent.changeText(
+      await screen.findByLabelText("Message current conversation"),
+      "Continue despite refresh failure.",
+    );
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Send message to current conversation"));
+    });
+
+    expect(await screen.findByText("Message sent. Refresh the conversation to see updates.")).toBeTruthy();
+    expect(warnSpy).toHaveBeenCalledWith("[mobile] accepted coding-agent turn snapshot refresh failed");
+    warnSpy.mockRestore();
+  });
+
+  it("scopes generated same-thread request IDs to each composer instance", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(1_788_800_000_000);
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: { capabilities: [{ id: "codingAgentsSameThreadTurns", enabled: true }] },
+      }),
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: threadSnapshotFixture(),
+      }),
+      createCodingAgentTurn: jest.fn().mockResolvedValue({
+        ok: true,
+        turn: {
+          threadId: "thread_mobile",
+          turnId: "turn_mobile_instance",
+          status: "accepted",
+          acceptedAt: "2026-07-06T00:02:00.000Z",
+        },
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    const first = render(<AgentThreadRoute />);
+    fireEvent.changeText(await screen.findByLabelText("Message current conversation"), "First instance.");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Send message to current conversation"));
+    });
+    first.unmount();
+
+    render(<AgentThreadRoute />);
+    fireEvent.changeText(await screen.findByLabelText("Message current conversation"), "Second instance.");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Send message to current conversation"));
+    });
+
+    const firstRequestId = client.createCodingAgentTurn.mock.calls[0]?.[0].request.clientRequestId;
+    const secondRequestId = client.createCodingAgentTurn.mock.calls[1]?.[0].request.clientRequestId;
+    expect(firstRequestId).toMatch(/^req_mobile_turn_/);
+    expect(secondRequestId).toBe(firstRequestId);
+  });
+
   it("keeps a failed same-thread draft and idempotency key available for retry", async () => {
     const client = {
       getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({

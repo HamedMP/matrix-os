@@ -15,13 +15,6 @@ type AgentThreadTurnComposerProps = {
   threadId: string;
 };
 
-let requestSequence = 0;
-
-function nextTurnRequestId(): `req_${string}` {
-  requestSequence = (requestSequence + 1) % 1_000_000;
-  return `req_mobile_turn_${Date.now().toString(36)}_${requestSequence.toString(36)}`;
-}
-
 export function AgentThreadTurnComposer({
   client,
   connectionState,
@@ -31,11 +24,13 @@ export function AgentThreadTurnComposer({
   const { theme } = useUnistyles();
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<TurnComposerError | null>(null);
+  const [refreshError, setRefreshError] = useState(false);
   const [pending, setPending] = useState(false);
   const mountedRef = useRef(true);
   const pendingRef = useRef(false);
   const previousConnectionStateRef = useRef(connectionState);
   const requestIdRef = useRef<`req_${string}` | null>(null);
+  const requestSequenceRef = useRef(0);
   const [capability, setCapability] = useState<{
     client: GatewayClient | null;
     enabled: boolean;
@@ -100,7 +95,13 @@ export function AgentThreadTurnComposer({
     if (pendingRef.current) return;
     setDraft(value);
     setError(null);
+    setRefreshError(false);
     requestIdRef.current = null;
+  }, []);
+
+  const nextTurnRequestId = useCallback((): `req_${string}` => {
+    requestSequenceRef.current = (requestSequenceRef.current + 1) % 1_000_000;
+    return `req_mobile_turn_${Date.now().toString(36)}_${requestSequenceRef.current.toString(36)}`;
   }, []);
 
   const submit = useCallback(async () => {
@@ -111,6 +112,7 @@ export function AgentThreadTurnComposer({
     pendingRef.current = true;
     setPending(true);
     setError(null);
+    setRefreshError(false);
     let result: Awaited<ReturnType<GatewayClient["createCodingAgentTurn"]>>;
     try {
       result = await client.createCodingAgentTurn({
@@ -133,8 +135,13 @@ export function AgentThreadTurnComposer({
     }
     requestIdRef.current = null;
     setDraft("");
-    await onAccepted();
-  }, [client, connectionState, draft, enabled, onAccepted, threadId]);
+    try {
+      await onAccepted();
+    } catch {
+      console.warn("[mobile] accepted coding-agent turn snapshot refresh failed");
+      if (mountedRef.current) setRefreshError(true);
+    }
+  }, [client, connectionState, draft, enabled, nextTurnRequestId, onAccepted, threadId]);
 
   if (!enabled) return null;
 
@@ -170,6 +177,9 @@ export function AgentThreadTurnComposer({
       />
       {!connected ? <Text style={styles.recovery}>Reconnect to send a message.</Text> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
+      {refreshError ? (
+        <Text style={styles.error}>Message sent. Refresh the conversation to see updates.</Text>
+      ) : null}
       <Pressable
         accessibilityLabel={buttonLabel}
         accessibilityRole="button"
