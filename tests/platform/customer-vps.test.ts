@@ -524,6 +524,62 @@ describe('platform/customer-vps', () => {
     expect(hetzner.createServer).toHaveBeenCalledTimes(2);
   });
 
+  it('retires failed exact and legacy previews before retry capacity checks', async () => {
+    let nextId = 0;
+    const ids = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+      '188d9ce1-395d-4d4c-a7b7-22754c3ab991',
+    ];
+    const { service, hetzner } = createService({
+      config: createTestConfig({ previewProvisioningLimit: 1 }),
+      machineIdFactory: () => ids[nextId++] ?? ids[2]!,
+    });
+
+    const failedExact = await service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'pr-897',
+    });
+    await updateUserMachine(db, failedExact.machineId, {
+      status: 'failed',
+      failureCode: 'provider_unavailable',
+      failureAt: '2026-04-26T12:05:00.000Z',
+    });
+    const failedLegacy = await service.provision({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'preview',
+    });
+    await updateUserMachine(db, failedLegacy.machineId, {
+      provisioningClass: 'preview',
+      status: 'failed',
+      failureCode: 'provider_unavailable',
+      failureAt: '2026-04-26T12:05:00.000Z',
+    });
+
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'pr-897',
+    })).resolves.toMatchObject({
+      machineId: ids[2],
+      status: 'provisioning',
+    });
+    await expect(getUserMachine(db, failedExact.machineId)).resolves.toMatchObject({
+      deletedAt: '2026-04-26T12:00:00.000Z',
+    });
+    await expect(getUserMachine(db, failedLegacy.machineId)).resolves.toMatchObject({
+      deletedAt: '2026-04-26T12:00:00.000Z',
+    });
+    await expect(listPendingProviderDeletions(
+      db,
+      '2026-04-26T12:00:00.000Z',
+      10,
+    )).resolves.toHaveLength(2);
+    expect(hetzner.createServer).toHaveBeenCalledTimes(3);
+  });
+
   it('counts failed distinct previews until they are retried or deleted', async () => {
     let nextId = 0;
     const ids = [

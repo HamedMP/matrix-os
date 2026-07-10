@@ -685,6 +685,20 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         if (attempt > deps.config.maxProvisionAttempts) {
           throw new CustomerVpsError(409, 'retry_exhausted', 'Provisioning retry limit reached');
         }
+        if (provisioningClass === 'preview' && request.runtimeSlot !== 'preview') {
+          const failedLegacy = await getActiveUserMachineByClerkId(
+            trx,
+            request.clerkUserId,
+            'preview',
+          );
+          if (
+            failedLegacy?.status === 'failed'
+            && failedLegacy.handle === request.handle
+            && failedLegacy.machineId !== existing.machineId
+          ) {
+            await retireFailedProvisioningMachine(failedLegacy);
+          }
+        }
         await retireFailedProvisioningMachine(existing);
       }
       if (provisioningClass === 'preview') {
