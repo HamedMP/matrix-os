@@ -12,7 +12,7 @@ For the evidence-based checkpoint audit, see [completion-audit.md](./completion-
 
 The landed checkpoint is not the confirmed final information architecture. Current evidence shows these explicit gaps:
 
-- `RuntimeSummarySchema` has a bounded `projects` field, but `packages/gateway/src/coding-agents/runtime-summary.ts` currently returns a permanent empty project list instead of adapting canonical workspace projects.
+- `RuntimeSummarySchema` now hydrates stable bounded canonical owner project summaries with task/active-thread/attention counts and safe timeout degradation. The authenticated project workspace projection is still missing.
 - Coding threads carry optional `projectId`/`taskId`, but there is no bounded project workspace projection that validates canonical task ownership and groups project-level plus task-bound threads.
 - Existing task UI has one `linkedSessionId`; it cannot be used as the source of truth for coding conversations because one task must support several independent threads.
 - The current desktop `AgentWorkspace` is a sectioned dashboard. It does not provide the required persistent project/task/thread navigator or a segmented Conversation/Kanban mode over one selected project.

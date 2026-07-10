@@ -57,6 +57,7 @@ async function createHarness() {
   return {
     app,
     homePath,
+    threads,
     setPrincipal: (principal: RequestPrincipal) => {
       currentPrincipal = principal;
     },
@@ -109,6 +110,31 @@ describe("coding agent thread lifecycle", () => {
     const replay = await app.request(`/api/coding-agents/threads/${firstSnapshot.thread.id}/events`);
     expect(replay.status).toBe(200);
     expect(AgentThreadSnapshotSchema.parse(await replay.json()).events.items).toHaveLength(3);
+  });
+
+  it("aggregates every bounded owner project thread beyond the list page", async () => {
+    const { threads } = await createHarness();
+    for (let index = 0; index < 55; index += 1) {
+      await threads.createThread(ownerPrincipal, {
+        ...createBody,
+        clientRequestId: `req_project_count_${index}`,
+      });
+    }
+    await threads.createThread(otherPrincipal, {
+      ...createBody,
+      clientRequestId: "req_other_project_count",
+    });
+
+    const page = await threads.listThreads(ownerPrincipal);
+    const counts = await threads.listProjectCounts(ownerPrincipal);
+
+    expect(page.items).toHaveLength(50);
+    expect(page.hasMore).toBe(true);
+    expect(counts).toEqual([{
+      projectId: "repo-main",
+      threadCount: 55,
+      attentionCount: 0,
+    }]);
   });
 
   it("replays events after a cursor and includes active threads in the runtime summary", async () => {

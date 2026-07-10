@@ -1100,10 +1100,10 @@ Goal: replace placeholder project hydration with canonical owner project/task/th
 
 ### 19.1 Real Project Summary Adapter
 
-- [ ] Read canonical owner projects through the existing workspace project service.
-- [ ] Return stable bounded project summaries from runtime summary.
-- [ ] Expose safe degraded state when project discovery fails; never return raw errors.
-- [ ] Add timeout/abort handling for any external project metadata call.
+- [x] Read canonical owner projects through the existing workspace project service.
+- [x] Return stable bounded project summaries from runtime summary.
+- [x] Expose safe degraded state when project discovery fails; never return raw errors.
+- [x] Add timeout/abort handling for project summary dependencies.
 
 Tests: `GW-001`, `GW-002`, `GW-003`.
 
