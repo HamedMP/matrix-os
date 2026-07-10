@@ -82,16 +82,19 @@ describe("coding agent workspace provider", () => {
         label: `Install ${agent === "claude" ? "Claude" : "Codex"}`,
         command: expect.stringContaining(installPackage),
       }),
-      {
+      expect.objectContaining({
         id: `${agent}_connect`,
         kind: "foreground_terminal",
         label: `Connect ${agent === "claude" ? "Claude" : "Codex"}`,
-        command: connectCommand,
-      },
+        command: expect.stringContaining(connectCommand),
+      }),
     ]);
-    expect(actions?.[0]).toMatchObject({
-      command: expect.stringContaining('MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"'),
-    });
+    for (const action of actions ?? []) {
+      expect(action.command).toContain(
+        'MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"',
+      );
+      expect(action.command).toContain('PATH="$MATRIX_NODE_PREFIX/bin:$PATH"');
+    }
     expect(JSON.stringify(actions)).not.toMatch(/api[_ -]?key|bearer|token|secret|password/i);
   });
 

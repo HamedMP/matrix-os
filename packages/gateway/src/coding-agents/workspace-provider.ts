@@ -65,13 +65,20 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function visibleInstallCommand(installPackage: string): string {
-  const command = [
+function visibleSetupCommand(command: string): string {
+  const foreground = [
     'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"',
-    `npm install -g --prefix "$MATRIX_NODE_PREFIX" ${installPackage}`,
+    'export PATH="$MATRIX_NODE_PREFIX/bin:$PATH"',
+    command,
+    'exec "${SHELL:-sh}" -l',
   ].join("; ");
-  const foreground = `${command}; exec "\${SHELL:-sh}" -l`;
   return `sh -lc ${shellQuote(foreground)}`;
+}
+
+function visibleInstallCommand(installPackage: string): string {
+  return visibleSetupCommand(
+    `npm install -g --prefix "$MATRIX_NODE_PREFIX" ${installPackage}`,
+  );
 }
 
 function providerSetupActions(agent: SupportedAgent): SafeSetupAction[] {
@@ -89,7 +96,7 @@ function providerSetupActions(agent: SupportedAgent): SafeSetupAction[] {
       id: `${agent}_connect`,
       kind: "foreground_terminal",
       label: `Connect ${displayName}`,
-      command: setup.connectCommand,
+      command: visibleSetupCommand(setup.connectCommand),
     },
   ]);
 }
