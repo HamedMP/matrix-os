@@ -131,6 +131,7 @@ Deployment evidence for the exact top stack head is deliberately non-production:
 - Preview VPS workflow run `29126211996` built and deployed `v2026.07.10-pr914-00909cc-r29126211996` to `pr-914`.
 - Platform Cloud Run run `29128264329` built and smoke-tested zero-traffic candidate revision `matrix-platform-00296-man` from `00909ccf8431`; the promote and promoted-traffic verification steps were skipped.
 - The Expo SDK 57 dev client is installed on the paired physical iPhone 14 Pro, Metro bundled the exact top stack successfully, and the computer chooser route was opened. User confirmation of the rendered list, runtime switch, and subsequent project/task/thread walkthrough is still pending and is not inferred from deployment success.
+- A read-only physical app-container audit found exactly the two expected React Native AsyncStorage records. Both decoded records passed the production contract schemas and strict allowlisted object shapes, with zero forbidden transcript/event/output/file/diff/approval/credential/token/provider/resume key-name matches. Values were not added to the evidence log, and the temporary manifest copy was deleted immediately after inspection.
 
 ## Remaining Validation
 
