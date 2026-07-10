@@ -31,6 +31,21 @@ function snapshot(id: string, projectId: string): AgentThreadSnapshot {
   };
 }
 
+function unassignedSnapshot(id: string): AgentThreadSnapshot {
+  return {
+    thread: {
+      id,
+      providerId: "codex",
+      title: "Legacy chat",
+      status: "completed",
+      attention: "completed",
+      createdAt: NOW,
+      updatedAt: NOW,
+    },
+    events: { items: [], hasMore: false, limit: 200 },
+  };
+}
+
 function summary(): RuntimeSummary {
   return {
     runtime: { id: "rt_primary", label: "Primary", status: "available" },
@@ -339,5 +354,48 @@ describe("AgentProjectWorkspaceShell", () => {
       expect(useCodingAgentWorkspace.getState().activeThreadId).toBeNull();
       expect(useCodingAgentWorkspace.getState().threadSnapshot).toBeNull();
     });
+  });
+
+  it("preserves an unassigned legacy chat while the project workspace reloads", async () => {
+    const emptyWorkspace: ProjectAgentWorkspace = {
+      ...workspace(),
+      project: { ...workspace().project, threadCount: 0 },
+      projectThreads: { items: [], hasMore: false, limit: 100 },
+    };
+    const invoke = vi.fn((channel: string) => {
+      if (channel === "state:get") return Promise.resolve({ value: null });
+      if (channel === "state:set") return Promise.resolve({ ok: true });
+      if (channel === "runtime:get-project-workspace") return Promise.resolve(emptyWorkspace);
+      if (channel === "runtime:subscribe-thread-events" || channel === "runtime:unsubscribe-thread-events") {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+    window.operator = { invoke, on: vi.fn(() => () => undefined) };
+
+    render(
+      <AgentProjectWorkspaceShell summary={summary()} onNewChat={vi.fn()}>
+        <div>Workspace</div>
+      </AgentProjectWorkspaceShell>,
+    );
+    await waitFor(() => {
+      expect(useCodingAgentProjectWorkspace.getState().status).toBe("ready");
+      expect(useCodingAgentProjectWorkspace.getState().selectedThreadId).toBeNull();
+    });
+
+    act(() => {
+      useCodingAgentWorkspace.setState({
+        activeThreadId: "thread_legacy",
+        threadSnapshotStatus: "ready",
+        threadSnapshot: unassignedSnapshot("thread_legacy"),
+      });
+      useCodingAgentProjectWorkspace.setState({ status: "loading", workspace: null });
+    });
+
+    expect(useCodingAgentWorkspace.getState()).toMatchObject({
+      activeThreadId: "thread_legacy",
+      threadSnapshotStatus: "ready",
+    });
+    expect(useCodingAgentWorkspace.getState().threadSnapshot?.thread.id).toBe("thread_legacy");
   });
 });

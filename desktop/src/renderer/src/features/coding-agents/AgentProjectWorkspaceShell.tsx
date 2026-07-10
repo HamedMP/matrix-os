@@ -71,9 +71,16 @@ export function AgentProjectWorkspaceShell({
 
   useEffect(() => {
     if (!enabled) return;
-    const currentActiveThreadId = useCodingAgentWorkspace.getState().activeThreadId;
+    const currentThreadState = useCodingAgentWorkspace.getState();
+    const currentActiveThreadId = currentThreadState.activeThreadId;
     if (!selectedThreadId) {
-      if (currentActiveThreadId) clearCodingAgentThreadSelection();
+      if (
+        currentActiveThreadId
+        && currentThreadState.threadSnapshot?.thread.id === currentActiveThreadId
+        && currentThreadState.threadSnapshot.thread.projectId
+      ) {
+        clearCodingAgentThreadSelection();
+      }
       return;
     }
     if (status !== "ready") return;
