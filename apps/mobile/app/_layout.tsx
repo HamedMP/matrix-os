@@ -374,6 +374,7 @@ function GatewayShell() {
           <Stack.Screen name="runtime" options={{ headerShown: false }} />
           <Stack.Screen name="canvas/index" options={{ headerShown: false }} />
           <Stack.Screen name="agents" options={{ headerShown: false }} />
+          <Stack.Screen name="computers" options={{ title: "Computers", presentation: "modal" }} />
           <Stack.Screen name="sessions" options={{ headerShown: false, presentation: "modal" }} />
           <Stack.Screen
             name="computers"

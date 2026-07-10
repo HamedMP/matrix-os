@@ -100,6 +100,7 @@ Every clarified functional requirement and buildable success criterion has at le
 | MB-008 | Conversation/Kanban control preserves selected project/task/thread. | Phone route/state test. |
 | MB-009 | Kanban renders canonical columns and multi-thread card aggregates. | Phone and tablet-width component tests. |
 | MB-010 | Opening either thread from a task card returns to the same conversation identity. | Router parameter validation/navigation test. |
+| MB-011 | A Cloud-authenticated phone can switch to a server-projected main/preview computer without signing out or caching the inventory. | Platform route, secure storage, and native chooser tests. |
 
 ### Phase 22.1 Evidence
 
@@ -119,6 +120,10 @@ Every clarified functional requirement and buildable success criterion has at le
 - `MB-008`: `apps/mobile/__tests__/agent-project-workspace-screen.test.tsx`, `apps/mobile/__tests__/agent-workspace-state.test.ts`, and `apps/mobile/__tests__/agent-project-route.test.tsx` prove the capability-gated Conversation/Kanban control changes only the view reference, preserves the selected project/task/thread IDs, and replaces the Expo route with the matching project URL.
 - `MB-009`: the project-workspace screen test renders phone and tablet board layouts from `ProjectAgentWorkspaceSchema`, asserts canonical `todo`, `running`, `waiting`, `blocked`, and `complete` columns, keeps `archived` hidden, and shows the gateway-projected thread/active/attention aggregates. A mixed completed/running thread fixture remains in the canonical task column instead of inferring a task move.
 - `MB-010`: the Kanban component test opens both `thread_plan` and `thread_fix` with their exact `projectId`/`taskId`/`threadId`, while `apps/mobile/__tests__/agent-project-board-route.test.tsx` proves the dedicated board route uses the shared project workspace in Kanban mode. SDK 57 device navigation remains part of the Phase 22 gate and is not proven by Jest.
+
+### Phase 22.4 Evidence
+
+- `MB-011`: `tests/platform/proxy-routing.test.ts` proves the Clerk-authenticated computer route returns only the current owner's bounded same-origin projection and rejects anonymous discovery. `apps/mobile/__tests__/mobile-computers.test.ts`, `storage.test.ts`, `computer-picker-screen.test.tsx`, and `settings-screen.test.tsx` prove response validation, credential-free selection persistence, Cloud sign-in recovery, and same-session gateway switching. Remote preview selection on a physical device remains part of the Phase 22 gate until the preview bundle is deployed.
 
 ## Security Tests
 
