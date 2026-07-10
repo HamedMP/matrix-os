@@ -20,6 +20,7 @@ import {
   FileSearchResponseSchema,
   FileWriteRequestSchema,
   FileWriteResponseSchema,
+  ProjectAgentWorkspaceSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
@@ -33,6 +34,7 @@ import {
   UserInputAnswerRequestSchema,
   boundedListSchema,
 } from "@matrix-os/contracts";
+import { CodingAgentProjectWorkspaceRequestSchema } from "./coding-agent-project-workspace";
 
 const Empty = z.object({}).strict();
 
@@ -71,6 +73,7 @@ const STATE_KEYS = [
   "panelLayouts",
   "appearance",
   "recents",
+  "codingAgentWorkspace",
 ] as const;
 
 const MAX_STATE_VALUE_BYTES = 64 * 1024;
@@ -128,6 +131,10 @@ export const INVOKE_CHANNELS = {
   "runtime:get-summary": {
     request: Empty,
     response: RuntimeSummarySchema,
+  },
+  "runtime:get-project-workspace": {
+    request: CodingAgentProjectWorkspaceRequestSchema,
+    response: ProjectAgentWorkspaceSchema,
   },
   "runtime:get-notification-preferences": {
     request: Empty,

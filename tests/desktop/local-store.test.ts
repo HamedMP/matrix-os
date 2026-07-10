@@ -55,6 +55,28 @@ describe("local store", () => {
     expect(await store.get("appearance")).toEqual({ theme: "system" });
   });
 
+  it("persists only bounded coding-agent workspace references and view mode", async () => {
+    const store = createLocalStore({ dir: await makeDir() });
+    const resumeState = {
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_auth",
+      selectedThreadId: "thread_plan",
+      viewMode: "conversation" as const,
+      updatedAt: "2026-07-10T12:00:00.000Z",
+    };
+
+    await store.set("codingAgentWorkspace", resumeState);
+    expect(await store.get("codingAgentWorkspace")).toEqual(resumeState);
+    await expect(store.setUnknown("codingAgentWorkspace", {
+      ...resumeState,
+      transcript: ["private"],
+    })).rejects.toThrow();
+    await expect(store.setUnknown("codingAgentWorkspace", {
+      ...resumeState,
+      bearerToken: "secret",
+    })).rejects.toThrow();
+  });
+
   it("prunes panel layouts not touched within the max age", async () => {
     const dir = await makeDir();
     const now = 1_750_000_000_000;

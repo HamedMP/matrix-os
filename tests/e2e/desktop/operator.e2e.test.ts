@@ -92,7 +92,12 @@ suite("operator desktop e2e", () => {
     await page.getByLabel("Command palette").waitFor({ timeout: 10_000 });
     await page.getByText("Open Agents").click();
     await page.getByRole("button", { name: "Start run" }).waitFor({ timeout: 10_000 });
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "04-agents-palette.png") });
+    await page.getByRole("navigation", { name: "Projects and conversations" }).waitFor();
+    await page.getByRole("group", { name: "Project chats" }).waitFor();
+    await page.getByRole("group", { name: "Task Fix the failing auth tests" }).waitFor();
+    await page.getByRole("button", { name: "Chat Investigate auth callback" }).waitFor();
+    await page.getByRole("button", { name: "Chat Verify token refresh" }).waitFor();
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "04-agents-project-navigator.png") });
   }, 30_000);
 
   it("starts an agent thread from the Agents workspace composer", async () => {

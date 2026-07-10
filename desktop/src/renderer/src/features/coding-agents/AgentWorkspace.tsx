@@ -1,4 +1,4 @@
-import { Bell, Bot, ChevronDown, ChevronRight, ChevronUp, ClipboardCheck, ExternalLink, FileText, FolderOpen, GitBranch, GitCommitHorizontal, GitPullRequest, Monitor, Play, RefreshCw, Save, Search, Server, SquareTerminal } from "lucide-react";
+import { Bell, Bot, ChevronDown, ChevronRight, ChevronUp, ClipboardCheck, ExternalLink, FileText, FolderOpen, GitBranch, GitCommitHorizontal, GitPullRequest, Play, Save, Search, Server, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ReviewIdSchema,
@@ -12,7 +12,6 @@ import {
   type FileReadRequest,
   type FileReadResponse,
   type FileSearchResponse,
-  type PreviewSessionSummary,
   type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
@@ -25,6 +24,10 @@ import { invoke } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
 import { codingAgentApprovalActionKey, codingAgentInputActionKey, useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useTabs } from "../../stores/tabs";
+import { AgentPreviewList, AgentTerminalList } from "./AgentWorkspaceContext";
+import { AgentRuntimeHeader } from "./AgentRuntimeHeader";
+import { AgentProjectWorkspaceShell } from "./AgentProjectWorkspaceShell";
+import { AgentWorkspaceSection as Section } from "./AgentWorkspaceSection";
 
 const STATUS_COLOR: Record<string, string> = {
   available: "var(--success)",
@@ -71,63 +74,6 @@ const ASSISTANT_PREVIEW_MAX_CHARS = 240;
 
 function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
   return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
-}
-
-function Section({
-  title,
-  count,
-  children,
-}: {
-  title: string;
-  count?: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="flex min-h-0 flex-col gap-2">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-          {title}
-        </h2>
-        {typeof count === "number" ? (
-          <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-            {count}
-          </span>
-        ) : null}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function RuntimeHeader({ summary, onRefresh }: { summary: RuntimeSummary; onRefresh: () => void }) {
-  return (
-    <div
-      className="flex shrink-0 items-center justify-between border-b px-5 py-4"
-      style={{ borderColor: "var(--border-subtle)" }}
-    >
-      <div className="flex min-w-0 items-center gap-3">
-        <span
-          className="flex h-9 w-9 items-center justify-center rounded-md"
-          style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
-        >
-          <Bot size={19} />
-        </span>
-        <div className="min-w-0">
-          <h1 className="truncate text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
-            Agent workspace
-          </h1>
-          <div className="flex items-center gap-2 text-sm" style={{ color: "var(--text-secondary)" }}>
-            <StatusDot color={STATUS_COLOR[summary.runtime.status] ?? DEFAULT_STATUS_COLOR} pulse={summary.runtime.status === "available"} />
-            <span className="truncate">{summary.runtime.label}</span>
-          </div>
-        </div>
-      </div>
-      <Button variant="ghost" onClick={onRefresh} aria-label="Refresh agent workspace">
-        <RefreshCw size={14} />
-        Refresh
-      </Button>
-    </div>
-  );
 }
 
 const NOTIFICATION_TOGGLES: Array<{ key: NotificationPreferenceKey; label: string; detail: string }> = [
@@ -1126,152 +1072,6 @@ function canOpenPreviewExternally(origin: string | undefined): origin is string 
   }
 }
 
-function TerminalList({ summary }: { summary: RuntimeSummary }) {
-  return (
-    <Section title="Terminals" count={summary.terminalSessions.items.length}>
-      <div className="grid gap-2">
-        {summary.terminalSessions.items.map((session) => (
-          <article
-            key={session.id}
-            className="flex items-center justify-between gap-3 rounded-md border p-3"
-            style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
-          >
-            <div className="flex min-w-0 items-center gap-2">
-              <SquareTerminal size={15} style={{ color: "var(--text-tertiary)" }} />
-              <div className="min-w-0">
-                <h3 className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-                  {session.name}
-                </h3>
-                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-                  {session.attachable ? "Attachable" : "Unavailable"}
-                </p>
-              </div>
-            </div>
-            <span className="shrink-0 text-xs capitalize" style={{ color: "var(--text-secondary)" }}>
-              {session.status}
-            </span>
-          </article>
-        ))}
-        {summary.terminalSessions.items.length === 0 ? (
-          <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
-            No terminal sessions.
-          </p>
-        ) : null}
-      </div>
-    </Section>
-  );
-}
-
-function PreviewList({ summary }: { summary: RuntimeSummary }) {
-  const previewSessions = summary.previewSessions ?? { items: [], hasMore: false, limit: 50 };
-  const [selectedPreviewId, setSelectedPreviewId] = useState<string | null>(null);
-  const selectedPreview = previewSessions.items.find((preview) => preview.id === selectedPreviewId) ?? null;
-  const externalUrl = canOpenPreviewExternally(selectedPreview?.origin) ? selectedPreview.origin : null;
-
-  const openExternalPreview = () => {
-    if (!externalUrl) return;
-    void invoke("shell:open-external", { url: externalUrl }).catch((err: unknown) => {
-      console.warn("[coding-agents] preview open failed", err instanceof Error ? err.message : String(err));
-    });
-  };
-
-  return (
-    <Section title="Previews" count={previewSessions.items.length}>
-      <div className="grid gap-2">
-        {previewSessions.items.map((preview) => (
-          <button
-            key={preview.id}
-            type="button"
-            aria-label={`Inspect preview ${preview.label}`}
-            aria-current={selectedPreviewId === preview.id ? "true" : undefined}
-            className="no-drag flex min-h-[68px] items-center justify-between gap-3 rounded-md border p-3 text-left transition-colors duration-100 hover:brightness-105"
-            style={{
-              borderColor: selectedPreviewId === preview.id ? "var(--accent)" : "var(--border-subtle)",
-              background: selectedPreviewId === preview.id ? "var(--accent-muted)" : "var(--bg-surface)",
-            }}
-            onClick={() => setSelectedPreviewId(preview.id)}
-          >
-            <div className="flex min-w-0 items-center gap-2">
-              <Monitor size={15} style={{ color: "var(--text-tertiary)" }} />
-              <div className="min-w-0">
-                <h3 className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-                  {preview.label}
-                </h3>
-                <p className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
-                  {preview.origin ?? "No local origin"}
-                </p>
-              </div>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <StatusDot color={STATUS_COLOR[preview.status] ?? DEFAULT_STATUS_COLOR} />
-              <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
-                {preview.status}
-              </span>
-            </div>
-          </button>
-        ))}
-        {previewSessions.items.length === 0 ? (
-          <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
-            No previews.
-          </p>
-        ) : null}
-        {selectedPreview ? (
-          <PreviewDetails preview={selectedPreview} externalUrl={externalUrl} onOpenExternal={openExternalPreview} />
-        ) : null}
-      </div>
-    </Section>
-  );
-}
-
-function PreviewDetails({
-  preview,
-  externalUrl,
-  onOpenExternal,
-}: {
-  preview: PreviewSessionSummary;
-  externalUrl: string | null;
-  onOpenExternal: () => void;
-}) {
-  return (
-    <section
-      className="rounded-md border p-3"
-      aria-label={`Preview details for ${preview.label}`}
-      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-elevated)" }}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-            Preview details
-          </h3>
-          <p className="mt-1 truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
-            {preview.origin ?? "No local origin"}
-          </p>
-        </div>
-        <Button
-          variant="ghost"
-          onClick={onOpenExternal}
-          disabled={!externalUrl}
-          aria-label={externalUrl ? `Open preview ${preview.label} in browser` : "Open in browser"}
-          title={externalUrl ? "Open in browser" : "HTTPS preview origin required"}
-        >
-          <ExternalLink size={14} />
-          Open in browser
-        </Button>
-      </div>
-      <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <div>
-          <dt style={{ color: "var(--text-tertiary)" }}>Status</dt>
-          <dd style={{ color: "var(--text-secondary)" }}>{preview.status}</dd>
-        </div>
-        <div>
-          <dt style={{ color: "var(--text-tertiary)" }}>Updated</dt>
-          <dd style={{ color: "var(--text-secondary)" }}>{preview.updatedAt ?? "Unknown"}</dd>
-        </div>
-      </dl>
-    </section>
-  );
-}
-
 function reviewStatusLabel(status: ReviewSummary["status"]): string {
   return status.replace(/_/g, " ");
 }
@@ -2089,6 +1889,7 @@ export default function AgentWorkspace() {
   const threadSnapshotError = useCodingAgentWorkspace((s) => s.threadSnapshotError);
   const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
   const loadNotificationPreferences = useCodingAgentWorkspace((s) => s.loadNotificationPreferences);
+  const requestComposerFocus = useCodingAgentWorkspace((s) => s.requestComposerFocus);
   const composerFocusRequestId = useCodingAgentWorkspace((s) => s.composerFocusRequestId);
   const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
 
@@ -2130,8 +1931,22 @@ export default function AgentWorkspace() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <RuntimeHeader summary={summary} onRefresh={() => void refresh()} />
-      <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-5">
+      <AgentRuntimeHeader summary={summary} onRefresh={() => void refresh()} />
+      <AgentProjectWorkspaceShell
+        summary={summary}
+        onNewChat={(projectId, taskId) => {
+          setComposerSeed({
+            seedId: Date.now(),
+            draft: {
+              ...defaultAgentThreadComposerDraft(summary),
+              projectId,
+              ...(taskId ? { taskId } : {}),
+            },
+          });
+          requestComposerFocus();
+        }}
+      >
+        <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-5">
         <AgentComposer summary={summary} seed={composerSeed} focusRequestId={composerFocusRequestId} />
         <NotificationPreferencesPanel />
         <ProviderList summary={summary} />
@@ -2148,9 +1963,9 @@ export default function AgentWorkspace() {
               error={threadSnapshotError}
             />
             {capabilityEnabled(summary, "codingAgentsPreview") ? (
-              <PreviewList summary={summary} />
+              <AgentPreviewList summary={summary} />
             ) : null}
-            <TerminalList summary={summary} />
+            <AgentTerminalList summary={summary} />
           </div>
         </div>
         {capabilityEnabled(summary, "codingAgentsReview") ? (
@@ -2166,7 +1981,8 @@ export default function AgentWorkspace() {
             }}
           />
         ) : null}
-      </div>
+        </div>
+      </AgentProjectWorkspaceShell>
     </div>
   );
 }

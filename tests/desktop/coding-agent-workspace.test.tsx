@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AgentWorkspace, {
   clearComposerLaunchContext,
   mergeComposerSeed,
 } from "../../desktop/src/renderer/src/features/coding-agents/AgentWorkspace";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import { useCodingAgentProjectWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-project-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
@@ -657,6 +658,17 @@ function multiInputAnsweredThreadSnapshotFixture(inputRequestId: string, correla
 
 describe("AgentWorkspace", () => {
   beforeEach(() => {
+    useCodingAgentProjectWorkspace.setState({
+      status: "idle",
+      runtimeId: null,
+      summary: null,
+      workspace: null,
+      error: null,
+      selectedProjectId: null,
+      selectedTaskId: null,
+      selectedThreadId: null,
+      viewMode: "conversation",
+    });
     useCodingAgentWorkspace.setState({
       status: "idle",
       summary: null,
@@ -731,6 +743,145 @@ describe("AgentWorkspace", () => {
     expect(screen.getByText("Fix settings route")).toBeTruthy();
     expect(screen.getByText("matrix-abc1234")).toBeTruthy();
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-summary", {});
+  });
+
+  it("DT-001 through DT-003 hydrates the persistent project and conversation navigator", async () => {
+    const baseSummary = summaryFixture({ threadCreate: true });
+    const summary = {
+      ...baseSummary,
+      capabilities: [
+        ...baseSummary.capabilities,
+        { id: "codingAgentsProjectWorkspace", enabled: true },
+        { id: "codingAgentsConversationView", enabled: true },
+      ],
+      projects: {
+        items: [
+          { id: "matrix-os", label: "Matrix OS", status: "available", taskCount: 1, threadCount: 3, attentionCount: 0 },
+          { id: "website", label: "Website", status: "available", taskCount: 0, threadCount: 0, attentionCount: 0 },
+        ],
+        hasMore: false,
+        limit: 20,
+      },
+    };
+    const workspace = {
+      project: { id: "matrix-os", label: "Matrix OS", status: "available", taskCount: 1, threadCount: 3, attentionCount: 0 },
+      tasks: {
+        items: [{
+          id: "task_auth",
+          projectId: "matrix-os",
+          title: "Harden authentication",
+          status: "running",
+          priority: "high",
+          order: 0,
+          threadCount: 2,
+          activeThreadCount: 2,
+          attentionCount: 0,
+        }],
+        hasMore: false,
+        limit: 100,
+      },
+      projectThreads: {
+        items: [{
+          ...baseSummary.activeThreads.items[0],
+          id: "thread_audit",
+          title: "Audit architecture",
+          projectId: "matrix-os",
+          attention: "none",
+        }],
+        hasMore: false,
+        limit: 100,
+      },
+      taskThreads: {
+        items: [
+          {
+            ...baseSummary.activeThreads.items[0],
+            id: "thread_plan",
+            title: "Plan auth changes",
+            projectId: "matrix-os",
+            taskId: "task_auth",
+            attention: "none",
+          },
+          {
+            ...baseSummary.activeThreads.items[0],
+            id: "thread_fix",
+            title: "Implement auth changes",
+            projectId: "matrix-os",
+            taskId: "task_auth",
+            attention: "none",
+          },
+        ],
+        hasMore: false,
+        limit: 100,
+      },
+      updatedAt: "2026-07-10T12:00:00.000Z",
+    };
+    const selectedSnapshot = {
+      ...threadSnapshotFixture(),
+      thread: workspace.projectThreads.items[0],
+    };
+    let summaryRequestCount = 0;
+    window.operator.invoke = vi.fn((channel: string, payload?: unknown) => {
+      if (channel === "runtime:get-summary") {
+        summaryRequestCount += 1;
+        return Promise.resolve({
+          ...summary,
+          serverTime: summaryRequestCount === 1
+            ? "2026-07-10T12:00:00.000Z"
+            : "2026-07-10T12:00:01.000Z",
+        });
+      }
+      if (channel === "runtime:get-project-workspace") return Promise.resolve(workspace);
+      if (channel === "runtime:get-thread-snapshot") {
+        const threadId = (payload as { threadId: string }).threadId;
+        const thread = [
+          ...workspace.projectThreads.items,
+          ...workspace.taskThreads.items,
+        ].find((candidate) => candidate.id === threadId) ?? selectedSnapshot.thread;
+        return Promise.resolve({ ...selectedSnapshot, thread });
+      }
+      if (channel === "runtime:subscribe-thread-events") return Promise.resolve({ ok: true });
+      if (channel === "runtime:unsubscribe-thread-events") return Promise.resolve({ ok: true });
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-notification-preferences") {
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
+      }
+      if (channel === "state:get") return Promise.resolve({ value: null });
+      if (channel === "state:set") return Promise.resolve({ ok: true });
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+
+    render(<AgentWorkspace />);
+
+    expect(await screen.findByRole("button", { name: "Project Matrix OS" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Project Website" })).toBeTruthy();
+    const task = screen.getByRole("group", { name: "Task Harden authentication" });
+    expect(within(task).getByRole("button", { name: "Chat Plan auth changes" })).toBeTruthy();
+    expect(within(task).getByRole("button", { name: "Chat Implement auth changes" })).toBeTruthy();
+    expect(within(screen.getByRole("group", { name: "Project chats" })).getByRole(
+      "button",
+      { name: "Chat Audit architecture" },
+    )).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+    await waitFor(() => {
+      const summaryRequests = vi.mocked(window.operator.invoke).mock.calls.filter(
+        ([channel]) => channel === "runtime:get-summary",
+      );
+      expect(summaryRequests).toHaveLength(2);
+    });
+    await waitFor(() => {
+      const workspaceRequests = vi.mocked(window.operator.invoke).mock.calls.filter(
+        ([channel]) => channel === "runtime:get-project-workspace",
+      );
+      expect(workspaceRequests).toHaveLength(2);
+    });
+
+    act(() => {
+      useCodingAgentWorkspace.setState({ activeThreadId: "thread_fix" });
+    });
+    await waitFor(() => {
+      expect(useCodingAgentProjectWorkspace.getState().selectedThreadId).toBe("thread_fix");
+    });
   });
 
   it("renders a clear new-run unavailable state when thread creation is disabled", async () => {
