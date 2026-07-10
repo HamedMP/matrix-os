@@ -1143,7 +1143,7 @@ Goal: sending a message in an existing chat resumes that chat's provider convers
 - [x] Insert user turn/event and idempotency record atomically.
 - [x] Atomically claim one active normal turn per thread; return safe busy conflict otherwise.
 - [x] Persist idempotency and active-turn ownership in the existing owner thread store's atomic mutation path; no client or in-memory-only source of truth.
-- [ ] Cap/evict any in-memory idempotency or dispatch registry and drain it on shutdown.
+- [x] Cap/evict any in-memory idempotency or dispatch registry and drain it on shutdown.
 
 Tests: `GW-012`, `GW-013`, `GW-014`, `GW-015`, `SEC-001`, `SEC-002`.
 
@@ -1151,11 +1151,11 @@ Maintenance boundary: `thread-store.ts` is already over 1,000 lines. Phase 20.2 
 
 ### 20.2 Provider Resume
 
-- [ ] Extend normalized provider adapter with a bounded `resumeTurn` operation and `AbortSignal`.
-- [ ] Keep provider credentials/resume identity on the runtime.
-- [ ] Persist resume identity/state before publishing idle/completed state.
-- [ ] Release active-turn ownership on completion, failure, abort, and startup reconciliation.
-- [ ] Verify one thread receives two sequential turns without creating a second provider conversation.
+- [x] Extend normalized provider adapter with a bounded `resumeTurn` operation and `AbortSignal`.
+- [x] Keep provider credentials/resume identity on the runtime.
+- [x] Persist resume identity/state before publishing idle/completed state.
+- [x] Release active-turn ownership on completion, failure, abort, and startup reconciliation.
+- [x] Verify one thread receives two sequential turns without creating a second provider conversation.
 
 Tests: `GW-016`, `GW-017`, `GW-018`, `SEC-005`, `E2E-001`.
 
