@@ -185,4 +185,44 @@ describe("AgentProjectWorkspaceShell", () => {
 
     expect(websiteRequests).toBe(1);
   });
+
+  it("clears stale thread details when selecting a project workspace that fails", async () => {
+    const projectWorkspace = workspace();
+    const invoke = vi.fn((channel: string, payload?: unknown) => {
+      if (channel === "state:get") return Promise.resolve({ value: null });
+      if (channel === "state:set") return Promise.resolve({ ok: true });
+      if (channel === "runtime:get-project-workspace") {
+        return (payload as { projectId: string }).projectId === "website"
+          ? Promise.reject(new Error("workspace unavailable"))
+          : Promise.resolve(projectWorkspace);
+      }
+      if (channel === "runtime:get-thread-snapshot") {
+        return Promise.resolve(snapshot((payload as { threadId: string }).threadId, "matrix-os"));
+      }
+      if (channel === "runtime:subscribe-thread-events" || channel === "runtime:unsubscribe-thread-events") {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+    window.operator = { invoke, on: vi.fn(() => () => undefined) };
+
+    render(
+      <AgentProjectWorkspaceShell summary={summary()} onNewChat={vi.fn()}>
+        <div>Workspace</div>
+      </AgentProjectWorkspaceShell>,
+    );
+    await waitFor(() => {
+      expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_project");
+    });
+
+    await act(async () => {
+      await useCodingAgentProjectWorkspace.getState().selectProject("website");
+    });
+
+    expect(useCodingAgentProjectWorkspace.getState().status).toBe("error");
+    await waitFor(() => {
+      expect(useCodingAgentWorkspace.getState().activeThreadId).toBeNull();
+      expect(useCodingAgentWorkspace.getState().threadSnapshot).toBeNull();
+    });
+  });
 });

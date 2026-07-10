@@ -70,12 +70,13 @@ export function AgentProjectWorkspaceShell({
   }, [enabled, hydrate, projectSignature, runtimeScope, summary.runtime.id]);
 
   useEffect(() => {
-    if (!enabled || status !== "ready") return;
+    if (!enabled) return;
     const currentActiveThreadId = useCodingAgentWorkspace.getState().activeThreadId;
     if (!selectedThreadId) {
       if (currentActiveThreadId) clearCodingAgentThreadSelection();
       return;
     }
+    if (status !== "ready") return;
     if (currentActiveThreadId !== selectedThreadId) {
       void loadThreadSnapshot(selectedThreadId);
     }
@@ -88,6 +89,7 @@ export function AgentProjectWorkspaceShell({
       attemptedExternalThreadId.current = null;
       return;
     }
+    if (status !== "ready") return;
     if (activeThreadId !== previous) {
       attemptedExternalThreadId.current = null;
     }
@@ -111,6 +113,7 @@ export function AgentProjectWorkspaceShell({
     focusExternalThread,
     projectSignature,
     selectedThreadId,
+    status,
   ]);
 
   if (!enabled) return children;
@@ -120,6 +123,7 @@ export function AgentProjectWorkspaceShell({
       <AgentProjectNavigator
         summary={summary}
         workspace={workspace}
+        liveThread={activeThread}
         status={status}
         error={error}
         selectedProjectId={selectedProjectId}

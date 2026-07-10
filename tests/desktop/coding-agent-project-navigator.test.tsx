@@ -177,4 +177,34 @@ describe("AgentProjectNavigator", () => {
     expect(within(screen.getByRole("group", { name: "Other task conversations" }))
       .getByRole("button", { name: "Chat Continue paged task" })).toBeTruthy();
   });
+
+  it("renders the latest gateway thread snapshot over a cached workspace row", () => {
+    const workspace = workspaceFixture();
+    const liveThread = {
+      ...workspace.taskThreads.items[0]!,
+      status: "completed" as const,
+      attention: "completed" as const,
+      updatedAt: "2026-07-10T12:01:00.000Z",
+    };
+
+    render(
+      <AgentProjectNavigator
+        summary={summaryFixture()}
+        workspace={workspace}
+        liveThread={liveThread}
+        status="ready"
+        selectedProjectId="matrix-os"
+        selectedTaskId="task_auth"
+        selectedThreadId="thread_plan"
+        onSelectProject={vi.fn()}
+        onSelectTask={vi.fn()}
+        onSelectThread={vi.fn()}
+        onNewChat={vi.fn()}
+      />,
+    );
+
+    const row = screen.getByRole("button", { name: "Chat Plan auth changes" });
+    expect(within(row).getByText("Done")).toBeTruthy();
+    expect(within(row).queryByText("Working")).toBeNull();
+  });
 });

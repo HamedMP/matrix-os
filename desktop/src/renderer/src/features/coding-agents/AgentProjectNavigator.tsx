@@ -16,6 +16,7 @@ type ProjectWorkspaceStatus = "idle" | "loading" | "ready" | "error";
 export interface AgentProjectNavigatorProps {
   summary: RuntimeSummary;
   workspace: ProjectAgentWorkspace | null;
+  liveThread?: AgentThreadSummary | null;
   status: ProjectWorkspaceStatus;
   error?: string | null;
   selectedProjectId: string | null;
@@ -98,6 +99,7 @@ function ThreadRow({
 export function AgentProjectNavigator({
   summary,
   workspace,
+  liveThread,
   status,
   error,
   selectedProjectId,
@@ -110,6 +112,13 @@ export function AgentProjectNavigator({
   onNewChat,
 }: AgentProjectNavigatorProps) {
   const grouped = workspace ? groupProjectWorkspaceThreads(workspace) : null;
+  const projectedThreads = new Map(
+    [...summary.activeThreads.items, ...summary.attentionThreads.items]
+      .map((thread) => [thread.id, thread] as const),
+  );
+  if (liveThread) projectedThreads.set(liveThread.id, liveThread);
+  const displayThread = (thread: AgentThreadSummary) =>
+    projectedThreads.get(thread.id) ?? thread;
   const providerLabel = (thread: AgentThreadSummary) =>
     summary.providers.find((provider) => provider.id === thread.providerId)?.displayName
       ?? "Agent";
@@ -186,8 +195,8 @@ export function AgentProjectNavigator({
                           {grouped.projectThreads.length > 0 ? grouped.projectThreads.map((thread) => (
                             <ThreadRow
                               key={thread.id}
-                              thread={thread}
-                              providerLabel={providerLabel(thread)}
+                              thread={displayThread(thread)}
+                              providerLabel={providerLabel(displayThread(thread))}
                               selected={thread.id === selectedThreadId}
                               onSelect={() => onSelectThread(thread.id)}
                             />
@@ -231,8 +240,8 @@ export function AgentProjectNavigator({
                                   {taskThreads.map((thread) => (
                                     <ThreadRow
                                       key={thread.id}
-                                      thread={thread}
-                                      providerLabel={providerLabel(thread)}
+                                      thread={displayThread(thread)}
+                                      providerLabel={providerLabel(displayThread(thread))}
                                       selected={thread.id === selectedThreadId}
                                       onSelect={() => onSelectThread(thread.id)}
                                     />
@@ -253,8 +262,8 @@ export function AgentProjectNavigator({
                                 {grouped.unlistedTaskThreads.map((thread) => (
                                   <ThreadRow
                                     key={thread.id}
-                                    thread={thread}
-                                    providerLabel={providerLabel(thread)}
+                                    thread={displayThread(thread)}
+                                    providerLabel={providerLabel(displayThread(thread))}
                                     selected={thread.id === selectedThreadId}
                                     onSelect={() => onSelectThread(thread.id)}
                                   />
