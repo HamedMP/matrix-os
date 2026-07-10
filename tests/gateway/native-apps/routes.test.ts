@@ -285,6 +285,38 @@ describe("native app routes", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("does not truncate decoded xpra responses with stale compression headers", async () => {
+    const { app } = createApp("alice");
+    const launch = await app.request("/api/native-apps/xterm/sessions", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: { "Content-Type": "application/json" },
+    });
+    const scopedCookie = launch.headers.get("set-cookie")?.split(";")[0];
+    const completeHtml = "<html>" + "x".repeat(20_000) + "</html>";
+    const fetchMock = vi.fn(async (_url: URL, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get("accept-encoding")).toBe("identity");
+      return new Response(completeHtml, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Encoding": "gzip",
+          "Content-Length": "9450",
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const stream = await app.request("/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/", {
+      headers: { Cookie: scopedCookie ?? "" },
+    });
+
+    expect(stream.status).toBe(200);
+    expect(await stream.text()).toBe(completeHtml);
+    expect(stream.headers.get("content-encoding")).toBeNull();
+    expect(stream.headers.get("content-length")).toBeNull();
+  });
+
   it("caps proxied stream request bodies before forwarding to xpra", async () => {
     const { app } = createApp("alice");
     const launch = await app.request("/api/native-apps/xterm/sessions", {

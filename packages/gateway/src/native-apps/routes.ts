@@ -24,6 +24,7 @@ const HOP_BY_HOP = new Set([
   "transfer-encoding",
   "upgrade",
 ]);
+const DECODED_FETCH_RESPONSE_HEADERS = ["content-encoding", "content-length"] as const;
 const SAFE_UPSTREAM_REQUEST_HEADERS = [
   "accept",
   "accept-language",
@@ -186,6 +187,7 @@ function setNativeStreamCookie(c: Context, service: NativeAppSessionService, ses
 function sanitizeProxyHeaders(headers: Headers): Headers {
   const out = new Headers(headers);
   for (const header of HOP_BY_HOP) out.delete(header);
+  for (const header of DECODED_FETCH_RESPONSE_HEADERS) out.delete(header);
   out.delete("set-cookie");
   out.delete("set-cookie2");
   return out;
@@ -197,6 +199,7 @@ function sanitizeProxyRequestHeaders(headers: Headers): Headers {
     const value = headers.get(header);
     if (value !== null) out.set(header, value);
   }
+  out.set("accept-encoding", "identity");
   return out;
 }
 
