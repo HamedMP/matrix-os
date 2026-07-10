@@ -171,7 +171,14 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
       });
       const persisted = sameScope ? null : await readPersistedSelection(runtimeScope);
       if (generation !== hydrationGeneration) return;
-      const preferred = persisted ?? currentSelection(state);
+      const preferred = persisted ?? (sameScope
+        ? currentSelection(state)
+        : {
+            selectedProjectId: null,
+            selectedTaskId: null,
+            selectedThreadId: null,
+            viewMode: state.viewMode,
+          });
       await loadProjectWorkspace(summary, preferred, generation, {
         preserveSelectionOnError: sameScope,
         preserveMissingPreferredProject: Boolean(

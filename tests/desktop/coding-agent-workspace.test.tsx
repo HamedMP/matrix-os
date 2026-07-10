@@ -761,7 +761,12 @@ describe("AgentWorkspace", () => {
     const pendingSecondSummary = new Promise<typeof secondSummary>((resolve) => {
       resolveSecondSummary = resolve;
     });
+    let resolveSecondReviews: ((value: ReturnType<typeof reviewsFixture>) => void) | undefined;
+    const pendingSecondReviews = new Promise<ReturnType<typeof reviewsFixture>>((resolve) => {
+      resolveSecondReviews = resolve;
+    });
     let summaryRequests = 0;
+    let reviewRequests = 0;
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") {
         summaryRequests += 1;
@@ -769,7 +774,12 @@ describe("AgentWorkspace", () => {
           ? Promise.resolve(firstSummary)
           : pendingSecondSummary;
       }
-      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-reviews") {
+        reviewRequests += 1;
+        return reviewRequests === 1
+          ? Promise.resolve(reviewsFixture())
+          : pendingSecondReviews;
+      }
       if (channel === "runtime:get-notification-preferences") {
         return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
       }
@@ -803,6 +813,11 @@ describe("AgentWorkspace", () => {
       await pendingSecondSummary;
     });
     await screen.findByText("Second account thread");
+
+    await act(async () => {
+      resolveSecondReviews?.(reviewsFixture());
+      await pendingSecondReviews;
+    });
   });
 
   it("DT-001 through DT-003 hydrates the persistent project and conversation navigator", async () => {

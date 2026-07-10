@@ -46,6 +46,7 @@ const MAX_LOCAL_CREATED_THREAD_HANDLES = 10;
 interface CodingAgentWorkspaceState {
   status: WorkspaceStatus;
   summary: RuntimeSummary | null;
+  summaryRevision: number;
   error: string | null;
   notificationPreferencesStatus: NotificationPreferencesStatus;
   notificationPreferences: CodingAgentNotificationPreferences | null;
@@ -437,6 +438,7 @@ async function flushNotificationPreferenceUpdates(): Promise<void> {
 export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set) => ({
   status: "idle",
   summary: null,
+  summaryRevision: 0,
   error: null,
   notificationPreferencesStatus: "idle",
   notificationPreferences: null,
@@ -505,6 +507,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         return {
           status: "ready",
           summary,
+          summaryRevision: state.summaryRevision + 1,
           error: null,
           ...(activeThreadStillPresent
             ? {}

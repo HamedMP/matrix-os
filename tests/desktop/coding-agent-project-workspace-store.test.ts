@@ -216,6 +216,48 @@ describe("coding-agent project workspace store", () => {
     });
   });
 
+  it("does not carry an in-memory chat selection into a new account scope", async () => {
+    const firstWorkspace = workspace("matrix-os", "task_auth", "thread_plan");
+    const secondWorkspace = workspace("matrix-os", "task_docs", "thread_new");
+    secondWorkspace.tasks.items.push({
+      ...firstWorkspace.tasks.items[0]!,
+    });
+    secondWorkspace.taskThreads.items.push({
+      ...firstWorkspace.taskThreads.items[0]!,
+    });
+    let workspaceRequests = 0;
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "state:get") return { value: null };
+      if (channel === "runtime:get-project-workspace") {
+        workspaceRequests += 1;
+        return workspaceRequests === 1 ? firstWorkspace : secondWorkspace;
+      }
+      if (channel === "state:set") return { ok: true };
+      throw new Error(`unexpected channel ${channel}`);
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+    const runtimeSummary = summary("rt_primary", "matrix-os", "Matrix OS");
+
+    await useCodingAgentProjectWorkspace.getState().hydrate(
+      runtimeSummary,
+      "first-account|https://app.matrix-os.com|primary",
+    );
+    await useCodingAgentProjectWorkspace.getState().hydrate(
+      runtimeSummary,
+      "second-account|https://app.matrix-os.com|primary",
+    );
+
+    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
+      status: "ready",
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_docs",
+      selectedThreadId: "thread_new",
+    });
+  });
+
   it("restores a persisted project that is outside the bounded summary page", async () => {
     const pagedSummary = summary("rt_primary", "matrix-os", "Matrix OS");
     pagedSummary.projects.hasMore = true;

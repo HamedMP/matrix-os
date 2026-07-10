@@ -1908,31 +1908,30 @@ export default function AgentWorkspace() {
   const [summaryRuntimeScope, setSummaryRuntimeScope] = useState<string | null>(null);
   const previousRuntimeScope = useRef(runtimeScope);
 
-  const retryCurrentScope = () => {
-    void refresh().then(() => {
-      if (useCodingAgentWorkspace.getState().status === "ready") {
-        setSummaryRuntimeScope(runtimeScope);
-      }
-    });
-  };
-
   useEffect(() => {
     const scopeChanged = previousRuntimeScope.current !== runtimeScope;
     previousRuntimeScope.current = runtimeScope;
+    const startingSummaryRevision = useCodingAgentWorkspace.getState().summaryRevision;
     let active = true;
     setSummaryRuntimeScope(null);
     if (scopeChanged) {
       clearCodingAgentRuntimeSelection();
       setComposerSeed(null);
     }
-    void refresh().then(() => {
-      if (active && useCodingAgentWorkspace.getState().status === "ready") {
+    const unsubscribeSummary = useCodingAgentWorkspace.subscribe((state) => {
+      if (
+        active
+        && state.status === "ready"
+        && state.summaryRevision > startingSummaryRevision
+      ) {
         setSummaryRuntimeScope(runtimeScope);
       }
     });
+    void refresh();
     void loadNotificationPreferences();
     return () => {
       active = false;
+      unsubscribeSummary();
     };
   }, [loadNotificationPreferences, refresh, runtimeScope]);
 
@@ -1951,7 +1950,7 @@ export default function AgentWorkspace() {
           icon={<Server size={28} />}
           headline={error ?? "Runtime summary unavailable"}
           description="Refresh the workspace or check your selected runtime."
-          action={<Button onClick={retryCurrentScope}>Retry</Button>}
+          action={<Button onClick={() => void refresh()}>Retry</Button>}
         />
       );
     }
@@ -1980,7 +1979,7 @@ export default function AgentWorkspace() {
         icon={<Server size={28} />}
         headline={error ?? "Runtime summary unavailable"}
         description="Refresh the workspace or check your selected runtime."
-        action={<Button onClick={retryCurrentScope}>Retry</Button>}
+        action={<Button onClick={() => void refresh()}>Retry</Button>}
       />
     );
   }
