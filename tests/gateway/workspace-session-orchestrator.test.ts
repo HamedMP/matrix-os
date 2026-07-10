@@ -82,17 +82,17 @@ describe("workspace session orchestrator", () => {
       sessionId: "sess_fixed",
       worktreePath: worktree.path,
       adminOverride: undefined,
-      approvalPolicy: "on-request",
+      approvalPolicy: "never",
       sandboxMode: "workspace_write",
       mode: undefined,
     });
     expect(d.agentSessionManager.startSession).toHaveBeenCalledWith(expect.objectContaining({
       agent: "codex",
-      approvalPolicy: "on_request",
       ownerId: "user_workspace",
       sandbox: { enabled: true, mode: "workspace-write", writableRoots: [worktree.path] },
       sessionId: "sess_fixed",
     }));
+    expect(d.agentSessionManager.startSession.mock.calls[0]?.[0].approvalPolicy).toBeUndefined();
     expect(d.eventPublisher.publishSessionStarted).toHaveBeenCalledWith(session);
   });
 

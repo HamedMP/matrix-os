@@ -174,7 +174,7 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
       sandbox: {
         enabled: true,
         failIfUnavailable: true,
-        autoAllowBashIfSandboxed: noPrompt,
+        autoAllowBashIfSandboxed: true,
         allowUnsandboxedCommands: false,
         filesystem: { denyWrite: sandbox.denyWriteRoots ?? [input.cwd] },
       },
@@ -182,13 +182,16 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
   }
 
   return ClaudeLaunchSettingsSchema.parse({
-    ...(noPrompt
-      ? { permissions: { allow: (sandbox.writableRoots ?? []).map(claudeEditPermissionRule) } }
-      : {}),
+    permissions: noPrompt
+      ? {
+          allow: (sandbox.writableRoots ?? []).map(claudeEditPermissionRule),
+          deny: ["Write", "NotebookEdit"],
+        }
+      : { deny: ["Edit", "Write", "NotebookEdit"] },
     sandbox: {
       enabled: true,
       failIfUnavailable: true,
-      autoAllowBashIfSandboxed: noPrompt,
+      autoAllowBashIfSandboxed: true,
       allowUnsandboxedCommands: false,
       filesystem: { allowWrite: sandbox.writableRoots ?? [] },
     },

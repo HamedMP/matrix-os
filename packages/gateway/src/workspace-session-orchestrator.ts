@@ -88,7 +88,8 @@ async function resolveAgentSandbox(options: {
     worktreePath: options.worktree.path,
     adminOverride: options.request.adminSandboxOverride,
     mode: options.request.mode,
-    approvalPolicy: toLaunchApprovalPolicy(options.request.approvalPolicy) ?? "on-request",
+    approvalPolicy: toLaunchApprovalPolicy(options.request.approvalPolicy) ??
+      (options.agent === "claude" ? "on-request" : "never"),
     sandboxMode: options.request.sandboxMode ?? "workspace_write",
   });
   if (!preflight.ok) {
@@ -164,7 +165,8 @@ export function createWorkspaceSessionOrchestrator(options: {
     async startSession(input: StartWorkspaceSessionInput): Promise<
       { ok: true; status: number; session: WorkspaceSessionView } | Failure
     > {
-      const request: StartWorkspaceSessionRequest = input.request.kind === "agent"
+      const request: StartWorkspaceSessionRequest =
+        input.request.kind === "agent" && input.request.agent === "claude"
         ? { ...input.request, approvalPolicy: input.request.approvalPolicy ?? "on_request" }
         : input.request;
       const sessionId = request.sessionId ?? idGenerator();

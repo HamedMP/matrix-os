@@ -268,10 +268,11 @@ describe("agent-launcher", () => {
       "fix the tests",
     ]);
     expect(claudeSettings(launch.args)).toEqual({
+      permissions: { deny: ["Edit", "Write", "NotebookEdit"] },
       sandbox: {
         enabled: true,
         failIfUnavailable: true,
-        autoAllowBashIfSandboxed: false,
+        autoAllowBashIfSandboxed: true,
         allowUnsandboxedCommands: false,
         filesystem: { allowWrite: [cwd, scratch] },
       },
@@ -324,6 +325,7 @@ describe("agent-launcher", () => {
           "Edit(//home/matrix/home/projects/repo/worktrees/wt_abc123def456/**)",
           "Edit(//home/matrix/home/system/agent-scratch/sess_abc123/**)",
         ],
+        deny: ["Write", "NotebookEdit"],
       },
       sandbox: { enabled: true, allowUnsandboxedCommands: false },
     });
@@ -362,6 +364,7 @@ describe("agent-launcher", () => {
         permissions: { deny: ["Edit", "Write", "NotebookEdit"] },
         sandbox: {
           enabled: true,
+          autoAllowBashIfSandboxed: true,
           filesystem: { denyWrite: [cwd, gitCommonDir] },
         },
       });
