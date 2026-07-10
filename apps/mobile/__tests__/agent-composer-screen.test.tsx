@@ -137,6 +137,8 @@ function reviewHunkRouteParams(): Record<string, string> {
 
 function threadFollowUpRouteParams(): Record<string, string> {
   return {
+    projectId: "matrix-os",
+    taskId: "task_auth",
     sourceThreadId: "thread_mobile",
     sourceThreadTitle: "Repair mobile route",
     sourceProviderId: "codex",
@@ -153,6 +155,7 @@ describe("AgentComposerScreen", () => {
   });
 
   it("requires a prompt before creating a run", async () => {
+    mockSearchParams = { projectId: "matrix-os" };
     const client = {
       getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
         ok: true,
@@ -177,7 +180,30 @@ describe("AgentComposerScreen", () => {
     expect(client.createCodingAgentThread).not.toHaveBeenCalled();
   });
 
-  it("creates a run and navigates to the accepted thread", async () => {
+  it("does not create a new conversation without a validated project route", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      createCodingAgentThread: jest.fn(),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentComposerScreen />);
+
+    fireEvent.changeText(await screen.findByLabelText("Agent run prompt"), "Investigate mobile composer");
+
+    expect(screen.getByText("Choose a project from the Agents workspace before starting a conversation.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Start run" }).props.accessibilityState?.disabled).toBe(true);
+    expect(client.createCodingAgentThread).not.toHaveBeenCalled();
+  });
+
+  it("creates a project-bound task conversation and preserves its accepted identity", async () => {
+    mockSearchParams = { projectId: "matrix-os", taskId: "task_auth" };
     const client = {
       getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
         ok: true,
@@ -218,11 +244,17 @@ describe("AgentComposerScreen", () => {
         providerId: "codex",
         projectId: "matrix-os",
         prompt: "Investigate mobile composer",
+        projectId: "matrix-os",
+        taskId: "task_auth",
         clientRequestId: expect.stringMatching(/^req_mobile_/),
       }));
       expect(mockRouterPush).toHaveBeenCalledWith({
         pathname: "/agents/[threadId]",
-        params: { threadId: "thread_mobile_create" },
+        params: {
+          projectId: "matrix-os",
+          taskId: "task_auth",
+          threadId: "thread_mobile_create",
+        },
       });
     });
     expect(AsyncStorage.getItem).not.toHaveBeenCalled();
@@ -532,7 +564,7 @@ describe("AgentComposerScreen", () => {
       }));
       expect(mockRouterPush).toHaveBeenCalledWith({
         pathname: "/agents/[threadId]",
-        params: { threadId: "thread_mobile_review_followup" },
+        params: { projectId: "matrix-os", threadId: "thread_mobile_review_followup" },
       });
     });
   });
@@ -585,6 +617,8 @@ describe("AgentComposerScreen", () => {
         projectId: "matrix-os",
         taskId: "task_mobile",
         prompt: expect.stringContaining("Please follow up on this agent run."),
+        projectId: "matrix-os",
+        taskId: "task_auth",
         attachments: [
           expect.objectContaining({
             id: "thread:thread_mobile",
@@ -595,7 +629,11 @@ describe("AgentComposerScreen", () => {
       }));
       expect(mockRouterPush).toHaveBeenCalledWith({
         pathname: "/agents/[threadId]",
-        params: { threadId: "thread_mobile_followup" },
+        params: {
+          projectId: "matrix-os",
+          taskId: "task_auth",
+          threadId: "thread_mobile_followup",
+        },
       });
     });
   });
@@ -660,6 +698,7 @@ describe("AgentComposerScreen", () => {
   });
 
   it("shows a safe create failure message", async () => {
+    mockSearchParams = { projectId: "matrix-os" };
     const client = {
       getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
         ok: true,
@@ -685,6 +724,7 @@ describe("AgentComposerScreen", () => {
   });
 
   it("does not create duplicate runs from rapid repeated submit presses", async () => {
+    mockSearchParams = { projectId: "matrix-os" };
     let resolveCreate: (value: unknown) => void = () => undefined;
     const client = {
       getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
@@ -731,7 +771,7 @@ describe("AgentComposerScreen", () => {
     });
     await waitFor(() => expect(mockRouterPush).toHaveBeenCalledWith({
       pathname: "/agents/[threadId]",
-      params: { threadId: "thread_mobile_duplicate" },
+      params: { projectId: "matrix-os", threadId: "thread_mobile_duplicate" },
     }));
   });
 

@@ -161,7 +161,10 @@ function reviewHunkFollowUpDraft(summary: RuntimeSummary, seed: ReviewHunkSeedPa
   };
 }
 
-function threadFollowUpDraft(summary: RuntimeSummary, seed: ThreadFollowUpSeedParams): AgentThreadComposerDraft {
+function threadFollowUpDraft(
+  summary: RuntimeSummary,
+  seed: ThreadFollowUpSeedParams,
+): AgentThreadComposerDraft {
   const base = defaultAgentThreadComposerDraft(summary);
   const sourceProvider = seed.sourceProviderId
     ? summary.providers.find((provider) => provider.id === seed.sourceProviderId)
@@ -350,7 +353,8 @@ export default function AgentComposerScreen() {
   const selectedProvider = summary?.providers.find((provider) => provider.id === draft?.providerId);
   const selectedProject = summary && draft ? availableProject(summary, draft.projectId) : undefined;
   const modes = selectedProvider?.supportedModes ?? [];
-  const canCreate = Boolean(summary && capabilityEnabled(summary, "codingAgentsThreadCreate"));
+  const canCompose = Boolean(summary && capabilityEnabled(summary, "codingAgentsThreadCreate"));
+  const canCreate = Boolean(canCompose && selectedProject);
 
   const chooseProvider = useCallback((provider: AgentProviderSummary) => {
     if (!summary) return;
@@ -454,7 +458,11 @@ export default function AgentComposerScreen() {
       }
       router.push({
         pathname: "/agents/[threadId]",
-        params: { threadId: result.snapshot.thread.id },
+        params: {
+          projectId: built.request.projectId,
+          ...(built.request.taskId ? { taskId: built.request.taskId } : {}),
+          threadId: result.snapshot.thread.id,
+        },
       });
     } finally {
       submitInFlight.current = false;
@@ -524,11 +532,24 @@ export default function AgentComposerScreen() {
         />
 
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Project</Text>
+          <View accessibilityLabel={selectedProject ? `Project ${selectedProject.label}` : "Project required"} style={styles.projectContext}>
+            <Ionicons name="folder-open-outline" size={18} color={theme.colors.moss} />
+            <View style={styles.rowText}>
+              <Text selectable style={styles.rowTitle}>{selectedProject?.label ?? "Choose a project first"}</Text>
+              <Text selectable style={styles.rowSubtitle}>
+                {draft.taskId ? `Task ${draft.taskId}` : "Project-level conversation"}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.section}>
           <Text style={styles.sectionTitle}>Provider</Text>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Provider ${selectedProvider?.displayName ?? "None"}`}
-            disabled={!canCreate}
+            disabled={!canCompose}
             onPress={() => setPickerOpen((open) => !open)}
             style={styles.providerButton}
           >
@@ -588,7 +609,7 @@ export default function AgentComposerScreen() {
             accessibilityLabel="Agent run prompt"
             multiline
             value={draft.prompt}
-            editable={canCreate}
+            editable={canCompose}
             onChangeText={(prompt) => setDraft((current) => current ? { ...current, prompt } : current)}
             placeholder="Describe the work to run"
             placeholderTextColor={theme.colors.mutedForeground}
@@ -597,8 +618,10 @@ export default function AgentComposerScreen() {
         </View>
 
         {createError ? <Text selectable style={styles.errorText}>{createError}</Text> : null}
-        {!canCreate ? (
+        {!canCompose ? (
           <Text selectable style={styles.errorText}>Agent runs are not available on this runtime yet.</Text>
+        ) : !selectedProject ? (
+          <Text selectable style={styles.errorText}>Choose a project from the Agents workspace before starting a conversation.</Text>
         ) : null}
         <Pressable
           accessibilityRole="button"
@@ -689,6 +712,18 @@ const styles = StyleSheet.create((theme, rt) => ({
     fontFamily: theme.fonts.sansSemiBold,
     fontSize: 14,
     color: theme.colors.foreground,
+  },
+  projectContext: {
+    minHeight: 62,
+    borderRadius: 14,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    padding: theme.spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing.md,
   },
   providerButton: {
     minHeight: 62,

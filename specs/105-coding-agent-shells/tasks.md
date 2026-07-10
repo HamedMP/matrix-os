@@ -1292,9 +1292,9 @@ Tests: `MB-001`, `MB-002`, `MB-003`, `MB-004`, `SEC-004`.
 
 ### 22.2 Conversation View
 
-- [ ] Send follow-ups to the selected thread turn route.
-- [ ] Preserve keyboard avoidance, safe areas, app suspension, streaming, and approval/input behavior.
-- [ ] Keep terminal handoff on canonical named sessions.
+- [x] Send follow-ups to the selected thread turn route.
+- [x] Preserve keyboard avoidance, safe areas, app suspension, streaming, and approval/input behavior.
+- [x] Keep terminal handoff on canonical named sessions.
 
 Tests: `MB-005`, `MB-006`, `MB-007`.
 

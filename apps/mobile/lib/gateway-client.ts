@@ -15,6 +15,9 @@ import {
   CodingAgentNotificationPreferencesUpdateSchema,
   CodingAgentProjectCreateRequestSchema,
   CodingAgentProjectCreateResponseSchema,
+  CreateAgentTurnErrorSchema,
+  CreateAgentTurnRequestSchema,
+  CreateAgentTurnResponseSchema,
   CursorSchema,
   FileBrowseRequestSchema,
   FileBrowseResponseSchema,
@@ -39,6 +42,8 @@ import {
   ThreadIdSchema,
   UserInputAnswerRequestSchema,
   type CreateAgentThreadRequest,
+  type CreateAgentTurnRequest,
+  type CreateAgentTurnResponse,
   type AgentThreadEvent,
   type CodingAgentNotificationPreferences,
   type CodingAgentNotificationPreferencesUpdate,
@@ -192,6 +197,14 @@ export type CodingAgentNotificationPreferencesUpdateResult =
 export type CodingAgentThreadCreateResult =
   | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
   | { ok: false; error: "Agent run could not be started. Try again." };
+
+export type CodingAgentTurnCreateResult =
+  | { ok: true; turn: CreateAgentTurnResponse }
+  | {
+    ok: false;
+    error: "Conversation is busy. Refresh and try again." | "Message could not be sent. Refresh and try again.";
+    reason: "busy" | "unavailable";
+  };
 
 export type CodingAgentThreadSnapshotResult =
   | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
@@ -1065,6 +1078,51 @@ export class GatewayClient {
     } catch (err: unknown) {
       logCodingAgentCatchWarning("/api/coding-agents/threads unavailable", err);
       return { ok: false, error: "Agent run could not be started. Try again." };
+    }
+  }
+
+  async createCodingAgentTurn(options: {
+    threadId: string;
+    request: CreateAgentTurnRequest;
+  }): Promise<CodingAgentTurnCreateResult> {
+    const unavailable = (): CodingAgentTurnCreateResult => ({
+      ok: false,
+      error: "Message could not be sent. Refresh and try again.",
+      reason: "unavailable",
+    });
+    try {
+      const parsedThreadId = ThreadIdSchema.safeParse(options.threadId);
+      const parsedRequest = CreateAgentTurnRequestSchema.safeParse(options.request);
+      if (!parsedThreadId.success || !parsedRequest.success) return unavailable();
+      const res = await this.fetchGateway(
+        `/api/coding-agents/threads/${encodeURIComponent(parsedThreadId.data)}/turns`,
+        {
+          method: "POST",
+          body: JSON.stringify(parsedRequest.data),
+        },
+      );
+      const body: unknown = await res.json();
+      if (!res.ok) {
+        const parsedError = CreateAgentTurnErrorSchema.safeParse(body);
+        if (res.status === 409 && parsedError.success && parsedError.data.code === "thread_busy") {
+          return {
+            ok: false,
+            error: "Conversation is busy. Refresh and try again.",
+            reason: "busy",
+          };
+        }
+        logCodingAgentStatusWarning("/api/coding-agents/threads/:threadId/turns unavailable", res.status);
+        return unavailable();
+      }
+      const parsed = CreateAgentTurnResponseSchema.safeParse(body);
+      if (!parsed.success || parsed.data.threadId !== parsedThreadId.data) {
+        logCodingAgentParseWarning("/api/coding-agents/threads/:threadId/turns returned invalid payload");
+        return unavailable();
+      }
+      return { ok: true, turn: parsed.data };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/threads/:threadId/turns unavailable", err);
+      return unavailable();
     }
   }
 
