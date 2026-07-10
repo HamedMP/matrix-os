@@ -518,7 +518,7 @@ exit 99
     const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-linux-tools'), 'utf8');
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
 
-    for (const pkg of ['dbus-x11', 'xauth', 'xpra', 'xterm']) {
+    for (const pkg of ['dbus-x11', 'x11-apps', 'xauth', 'xpra', 'xterm']) {
       expect(cloudInit).toContain(pkg);
       expect(installer).toContain(pkg);
     }

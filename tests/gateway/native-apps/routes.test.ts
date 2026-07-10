@@ -85,6 +85,7 @@ describe("native app routes", () => {
     expect(response.status).toBe(200);
     expect(body.apps).toEqual([
       expect.objectContaining({ id: "xterm", runtime: "linux-native", command: ["xterm"] }),
+      expect.objectContaining({ id: "xcalc", runtime: "linux-native", command: ["xcalc"] }),
     ]);
   });
 

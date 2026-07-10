@@ -60,6 +60,14 @@ describe("NativeAppSessionService", () => {
         enabled: true,
         permissions: { filesystem: "none", network: false, clipboard: false },
       }),
+      expect.objectContaining({
+        id: "xcalc",
+        name: "XCalc",
+        runtime: "linux-native",
+        command: ["xcalc"],
+        enabled: true,
+        permissions: { filesystem: "none", network: false, clipboard: false },
+      }),
     ]);
   });
 

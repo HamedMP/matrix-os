@@ -39,6 +39,20 @@ export function createDefaultNativeAppRegistry(): NativeAppDefinition[] {
         clipboard: false,
       },
     },
+    {
+      id: "xcalc",
+      name: "XCalc",
+      command: ["xcalc"],
+      runtime: "linux-native",
+      enabled: true,
+      defaultWidth: 420,
+      defaultHeight: 560,
+      permissions: {
+        filesystem: "none",
+        network: false,
+        clipboard: false,
+      },
+    },
   ];
 }
 
