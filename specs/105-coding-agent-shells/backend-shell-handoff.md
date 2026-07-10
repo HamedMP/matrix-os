@@ -17,6 +17,12 @@ This note is the stable integration boundary for desktop and mobile Conversation
 4. Treat `codingAgentsConversationView` and `codingAgentsKanbanView` as additive shell capability flags.
 5. Select a project from `summary.projects.items`, then fetch `GET /api/coding-agents/projects/:projectId/workspace`.
 
+Gateway publication invariant: when the corresponding project shell surfaces are configured,
+`GET /api/coding-agents/summary` emits `codingAgentsProjectWorkspace`,
+`codingAgentsConversationView`, and `codingAgentsKanbanView` with availability derived from the
+canonical project read model. Shells must not infer either view capability from the presence of
+projects or from another capability flag.
+
 `ProjectAgentWorkspaceSchema` is the canonical bounded navigation projection. Its `projectThreads` and `taskThreads` lists are independent; a task may own several selectable threads. Canonical task status comes from `tasks.items` and must not be inferred from thread status.
 
 ## Mutations
