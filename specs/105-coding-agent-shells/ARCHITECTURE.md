@@ -284,6 +284,7 @@ Use branded or schema-validated string aliases:
 - `projectId`: existing project slug/ID contract.
 - `taskId`: `task_[A-Za-z0-9_-]{1,128}` or existing task ID.
 - `threadId`: `thread_[A-Za-z0-9_-]{1,128}`.
+- `turnId`: `turn_[A-Za-z0-9_-]{1,128}`.
 - `eventId`: `evt_[A-Za-z0-9_-]{1,128}`.
 - `approvalId`: `appr_[A-Za-z0-9_-]{1,128}`.
 - `terminalSessionId`: existing named session/UUID schema; do not invent a second ID if canonical names already exist.
