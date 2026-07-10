@@ -642,9 +642,31 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         await lockUserMachineProvisioning(trx, request.clerkUserId);
       }
       const existing = await findExistingProvisioningMachine(trx, request, provisioningClass);
+      const retireFailedProvisioningMachine = async (failedMachine: UserMachineRecord): Promise<void> => {
+        await retireUserMachine(trx, failedMachine.machineId, currentTime.toISOString());
+        if (failedMachine.hetznerServerId !== null) {
+          await enqueueProviderDeletionTx(trx, {
+            providerServerId: failedMachine.hetznerServerId,
+            reason: 'failed_retry_retire',
+            machineId: failedMachine.machineId,
+            handle: request.handle,
+            detail: 'retiring failed machine before retry',
+          });
+        }
+      };
       let attempt = 1;
       if (existing) {
         if (existing.status !== 'failed') {
+          if (provisioningClass === 'preview' && existing.runtimeSlot !== request.runtimeSlot) {
+            const failedExact = await getActiveUserMachineByClerkId(
+              trx,
+              request.clerkUserId,
+              request.runtimeSlot,
+            );
+            if (failedExact?.status === 'failed' && failedExact.handle === request.handle) {
+              await retireFailedProvisioningMachine(failedExact);
+            }
+          }
           if (provisioningClass === 'preview' && existing.provisioningClass !== 'preview') {
             const retainedMachines = await listNonDeletedUserMachinesByClerkId(trx, request.clerkUserId);
             assertPreviewProvisioningCapacity(retainedMachines, deps.config.previewProvisioningLimit);
@@ -662,16 +684,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         if (attempt > deps.config.maxProvisionAttempts) {
           throw new CustomerVpsError(409, 'retry_exhausted', 'Provisioning retry limit reached');
         }
-        await retireUserMachine(trx, existing.machineId, currentTime.toISOString());
-        if (existing.hetznerServerId !== null) {
-          await enqueueProviderDeletionTx(trx, {
-            providerServerId: existing.hetznerServerId,
-            reason: 'failed_retry_retire',
-            machineId: existing.machineId,
-            handle: request.handle,
-            detail: 'retiring failed machine before retry',
-          });
-        }
+        await retireFailedProvisioningMachine(existing);
       }
       if (provisioningClass === 'preview') {
         const retainedMachines = await listNonDeletedUserMachinesByClerkId(trx, request.clerkUserId);

@@ -450,6 +450,7 @@ describe('platform/customer-vps', () => {
       '188d9ce1-395d-4d4c-a7b7-22754c3ab991',
     ];
     const { service, hetzner } = createService({
+      config: createTestConfig({ previewProvisioningLimit: 1 }),
       machineIdFactory: () => ids[nextId++] ?? ids[2]!,
     });
 
@@ -477,6 +478,10 @@ describe('platform/customer-vps', () => {
     await expect(getUserMachine(db, liveLegacy.machineId)).resolves.toMatchObject({
       provisioningClass: 'preview',
       runtimeSlot: 'preview',
+    });
+    await expect(getUserMachine(db, failedExact.machineId)).resolves.toMatchObject({
+      deletedAt: '2026-04-26T12:00:00.000Z',
+      status: 'failed',
     });
     expect(hetzner.createServer).toHaveBeenCalledTimes(2);
   });

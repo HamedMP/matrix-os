@@ -134,7 +134,8 @@ connect to, CLI betas need a paired shell), and today each is assembled by hand.
   back to the same owner's matching legacy `runtimeSlot: preview` row under the
   owner lock, so migration cannot create a duplicate provider server. Exact slots
   must match the requested handle or fail with a generic conflict, and a live
-  matching legacy row wins over a failed exact row during migration.
+  matching legacy row wins over a failed exact row during migration. The failed
+  duplicate is retired and queued for provider cleanup before capacity is checked.
 - `matrix-install-logship`: URL must be `https://`, handle must match
   `^[a-z0-9][a-z0-9-]{1,62}$`, env must be one of `preview|prod|staging`; the Alloy
   binary download is pinned to an exact version and verified against a recorded
