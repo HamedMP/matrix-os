@@ -12,7 +12,8 @@ import { SupportedAgentSchema, type SupportedAgent } from "../agent-launcher.js"
 import type { WorkspaceSessionOrchestrator } from "../workspace-session-orchestrator.js";
 import type { CodingAgentProviderAdapter } from "./thread-store.js";
 
-type WorkspaceRuntime = Pick<WorkspaceSessionOrchestrator, "startSession" | "stopSession">;
+type WorkspaceRuntime = Pick<WorkspaceSessionOrchestrator, "startSession" | "stopSession"> &
+  Partial<Pick<WorkspaceSessionOrchestrator, "sendInput">>;
 type SetupAgent = Extract<SupportedAgent, "claude" | "codex">;
 
 const SETUP_AGENTS: Record<SetupAgent, { installPackage: string; connectCommand: string }> = {
@@ -123,6 +124,23 @@ function runningStatusFor(session: { runtime?: { status?: unknown } | null }): "
   return session.runtime?.status === "starting" ? "starting" : "running";
 }
 
+function workspaceTurnInput(
+  message: string,
+  attachments: Parameters<NonNullable<CodingAgentProviderAdapter["resumeTurn"]>>[0]["turn"]["attachments"],
+): string {
+  const references = (attachments ?? [])
+    .filter((attachment) => attachment.kind === "structured_ref")
+    .map((attachment) => `- ${attachment.label}${attachment.path ? `: ${attachment.path}` : ""}`);
+  const body = references.length > 0
+    ? `${message}\n\nContext references:\n${references.join("\n")}`
+    : message;
+  const input = `${body}\r`;
+  if (Buffer.byteLength(input, "utf-8") > 64 * 1024) {
+    throw new Error("Workspace provider input is too large");
+  }
+  return input;
+}
+
 function statusEvent(input: {
   threadId: string;
   status: "starting" | "running" | "aborted";
@@ -209,8 +227,8 @@ export function createWorkspaceCodingAgentProvider(
       }
 
       const terminalSessionId = terminalSessionIdFor(result.session);
-      return [
-        statusEvent({
+      return {
+        events: [statusEvent({
           threadId: thread.id,
           status: runningStatusFor(result.session),
           now,
@@ -230,8 +248,26 @@ export function createWorkspaceCodingAgentProvider(
           occurredAt: now().toISOString(),
           messageId: `msg_${thread.id}`,
           delta: "Agent session started.",
-        }),
-      ];
+        })],
+        resumeState: { conversationId: sessionId },
+      };
+    },
+    async resumeTurn({ thread, turn, resumeState, signal }) {
+      if (!runnable || !options.runtime.sendInput) {
+        throw new Error("Workspace provider turn resume unavailable");
+      }
+      const sessionId = sessionIdForThread(thread.id);
+      if (resumeState.conversationId !== sessionId) {
+        throw new Error("Workspace provider conversation mismatch");
+      }
+      signal.throwIfAborted();
+      const result = await options.runtime.sendInput(
+        sessionId,
+        workspaceTurnInput(turn.message, turn.attachments),
+        signal,
+      );
+      if (!result.ok) throw new Error("Workspace provider turn resume failed");
+      return { events: [], outcome: "delivered", resumeState };
     },
     async abortThread({ thread, now, nextEventId }) {
       const result = await options.runtime.stopSession(sessionIdForThread(thread.id));

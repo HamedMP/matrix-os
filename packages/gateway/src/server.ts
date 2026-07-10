@@ -101,11 +101,12 @@ import { createAgentCredentialStatusService } from "./onboarding/agent-credentia
 import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
 import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-summary.js";
 import { createCodingAgentRoutes } from "./coding-agents/routes.js";
-import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type CodingAgentProviderAdapter, type CodingAgentThreadStore } from "./coding-agents/thread-store.js";
+import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type CodingAgentProviderAdapter, type CodingAgentThreadStore, type CodingAgentTurnStore } from "./coding-agents/thread-store.js";
 import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./coding-agents/thread-stream.js";
 import { createWorkspaceCodingAgentProviderSet } from "./coding-agents/workspace-provider.js";
 import { configuredWorkspaceProviderAgents } from "./coding-agents/workspace-provider-config.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
+import { createCodingAgentTurnLifecycle } from "./coding-agents/turn-lifecycle.js";
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
 import { createCodingAgentPreviewSummaryStore } from "./coding-agents/preview-summary.js";
 import { createOwnerCodingAgentProjectSummaryStore } from "./coding-agents/project-summary.js";
@@ -496,7 +497,7 @@ export async function createGateway(config: GatewayConfig) {
       };
     },
   });
-  let codingAgentThreadStore: CodingAgentThreadStore | undefined;
+  let codingAgentThreadStore: (CodingAgentThreadStore & CodingAgentTurnStore) | undefined;
   const codingAgentSessionStopReconciler = createCodingAgentSessionStopReconciler();
   const workspaceEventStore = createWorkspaceEventStore({ homePath });
   const reviewStore = createReviewStore({ homePath });
@@ -536,6 +537,8 @@ export async function createGateway(config: GatewayConfig) {
       worktreeManager: codingAgentWorktreeManager,
       agentLauncher: codingAgentLauncher,
       zellijRuntime: workspaceZellijRuntime,
+      inputWriter: (sessionId, input, signal) =>
+        workspaceZellijRuntime.sendInput(sessionId, input, signal),
     });
     const codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
       worktreeManager: codingAgentWorktreeManager,
@@ -571,6 +574,12 @@ export async function createGateway(config: GatewayConfig) {
     agentCredentials: agentCredentialService,
   });
   const codingAgentWorkspaceEnabled = Boolean(codingAgentThreadStore);
+  const codingAgentTurnLifecycle = await createCodingAgentTurnLifecycle({
+    store: codingAgentThreadStore,
+    providers: codingAgentProviders,
+    logFailure: logBestEffortFailure,
+  });
+  const codingAgentTurnsEnabled = codingAgentTurnLifecycle.turnsEnabled;
   if (codingAgentThreadStore) {
     void codingAgentSessionStopReconciler.attachThreadStore(codingAgentThreadStore).catch((err: unknown) => {
       console.warn("[coding-agents] Failed to flush pending session stops:", err instanceof Error ? err.message : String(err));
@@ -605,6 +614,7 @@ export async function createGateway(config: GatewayConfig) {
     capabilities: {
       projectWorkspace: true,
       workspace: codingAgentWorkspaceEnabled,
+      sameThreadTurns: codingAgentTurnsEnabled,
       approvals: false,
       review: true,
       preview: true,
@@ -1639,6 +1649,7 @@ export async function createGateway(config: GatewayConfig) {
     service: codingAgentRuntimeSummaryService,
     projectWorkspaces: codingAgentProjectWorkspaceStore,
     threads: codingAgentThreadStore,
+    turns: codingAgentTurnsEnabled ? codingAgentThreadStore : undefined,
     reviews: codingAgentReviewSummaryStore,
     files: codingAgentFileStore,
     sourceControl: codingAgentSourceControlStore,
@@ -4193,6 +4204,7 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
+      await codingAgentTurnLifecycle.shutdown();
       codingAgentThreadStream?.shutdown();
       codingAgentAttentionNotifications?.dispose();
       codingAgentSessionStopReconciler.dispose();

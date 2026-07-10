@@ -99,6 +99,24 @@ describe("zellij-runtime", () => {
     );
   });
 
+  it("sends bounded input to one deterministic session with the caller signal", async () => {
+    const runCommand = vi.fn(async () => ({ stdout: "", stderr: "" }));
+    const runtime = createZellijRuntime({ homePath, runCommand });
+    const signal = AbortSignal.timeout(1_000);
+
+    await runtime.sendInput("sess_abc123", "Continue with the fix.\r", signal);
+
+    expect(runCommand).toHaveBeenCalledWith(
+      "zellij",
+      ["--session", "matrix-sess_abc123", "action", "write-chars", "--", "Continue with the fix.\r"],
+      expect.objectContaining({
+        cwd: homePath,
+        timeout: 10_000,
+        signal,
+      }),
+    );
+  });
+
   it("writes chrome-free Matrix zellij config and starts with that config environment", async () => {
     const pty = createPty();
     const spawnPty = vi.fn(() => pty.process);

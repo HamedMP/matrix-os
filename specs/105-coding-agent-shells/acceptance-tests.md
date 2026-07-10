@@ -63,7 +63,7 @@ Every clarified functional requirement and buildable success criterion has at le
 | GW-013 | Turn acceptance atomically appends one user turn and claims active ownership. | Store/route test replays the persisted `turn.accepted` event after the 202 response in `tests/gateway/coding-agents-turns.test.ts`. |
 | GW-014 | Duplicate turn request returns the original accepted turn. | Same `(owner, thread, clientRequestId)` returns one turn both in-process and after store reload in `tests/gateway/coding-agents-turns.test.ts`. |
 | GW-015 | Concurrent normal turn returns safe `thread_busy`. | Parallel route requests produce one 202 and one generic 409 with no local queue in `tests/gateway/coding-agents-turns.test.ts`. |
-| GW-016 | Sequential turns resume one provider conversation. | Fake adapter receives two distinct persisted turns for one thread and one unchanged server-only conversation identity in `tests/gateway/coding-agents-turn-dispatch.test.ts`. |
+| GW-016 | Sequential turns resume one provider conversation. | Fake adapter receives two distinct persisted turns for one thread and one unchanged server-only conversation identity in `tests/gateway/coding-agents-turn-dispatch.test.ts`; workspace-provider coverage proves input delivery settles the turn while the canonical running session keeps the thread active. |
 | GW-017 | Completion/failure/abort releases active-turn ownership. | Sequential completion, timeout failure, explicit abort, and persisted startup reconciliation each allow a later valid turn in `tests/gateway/coding-agents-turn-dispatch.test.ts`. |
 | GW-018 | Provider timeout/abort maps to bounded safe thread state. | Timeout, shutdown abort, registry cap, saturated idempotent retry, terminal request-body cleanup, safe persisted failure, and raw resume-identity exclusion assertions in `tests/gateway/coding-agents-turn-dispatch.test.ts`. |
 
@@ -113,7 +113,7 @@ Every clarified functional requirement and buildable success criterion has at le
 
 | ID | Requirement | Expected Evidence |
 | --- | --- | --- |
-| E2E-001 | One thread accepts two sequential turns with one provider conversation. | Fake-provider gateway integration in `tests/gateway/coding-agents-turn-dispatch.test.ts`; production workspace adapter smoke remains part of Gate 3. |
+| E2E-001 | One thread accepts two sequential turns with one provider conversation. | Fake-provider gateway integration in `tests/gateway/coding-agents-turn-dispatch.test.ts` plus deterministic workspace provider/store integration in `tests/gateway/coding-agents-workspace-provider.test.ts`; real-process smoke remains part of Gate 3. |
 | E2E-002 | Desktop creates two chats for one task; mobile sees both after hydration. | Stubbed automated E2E plus real-runtime checkpoint. |
 | E2E-003 | Mobile sends a follow-up; desktop receives events on the same thread. | Cross-shell real-runtime smoke with exact thread ID. |
 | E2E-004 | Both shells switch Conversation/Kanban and reopen the same task/thread. | Desktop automated smoke, mobile device smoke, and recorded IDs. |

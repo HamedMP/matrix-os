@@ -281,7 +281,7 @@ export function createAgentSessionManager(options: {
   worktreeManager: WorktreeManager;
   agentLauncher: AgentLauncher;
   zellijRuntime: ZellijRuntime;
-  inputWriter?: (sessionId: string, input: string) => Promise<void>;
+  inputWriter?: (sessionId: string, input: string, signal?: AbortSignal) => Promise<void>;
   now?: () => string;
   idGenerator?: () => string;
 }) {
@@ -429,7 +429,11 @@ export function createAgentSessionManager(options: {
       return { ok: true, sessions, nextCursor: null };
     },
 
-    async sendInput(sessionId: string, input: string): Promise<{ ok: true; session: WorkspaceSessionView } | Failure> {
+    async sendInput(
+      sessionId: string,
+      input: string,
+      signal?: AbortSignal,
+    ): Promise<{ ok: true; session: WorkspaceSessionView } | Failure> {
       if (!SessionIdSchema.safeParse(sessionId).success || !SessionInputSchema.safeParse(input).success) {
         return failure(400, "invalid_session_input", "Session input is invalid");
       }
@@ -442,7 +446,7 @@ export function createAgentSessionManager(options: {
         return failure(503, "runtime_unavailable", "Session runtime is unavailable");
       }
       try {
-        await options.inputWriter(sessionId, input);
+        await options.inputWriter(sessionId, input, signal);
       } catch (err: unknown) {
         if (err instanceof Error) {
           console.warn("[agent-session-manager] Failed to send session input:", err.message);
