@@ -620,6 +620,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     if (
       existingBeforeBundleResolve
       && existingBeforeBundleResolve.status !== 'failed'
+      && !(provisioningClass === 'preview' && existingBeforeBundleResolve.runtimeSlot !== request.runtimeSlot)
       && (provisioningClass === 'customer' || existingBeforeBundleResolve.provisioningClass === 'preview')
     ) {
       return activeProvisionResponse(existingBeforeBundleResolve, deps.config.provisionEtaSeconds);

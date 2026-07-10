@@ -486,6 +486,44 @@ describe('platform/customer-vps', () => {
     expect(hetzner.createServer).toHaveBeenCalledTimes(2);
   });
 
+  it('retires a failed exact slot when the matching legacy preview was already adopted', async () => {
+    let nextId = 0;
+    const ids = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+    ];
+    const { service, hetzner } = createService({
+      machineIdFactory: () => ids[nextId++] ?? ids[1]!,
+    });
+
+    const failedExact = await service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'pr-897',
+    });
+    await updateUserMachine(db, failedExact.machineId, {
+      status: 'failed',
+      failureCode: 'provider_unavailable',
+      failureAt: '2026-04-26T12:05:00.000Z',
+    });
+    const adoptedLegacy = await service.provision({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'preview',
+    });
+    await updateUserMachine(db, adoptedLegacy.machineId, { provisioningClass: 'preview' });
+
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'pr-897',
+    })).resolves.toEqual(adoptedLegacy);
+    await expect(getUserMachine(db, failedExact.machineId)).resolves.toMatchObject({
+      deletedAt: '2026-04-26T12:00:00.000Z',
+    });
+    expect(hetzner.createServer).toHaveBeenCalledTimes(2);
+  });
+
   it('counts failed distinct previews until they are retried or deleted', async () => {
     let nextId = 0;
     const ids = [
