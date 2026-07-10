@@ -123,7 +123,7 @@ Every clarified functional requirement and buildable success criterion has at le
 
 ### Phase 22.4 Evidence
 
-- `MB-011`: `tests/platform/proxy-routing.test.ts` proves the Clerk-authenticated computer route returns only the current owner's bounded same-origin projection and rejects anonymous discovery. `apps/mobile/__tests__/mobile-computers.test.ts`, `storage.test.ts`, `computer-picker-screen.test.tsx`, and `settings-screen.test.tsx` prove response validation, credential-free selection persistence, Cloud sign-in recovery, and same-session gateway switching. Remote preview selection on a physical device remains part of the Phase 22 gate until the preview bundle is deployed.
+- `MB-011`: `tests/platform/proxy-routing.test.ts` proves the Clerk-authenticated computer route returns only the current owner's bounded same-origin projection and rejects anonymous discovery. `apps/mobile/__tests__/mobile-computers.test.ts`, `storage.test.ts`, `computer-picker-screen.test.tsx`, and `settings-screen.test.tsx` prove response validation, credential-free selection persistence, Cloud sign-in recovery, load-error recovery, and same-session gateway switching. Preview VPS workflow run `29126211996` deployed exact top-stack bundle `v2026.07.10-pr914-00909cc-r29126211996`, and Platform Cloud Run run `29128264329` deployed and smoke-tested exact-head zero-traffic candidate revision `matrix-platform-00296-man` without promotion. The Expo SDK 57 dev client bundled and opened the chooser on the paired physical phone; the rendered list, selection, and post-switch workspace walkthrough still require direct user confirmation and remain part of the Phase 22 gate.
 
 ## Security Tests
 
