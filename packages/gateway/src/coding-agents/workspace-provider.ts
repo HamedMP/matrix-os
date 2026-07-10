@@ -1,6 +1,7 @@
 import {
   AgentThreadEventSchema,
   ProviderIdSchema,
+  SafeSetupActionSchema,
   TerminalSessionIdSchema,
   type AgentProviderSummary,
   type AgentThreadEvent,
@@ -12,6 +13,18 @@ import type { WorkspaceSessionOrchestrator } from "../workspace-session-orchestr
 import type { CodingAgentProviderAdapter } from "./thread-store.js";
 
 type WorkspaceRuntime = Pick<WorkspaceSessionOrchestrator, "startSession" | "stopSession">;
+type SetupAgent = Extract<SupportedAgent, "claude" | "codex">;
+
+const SETUP_AGENTS: Record<SetupAgent, { installPackage: string; connectCommand: string }> = {
+  claude: {
+    installPackage: "@anthropic-ai/claude-code@latest",
+    connectCommand: "claude",
+  },
+  codex: {
+    installPackage: "@openai/codex@latest",
+    connectCommand: "codex login",
+  },
+};
 
 export interface WorkspaceCodingAgentProviderOptions {
   providerId: string;
@@ -46,6 +59,46 @@ function providerKind(agent: SupportedAgent): AgentProviderSummary["kind"] {
   if (agent === "codex") return "codex";
   if (agent === "opencode") return "opencode";
   return "custom";
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function visibleSetupCommand(command: string): string {
+  const foreground = [
+    'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"',
+    'export PATH="$MATRIX_NODE_PREFIX/bin:$PATH"',
+    command,
+    'exec "${SHELL:-sh}" -l',
+  ].join("; ");
+  return `sh -lc ${shellQuote(foreground)}`;
+}
+
+function visibleInstallCommand(installPackage: string): string {
+  return visibleSetupCommand(
+    `npm install -g --prefix "$MATRIX_NODE_PREFIX" ${installPackage}`,
+  );
+}
+
+function providerSetupActions(agent: SupportedAgent): SafeSetupAction[] {
+  if (agent !== "claude" && agent !== "codex") return [];
+  const displayName = providerDisplayName(agent);
+  const setup = SETUP_AGENTS[agent];
+  return SafeSetupActionSchema.array().max(2).parse([
+    {
+      id: `${agent}_install`,
+      kind: "foreground_terminal",
+      label: `Install ${displayName}`,
+      command: visibleInstallCommand(setup.installPackage),
+    },
+    {
+      id: `${agent}_connect`,
+      kind: "foreground_terminal",
+      label: `Connect ${displayName}`,
+      command: visibleSetupCommand(setup.connectCommand),
+    },
+  ]);
 }
 
 function terminalSessionIdFor(session: {
@@ -127,7 +180,7 @@ export function createWorkspaceCodingAgentProvider(
       return { ok: runnable };
     },
     buildSetupAction(): SafeSetupAction[] {
-      return [];
+      return providerSetupActions(agent);
     },
     async startThread({ principal, thread, request, now, nextEventId }) {
       if (!runnable) {
