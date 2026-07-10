@@ -5,6 +5,7 @@ import { CustomerVpsError, logCustomerVpsError, type CustomerVpsFailureCode } fr
 import { bearerTokenMatches } from './customer-vps-auth.js';
 import {
   MachineIdParamSchema,
+  PreviewProvisionRequestSchema,
   ProvisionRequestSchema,
   RegisterRequestSchema,
   RecoverRequestSchema,
@@ -167,6 +168,44 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
         },
       });
       return jsonError(c, err, '/vps/provision');
+    }
+  });
+
+  app.post('/preview/provision', bodyLimit({ maxSize: VPS_BODY_LIMIT }), async (c) => {
+    const authError = requirePlatformAuth(c);
+    if (authError) return authError;
+    let parsed: ReturnType<typeof PreviewProvisionRequestSchema.safeParse>;
+    try {
+      parsed = PreviewProvisionRequestSchema.safeParse(await readJson(c));
+    } catch (err: unknown) {
+      return jsonError(c, err, '/vps/preview/provision');
+    }
+    if (!parsed.success) {
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+    const { clerkUserId, handle, runtimeSlot, developerTools } = parsed.data;
+    emitTelemetry(MATRIX_TELEMETRY_EVENTS.VPS_PROVISION_REQUESTED, {
+      distinctId: clerkUserId,
+      properties: {
+        handle,
+        runtime_slot: runtimeSlot,
+        developer_tools_count: developerTools?.length,
+      },
+    });
+    try {
+      return c.json(await deps.service.provisionPreview(parsed.data), 202);
+    } catch (err: unknown) {
+      const failureCode = customerVpsFailureCode(err);
+      vpsProvisionFailuresTotal.inc({ failure_code: failureCode });
+      emitTelemetry(MATRIX_TELEMETRY_EVENTS.VPS_PROVISION_FAILED, {
+        distinctId: clerkUserId,
+        properties: {
+          failure_code: failureCode,
+          http_status: customerVpsFailureStatus(err),
+          handle,
+        },
+      });
+      return jsonError(c, err, '/vps/preview/provision');
     }
   });
 
