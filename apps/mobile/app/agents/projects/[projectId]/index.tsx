@@ -1,8 +1,1 @@
-import { Redirect } from "expo-router";
-import { AgentProjectRoute } from "@/components/agents/agent-project-route";
-import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
-
-export default function ProjectAgentRoute() {
-  if (!CODING_AGENTS_MOBILE_WORKSPACE) return <Redirect href="/agents" />;
-  return <AgentProjectRoute routeViewMode="conversation" />;
-}
+zsh:1: no matches found: fd7db13324349819aec0794577982ea1756dc7ea:apps/mobile/app/agents/projects/[projectId]/index.tsx
