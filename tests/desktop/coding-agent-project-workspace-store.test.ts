@@ -209,6 +209,45 @@ describe("coding-agent project workspace store", () => {
       .toBe("Second account chat");
   });
 
+  it("preserves task and thread selection across a transient workspace failure", async () => {
+    const projectWorkspace = workspace("matrix-os", "task_auth", "thread_plan");
+    let workspaceRequestCount = 0;
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "state:get") return { value: null };
+      if (channel === "state:set") return { ok: true };
+      if (channel === "runtime:get-project-workspace") {
+        workspaceRequestCount += 1;
+        if (workspaceRequestCount === 2) throw new Error("temporary outage");
+        return projectWorkspace;
+      }
+      throw new Error(`unexpected channel ${channel}`);
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+
+    await useCodingAgentProjectWorkspace.getState().hydrate(
+      summary("rt_primary", "matrix-os", "Matrix OS"),
+    );
+    await useCodingAgentProjectWorkspace.getState().refresh();
+
+    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
+      status: "error",
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_auth",
+      selectedThreadId: "thread_plan",
+    });
+
+    await useCodingAgentProjectWorkspace.getState().refresh();
+    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
+      status: "ready",
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_auth",
+      selectedThreadId: "thread_plan",
+    });
+  });
+
   it("E2E-006 reconciles an externally focused thread across project workspaces", async () => {
     const workspaces: Record<string, ProjectAgentWorkspace> = {
       "matrix-os": workspace("matrix-os", "task_auth", "thread_plan"),

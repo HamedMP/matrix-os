@@ -115,8 +115,8 @@ async function loadProjectWorkspace(
       status: "error",
       workspace: null,
       selectedProjectId,
-      selectedTaskId: null,
-      selectedThreadId: null,
+      selectedTaskId: preferred.selectedTaskId,
+      selectedThreadId: preferred.selectedThreadId,
       error: "Project workspace unavailable",
     });
   }
