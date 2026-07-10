@@ -1939,7 +1939,10 @@ export default function AgentWorkspace() {
       <AgentRuntimeHeader
         summary={summary}
         onRefresh={() => {
-          void Promise.all([refresh(), refreshProjectWorkspace()]);
+          void (async () => {
+            await refresh();
+            await refreshProjectWorkspace();
+          })();
         }}
       />
       <AgentProjectWorkspaceShell

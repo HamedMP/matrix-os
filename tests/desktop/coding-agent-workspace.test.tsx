@@ -819,10 +819,15 @@ describe("AgentWorkspace", () => {
       ...threadSnapshotFixture(),
       thread: workspace.projectThreads.items[0],
     };
+    let resolveManualSummary: (value: typeof summary) => void = () => undefined;
+    const manualSummary = new Promise<typeof summary>((resolve) => {
+      resolveManualSummary = resolve;
+    });
     let summaryRequestCount = 0;
     window.operator.invoke = vi.fn((channel: string, payload?: unknown) => {
       if (channel === "runtime:get-summary") {
         summaryRequestCount += 1;
+        if (summaryRequestCount === 3) return manualSummary;
         return Promise.resolve({
           ...summary,
           serverTime: summaryRequestCount === 1
@@ -882,11 +887,20 @@ describe("AgentWorkspace", () => {
       );
       expect(summaryRequests).toHaveLength(3);
     });
+    expect(vi.mocked(window.operator.invoke).mock.calls.filter(
+      ([channel]) => channel === "runtime:get-project-workspace",
+    )).toHaveLength(1);
+
+    resolveManualSummary(summary);
     await waitFor(() => {
       const workspaceRequests = vi.mocked(window.operator.invoke).mock.calls.filter(
         ([channel]) => channel === "runtime:get-project-workspace",
       );
       expect(workspaceRequests).toHaveLength(2);
+    });
+    await waitFor(() => {
+      expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_audit");
+      expect(useCodingAgentWorkspace.getState().threadSnapshot?.thread.id).toBe("thread_audit");
     });
 
     act(() => {

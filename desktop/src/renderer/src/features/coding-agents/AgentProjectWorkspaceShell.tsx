@@ -5,6 +5,7 @@ import {
   useCodingAgentWorkspace,
 } from "../../stores/coding-agent-workspace";
 import { useCodingAgentProjectWorkspace } from "../../stores/coding-agent-project-workspace";
+import { useConnection } from "../../stores/connection";
 import { AgentProjectNavigator } from "./AgentProjectNavigator";
 
 function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
@@ -39,6 +40,11 @@ export function AgentProjectWorkspaceShell({
   const focusExternalThread = useCodingAgentProjectWorkspace(
     (state) => state.focusExternalThread,
   );
+  const runtimeScope = useConnection((state) => [
+    state.handle ?? "signed-out",
+    state.platformHost,
+    state.runtimeSlot,
+  ].join("|"));
   const activeThreadId = useCodingAgentWorkspace((state) => state.activeThreadId);
   const activeThread = useCodingAgentWorkspace((state) =>
     state.threadSnapshot?.thread.id === state.activeThreadId
@@ -46,7 +52,7 @@ export function AgentProjectWorkspaceShell({
       : null);
   const loadThreadSnapshot = useCodingAgentWorkspace((state) => state.loadThreadSnapshot);
   const previousActiveThreadId = useRef<string | null>(null);
-  const pendingExternalThreadId = useRef<string | null>(null);
+  const attemptedExternalThreadId = useRef<string | null>(null);
   const projectSignature = [
     ...summary.projects.items.map((project) => [
       project.id,
@@ -61,7 +67,7 @@ export function AgentProjectWorkspaceShell({
   useEffect(() => {
     if (!enabled) return;
     void hydrate(summary);
-  }, [enabled, hydrate, projectSignature, summary.runtime.id]);
+  }, [enabled, hydrate, projectSignature, runtimeScope, summary.runtime.id]);
 
   useEffect(() => {
     if (!enabled || status !== "ready") return;
@@ -79,31 +85,24 @@ export function AgentProjectWorkspaceShell({
     const previous = previousActiveThreadId.current;
     previousActiveThreadId.current = activeThreadId;
     if (!enabled) {
-      pendingExternalThreadId.current = null;
+      attemptedExternalThreadId.current = null;
       return;
     }
     if (activeThreadId !== previous) {
-      pendingExternalThreadId.current = activeThreadId !== selectedThreadId
-        ? activeThreadId
-        : null;
+      attemptedExternalThreadId.current = null;
     }
     if (
       !activeThreadId
-      || pendingExternalThreadId.current !== activeThreadId
       || activeThreadId === selectedThreadId
+      || attemptedExternalThreadId.current === activeThreadId
     ) {
       return;
     }
     const relation = activeThread
       ? { projectId: activeThread.projectId, taskId: activeThread.taskId }
       : undefined;
-    void focusExternalThread(activeThreadId, relation).then(() => {
-      if (
-        useCodingAgentProjectWorkspace.getState().selectedThreadId === activeThreadId
-      ) {
-        pendingExternalThreadId.current = null;
-      }
-    });
+    attemptedExternalThreadId.current = activeThreadId;
+    void focusExternalThread(activeThreadId, relation);
   }, [
     activeThread?.projectId,
     activeThread?.taskId,
