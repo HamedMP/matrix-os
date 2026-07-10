@@ -72,6 +72,7 @@ function resetStore(): void {
   useCodingAgentProjectWorkspace.setState({
     status: "idle",
     runtimeId: null,
+    runtimeScope: null,
     summary: null,
     workspace: null,
     error: null,

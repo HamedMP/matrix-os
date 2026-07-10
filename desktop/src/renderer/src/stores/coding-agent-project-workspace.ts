@@ -17,10 +17,11 @@ type ProjectWorkspaceStatus = "idle" | "loading" | "ready" | "error";
 interface CodingAgentProjectWorkspaceState extends ProjectWorkspaceSelection {
   status: ProjectWorkspaceStatus;
   runtimeId: string | null;
+  runtimeScope: string | null;
   summary: RuntimeSummary | null;
   workspace: ProjectAgentWorkspace | null;
   error: string | null;
-  hydrate: (summary: RuntimeSummary) => Promise<void>;
+  hydrate: (summary: RuntimeSummary, runtimeScope?: string) => Promise<void>;
   refresh: () => Promise<void>;
   selectProject: (projectId: string) => Promise<void>;
   selectTask: (taskId: string) => void;
@@ -72,6 +73,7 @@ async function loadProjectWorkspace(
   summary: RuntimeSummary,
   preferred: ProjectWorkspaceSelection,
   generation: number,
+  preserveSelectionOnError = true,
 ): Promise<void> {
   const selectedProjectId = resolveSelectedProjectId(summary, preferred.selectedProjectId);
   if (!selectedProjectId) {
@@ -115,8 +117,8 @@ async function loadProjectWorkspace(
       status: "error",
       workspace: null,
       selectedProjectId,
-      selectedTaskId: preferred.selectedTaskId,
-      selectedThreadId: preferred.selectedThreadId,
+      selectedTaskId: preserveSelectionOnError ? preferred.selectedTaskId : null,
+      selectedThreadId: preserveSelectionOnError ? preferred.selectedThreadId : null,
       error: "Project workspace unavailable",
     });
   }
@@ -126,6 +128,7 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
   (set) => ({
     status: "idle",
     runtimeId: null,
+    runtimeScope: null,
     summary: null,
     workspace: null,
     error: null,
@@ -134,21 +137,23 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
     selectedThreadId: null,
     viewMode: "conversation",
 
-    hydrate: async (summary) => {
+    hydrate: async (summary, runtimeScope = summary.runtime.id) => {
       const generation = ++hydrationGeneration;
       const state = useCodingAgentProjectWorkspace.getState();
-      const sameRuntime = state.runtimeId === summary.runtime.id;
+      const sameScope = state.runtimeId === summary.runtime.id
+        && state.runtimeScope === runtimeScope;
       set({
         status: "loading",
         runtimeId: summary.runtime.id,
+        runtimeScope,
         summary,
         workspace: null,
         error: null,
       });
-      const persisted = sameRuntime ? null : await readPersistedSelection();
+      const persisted = sameScope ? null : await readPersistedSelection();
       if (generation !== hydrationGeneration) return;
       const preferred = persisted ?? currentSelection(state);
-      await loadProjectWorkspace(summary, preferred, generation);
+      await loadProjectWorkspace(summary, preferred, generation, sameScope);
     },
 
     refresh: async () => {

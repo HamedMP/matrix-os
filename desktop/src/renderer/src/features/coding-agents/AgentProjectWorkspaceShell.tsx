@@ -66,7 +66,7 @@ export function AgentProjectWorkspaceShell({
 
   useEffect(() => {
     if (!enabled) return;
-    void hydrate(summary);
+    void hydrate(summary, runtimeScope);
   }, [enabled, hydrate, projectSignature, runtimeScope, summary.runtime.id]);
 
   useEffect(() => {
@@ -100,9 +100,20 @@ export function AgentProjectWorkspaceShell({
     ) {
       return;
     }
-    const relation = activeThread
-      ? { projectId: activeThread.projectId, taskId: activeThread.taskId }
+    const workspaceThread = workspace
+      ? [...workspace.projectThreads.items, ...workspace.taskThreads.items]
+        .find((thread) => thread.id === activeThreadId)
       : undefined;
+    const summaryThread = [
+      ...summary.activeThreads.items,
+      ...summary.attentionThreads.items,
+    ].find((thread) => thread.id === activeThreadId);
+    const routeableThread = activeThread ?? workspaceThread ?? summaryThread;
+    if (!routeableThread) return;
+    const relation = {
+      projectId: routeableThread.projectId,
+      taskId: routeableThread.taskId,
+    };
     attemptedExternalThreadId.current = activeThreadId;
     void focusExternalThread(activeThreadId, relation);
   }, [
@@ -114,6 +125,8 @@ export function AgentProjectWorkspaceShell({
     projectSignature,
     selectedThreadId,
     status,
+    summary,
+    workspace,
   ]);
 
   if (!enabled) return children;
