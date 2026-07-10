@@ -223,11 +223,18 @@ async function findExistingProvisioningMachine(
   provisioningClass: UserMachineProvisioningClass,
 ): Promise<UserMachineRecord | undefined> {
   const exact = await getActiveUserMachineByClerkId(db, request.clerkUserId, request.runtimeSlot);
-  if (exact || provisioningClass !== 'preview' || request.runtimeSlot === 'preview') {
+  if (provisioningClass !== 'preview' || request.runtimeSlot === 'preview') {
     return exact;
   }
+  if (exact && exact.handle !== request.handle) {
+    throw new CustomerVpsError(409, 'invalid_state', 'Preview slot unavailable');
+  }
   const legacy = await getActiveUserMachineByClerkId(db, request.clerkUserId, 'preview');
-  return legacy?.handle === request.handle ? legacy : undefined;
+  const matchingLegacy = legacy?.handle === request.handle ? legacy : undefined;
+  if (exact?.status === 'failed' && matchingLegacy && matchingLegacy.status !== 'failed') {
+    return matchingLegacy;
+  }
+  return exact ?? matchingLegacy;
 }
 
 function statusResponse(row: UserMachineRecord): StatusResponse {

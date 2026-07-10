@@ -417,6 +417,70 @@ describe('platform/customer-vps', () => {
     expect(hetzner.createServer).toHaveBeenCalledTimes(2);
   });
 
+  it('rejects an exact preview slot owned by another handle without reclassifying it', async () => {
+    const { service, hetzner } = createService();
+
+    const customerMachine = await service.provision({
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      runtimeSlot: 'pr-897',
+    });
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'pr-897',
+    })).rejects.toMatchObject({
+      status: 409,
+      code: 'invalid_state',
+      publicMessage: 'Preview slot unavailable',
+    });
+
+    await expect(getUserMachine(db, customerMachine.machineId)).resolves.toMatchObject({
+      handle: 'alice',
+      provisioningClass: 'customer',
+    });
+    expect(hetzner.createServer).toHaveBeenCalledOnce();
+  });
+
+  it('prefers a live matching legacy preview over a failed exact slot', async () => {
+    let nextId = 0;
+    const ids = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+      '188d9ce1-395d-4d4c-a7b7-22754c3ab991',
+    ];
+    const { service, hetzner } = createService({
+      machineIdFactory: () => ids[nextId++] ?? ids[2]!,
+    });
+
+    const failedExact = await service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'pr-897',
+    });
+    await updateUserMachine(db, failedExact.machineId, {
+      status: 'failed',
+      failureCode: 'provider_unavailable',
+      failureAt: '2026-04-26T12:05:00.000Z',
+    });
+    const liveLegacy = await service.provision({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'preview',
+    });
+
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'pr-897',
+    })).resolves.toEqual(liveLegacy);
+    await expect(getUserMachine(db, liveLegacy.machineId)).resolves.toMatchObject({
+      provisioningClass: 'preview',
+      runtimeSlot: 'preview',
+    });
+    expect(hetzner.createServer).toHaveBeenCalledTimes(2);
+  });
+
   it('counts failed distinct previews until they are retried or deleted', async () => {
     let nextId = 0;
     const ids = [
