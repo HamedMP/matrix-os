@@ -526,6 +526,8 @@ exit 99
     expect(syncAgent).toContain('matrix-linux-tools.service');
     expect(syncAgent).toContain('systemctl start --no-block matrix-linux-tools.service');
     expect(syncAgent).toContain('Linux tools service enabled');
+    expect(syncAgent).toContain('LINUX_TOOLS_BOOTSTRAP_MARKER');
+    expect(syncAgent).toContain('bootstrap_linux_tools_service\n\nwhile true; do');
   });
 
   it('installs a customer host code-server service behind restore completion', () => {
