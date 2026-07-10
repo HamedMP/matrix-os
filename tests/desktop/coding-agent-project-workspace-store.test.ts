@@ -297,7 +297,7 @@ describe("coding-agent project workspace store", () => {
     });
   });
 
-  it("clears a same-runtime workspace while revalidating a potentially new account", async () => {
+  it("preserves the same-scope workspace while routine hydration revalidates it", async () => {
     const previousWorkspace = workspace("matrix-os", "task_auth", "thread_plan");
     const nextWorkspace = workspace("matrix-os", "task_docs", "thread_docs");
     nextWorkspace.taskThreads.items[0]!.title = "Second account chat";
@@ -326,7 +326,7 @@ describe("coding-agent project workspace store", () => {
 
     expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
       status: "loading",
-      workspace: null,
+      workspace: previousWorkspace,
     });
 
     resolveReload(nextWorkspace);

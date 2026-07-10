@@ -166,7 +166,7 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
         runtimeId: summary.runtime.id,
         runtimeScope,
         summary,
-        workspace: null,
+        workspace: sameScope ? state.workspace : null,
         error: null,
       });
       const persisted = sameScope ? null : await readPersistedSelection(runtimeScope);
