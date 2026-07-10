@@ -241,6 +241,27 @@ export function AgentProjectNavigator({
                               </div>
                             );
                           })}
+                          {grouped.unlistedTaskThreads.length > 0 ? (
+                            <div role="group" aria-label="Other task conversations">
+                              <div
+                                className="px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.1em]"
+                                style={{ color: "var(--text-tertiary)" }}
+                              >
+                                Other task conversations
+                              </div>
+                              <div className="space-y-0.5">
+                                {grouped.unlistedTaskThreads.map((thread) => (
+                                  <ThreadRow
+                                    key={thread.id}
+                                    thread={thread}
+                                    providerLabel={providerLabel(thread)}
+                                    selected={thread.id === selectedThreadId}
+                                    onSelect={() => onSelectThread(thread.id)}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
                         {workspace.tasks.hasMore
                           || workspace.projectThreads.hasMore

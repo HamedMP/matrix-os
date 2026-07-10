@@ -23,11 +23,15 @@ import { Button, EmptyState, StatusDot } from "../../design/primitives";
 import { invoke } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
 import { codingAgentApprovalActionKey, codingAgentInputActionKey, useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { useCodingAgentProjectWorkspace } from "../../stores/coding-agent-project-workspace";
 import { useTabs } from "../../stores/tabs";
 import { AgentPreviewList, AgentTerminalList } from "./AgentWorkspaceContext";
 import { AgentRuntimeHeader } from "./AgentRuntimeHeader";
 import { AgentProjectWorkspaceShell } from "./AgentProjectWorkspaceShell";
-import { AgentWorkspaceSection as Section } from "./AgentWorkspaceSection";
+import {
+  AgentWorkspaceSection as Section,
+  AgentWorkspaceStack,
+} from "./AgentWorkspaceSection";
 
 const STATUS_COLOR: Record<string, string> = {
   available: "var(--success)",
@@ -1889,6 +1893,7 @@ export default function AgentWorkspace() {
   const threadSnapshotError = useCodingAgentWorkspace((s) => s.threadSnapshotError);
   const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
   const loadNotificationPreferences = useCodingAgentWorkspace((s) => s.loadNotificationPreferences);
+  const refreshProjectWorkspace = useCodingAgentProjectWorkspace((s) => s.refresh);
   const requestComposerFocus = useCodingAgentWorkspace((s) => s.requestComposerFocus);
   const composerFocusRequestId = useCodingAgentWorkspace((s) => s.composerFocusRequestId);
   const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
@@ -1931,7 +1936,12 @@ export default function AgentWorkspace() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <AgentRuntimeHeader summary={summary} onRefresh={() => void refresh()} />
+      <AgentRuntimeHeader
+        summary={summary}
+        onRefresh={() => {
+          void Promise.all([refresh(), refreshProjectWorkspace()]);
+        }}
+      />
       <AgentProjectWorkspaceShell
         summary={summary}
         onNewChat={(projectId, taskId) => {
@@ -1946,42 +1956,42 @@ export default function AgentWorkspace() {
           requestComposerFocus();
         }}
       >
-        <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-5">
-        <AgentComposer summary={summary} seed={composerSeed} focusRequestId={composerFocusRequestId} />
-        <NotificationPreferencesPanel />
-        <ProviderList summary={summary} />
-        <AttentionThreadList summary={summary} />
-        <div className="grid gap-4 xl:grid-cols-2">
-          <div className="grid gap-4">
-            <ThreadList summary={summary} />
-            <CreatedThreadHandleList summary={summary} />
+        <AgentWorkspaceStack>
+          <AgentComposer summary={summary} seed={composerSeed} focusRequestId={composerFocusRequestId} />
+          <NotificationPreferencesPanel />
+          <ProviderList summary={summary} />
+          <AttentionThreadList summary={summary} />
+          <div className="grid gap-4 xl:grid-cols-2">
+            <div className="grid gap-4">
+              <ThreadList summary={summary} />
+              <CreatedThreadHandleList summary={summary} />
+            </div>
+            <div className="grid gap-4">
+              <ThreadSnapshotPanel
+                status={threadSnapshotStatus}
+                snapshot={threadSnapshot}
+                error={threadSnapshotError}
+              />
+              {capabilityEnabled(summary, "codingAgentsPreview") ? (
+                <AgentPreviewList summary={summary} />
+              ) : null}
+              <AgentTerminalList summary={summary} />
+            </div>
           </div>
-          <div className="grid gap-4">
-            <ThreadSnapshotPanel
-              status={threadSnapshotStatus}
-              snapshot={threadSnapshot}
-              error={threadSnapshotError}
+          {capabilityEnabled(summary, "codingAgentsReview") ? (
+            <ReviewList
+              canReadFiles={capabilityEnabled(summary, "codingAgentsFiles")}
+              canPrepareCommit={capabilityEnabled(summary, "codingAgentsSourceControl")}
+              canCreateFollowUp={canCreateFollowUp}
+              onAskHunkFollowUp={(snapshot, selected) => {
+                setComposerSeed({
+                  seedId: Date.now(),
+                  draft: reviewHunkFollowUpDraft(summary, snapshot, selected),
+                });
+              }}
             />
-            {capabilityEnabled(summary, "codingAgentsPreview") ? (
-              <AgentPreviewList summary={summary} />
-            ) : null}
-            <AgentTerminalList summary={summary} />
-          </div>
-        </div>
-        {capabilityEnabled(summary, "codingAgentsReview") ? (
-          <ReviewList
-            canReadFiles={capabilityEnabled(summary, "codingAgentsFiles")}
-            canPrepareCommit={capabilityEnabled(summary, "codingAgentsSourceControl")}
-            canCreateFollowUp={canCreateFollowUp}
-            onAskHunkFollowUp={(snapshot, selected) => {
-              setComposerSeed({
-                seedId: Date.now(),
-                draft: reviewHunkFollowUpDraft(summary, snapshot, selected),
-              });
-            }}
-          />
-        ) : null}
-        </div>
+          ) : null}
+        </AgentWorkspaceStack>
       </AgentProjectWorkspaceShell>
     </div>
   );

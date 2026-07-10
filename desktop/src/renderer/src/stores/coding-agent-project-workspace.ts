@@ -21,6 +21,7 @@ interface CodingAgentProjectWorkspaceState extends ProjectWorkspaceSelection {
   workspace: ProjectAgentWorkspace | null;
   error: string | null;
   hydrate: (summary: RuntimeSummary) => Promise<void>;
+  refresh: () => Promise<void>;
   selectProject: (projectId: string) => Promise<void>;
   selectTask: (taskId: string) => void;
   selectThread: (threadId: string) => void;
@@ -141,13 +142,25 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
         status: "loading",
         runtimeId: summary.runtime.id,
         summary,
-        workspace: sameRuntime ? state.workspace : null,
+        workspace: null,
         error: null,
       });
       const persisted = sameRuntime ? null : await readPersistedSelection();
       if (generation !== hydrationGeneration) return;
       const preferred = persisted ?? currentSelection(state);
       await loadProjectWorkspace(summary, preferred, generation);
+    },
+
+    refresh: async () => {
+      const state = useCodingAgentProjectWorkspace.getState();
+      if (!state.summary) return;
+      const generation = ++hydrationGeneration;
+      set({ status: "loading", workspace: null, error: null });
+      await loadProjectWorkspace(
+        state.summary,
+        currentSelection(state),
+        generation,
+      );
     },
 
     selectProject: async (projectId) => {

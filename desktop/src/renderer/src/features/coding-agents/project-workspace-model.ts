@@ -16,6 +16,7 @@ export type ProjectWorkspaceSelection = Omit<
 export interface GroupedProjectWorkspaceThreads {
   projectThreads: AgentThreadSummary[];
   taskThreads: Record<string, AgentThreadSummary[]>;
+  unlistedTaskThreads: AgentThreadSummary[];
 }
 
 export function resolveSelectedProjectId(
@@ -35,8 +36,13 @@ export function groupProjectWorkspaceThreads(
   workspace: ProjectAgentWorkspace,
 ): GroupedProjectWorkspaceThreads {
   const taskThreads: Record<string, AgentThreadSummary[]> = {};
+  const visibleTaskIds = new Set(workspace.tasks.items.map((task) => task.id));
+  const unlistedTaskThreads: AgentThreadSummary[] = [];
   for (const thread of workspace.taskThreads.items) {
-    if (!thread.taskId) continue;
+    if (!thread.taskId || !visibleTaskIds.has(thread.taskId)) {
+      unlistedTaskThreads.push(thread);
+      continue;
+    }
     const existing = taskThreads[thread.taskId];
     if (existing) existing.push(thread);
     else taskThreads[thread.taskId] = [thread];
@@ -44,6 +50,7 @@ export function groupProjectWorkspaceThreads(
   return {
     projectThreads: [...workspace.projectThreads.items],
     taskThreads,
+    unlistedTaskThreads,
   };
 }
 

@@ -148,4 +148,33 @@ describe("AgentProjectNavigator", () => {
     expect(onNewChat).toHaveBeenNthCalledWith(1, "matrix-os");
     expect(onNewChat).toHaveBeenNthCalledWith(2, "matrix-os", "task_auth");
   });
+
+  it("keeps returned conversations visible when their task is outside the bounded task page", () => {
+    const workspace = workspaceFixture();
+    workspace.tasks.hasMore = true;
+    workspace.taskThreads.items.push({
+      ...workspace.taskThreads.items[0]!,
+      id: "thread_hidden_task",
+      taskId: "task_outside_page",
+      title: "Continue paged task",
+    });
+
+    render(
+      <AgentProjectNavigator
+        summary={summaryFixture()}
+        workspace={workspace}
+        status="ready"
+        selectedProjectId="matrix-os"
+        selectedTaskId={null}
+        selectedThreadId={null}
+        onSelectProject={vi.fn()}
+        onSelectTask={vi.fn()}
+        onSelectThread={vi.fn()}
+        onNewChat={vi.fn()}
+      />,
+    );
+
+    expect(within(screen.getByRole("group", { name: "Other task conversations" }))
+      .getByRole("button", { name: "Chat Continue paged task" })).toBeTruthy();
+  });
 });

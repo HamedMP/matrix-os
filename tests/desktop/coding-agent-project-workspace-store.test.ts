@@ -171,6 +171,44 @@ describe("coding-agent project workspace store", () => {
     expect(useCodingAgentProjectWorkspace.getState().workspace?.project.id).toBe("website");
   });
 
+  it("clears a same-runtime workspace while revalidating a potentially new account", async () => {
+    const previousWorkspace = workspace("matrix-os", "task_auth", "thread_plan");
+    const nextWorkspace = workspace("matrix-os", "task_docs", "thread_docs");
+    nextWorkspace.taskThreads.items[0]!.title = "Second account chat";
+    let resolveReload: (value: ProjectAgentWorkspace) => void = () => undefined;
+    const reload = new Promise<ProjectAgentWorkspace>((resolve) => {
+      resolveReload = resolve;
+    });
+    let workspaceRequestCount = 0;
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "state:get") return { value: null };
+      if (channel === "runtime:get-project-workspace") {
+        workspaceRequestCount += 1;
+        return workspaceRequestCount === 1 ? previousWorkspace : reload;
+      }
+      if (channel === "state:set") return { ok: true };
+      throw new Error(`unexpected channel ${channel}`);
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+    const runtimeSummary = summary("rt_primary", "matrix-os", "Matrix OS");
+
+    await useCodingAgentProjectWorkspace.getState().hydrate(runtimeSummary);
+    const pendingHydration = useCodingAgentProjectWorkspace.getState().hydrate(runtimeSummary);
+
+    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
+      status: "loading",
+      workspace: null,
+    });
+
+    resolveReload(nextWorkspace);
+    await pendingHydration;
+    expect(useCodingAgentProjectWorkspace.getState().workspace?.taskThreads.items[0]?.title)
+      .toBe("Second account chat");
+  });
+
   it("E2E-006 reconciles an externally focused thread across project workspaces", async () => {
     const workspaces: Record<string, ProjectAgentWorkspace> = {
       "matrix-os": workspace("matrix-os", "task_auth", "thread_plan"),

@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { PreviewSessionSummary, RuntimeSummary } from "@matrix-os/contracts";
 import { Button, StatusDot } from "../../design/primitives";
 import { invoke } from "../../lib/operator";
+import { AgentWorkspaceSection } from "./AgentWorkspaceSection";
 
 const STATUS_COLOR: Record<string, string> = {
   available: "var(--success)",
@@ -15,32 +16,6 @@ const STATUS_COLOR: Record<string, string> = {
 };
 const DEFAULT_STATUS_COLOR = "var(--text-tertiary)";
 
-function Section({
-  title,
-  count,
-  children,
-}: {
-  title: string;
-  count?: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="flex min-h-0 flex-col gap-2">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-          {title}
-        </h2>
-        {typeof count === "number" ? (
-          <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-            {count}
-          </span>
-        ) : null}
-      </div>
-      {children}
-    </section>
-  );
-}
-
 function canOpenPreviewExternally(origin: string | undefined): origin is string {
   if (!origin) return false;
   try {
@@ -52,7 +27,7 @@ function canOpenPreviewExternally(origin: string | undefined): origin is string 
 
 export function AgentTerminalList({ summary }: { summary: RuntimeSummary }) {
   return (
-    <Section title="Terminals" count={summary.terminalSessions.items.length}>
+    <AgentWorkspaceSection title="Terminals" count={summary.terminalSessions.items.length}>
       <div className="grid gap-2">
         {summary.terminalSessions.items.map((session) => (
           <article
@@ -82,7 +57,7 @@ export function AgentTerminalList({ summary }: { summary: RuntimeSummary }) {
           </p>
         ) : null}
       </div>
-    </Section>
+    </AgentWorkspaceSection>
   );
 }
 
@@ -100,7 +75,7 @@ export function AgentPreviewList({ summary }: { summary: RuntimeSummary }) {
   };
 
   return (
-    <Section title="Previews" count={previewSessions.items.length}>
+    <AgentWorkspaceSection title="Previews" count={previewSessions.items.length}>
       <div className="grid gap-2">
         {previewSessions.items.map((preview) => (
           <button
@@ -143,7 +118,7 @@ export function AgentPreviewList({ summary }: { summary: RuntimeSummary }) {
           <PreviewDetails preview={selectedPreview} externalUrl={externalUrl} onOpenExternal={openExternalPreview} />
         ) : null}
       </div>
-    </Section>
+    </AgentWorkspaceSection>
   );
 }
 

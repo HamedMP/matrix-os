@@ -862,12 +862,25 @@ describe("AgentWorkspace", () => {
       { name: "Chat Audit architecture" },
     )).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+    await act(async () => {
+      await useCodingAgentWorkspace.getState().refresh();
+    });
     await waitFor(() => {
       const summaryRequests = vi.mocked(window.operator.invoke).mock.calls.filter(
         ([channel]) => channel === "runtime:get-summary",
       );
       expect(summaryRequests).toHaveLength(2);
+    });
+    expect(vi.mocked(window.operator.invoke).mock.calls.filter(
+      ([channel]) => channel === "runtime:get-project-workspace",
+    )).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+    await waitFor(() => {
+      const summaryRequests = vi.mocked(window.operator.invoke).mock.calls.filter(
+        ([channel]) => channel === "runtime:get-summary",
+      );
+      expect(summaryRequests).toHaveLength(3);
     });
     await waitFor(() => {
       const workspaceRequests = vi.mocked(window.operator.invoke).mock.calls.filter(

@@ -48,7 +48,6 @@ export function AgentProjectWorkspaceShell({
   const previousActiveThreadId = useRef<string | null>(null);
   const pendingExternalThreadId = useRef<string | null>(null);
   const projectSignature = [
-    summary.serverTime,
     ...summary.projects.items.map((project) => [
       project.id,
       project.taskCount,
