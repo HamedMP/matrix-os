@@ -80,7 +80,10 @@ type RuntimeSummary = {
   activeThreads: BoundedList<AgentThreadSummary>;
   attentionThreads: BoundedList<AgentThreadSummary>;
   terminalSessions: BoundedList<TerminalSessionSummary>;
+  previewSessions: BoundedList<PreviewSessionSummary>;
   recentActivity: BoundedList<ActivityEventSummary>;
+  limits: RuntimeLimits;
+  serverTime: string;
 };
 ```
 
@@ -296,6 +299,7 @@ type RuntimeSummary = {
   activeThreads: BoundedList<AgentThreadSummary>;
   attentionThreads: BoundedList<AgentThreadSummary>;
   terminalSessions: BoundedList<TerminalSessionSummary>;
+  previewSessions: BoundedList<PreviewSessionSummary>;
   recentActivity: BoundedList<ActivityEventSummary>;
   serverTime: string;
   limits: RuntimeLimits;
