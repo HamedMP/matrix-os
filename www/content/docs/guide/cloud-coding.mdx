@@ -103,6 +103,10 @@ Editor assets and WebSocket traffic stay behind Matrix authentication. Platform 
 
 ## Sandboxing
 
-Sandboxing starts with a non-root runtime and preflight checks for required tools such as bubblewrap, git, GitHub CLI, Zellij, tmux, and supported agent CLIs.
+Sandboxing starts with a non-root runtime and preflight checks for required tools such as bubblewrap, socat, git, GitHub CLI, Zellij, tmux, and supported agent CLIs.
+
+On Ubuntu 24.04 and newer hosts, Matrix OS installs and reloads the narrow AppArmor profile that allows bubblewrap to create the user namespace used for isolation. Existing managed hosts reconcile the same sandbox prerequisites during an in-place runtime update.
+
+Claude and Codex launches stay gateway-owned and worktree-scoped. Claude verifies the installed CLI against a session-only strict sandbox policy before its terminal session starts, and prompted remote runs use the CLI's non-interactive path so a first-use trust screen cannot block the run. Read-only and review work cannot write to the checkout or its shared Git metadata, while workspace-write runs are limited to the canonical selected worktree and bounded session scratch space. Built-in file edits remain available only inside the selected worktree, and unmatched paths are denied without waiting for an unavailable remote prompt. Approval modes that cannot be enforced safely fail before a session is created.
 
 Agent launches fail closed when a requested sandbox cannot be prepared. Health output reports workspace, session, review, sandbox, and Browser IDE status without exposing filesystem paths, provider names, secrets, or raw internal errors.
