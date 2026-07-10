@@ -23,12 +23,11 @@ Gateway publication invariant: when the corresponding project shell surfaces are
 canonical project read model. Shells must not infer either view capability from the presence of
 projects or from another capability flag.
 
-### Mobile computer selection contract gap
+### Mobile computer selection contract
 
 The web shell can render the authenticated `/runtime` machine picker, but native mobile sessions
-are intentionally excluded from that HTML response. Before a native computer chooser can ship,
-the platform must expose an authenticated, bounded JSON projection for the current Clerk user's
-active Matrix computers. The missing boundary is:
+are intentionally excluded from that HTML response. Native shells consume an authenticated,
+bounded JSON projection of the current Clerk user's active Matrix computers:
 
 - `GET /api/auth/computers`, authenticated with the existing Clerk bearer token.
 - `MatrixComputerListSchema`, containing only bounded safe identifiers, display labels, runtime
@@ -39,6 +38,13 @@ active Matrix computers. The missing boundary is:
 The native client may persist the selected same-origin gateway path, but the platform list remains
 the source of truth. Switching computers must reuse the existing Clerk token provider and must
 rehydrate gateway-backed state instead of copying runtime data between computers.
+
+| Route | Auth method | Owner scope | Public |
+|---|---|---|---|
+| `GET /api/auth/computers` | Existing Clerk bearer token verified by the platform | Active computers owned by the authenticated Clerk user | No |
+
+The route accepts no request body or user-controlled query input, caps the projection at 20
+records, performs no external calls, and returns generic errors with `Cache-Control: no-store`.
 
 `ProjectAgentWorkspaceSchema` is the canonical bounded navigation projection. Its `projectThreads` and `taskThreads` lists are independent; a task may own several selectable threads. Canonical task status comes from `tasks.items` and must not be inferred from thread status.
 
