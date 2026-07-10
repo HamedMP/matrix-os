@@ -65,6 +65,7 @@ export const ProviderIdSchema = z.string().min(1).max(80).regex(SAFE_SLUG, "Inva
 export const ProjectIdSchema = referenceId(160);
 export const TaskIdSchema = prefixedId("task_");
 export const ThreadIdSchema = prefixedId("thread_");
+export const AgentTurnIdSchema = prefixedId("turn_");
 export const EventIdSchema = prefixedId("evt_");
 export const ApprovalIdSchema = prefixedId("appr_");
 export const RequestIdSchema = prefixedId("req_");
@@ -121,6 +122,10 @@ export const RuntimeCapabilityIdSchema = z.enum([
   "codingAgentsFiles",
   "codingAgentsSourceControl",
   "codingAgentsNativeMobileTerminal",
+  "codingAgentsProjectWorkspace",
+  "codingAgentsSameThreadTurns",
+  "codingAgentsConversationView",
+  "codingAgentsKanbanView",
 ]);
 
 export const RuntimeTargetSchema = z.object({
@@ -257,6 +262,36 @@ export const CreateAgentThreadRequestSchema = z.object({
 
 export type CreateAgentThreadRequest = z.infer<typeof CreateAgentThreadRequestSchema>;
 
+export const CreateAgentTurnRequestSchema = z.object({
+  message: boundedText(24_000, 96 * 1024),
+  attachments: z.array(AgentAttachmentSchema).max(8).optional(),
+  clientRequestId: RequestIdSchema,
+}).strict();
+
+export type CreateAgentTurnRequest = z.infer<typeof CreateAgentTurnRequestSchema>;
+
+export const AgentTurnStatusSchema = z.enum(["accepted", "running", "completed", "failed", "aborted"]);
+
+export const CreateAgentTurnResponseSchema = z.object({
+  threadId: ThreadIdSchema,
+  turnId: AgentTurnIdSchema,
+  status: z.enum(["accepted", "already_accepted"]),
+  acceptedAt: IsoTimestampSchema,
+}).strict();
+
+export const CreateAgentTurnErrorCodeSchema = z.enum([
+  "thread_busy",
+  "thread_not_found",
+  "turn_unavailable",
+]);
+
+export const CreateAgentTurnErrorSchema = SafeClientErrorSchema.extend({
+  code: CreateAgentTurnErrorCodeSchema,
+}).strict();
+
+export type CreateAgentTurnResponse = z.infer<typeof CreateAgentTurnResponseSchema>;
+export type CreateAgentTurnError = z.infer<typeof CreateAgentTurnErrorSchema>;
+
 export const AgentThreadComposerDraftSchema = z.object({
   providerId: ProviderIdSchema.optional(),
   prompt: z.string()
@@ -366,6 +401,22 @@ const BaseThreadEventSchema = z.object({
   threadId: ThreadIdSchema,
   occurredAt: IsoTimestampSchema,
 });
+
+export const AgentTurnLifecycleEventSchema = z.discriminatedUnion("type", [
+  BaseThreadEventSchema.extend({
+    type: z.literal("turn.accepted"),
+    turnId: AgentTurnIdSchema,
+    clientRequestId: RequestIdSchema,
+    acceptedAt: IsoTimestampSchema,
+  }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("turn.status"),
+    turnId: AgentTurnIdSchema,
+    status: AgentTurnStatusSchema,
+  }).strict(),
+]);
+
+export type AgentTurnLifecycleEvent = z.infer<typeof AgentTurnLifecycleEventSchema>;
 
 export const AgentThreadEventSchema = z.discriminatedUnion("type", [
   BaseThreadEventSchema.extend({
@@ -548,12 +599,91 @@ export const TerminalServerFrameSchema = z.discriminatedUnion("type", [
   }).strict(),
 ]);
 
+export const BoundedAggregateCountSchema = z.number().int().min(0).max(1_000_000);
+
 export const ProjectSummarySchema = z.object({
   id: ProjectIdSchema,
   label: SafeDisplayStringSchema,
   status: z.enum(["available", "missing", "stale", "unknown"]).default("unknown"),
+  taskCount: BoundedAggregateCountSchema,
+  threadCount: BoundedAggregateCountSchema,
+  attentionCount: BoundedAggregateCountSchema,
   updatedAt: IsoTimestampSchema.optional(),
 }).strict();
+
+export const CanonicalTaskStatusSchema = z.enum([
+  "todo",
+  "running",
+  "waiting",
+  "blocked",
+  "complete",
+  "archived",
+]);
+export const CanonicalTaskPrioritySchema = z.enum(["low", "normal", "high", "urgent"]);
+
+export const TaskAgentSummarySchema = z.object({
+  id: TaskIdSchema,
+  projectId: ProjectIdSchema,
+  title: SafeDisplayStringSchema,
+  status: CanonicalTaskStatusSchema,
+  priority: CanonicalTaskPrioritySchema,
+  order: z.number().int().min(0).max(1_000_000),
+  threadCount: BoundedAggregateCountSchema,
+  activeThreadCount: BoundedAggregateCountSchema,
+  attentionCount: BoundedAggregateCountSchema,
+  latestThreadAt: IsoTimestampSchema.optional(),
+  revision: z.number().int().min(0).max(1_000_000_000).optional(),
+}).strict();
+
+export type TaskAgentSummary = z.infer<typeof TaskAgentSummarySchema>;
+
+const ProjectTaskSummaryListSchema = boundedListSchema(TaskAgentSummarySchema, 100);
+const ProjectThreadSummaryListSchema = boundedListSchema(AgentThreadSummarySchema, 100);
+
+export const ProjectAgentWorkspaceSchema = z.object({
+  project: ProjectSummarySchema,
+  tasks: ProjectTaskSummaryListSchema,
+  projectThreads: ProjectThreadSummaryListSchema,
+  taskThreads: ProjectThreadSummaryListSchema,
+  updatedAt: IsoTimestampSchema,
+}).strict().superRefine((workspace, ctx) => {
+  for (const [index, task] of workspace.tasks.items.entries()) {
+    if (task.projectId !== workspace.project.id) {
+      ctx.addIssue({ code: "custom", message: "Task project does not match workspace", path: ["tasks", "items", index, "projectId"] });
+    }
+  }
+  for (const [index, thread] of workspace.projectThreads.items.entries()) {
+    if (thread.projectId !== workspace.project.id || thread.taskId !== undefined) {
+      ctx.addIssue({ code: "custom", message: "Project thread relation is invalid", path: ["projectThreads", "items", index] });
+    }
+  }
+  for (const [index, thread] of workspace.taskThreads.items.entries()) {
+    if (thread.projectId !== workspace.project.id || thread.taskId === undefined) {
+      ctx.addIssue({ code: "custom", message: "Task thread relation is invalid", path: ["taskThreads", "items", index] });
+    }
+  }
+});
+
+export type ProjectAgentWorkspace = z.infer<typeof ProjectAgentWorkspaceSchema>;
+
+const AgentThreadListLimitSchema = z.number().int().min(1).max(100).default(50);
+
+export const AgentThreadListFilterSchema = z.discriminatedUnion("scope", [
+  z.object({
+    scope: z.literal("project"),
+    projectId: ProjectIdSchema,
+    taskId: TaskIdSchema.optional(),
+    cursor: CursorSchema.optional(),
+    limit: AgentThreadListLimitSchema,
+  }).strict(),
+  z.object({
+    scope: z.literal("legacy_unassigned"),
+    cursor: CursorSchema.optional(),
+    limit: AgentThreadListLimitSchema,
+  }).strict(),
+]);
+
+export type AgentThreadListFilter = z.infer<typeof AgentThreadListFilterSchema>;
 
 export const PreviewSessionSummarySchema = z.object({
   id: referenceId(128),

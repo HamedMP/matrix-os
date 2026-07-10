@@ -1070,26 +1070,29 @@ Goal: make the clarified hierarchy explicit and independently testable before ru
 
 ### 18.1 Shared Project Workspace Contracts
 
-- [ ] Add bounded project summary counts for tasks, threads, and attention.
-- [ ] Add canonical `TaskAgentSummarySchema` using existing Matrix task status/priority values.
-- [ ] Add bounded `ProjectAgentWorkspaceSchema` with independent task/thread caps and truncation metadata.
-- [ ] Add thread list filters for required `projectId` and optional `taskId`.
-- [ ] Keep legacy unassigned thread reads explicit and bounded; do not allow new shell-created unassigned threads.
+- [x] Add bounded project summary counts for tasks, threads, and attention.
+- [x] Add canonical `TaskAgentSummarySchema` using existing Matrix task status/priority values.
+- [x] Add bounded `ProjectAgentWorkspaceSchema` with independent task/thread caps and truncation metadata.
+- [x] Add thread list filters for required `projectId` and optional `taskId`.
+- [x] Keep legacy unassigned thread read filters explicit and bounded.
+- [ ] Enforce no new shell-created unassigned threads in Phase 19 (`GW-009`) after real project hydration exists.
 
 Tests: `CT-001`, `CT-002`, `CT-003`, `CT-004`.
 
 ### 18.2 Same-Thread Turn Contracts
 
-- [ ] Add `AgentTurnIdSchema`, `CreateAgentTurnRequestSchema`, and `CreateAgentTurnResponseSchema`.
-- [ ] Bound message, attachments, idempotency key, and safe errors.
-- [ ] Add turn lifecycle events without exposing provider resume identity.
-- [ ] Add capability IDs for project workspace projection, same-thread turns, and Conversation/Kanban shells.
+- [x] Add `AgentTurnIdSchema`, `CreateAgentTurnRequestSchema`, and `CreateAgentTurnResponseSchema`.
+- [x] Bound message, attachments, idempotency key, and safe errors.
+- [x] Add turn lifecycle event contracts without exposing provider resume identity.
+- [x] Add capability IDs for project workspace projection, same-thread turns, and Conversation/Kanban shells.
 
 Tests: `CT-005`, `CT-006`, `CT-007`.
 
 Gate:
 
-- [ ] Gate 1 rerun passes for the additive contracts.
+- [x] Gate 1 rerun passes for the additive contracts (`CT-001` through `CT-007`).
+
+Maintenance boundary: `packages/contracts/src/index.ts` is now a 1,000+ line schema-only barrel. Before adding another coding-agent contract family, extract the coding-agent schemas into focused domain modules while preserving the package's existing root exports.
 
 ## Phase 19 - Gateway Project Workspace Read Model
 
