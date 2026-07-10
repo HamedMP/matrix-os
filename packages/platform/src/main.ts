@@ -1798,7 +1798,7 @@ async function resolveAppDomainIdentity(opts: {
           }
         }
       }
-      if (bearerToken === appSessionToken && opts.requestedHandle) {
+      if (opts.requestedHandle) {
         const requestedMachine = await getActiveUserMachineByHandle(opts.db, opts.requestedHandle);
         if (requestedMachine?.clerkUserId === claims.sub) {
           return {
