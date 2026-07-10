@@ -1,7 +1,6 @@
 import { z } from "zod/v4";
 import {
   AgentThreadEventSchema,
-  AgentTurnStatusSchema,
   type AgentProviderSummary,
   type AgentThreadEvent,
   type AgentThreadSummary,
@@ -22,7 +21,7 @@ export const CodingAgentProviderResumeStateSchema = z.object({
 const CodingAgentProviderRunResultSchema = z.object({
   events: z.array(AgentThreadEventSchema).max(MAX_PROVIDER_EVENTS),
   resumeState: CodingAgentProviderResumeStateSchema.optional(),
-  outcome: AgentTurnStatusSchema.extract(["completed", "failed", "aborted"]).optional(),
+  outcome: z.enum(["completed", "failed", "aborted", "delivered"]).optional(),
 }).strict();
 
 export type CodingAgentProviderResumeState = z.infer<typeof CodingAgentProviderResumeStateSchema>;

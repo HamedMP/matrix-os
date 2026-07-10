@@ -30,7 +30,7 @@ export interface CodingAgentTurnDispatcherOptions {
     threadId: string;
     turnId: string;
     providerEvents: AgentThreadEvent[];
-    outcome: "completed" | "failed" | "aborted";
+    outcome: "completed" | "failed" | "aborted" | "delivered";
     resumeState?: CodingAgentProviderResumeState;
   }): Promise<void>;
   nextEventId(): string;

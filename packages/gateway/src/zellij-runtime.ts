@@ -19,7 +19,7 @@ import { applyTerminalTruecolorEnv } from "./terminal-env.js";
 type CommandRunner = (
   command: string,
   args: string[],
-  options: { cwd: string; timeout: number },
+  options: { cwd: string; timeout: number; signal?: AbortSignal },
 ) => Promise<{ stdout: string; stderr: string }>;
 type PtyProcess = Pick<import("node-pty").IPty, "kill" | "onExit">;
 type RetainedPty = {
@@ -56,6 +56,7 @@ export interface ZellijHealth {
 }
 
 const SessionIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
+const SessionInputSchema = z.string().min(1).max(64 * 1024);
 const ZELLIJ_TIMEOUT_MS = 10_000;
 const ZELLIJ_STARTUP_DELAY_MS = 500;
 const MAX_RETAINED_ZELLIJ_PTYS = 128;
@@ -89,6 +90,7 @@ const defaultRunCommand: CommandRunner = async (command, args, options) => {
     timeout: options.timeout,
     encoding: "utf-8",
     maxBuffer: 1024 * 1024,
+    signal: options.signal,
   });
   return { stdout, stderr };
 };
@@ -279,6 +281,22 @@ export function createZellijRuntime(options: {
 
     observeCommand(sessionId: string): string[] {
       return ["zellij", "attach", sessionName(sessionId), "--index", "0"];
+    },
+
+    async sendInput(sessionId: string, input: string, signal?: AbortSignal): Promise<void> {
+      const data = SessionInputSchema.parse(input);
+      await runCommand("zellij", [
+        "--session",
+        sessionName(sessionId),
+        "action",
+        "write-chars",
+        "--",
+        data,
+      ], {
+        cwd: homePath,
+        timeout: ZELLIJ_TIMEOUT_MS,
+        signal,
+      });
     },
 
     async kill(sessionId: string): Promise<{ ok: true }> {

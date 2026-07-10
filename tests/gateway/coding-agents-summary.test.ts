@@ -320,6 +320,7 @@ describe("coding agent runtime summary", () => {
       capabilities: {
         workspace: true,
         approvals: true,
+        sameThreadTurns: true,
       },
       now: () => now,
       runtime: { id: "rt_primary", label: "Primary Matrix computer" },
@@ -332,6 +333,7 @@ describe("coding agent runtime summary", () => {
       expect.objectContaining({ id: "codingAgentsDesktopWorkspace", enabled: true }),
       expect.objectContaining({ id: "codingAgentsMobileWorkspace", enabled: true }),
       expect.objectContaining({ id: "codingAgentsThreadCreate", enabled: true }),
+      expect.objectContaining({ id: "codingAgentsSameThreadTurns", enabled: true }),
       expect.objectContaining({ id: "codingAgentsApprovals", enabled: true }),
       expect.objectContaining({ id: "codingAgentsNativeMobileTerminal", enabled: true }),
     ]));
@@ -350,6 +352,7 @@ describe("coding agent runtime summary", () => {
     const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
 
     expect(capability(summary, "codingAgentsThreadCreate")).toMatchObject({ enabled: true });
+    expect(capability(summary, "codingAgentsSameThreadTurns")).toMatchObject({ enabled: false });
     expect(capability(summary, "codingAgentsDesktopWorkspace")).toMatchObject({ enabled: false });
     expect(capability(summary, "codingAgentsMobileWorkspace")).toMatchObject({ enabled: false });
     expect(capability(summary, "codingAgentsApprovals")).toMatchObject({ enabled: false });

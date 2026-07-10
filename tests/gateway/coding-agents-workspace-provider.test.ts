@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -379,5 +379,109 @@ describe("coding agent workspace provider", () => {
       "thread.completed",
     ]);
     expect(events?.at(-1)).toMatchObject({ type: "thread.completed", outcome: "aborted" });
+  });
+
+  it("resumes a running workspace thread through its persisted deterministic session", async () => {
+    const sendInput = vi.fn(async () => ({ ok: true, session: workspaceSession() }));
+    const runtime = {
+      startSession: vi.fn(async () => ({ ok: true, status: 201, session: workspaceSession() })),
+      sendInput,
+      stopSession: vi.fn(async () => ({ ok: true, session: workspaceSession() })),
+    };
+    const provider = createWorkspaceCodingAgentProvider({
+      providerId: "codex",
+      agent: "codex",
+      runtime,
+    });
+    const started = await provider.startThread({
+      principal: ownerPrincipal,
+      thread: AgentThreadSummarySchema.parse({
+        id: "thread_workspace_1",
+        providerId: "codex",
+        title: "Coding agent run",
+        status: "queued",
+        attention: "none",
+        createdAt: baseNow.toISOString(),
+        updatedAt: baseNow.toISOString(),
+      }),
+      request: createBody,
+      now: () => baseNow,
+      nextEventId: () => "evt_workspace_start",
+    });
+    const resumeState = Array.isArray(started) ? undefined : started.resumeState;
+    const signal = AbortSignal.timeout(1_000);
+
+    const resumed = await provider.resumeTurn?.({
+      principal: ownerPrincipal,
+      thread: AgentThreadSummarySchema.parse({
+        id: "thread_workspace_1",
+        providerId: "codex",
+        title: "Coding agent run",
+        status: "running",
+        attention: "none",
+        createdAt: baseNow.toISOString(),
+        updatedAt: baseNow.toISOString(),
+      }),
+      turn: { turnId: "turn_workspace_1", message: "Continue with the tests." },
+      resumeState: resumeState!,
+      signal,
+      now: () => baseNow,
+      nextEventId: () => "evt_workspace_resume",
+    });
+
+    expect(resumeState).toEqual({ conversationId: "sess_workspace_1" });
+    expect(sendInput).toHaveBeenCalledWith(
+      "sess_workspace_1",
+      "Continue with the tests.\r",
+      signal,
+    );
+    expect(resumed).toMatchObject({
+      events: [],
+      outcome: "delivered",
+      resumeState,
+    });
+  });
+
+  it("accepts a same-thread turn while the canonical workspace session remains running", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-workspace-turn-"));
+    const sendInput = vi.fn(async () => ({ ok: true, session: workspaceSession() }));
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      relationValidator: {
+        validateCreate: async () => undefined,
+        validateThread: async () => undefined,
+      },
+      providers: [createWorkspaceCodingAgentProvider({
+        providerId: "codex",
+        agent: "codex",
+        runtime: {
+          startSession: vi.fn(async () => ({ ok: true, status: 201, session: workspaceSession() })),
+          sendInput,
+          stopSession: vi.fn(async () => ({ ok: true, session: workspaceSession() })),
+        },
+      })],
+    });
+    try {
+      const created = await threads.createThread(ownerPrincipal, createBody);
+      expect(created.snapshot.thread.status).toBe("running");
+
+      const accepted = await threads.acceptTurn(ownerPrincipal, created.snapshot.thread.id, {
+        message: "Continue in this conversation.",
+        clientRequestId: "req_workspace_turn_1",
+      });
+      expect(accepted.status).toBe("accepted");
+      await vi.waitFor(() => expect(sendInput).toHaveBeenCalledTimes(1));
+      await vi.waitFor(async () => {
+        expect((await threads.getThread(ownerPrincipal, created.snapshot.thread.id)).thread.status)
+          .toBe("running");
+      });
+      expect((await threads.listThreads(ownerPrincipal)).items).toContainEqual(
+        expect.objectContaining({ id: created.snapshot.thread.id, status: "running" }),
+      );
+    } finally {
+      await threads.shutdownTurns();
+      await rm(homePath, { recursive: true, force: true });
+    }
   });
 });

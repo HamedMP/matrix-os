@@ -771,9 +771,14 @@ export function createCodingAgentThreadStore(
   function terminalTurnEvents(
     threadId: string,
     turnId: string,
-    outcome: "completed" | "failed" | "aborted",
+    outcome: "completed" | "failed" | "aborted" | "delivered",
   ): AgentThreadEvent[] {
-    const lifecycle = turnStatusEvent(threadId, turnId, outcome);
+    const lifecycle = turnStatusEvent(
+      threadId,
+      turnId,
+      outcome === "delivered" ? "completed" : outcome,
+    );
+    if (outcome === "delivered") return [lifecycle];
     if (outcome === "failed") {
       return [lifecycle, ...safeProviderRunFailureEvents(threadId, now, nextEventId)];
     }
@@ -814,7 +819,7 @@ export function createCodingAgentThreadStore(
     threadId: string;
     turnId: string;
     providerEvents: AgentThreadEvent[];
-    outcome: "completed" | "failed" | "aborted";
+    outcome: "completed" | "failed" | "aborted" | "delivered";
     resumeState?: CodingAgentProviderResumeState;
   }): Promise<void> {
     const result = await mutate(async (state) => {
@@ -849,7 +854,11 @@ export function createCodingAgentThreadStore(
           events: [...state.events, ...events],
           turns: state.turns.map((turn) =>
             turn.ownerId === input.ownerId && turn.threadId === input.threadId && turn.turnId === input.turnId
-              ? settledTurn(turn, input.outcome, events.at(-1)!.occurredAt)
+              ? settledTurn(
+                turn,
+                input.outcome === "delivered" ? "completed" : input.outcome,
+                events.at(-1)!.occurredAt,
+              )
               : turn
           ),
         },
@@ -1063,10 +1072,10 @@ export function createCodingAgentThreadStore(
               },
             };
           }
-          if (thread.activeTurnId || activeThread(thread)) {
+          if (thread.activeTurnId) {
             throw new CodingAgentTurnError("thread_busy");
           }
-          if (!["completed", "failed", "aborted"].includes(thread.status)) {
+          if (!["running", "completed", "failed", "aborted"].includes(thread.status)) {
             throw new CodingAgentTurnError("turn_unavailable");
           }
           await relationValidator(principal, { projectId: thread.projectId, taskId: thread.taskId });

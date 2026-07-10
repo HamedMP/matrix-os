@@ -254,7 +254,7 @@ describe("agent-session-manager", () => {
     expect(started.ok).toBe(true);
 
     await expect(manager.sendInput("sess_abc123", "pnpm test\n")).resolves.toMatchObject({ ok: true });
-    expect(inputWriter).toHaveBeenCalledWith("sess_abc123", "pnpm test\n");
+    expect(inputWriter).toHaveBeenCalledWith("sess_abc123", "pnpm test\n", undefined);
 
     await expect(manager.killSession("sess_abc123")).resolves.toMatchObject({
       ok: true,

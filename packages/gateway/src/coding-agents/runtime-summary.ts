@@ -80,6 +80,7 @@ export interface CodingAgentRuntimeSummaryOptions {
   capabilities?: {
     projectWorkspace?: boolean;
     workspace?: boolean;
+    sameThreadTurns?: boolean;
     approvals?: boolean;
     review?: boolean;
     preview?: boolean;
@@ -394,6 +395,10 @@ export function createCodingAgentRuntimeSummaryService(
           capability({ id: "codingAgentsDesktopWorkspace", enabled: workspaceEnabled }),
           capability({ id: "codingAgentsMobileWorkspace", enabled: workspaceEnabled }),
           capability({ id: "codingAgentsThreadCreate", enabled: threadsEnabled }),
+          capability({
+            id: "codingAgentsSameThreadTurns",
+            enabled: options.capabilities?.sameThreadTurns === true,
+          }),
           capability({ id: "codingAgentsApprovals", enabled: approvalsEnabled }),
           capability({ id: "codingAgentsReview", enabled: reviewEnabled }),
           capability({ id: "codingAgentsPreview", enabled: previewEnabled }),

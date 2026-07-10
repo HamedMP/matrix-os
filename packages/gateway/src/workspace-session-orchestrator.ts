@@ -216,8 +216,8 @@ export function createWorkspaceSessionOrchestrator(options: {
       return options.agentSessionManager.getSession(sessionId);
     },
 
-    async sendInput(sessionId: string, input: string) {
-      return options.agentSessionManager.sendInput(sessionId, input);
+    async sendInput(sessionId: string, input: string, signal?: AbortSignal) {
+      return options.agentSessionManager.sendInput(sessionId, input, signal);
     },
 
     async attachSession(sessionId: string, mode: SessionAttachMode) {
