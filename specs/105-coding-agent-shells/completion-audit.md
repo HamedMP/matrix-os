@@ -1,10 +1,12 @@
 # Completion Audit: Coding Agent Shells
 
 **Audited commit**: `056b3da668ed6d1753712120316d2d5accfafdcf`
-**Date**: 2026-07-08
+**Date**: 2026-07-10
 **Scope**: Evidence review for the Matrix OS coding-agent desktop, mobile, browser, and gateway shell implementation checkpoint.
 
-This audit records current evidence through the desktop operator palette smoke and mobile terminal handoff checkpoint. It does not mark the full rollout complete while real-device smoke and broader cross-shell validation remain outstanding.
+The audited commit includes the earlier `87bc72d0fdd9067fcec395c479de80fcaccfe641` deployment checkpoint as an ancestor. Repository CI, Docker, and Host Bundle Release evidence below is tied to that deployment checkpoint; later descendant PRs through audited commit `056b3da668` add the separately listed desktop/mobile smoke coverage and do not change what the earlier release evidence proves.
+
+This audit records current evidence through the desktop operator palette smoke and mobile terminal handoff checkpoint. It does not mark the full rollout complete while real-device smoke and broader cross-shell validation remain outstanding. The 2026-07-10 product clarification also adds project-first navigation, same-thread turns, multi-thread tasks, and Conversation/Kanban views to the completion bar; those requirements are explicitly incomplete below.
 
 ## Evidence Matrix
 
@@ -24,6 +26,23 @@ This audit records current evidence through the desktop operator palette smoke a
 | Desktop renderer does not receive raw bearer/provider credentials | Trusted IPC and main-process client inventory in `current-state.md`; desktop runtime client tests | Implemented by architecture and tests |
 | Mobile persistent state stores only bounded UI references | `apps/mobile/lib/agent-workspace-state.ts`; `apps/mobile/lib/mobile-shell-state.ts`; mobile state tests listed in `current-state.md` | Implemented |
 | Public and internal docs | `docs/dev/coding-agent-shells.md`; `www/content/docs/coding-agents.mdx`; `current-state.md` | Implemented and must stay synchronized |
+| Runtime summary hydrates real canonical projects and bounded task/thread projections | Current `packages/gateway/src/coding-agents/runtime-summary.ts` returns an empty project list; no project workspace projection exists | **Incomplete** |
+| One visible chat is one resumable thread and follow-up messages create turns in that same provider conversation | Current follow-up path creates a new referenced thread; no turn mutation/provider resume route exists | **Incomplete** |
+| One canonical task supports several independently selectable coding threads | Thread records can carry `taskId`, but no relation adapter/multi-thread task projection exists and legacy task UI has a singular session link | **Incomplete** |
+| Desktop project/task/thread navigator with Conversation and Kanban modes | Current `AgentWorkspace.tsx` is a sectioned dashboard and existing Board is a separate surface | **Incomplete** |
+| Mobile project-first task/thread navigation with Conversation and Kanban modes | Current `/agents` stack has recent work/thread detail but no project Kanban hierarchy | **Incomplete** |
+
+The named evidence required to close these rows is in `acceptance-tests.md`. Existing checkpoint tests are regression evidence only and cannot be reused as proof of the clarified behavior unless they are extended to exercise the named fixture/cardinality.
+
+## Specification Alignment Audit
+
+The 2026-07-10 clarification package was checked before implementation:
+
+- All 58 acceptance-test IDs in `acceptance-tests.md` are referenced by the active Phase 18-23 checklist, with no missing or orphan IDs.
+- Every clarified functional requirement and buildable success criterion (`FR-006`, `FR-007`, `FR-020`, `FR-026` through `FR-029`, `FR-062`, `FR-066`, `FR-067`, `FR-070`, `FR-075` through `FR-077`, and `SC-011` through `SC-014`) appears in the acceptance requirement-coverage matrix.
+- Relative Markdown links in the spec package resolve.
+- The project/task/thread cardinality, same-thread turn behavior, canonical task-status rule, and Conversation/Kanban terminology agree across `SPEC.md`, `ARCHITECTURE.md`, `plan.md`, `tasks.md`, and `acceptance-tests.md`.
+- Gate 0 remains intentionally open pending explicit product-owner confirmation. These checks prove specification alignment only, not implementation.
 
 ## Validation Evidence
 

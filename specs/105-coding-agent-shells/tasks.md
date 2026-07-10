@@ -1,7 +1,7 @@
 # Tasks: Coding Agent Shells
 
-**Status**: Implementation checkpoint
-**Branch**: merged implementation checkpoint through `main` commit `056b3da668ed6d1753712120316d2d5accfafdcf`
+**Status**: Product-model confirmation checkpoint
+**Lineage**: foundation merged through the recorded implementation checkpoint; clarified follow-up is specified against current `main`
 **Rule**: Preserve all existing desktop and mobile functionality. Add coding-agent capabilities incrementally behind contracts, tests, and feature flags.
 
 ## Implementation Checkpoint
@@ -21,6 +21,21 @@ As of the `056b3da668ed6d1753712120316d2d5accfafdcf` main checkpoint:
 - PR #868 mobile validation now confirms thread detail terminal handoff persists the bounded canonical terminal session reference needed by the mobile Terminal route without persisting terminal output or transcript data.
 - PR #869 desktop validation now confirms the command-palette Agents entry still opens after terminal interaction, and menu-template tests cover the native Agents accelerator used to focus the same workspace.
 - Remaining work is validation and rollout hardening: real-runtime desktop smoke, mobile SDK 57 device smoke, and continued docs sync as later provider/runtime behavior changes.
+
+That checkpoint is not the clarified final product. The active backlog now requires a project-first hierarchy, same-thread conversation turns, tasks with multiple threads, and Conversation/Kanban views. `acceptance-tests.md` is the authoritative test matrix for this follow-up work.
+
+## Active Confirmation Plan
+
+- [x] Record one visible chat/session as one resumable `AgentThread`.
+- [x] Record each accepted user message as one server-side `AgentTurn` in that thread.
+- [x] Record `Project -> Task -> many AgentThreads` cardinality and project-level threads.
+- [x] Keep canonical Matrix task statuses separate from aggregated thread execution state.
+- [x] Define Conversation and Kanban as two views over one gateway-owned model.
+- [x] Add aligned architecture, phased plan, implementation tasks, and acceptance-test IDs.
+- [ ] Product owner confirms all four product decisions in Gate 0; the two mechanical readiness checks also pass.
+- [ ] Begin implementation only after confirmation.
+
+No Phase 18+ production code may start while the confirmation checkbox remains open.
 
 ## Agent Instructions
 
@@ -176,7 +191,7 @@ Acceptance:
 Acceptance:
 
 - [ ] Create request requires provider and prompt.
-- [ ] Optional project/task/session/worktree references validate independently.
+- [ ] Legacy optional project/task/session/worktree references validate independently; Phase 18 supersedes new shell-created threads by requiring `projectId`.
 
 ### 1.6 Thread Event Schemas
 
@@ -1049,6 +1064,184 @@ Goal: prove cross-shell coding-agent workflows before broad rollout.
 - [ ] Mobile SDK 57 native build impact documented.
 - [ ] Rollback path documented.
 
+## Phase 18 - Project, Task, Thread, And Turn Contracts
+
+Goal: make the clarified hierarchy explicit and independently testable before runtime/UI changes.
+
+### 18.1 Shared Project Workspace Contracts
+
+- [ ] Add bounded project summary counts for tasks, threads, and attention.
+- [ ] Add canonical `TaskAgentSummarySchema` using existing Matrix task status/priority values.
+- [ ] Add bounded `ProjectAgentWorkspaceSchema` with independent task/thread caps and truncation metadata.
+- [ ] Add thread list filters for required `projectId` and optional `taskId`.
+- [ ] Keep legacy unassigned thread reads explicit and bounded; do not allow new shell-created unassigned threads.
+
+Tests: `CT-001`, `CT-002`, `CT-003`, `CT-004`.
+
+### 18.2 Same-Thread Turn Contracts
+
+- [ ] Add `AgentTurnIdSchema`, `CreateAgentTurnRequestSchema`, and `CreateAgentTurnResponseSchema`.
+- [ ] Bound message, attachments, idempotency key, and safe errors.
+- [ ] Add turn lifecycle events without exposing provider resume identity.
+- [ ] Add capability IDs for project workspace projection, same-thread turns, and Conversation/Kanban shells.
+
+Tests: `CT-005`, `CT-006`, `CT-007`.
+
+Gate:
+
+- [ ] Gate 1 rerun passes for the additive contracts.
+
+## Phase 19 - Gateway Project Workspace Read Model
+
+Goal: replace placeholder project hydration with canonical owner project/task/thread projections.
+
+### 19.1 Real Project Summary Adapter
+
+- [ ] Read canonical owner projects through the existing workspace project service.
+- [ ] Return stable bounded project summaries from runtime summary.
+- [ ] Expose safe degraded state when project discovery fails; never return raw errors.
+- [ ] Add timeout/abort handling for any external project metadata call.
+
+Tests: `GW-001`, `GW-002`, `GW-003`.
+
+### 19.2 Project Workspace Projection
+
+- [ ] Add authenticated `GET /api/coding-agents/projects/:projectId/workspace`.
+- [ ] Validate project path param and independent task/thread cursors/limits with Zod 4.
+- [ ] Enforce owner access before reading tasks or threads.
+- [ ] Join canonical tasks with bounded project-level/task-bound thread aggregates.
+- [ ] Support several threads on one task without nested unbounded arrays.
+- [ ] Reject/quarantine stale cross-project relations without mutating during a read.
+
+Tests: `GW-004`, `GW-005`, `GW-006`, `GW-007`, `GW-008`.
+
+### 19.3 Task/Thread Relation Mutations
+
+- [ ] Require valid project for new shell-created threads.
+- [ ] Validate optional task exists in the same project before thread insert.
+- [ ] Add explicit idempotent thread reassignment only if required for legacy adoption.
+- [ ] Publish project/task/thread projection updates after successful persistence.
+
+Tests: `GW-009`, `GW-010`, `GW-011`.
+
+Gate:
+
+- [ ] Gate 2 rerun proves real project hydration, caps, auth, validation, and safe errors.
+
+## Phase 20 - Same-Thread Provider Turns
+
+Goal: sending a message in an existing chat resumes that chat's provider conversation.
+
+### 20.1 Turn Store And Route
+
+- [ ] Add authenticated `POST /api/coding-agents/threads/:threadId/turns`.
+- [ ] Apply body limit before JSON parsing and validate all params/body with Zod 4.
+- [ ] Check thread ownership, project/task integrity, and terminal thread state.
+- [ ] Insert user turn/event and idempotency record atomically.
+- [ ] Atomically claim one active normal turn per thread; return safe busy conflict otherwise.
+- [ ] Persist idempotency and active-turn ownership in the existing owner thread store's atomic mutation path; no client or in-memory-only source of truth.
+- [ ] Cap/evict any in-memory idempotency or dispatch registry and drain it on shutdown.
+
+Tests: `GW-012`, `GW-013`, `GW-014`, `GW-015`, `SEC-001`, `SEC-002`.
+
+### 20.2 Provider Resume
+
+- [ ] Extend normalized provider adapter with a bounded `resumeTurn` operation and `AbortSignal`.
+- [ ] Keep provider credentials/resume identity on the runtime.
+- [ ] Persist resume identity/state before publishing idle/completed state.
+- [ ] Release active-turn ownership on completion, failure, abort, and startup reconciliation.
+- [ ] Verify one thread receives two sequential turns without creating a second provider conversation.
+
+Tests: `GW-016`, `GW-017`, `GW-018`, `SEC-005`, `E2E-001`.
+
+Gate:
+
+- [ ] Gate 3 rerun passes with fake provider and first flagged real provider.
+
+## Phase 21 - Desktop Project Conversation And Kanban
+
+Goal: replace the checkpoint dashboard with the confirmed project-first desktop workspace.
+
+### 21.1 Project/Task/Thread Navigator
+
+- [ ] Add persistent project groups in the left navigator.
+- [ ] Render project-level threads and task groups.
+- [ ] Render every thread under a task; do not infer cardinality from singular `linkedSessionId`.
+- [ ] Add new-chat action with required project and optional task/provider.
+- [ ] Reconcile persisted selected project/task/thread against live projections.
+- [ ] Keep renderer bearer/provider credentials absent through trusted IPC.
+
+Tests: `DT-001`, `DT-002`, `DT-003`, `DT-004`, `SEC-003`.
+
+### 21.2 Conversation View
+
+- [ ] Render selected same-thread transcript, attention, approvals, terminal, files, review, and preview context.
+- [ ] Send follow-up through the turn IPC, not thread create.
+- [ ] Keep explicit "new chat from context" separate from same-thread send.
+- [ ] Handle busy/idempotent/offline states with generic recovery copy.
+
+Tests: `DT-005`, `DT-006`, `DT-007`.
+
+### 21.3 Kanban View
+
+- [ ] Add segmented Conversation/Kanban control.
+- [ ] Reuse canonical task columns/order/mutations.
+- [ ] Show bounded thread count, active count, and attention count on task cards.
+- [ ] Open all task threads from a card and preserve selected identity when switching modes.
+- [ ] Never auto-move task status from thread reducer/effects.
+
+Tests: `DT-008`, `DT-009`, `DT-010`, `DT-011`.
+
+Gate:
+
+- [ ] Desktop typecheck, focused Vitest, operator E2E, Canvas/Desktop regression, pattern scan, and screenshot checks pass.
+
+## Phase 22 - Mobile Project Conversation And Kanban
+
+Goal: expose the same hierarchy and conversations with SDK 57 phone/tablet ergonomics.
+
+### 22.1 Project-First Routes And Resume
+
+- [ ] Add project route/selector and project workspace hydration.
+- [ ] Render task groups with all attached threads plus project-level threads.
+- [ ] Persist only bounded project/task/thread/view references.
+- [ ] Reconcile stale references on app resume/runtime switch.
+
+Tests: `MB-001`, `MB-002`, `MB-003`, `MB-004`, `SEC-004`.
+
+### 22.2 Conversation View
+
+- [ ] Send follow-ups to the selected thread turn route.
+- [ ] Preserve keyboard avoidance, safe areas, app suspension, streaming, and approval/input behavior.
+- [ ] Keep terminal handoff on canonical named sessions.
+
+Tests: `MB-005`, `MB-006`, `MB-007`.
+
+### 22.3 Kanban View
+
+- [ ] Add Conversation/Kanban control for the selected project.
+- [ ] Render canonical task columns as phone-appropriate sections/horizontal board and tablet split view.
+- [ ] Show bounded multi-thread aggregates and open any thread on a task.
+- [ ] Preserve selected context when returning to Conversation.
+
+Tests: `MB-008`, `MB-009`, `MB-010`.
+
+Gate:
+
+- [ ] Mobile Jest, lint, `tsc --noEmit`, SDK 57 dev-client device smoke, and existing tab/terminal/app/auth regressions pass.
+
+## Phase 23 - Final Cross-Shell Acceptance
+
+- [ ] Desktop creates a project task and two independent chats on it; mobile sees both (`E2E-002`).
+- [ ] Mobile sends a second turn in one chat; desktop sees the same thread/provider conversation (`E2E-003`).
+- [ ] Conversation/Kanban switching preserves project/task/thread identity on both shells (`E2E-004`).
+- [ ] Task status mutations propagate without being overwritten by mixed thread states (`E2E-005`).
+- [ ] Cross-shell terminal, review, preview, approval, notification, offline/reconnect, and runtime-switch paths pass (`E2E-006`).
+- [ ] Security and unsafe-error audit passes (`SEC-001` through `SEC-006`).
+- [ ] Public/internal docs update only after behavior is implemented and verified; until then public docs are explicitly deferred to avoid advertising unshipped behavior.
+- [ ] `completion-audit.md` has current evidence for every clarified requirement.
+- [ ] Product owner performs final desktop/mobile checkpoint test and confirms release readiness.
+
 ## Cross-Cutting Guardrails
 
 ### Do
@@ -1078,6 +1271,8 @@ Goal: prove cross-shell coding-agent workflows before broad rollout.
 - [ ] Do not hide interactive provider setup in a background job when the user needs to act.
 
 ## Suggested PR Slices
+
+The original slices below document the landed foundation. The active next stack is Phase 18 through Phase 23 and must start only after Gate 0 confirmation.
 
 1. **contracts(agent-shells): add schemas and tests**
    - Contract package or gateway-local contracts only.
@@ -1142,12 +1337,32 @@ Goal: prove cross-shell coding-agent workflows before broad rollout.
 
 ## Open Questions
 
-- [ ] What is the canonical existing source of truth for project/task/thread records today: gateway workspace files, owner Postgres, kernel conversation store, or a combination?
-- [ ] Which first provider path should be used for thread creation in the first implementation PR?
+Resolved by the product clarification checkpoint:
+
+- [x] One visible chat/session is one resumable coding-agent thread.
+- [x] One task may own several independent coding-agent threads.
+- [x] Conversation and Kanban are two views over the same canonical project/task/thread records.
+- [x] A normal follow-up is a new turn in the same thread; creating a new related chat is a separate explicit action.
+- [x] Existing Matrix project/task APIs and task statuses remain canonical.
+
+Awaiting product-owner confirmation before Phase 18 implementation:
+
+- [ ] New chats require a project; legacy unassigned chats remain read-compatible under `Unassigned`.
+- [ ] Task status is explicit/manual canonical state; mixed thread states only change card badges/attention.
+- [ ] A busy thread rejects another normal turn instead of silently queueing it.
+- [ ] Both desktop and mobile expose Conversation and Kanban as primary agent-workspace modes.
+
+Resolved implementation questions:
+
+- [x] Canonical project/task records remain in existing workspace services; coding threads remain in the gateway/runtime thread store until a separately reviewed owner-persistence migration.
+- [x] Existing workspace-backed provider tests remain the fake/baseline path; real providers stay behind normalized server-side adapters and flags.
+- [x] Desktop trusted core owns authenticated thread streams and bridges validated events to the renderer.
+- [x] Mobile uses the `/agents` stack without replacing existing Mission Control or tabs.
+- [x] Public docs for the clarified UX are deferred until implementation/runtime verification, so unshipped behavior is not advertised.
+
+Historical questions retained for unrelated future work:
+
 - [ ] Does the current terminal WebSocket already carry monotonic sequence numbers in all environments, or do we need a compatibility replay adapter?
-- [ ] Should desktop renderer subscribe to thread streams directly with injected auth headers, or should trusted core own streams and bridge events through IPC?
-- [ ] Which mobile route should be the default entry point for agent work: existing Mission Control or new `/agents` stack?
-- [ ] What is the minimum public-doc update required before internal rollout?
 - [ ] Which provider setup actions must be foreground terminal sessions because they need user interaction?
 - [ ] What is the safe cap for active thread event subscribers per runtime?
 - [ ] What are the exact memory limits for desktop cached workspaces and mobile transcript windows?

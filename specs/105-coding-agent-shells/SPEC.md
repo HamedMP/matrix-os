@@ -1,13 +1,15 @@
 # Feature Specification: Coding Agent Shells
 
-**Feature Branch**: `chore/mobile-expo-sdk-57`
+**Feature Lineage**: `spec/coding-agent-shells`, rebased onto the Expo SDK 57 mobile foundation and current `main`
 **Created**: 2026-07-06
-**Status**: Draft
+**Status**: Product clarification checkpoint - awaiting confirmation
 **Input**: Upgrade Matrix OS desktop and mobile shells into first-class interfaces for managing multiple coding agents on the user's remote Matrix computer, while preserving every existing desktop and mobile capability.
 
 ## Overview
 
-Matrix OS should feel like a remote development computer with native-feeling shells on desktop and mobile. The user signs in once, chooses their Matrix computer, opens a project, starts one or more coding agents, watches live work, reviews files and diffs, uses terminal sessions, opens previews, and resumes the same work from another device.
+Matrix OS should feel like a remote development computer with native-feeling shells on desktop and mobile. The user signs in once, chooses their Matrix computer, opens a project, starts one or more coding conversations, watches live work, reviews files and diffs, uses terminal sessions, opens previews, and resumes the same work from another device.
+
+The primary user object is a coding conversation. One visible chat/session maps to one `AgentThread`, and every user message in that conversation starts one server-side provider turn through the Matrix gateway. A thread may be attached directly to a project or to one task inside that project. One task may own several independent threads so a user can explore, implement, review, and repair the same task with separate agents without mixing transcripts or provider state.
 
 The headless runtime remains the source of truth. The desktop app and mobile app are interfaces, not separate runtimes. Every project, terminal session, agent thread, approval, diff, file read/write, app launch, and preview route must flow through authenticated gateway contracts backed by the user's Matrix computer.
 
@@ -23,12 +25,43 @@ This spec intentionally builds on the existing Matrix OS pieces:
 ## Product Goals
 
 1. **Remote computer first**: desktop and mobile connect to the user's Matrix computer and never require users to manage SSH keys, hostnames, VPS IPs, or raw credentials.
-2. **Multi-agent by default**: users can configure and run multiple coding agents side by side, with independent sessions, transcripts, terminals, statuses, approvals, and notifications.
-3. **Thread/task/workspace model**: each agent run can be standalone or bound to a project/task/worktree. Opening a thread reveals the relevant terminal, files, diff, preview, logs, and actions.
+2. **Conversation-first agents**: each chat/session is one coding-agent thread with its own provider conversation, transcript, terminal binding, status, approvals, and notifications. Sending a message resumes that thread through a gateway-owned provider call.
+3. **Project/task/thread hierarchy**: projects contain tasks and project-level threads; tasks can contain zero, one, or many threads. Opening a thread reveals the relevant terminal, files, diff, preview, logs, and actions.
 4. **Cross-shell continuity**: work started on desktop resumes on mobile and vice versa. The same named terminal session, agent thread, project, diff, and app launch inventory are visible from both shells.
 5. **Native-feeling clients**: desktop uses Electron's trusted core and native notifications/menus. Mobile uses Expo SDK 57 and phone-first layouts. Both retain current features.
 6. **Reliability under interruption**: reconnects, sleep/wake, token expiry, runtime switch, network loss, and mobile app suspension must produce recoverable states, not lost work.
 7. **Safe by construction**: every endpoint, WebSocket frame, IPC message, app launch, deep link, and persisted reference is validated and owner-scoped.
+
+## Canonical Product Model
+
+### Hierarchy And Cardinality
+
+```text
+Runtime
+  Project (1..n)
+    Project-level thread (0..n)
+    Task (0..n)
+      Agent thread / chat session (0..n)
+        User and assistant turns (1..n)
+```
+
+- A new shell-created coding thread MUST belong to exactly one project.
+- A thread MAY belong to one task in that same project.
+- A task MAY own multiple threads; no task-level singleton session assumption is allowed.
+- A thread is one resumable provider conversation, not one prompt. Each accepted user turn calls the normalized provider adapter with the thread's server-owned resume identity.
+- Existing standalone threads created before this rule remain readable under a bounded `Unassigned` compatibility group and can be attached to a project through an explicit server mutation. New desktop/mobile flows do not create additional unassigned threads.
+- A provider run/turn and a terminal session are different objects. A thread may bind one canonical named terminal session, and several threads may refer to the same task without sharing transcript or provider resume state.
+
+### Two Views Over One Runtime Model
+
+Desktop and mobile expose the same project/task/thread data through two shell-appropriate views:
+
+1. **Conversation view**: project-first navigation, task groups, individual chat sessions, selected transcript, composer, approvals, and thread tools.
+2. **Kanban view**: the existing canonical Matrix task columns (`todo`, `running`, `waiting`, `blocked`, `complete`) with each task card showing bounded aggregate thread state, attention, and thread count. Opening a card reveals every thread attached to that task.
+
+The views are projections over the same gateway-owned records. Switching views MUST NOT copy, synthesize, or locally persist project, task, thread, transcript, or status data.
+
+Task status remains canonical task state and is changed through existing validated task mutations. Agent thread state appears as badges/attention on the card; it MUST NOT silently overwrite task status because several threads with different states may belong to one task.
 
 ## Non-Goals
 
@@ -69,35 +102,50 @@ As a user, I want the mobile app to open the same Matrix computer, resume recent
 3. Given an agent thread is running, when the user opens mobile, then the thread appears with live or resumable status.
 4. Given the app is backgrounded, when the user returns, then mobile reconciles live runtime state before trusting stale local resume state.
 
-### US3 - Manage Multiple Coding Agents (P1)
+### US3 - Manage Multiple Coding Conversations (P1)
 
-As a user, I want to see installed/configured coding agents, start runs with a chosen agent, and manage concurrent runs without state mixing.
+As a user, I want to see installed/configured coding providers, start chats with a chosen provider, send follow-up messages in the same conversation, and manage concurrent conversations without state mixing.
 
-**Independent Test**: Configure at least two agent providers, start two runs against the same project and one run against another project, switch between threads, approve/decline requests, abort one run, and verify the others continue.
+**Independent Test**: Configure at least two providers, create two chats for one task and one project-level chat in another project, send two messages in one chat, switch between chats, approve/decline requests, abort one active turn, and verify the other conversations continue.
 
 **Acceptance Criteria**
 
 1. Given multiple agent providers are available, when the user opens the agent picker, then every provider has a safe display name, availability status, install/auth status, default model or mode, and last health check.
-2. Given the user starts a run, when they pick an agent, project, task, and prompt, then the gateway creates an owner-scoped agent thread and begins streaming events.
+2. Given the user starts a chat, when they pick a provider, project, optional task, and first message, then the gateway creates an owner-scoped thread and begins streaming the first provider turn.
 3. Given multiple threads are running, when the user switches between them, then each thread preserves its own transcript, tool activity, terminal binding, approvals, and status.
 4. Given a thread needs approval or input, when the event arrives, then desktop and mobile show a safe, actionable attention state.
-5. Given the user aborts one thread, when abort succeeds, then only that thread stops; other threads and terminal sessions remain unaffected.
+5. Given the user sends a follow-up in an idle thread, when the gateway accepts it, then the existing thread and provider conversation resume instead of creating a replacement thread.
+6. Given the user aborts one active turn, when abort succeeds, then only that thread stops; other threads and terminal sessions remain unaffected.
 
-### US4 - Work In A Project Workspace (P2)
+### US4 - Navigate Projects In Conversation And Kanban Views (P1)
 
-As a user, I want every project/task/thread to open into a workspace with terminal, files, diff, preview, logs, and agent transcript.
+As a user, I want projects and their chats in a left navigator, and I want to switch the selected project between conversation and Kanban views without losing context.
 
-**Independent Test**: Open a project, create a task, start an agent, inspect changed files, open a file, view diff, open preview, send follow-up, and verify the same workspace is visible on desktop and mobile with shell-appropriate layout.
+**Independent Test**: Open a project, create one task, create two chats on that task and one project-level chat, switch between conversation and Kanban views, open each chat from both views, and verify the same hierarchy/statuses appear on desktop and mobile.
 
 **Acceptance Criteria**
 
-1. Given a project is selected, when the user opens its workspace, then the shell shows project identity, repository status, active tasks, active threads, terminals, and recent activity.
-2. Given the user opens files, when edits occur, then saves go through gateway file contracts with conflict detection.
-3. Given an agent changes files, when diff data is available, then the shell shows per-file status and review actions.
-4. Given a dev server or generated app is running, when preview opens, then the preview route is owner-scoped and origin-restricted.
-5. Given the viewport is mobile, when the same workspace opens, then it uses stacked panes/sheets/tabs instead of desktop panel density.
+1. Given projects exist, when the agent workspace opens, then the left navigator shows bounded projects and their project-level/task-bound chats with safe status and attention indicators.
+2. Given a task has several chats, when it expands or its Kanban card opens, then every attached thread is visible and independently selectable.
+3. Given the user changes views, when Conversation or Kanban becomes active, then the selected project and selected task/thread remain stable where applicable.
+4. Given a Kanban card moves, when the mutation succeeds, then the canonical task status changes and every shell receives the same task state.
+5. Given an agent thread status changes, when the Kanban projection updates, then the card's aggregate badges change without silently moving the task.
+6. Given the viewport is mobile, when the same project opens, then navigation and Kanban columns use routes/stacks or horizontally scrollable sections instead of requiring desktop panel density.
 
-### US5 - Review And Ship Agent Work (P2)
+### US5 - Work In A Coding Conversation (P1)
+
+As a user, I want each chat to be a resumable coding workspace with transcript, terminal, files, diff, preview, logs, approvals, and follow-up messages.
+
+**Independent Test**: Open a task-bound chat, send a follow-up, inspect changed files, open a file, view diff, open preview, and verify the same thread resumes on desktop and mobile.
+
+**Acceptance Criteria**
+
+1. Given a thread is selected, when its conversation opens, then the shell hydrates a bounded snapshot and subscribes from the accepted event cursor.
+2. Given the thread is idle, when the user sends a message, then the gateway appends an idempotent user turn and resumes the same server-owned provider conversation.
+3. Given the thread already has an active turn, when another normal message is submitted, then the gateway returns a safe busy conflict instead of starting concurrent turns or silently queueing work.
+4. Given the user opens files, review, terminal, or preview, when they return, then the same project/task/thread selection is preserved as bounded UI state.
+
+### US6 - Review And Ship Agent Work (P2)
 
 As a user, I want to review diffs created by agents, ask for follow-up fixes, and prepare changes for PR without leaving Matrix.
 
@@ -110,7 +158,7 @@ As a user, I want to review diffs created by agents, ask for follow-up fixes, an
 3. Given source control credentials are available server-side, when the user creates a PR, then the operation runs through the gateway and no GitHub token is stored in the client.
 4. Given diff data is too large, when review opens, then the shell shows partial/summary state and explicit fetch-more behavior instead of freezing.
 
-### US6 - Use Remote Terminal Sessions Everywhere (P1)
+### US7 - Use Remote Terminal Sessions Everywhere (P1)
 
 As a user, I want named remote terminal sessions that survive reloads, device switches, network loss, and app restarts.
 
@@ -124,7 +172,7 @@ As a user, I want named remote terminal sessions that survive reloads, device sw
 4. Given the user intentionally terminates a session, when confirmation succeeds, then all attached clients see ended state.
 5. Given paste/input is large, when sent, then frames are bounded and chunked according to gateway limits.
 
-### US7 - Keep Existing Desktop Features (P1)
+### US8 - Keep Existing Desktop Features (P1)
 
 As a current desktop user, I want auth, runtime switching, embeds, settings, updates, notifications, local UI state, and app launch behavior to continue working.
 
@@ -137,7 +185,7 @@ As a current desktop user, I want auth, runtime switching, embeds, settings, upd
 3. Deep links and notification click-through validate payloads before navigation.
 4. The updater remains non-destructive; it never force-restarts active work.
 
-### US8 - Keep Existing Mobile Features (P1)
+### US9 - Keep Existing Mobile Features (P1)
 
 As a current mobile user, I want chat, terminal, apps, canvas entry, settings, push, offline state, auth, and mobile shell resume behavior to keep working after the upgrade.
 
@@ -159,6 +207,8 @@ As a current mobile user, I want chat, terminal, apps, canvas entry, settings, p
 - **FR-003**: Contracts MUST be source-compatible with current gateway behavior where possible, using additive fields and explicit versioning for changed frames.
 - **FR-004**: Runtime state MUST be canonical on the Matrix computer. Clients may store bounded caches and last-viewed UI state only.
 - **FR-005**: The gateway MUST expose a single runtime summary endpoint that desktop and mobile can use to hydrate: active runtime, available agents, projects, active threads, terminal sessions, recent activity, and feature availability.
+- **FR-006**: Runtime hydration MUST include real bounded project summaries. A project workspace read model MUST expose canonical task summaries plus project-level and task-bound thread summaries with independent cursors/caps.
+- **FR-007**: Project/task/thread relations MUST be validated server-side. A task-bound thread's `projectId` MUST equal the canonical task's project, and inaccessible or stale references MUST fail with safe errors.
 
 ### Agent Providers
 
@@ -170,12 +220,16 @@ As a current mobile user, I want chat, terminal, apps, canvas entry, settings, p
 
 ### Agent Threads
 
-- **FR-020**: Users MUST be able to create a thread with provider, prompt, optional project, optional task, optional worktree, optional terminal session, model/mode options, approval policy, and sandbox policy.
+- **FR-020**: Users MUST be able to create a thread with provider, first message, required project, optional task, optional worktree, optional terminal session, model/mode options, approval policy, and sandbox policy. Existing unassigned threads remain read-compatible only.
 - **FR-021**: Threads MUST stream typed events: lifecycle, assistant text, reasoning/plan, tool activity, terminal activity, file changes, diffs, approvals, user-input requests, errors, and completion.
 - **FR-022**: Threads MUST be resumable by ID across desktop, mobile, browser shell, and CLI.
 - **FR-023**: Threads MUST have explicit statuses: `queued`, `starting`, `running`, `waiting_for_approval`, `waiting_for_input`, `completed`, `failed`, `aborted`, `stale`, and `archived`.
 - **FR-024**: Thread abort MUST target one thread/run and leave project, terminal, and other threads intact.
 - **FR-025**: Thread transcript memory in clients MUST be capped; clients fetch historical windows or snapshots from the runtime.
+- **FR-026**: A thread with no active normal turn MUST accept an idempotent user turn through a dedicated mutating route. The turn MUST resume the same server-owned provider conversation identity and append to the same thread event log.
+- **FR-027**: At most one normal provider turn may be active per thread. Concurrent follow-up attempts MUST return a generic recoverable busy conflict; clients MUST NOT invent a local queue.
+- **FR-028**: A task MUST support zero, one, or many coding threads. Thread list/read routes MUST support bounded owner-scoped `projectId` and `taskId` filters.
+- **FR-029**: Creating, sending to, aborting, archiving, or reassigning a thread MUST be idempotent where retries are possible and MUST publish the updated project/task/thread projection after persistence succeeds.
 
 ### Approvals And User Input
 
@@ -206,19 +260,23 @@ As a current mobile user, I want chat, terminal, apps, canvas entry, settings, p
 
 - **FR-060**: Desktop MUST keep all privileged behavior in the trusted main process or validated preload bridge.
 - **FR-061**: Desktop renderer MUST never receive raw bearer tokens, provider credentials, platform secrets, or app launch tokens not intended for that surface.
-- **FR-062**: Desktop MUST add a mission-control style agent workspace: project/task sidebar, active thread list, global composer, terminal panel, file/diff/preview panels, activity timeline, and provider setup surface.
+- **FR-062**: Desktop MUST add a mission-control style agent workspace with a persistent project/task/thread navigator and a segmented Conversation/Kanban view control. Conversation view owns the selected transcript/composer and contextual terminal/file/review/preview inspector; Kanban view reuses canonical task columns and shows bounded thread aggregates.
 - **FR-063**: Desktop MUST preserve existing embeds, auth handoff, runtime switching, settings, updater, single-instance, deep links, menus, notifications, and persisted window state.
 - **FR-064**: Desktop MUST validate every IPC request and response with shared or local schemas.
 - **FR-065**: Desktop notifications MUST deep-link to exact thread/task/session targets using validated payloads.
+- **FR-066**: Desktop project navigation MUST show project-level threads and task groups; each task group may show multiple thread rows. Selecting a thread from the sidebar or Kanban card MUST focus the same conversation identity.
+- **FR-067**: Desktop MUST preserve selected project, view mode, optional task, and optional thread as bounded safe UI references only and reconcile them against live runtime state during hydration/runtime switch.
 
 ### Mobile Shell
 
-- **FR-070**: Mobile SDK 57 MUST add an agent workspace optimized for phone and tablet: inbox/recent work, provider picker, composer, thread detail, approvals, terminal, files, review, and preview.
+- **FR-070**: Mobile SDK 57 MUST add a project-first agent workspace optimized for phone and tablet: project selector, task/thread list, Conversation/Kanban mode, provider picker, same-thread composer, approvals, terminal, files, review, and preview.
 - **FR-071**: Mobile MUST preserve existing tabs/routes: chat, mission control, terminal, apps, settings, canvas, sessions, auth, push, and offline handling.
 - **FR-072**: Mobile MUST use current gateway auth/token patterns and must not require SSH key management.
 - **FR-073**: Mobile terminal MUST remain available and evolve toward a native terminal surface behind a capability flag; the existing WebView terminal stays as fallback until the native path is verified.
 - **FR-074**: Mobile thread, approval, terminal, and review screens MUST handle app backgrounding, orientation, safe areas, keyboard, and network transitions.
 - **FR-075**: Mobile local persistence MUST store only bounded resume/UI state and safe runtime references; every persisted reference must reconcile against live runtime state on read.
+- **FR-076**: Mobile MUST expose every thread attached to a task and MUST resume the same thread/provider conversation when sending a follow-up; it MUST NOT model follow-up as a replacement thread.
+- **FR-077**: Mobile Kanban MUST use the canonical task statuses and shell-appropriate navigation while preserving the selected project/task/thread when switching back to Conversation view.
 
 ### Observability And Diagnostics
 
@@ -239,7 +297,19 @@ A configured coding-agent provider available on the Matrix computer. Includes di
 
 ### AgentThread
 
-A single coding-agent run or resumable conversation. Belongs to owner/runtime, may be bound to project/task/worktree/session, has status, transcript cursor, event cursor, attention state, and lifecycle timestamps.
+A single resumable coding conversation. Belongs to owner/runtime and one project, may be bound to one task/worktree/terminal session, has a server-owned provider resume identity, status, transcript cursor, event cursor, attention state, and lifecycle timestamps. It contains many turns but never more than one active normal provider turn.
+
+### AgentTurn
+
+One accepted user message and the resulting provider execution within an existing thread. It has an idempotency key, bounded input, lifecycle state, event range, and timestamps. Sending a turn invokes the normalized provider adapter server-side and does not create a new thread.
+
+### Project
+
+The canonical owner project already managed by Matrix workspace APIs. Coding-agent shells consume a bounded safe projection; they do not create a second project registry.
+
+### Task
+
+The canonical Matrix project task with status `todo`, `running`, `waiting`, `blocked`, `complete`, or `archived`. One task may reference multiple coding-agent threads. Task status and thread execution status are separate state machines.
 
 ### AgentEvent
 
@@ -279,7 +349,7 @@ Local client UI state for last selected runtime/project/thread/session/screen. I
 | Desktop renderer | Invoke privileged actions | Validated IPC to trusted core | No | Every request/response schema-checked. |
 | Mobile app | Gateway HTTP/WS calls | Existing mobile auth and short-lived gateway token | No | Query token allowed only where browser/native WS APIs need it. |
 | Browser shell | Agent workspace routes | Existing shell auth/session | No | Must use query-token allowlist for browser WS routes. |
-| Gateway REST | Runtime summary, providers, threads, files, diffs, previews | Owner session or trusted platform-to-runtime auth | No | Body limits on mutating routes. |
+| Gateway REST | Runtime summary, project/task projections, threads, turns, files, diffs, previews | Owner session or trusted platform-to-runtime auth | No | Body limits on mutating routes. |
 | Gateway WS | Thread events, terminal attach, runtime events | Owner session; setup awaited before success frame | No | Frame size and shape validation required. |
 | Provider setup | Install/auth/check provider | Authenticated owner, explicit user action | No | Runs on Matrix computer, foreground when interactive. |
 | App embeds/previews | Open app/shell/preview | Short-lived owner-scoped launch handoff | No | Origin allowlist and isolated session partitions. |
@@ -300,7 +370,9 @@ Local client UI state for last selected runtime/project/thread/session/screen. I
 ### Resource Limits
 
 - Runtime summaries must be bounded and paginated for projects, threads, sessions, and activity.
+- Project workspace projections must independently cap tasks, project-level threads, and per-task thread summaries; no nested unbounded arrays.
 - Thread event streams must support cursors and replay windows.
+- Turn input, idempotency registries, active-turn ownership, and per-thread event windows must be bounded.
 - Client transcript caches must cap message/event count.
 - Terminal output buffers must use ring buffers with explicit limits.
 - In-memory registries for subscribers, providers, sessions, previews, launch tokens, and diagnostics must have caps and eviction.
@@ -320,12 +392,14 @@ Local client UI state for last selected runtime/project/thread/session/screen. I
 ### Required End-To-End Paths
 
 1. Desktop sign-in -> runtime summary -> provider list -> create thread -> stream events -> complete notification -> focus thread.
-2. Mobile sign-in -> runtime summary -> attach existing thread -> send follow-up -> receive approval -> approve -> stream resumes.
+2. Mobile sign-in -> runtime summary -> open existing project/task/thread -> send same-thread follow-up -> receive approval -> approve -> stream resumes.
 3. Desktop create terminal -> mobile attach -> desktop detach -> mobile input -> desktop reattach -> intentional terminate.
 4. Agent changes files -> review snapshot -> open file -> conflict-safe save -> diff refresh.
 5. Provider setup required -> open foreground terminal install/setup command -> provider health refresh -> provider becomes selectable.
 6. Runtime switch -> all clients close old runtime streams -> clear embedded sessions where needed -> hydrate selected runtime.
 7. Network loss -> clients mark reconnecting -> streams resume by cursor -> no duplicate terminal output or thread events.
+8. Project navigator -> task with two threads -> select either conversation -> switch to Kanban -> open the same task/thread -> selection remains coherent.
+9. Idle thread -> idempotent follow-up turn -> provider resumes the same conversation identity -> desktop and mobile show one shared transcript.
 
 ## Success Criteria
 
@@ -339,6 +413,10 @@ Local client UI state for last selected runtime/project/thread/session/screen. I
 - **SC-008**: Existing mobile feature regression checklist passes: chat, terminal, apps, canvas entry, sessions, settings, push/offline, auth, persisted shell state.
 - **SC-009**: Error-path audit finds no raw provider names, secret-looking tokens, filesystem paths, database errors, or upstream stack traces in user-visible UI.
 - **SC-010**: Typecheck and test gates pass for changed packages, with focused contract tests around every new gateway route/WS/IPC surface.
+- **SC-011**: A task with at least two threads renders both conversations in desktop and mobile, and each transcript/provider state remains isolated.
+- **SC-012**: Desktop and mobile can switch between Conversation and Kanban views without duplicating records or losing the selected project/task/thread.
+- **SC-013**: Sending two sequential messages to one thread produces one thread with two user turns and one stable provider conversation identity; duplicate retries do not create an extra turn.
+- **SC-014**: The runtime summary returns real project data when projects exist; no final shell may ship with a permanently empty project adapter.
 
 ## Rollout Strategy
 
@@ -349,5 +427,7 @@ Local client UI state for last selected runtime/project/thread/session/screen. I
 5. Add file/diff/review/preview panels.
 6. Add native/mobile terminal rendering improvements behind capability detection.
 7. Expand provider setup, health, and cross-shell notifications.
+8. Replace the checkpoint dashboard with project-first Conversation/Kanban views only after the product-model confirmation gate.
+9. Enable same-thread follow-up turns and multi-thread task projections behind additive capabilities before removing compatibility paths.
 
 Every phase must preserve current desktop and mobile behavior and include compatibility checks before replacing existing surfaces.
