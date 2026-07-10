@@ -186,6 +186,64 @@ describe("AgentProjectWorkspaceShell", () => {
     expect(html).toContain("Switching computer");
   });
 
+  it("keeps stale content gated while the new scope workspace is loading", async () => {
+    let resolveWorkspace: ((value: ProjectAgentWorkspace) => void) | undefined;
+    const pendingWorkspace = new Promise<ProjectAgentWorkspace>((resolve) => {
+      resolveWorkspace = resolve;
+    });
+    const invoke = vi.fn((channel: string) => {
+      if (channel === "state:get") return Promise.resolve({ value: null });
+      if (channel === "state:set") return Promise.resolve({ ok: true });
+      if (channel === "runtime:get-project-workspace") return pendingWorkspace;
+      if (channel === "runtime:subscribe-thread-events" || channel === "runtime:unsubscribe-thread-events") {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+    window.operator = { invoke, on: vi.fn(() => () => undefined) };
+    useCodingAgentProjectWorkspace.setState({
+      status: "ready",
+      runtimeId: "rt_primary",
+      runtimeScope: "first-account|https://app.matrix-os.com|primary",
+      summary: summary(),
+      workspace: workspace(),
+      selectedProjectId: "matrix-os",
+      selectedTaskId: null,
+      selectedThreadId: "thread_project",
+    });
+    useCodingAgentWorkspace.setState({
+      activeThreadId: "thread_project",
+      threadSnapshotStatus: "ready",
+      threadSnapshot: snapshot("thread_project", "matrix-os"),
+    });
+    useConnection.setState({
+      handle: "second-account",
+      platformHost: "https://app.matrix-os.com",
+      runtimeSlot: "primary",
+    });
+
+    const view = render(
+      <AgentProjectWorkspaceShell summary={summary()} onNewChat={vi.fn()}>
+        <div>Prior conversation content</div>
+      </AgentProjectWorkspaceShell>,
+    );
+    await waitFor(() => {
+      expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
+        status: "loading",
+        runtimeScope: "second-account|https://app.matrix-os.com|primary",
+      });
+    });
+
+    expect(view.queryByText("Matrix OS")).toBeNull();
+    expect(view.queryByText("Prior conversation content")).toBeNull();
+    expect(view.getByText("Switching computer…")).toBeTruthy();
+
+    await act(async () => {
+      resolveWorkspace?.(workspace());
+      await pendingWorkspace;
+    });
+  });
+
   it("clears prior-scope thread details when the next account workspace fails", async () => {
     const projectWorkspace = workspace();
     let workspaceRequests = 0;

@@ -58,6 +58,9 @@ export function AgentProjectWorkspaceShell({
   const previousHydratedRuntimeScope = useRef<string | null>(hydratedRuntimeScope);
   const previousSelectedThreadId = useRef<string | null>(selectedThreadId);
   const attemptedExternalThreadId = useRef<string | null>(null);
+  const lastReadyRuntimeScope = useRef<string | null>(
+    status === "ready" ? hydratedRuntimeScope : null,
+  );
   const projectSignature = [
     ...summary.projects.items.map((project) => [
       project.id,
@@ -69,6 +72,10 @@ export function AgentProjectWorkspaceShell({
   ].join("|");
   const enabled = capabilityEnabled(summary, "codingAgentsProjectWorkspace");
   const scopeMatches = hydratedRuntimeScope === runtimeScope;
+  if (scopeMatches && status === "ready") {
+    lastReadyRuntimeScope.current = runtimeScope;
+  }
+  const scopeReady = scopeMatches && lastReadyRuntimeScope.current === runtimeScope;
 
   useEffect(() => {
     if (!enabled) return;
@@ -163,7 +170,7 @@ export function AgentProjectWorkspaceShell({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-      {scopeMatches ? (
+      {scopeReady ? (
         <AgentProjectNavigator
           summary={summary}
           workspace={workspace}
@@ -202,13 +209,15 @@ export function AgentProjectWorkspaceShell({
         </nav>
       )}
       <main className="flex min-h-0 min-w-[320px] flex-1 flex-col overflow-hidden">
-        {scopeMatches ? children : (
+        {scopeReady ? children : (
           <div
             role="status"
             className="flex min-h-0 flex-1 items-center justify-center px-6 text-sm"
             style={{ color: "var(--text-secondary)" }}
           >
-            Switching computer…
+            {scopeMatches && status === "error"
+              ? error ?? "Project workspace unavailable"
+              : "Switching computer…"}
           </div>
         )}
       </main>
