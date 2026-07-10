@@ -571,6 +571,49 @@ describe("mobile project-first coding-agent workspace", () => {
     expect(screen.queryByTestId("kanban-phone-board")).toBeNull();
   });
 
+  it("keeps the Kanban route seed when foreground hydration races the initial safe-reference save", async () => {
+    let appStateListener: ((state: string) => void) | undefined;
+    jest.spyOn(AppState, "addEventListener").mockImplementation((_, listener) => {
+      appStateListener = listener as (state: string) => void;
+      return { remove: jest.fn() } as never;
+    });
+    let resolveFirstSave: (() => void) | undefined;
+    jest.mocked(AsyncStorage.setItem)
+      .mockImplementationOnce(() => new Promise<void>((resolve) => {
+        resolveFirstSave = resolve;
+      }))
+      .mockResolvedValue(undefined);
+    const client = clientFixture();
+
+    render(
+      <AgentProjectWorkspaceScreen
+        client={client as never}
+        connectionState="connected"
+        requestedProjectId="matrix-os"
+        onOpenProject={jest.fn()}
+        onOpenThread={jest.fn()}
+        onNewConversation={jest.fn()}
+        onViewModeChange={jest.fn()}
+        routeViewMode="kanban"
+      />,
+    );
+
+    await waitFor(() => expect(AsyncStorage.setItem).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      appStateListener?.("active");
+    });
+    await waitFor(() => expect(client.getCodingAgentProjectWorkspace).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      resolveFirstSave?.();
+    });
+
+    expect(await screen.findByTestId("kanban-phone-board")).toBeTruthy();
+    const latestSelection = JSON.parse(
+      jest.mocked(AsyncStorage.setItem).mock.calls.at(-1)?.[1] ?? "{}",
+    );
+    expect(latestSelection.viewMode).toBe("kanban");
+  });
+
   it("uses the tablet Kanban board layout at tablet widths", async () => {
     jest.spyOn(ReactNative, "useWindowDimensions").mockReturnValue({
       width: 1024,
