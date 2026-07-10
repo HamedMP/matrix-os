@@ -1,6 +1,6 @@
 # 105 - Coding Agent Shells
 
-**Status**: Gate 0 confirmed; Phase 18 implementation active
+**Status**: Backend Phases 18-20 implemented; Phase 21 shell implementation next; real-process Gate 3 smoke pending
 **Created**: 2026-07-06
 **Lineage**: `spec/coding-agent-shells`, rebased onto the Expo SDK 57 mobile foundation and current `main`
 **Scope**: Desktop and mobile shell upgrade for multi-agent coding work on the user's Matrix computer.
@@ -14,6 +14,7 @@
 - [current-state.md](./current-state.md) - Current route, contract, client, shell, and test inventory.
 - [completion-audit.md](./completion-audit.md) - Evidence-based completion audit for the landed implementation checkpoint.
 - [acceptance-tests.md](./acceptance-tests.md) - Named contract, gateway, desktop, mobile, security, and cross-shell tests required for the clarified final experience.
+- [backend-shell-handoff.md](./backend-shell-handoff.md) - Stable gateway contracts, capabilities, lifecycle rules, and validation commands for desktop/mobile implementation.
 
 ## Intent
 

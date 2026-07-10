@@ -567,6 +567,8 @@ export async function createGateway(config: GatewayConfig) {
         taskManager: createTaskManager({ homePath }),
         principalOwnerIds: codingAgentOwnerIds,
       }),
+      projectionPublisher: (change) =>
+        workspaceEventPublisher.publishCodingAgentThreadProjection(change),
     })
     : undefined;
   const codingAgentProviderRegistry = createCodingAgentProviderRegistry({

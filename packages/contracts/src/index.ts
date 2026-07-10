@@ -262,6 +262,14 @@ export const CreateAgentThreadRequestSchema = z.object({
 
 export type CreateAgentThreadRequest = z.infer<typeof CreateAgentThreadRequestSchema>;
 
+export const AdoptAgentThreadRequestSchema = z.object({
+  projectId: ProjectIdSchema,
+  taskId: TaskIdSchema.optional(),
+  clientRequestId: RequestIdSchema,
+}).strict();
+
+export type AdoptAgentThreadRequest = z.infer<typeof AdoptAgentThreadRequestSchema>;
+
 export const CreateAgentTurnRequestSchema = z.object({
   message: boundedText(24_000, 96 * 1024),
   attachments: z.array(AgentAttachmentSchema).max(8).optional(),
@@ -345,6 +353,13 @@ export const AgentThreadSummarySchema = z.object({
 }).strict();
 
 export type AgentThreadSummary = z.infer<typeof AgentThreadSummarySchema>;
+
+export const AdoptAgentThreadResponseSchema = z.object({
+  thread: AgentThreadSummarySchema,
+  status: z.enum(["adopted", "already_adopted"]),
+}).strict();
+
+export type AdoptAgentThreadResponse = z.infer<typeof AdoptAgentThreadResponseSchema>;
 
 export const ApprovalDecisionSchema = z.enum(["approve", "approve_for_session", "decline", "cancel"]);
 export const ApprovalRiskSchema = z.enum(["low", "medium", "high"]);

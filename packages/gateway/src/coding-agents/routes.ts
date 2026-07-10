@@ -3,6 +3,8 @@ import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod/v4";
 import {
+  AdoptAgentThreadRequestSchema,
+  AdoptAgentThreadResponseSchema,
   ApprovalDecisionRequestSchema,
   ApprovalIdSchema,
   CreateAgentThreadRequestSchema,
@@ -88,6 +90,7 @@ export interface CodingAgentRouteDeps {
 }
 
 const THREAD_MUTATION_BODY_LIMIT = 128 * 1024;
+const THREAD_ADOPTION_BODY_LIMIT = 4 * 1024;
 const THREAD_TURN_BODY_LIMIT = 128 * 1024;
 const THREAD_ABORT_BODY_LIMIT = 1024;
 const THREAD_APPROVAL_BODY_LIMIT = 8 * 1024;
@@ -264,6 +267,9 @@ function validationFailed() {
 }
 
 function mapThreadRouteError(c: Context, err: unknown) {
+  if (isBodyLimitError(err)) {
+    return c.json({ error: bodyTooLarge() }, 413);
+  }
   if (isRequestPrincipalError(err)) {
     const mapped = mapRequestPrincipalError(err);
     return c.json(mapped.body, mapped.status as ContentfulStatusCode);
@@ -285,7 +291,7 @@ function mapThreadRouteError(c: Context, err: unknown) {
     logCodingAgentWarning("thread relation validation unavailable", err);
     return c.json({ error: threadsUnavailable() }, 503);
   }
-  if (err instanceof z.ZodError) {
+  if (err instanceof z.ZodError || err instanceof SyntaxError) {
     return c.json({ error: validationFailed() }, 400);
   }
   logCodingAgentWarning("thread route failed", err);
@@ -320,7 +326,14 @@ function turnError(code: "thread_busy" | "thread_not_found" | "turn_unavailable"
 export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
   const app = new Hono();
   const principalFor = (c: Context) => deps.getPrincipal?.(c) ?? requireRequestPrincipal(c);
-  const threadMutationBodyLimit = bodyLimit({ maxSize: THREAD_MUTATION_BODY_LIMIT });
+  const threadMutationBodyLimit = bodyLimit({
+    maxSize: THREAD_MUTATION_BODY_LIMIT,
+    onError: (c) => c.json({ error: bodyTooLarge() }, 413),
+  });
+  const threadAdoptionBodyLimit = bodyLimit({
+    maxSize: THREAD_ADOPTION_BODY_LIMIT,
+    onError: (c) => c.json({ error: bodyTooLarge() }, 413),
+  });
   const threadTurnBodyLimit = bodyLimit({ maxSize: THREAD_TURN_BODY_LIMIT });
   const threadAbortBodyLimit = bodyLimit({ maxSize: THREAD_ABORT_BODY_LIMIT });
   const threadApprovalBodyLimit = bodyLimit({ maxSize: THREAD_APPROVAL_BODY_LIMIT });
@@ -433,6 +446,21 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         const request = CreateAgentThreadRequestSchema.parse(await c.req.json());
         const result = await deps.threads!.createShellThread(principal, request);
         return c.json(result.snapshot, result.existing ? 200 : 202);
+      } catch (err: unknown) {
+        return mapThreadRouteError(c, err);
+      }
+    });
+
+    app.post("/threads/:threadId/adopt", threadAdoptionBodyLimit, async (c) => {
+      try {
+        const principal = principalFor(c);
+        const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
+        const request = AdoptAgentThreadRequestSchema.parse(await c.req.json());
+        const response = await deps.threads!.adoptLegacyThread(principal, threadId, request);
+        return c.json(
+          AdoptAgentThreadResponseSchema.parse(response),
+          response.status === "already_adopted" ? 200 : 202,
+        );
       } catch (err: unknown) {
         return mapThreadRouteError(c, err);
       }

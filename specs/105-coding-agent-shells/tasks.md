@@ -1,6 +1,6 @@
 # Tasks: Coding Agent Shells
 
-**Status**: Gate 0 confirmed; Phase 18 implementation active
+**Status**: Backend Phases 18-20 implemented; Phase 21 shell implementation next; real-process Gate 3 smoke pending
 **Lineage**: foundation merged through the recorded implementation checkpoint; clarified follow-up is specified against current `main`
 **Rule**: Preserve all existing desktop and mobile functionality. Add coding-agent capabilities incrementally behind contracts, tests, and feature flags.
 
@@ -1075,7 +1075,7 @@ Goal: make the clarified hierarchy explicit and independently testable before ru
 - [x] Add bounded `ProjectAgentWorkspaceSchema` with independent task/thread caps and truncation metadata.
 - [x] Add thread list filters for required `projectId` and optional `taskId`.
 - [x] Keep legacy unassigned thread read filters explicit and bounded.
-- [ ] Enforce no new shell-created unassigned threads in Phase 19 (`GW-009`) after real project hydration exists.
+- [x] Enforce no new shell-created unassigned threads in Phase 19 (`GW-009`) after real project hydration exists.
 
 Tests: `CT-001`, `CT-002`, `CT-003`, `CT-004`.
 
@@ -1122,14 +1122,14 @@ Tests: `GW-004`, `GW-005`, `GW-006`, `GW-007`, `GW-008`.
 
 - [x] Require valid project for new shell-created threads.
 - [x] Validate optional task exists in the same project before thread insert.
-- [ ] Add explicit idempotent thread reassignment only if required for legacy adoption.
-- [ ] Publish project/task/thread projection updates after successful persistence.
+- [x] Add explicit idempotent thread reassignment only if required for legacy adoption.
+- [x] Publish project/task/thread projection updates after successful persistence.
 
 Tests: `GW-009`, `GW-010`, `GW-011`.
 
 Gate:
 
-- [ ] Gate 2 rerun proves real project hydration, caps, auth, validation, and safe errors.
+- [x] Gate 2 rerun proves real project hydration, caps, auth, validation, and safe errors.
 
 ## Phase 20 - Same-Thread Provider Turns
 

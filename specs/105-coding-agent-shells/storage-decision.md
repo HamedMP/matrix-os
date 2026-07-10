@@ -44,6 +44,8 @@ Thread creation is idempotent by `ownerId + clientRequestId`. A repeated create 
 
 Abort is idempotent by thread plus abort `clientRequestId`; repeated abort requests return the existing aborted snapshot and do not append duplicate events.
 
+Legacy adoption is state-idempotent: only a thread with no project or task relation can be assigned, an exact relation retry returns `already_adopted`, and any attempt to move an assigned thread fails relation validation. Public thread projection changes are derived from the persisted next state and published through bounded workspace activity events only after the owner-file write succeeds.
+
 ## Bounds And Eviction
 
 The first store caps persisted state to:

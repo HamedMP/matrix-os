@@ -72,6 +72,25 @@ describe("coding agent turn dispatch", () => {
     }
   });
 
+  it("publishes each persisted turn projection change and suppresses idempotent retry noise", async () => {
+    const projectionPublisher = vi.fn(async () => undefined);
+    const harness = await createTurnHarness({ projectionPublisher });
+    try {
+      projectionPublisher.mockClear();
+      const path = `/api/coding-agents/threads/${harness.threadId}/turns`;
+      expect((await harness.app.request(postTurn(path, turnBody))).status).toBe(202);
+      await vi.waitFor(() => expect(projectionPublisher).toHaveBeenCalledTimes(3));
+      expect(projectionPublisher.mock.calls.every(([change]) =>
+        change.type === "updated" && change.thread.id === harness.threadId
+      )).toBe(true);
+
+      expect((await harness.app.request(postTurn(path, turnBody))).status).toBe(200);
+      expect(projectionPublisher).toHaveBeenCalledTimes(3);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it("GW-016 E2E-001 resumes two sequential turns with one provider conversation", async () => {
     const resumeTurn = vi.fn(async (input: {
       thread: { id: string };
