@@ -6,8 +6,10 @@ import {
   AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
   AgentThreadSummarySchema,
+  SafeSetupActionSchema,
   type AgentThreadEvent,
 } from "../../packages/contracts/src/index.js";
+import { createCodingAgentProviderRegistry } from "../../packages/gateway/src/coding-agents/provider-registry.js";
 import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import {
   createWorkspaceCodingAgentProvider,
@@ -49,6 +51,94 @@ function workspaceSession(overrides: Record<string, unknown> = {}) {
 }
 
 describe("coding agent workspace provider", () => {
+  it.each([
+    ["claude", "@anthropic-ai/claude-code@latest", "claude"],
+    ["codex", "@openai/codex@latest", "codex login"],
+  ] as const)("returns bounded foreground install and connect actions for %s", async (
+    agent,
+    installPackage,
+    connectCommand,
+  ) => {
+    const provider = createWorkspaceCodingAgentProvider({
+      providerId: agent,
+      agent,
+      runtime: {
+        startSession: vi.fn(),
+        stopSession: vi.fn(),
+      },
+    });
+
+    const actions = await provider.buildSetupAction?.({
+      principal: ownerPrincipal,
+      now: () => baseNow,
+      signal: AbortSignal.timeout(1_000),
+    });
+
+    expect(actions).toHaveLength(2);
+    expect(actions?.map((action) => SafeSetupActionSchema.parse(action))).toEqual([
+      expect.objectContaining({
+        id: `${agent}_install`,
+        kind: "foreground_terminal",
+        label: `Install ${agent === "claude" ? "Claude" : "Codex"}`,
+        command: expect.stringContaining(installPackage),
+      }),
+      {
+        id: `${agent}_connect`,
+        kind: "foreground_terminal",
+        label: `Connect ${agent === "claude" ? "Claude" : "Codex"}`,
+        command: connectCommand,
+      },
+    ]);
+    expect(actions?.[0]).toMatchObject({
+      command: expect.stringContaining('MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"'),
+    });
+    expect(JSON.stringify(actions)).not.toMatch(/api[_ -]?key|bearer|token|secret|password/i);
+  });
+
+  it("projects setup actions through the registry for a missing configured provider", async () => {
+    const provider = createWorkspaceCodingAgentProvider({
+      providerId: "claude",
+      agent: "claude",
+      runtime: {
+        startSession: vi.fn(),
+        stopSession: vi.fn(),
+      },
+    });
+    const registry = createCodingAgentProviderRegistry({
+      providers: [provider],
+      agentCredentials: {
+        getStatus: vi.fn(async () => ({
+          systemAgent: "hermes" as const,
+          activeAgents: ["hermes"] as const,
+          routingExplanation: "Provider state is runtime-owned.",
+          agents: [{
+            agent: "claude" as const,
+            status: "missing" as const,
+            coordinationRole: "core_agent" as const,
+            workflows: ["core_agent" as const],
+            degradedWorkflows: ["core_agent" as const],
+            verifiedAt: null,
+            nextAction: "Connect the configured provider",
+          }],
+        })),
+      },
+      now: () => baseNow,
+    });
+
+    const [summary] = await registry.listProviders(ownerPrincipal);
+
+    expect(summary).toMatchObject({
+      id: "claude",
+      availability: "setup_required",
+      installStatus: "missing",
+      authStatus: "missing",
+      setupActions: [
+        expect.objectContaining({ id: "claude_install", kind: "foreground_terminal" }),
+        expect.objectContaining({ id: "claude_connect", kind: "foreground_terminal" }),
+      ],
+    });
+  });
+
   it("keeps Claude registry-visible but excludes it from executable providers until sandboxed", async () => {
     const runtime = {
       startSession: vi.fn(),

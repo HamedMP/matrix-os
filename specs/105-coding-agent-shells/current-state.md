@@ -163,6 +163,7 @@ Workspace provider behavior:
 - Starts deterministic workspace agent sessions through `WorkspaceSessionOrchestrator`.
 - Builds one normalized registry adapter per validated configured Claude/Codex agent while sharing the same gateway-owned workspace runtime.
 - Adds only Codex to the executable provider set. Claude's registry adapter reports unavailable and rejects direct execution until [#893](https://github.com/HamedMP/matrix-os/issues/893) provides equivalent sandbox and approval enforcement.
+- Emits fixed, schema-bounded foreground install and connect actions for Claude/Codex. Install actions use the canonical runtime node prefix and keep the terminal visible; no credential, owner path, or client-supplied command enters the action.
 - Passes through prompt, project, task, worktree, mode, approval policy, sandbox mode, and zellij runtime preference.
 - Passes bounded `structured_ref` attachments into the runtime launch prompt as safe reference metadata so review follow-up runs can inspect the selected file/hunk without client-side diff contents.
 - Binds coding-agent threads to canonical `terminalSessionId` from the workspace session.

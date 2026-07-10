@@ -67,6 +67,8 @@ The gateway provider registry owns shell-facing provider projections. It validat
 
 Workspace provider projections are configured with the bounded, comma-separated `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` setting. The supported rollout values are `claude` and `codex`; duplicates, unknown values, empty entries, and more than two entries fail startup with a generic configuration error. Codex enters both the registry and executable provider sets. Claude remains registry-visible but unavailable for thread creation until its launcher enforces the requested sandbox and approval policy; [#893](https://github.com/HamedMP/matrix-os/issues/893) tracks that rollout boundary. Registry-only adapters also reject direct execution so later wiring changes fail closed. The legacy `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1` setting remains a Codex-only compatibility path when the explicit list is unset. An explicitly empty list disables workspace providers even if the legacy flag is set.
 
+Claude and Codex workspace adapters expose only fixed server-owned foreground setup actions. Install actions use `MATRIX_NODE_PREFIX`, defaulting to the canonical `/opt/matrix/runtime/node` prefix, run the existing npm package install in a visible terminal, and leave an interactive shell open. Connect actions launch the provider's interactive local login flow. Commands are bounded by `SafeSetupActionSchema`; clients must not render command text, persist it, or accept client-supplied replacements.
+
 When adding a provider:
 
 1. Add a provider summary state through the provider registry.
