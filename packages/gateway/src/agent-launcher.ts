@@ -147,11 +147,20 @@ function claudePermissionMode(input: AgentLaunchInput): z.infer<typeof ClaudePer
   if (input.approvalPolicy === "on-failure") {
     throw new Error("Claude approval policy is unavailable");
   }
-  if (input.approvalPolicy !== "never") return "default";
-  if (input.sandbox?.mode === "danger-full-access" || input.sandbox?.enabled === false) {
+  if (
+    input.approvalPolicy === "never" &&
+    (input.sandbox?.mode === "danger-full-access" || input.sandbox?.enabled === false)
+  ) {
     return "bypassPermissions";
   }
-  return "dontAsk";
+  if (
+    input.sandbox?.enabled === true &&
+    input.sandbox.mode !== "danger-full-access" &&
+    (input.approvalPolicy === "on-request" || input.approvalPolicy === "never")
+  ) {
+    return "dontAsk";
+  }
+  return "default";
 }
 
 function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLaunchSettingsSchema> {
@@ -167,7 +176,10 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
   const mode = readOnlyMode
     ? "read-only"
     : sandbox.mode ?? "workspace-write";
-  const noPrompt = input.approvalPolicy === "never" && input.mode !== "plan" && input.mode !== "review";
+  const scopedEdits =
+    (input.approvalPolicy === "on-request" || input.approvalPolicy === "never") &&
+    input.mode !== "plan" &&
+    input.mode !== "review";
   if (mode === "read-only") {
     return ClaudeLaunchSettingsSchema.parse({
       permissions: { deny: ["Edit", "Write", "NotebookEdit"] },
@@ -182,10 +194,9 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
   }
 
   return ClaudeLaunchSettingsSchema.parse({
-    permissions: noPrompt
+    permissions: scopedEdits
       ? {
           allow: (sandbox.writableRoots ?? []).map(claudeEditPermissionRule),
-          deny: ["Write", "NotebookEdit"],
         }
       : { deny: ["Edit", "Write", "NotebookEdit"] },
     sandbox: {

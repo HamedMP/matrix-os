@@ -260,7 +260,7 @@ describe("agent-launcher", () => {
       "--settings",
       expect.any(String),
       "--permission-mode",
-      "default",
+      "dontAsk",
       "--strict-mcp-config",
       "--no-chrome",
       "--print",
@@ -268,7 +268,12 @@ describe("agent-launcher", () => {
       "fix the tests",
     ]);
     expect(claudeSettings(launch.args)).toEqual({
-      permissions: { deny: ["Edit", "Write", "NotebookEdit"] },
+      permissions: {
+        allow: [
+          "Edit(//home/matrix/home/projects/repo/worktrees/wt_abc123def456/**)",
+          "Edit(//home/matrix/home/system/agent-scratch/sess_abc123/**)",
+        ],
+      },
       sandbox: {
         enabled: true,
         failIfUnavailable: true,
@@ -325,7 +330,6 @@ describe("agent-launcher", () => {
           "Edit(//home/matrix/home/projects/repo/worktrees/wt_abc123def456/**)",
           "Edit(//home/matrix/home/system/agent-scratch/sess_abc123/**)",
         ],
-        deny: ["Write", "NotebookEdit"],
       },
       sandbox: { enabled: true, allowUnsandboxedCommands: false },
     });
