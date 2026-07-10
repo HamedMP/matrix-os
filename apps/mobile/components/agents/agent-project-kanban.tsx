@@ -49,11 +49,13 @@ export function AgentProjectViewModeControl({
 export function AgentProjectKanban({
   workspace,
   tablet,
+  canCreateConversations,
   onOpenThread,
   onNewConversation,
 }: {
   workspace: ProjectAgentWorkspace;
   tablet: boolean;
+  canCreateConversations: boolean;
   onOpenThread: (thread: AgentThreadSummary) => void;
   onNewConversation: (taskId: string) => void;
 }) {
@@ -85,7 +87,7 @@ export function AgentProjectKanban({
                 key={task.id}
                 task={task}
                 threads={taskThreads(workspace, task.id)}
-                onNewConversation={() => onNewConversation(task.id)}
+                onNewConversation={canCreateConversations ? () => onNewConversation(task.id) : null}
                 onOpenThread={onOpenThread}
               />
             ))}
@@ -136,7 +138,7 @@ function KanbanTaskCard({
   task: TaskAgentSummary;
   threads: AgentThreadSummary[];
   onOpenThread: (thread: AgentThreadSummary) => void;
-  onNewConversation: () => void;
+  onNewConversation: (() => void) | null;
 }) {
   const { theme } = useUnistyles();
   return (
@@ -150,14 +152,16 @@ function KanbanTaskCard({
           <Text selectable style={styles.taskTitle}>{task.title}</Text>
           <Text selectable style={styles.taskMeta}>{task.priority} priority</Text>
         </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`New Kanban conversation for ${task.title}`}
-          onPress={onNewConversation}
-          style={styles.addButton}
-        >
-          <Ionicons name="add" size={16} color={theme.colors.forest} />
-        </Pressable>
+        {onNewConversation ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`New Kanban conversation for ${task.title}`}
+            onPress={onNewConversation}
+            style={styles.addButton}
+          >
+            <Ionicons name="add" size={16} color={theme.colors.forest} />
+          </Pressable>
+        ) : null}
       </View>
       <View style={styles.aggregateRow}>
         <Aggregate label="chats" value={task.threadCount} />

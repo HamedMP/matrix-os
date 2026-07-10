@@ -8,10 +8,12 @@ import { agentProjectWorkspaceStyles as styles } from "./agent-project-workspace
 
 export function AgentProjectConversation({
   workspace,
+  canCreateConversations,
   onOpenThread,
   onNewConversation,
 }: {
   workspace: ProjectAgentWorkspace;
+  canCreateConversations: boolean;
   onOpenThread: (thread: AgentThreadSummary) => void;
   onNewConversation: (taskId: string) => void;
 }) {
@@ -48,14 +50,16 @@ export function AgentProjectConversation({
                     {countLabel(task.threadCount, "conversation")} · {task.status.replace(/_/g, " ")}
                   </Text>
                 </View>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`New conversation for ${task.title}`}
-                  onPress={() => onNewConversation(task.id)}
-                  style={styles.secondaryButton}
-                >
-                  <Ionicons name="add" size={16} color={theme.colors.forest} />
-                </Pressable>
+                {canCreateConversations ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`New conversation for ${task.title}`}
+                    onPress={() => onNewConversation(task.id)}
+                    style={styles.secondaryButton}
+                  >
+                    <Ionicons name="add" size={16} color={theme.colors.forest} />
+                  </Pressable>
+                ) : null}
               </View>
               {threads.length === 0 ? (
                 <Text selectable style={styles.emptyText}>No conversations for this task.</Text>

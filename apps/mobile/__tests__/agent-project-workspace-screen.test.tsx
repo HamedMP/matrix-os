@@ -197,10 +197,17 @@ describe("mobile project-first coding-agent workspace", () => {
     );
   });
 
-  it("opens a valid routed project beyond the summary page", async () => {
+  it("opens a valid routed project that is beyond the bounded summary page", async () => {
     const requestedWorkspace: ProjectAgentWorkspace = {
       ...workspace,
-      project: { ...workspace.project, id: "older-project", label: "Older Project" },
+      project: {
+        id: "older-project",
+        label: "Older Project",
+        status: "available",
+        taskCount: 0,
+        threadCount: 0,
+        attentionCount: 0,
+      },
       tasks: { items: [], hasMore: false, limit: 100 },
       projectThreads: { items: [], hasMore: false, limit: 100 },
       taskThreads: { items: [], hasMore: false, limit: 100 },
@@ -208,19 +215,56 @@ describe("mobile project-first coding-agent workspace", () => {
     const client = clientFixture();
     client.getCodingAgentRuntimeSummary.mockResolvedValue({
       ok: true,
-      summary: { ...summary, projects: { ...summary.projects, hasMore: true, nextCursor: "website" } },
+      summary: {
+        ...summary,
+        projects: { ...summary.projects, hasMore: true, nextCursor: "website" },
+      },
     });
     client.getCodingAgentProjectWorkspace.mockResolvedValue({ ok: true, workspace: requestedWorkspace });
     const onOpenProject = jest.fn();
 
-    render(<AgentProjectWorkspaceScreen client={client as never} connectionState="connected" requestedProjectId="older-project" onOpenProject={onOpenProject} onOpenThread={jest.fn()} onNewConversation={jest.fn()} />);
+    render(
+      <AgentProjectWorkspaceScreen
+        client={client as never}
+        connectionState="connected"
+        requestedProjectId="older-project"
+        onOpenProject={onOpenProject}
+        onOpenThread={jest.fn()}
+        onNewConversation={jest.fn()}
+      />,
+    );
 
     expect(await screen.findByRole("button", { name: "Open project Older Project" })).toBeTruthy();
     expect(client.getCodingAgentProjectWorkspace).toHaveBeenCalledWith({ projectId: "older-project" });
     expect(onOpenProject).not.toHaveBeenCalled();
   });
 
-  it("loads and merges bounded project workspace cursors", async () => {
+  it("falls back to a live summary project only when the routed project endpoint rejects it", async () => {
+    const client = clientFixture();
+    client.getCodingAgentProjectWorkspace
+      .mockResolvedValueOnce({ ok: false, error: "Project workspace unavailable" })
+      .mockResolvedValueOnce({ ok: true, workspace });
+    const onOpenProject = jest.fn();
+
+    render(
+      <AgentProjectWorkspaceScreen
+        client={client as never}
+        connectionState="connected"
+        requestedProjectId="stale-project"
+        onOpenProject={onOpenProject}
+        onOpenThread={jest.fn()}
+        onNewConversation={jest.fn()}
+      />,
+    );
+
+    expect(await screen.findByText("Project audit")).toBeTruthy();
+    expect(screen.getByText("The previous project was unavailable. Showing a live project instead.")).toBeTruthy();
+    expect(client.getCodingAgentProjectWorkspace).toHaveBeenNthCalledWith(1, { projectId: "stale-project" });
+    expect(client.getCodingAgentProjectWorkspace).toHaveBeenNthCalledWith(2, { projectId: "matrix-os" });
+    expect(onOpenProject).toHaveBeenCalledWith("matrix-os");
+  });
+
+  it("loads and merges every bounded workspace list from gateway cursors", async () => {
     const firstPage: ProjectAgentWorkspace = {
       ...workspace,
       tasks: { ...workspace.tasks, hasMore: true, nextCursor: "task_auth" },
@@ -229,16 +273,55 @@ describe("mobile project-first coding-agent workspace", () => {
     };
     const secondPage: ProjectAgentWorkspace = {
       ...workspace,
-      tasks: { items: [{ ...workspace.tasks.items[0], id: "task_release", title: "Ship release" }], hasMore: false, limit: 100 },
-      projectThreads: { items: [{ ...workspace.projectThreads.items[0], id: "thread_docs", title: "Write release notes" }], hasMore: false, limit: 100 },
-      taskThreads: { items: [{ ...workspace.taskThreads.items[0], id: "thread_ship", taskId: "task_release", title: "Publish candidate" }], hasMore: false, limit: 100 },
+      tasks: {
+        items: [{
+          ...workspace.tasks.items[0],
+          id: "task_release",
+          title: "Ship release",
+          order: 1,
+          threadCount: 1,
+          activeThreadCount: 0,
+          attentionCount: 0,
+        }],
+        hasMore: false,
+        limit: 100,
+      },
+      projectThreads: {
+        items: [{
+          ...workspace.projectThreads.items[0],
+          id: "thread_docs",
+          title: "Write release notes",
+        }],
+        hasMore: false,
+        limit: 100,
+      },
+      taskThreads: {
+        items: [{
+          ...workspace.taskThreads.items[0],
+          id: "thread_ship",
+          taskId: "task_release",
+          title: "Publish candidate",
+        }],
+        hasMore: false,
+        limit: 100,
+      },
     };
     const client = clientFixture();
     client.getCodingAgentProjectWorkspace
       .mockResolvedValueOnce({ ok: true, workspace: firstPage })
       .mockResolvedValueOnce({ ok: true, workspace: secondPage });
 
-    render(<AgentProjectWorkspaceScreen client={client as never} connectionState="connected" requestedProjectId="matrix-os" onOpenProject={jest.fn()} onOpenThread={jest.fn()} onNewConversation={jest.fn()} />);
+    render(
+      <AgentProjectWorkspaceScreen
+        client={client as never}
+        connectionState="connected"
+        requestedProjectId="matrix-os"
+        onOpenProject={jest.fn()}
+        onOpenThread={jest.fn()}
+        onNewConversation={jest.fn()}
+      />,
+    );
+
     fireEvent.press(await screen.findByRole("button", { name: "Load more project workspace" }));
 
     expect(await screen.findByText("Ship release")).toBeTruthy();
@@ -253,19 +336,37 @@ describe("mobile project-first coding-agent workspace", () => {
       taskThreadCursor: "thread_fix",
       taskThreadLimit: 100,
     });
+    expect(screen.queryByRole("button", { name: "Load more project workspace" })).toBeNull();
   });
 
-  it("hides creation affordances when thread creation is disabled", async () => {
+  it("hides all chat creation affordances when the runtime disables thread creation", async () => {
     const client = clientFixture();
     client.getCodingAgentRuntimeSummary.mockResolvedValue({
       ok: true,
-      summary: { ...summary, capabilities: summary.capabilities.filter(({ id }) => id !== "codingAgentsThreadCreate") },
+      summary: {
+        ...summary,
+        capabilities: summary.capabilities.filter(({ id }) => id !== "codingAgentsThreadCreate"),
+      },
     });
-    render(<AgentProjectWorkspaceScreen client={client as never} connectionState="connected" requestedProjectId="matrix-os" onOpenProject={jest.fn()} onOpenThread={jest.fn()} onNewConversation={jest.fn()} />);
+
+    render(
+      <AgentProjectWorkspaceScreen
+        client={client as never}
+        connectionState="connected"
+        requestedProjectId="matrix-os"
+        onOpenProject={jest.fn()}
+        onOpenThread={jest.fn()}
+        onNewConversation={jest.fn()}
+      />,
+    );
 
     await screen.findByText("Project audit");
     expect(screen.queryByRole("button", { name: "New project conversation" })).toBeNull();
     expect(screen.queryByRole("button", { name: "New conversation for Repair authentication" })).toBeNull();
+
+    fireEvent.press(screen.getByRole("button", { name: "Show Kanban" }));
+    expect(await screen.findByTestId("kanban-phone-board")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "New Kanban conversation for Repair authentication" })).toBeNull();
   });
 
   it("restores safe selection, drops stale child references, and refreshes on foreground", async () => {

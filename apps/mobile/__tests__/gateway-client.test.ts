@@ -778,6 +778,44 @@ describe("GatewayClient", () => {
     fetchMock.mockRestore();
   });
 
+  it("fetches bounded project workspace pages with validated independent cursors", async () => {
+    const pagedWorkspace = {
+      project: {
+        id: "matrix-os",
+        label: "Matrix OS",
+        status: "available",
+        taskCount: 0,
+        threadCount: 0,
+        attentionCount: 0,
+      },
+      tasks: { items: [], hasMore: false, limit: 25 },
+      projectThreads: { items: [], hasMore: false, limit: 30 },
+      taskThreads: { items: [], hasMore: false, limit: 35 },
+      updatedAt: "2026-07-10T13:30:00.000Z",
+    };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(pagedWorkspace));
+    const client = new GatewayClient("http://localhost:4000", "token");
+
+    await expect(client.getCodingAgentProjectWorkspace({
+      projectId: "matrix-os",
+      taskCursor: "task_auth",
+      taskLimit: 25,
+      projectThreadCursor: "thread_audit",
+      projectThreadLimit: 30,
+      taskThreadCursor: "thread_fix",
+      taskThreadLimit: 35,
+    })).resolves.toEqual({ ok: true, workspace: pagedWorkspace });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/projects/matrix-os/workspace?taskCursor=task_auth&taskLimit=25&projectThreadCursor=thread_audit&projectThreadLimit=30&taskThreadCursor=thread_fix&taskThreadLimit=35",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer token" }),
+        signal: expect.any(Object),
+      }),
+    );
+
+    fetchMock.mockRestore();
+  });
+
   it("sends a validated turn to the selected coding agent thread", async () => {
     const request: CreateAgentTurnRequest = {
       message: "Continue with the mobile route tests.",

@@ -19,3 +19,17 @@ export function runtimeCapabilityEnabled(
 ): boolean {
   return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
 }
+
+export function includeWorkspaceProject(
+  summary: RuntimeSummary,
+  workspace: Pick<ProjectAgentWorkspace, "project">,
+): RuntimeSummary {
+  const items = [
+    ...summary.projects.items.filter((project) => project.id !== workspace.project.id),
+    workspace.project,
+  ].slice(-summary.projects.limit);
+  return {
+    ...summary,
+    projects: { ...summary.projects, items },
+  };
+}
