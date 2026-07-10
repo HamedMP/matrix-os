@@ -132,6 +132,7 @@ Safe degradation:
 Focused tests:
 
 - `tests/gateway/coding-agents-summary.test.ts`
+- `tests/gateway/coding-agents-provider-registry.test.ts`
 
 ## Providers And Thread Store
 
@@ -146,6 +147,15 @@ Implemented providers:
 
 - Fake provider for deterministic gateway tests behind `MATRIX_CODING_AGENTS_FAKE_PROVIDER=1`.
 - Workspace-backed provider behind `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1`.
+
+Provider registry behavior:
+
+- Validates a bounded configured adapter list and rejects unsafe or duplicate provider IDs at startup.
+- Validates and bounds existing owner-scoped onboarding credential responses, normalizes them into coarse install and auth states, and keeps credential-known non-system providers in the runtime projection before an execution adapter is registered while marking those credential-only projections unavailable for runs.
+- Fails configured providers closed to unavailable/unknown state when the credential source cannot be read, without running setup-action or health reads.
+- Validates provider summaries and setup actions with shared Zod 4 schemas; malformed adapter output becomes a generic unavailable provider projection.
+- Passes an `AbortSignal.timeout()` signal to summary, setup-action, and health calls.
+- Caches only coarse health results in a capped owner/provider TTL cache with LRU eviction and explicit invalidation; provider credentials and raw health output are never cached or returned.
 
 Workspace provider behavior:
 
@@ -415,7 +425,7 @@ Current behavior:
 Focused gateway/contracts:
 
 ```bash
-pnpm exec vitest run tests/gateway/coding-agents-workspace-provider.test.ts tests/gateway/coding-agents-threads.test.ts tests/gateway/coding-agents-thread-stream.test.ts tests/gateway/coding-agents-summary.test.ts tests/gateway/coding-agents-file-read.test.ts tests/contracts/coding-agents.test.ts tests/gateway/agent-launcher.test.ts tests/gateway/agent-session-manager.test.ts tests/gateway/workspace-session-orchestrator.test.ts tests/observability/process-error-entrypoints.test.ts
+pnpm exec vitest run tests/gateway/coding-agents-provider-registry.test.ts tests/gateway/coding-agents-workspace-provider.test.ts tests/gateway/coding-agents-threads.test.ts tests/gateway/coding-agents-thread-stream.test.ts tests/gateway/coding-agents-summary.test.ts tests/gateway/coding-agents-file-read.test.ts tests/contracts/coding-agents.test.ts tests/gateway/agent-launcher.test.ts tests/gateway/agent-session-manager.test.ts tests/gateway/workspace-session-orchestrator.test.ts tests/observability/process-error-entrypoints.test.ts
 ```
 
 Gateway diagnostics:

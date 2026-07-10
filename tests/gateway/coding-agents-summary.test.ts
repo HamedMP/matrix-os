@@ -168,6 +168,33 @@ describe("coding agent runtime summary", () => {
     expect(summary.providers.map((provider) => provider.id)).toEqual(["codex"]);
   });
 
+  it("hydrates provider summaries through the owner-scoped provider registry", async () => {
+    const listProviders = vi.fn(async () => [{
+      id: "codex",
+      displayName: "Codex",
+      kind: "codex" as const,
+      availability: "available" as const,
+      installStatus: "installed" as const,
+      authStatus: "authenticated" as const,
+      supportedModes: ["default" as const],
+      defaultMode: "default" as const,
+      setupActions: [],
+      lastCheckedAt: now.toISOString(),
+    }]);
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      providerRegistry: { listProviders },
+      now: () => now,
+    });
+
+    const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
+
+    expect(listProviders).toHaveBeenCalledWith(testPrincipal);
+    expect(summary.providers).toEqual([
+      expect.objectContaining({ id: "codex", availability: "available" }),
+    ]);
+  });
+
   it("withholds owner-local terminal sessions from other principals", async () => {
     const service = createCodingAgentRuntimeSummaryService({
       homePath: "/home/matrix/home",
