@@ -13,7 +13,7 @@ For the evidence-based checkpoint audit, see [completion-audit.md](./completion-
 The landed checkpoint is not the confirmed final information architecture. Current evidence shows these explicit gaps:
 
 - `RuntimeSummarySchema` now hydrates stable bounded canonical owner project summaries with task/active-thread/attention counts and safe timeout degradation. The authenticated project workspace route returns independently paginated canonical tasks, project-level chats, task-bound chats, and bounded task aggregates.
-- Coding threads carry optional `projectId`/`taskId`; the read model now quarantines stale cross-project task relations, but new thread mutations do not yet require an owned project or enforce that an optional task belongs to that project.
+- Coding threads carry optional `projectId`/`taskId`; the read model quarantines stale cross-project task relations, and the shell-create path now requires an owned canonical project plus a same-project canonical task when provided. Legacy unassigned records remain read-compatible, while explicit reassignment and project-level mutation broadcasts remain open.
 - Existing task UI has one `linkedSessionId`; it cannot be used as the source of truth for coding conversations because one task must support several independent threads.
 - The current desktop `AgentWorkspace` is a sectioned dashboard. It does not provide the required persistent project/task/thread navigator or a segmented Conversation/Kanban mode over one selected project.
 - The current mobile Agents routes provide recent work and thread detail, but not project-first task/thread navigation or a Kanban mode.
@@ -70,7 +70,7 @@ Implemented routes:
 | --- | --- | --- | --- |
 | `/api/coding-agents/summary` | `GET` | Implemented | Authenticated runtime summary. Returns `RuntimeSummarySchema`. |
 | `/api/coding-agents/projects/:projectId/workspace` | `GET` | Implemented | Authenticated owner-scoped project read model. Validates independent task/project-chat/task-chat cursors and limits, joins canonical tasks to bounded thread aggregates, and quarantines stale cross-project task relations. Returns `ProjectAgentWorkspaceSchema`. |
-| `/api/coding-agents/threads` | `POST` | Implemented | Validates `CreateAgentThreadRequestSchema`, body limit 96 KiB, idempotent by `clientRequestId`. |
+| `/api/coding-agents/threads` | `POST` | Implemented | Validates `CreateAgentThreadRequestSchema`, body limit 128 KiB, requires an owned canonical project and same-project task when provided, and is idempotent by `clientRequestId` before relation validation or provider launch. |
 | `/api/coding-agents/threads` | `GET` | Implemented | Authenticated bounded thread list. |
 | `/api/coding-agents/threads/:threadId` | `GET` | Implemented | Authenticated snapshot replay for one thread. No-cursor snapshots return the latest bounded event window. |
 | `/api/coding-agents/threads/:threadId/events` | `GET` | Implemented | Authenticated snapshot replay with optional cursor. |

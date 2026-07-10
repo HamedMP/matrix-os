@@ -29,6 +29,10 @@ import {
   type CodingAgentProjectWorkspaceQuery,
   type CodingAgentTaskThreadAggregate,
 } from "./project-workspace.js";
+import {
+  CodingAgentThreadRelationError,
+  type CodingAgentThreadRelationValidator,
+} from "./thread-relations.js";
 
 const THREAD_STORE_RELATIVE_PATH = ["system", "coding-agents", "threads.json"] as const;
 const THREAD_LIST_LIMIT = 50;
@@ -139,10 +143,12 @@ export interface CodingAgentThreadStoreOptions {
   homePath: string;
   now?: () => Date;
   providers: CodingAgentProviderAdapter[];
+  relationValidator?: CodingAgentThreadRelationValidator;
 }
 
 export interface CodingAgentThreadStore {
   createThread(principal: RequestPrincipal, request: CreateAgentThreadRequest): Promise<ThreadCreateResult>;
+  createShellThread(principal: RequestPrincipal, request: CreateAgentThreadRequest): Promise<ThreadCreateResult>;
   listThreads(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
   listAttentionThreads(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
   listProjectCounts(principal: RequestPrincipal): Promise<Array<{
@@ -683,89 +689,105 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
     }
   }
 
-  return {
-    async createThread(principal, request) {
-      const provider = providerFor(request.providerId);
-      const result = await mutate(async (state) => {
-        const existing = state.threads.find((thread) =>
-          thread.ownerId === principal.userId && thread.clientRequestId === request.clientRequestId
-        );
-        if (existing) {
-          const result: ThreadCreateMutationResult = {
-            snapshot: snapshotFor(existing, state.events),
-            existing: true,
-            eventsToPublish: [],
-          };
-          return { state, result };
-        }
-
-        const createdAt = now().toISOString();
-        let thread: StoredThread = {
-          id: nextThreadId(),
-          ownerId: principal.userId,
-          clientRequestId: request.clientRequestId,
-          abortClientRequestIds: [],
-          approvalDecisionClientRequestIds: [],
-          inputAnswerClientRequestIds: [],
-          providerId: request.providerId,
-          title: genericTitle(),
-          status: "queued",
-          attention: "none",
-          projectId: request.projectId,
-          taskId: request.taskId,
-          terminalSessionId: request.terminalSessionId,
-          createdAt,
-          updatedAt: createdAt,
+  async function createThreadInternal(
+    principal: RequestPrincipal,
+    request: CreateAgentThreadRequest,
+    relationValidator?: CodingAgentThreadRelationValidator,
+  ): Promise<ThreadCreateResult> {
+    const result = await mutate(async (state) => {
+      const existing = state.threads.find((thread) =>
+        thread.ownerId === principal.userId && thread.clientRequestId === request.clientRequestId
+      );
+      if (existing) {
+        const result: ThreadCreateMutationResult = {
+          snapshot: snapshotFor(existing, state.events),
+          existing: true,
+          eventsToPublish: [],
         };
-        const createdEvent = AgentThreadEventSchema.parse({
-          type: "thread.created",
-          eventId: nextEventId(),
-          threadId: thread.id,
-          occurredAt: createdAt,
+        return { state, result };
+      }
+
+      if (relationValidator) await relationValidator.validateCreate(principal, request);
+      const provider = providerFor(request.providerId);
+
+      const createdAt = now().toISOString();
+      let thread: StoredThread = {
+        id: nextThreadId(),
+        ownerId: principal.userId,
+        clientRequestId: request.clientRequestId,
+        abortClientRequestIds: [],
+        approvalDecisionClientRequestIds: [],
+        inputAnswerClientRequestIds: [],
+        providerId: request.providerId,
+        title: genericTitle(),
+        status: "queued",
+        attention: "none",
+        projectId: request.projectId,
+        taskId: request.taskId,
+        terminalSessionId: request.terminalSessionId,
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const createdEvent = AgentThreadEventSchema.parse({
+        type: "thread.created",
+        eventId: nextEventId(),
+        threadId: thread.id,
+        occurredAt: createdAt,
+        thread: stripOwner(thread),
+      });
+      let providerEvents: AgentThreadEvent[];
+      try {
+        providerEvents = parseProviderEvents(await provider.startThread({
+          principal,
           thread: stripOwner(thread),
-        });
-        let providerEvents: AgentThreadEvent[];
-        try {
-          providerEvents = parseProviderEvents(await provider.startThread({
-            principal,
-            thread: stripOwner(thread),
-            request,
-            now,
-            nextEventId,
-          }), thread.id);
-        } catch (err: unknown) {
-          logCodingAgentWarning("provider start failed", err);
-          providerEvents = safeProviderRunFailureEvents(thread.id, now, nextEventId);
-        }
-        const events = [createdEvent, ...providerEvents];
-        for (const event of events.slice(1)) {
+          request,
+          now,
+          nextEventId,
+        }), thread.id);
+      } catch (err: unknown) {
+        logCodingAgentWarning("provider start failed", err);
+        providerEvents = safeProviderRunFailureEvents(thread.id, now, nextEventId);
+      }
+      const events = [createdEvent, ...providerEvents];
+      for (const event of events.slice(1)) {
+        thread = applyEvent(thread, event);
+      }
+      const pending = consumePendingTerminalStop(state.pendingTerminalStops, thread);
+      if (pending.pendingStop && activeThread(thread)) {
+        const stopEvents = terminalStoppedEvents(thread.id, pending.pendingStop.runtimeStatus, now, nextEventId);
+        events.push(...stopEvents);
+        for (const event of stopEvents) {
           thread = applyEvent(thread, event);
         }
-        const pending = consumePendingTerminalStop(state.pendingTerminalStops, thread);
-        if (pending.pendingStop && activeThread(thread)) {
-          const stopEvents = terminalStoppedEvents(thread.id, pending.pendingStop.runtimeStatus, now, nextEventId);
-          events.push(...stopEvents);
-          for (const event of stopEvents) {
-            thread = applyEvent(thread, event);
-          }
-        }
-        const nextState = {
-          version: 1 as const,
-          threads: [thread, ...state.threads],
-          events: [...state.events, ...events],
-          pendingTerminalStops: pending.pendingTerminalStops,
-        };
-        const result: ThreadCreateMutationResult = {
-          snapshot: snapshotFor(thread, nextState.events),
-          existing: false,
-          eventsToPublish: events,
-        };
-        return { state: nextState, result };
-      });
-      if (!result.existing) {
-        publish(principal.userId, result.snapshot.thread.id, result.eventsToPublish);
       }
-      return { snapshot: result.snapshot, existing: result.existing };
+      const nextState = {
+        version: 1 as const,
+        threads: [thread, ...state.threads],
+        events: [...state.events, ...events],
+        pendingTerminalStops: pending.pendingTerminalStops,
+      };
+      const result: ThreadCreateMutationResult = {
+        snapshot: snapshotFor(thread, nextState.events),
+        existing: false,
+        eventsToPublish: events,
+      };
+      return { state: nextState, result };
+    });
+    if (!result.existing) {
+      publish(principal.userId, result.snapshot.thread.id, result.eventsToPublish);
+    }
+    return { snapshot: result.snapshot, existing: result.existing };
+  }
+
+  return {
+    createThread(principal, request) {
+      return createThreadInternal(principal, request);
+    },
+    createShellThread(principal, request) {
+      if (!options.relationValidator) {
+        throw new CodingAgentThreadRelationError("validation_unavailable");
+      }
+      return createThreadInternal(principal, request, options.relationValidator);
     },
     async listThreads(principal) {
       const state = await readState(options.homePath);

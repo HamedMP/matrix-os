@@ -62,6 +62,7 @@ import {
 import type { CodingAgentNotificationPreferenceStore } from "./notification-preferences.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
 import { CodingAgentProjectWorkspaceError } from "./project-workspace.js";
+import { CodingAgentThreadRelationError } from "./thread-relations.js";
 
 export interface CodingAgentRouteDeps {
   service: CodingAgentRuntimeSummaryService;
@@ -264,6 +265,19 @@ function mapThreadRouteError(c: Context, err: unknown) {
     const status = err.code === "thread_not_found" ? 404 : err.code === "provider_unavailable" ? 400 : 503;
     return c.json({ error: safeThreadError(err.code) }, status);
   }
+  if (err instanceof CodingAgentThreadRelationError) {
+    if (err.code === "invalid_relation") {
+      return c.json({
+        error: SafeClientErrorSchema.parse({
+          code: "thread_relation_invalid",
+          safeMessage: "Choose an available project and task, then try again.",
+          retryable: false,
+        }),
+      }, 400);
+    }
+    logCodingAgentWarning("thread relation validation unavailable", err);
+    return c.json({ error: threadsUnavailable() }, 503);
+  }
   if (err instanceof z.ZodError) {
     return c.json({ error: validationFailed() }, 400);
   }
@@ -348,7 +362,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
       try {
         const principal = principalFor(c);
         const request = CreateAgentThreadRequestSchema.parse(await c.req.json());
-        const result = await deps.threads!.createThread(principal, request);
+        const result = await deps.threads!.createShellThread(principal, request);
         return c.json(result.snapshot, result.existing ? 200 : 202);
       } catch (err: unknown) {
         return mapThreadRouteError(c, err);

@@ -56,9 +56,9 @@ Every clarified functional requirement and buildable success criterion has at le
 | GW-006 | One task projects two independent threads. | Focused and owner-service fixtures return `thread_plan` and `thread_fix` under `task_auth` with count 2 in `tests/gateway/coding-agents-project-workspace.test.ts`. |
 | GW-007 | Project-level threads remain separate from task-bound threads. | `thread_audit` appears only in the project-level list in `tests/gateway/coding-agents-project-workspace.test.ts`. |
 | GW-008 | Workspace lists and aggregates are capped without nested transcript/event payloads. | A 104-thread fixture proves independent truncation and exact bounded aggregates; an owner-service fixture quarantines a cross-project task relation without mutation in `tests/gateway/coding-agents-project-workspace.test.ts`. |
-| GW-009 | New shell-created thread requires an owned project. | Missing/stale/unauthorized project fails safely; valid project succeeds. |
-| GW-010 | Task-bound thread must use the task's project. | `website` task with `matrix-os` project is rejected before insert/provider launch. |
-| GW-011 | Duplicate create is idempotent with project/task relation unchanged. | Same `clientRequestId` returns original thread. |
+| GW-009 | New shell-created thread requires an owned project. | Missing, stale, and unauthorized project fixtures fail safely before provider launch or persistence; an owned project succeeds in `tests/gateway/coding-agents-thread-relations.test.ts`. |
+| GW-010 | Task-bound thread must use the task's project. | A `website` task submitted with the `matrix-os` project is rejected before provider launch or persistence in `tests/gateway/coding-agents-thread-relations.test.ts`. |
+| GW-011 | Duplicate create is idempotent with project/task relation unchanged. | A retry with the same `clientRequestId` and a changed stale relation returns the original thread and invokes the provider once in `tests/gateway/coding-agents-thread-relations.test.ts`. |
 | GW-012 | Turn route has auth, body limit, Zod params/body validation, ownership, and safe errors. | Focused route matrix covers every boundary. |
 | GW-013 | Turn acceptance atomically appends one user turn and claims active ownership. | Transaction/store test observes no partial state. |
 | GW-014 | Duplicate turn request returns the original accepted turn. | Same `(owner, thread, clientRequestId)` creates one turn/provider call. |

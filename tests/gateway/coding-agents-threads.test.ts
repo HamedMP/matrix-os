@@ -38,6 +38,7 @@ async function createHarness() {
   const threads = createCodingAgentThreadStore({
     homePath,
     now,
+    relationValidator: { validateCreate: async () => undefined },
     providers: [
       createFakeCodingAgentProvider({ providerId: "codex" }),
     ],
@@ -180,6 +181,7 @@ describe("coding agent thread lifecycle", () => {
     const threads = createCodingAgentThreadStore({
       homePath,
       now: () => baseNow,
+      relationValidator: { validateCreate: async () => undefined },
       providers: [createFakeCodingAgentProvider({ providerId: "codex", deltaCount: 250 })],
     });
     const app = new Hono();
@@ -205,6 +207,7 @@ describe("coding agent thread lifecycle", () => {
     const threads = createCodingAgentThreadStore({
       homePath,
       now: () => baseNow,
+      relationValidator: { validateCreate: async () => undefined },
       providers: [createFakeCodingAgentProvider({ providerId: "codex", deltaCount: 250 })],
     });
     const app = new Hono();
@@ -507,6 +510,7 @@ describe("coding agent thread lifecycle", () => {
     const threads = createCodingAgentThreadStore({
       homePath,
       now: () => baseNow,
+      relationValidator: { validateCreate: async () => undefined },
       providers: [provider],
     });
 
@@ -617,6 +621,7 @@ describe("coding agent thread lifecycle", () => {
     const threads = createCodingAgentThreadStore({
       homePath,
       now: () => baseNow,
+      relationValidator: { validateCreate: async () => undefined },
       providers: [provider],
     });
     const app = new Hono();
@@ -709,6 +714,7 @@ describe("coding agent thread lifecycle", () => {
     const threads = createCodingAgentThreadStore({
       homePath,
       now: () => baseNow,
+      relationValidator: { validateCreate: async () => undefined },
       providers: [provider],
     });
     const app = new Hono();
