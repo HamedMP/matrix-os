@@ -10,6 +10,10 @@ export default function AgentsLayout() {
         name="projects/[projectId]/index"
         options={{ title: "Project Conversations" }}
       />
+      <Stack.Screen
+        name="projects/[projectId]/board"
+        options={{ title: "Project Kanban" }}
+      />
     </Stack>
   );
 }

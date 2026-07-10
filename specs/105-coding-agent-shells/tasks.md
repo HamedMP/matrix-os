@@ -1300,10 +1300,10 @@ Tests: `MB-005`, `MB-006`, `MB-007`.
 
 ### 22.3 Kanban View
 
-- [ ] Add Conversation/Kanban control for the selected project.
-- [ ] Render canonical task columns as phone-appropriate sections/horizontal board and tablet split view.
-- [ ] Show bounded multi-thread aggregates and open any thread on a task.
-- [ ] Preserve selected context when returning to Conversation.
+- [x] Add Conversation/Kanban control for the selected project.
+- [x] Render canonical task columns as phone-appropriate sections/horizontal board and tablet split view.
+- [x] Show bounded multi-thread aggregates and open any thread on a task.
+- [x] Preserve selected context when returning to Conversation.
 
 Tests: `MB-008`, `MB-009`, `MB-010`.
 

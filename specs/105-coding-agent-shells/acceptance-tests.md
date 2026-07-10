@@ -1,6 +1,6 @@
 # Acceptance Tests: Project Conversations And Kanban
 
-**Status**: Phase 18-20 backend evidence, Phase 21 desktop navigator/conversation/Kanban/computer/inspector evidence, and Phase 22.1 mobile project-route evidence added; remaining Conversation/Kanban, security, device, and cross-shell evidence remains planned
+**Status**: Phase 18-20 backend evidence, Phase 21 desktop navigator/conversation/Kanban/computer/inspector evidence, and Phase 22.1-22.3 mobile automated evidence added; device, security, and cross-shell evidence remains planned
 **Updated**: 2026-07-10
 
 This matrix is the executable acceptance contract for the clarified coding-agent shell model. A task checkbox in `tasks.md` is complete only when its named test IDs have current evidence on the exact implementation head. Existing checkpoint tests remain required regressions but do not prove these new cases.
@@ -113,6 +113,12 @@ Every clarified functional requirement and buildable success criterion has at le
 - `MB-005`: `apps/mobile/__tests__/gateway-client.test.ts` validates the authenticated, schema-checked `POST /api/coding-agents/threads/:threadId/turns` client. `apps/mobile/__tests__/agent-thread-screen.test.tsx` proves the Conversation composer posts to the currently selected thread, refreshes that bounded snapshot, clears the accepted draft, and never calls create-thread.
 - `MB-006`: the thread-route tests cover busy retry with the same idempotency key, duplicate-submit suppression, offline draft retention, fail-closed capability checks, reconnect rehydration, and foreground snapshot refresh. Drafts stay transient component state and are not added to AsyncStorage.
 - `MB-007`: the existing thread-route terminal regression still persists and opens only the canonical bounded `terminalSessionId`; the project-route fixtures keep the exact selected project/task/thread identity. Device keyboard, safe-area, background, and terminal handoff smoke remain part of the Phase 22 gate and are not proven by Jest.
+
+### Phase 22.3 Evidence
+
+- `MB-008`: `apps/mobile/__tests__/agent-project-workspace-screen.test.tsx`, `apps/mobile/__tests__/agent-workspace-state.test.ts`, and `apps/mobile/__tests__/agent-project-route.test.tsx` prove the capability-gated Conversation/Kanban control changes only the view reference, preserves the selected project/task/thread IDs, and replaces the Expo route with the matching project URL.
+- `MB-009`: the project-workspace screen test renders phone and tablet board layouts from `ProjectAgentWorkspaceSchema`, asserts canonical `todo`, `running`, `waiting`, `blocked`, and `complete` columns, keeps `archived` hidden, and shows the gateway-projected thread/active/attention aggregates. A mixed completed/running thread fixture remains in the canonical task column instead of inferring a task move.
+- `MB-010`: the Kanban component test opens both `thread_plan` and `thread_fix` with their exact `projectId`/`taskId`/`threadId`, while `apps/mobile/__tests__/agent-project-board-route.test.tsx` proves the dedicated board route uses the shared project workspace in Kanban mode. SDK 57 device navigation remains part of the Phase 22 gate and is not proven by Jest.
 
 ## Security Tests
 

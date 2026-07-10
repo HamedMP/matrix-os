@@ -28,6 +28,7 @@ jest.mock("../components/agents/agent-project-workspace-screen", () => ({
     onOpenProject: (projectId: string) => void;
     onOpenThread: (identity: { projectId: string; taskId: string | null; threadId: string }) => void;
     onNewConversation: (identity: { projectId: string; taskId: string | null }) => void;
+    onViewModeChange: (viewMode: "conversation" | "kanban") => void;
   }) => {
     const React = require("react") as typeof import("react");
     const { Pressable, Text, View } = require("react-native") as typeof import("react-native");
@@ -53,6 +54,11 @@ jest.mock("../components/agents/agent-project-workspace-screen", () => ({
         accessibilityRole: "button",
         accessibilityLabel: "Create task conversation",
         onPress: () => props.onNewConversation({ projectId: "matrix-os", taskId: "task_auth" }),
+      }),
+      React.createElement(Pressable, {
+        accessibilityRole: "button",
+        accessibilityLabel: "Show project Kanban",
+        onPress: () => props.onViewModeChange("kanban"),
       }),
     );
   },
@@ -102,6 +108,12 @@ describe("project coding-agent Expo route", () => {
     expect(mockRouterPush).toHaveBeenCalledWith({
       pathname: "/agents/new",
       params: { projectId: "matrix-os", taskId: "task_auth" },
+    });
+
+    fireEvent.press(screen.getByLabelText("Show project Kanban"));
+    expect(mockRouterReplace).toHaveBeenCalledWith({
+      pathname: "/agents/projects/[projectId]/board",
+      params: { projectId: "matrix-os" },
     });
   });
 

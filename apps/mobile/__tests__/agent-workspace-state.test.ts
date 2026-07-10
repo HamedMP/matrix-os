@@ -14,6 +14,7 @@ import {
   parseAgentWorkspaceState,
   reconcileAgentWorkspaceState,
   saveAgentWorkspaceState,
+  selectAgentWorkspaceViewMode,
   selectAgentWorkspaceThread,
 } from "../lib/agent-workspace-state";
 import type { ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
@@ -191,6 +192,19 @@ describe("agent workspace state", () => {
     });
   });
 
+  it("retains matching child references until the project workspace can validate them", () => {
+    const selected = parseAgentWorkspaceState({
+      selectedRuntimeId: "rt_primary",
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_auth",
+      selectedThreadId: "thread_fix",
+      viewMode: "kanban",
+      updatedAt: "2026-07-10T13:00:00.000Z",
+    });
+
+    expect(reconcileAgentWorkspaceState(selected, summary)).toEqual(selected);
+  });
+
   it("drops stale task and thread references after workspace hydration", () => {
     const selected = parseAgentWorkspaceState({
       selectedRuntimeId: "rt_primary",
@@ -206,6 +220,26 @@ describe("agent workspace state", () => {
       selectedTaskId: null,
       selectedThreadId: null,
     });
+  });
+
+  it("switches Conversation and Kanban without changing canonical selection identity", () => {
+    const selected = parseAgentWorkspaceState({
+      selectedRuntimeId: "rt_primary",
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_auth",
+      selectedThreadId: "thread_fix",
+      viewMode: "conversation",
+      updatedAt: "2026-07-10T13:00:00.000Z",
+    });
+
+    expect(selectAgentWorkspaceViewMode(selected, "kanban")).toEqual({
+      ...selected,
+      viewMode: "kanban",
+    });
+    expect(selectAgentWorkspaceViewMode(
+      selectAgentWorkspaceViewMode(selected, "kanban"),
+      "conversation",
+    )).toEqual(selected);
   });
 
   it("loads malformed storage safely and serializes only the allowlist", async () => {
