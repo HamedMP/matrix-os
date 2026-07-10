@@ -19,6 +19,7 @@ import {
 } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { AgentProjectPicker } from "@/components/agent-project-picker";
+import { includeWorkspaceProject } from "@/components/agents/agent-project-utils";
 import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 
 type ScreenState =
@@ -157,12 +158,6 @@ function reviewHunkFollowUpDraft(summary: RuntimeSummary, seed: ReviewHunkSeedPa
       },
     ],
   };
-}
-
-function includeWorkspaceProject(summary: RuntimeSummary, project: RuntimeSummary["projects"]["items"][number]): RuntimeSummary {
-  const items = [...summary.projects.items.filter((candidate) => candidate.id !== project.id), project]
-    .slice(-summary.projects.limit);
-  return { ...summary, projects: { ...summary.projects, items } };
 }
 
 function threadFollowUpDraft(
@@ -341,7 +336,7 @@ export default function AgentComposerScreen() {
         workspaceResult.ok
         && workspaceResult.workspace.project.id === requestedProjectId
       ) {
-        summary = includeWorkspaceProject(summary, workspaceResult.workspace.project);
+        summary = includeWorkspaceProject(summary, workspaceResult.workspace);
       }
     }
     setState({ status: "ready", summary, error: null });
