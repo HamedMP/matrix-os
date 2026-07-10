@@ -61,6 +61,81 @@ describe('platform/customer-vps-routes', () => {
     expect(status.status).toBe(401);
   });
 
+  it('protects and validates the preview provision route contract', async () => {
+    const provision = vi.fn();
+    const provisionPreview = vi.fn().mockResolvedValue({
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      status: 'provisioning',
+      etaSeconds: 90,
+    });
+    const service = {
+      provision,
+      provisionPreview,
+    } as unknown as Parameters<typeof createCustomerVpsRoutes>[0]['service'];
+    const app = new Hono();
+    app.route('/vps', createCustomerVpsRoutes({ service, platformSecret }));
+
+    const unauthorized = await app.request('/vps/preview/provision', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ clerkUserId: 'user_123', handle: 'pr-897', runtimeSlot: 'pr-897' }),
+    });
+    expect(unauthorized.status).toBe(401);
+
+    for (const body of [
+      { clerkUserId: 'user_123', handle: 'preview-897', runtimeSlot: 'preview-897' },
+      { clerkUserId: 'user_123', handle: 'pr-897', runtimeSlot: 'pr-896' },
+      { clerkUserId: 'user_123', handle: 'pr-897', runtimeSlot: 'pr-897', serverType: 'cpx52' },
+    ]) {
+      const invalid = await app.request('/vps/preview/provision', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      expect(invalid.status).toBe(400);
+      expect(await invalid.json()).toEqual({ error: 'Invalid request' });
+    }
+
+    const accepted = await app.request('/vps/preview/provision', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ clerkUserId: 'user_123', handle: 'pr-897', runtimeSlot: 'pr-897' }),
+    });
+
+    expect(accepted.status).toBe(202);
+    expect(await accepted.json()).toMatchObject({ status: 'provisioning' });
+    expect(provisionPreview).toHaveBeenCalledWith({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'pr-897',
+    });
+    expect(provision).not.toHaveBeenCalled();
+
+    provisionPreview.mockRejectedValueOnce(new Error('provider token and private path leaked'));
+    const failed = await app.request('/vps/preview/provision', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ clerkUserId: 'user_123', handle: 'pr-898', runtimeSlot: 'pr-898' }),
+    });
+    expect(failed.status).toBe(500);
+    expect(await failed.json()).toEqual({ error: 'Provisioning failed' });
+  });
+
+  it('rejects oversized preview provision bodies before parsing', async () => {
+    const app = createApp();
+    const res = await app.request('/vps/preview/provision', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${platformSecret}`,
+        'content-type': 'application/json',
+        'content-length': '5001',
+      },
+      body: JSON.stringify({ clerkUserId: 'user_123', handle: 'pr-897', runtimeSlot: 'pr-897', padding: 'x'.repeat(5000) }),
+    });
+
+    expect(res.status).toBe(413);
+  });
+
   it('provisions, registers, reads status, and deletes through the route contract', async () => {
     const app = createApp();
     const adminHeaders = { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' };

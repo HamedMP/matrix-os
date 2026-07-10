@@ -122,6 +122,14 @@ describe('platform/customer-vps', () => {
     expect(config.posthogPublicHost).toBe('https://eu.posthog.com');
   });
 
+  it('keeps the preview provisioning limit bounded for missing or invalid configuration', () => {
+    expect(loadCustomerVpsConfig({}).previewProvisioningLimit).toBe(8);
+    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '4' }).previewProvisioningLimit).toBe(4);
+    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '0' }).previewProvisioningLimit).toBe(8);
+    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '17' }).previewProvisioningLimit).toBe(8);
+    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '2.5' }).previewProvisioningLimit).toBe(8);
+  });
+
   it('provisions a user machine idempotently by clerkUserId', async () => {
     const { service, hetzner } = createService();
 
@@ -234,6 +242,50 @@ describe('platform/customer-vps', () => {
       handle: 'alice',
       deletedAt: null,
     });
+  });
+
+  it('provisions operator previews outside customer billing slots while enforcing the preview cap', async () => {
+    let nextId = 0;
+    const ids = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+      '188d9ce1-395d-4d4c-a7b7-22754c3ab991',
+    ];
+    const resolveBillingEntitlement = vi.fn().mockResolvedValue(activeEntitlement({ maxRuntimeSlots: 1 }));
+    const { service, hetzner } = createService({
+      config: createTestConfig({ previewProvisioningLimit: 1 }),
+      machineIdFactory: () => ids[nextId++] ?? ids[2]!,
+      resolveBillingEntitlement,
+    });
+
+    await service.provision({ clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary' });
+    const preview = await service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'pr-897',
+    });
+    const repeated = await service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'pr-897',
+    });
+
+    expect(repeated).toEqual(preview);
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-898',
+      runtimeSlot: 'pr-898',
+    })).rejects.toMatchObject({
+      status: 429,
+      code: 'quota_exceeded',
+      publicMessage: 'Preview capacity unavailable',
+    });
+    expect(hetzner.createServer).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(hetzner.createServer).mock.calls[1]?.[0]).toMatchObject({
+      name: 'matrix-pr-897',
+      serverType: 'cpx22',
+    });
+    expect(resolveBillingEntitlement).toHaveBeenCalledOnce();
   });
 
   it('rejects requested Hetzner server types outside the entitlement catalog', async () => {
