@@ -7,6 +7,7 @@ import type { RuntimeSummary } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { AgentCockpit } from "@/components/agent-cockpit";
+import { AgentProjectList } from "@/components/agents/agent-project-workspace-screen";
 import { AGENT_WORKSPACE_CONNECTION_LABELS, capabilityEnabled } from "@/components/agents/agent-workspace-shared";
 import { useRuntimeSummary } from "@/lib/use-runtime-summary";
 import { capture } from "@/lib/analytics";
@@ -124,6 +125,19 @@ export default function AgentsScreen() {
           router.push(`/agents/${thread.id}` as any);
         }}
       />
+
+      {capabilityEnabled(summary, "codingAgentsProjectWorkspace")
+        && capabilityEnabled(summary, "codingAgentsConversationView") ? (
+          <AgentProjectList
+            summary={summary}
+            onOpenProject={(projectId) => {
+              router.push({
+                pathname: "/agents/projects/[projectId]",
+                params: { projectId },
+              } as never);
+            }}
+          />
+        ) : null}
 
       <View style={styles.navRow}>
         {navCards.map((card) => (

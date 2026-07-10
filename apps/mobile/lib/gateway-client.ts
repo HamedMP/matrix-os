@@ -24,6 +24,8 @@ import {
   FileSearchResponseSchema,
   FileWriteRequestSchema,
   FileWriteResponseSchema,
+  ProjectAgentWorkspaceSchema,
+  ProjectIdSchema,
   RequestIdSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
@@ -49,6 +51,7 @@ import {
   type FileSearchResponse,
   type FileWriteRequest,
   type FileWriteResponse,
+  type ProjectAgentWorkspace,
   type ReviewSnapshot,
   type RuntimeSummary,
   type SourceControlCreatePullRequestRequest,
@@ -148,6 +151,10 @@ export type CodingAgentRuntimeSummaryResult =
 export type ProjectCreateResult =
   | ({ ok: true } & CodingAgentProjectCreateResponse)
   | { ok: false; error: "Project could not be created. Try again." };
+
+export type CodingAgentProjectWorkspaceResult =
+  | { ok: true; workspace: ProjectAgentWorkspace }
+  | { ok: false; error: "Project workspace unavailable" };
 
 const CodingAgentNotificationPreferencesRouteResponseSchema = z.object({
   preferences: CodingAgentNotificationPreferencesSchema,
@@ -929,6 +936,34 @@ export class GatewayClient {
     } catch (err: unknown) {
       logGatewayCatchWarning("/api/coding-agents/projects unavailable", err);
       return { ok: false, error: "Project could not be created. Try again." };
+    }
+  }
+
+  async getCodingAgentProjectWorkspace(
+    options: { projectId: string },
+  ): Promise<CodingAgentProjectWorkspaceResult> {
+    try {
+      const parsedProjectId = ProjectIdSchema.safeParse(options.projectId);
+      if (!parsedProjectId.success) {
+        return { ok: false, error: "Project workspace unavailable" };
+      }
+      const res = await this.fetchGateway(
+        `/api/coding-agents/projects/${encodeURIComponent(parsedProjectId.data)}/workspace`,
+      );
+      if (!res.ok) {
+        logCodingAgentStatusWarning("/api/coding-agents/projects/:projectId/workspace unavailable", res.status);
+        return { ok: false, error: "Project workspace unavailable" };
+      }
+      const body = await res.json();
+      const parsed = ProjectAgentWorkspaceSchema.safeParse(body);
+      if (!parsed.success) {
+        logCodingAgentParseWarning("/api/coding-agents/projects/:projectId/workspace returned invalid payload");
+        return { ok: false, error: "Project workspace unavailable" };
+      }
+      return { ok: true, workspace: parsed.data };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/projects/:projectId/workspace unavailable", err);
+      return { ok: false, error: "Project workspace unavailable" };
     }
   }
 
