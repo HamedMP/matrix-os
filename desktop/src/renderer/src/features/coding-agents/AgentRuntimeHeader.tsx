@@ -4,8 +4,11 @@ import { Button, StatusDot } from "../../design/primitives";
 
 const STATUS_COLOR: Record<string, string> = {
   available: "var(--success)",
+  running: "var(--success)",
   degraded: "var(--warning)",
   offline: "var(--danger)",
+  failed: "var(--danger)",
+  unavailable: "var(--danger)",
   unknown: "var(--text-tertiary)",
 };
 
