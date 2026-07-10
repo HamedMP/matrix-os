@@ -290,4 +290,34 @@ describe("coding-agent project workspace store", () => {
     });
     expect(useCodingAgentProjectWorkspace.getState().workspace?.project.id).toBe("website");
   });
+
+  it("keeps an externally focused chat selected when it is outside the bounded task chat page", async () => {
+    const projectWorkspace = workspace("matrix-os", "task_auth", "thread_visible");
+    projectWorkspace.taskThreads.hasMore = true;
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "state:get") return { value: null };
+      if (channel === "runtime:get-project-workspace") return projectWorkspace;
+      if (channel === "state:set") return { ok: true };
+      throw new Error(`unexpected channel ${channel}`);
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+
+    await useCodingAgentProjectWorkspace.getState().hydrate(
+      summary("rt_primary", "matrix-os", "Matrix OS"),
+    );
+    await useCodingAgentProjectWorkspace.getState().focusExternalThread(
+      "thread_outside_page",
+      { projectId: "matrix-os", taskId: "task_auth" },
+    );
+
+    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
+      status: "ready",
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_auth",
+      selectedThreadId: "thread_outside_page",
+    });
+  });
 });

@@ -74,6 +74,7 @@ async function loadProjectWorkspace(
   preferred: ProjectWorkspaceSelection,
   generation: number,
   preserveSelectionOnError = true,
+  preserveMissingPreferredThread = false,
 ): Promise<void> {
   const selectedProjectId = resolveSelectedProjectId(summary, preferred.selectedProjectId);
   if (!selectedProjectId) {
@@ -102,7 +103,7 @@ async function loadProjectWorkspace(
     const selection = reconcileProjectWorkspaceSelection(workspace, {
       ...preferred,
       selectedProjectId,
-    });
+    }, preserveMissingPreferredThread);
     useCodingAgentProjectWorkspace.setState({
       status: "ready",
       workspace,
@@ -267,7 +268,7 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
         error: null,
         ...preferred,
       });
-      await loadProjectWorkspace(state.summary, preferred, generation);
+      await loadProjectWorkspace(state.summary, preferred, generation, true, true);
     },
 
     setViewMode: (viewMode) => {

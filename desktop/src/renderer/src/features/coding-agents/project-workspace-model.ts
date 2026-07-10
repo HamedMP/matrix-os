@@ -70,6 +70,7 @@ function selectionForThread(
 export function reconcileProjectWorkspaceSelection(
   workspace: ProjectAgentWorkspace,
   preferred: ProjectWorkspaceSelection,
+  preserveMissingPreferredThread = false,
 ): ProjectWorkspaceSelection {
   const allThreads = [
     ...workspace.projectThreads.items,
@@ -80,6 +81,15 @@ export function reconcileProjectWorkspaceSelection(
     : undefined;
   if (selectedThread) {
     return selectionForThread(workspace, selectedThread, preferred.viewMode);
+  }
+
+  if (preserveMissingPreferredThread && preferred.selectedThreadId) {
+    return {
+      selectedProjectId: workspace.project.id,
+      selectedTaskId: preferred.selectedTaskId,
+      selectedThreadId: preferred.selectedThreadId,
+      viewMode: preferred.viewMode,
+    };
   }
 
   const selectedTask = preferred.selectedTaskId
