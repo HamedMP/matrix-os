@@ -98,6 +98,35 @@ describe("cli/rich-paste", () => {
     expect(headers["X-Matrix-Filename"]).toBe("paste.webp");
   });
 
+  it("trims separators after truncating long upload filenames", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      terminalPath: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-10/paste.png",
+      path: "projects/.matrix-terminal-pastes/2026-07-10/paste.png",
+      mimeType: "image/png",
+      size: pngBytes.byteLength,
+    }), {
+      status: 201,
+      headers: { "Content-Type": "application/json" },
+    }));
+    const client = createRichPasteUploadClient({
+      gatewayUrl: "https://matrix.example",
+      fetch: fetchMock as typeof fetch,
+    });
+
+    await client.uploadPasteAssets({
+      sessionName: "codex-c",
+      transactionId: "tx-1",
+      assets: [{
+        name: `${"a".repeat(250)} ${"b".repeat(10)}.png`,
+        mimeType: "image/png",
+        bytes: pngBytes,
+      }],
+    });
+
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers["X-Matrix-Filename"]).toBe(`${"a".repeat(250)}.png`);
+  });
+
   it("rewrites quoted image paths with spaces while preserving surrounding prompt text", async () => {
     const localPath = join(tempDir, "Screenshot 2026-07-08 at 10.31.00.png");
     await writeFile(localPath, pngBytes);

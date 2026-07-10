@@ -287,8 +287,8 @@ function safeUploadFilename(asset: RichPasteUploadAsset): string {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^A-Za-z0-9._-]+/g, "-")
     .replace(/-+/g, "-")
-    .replace(/^[._-]+|[._-]+$/g, "")
-    .slice(0, maxStemLength);
+    .slice(0, maxStemLength)
+    .replace(/^[._-]+|[._-]+$/g, "");
   return `${stem || "paste"}${extension}`;
 }
 
