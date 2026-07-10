@@ -235,7 +235,7 @@ export function createRichPasteUploadClient(options: RichPasteUploadClientOption
       for (const [index, asset] of input.assets.entries()) {
         const headers: Record<string, string> = {
           "Content-Type": asset.mimeType,
-          "X-Matrix-Filename": asset.name,
+          "X-Matrix-Filename": safeUploadFilename(asset),
         };
         if (options.token) {
           headers.Authorization = `Bearer ${options.token}`;
@@ -274,6 +274,35 @@ export function createRichPasteUploadClient(options: RichPasteUploadClientOption
       return uploaded;
     },
   };
+}
+
+function safeUploadFilename(asset: RichPasteUploadAsset): string {
+  const extension = uploadExtensionForMimeType(asset.mimeType);
+  const rawName = basename(asset.name).split(/[\\/]/).pop() ?? "";
+  const rawExtension = extname(rawName);
+  const rawStem = rawExtension ? rawName.slice(0, -rawExtension.length) : rawName;
+  const maxStemLength = 255 - extension.length;
+  const stem = rawStem
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[._-]+|[._-]+$/g, "")
+    .slice(0, maxStemLength);
+  return `${stem || "paste"}${extension}`;
+}
+
+function uploadExtensionForMimeType(mimeType: RichPasteImageMimeType): ".png" | ".jpg" | ".gif" | ".webp" {
+  switch (mimeType) {
+    case "image/jpeg":
+      return ".jpg";
+    case "image/gif":
+      return ".gif";
+    case "image/webp":
+      return ".webp";
+    case "image/png":
+      return ".png";
+  }
 }
 
 export function createRichPasteRewriter(input: {

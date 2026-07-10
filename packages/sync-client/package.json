@@ -1,6 +1,6 @@
 {
   "name": "@finnaai/matrix",
-  "version": "0.3.12",
+  "version": "0.3.13",
   "description": "Matrix OS command-line client — login, sync, and peer management for matrix-os.com",
   "type": "module",
   "license": "AGPL-3.0-or-later",

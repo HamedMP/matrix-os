@@ -89,6 +89,7 @@ export interface ShellAttachOptions {
     rewriter?: RichPasteRewriter;
     uploadClient?: RichPasteUploadClient;
     clipboardReader?: ClipboardImageReader;
+    statusMinVisibleMs?: number;
   };
   noRichPaste?: boolean;
   cwd?: string;
@@ -134,6 +135,7 @@ const RICH_PASTE_UPLOAD_FAILED_MESSAGE = "Image paste failed: upload did not com
 const INCOMPLETE_BRACKETED_PASTE_MESSAGE = "Image paste failed: paste did not complete.";
 const RICH_PASTE_PROGRESS_MESSAGE = "Image paste: reading/uploading...";
 const RICH_PASTE_INSERTED_MESSAGE = "Image paste: inserted.";
+const RICH_PASTE_STATUS_MIN_VISIBLE_MS = 1_200;
 
 type MaybeTtyStream = NodeJS.ReadStream & {
   isTTY?: boolean;
@@ -730,6 +732,11 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           clipboardReader: attachOptions.richPaste?.clipboardReader ?? createMacOsClipboardImageReader(),
         })
         : undefined;
+      const configuredRichPasteStatusMinVisibleMs = attachOptions.richPaste?.statusMinVisibleMs;
+      const richPasteStatusMinVisibleMs = typeof configuredRichPasteStatusMinVisibleMs === "number" &&
+        Number.isFinite(configuredRichPasteStatusMinVisibleMs)
+        ? Math.max(0, configuredRichPasteStatusMinVisibleMs)
+        : RICH_PASTE_STATUS_MIN_VISIBLE_MS;
       const heartbeatIntervalMs = attachOptions.heartbeatIntervalMs ?? SHELL_ATTACH_HEARTBEAT_INTERVAL_MS;
       const heartbeatTimeoutMs = attachOptions.heartbeatTimeoutMs ?? SHELL_ATTACH_HEARTBEAT_TIMEOUT_MS;
       const heartbeatMissesBeforeReconnect =
@@ -1018,6 +1025,16 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             code: err instanceof Error && "code" in err ? (err as { code?: string }).code ?? "attach_failed" : "attach_failed",
           })));
         };
+        const waitForRichPasteStatusVisibility = (shownAt: number): Promise<void> => {
+          const remainingMs = richPasteStatusMinVisibleMs - (Date.now() - shownAt);
+          if (remainingMs <= 0) {
+            return Promise.resolve();
+          }
+          return new Promise((resolveDelay) => {
+            const timer = setTimeout(resolveDelay, remainingMs);
+            timer.unref?.();
+          });
+        };
         const sendInputFrame = (
           data: string,
           observablePaste: boolean,
@@ -1030,12 +1047,14 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             sendInputData(data);
             return;
           }
+          const progressShownAt = Date.now();
           writeError(`\r\n${RICH_PASTE_PROGRESS_MESSAGE}\r\n`);
           return richPasteRewriter.rewrite({
             sessionName: name,
             text: options.manualClipboardPaste ? "" : data,
             observablePaste: options.manualClipboardPaste ? true : observablePaste,
-          }).then((result) => {
+          }).then(async (result) => {
+            await waitForRichPasteStatusVisibility(progressShownAt);
             if (settled) {
               return;
             }
@@ -1047,7 +1066,8 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
               writeError(`\r\n${RICH_PASTE_INSERTED_MESSAGE}\r\n`);
             }
             sendInputData(result.outgoingText);
-          }).catch((err: unknown) => {
+          }).catch(async (err: unknown) => {
+            await waitForRichPasteStatusVisibility(progressShownAt);
             if (!settled) {
               writeError(`\r\n${RICH_PASTE_UPLOAD_FAILED_MESSAGE}\r\n`);
               writeError(`[debug] rich paste rewrite failed: ${err instanceof Error ? err.name : typeof err}\r\n`);
