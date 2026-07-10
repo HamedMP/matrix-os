@@ -25,8 +25,8 @@ enable_ubuntu_universe() {
   # shellcheck disable=SC1091 -- the host-owned OS metadata is the distro source of truth.
   . /etc/os-release
   [ "${ID:-}" = "ubuntu" ] || return 0
-  timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common
-  timeout 60 add-apt-repository -y universe
+  timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common || return 1
+  timeout 60 add-apt-repository -y universe || return 1
 }
 
 configure_bwrap_apparmor() {
@@ -36,8 +36,8 @@ configure_bwrap_apparmor() {
   [ "${ID:-}" = "ubuntu" ] || return 0
   dpkg --compare-versions "$VERSION_ID" ge 24.04 || return 0
 
-  install -d -o root -g root -m 0755 /etc/apparmor.d
-  cat >/etc/apparmor.d/bwrap <<'EOF'
+  install -d -o root -g root -m 0755 /etc/apparmor.d || return 1
+  cat >/etc/apparmor.d/bwrap <<'EOF' || return 1
 abi <abi/4.0>,
 include <tunables/global>
 
@@ -47,7 +47,7 @@ profile bwrap /usr/bin/bwrap flags=(unconfined) {
 }
 EOF
   if systemctl is-active --quiet apparmor; then
-    systemctl reload apparmor
+    systemctl reload apparmor || return 1
   fi
 }
 
@@ -60,15 +60,16 @@ ensure_agent_sandbox_runtime() {
     timeout 300 apt-get update \
       -o Acquire::Retries=3 \
       -o Acquire::http::Timeout=20 \
-      -o Acquire::https::Timeout=20
-    enable_ubuntu_universe
+      -o Acquire::https::Timeout=20 || return 1
+    enable_ubuntu_universe || return 1
     timeout 300 apt-get update \
       -o Acquire::Retries=3 \
       -o Acquire::http::Timeout=20 \
-      -o Acquire::https::Timeout=20
-    timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap socat
+      -o Acquire::https::Timeout=20 || return 1
+    timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap socat || return 1
   fi
-  configure_bwrap_apparmor
+  configure_bwrap_apparmor || return 1
+  command -v bwrap >/dev/null 2>&1 && command -v socat >/dev/null 2>&1
 }
 
 link_tool() {
@@ -97,7 +98,10 @@ is_tool_installed() {
 }
 
 if [ "$MODE" != "--tools-only" ]; then
-  ensure_agent_sandbox_runtime
+  if ! ensure_agent_sandbox_runtime; then
+    log "coding-agent sandbox provisioning failed"
+    exit 1
+  fi
 fi
 if [ "$MODE" = "--sandbox-only" ]; then
   exit 0
