@@ -19,6 +19,11 @@ export interface WorkspaceCodingAgentProviderOptions {
   runtime: WorkspaceRuntime;
 }
 
+export interface WorkspaceCodingAgentProvidersOptions {
+  agents: readonly SupportedAgent[];
+  runtime: WorkspaceRuntime;
+}
+
 function sessionIdForThread(threadId: string): string {
   return `sess_${threadId.slice("thread_".length)}`;
 }
@@ -192,4 +197,15 @@ export function createWorkspaceCodingAgentProvider(
       return [];
     },
   };
+}
+
+export function createWorkspaceCodingAgentProviders(
+  options: WorkspaceCodingAgentProvidersOptions,
+): CodingAgentProviderAdapter[] {
+  const agents = SupportedAgentSchema.array().max(4).parse(options.agents);
+  return agents.map((agent) => createWorkspaceCodingAgentProvider({
+    providerId: agent,
+    agent,
+    runtime: options.runtime,
+  }));
 }

@@ -101,7 +101,8 @@ import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-
 import { createCodingAgentRoutes } from "./coding-agents/routes.js";
 import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type CodingAgentProviderAdapter, type CodingAgentThreadStore } from "./coding-agents/thread-store.js";
 import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./coding-agents/thread-stream.js";
-import { createWorkspaceCodingAgentProvider } from "./coding-agents/workspace-provider.js";
+import { createWorkspaceCodingAgentProviders } from "./coding-agents/workspace-provider.js";
+import { configuredWorkspaceProviderAgents } from "./coding-agents/workspace-provider-config.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
 import { createCodingAgentPreviewSummaryStore } from "./coding-agents/preview-summary.js";
@@ -520,7 +521,8 @@ export async function createGateway(config: GatewayConfig) {
     onSessionStopped: (session) => codingAgentSessionStopReconciler.handleSessionStopped(session),
   });
   const codingAgentProviders: CodingAgentProviderAdapter[] = [];
-  if (process.env.MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER === "1") {
+  const codingAgentWorkspaceAgents = configuredWorkspaceProviderAgents(process.env);
+  if (codingAgentWorkspaceAgents.length > 0) {
     const codingAgentWorktreeManager = createWorktreeManager({ homePath });
     const codingAgentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
     const codingAgentSessionManager = createAgentSessionManager({
@@ -536,9 +538,8 @@ export async function createGateway(config: GatewayConfig) {
       sessionRuntimeBridge: workspaceSessionRuntimeBridge,
       eventPublisher: workspaceEventPublisher,
     });
-    codingAgentProviders.push(createWorkspaceCodingAgentProvider({
-      providerId: "codex",
-      agent: "codex",
+    codingAgentProviders.push(...createWorkspaceCodingAgentProviders({
+      agents: codingAgentWorkspaceAgents,
       runtime: codingAgentWorkspaceRuntime,
     }));
   } else if (process.env.MATRIX_CODING_AGENTS_FAKE_PROVIDER === "1") {

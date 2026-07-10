@@ -140,13 +140,14 @@ Core files:
 
 - `packages/gateway/src/coding-agents/thread-store.ts`
 - `packages/gateway/src/coding-agents/provider-registry.ts`
+- `packages/gateway/src/coding-agents/workspace-provider-config.ts`
 - `packages/gateway/src/coding-agents/workspace-provider.ts`
 - `packages/gateway/src/coding-agents/review-summary.ts`
 
 Implemented providers:
 
 - Fake provider for deterministic gateway tests behind `MATRIX_CODING_AGENTS_FAKE_PROVIDER=1`.
-- Workspace-backed provider behind `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1`.
+- Workspace-backed Claude/Codex providers behind the bounded `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` list. The legacy `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1` flag remains Codex-only when the explicit list is unset.
 
 Provider registry behavior:
 
@@ -160,6 +161,7 @@ Provider registry behavior:
 Workspace provider behavior:
 
 - Starts deterministic workspace agent sessions through `WorkspaceSessionOrchestrator`.
+- Builds one normalized execution adapter per validated configured Claude/Codex agent while sharing the same gateway-owned workspace runtime.
 - Passes through prompt, project, task, worktree, mode, approval policy, sandbox mode, and zellij runtime preference.
 - Passes bounded `structured_ref` attachments into the runtime launch prompt as safe reference metadata so review follow-up runs can inspect the selected file/hunk without client-side diff contents.
 - Binds coding-agent threads to canonical `terminalSessionId` from the workspace session.
@@ -408,7 +410,8 @@ Client flags:
 Server flags:
 
 - Fake provider: `MATRIX_CODING_AGENTS_FAKE_PROVIDER=1`.
-- Workspace provider: `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1`.
+- Workspace providers: `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex` (bounded explicit list).
+- Legacy Codex-only workspace provider: `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1` when the explicit list is unset.
 
 Current behavior:
 
@@ -425,7 +428,7 @@ Current behavior:
 Focused gateway/contracts:
 
 ```bash
-pnpm exec vitest run tests/gateway/coding-agents-provider-registry.test.ts tests/gateway/coding-agents-workspace-provider.test.ts tests/gateway/coding-agents-threads.test.ts tests/gateway/coding-agents-thread-stream.test.ts tests/gateway/coding-agents-summary.test.ts tests/gateway/coding-agents-file-read.test.ts tests/contracts/coding-agents.test.ts tests/gateway/agent-launcher.test.ts tests/gateway/agent-session-manager.test.ts tests/gateway/workspace-session-orchestrator.test.ts tests/observability/process-error-entrypoints.test.ts
+pnpm exec vitest run tests/gateway/coding-agents-provider-registry.test.ts tests/gateway/coding-agents-workspace-provider-config.test.ts tests/gateway/coding-agents-workspace-provider.test.ts tests/gateway/coding-agents-threads.test.ts tests/gateway/coding-agents-thread-stream.test.ts tests/gateway/coding-agents-summary.test.ts tests/gateway/coding-agents-file-read.test.ts tests/contracts/coding-agents.test.ts tests/gateway/agent-launcher.test.ts tests/gateway/agent-session-manager.test.ts tests/gateway/workspace-session-orchestrator.test.ts tests/observability/process-error-entrypoints.test.ts
 ```
 
 Gateway diagnostics:

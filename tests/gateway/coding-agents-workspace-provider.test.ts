@@ -9,7 +9,10 @@ import {
   type AgentThreadEvent,
 } from "../../packages/contracts/src/index.js";
 import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
-import { createWorkspaceCodingAgentProvider } from "../../packages/gateway/src/coding-agents/workspace-provider.js";
+import {
+  createWorkspaceCodingAgentProvider,
+  createWorkspaceCodingAgentProviders,
+} from "../../packages/gateway/src/coding-agents/workspace-provider.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 
 const ownerPrincipal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
@@ -46,6 +49,60 @@ function workspaceSession(overrides: Record<string, unknown> = {}) {
 }
 
 describe("coding agent workspace provider", () => {
+  it("creates one provider adapter per configured workspace agent", () => {
+    const runtime = {
+      startSession: vi.fn(),
+      stopSession: vi.fn(),
+    };
+
+    const providers = createWorkspaceCodingAgentProviders({
+      agents: ["claude", "codex"],
+      runtime,
+    });
+
+    expect(providers.map((provider) => provider.providerId)).toEqual(["claude", "codex"]);
+  });
+
+  it("starts the selected Claude provider through the shared workspace runtime", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-workspace-provider-"));
+    const runtime = {
+      startSession: vi.fn(async () => ({
+        ok: true,
+        status: 201,
+        session: workspaceSession({ agent: "claude" }),
+      })),
+      stopSession: vi.fn(async () => ({ ok: true, session: workspaceSession() })),
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: createWorkspaceCodingAgentProviders({
+        agents: ["codex", "claude"],
+        runtime,
+      }),
+    });
+
+    const created = await threads.createThread(ownerPrincipal, {
+      ...createBody,
+      providerId: "claude",
+      clientRequestId: "req_workspace_claude_1",
+    });
+
+    expect(runtime.startSession).toHaveBeenCalledWith({
+      ownerScope: { type: "user", id: "owner_user" },
+      request: expect.objectContaining({
+        agent: "claude",
+        kind: "agent",
+        prompt: createBody.prompt,
+        runtimePreference: "zellij",
+      }),
+    });
+    expect(created.snapshot.thread).toMatchObject({
+      providerId: "claude",
+      status: "running",
+    });
+  });
+
   it("starts a workspace agent session and binds the terminal reference to the stored thread", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-workspace-provider-"));
     const runtime = {
