@@ -596,6 +596,10 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
     expect(workflow).toContain('VERSION="v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}"');
+    expect(workflow).toContain('RUNTIME_SLOT: ${{ needs.gate.outputs.handle }}');
+    expect(workflow).toContain('--arg runtimeSlot "$RUNTIME_SLOT"');
+    expect(workflow).toContain("'{clerkUserId: $clerkUserId, handle: $handle, runtimeSlot: $runtimeSlot}'");
+    expect(workflow).not.toContain('\\"runtimeSlot\\":\\"preview\\"');
     expect(workflow).toContain('dist/host-bundle/incremental-manifest.json');
     expect(workflow).toContain('dist/host-bundle/objects/**');
     expect(workflow).toContain('./scripts/publish-release.sh "$VERSION" --channel none');
