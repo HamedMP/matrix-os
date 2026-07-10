@@ -341,7 +341,14 @@ export function clearCodingAgentThreadSelection(): void {
 
 export function clearCodingAgentRuntimeSelection(): void {
   clearCodingAgentThreadSelection();
-  useCodingAgentWorkspace.setState({ createdThreadHandles: [] });
+  reviewsSeq += 1;
+  useCodingAgentWorkspace.setState({
+    createdThreadHandles: [],
+    reviewsStatus: "idle",
+    reviews: null,
+    reviewsError: null,
+    ...clearReviewSelectionState(),
+  });
 }
 
 function attachActiveThreadEventStream(snapshot: AgentThreadSnapshot): void {

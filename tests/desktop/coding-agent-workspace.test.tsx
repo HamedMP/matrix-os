@@ -791,6 +791,36 @@ describe("AgentWorkspace", () => {
     act(() => {
       useCodingAgentWorkspace.setState({
         createdThreadHandles: [...firstSummary.activeThreads.items],
+        reviewsStatus: "ready",
+        reviews: reviewsFixture(),
+        selectedReviewId: "rev_desktop_1",
+        reviewSnapshotStatus: "ready",
+        reviewSnapshot: reviewSnapshotFixture(),
+        fileReadStatus: "ready",
+        fileRead: fileReadFixture(),
+        selectedFilePath: "packages/gateway/src/coding-agents/routes.ts",
+        selectedFileReference: {
+          projectId: "matrix-os",
+          worktreeId: "wt_desktop_1",
+          path: "packages/gateway/src/coding-agents/routes.ts",
+        },
+        sourceCommitStatus: "prepared",
+        sourceCommit: {
+          status: "committed",
+          commitSha: "0123456789abcdef0123456789abcdef01234567",
+          branch: "feature/review-fix",
+          changedFileCount: 1,
+          safeMessage: "Changes were committed.",
+        },
+        sourcePullRequestStatus: "ready",
+        sourcePullRequest: {
+          status: "created",
+          number: 808,
+          url: "https://github.com/HamedMP/matrix-os/pull/808",
+          headBranch: "feature/review-fix",
+          baseBranch: "main",
+          safeMessage: "Pull request is ready for review.",
+        },
       });
     });
 
@@ -806,13 +836,29 @@ describe("AgentWorkspace", () => {
     });
     expect(screen.queryByText("Fix settings route")).toBeNull();
     expect(screen.getByText("Loading workspace...")).toBeTruthy();
-    expect(useCodingAgentWorkspace.getState().createdThreadHandles).toEqual([]);
+    expect(useCodingAgentWorkspace.getState()).toMatchObject({
+      createdThreadHandles: [],
+      reviewsStatus: "idle",
+      reviews: null,
+      selectedReviewId: null,
+      reviewSnapshotStatus: "idle",
+      reviewSnapshot: null,
+      fileReadStatus: "idle",
+      fileRead: null,
+      selectedFilePath: null,
+      selectedFileReference: null,
+      sourceCommitStatus: "idle",
+      sourceCommit: null,
+      sourcePullRequestStatus: "idle",
+      sourcePullRequest: null,
+    });
 
     await act(async () => {
       resolveSecondSummary?.(secondSummary);
       await pendingSecondSummary;
     });
     await screen.findByText("Second account thread");
+    expect(useCodingAgentWorkspace.getState().reviews).toBeNull();
 
     await act(async () => {
       resolveSecondReviews?.(reviewsFixture());
