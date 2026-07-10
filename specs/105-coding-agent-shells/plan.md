@@ -570,12 +570,22 @@ Must preserve:
 
 Do not begin Phase I implementation until:
 
-- Product owner confirms one visible chat/session equals one resumable thread.
-- Product owner confirms new chats require a project and task binding is optional.
-- Product owner confirms one task may own several threads.
-- Product owner confirms task status remains explicit canonical board state while thread state is an aggregate badge/attention projection.
-- Product owner confirms Conversation and Kanban are the two primary views on desktop and mobile.
-- `SPEC.md`, `ARCHITECTURE.md`, `plan.md`, `tasks.md`, and `acceptance-tests.md` use the same terminology/cardinality.
+Product decisions:
+
+1. New chats require a project; task binding is optional, and legacy unassigned chats remain bounded read-compatible records.
+2. Task status remains explicit canonical board state while thread state is an aggregate badge/attention projection.
+3. A busy thread rejects another normal turn with a recoverable state instead of silently queueing it.
+4. Conversation and Kanban are the two primary agent-workspace views on desktop and mobile.
+
+Already-established model constraints:
+
+- One visible chat/session equals one resumable thread.
+- One task may own several independent threads.
+
+Mechanical readiness checks:
+
+- Product-owner confirmation of all four decisions is recorded in `tasks.md`.
+- `SPEC.md`, `ARCHITECTURE.md`, `plan.md`, `tasks.md`, and `acceptance-tests.md` use the same terminology/cardinality and all acceptance IDs are mapped.
 
 ### Gate 1 - Contract Acceptance
 

@@ -4,6 +4,8 @@
 **Date**: 2026-07-10
 **Scope**: Evidence review for the Matrix OS coding-agent desktop, mobile, browser, and gateway shell implementation checkpoint.
 
+The audited commit includes the earlier `87bc72d0fdd9067fcec395c479de80fcaccfe641` deployment checkpoint as an ancestor. Repository CI, Docker, and Host Bundle Release evidence below is tied to that deployment checkpoint; later descendant PRs through audited commit `056b3da668` add the separately listed desktop/mobile smoke coverage and do not change what the earlier release evidence proves.
+
 This audit records current evidence through the desktop operator palette smoke and mobile terminal handoff checkpoint. It does not mark the full rollout complete while real-device smoke and broader cross-shell validation remain outstanding. The 2026-07-10 product clarification also adds project-first navigation, same-thread turns, multi-thread tasks, and Conversation/Kanban views to the completion bar; those requirements are explicitly incomplete below.
 
 ## Evidence Matrix

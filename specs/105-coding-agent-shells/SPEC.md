@@ -132,7 +132,7 @@ As a user, I want projects and their chats in a left navigator, and I want to sw
 5. Given an agent thread status changes, when the Kanban projection updates, then the card's aggregate badges change without silently moving the task.
 6. Given the viewport is mobile, when the same project opens, then navigation and Kanban columns use routes/stacks or horizontally scrollable sections instead of requiring desktop panel density.
 
-### US4A - Work In A Coding Conversation (P1)
+### US5 - Work In A Coding Conversation (P1)
 
 As a user, I want each chat to be a resumable coding workspace with transcript, terminal, files, diff, preview, logs, approvals, and follow-up messages.
 
@@ -145,7 +145,7 @@ As a user, I want each chat to be a resumable coding workspace with transcript, 
 3. Given the thread already has an active turn, when another normal message is submitted, then the gateway returns a safe busy conflict instead of starting concurrent turns or silently queueing work.
 4. Given the user opens files, review, terminal, or preview, when they return, then the same project/task/thread selection is preserved as bounded UI state.
 
-### US5 - Review And Ship Agent Work (P2)
+### US6 - Review And Ship Agent Work (P2)
 
 As a user, I want to review diffs created by agents, ask for follow-up fixes, and prepare changes for PR without leaving Matrix.
 
@@ -158,7 +158,7 @@ As a user, I want to review diffs created by agents, ask for follow-up fixes, an
 3. Given source control credentials are available server-side, when the user creates a PR, then the operation runs through the gateway and no GitHub token is stored in the client.
 4. Given diff data is too large, when review opens, then the shell shows partial/summary state and explicit fetch-more behavior instead of freezing.
 
-### US6 - Use Remote Terminal Sessions Everywhere (P1)
+### US7 - Use Remote Terminal Sessions Everywhere (P1)
 
 As a user, I want named remote terminal sessions that survive reloads, device switches, network loss, and app restarts.
 
@@ -172,7 +172,7 @@ As a user, I want named remote terminal sessions that survive reloads, device sw
 4. Given the user intentionally terminates a session, when confirmation succeeds, then all attached clients see ended state.
 5. Given paste/input is large, when sent, then frames are bounded and chunked according to gateway limits.
 
-### US7 - Keep Existing Desktop Features (P1)
+### US8 - Keep Existing Desktop Features (P1)
 
 As a current desktop user, I want auth, runtime switching, embeds, settings, updates, notifications, local UI state, and app launch behavior to continue working.
 
@@ -185,7 +185,7 @@ As a current desktop user, I want auth, runtime switching, embeds, settings, upd
 3. Deep links and notification click-through validate payloads before navigation.
 4. The updater remains non-destructive; it never force-restarts active work.
 
-### US8 - Keep Existing Mobile Features (P1)
+### US9 - Keep Existing Mobile Features (P1)
 
 As a current mobile user, I want chat, terminal, apps, canvas entry, settings, push, offline state, auth, and mobile shell resume behavior to keep working after the upgrade.
 
