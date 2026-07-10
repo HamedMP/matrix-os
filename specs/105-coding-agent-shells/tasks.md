@@ -1120,8 +1120,8 @@ Tests: `GW-004`, `GW-005`, `GW-006`, `GW-007`, `GW-008`.
 
 ### 19.3 Task/Thread Relation Mutations
 
-- [ ] Require valid project for new shell-created threads.
-- [ ] Validate optional task exists in the same project before thread insert.
+- [x] Require valid project for new shell-created threads.
+- [x] Validate optional task exists in the same project before thread insert.
 - [ ] Add explicit idempotent thread reassignment only if required for legacy adoption.
 - [ ] Publish project/task/thread projection updates after successful persistence.
 

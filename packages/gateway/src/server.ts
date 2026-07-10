@@ -35,6 +35,8 @@ import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
 import { createPreviewManager } from "./preview-manager.js";
+import { createProjectManager } from "./project-manager.js";
+import { createTaskManager } from "./task-manager.js";
 import { createReviewStore } from "./review-store.js";
 import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
 import { createSymphonyRunner } from "./symphony-runner.js";
@@ -108,6 +110,7 @@ import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summ
 import { createCodingAgentPreviewSummaryStore } from "./coding-agents/preview-summary.js";
 import { createOwnerCodingAgentProjectSummaryStore } from "./coding-agents/project-summary.js";
 import { createOwnerCodingAgentProjectWorkspaceStore } from "./coding-agents/project-workspace.js";
+import { createCodingAgentThreadRelationValidator } from "./coding-agents/thread-relations.js";
 import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
@@ -556,6 +559,11 @@ export async function createGateway(config: GatewayConfig) {
     ? createCodingAgentThreadStore({
       homePath,
       providers: codingAgentProviders,
+      relationValidator: createCodingAgentThreadRelationValidator({
+        projectManager: createProjectManager({ homePath }),
+        taskManager: createTaskManager({ homePath }),
+        principalOwnerIds: codingAgentOwnerIds,
+      }),
     })
     : undefined;
   const codingAgentProviderRegistry = createCodingAgentProviderRegistry({
