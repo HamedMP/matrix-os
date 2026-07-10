@@ -234,6 +234,15 @@ describe("coding agent project conversation contracts", () => {
       turnId: "turn_fix_2",
       status: "completed",
     }).type).toBe("turn.status");
+    expect(AgentThreadEventSchema.parse({
+      type: "turn.accepted",
+      eventId: "evt_turn_replay",
+      threadId: "thread_fix",
+      occurredAt: now,
+      turnId: "turn_fix_2",
+      clientRequestId: "req_turn_fix_2",
+      acceptedAt: now,
+    }).type).toBe("turn.accepted");
 
     const unsafeValues = [
       {

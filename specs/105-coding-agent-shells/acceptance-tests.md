@@ -59,10 +59,10 @@ Every clarified functional requirement and buildable success criterion has at le
 | GW-009 | New shell-created thread requires an owned project. | Missing, stale, and unauthorized project fixtures fail safely before provider launch or persistence; an owned project succeeds in `tests/gateway/coding-agents-thread-relations.test.ts`. |
 | GW-010 | Task-bound thread must use the task's project. | A `website` task submitted with the `matrix-os` project is rejected before provider launch or persistence in `tests/gateway/coding-agents-thread-relations.test.ts`. |
 | GW-011 | Duplicate create is idempotent with project/task relation unchanged. | A retry with the same `clientRequestId` and a changed stale relation returns the original thread and invokes the provider once in `tests/gateway/coding-agents-thread-relations.test.ts`. |
-| GW-012 | Turn route has auth, body limit, Zod params/body validation, ownership, and safe errors. | Focused route matrix covers every boundary. |
-| GW-013 | Turn acceptance atomically appends one user turn and claims active ownership. | Transaction/store test observes no partial state. |
-| GW-014 | Duplicate turn request returns the original accepted turn. | Same `(owner, thread, clientRequestId)` creates one turn/provider call. |
-| GW-015 | Concurrent normal turn returns safe `thread_busy`. | Parallel store/route test proves one winner and no hidden queue. |
+| GW-012 | Turn route has auth, body limit, Zod params/body validation, ownership, and safe errors. | Auth, oversized body, malformed thread/body, cross-owner, stale-relation, and generic error assertions in `tests/gateway/coding-agents-turns.test.ts`. |
+| GW-013 | Turn acceptance atomically appends one user turn and claims active ownership. | Store/route test replays the persisted `turn.accepted` event after the 202 response in `tests/gateway/coding-agents-turns.test.ts`. |
+| GW-014 | Duplicate turn request returns the original accepted turn. | Same `(owner, thread, clientRequestId)` returns one turn both in-process and after store reload in `tests/gateway/coding-agents-turns.test.ts`. |
+| GW-015 | Concurrent normal turn returns safe `thread_busy`. | Parallel route requests produce one 202 and one generic 409 with no local queue in `tests/gateway/coding-agents-turns.test.ts`. |
 | GW-016 | Sequential turns resume one provider conversation. | Fake adapter records create once, resume once, stable internal conversation ID. |
 | GW-017 | Completion/failure/abort releases active-turn ownership. | Each terminal outcome allows a later valid turn. |
 | GW-018 | Provider timeout/abort maps to bounded safe thread state. | AbortSignal and raw-error redaction tests. |
@@ -102,8 +102,8 @@ Every clarified functional requirement and buildable success criterion has at le
 
 | ID | Requirement | Expected Evidence |
 | --- | --- | --- |
-| SEC-001 | Every new mutation applies `bodyLimit` before parsing and validates route/body with Zod 4. | Route tests and pattern scan. |
-| SEC-002 | Project/task/thread/turn authorization is owner-scoped and rejects cross-owner references. | Principal matrix tests. |
+| SEC-001 | Every new mutation applies `bodyLimit` before parsing and validates route/body with Zod 4. | Turn route oversized/malformed tests in `tests/gateway/coding-agents-turns.test.ts`, route-focused mutation tests, and pattern scan. |
+| SEC-002 | Project/task/thread/turn authorization is owner-scoped and rejects cross-owner references. | Project workspace, thread relation, and turn principal matrices in their focused gateway tests. |
 | SEC-003 | Desktop renderer receives no bearer/provider credentials or provider resume IDs. | IPC contract/handler fixtures and forbidden-key scan. |
 | SEC-004 | Mobile persistence excludes transcripts, events, terminal output, file/diff data, approvals, tokens, and provider state. | AsyncStorage serialization tests. |
 | SEC-005 | Every external provider call has timeout/AbortSignal and safe error mapping. | Adapter timeout/failure tests. |

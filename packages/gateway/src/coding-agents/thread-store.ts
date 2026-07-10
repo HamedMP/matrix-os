@@ -6,7 +6,11 @@ import {
   AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
   AgentThreadSummarySchema,
+  AgentTurnIdSchema,
+  AgentTurnStatusSchema,
   ApprovalIdSchema,
+  CreateAgentTurnRequestSchema,
+  CreateAgentTurnResponseSchema,
   IsoTimestampSchema,
   ProviderIdSchema,
   RequestIdSchema,
@@ -17,6 +21,8 @@ import {
   type AgentThreadSummary,
   type ApprovalDecisionRequest,
   type CreateAgentThreadRequest,
+  type CreateAgentTurnRequest,
+  type CreateAgentTurnResponse,
   type SafeSetupAction,
   type UserInputAnswerRequest,
 } from "@matrix-os/contracts";
@@ -43,6 +49,10 @@ const MAX_ABORT_REQUEST_IDS = 50;
 const MAX_APPROVAL_DECISION_REQUEST_IDS = 50;
 const MAX_INPUT_ANSWER_REQUEST_IDS = 50;
 const MAX_PENDING_TERMINAL_STOPS = 100;
+// Retain bounded request payloads for dispatch/idempotency. At the shared
+// 96 KiB request limit, this caps worst-case turn payload storage below 10 MiB.
+const MAX_STORED_TURNS = 100;
+const MAX_TURNS_PER_THREAD = 50;
 
 const OwnerIdSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9_.:@-]+$/);
 const WorkspaceSessionIdSchema = z.string().min(1).max(160).regex(/^sess_[A-Za-z0-9_-]+$/);
@@ -53,6 +63,16 @@ const StoredThreadSchema = AgentThreadSummarySchema.extend({
   abortClientRequestIds: z.array(RequestIdSchema).max(MAX_ABORT_REQUEST_IDS).default([]),
   approvalDecisionClientRequestIds: z.array(RequestIdSchema).max(MAX_APPROVAL_DECISION_REQUEST_IDS).default([]),
   inputAnswerClientRequestIds: z.array(RequestIdSchema).max(MAX_INPUT_ANSWER_REQUEST_IDS).default([]),
+  activeTurnId: AgentTurnIdSchema.optional(),
+}).strict();
+
+const StoredTurnSchema = CreateAgentTurnRequestSchema.extend({
+  ownerId: OwnerIdSchema,
+  threadId: AgentThreadSummarySchema.shape.id,
+  turnId: AgentTurnIdSchema,
+  status: AgentTurnStatusSchema,
+  acceptedAt: IsoTimestampSchema,
+  updatedAt: IsoTimestampSchema,
 }).strict();
 
 const TerminalSessionStoppedReconciliationSchema = z.object({
@@ -74,11 +94,13 @@ const StoredThreadStateSchema = z.object({
   version: z.literal(1),
   threads: z.array(StoredThreadSchema).max(MAX_STORED_THREADS),
   events: z.array(AgentThreadEventSchema).max(MAX_STORED_THREADS * MAX_EVENTS_PER_THREAD),
+  turns: z.array(StoredTurnSchema).max(MAX_STORED_TURNS).default([]),
   pendingTerminalStops: z.array(PendingTerminalStopSchema).max(MAX_PENDING_TERMINAL_STOPS).default([]),
 }).strict();
 
 type StoredThread = z.infer<typeof StoredThreadSchema>;
 type StoredThreadState = z.infer<typeof StoredThreadStateSchema>;
+type StoredTurn = z.infer<typeof StoredTurnSchema>;
 type PendingTerminalStop = z.infer<typeof PendingTerminalStopSchema>;
 type AgentThreadSnapshot = z.infer<typeof AgentThreadSnapshotSchema>;
 type ThreadCreateResult = { snapshot: AgentThreadSnapshot; existing: boolean };
@@ -180,6 +202,14 @@ export interface CodingAgentThreadStore {
   registerEventSink(sink: ThreadEventSink): { dispose(): void };
 }
 
+export interface CodingAgentTurnStore {
+  acceptTurn(
+    principal: RequestPrincipal,
+    threadId: string,
+    request: CreateAgentTurnRequest,
+  ): Promise<CreateAgentTurnResponse>;
+}
+
 export class CodingAgentThreadError extends Error {
   constructor(
     readonly code: "provider_unavailable" | "thread_not_found" | "thread_store_unavailable",
@@ -187,6 +217,13 @@ export class CodingAgentThreadError extends Error {
   ) {
     super(message);
     this.name = "CodingAgentThreadError";
+  }
+}
+
+export class CodingAgentTurnError extends Error {
+  constructor(readonly code: "thread_busy" | "thread_not_found" | "turn_unavailable") {
+    super(code);
+    this.name = "CodingAgentTurnError";
   }
 }
 
@@ -248,7 +285,7 @@ export function createFakeCodingAgentProvider(options: { providerId: string; del
 }
 
 function emptyState(): StoredThreadState {
-  return { version: 1, threads: [], events: [], pendingTerminalStops: [] };
+  return { version: 1, threads: [], events: [], turns: [], pendingTerminalStops: [] };
 }
 
 function statePath(homePath: string): string {
@@ -346,6 +383,7 @@ function stripOwner(thread: StoredThread): AgentThreadSummary {
     abortClientRequestIds: _abortClientRequestIds,
     approvalDecisionClientRequestIds: _approvalDecisionClientRequestIds,
     inputAnswerClientRequestIds: _inputAnswerClientRequestIds,
+    activeTurnId: _activeTurnId,
     ...summary
   } = thread;
   return AgentThreadSummarySchema.parse(summary);
@@ -367,10 +405,21 @@ function trimState(state: StoredThreadState): StoredThreadState {
       return kept;
     }, []);
   const events = latestEvents.reverse();
+  const turns = state.turns
+    .slice()
+    .reverse()
+    .filter((turn) => activeThreadIds.includes(turn.threadId))
+    .reduce<StoredTurn[]>((kept, turn) => {
+      const countForThread = kept.filter((candidate) => candidate.threadId === turn.threadId).length;
+      if (countForThread < MAX_TURNS_PER_THREAD && kept.length < MAX_STORED_TURNS) kept.push(turn);
+      return kept;
+    }, [])
+    .reverse();
   return {
     version: 1,
     threads,
     events,
+    turns,
     pendingTerminalStops: state.pendingTerminalStops.slice(-MAX_PENDING_TERMINAL_STOPS),
   };
 }
@@ -650,7 +699,9 @@ export function safeThreadError(code: CodingAgentThreadError["code"]) {
   });
 }
 
-export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOptions): CodingAgentThreadStore {
+export function createCodingAgentThreadStore(
+  options: CodingAgentThreadStoreOptions,
+): CodingAgentThreadStore & CodingAgentTurnStore {
   const now = options.now ?? (() => new Date());
   const providers = options.providers.map((provider) => ({
     ...provider,
@@ -764,6 +815,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
         version: 1 as const,
         threads: [thread, ...state.threads],
         events: [...state.events, ...events],
+        turns: state.turns,
         pendingTerminalStops: pending.pendingTerminalStops,
       };
       const result: ThreadCreateMutationResult = {
@@ -788,6 +840,88 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
         throw new CodingAgentThreadRelationError("validation_unavailable");
       }
       return createThreadInternal(principal, request, options.relationValidator);
+    },
+    async acceptTurn(principal, threadId, request) {
+      const relationValidator = options.relationValidator?.validateThread;
+      if (!relationValidator) throw new CodingAgentTurnError("turn_unavailable");
+      const result = await mutate(async (state) => {
+        const thread = state.threads.find((candidate) =>
+          candidate.ownerId === principal.userId && candidate.id === threadId
+        );
+        if (!thread) throw new CodingAgentTurnError("thread_not_found");
+        const existing = state.turns.find((turn) =>
+          turn.ownerId === principal.userId &&
+          turn.threadId === threadId &&
+          turn.clientRequestId === request.clientRequestId
+        );
+        if (existing) {
+          return {
+            state,
+            result: {
+              response: CreateAgentTurnResponseSchema.parse({
+                threadId,
+                turnId: existing.turnId,
+                status: "already_accepted",
+                acceptedAt: existing.acceptedAt,
+              }),
+              eventsToPublish: [] as AgentThreadEvent[],
+            },
+          };
+        }
+        if (thread.activeTurnId || activeThread(thread)) {
+          throw new CodingAgentTurnError("thread_busy");
+        }
+        if (!["completed", "failed", "aborted"].includes(thread.status)) {
+          throw new CodingAgentTurnError("turn_unavailable");
+        }
+        await relationValidator(principal, { projectId: thread.projectId, taskId: thread.taskId });
+        const acceptedAt = now().toISOString();
+        const turnId = AgentTurnIdSchema.parse(`turn_${randomUUID()}`);
+        const event = AgentThreadEventSchema.parse({
+          type: "turn.accepted",
+          eventId: nextEventId(),
+          threadId,
+          occurredAt: acceptedAt,
+          turnId,
+          clientRequestId: request.clientRequestId,
+          acceptedAt,
+        });
+        const nextThread = {
+          ...thread,
+          activeTurnId: turnId,
+          status: "running" as const,
+          attention: "none" as const,
+          updatedAt: acceptedAt,
+        };
+        const turn = StoredTurnSchema.parse({
+          ...request,
+          ownerId: principal.userId,
+          threadId,
+          turnId,
+          status: "accepted",
+          acceptedAt,
+          updatedAt: acceptedAt,
+        });
+        return {
+          state: {
+            ...state,
+            threads: state.threads.map((candidate) => candidate === thread ? nextThread : candidate),
+            events: [...state.events, event],
+            turns: [...state.turns, turn],
+          },
+          result: {
+            response: CreateAgentTurnResponseSchema.parse({
+              threadId,
+              turnId,
+              status: "accepted",
+              acceptedAt,
+            }),
+            eventsToPublish: [event],
+          },
+        };
+      });
+      publish(principal.userId, threadId, result.eventsToPublish);
+      return result.response;
     },
     async listThreads(principal) {
       const state = await readState(options.homePath);
@@ -907,6 +1041,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
           version: 1 as const,
           threads: state.threads.map((candidate) => candidate.id === thread.id ? nextThread : candidate),
           events: [...state.events, ...abortEvents],
+          turns: state.turns,
           pendingTerminalStops: state.pendingTerminalStops,
         };
         return {
@@ -962,6 +1097,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
           version: 1 as const,
           threads: state.threads.map((candidate) => candidate.id === thread.id ? nextThread : candidate),
           events: [...state.events, ...approvalEvents],
+          turns: state.turns,
           pendingTerminalStops: state.pendingTerminalStops,
         };
         return {
@@ -1017,6 +1153,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
           version: 1 as const,
           threads: state.threads.map((candidate) => candidate.id === thread.id ? nextThread : candidate),
           events: [...state.events, ...inputEvents],
+          turns: state.turns,
           pendingTerminalStops: state.pendingTerminalStops,
         };
         return {
@@ -1099,6 +1236,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
             reconciledThreads.find((entry) => entry.thread.id === thread.id)?.nextThread ?? thread
           ),
           events: nextEvents,
+          turns: state.turns,
           pendingTerminalStops: state.pendingTerminalStops.filter((stop) =>
             !(
               stop.ownerId === parsed.ownerId &&

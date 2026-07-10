@@ -6,6 +6,9 @@ import {
   ApprovalDecisionRequestSchema,
   ApprovalIdSchema,
   CreateAgentThreadRequestSchema,
+  CreateAgentTurnErrorSchema,
+  CreateAgentTurnRequestSchema,
+  CreateAgentTurnResponseSchema,
   CursorSchema,
   FileBrowseRequestSchema,
   FileBrowseResponseSchema,
@@ -42,9 +45,11 @@ import {
 } from "../request-principal.js";
 import type { CodingAgentRuntimeSummaryService } from "./runtime-summary.js";
 import {
+  CodingAgentTurnError,
   CodingAgentThreadError,
   safeThreadError,
   type CodingAgentThreadStore,
+  type CodingAgentTurnStore,
 } from "./thread-store.js";
 import {
   CodingAgentReviewSnapshotError,
@@ -74,6 +79,7 @@ export interface CodingAgentRouteDeps {
     ): Promise<unknown>;
   };
   threads?: CodingAgentThreadStore;
+  turns?: CodingAgentTurnStore;
   reviews?: CodingAgentReviewSummaryStore;
   files?: CodingAgentFileStore;
   sourceControl?: CodingAgentSourceControlStore;
@@ -82,6 +88,7 @@ export interface CodingAgentRouteDeps {
 }
 
 const THREAD_MUTATION_BODY_LIMIT = 128 * 1024;
+const THREAD_TURN_BODY_LIMIT = 128 * 1024;
 const THREAD_ABORT_BODY_LIMIT = 1024;
 const THREAD_APPROVAL_BODY_LIMIT = 8 * 1024;
 const THREAD_INPUT_BODY_LIMIT = 40 * 1024;
@@ -285,10 +292,36 @@ function mapThreadRouteError(c: Context, err: unknown) {
   return c.json({ error: threadsUnavailable() }, 503);
 }
 
+function turnError(code: "thread_busy" | "thread_not_found" | "turn_unavailable") {
+  if (code === "thread_busy") {
+    return CreateAgentTurnErrorSchema.parse({
+      code,
+      safeMessage: "This conversation is already running. Wait for it to finish and try again.",
+      retryable: true,
+      recoveryActions: ["retry"],
+    });
+  }
+  if (code === "thread_not_found") {
+    return CreateAgentTurnErrorSchema.parse({
+      code,
+      safeMessage: "Conversation is unavailable. Refresh and try again.",
+      retryable: true,
+      recoveryActions: ["retry"],
+    });
+  }
+  return CreateAgentTurnErrorSchema.parse({
+    code,
+    safeMessage: "This conversation cannot accept a message right now. Refresh and try again.",
+    retryable: true,
+    recoveryActions: ["retry"],
+  });
+}
+
 export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
   const app = new Hono();
   const principalFor = (c: Context) => deps.getPrincipal?.(c) ?? requireRequestPrincipal(c);
   const threadMutationBodyLimit = bodyLimit({ maxSize: THREAD_MUTATION_BODY_LIMIT });
+  const threadTurnBodyLimit = bodyLimit({ maxSize: THREAD_TURN_BODY_LIMIT });
   const threadAbortBodyLimit = bodyLimit({ maxSize: THREAD_ABORT_BODY_LIMIT });
   const threadApprovalBodyLimit = bodyLimit({ maxSize: THREAD_APPROVAL_BODY_LIMIT });
   const threadInputBodyLimit = bodyLimit({ maxSize: THREAD_INPUT_BODY_LIMIT });
@@ -353,6 +386,42 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         }
         logCodingAgentWarning("project workspace route failed", err);
         return c.json({ error: projectWorkspaceUnavailable() }, 503);
+      }
+    });
+  }
+
+  if (deps.turns) {
+    app.post("/threads/:threadId/turns", threadTurnBodyLimit, async (c) => {
+      try {
+        const principal = principalFor(c);
+        const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
+        const request = CreateAgentTurnRequestSchema.parse(await c.req.json());
+        const response = await deps.turns!.acceptTurn(principal, threadId, request);
+        return c.json(
+          CreateAgentTurnResponseSchema.parse(response),
+          response.status === "already_accepted" ? 200 : 202,
+        );
+      } catch (err: unknown) {
+        if (isRequestPrincipalError(err)) {
+          const mapped = mapRequestPrincipalError(err);
+          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+        }
+        if (err instanceof z.ZodError) {
+          return c.json({ error: validationFailed() }, 400);
+        }
+        if (err instanceof CodingAgentTurnError) {
+          const status = err.code === "thread_not_found" ? 404 : 409;
+          return c.json({ error: turnError(err.code) }, status);
+        }
+        if (err instanceof CodingAgentThreadRelationError) {
+          if (err.code === "invalid_relation") {
+            return c.json({ error: turnError("turn_unavailable") }, 409);
+          }
+          logCodingAgentWarning("turn relation validation unavailable", err);
+          return c.json({ error: turnError("turn_unavailable") }, 503);
+        }
+        logCodingAgentWarning("thread turn route failed", err);
+        return c.json({ error: turnError("turn_unavailable") }, 503);
       }
     });
   }

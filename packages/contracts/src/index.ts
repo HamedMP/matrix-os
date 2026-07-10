@@ -418,7 +418,7 @@ export const AgentTurnLifecycleEventSchema = z.discriminatedUnion("type", [
 
 export type AgentTurnLifecycleEvent = z.infer<typeof AgentTurnLifecycleEventSchema>;
 
-export const AgentThreadEventSchema = z.discriminatedUnion("type", [
+const CoreAgentThreadEventSchema = z.discriminatedUnion("type", [
   BaseThreadEventSchema.extend({
     type: z.literal("thread.created"),
     thread: AgentThreadSummarySchema,
@@ -498,6 +498,11 @@ export const AgentThreadEventSchema = z.discriminatedUnion("type", [
     type: z.literal("thread.completed"),
     outcome: z.enum(["completed", "failed", "aborted"]),
   }).strict(),
+]);
+
+export const AgentThreadEventSchema = z.discriminatedUnion("type", [
+  ...AgentTurnLifecycleEventSchema.options,
+  ...CoreAgentThreadEventSchema.options,
 ]);
 
 export type AgentThreadEvent = z.infer<typeof AgentThreadEventSchema>;
