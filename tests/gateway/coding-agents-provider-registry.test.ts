@@ -186,7 +186,7 @@ describe("coding-agent provider registry", () => {
       id: "claude",
       displayName: "Claude",
       kind: "claude",
-      availability: "available",
+      availability: "unavailable",
       installStatus: "installed",
       authStatus: "authenticated",
       setupActions: [],

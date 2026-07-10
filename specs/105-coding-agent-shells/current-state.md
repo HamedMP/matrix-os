@@ -151,7 +151,7 @@ Implemented providers:
 Provider registry behavior:
 
 - Validates a bounded configured adapter list and rejects unsafe or duplicate provider IDs at startup.
-- Validates and bounds existing owner-scoped onboarding credential responses, normalizes them into coarse install, auth, and availability states, and keeps credential-known non-system providers in the runtime projection before an execution adapter is registered.
+- Validates and bounds existing owner-scoped onboarding credential responses, normalizes them into coarse install and auth states, and keeps credential-known non-system providers in the runtime projection before an execution adapter is registered while marking those credential-only projections unavailable for runs.
 - Fails configured providers closed to unavailable/unknown state when the credential source cannot be read, without running setup-action or health reads.
 - Validates provider summaries and setup actions with shared Zod 4 schemas; malformed adapter output becomes a generic unavailable provider projection.
 - Passes an `AbortSignal.timeout()` signal to summary, setup-action, and health calls.

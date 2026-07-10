@@ -97,15 +97,7 @@ function summaryFromCredential(credential: AgentCredentialSummary): AgentProvide
     id: credential.agent,
     displayName: displayNameForAgent(credential.agent),
     kind: kindForAgent(credential.agent),
-    availability: isAvailable
-      ? "available"
-      : isExpired
-        ? "auth_required"
-        : isMissing
-          ? "setup_required"
-          : failed
-            ? "unavailable"
-            : "unknown",
+    availability: "unavailable",
     installStatus: isAvailable || isExpired
       ? "installed"
       : isMissing
