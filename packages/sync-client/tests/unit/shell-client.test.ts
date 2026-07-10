@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createShellClient,
   SHELL_ATTACH_LIVE_TAIL_FROM_SEQ,
@@ -53,6 +53,10 @@ describe("createShellClient attachSession", () => {
   beforeEach(() => {
     FakeWebSocket.last = null;
     FakeWebSocket.instances = [];
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("detaches on raw Ctrl-C before the websocket has attached", async () => {
@@ -166,7 +170,7 @@ describe("createShellClient attachSession", () => {
       input,
       output,
       WebSocketImpl: FakeWebSocket as never,
-      richPaste: { rewriter },
+      richPaste: { rewriter, statusMinVisibleMs: 0 },
     });
 
     FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
@@ -192,6 +196,65 @@ describe("createShellClient attachSession", () => {
       data: '"/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/upload.png" what about this?',
     }));
     expect(FakeWebSocket.last?.sent.join("\n")).not.toContain("/var/folders/t5");
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "exit" }));
+    await expect(attach).resolves.toEqual({ detached: false });
+  });
+
+  it("keeps rich paste progress visible before printing completion and sending rewritten input", async () => {
+    vi.useFakeTimers();
+    const input = new PassThrough() as PassThrough & {
+      isTTY: true;
+      rows: number;
+      columns: number;
+      setRawMode: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+    };
+    input.isTTY = true;
+    input.rows = 24;
+    input.columns = 80;
+    input.setRawMode = vi.fn();
+    input.pause = vi.fn();
+    const errorOutput = new PassThrough();
+    const errors: string[] = [];
+    errorOutput.on("data", (chunk) => errors.push(String(chunk)));
+    const rewriter = {
+      rewrite: vi.fn(async () => ({
+        status: "rewritten" as const,
+        outgoingText: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-10/upload.png",
+        assets: [],
+      })),
+    };
+    const client = createShellClient({
+      gatewayUrl: "https://matrix.example",
+      token: "token-123",
+      timeoutMs: 10_000,
+    });
+    const attach = client.attachSession("main", {
+      input,
+      output: new PassThrough(),
+      errorOutput: errorOutput as NodeJS.WriteStream,
+      WebSocketImpl: FakeWebSocket as never,
+      richPaste: { rewriter },
+    });
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    input.write("/var/folders/t5/screen.png");
+    await Promise.resolve();
+
+    expect(errors.join("")).toContain("Image paste: reading/uploading...");
+    expect(errors.join("")).not.toContain("Image paste: inserted.");
+    expect(sentInputData()).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(1_199);
+    expect(errors.join("")).not.toContain("Image paste: inserted.");
+    expect(sentInputData()).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(errors.join("")).toContain("Image paste: inserted.");
+    expect(sentInputData()).toEqual([
+      "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-10/upload.png",
+    ]);
 
     FakeWebSocket.last?.emit("message", JSON.stringify({ type: "exit" }));
     await expect(attach).resolves.toEqual({ detached: false });
@@ -227,7 +290,7 @@ describe("createShellClient attachSession", () => {
       input,
       output: new PassThrough(),
       WebSocketImpl: FakeWebSocket as never,
-      richPaste: { rewriter },
+      richPaste: { rewriter, statusMinVisibleMs: 0 },
     });
 
     FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
@@ -293,7 +356,7 @@ describe("createShellClient attachSession", () => {
       input,
       output: new PassThrough(),
       WebSocketImpl: FakeWebSocket as never,
-      richPaste: { rewriter },
+      richPaste: { rewriter, statusMinVisibleMs: 0 },
     });
 
     FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
@@ -357,7 +420,7 @@ describe("createShellClient attachSession", () => {
       input,
       output: new PassThrough(),
       WebSocketImpl: FakeWebSocket as never,
-      richPaste: { rewriter },
+      richPaste: { rewriter, statusMinVisibleMs: 0 },
     });
 
     FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
@@ -422,7 +485,7 @@ describe("createShellClient attachSession", () => {
         output: new PassThrough(),
         errorOutput: errorOutput as NodeJS.WriteStream,
         WebSocketImpl: FakeWebSocket as never,
-        richPaste: { rewriter },
+        richPaste: { rewriter, statusMinVisibleMs: 0 },
       });
 
       FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
@@ -473,7 +536,7 @@ describe("createShellClient attachSession", () => {
       input,
       output: new PassThrough(),
       WebSocketImpl: FakeWebSocket as never,
-      richPaste: { rewriter },
+      richPaste: { rewriter, statusMinVisibleMs: 0 },
     });
 
     FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
@@ -531,7 +594,7 @@ describe("createShellClient attachSession", () => {
       input,
       output: new PassThrough(),
       WebSocketImpl: FakeWebSocket as never,
-      richPaste: { rewriter },
+      richPaste: { rewriter, statusMinVisibleMs: 0 },
     });
 
     FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
@@ -593,7 +656,7 @@ describe("createShellClient attachSession", () => {
       output: new PassThrough(),
       errorOutput: errorOutput as NodeJS.WriteStream,
       WebSocketImpl: FakeWebSocket as never,
-      richPaste: { rewriter },
+      richPaste: { rewriter, statusMinVisibleMs: 0 },
     });
 
     FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
@@ -649,7 +712,7 @@ describe("createShellClient attachSession", () => {
       input,
       output: new PassThrough(),
       WebSocketImpl: FakeWebSocket as never,
-      richPaste: { rewriter },
+      richPaste: { rewriter, statusMinVisibleMs: 0 },
     });
 
     FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
@@ -700,7 +763,7 @@ describe("createShellClient attachSession", () => {
       input,
       output: new PassThrough(),
       WebSocketImpl: FakeWebSocket as never,
-      richPaste: { rewriter },
+      richPaste: { rewriter, statusMinVisibleMs: 0 },
     });
 
     FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
@@ -767,7 +830,7 @@ describe("createShellClient attachSession", () => {
       output: new PassThrough(),
       errorOutput: errorOutput as NodeJS.WriteStream,
       WebSocketImpl: FakeWebSocket as never,
-      richPaste: { rewriter },
+      richPaste: { rewriter, statusMinVisibleMs: 0 },
     });
 
     FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
@@ -822,7 +885,7 @@ describe("createShellClient attachSession", () => {
       output: new PassThrough(),
       errorOutput: errorOutput as NodeJS.WriteStream,
       WebSocketImpl: FakeWebSocket as never,
-      richPaste: { rewriter },
+      richPaste: { rewriter, statusMinVisibleMs: 0 },
     });
 
     FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));

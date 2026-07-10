@@ -720,7 +720,7 @@ describe("shell REST client", () => {
         expect(init?.headers).toEqual(expect.objectContaining({
           Authorization: "Bearer tok",
           "Content-Type": "image/png",
-          "X-Matrix-Filename": "Screenshot 2026-07-07 at 6.50.39 PM.png",
+          "X-Matrix-Filename": "Screenshot-2026-07-07-at-6.50.39-PM.png",
         }));
         expect(Buffer.from(init?.body as BodyInit as ArrayBuffer)).toEqual(PNG_BYTES);
         return new Response(JSON.stringify({
@@ -748,6 +748,7 @@ describe("shell REST client", () => {
       output,
       errorOutput,
       cwd: "projects/app",
+      richPaste: { statusMinVisibleMs: 0 },
     });
     ControlledWebSocket.last?.emit("open");
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
