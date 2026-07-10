@@ -78,8 +78,6 @@ const ThreadFollowUpSeedParamsSchema = z.object({
 
 type ThreadFollowUpSeedParams = z.infer<typeof ThreadFollowUpSeedParamsSchema>;
 
-let requestCounter = 0;
-
 function firstRouteParam(value: unknown): string | undefined {
   if (Array.isArray(value)) {
     const [first] = value;
@@ -88,9 +86,9 @@ function firstRouteParam(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function nextClientRequestId(): string {
-  requestCounter += 1;
-  return `req_mobile_${Date.now().toString(36)}_${requestCounter}`;
+function nextClientRequestId(requestCounter: { current: number }): string {
+  requestCounter.current = (requestCounter.current + 1) % 1_000_000;
+  return `req_mobile_${Date.now().toString(36)}_${requestCounter.current.toString(36)}`;
 }
 
 function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
@@ -159,6 +157,12 @@ function reviewHunkFollowUpDraft(summary: RuntimeSummary, seed: ReviewHunkSeedPa
       },
     ],
   };
+}
+
+function includeWorkspaceProject(summary: RuntimeSummary, project: RuntimeSummary["projects"]["items"][number]): RuntimeSummary {
+  const items = [...summary.projects.items.filter((candidate) => candidate.id !== project.id), project]
+    .slice(-summary.projects.limit);
+  return { ...summary, projects: { ...summary.projects, items } };
 }
 
 function threadFollowUpDraft(
@@ -307,6 +311,7 @@ export default function AgentComposerScreen() {
   const generation = useRef(0);
   const submitInFlight = useRef(false);
   const projectCreateRequest = useRef<{ key: string; clientRequestId: string } | null>(null);
+  const requestCounter = useRef(0);
 
   const loadSummary = useCallback(async () => {
     const nextGeneration = generation.current + 1;
@@ -322,7 +327,22 @@ export default function AgentComposerScreen() {
       setState({ status: "error", summary: null, error: "Runtime summary unavailable" });
       return;
     }
-    const summary = result.summary;
+    let summary = result.summary;
+    if (
+      requestedProjectId !== undefined
+      && !summary.projects.items.some((project) => project.id === requestedProjectId)
+    ) {
+      const workspaceResult = await client.getCodingAgentProjectWorkspace({
+        projectId: requestedProjectId,
+      });
+      if (generation.current !== nextGeneration) return;
+      if (
+        workspaceResult.ok
+        && workspaceResult.workspace.project.id === requestedProjectId
+      ) {
+        summary = includeWorkspaceProject(summary, workspaceResult.workspace.project);
+      }
+    }
     setState({ status: "ready", summary, error: null });
     const baseDraft = defaultAgentThreadComposerDraft(summary);
     const selectedProjectId = defaultProjectId(summary, requestedProjectId);
@@ -392,7 +412,7 @@ export default function AgentComposerScreen() {
     if (projectCreateRequest.current?.key !== requestKey) {
       projectCreateRequest.current = {
         key: requestKey,
-        clientRequestId: nextClientRequestId(),
+        clientRequestId: nextClientRequestId(requestCounter),
       };
     }
     const clientRequestId = projectCreateRequest.current.clientRequestId;
@@ -440,7 +460,7 @@ export default function AgentComposerScreen() {
     const built = buildCreateAgentThreadRequestFromComposer({
       draft,
       summary,
-      clientRequestId: nextClientRequestId(),
+      clientRequestId: nextClientRequestId(requestCounter),
     });
     if (!built.ok) {
       setCreateError(built.issues[0]?.safeMessage ?? "Agent run could not be started. Try again.");

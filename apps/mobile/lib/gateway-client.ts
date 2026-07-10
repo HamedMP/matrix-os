@@ -1103,7 +1103,10 @@ export class GatewayClient {
       );
       const body: unknown = await res.json();
       if (!res.ok) {
-        const parsedError = CreateAgentTurnErrorSchema.safeParse(body);
+        const errorPayload = body && typeof body === "object" && "error" in body
+          ? (body as { error: unknown }).error
+          : body;
+        const parsedError = CreateAgentTurnErrorSchema.safeParse(errorPayload);
         if (res.status === 409 && parsedError.success && parsedError.data.code === "thread_busy") {
           return {
             ok: false,

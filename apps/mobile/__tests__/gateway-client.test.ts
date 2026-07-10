@@ -814,10 +814,12 @@ describe("GatewayClient", () => {
 
   it("rejects invalid turn requests locally and maps busy responses to a safe retry state", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
-      code: "thread_busy",
-      safeMessage: "This conversation cannot accept a message right now. Refresh and try again.",
-      retryable: true,
-      recoveryActions: ["retry"],
+      error: {
+        code: "thread_busy",
+        safeMessage: "This conversation cannot accept a message right now. Refresh and try again.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
     }, { status: 409 }));
     const client = new GatewayClient("http://localhost:4000", "token");
 
