@@ -84,6 +84,14 @@ export function AgentProjectWorkspaceShell({
       return;
     }
     if (status !== "ready") return;
+    if (
+      currentActiveThreadId
+      && currentActiveThreadId !== selectedThreadId
+      && currentThreadState.threadSnapshotStatus === "loading"
+      && !currentThreadState.threadSnapshot
+    ) {
+      return;
+    }
     if (currentActiveThreadId !== selectedThreadId) {
       void loadThreadSnapshot(selectedThreadId);
     }
@@ -154,7 +162,13 @@ export function AgentProjectWorkspaceShell({
           void selectProject(projectId);
         }}
         onSelectTask={selectTask}
-        onSelectThread={selectThread}
+        onSelectThread={(threadId) => {
+          const currentActiveThreadId = useCodingAgentWorkspace.getState().activeThreadId;
+          selectThread(threadId);
+          if (currentActiveThreadId !== threadId) {
+            void loadThreadSnapshot(threadId);
+          }
+        }}
         onNewChat={onNewChat}
       />
       <main className="flex min-h-0 min-w-[320px] flex-1 flex-col overflow-hidden">

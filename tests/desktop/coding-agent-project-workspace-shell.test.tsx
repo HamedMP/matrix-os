@@ -316,6 +316,81 @@ describe("AgentProjectWorkspaceShell", () => {
     });
   });
 
+  it("does not replace a pending notification thread when project hydration finishes first", async () => {
+    const projectWorkspace = workspace();
+    const websiteWorkspace: ProjectAgentWorkspace = {
+      ...projectWorkspace,
+      project: {
+        id: "website",
+        label: "Website",
+        status: "available",
+        taskCount: 0,
+        threadCount: 1,
+        attentionCount: 0,
+      },
+      projectThreads: {
+        items: [thread("thread_external", "website")],
+        hasMore: false,
+        limit: 100,
+      },
+    };
+    let resolveExternalSnapshot: ((value: AgentThreadSnapshot) => void) | undefined;
+    const externalSnapshot = new Promise<AgentThreadSnapshot>((resolve) => {
+      resolveExternalSnapshot = resolve;
+    });
+    const snapshotRequests: string[] = [];
+    const invoke = vi.fn((channel: string, payload?: unknown) => {
+      if (channel === "state:get") return Promise.resolve({ value: null });
+      if (channel === "state:set") return Promise.resolve({ ok: true });
+      if (channel === "runtime:get-project-workspace") {
+        return Promise.resolve(
+          (payload as { projectId: string }).projectId === "website"
+            ? websiteWorkspace
+            : projectWorkspace,
+        );
+      }
+      if (channel === "runtime:get-thread-snapshot") {
+        const threadId = (payload as { threadId: string }).threadId;
+        snapshotRequests.push(threadId);
+        return threadId === "thread_external"
+          ? externalSnapshot
+          : Promise.resolve(snapshot(threadId, "matrix-os"));
+      }
+      if (channel === "runtime:subscribe-thread-events" || channel === "runtime:unsubscribe-thread-events") {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+    window.operator = { invoke, on: vi.fn(() => () => undefined) };
+
+    void useCodingAgentWorkspace.getState().loadThreadSnapshot("thread_external");
+    render(
+      <AgentProjectWorkspaceShell summary={summary()} onNewChat={vi.fn()}>
+        <div>Workspace</div>
+      </AgentProjectWorkspaceShell>,
+    );
+
+    await waitFor(() => {
+      expect(useCodingAgentProjectWorkspace.getState().status).toBe("ready");
+    });
+    expect(snapshotRequests).toEqual(["thread_external"]);
+    expect(useCodingAgentWorkspace.getState()).toMatchObject({
+      activeThreadId: "thread_external",
+      threadSnapshotStatus: "loading",
+    });
+
+    await act(async () => {
+      resolveExternalSnapshot?.(snapshot("thread_external", "website"));
+      await externalSnapshot;
+    });
+    await waitFor(() => {
+      expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
+        selectedProjectId: "website",
+        selectedThreadId: "thread_external",
+      });
+    });
+  });
+
   it("clears stale thread details when selecting a project workspace that fails", async () => {
     const projectWorkspace = workspace();
     const invoke = vi.fn((channel: string, payload?: unknown) => {
