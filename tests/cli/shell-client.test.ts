@@ -752,8 +752,13 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("open");
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     input.emit("data", `"${imagePath}"`);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toContainEqual({
+        type: "input",
+        data: "\"/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/upload.png\"",
+      });
+    });
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
 
     await expect(attached).resolves.toEqual({ detached: false });
