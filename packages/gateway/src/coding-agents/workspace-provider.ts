@@ -17,11 +17,17 @@ export interface WorkspaceCodingAgentProviderOptions {
   providerId: string;
   agent: SupportedAgent;
   runtime: WorkspaceRuntime;
+  runnable?: boolean;
 }
 
-export interface WorkspaceCodingAgentProvidersOptions {
+export interface WorkspaceCodingAgentProviderSetOptions {
   agents: readonly SupportedAgent[];
   runtime: WorkspaceRuntime;
+}
+
+export interface WorkspaceCodingAgentProviderSet {
+  registryProviders: CodingAgentProviderAdapter[];
+  executionProviders: CodingAgentProviderAdapter[];
 }
 
 function sessionIdForThread(threadId: string): string {
@@ -99,6 +105,7 @@ export function createWorkspaceCodingAgentProvider(
 ): CodingAgentProviderAdapter {
   const providerId = ProviderIdSchema.parse(options.providerId);
   const agent = SupportedAgentSchema.parse(options.agent);
+  const runnable = options.runnable !== false;
 
   return {
     providerId,
@@ -107,7 +114,7 @@ export function createWorkspaceCodingAgentProvider(
         id: providerId,
         displayName: providerDisplayName(agent),
         kind: providerKind(agent),
-        availability: "available",
+        availability: runnable ? "available" : "unavailable",
         installStatus: "installed",
         authStatus: "authenticated",
         supportedModes: ["default", "review"],
@@ -117,12 +124,15 @@ export function createWorkspaceCodingAgentProvider(
       };
     },
     healthCheck() {
-      return { ok: true };
+      return { ok: runnable };
     },
     buildSetupAction(): SafeSetupAction[] {
       return [];
     },
     async startThread({ principal, thread, request, now, nextEventId }) {
+      if (!runnable) {
+        throw new Error("Workspace provider execution unavailable");
+      }
       const sessionId = sessionIdForThread(thread.id);
       const result = await options.runtime.startSession({
         ownerScope: { type: "user", id: principal.userId },
@@ -199,13 +209,18 @@ export function createWorkspaceCodingAgentProvider(
   };
 }
 
-export function createWorkspaceCodingAgentProviders(
-  options: WorkspaceCodingAgentProvidersOptions,
-): CodingAgentProviderAdapter[] {
+export function createWorkspaceCodingAgentProviderSet(
+  options: WorkspaceCodingAgentProviderSetOptions,
+): WorkspaceCodingAgentProviderSet {
   const agents = SupportedAgentSchema.array().max(4).parse(options.agents);
-  return agents.map((agent) => createWorkspaceCodingAgentProvider({
+  const registryProviders = agents.map((agent) => createWorkspaceCodingAgentProvider({
     providerId: agent,
     agent,
     runtime: options.runtime,
+    runnable: agent === "codex",
   }));
+  return {
+    registryProviders,
+    executionProviders: registryProviders.filter((provider) => provider.providerId === "codex"),
+  };
 }

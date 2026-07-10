@@ -11,7 +11,7 @@ import {
 import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import {
   createWorkspaceCodingAgentProvider,
-  createWorkspaceCodingAgentProviders,
+  createWorkspaceCodingAgentProviderSet,
 } from "../../packages/gateway/src/coding-agents/workspace-provider.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 
@@ -49,58 +49,75 @@ function workspaceSession(overrides: Record<string, unknown> = {}) {
 }
 
 describe("coding agent workspace provider", () => {
-  it("creates one provider adapter per configured workspace agent", () => {
+  it("keeps Claude registry-visible but excludes it from executable providers until sandboxed", async () => {
     const runtime = {
       startSession: vi.fn(),
       stopSession: vi.fn(),
     };
 
-    const providers = createWorkspaceCodingAgentProviders({
+    const providers = createWorkspaceCodingAgentProviderSet({
       agents: ["claude", "codex"],
       runtime,
     });
 
-    expect(providers.map((provider) => provider.providerId)).toEqual(["claude", "codex"]);
+    expect(providers.registryProviders.map((provider) => provider.providerId)).toEqual(["claude", "codex"]);
+    expect(providers.executionProviders.map((provider) => provider.providerId)).toEqual(["codex"]);
+
+    const claude = providers.registryProviders[0]!;
+    expect(await claude.getSummary?.({
+      principal: ownerPrincipal,
+      now: () => baseNow,
+      signal: AbortSignal.timeout(1_000),
+    })).toMatchObject({
+      id: "claude",
+      availability: "unavailable",
+    });
+    await expect(claude.startThread({
+      principal: ownerPrincipal,
+      thread: AgentThreadSummarySchema.parse({
+        id: "thread_claude_blocked",
+        providerId: "claude",
+        title: "Coding agent run",
+        status: "queued",
+        attention: "none",
+        projectId: createBody.projectId,
+        taskId: createBody.taskId,
+        createdAt: baseNow.toISOString(),
+        updatedAt: baseNow.toISOString(),
+      }),
+      request: {
+        ...createBody,
+        providerId: "claude",
+        clientRequestId: "req_workspace_claude_blocked",
+      },
+      now: () => baseNow,
+      nextEventId: () => "event_claude_blocked",
+    })).rejects.toThrow("Workspace provider execution unavailable");
+    expect(runtime.startSession).not.toHaveBeenCalled();
   });
 
-  it("starts the selected Claude provider through the shared workspace runtime", async () => {
+  it("rejects Claude thread starts without invoking the shared workspace runtime", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-workspace-provider-"));
     const runtime = {
-      startSession: vi.fn(async () => ({
-        ok: true,
-        status: 201,
-        session: workspaceSession({ agent: "claude" }),
-      })),
+      startSession: vi.fn(),
       stopSession: vi.fn(async () => ({ ok: true, session: workspaceSession() })),
     };
+    const providers = createWorkspaceCodingAgentProviderSet({
+      agents: ["codex", "claude"],
+      runtime,
+    });
     const threads = createCodingAgentThreadStore({
       homePath,
       now: () => baseNow,
-      providers: createWorkspaceCodingAgentProviders({
-        agents: ["codex", "claude"],
-        runtime,
-      }),
+      providers: providers.executionProviders,
     });
 
-    const created = await threads.createThread(ownerPrincipal, {
+    await expect(threads.createThread(ownerPrincipal, {
       ...createBody,
       providerId: "claude",
       clientRequestId: "req_workspace_claude_1",
-    });
-
-    expect(runtime.startSession).toHaveBeenCalledWith({
-      ownerScope: { type: "user", id: "owner_user" },
-      request: expect.objectContaining({
-        agent: "claude",
-        kind: "agent",
-        prompt: createBody.prompt,
-        runtimePreference: "zellij",
-      }),
-    });
-    expect(created.snapshot.thread).toMatchObject({
-      providerId: "claude",
-      status: "running",
-    });
+    })).rejects.toMatchObject({ code: "provider_unavailable" });
+    expect(runtime.startSession).not.toHaveBeenCalled();
   });
 
   it("starts a workspace agent session and binds the terminal reference to the stored thread", async () => {

@@ -101,7 +101,7 @@ import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-
 import { createCodingAgentRoutes } from "./coding-agents/routes.js";
 import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type CodingAgentProviderAdapter, type CodingAgentThreadStore } from "./coding-agents/thread-store.js";
 import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./coding-agents/thread-stream.js";
-import { createWorkspaceCodingAgentProviders } from "./coding-agents/workspace-provider.js";
+import { createWorkspaceCodingAgentProviderSet } from "./coding-agents/workspace-provider.js";
 import { configuredWorkspaceProviderAgents } from "./coding-agents/workspace-provider-config.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
@@ -521,6 +521,7 @@ export async function createGateway(config: GatewayConfig) {
     onSessionStopped: (session) => codingAgentSessionStopReconciler.handleSessionStopped(session),
   });
   const codingAgentProviders: CodingAgentProviderAdapter[] = [];
+  const codingAgentRegistryProviders: CodingAgentProviderAdapter[] = [];
   const codingAgentWorkspaceAgents = configuredWorkspaceProviderAgents(process.env);
   if (codingAgentWorkspaceAgents.length > 0) {
     const codingAgentWorktreeManager = createWorktreeManager({ homePath });
@@ -538,12 +539,16 @@ export async function createGateway(config: GatewayConfig) {
       sessionRuntimeBridge: workspaceSessionRuntimeBridge,
       eventPublisher: workspaceEventPublisher,
     });
-    codingAgentProviders.push(...createWorkspaceCodingAgentProviders({
+    const providerSet = createWorkspaceCodingAgentProviderSet({
       agents: codingAgentWorkspaceAgents,
       runtime: codingAgentWorkspaceRuntime,
-    }));
+    });
+    codingAgentProviders.push(...providerSet.executionProviders);
+    codingAgentRegistryProviders.push(...providerSet.registryProviders);
   } else if (process.env.MATRIX_CODING_AGENTS_FAKE_PROVIDER === "1") {
-    codingAgentProviders.push(createFakeCodingAgentProvider({ providerId: "codex" }));
+    const fakeProvider = createFakeCodingAgentProvider({ providerId: "codex" });
+    codingAgentProviders.push(fakeProvider);
+    codingAgentRegistryProviders.push(fakeProvider);
   }
   codingAgentThreadStore = codingAgentProviders.length > 0
     ? createCodingAgentThreadStore({
@@ -552,7 +557,7 @@ export async function createGateway(config: GatewayConfig) {
     })
     : undefined;
   const codingAgentProviderRegistry = createCodingAgentProviderRegistry({
-    providers: codingAgentProviders,
+    providers: codingAgentRegistryProviders,
     agentCredentials: agentCredentialService,
   });
   const codingAgentWorkspaceEnabled = Boolean(codingAgentThreadStore);

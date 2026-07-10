@@ -147,7 +147,7 @@ Core files:
 Implemented providers:
 
 - Fake provider for deterministic gateway tests behind `MATRIX_CODING_AGENTS_FAKE_PROVIDER=1`.
-- Workspace-backed Claude/Codex providers behind the bounded `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` list. The legacy `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1` flag remains Codex-only when the explicit list is unset.
+- Workspace-backed Claude/Codex registry projections behind the bounded `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` list. Codex is executable; Claude remains unavailable for thread creation until its launcher enforces the shared sandbox and approval contract. The legacy `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1` flag remains Codex-only when the explicit list is unset.
 
 Provider registry behavior:
 
@@ -161,7 +161,8 @@ Provider registry behavior:
 Workspace provider behavior:
 
 - Starts deterministic workspace agent sessions through `WorkspaceSessionOrchestrator`.
-- Builds one normalized execution adapter per validated configured Claude/Codex agent while sharing the same gateway-owned workspace runtime.
+- Builds one normalized registry adapter per validated configured Claude/Codex agent while sharing the same gateway-owned workspace runtime.
+- Adds only Codex to the executable provider set. Claude's registry adapter reports unavailable and rejects direct execution until [#893](https://github.com/HamedMP/matrix-os/issues/893) provides equivalent sandbox and approval enforcement.
 - Passes through prompt, project, task, worktree, mode, approval policy, sandbox mode, and zellij runtime preference.
 - Passes bounded `structured_ref` attachments into the runtime launch prompt as safe reference metadata so review follow-up runs can inspect the selected file/hunk without client-side diff contents.
 - Binds coding-agent threads to canonical `terminalSessionId` from the workspace session.
@@ -410,7 +411,7 @@ Client flags:
 Server flags:
 
 - Fake provider: `MATRIX_CODING_AGENTS_FAKE_PROVIDER=1`.
-- Workspace providers: `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex` (bounded explicit list).
+- Workspace provider projections: `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex` (bounded explicit list; Codex executable, Claude registry-only).
 - Legacy Codex-only workspace provider: `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1` when the explicit list is unset.
 
 Current behavior:
@@ -483,6 +484,7 @@ git diff --check
 
 ## Open Questions And Deferred Work
 
+- Claude workspace execution: registry and owner credential projection are implemented, but thread creation remains fail-closed until [#893](https://github.com/HamedMP/matrix-os/issues/893) enforces the shared sandbox and approval contract in the launcher and runtime preflight.
 - Session completion reconciliation: implemented for workspace `session.stopped` events that carry owner id, workspace session id, and bound `terminalSessionId`; the gateway thread store marks matching active coding-agent threads completed or failed server-side without matching unrelated owners or reused terminal ids. Startup recovery now returns degraded/closed agent sessions from the runtime session manager and routes them through the same workspace `session.stopped` publisher path, so coding-agent thread completion reconciliation also runs after autonomous startup/runtime degradation recovery.
 - File/review/preview/source-control shell surfaces: read-only review summaries now have coding-agent contracts/routes/desktop IPC/mobile clients plus desktop and mobile read-only review panels. A read-only review snapshot route now exposes bounded diff hunk metadata and capped hunk line bodies from safe owner worktrees plus partial findings-derived fallback metadata for shell diff panels. Runtime summaries now include safe preview summary rows from existing workspace preview records, and the desktop/mobile Agents workspaces render those rows read-only. Desktop also has a read-only preview inspector with HTTPS-only external launch through the existing safe IPC path, mobile has an HTTPS-only preview route using the existing app runtime frame, and the browser Workspace preview panel renders validated active-project coding-agent preview origin/status rows with direct launch limited to HTTPS origins. Gateway now has bounded browse/search/read and conflict-safe write routes for owner worktree files, desktop/mobile review details can render one selected bounded file snapshot through trusted clients, desktop/mobile review details can prepare a local source-control commit through trusted clients, the gateway can create or return a GitHub pull request from a validated owner worktree without exposing credentials, and desktop/mobile review details can trigger that PR creation through trusted clients with generic safe error states and safe HTTPS open actions for the returned pull request URL. Browser Workspace can open an existing Canvas PR workspace from bounded worktree PR metadata, but commit and pull-request creation remain outside browser Workspace.
 - Approval/input shell actions: desktop and mobile approval decisions plus user-input answers now use trusted gateway clients, bounded UI controls, idempotent request ids, and focused tests. Desktop selected-thread details now subscribe through a trusted main-process thread-event bridge and merge live approval/input resolution events without exposing bearer credentials to the renderer; mobile thread details subscribe through the authenticated gateway client, pin the newest unresolved approval/input request above the timeline for phone-first action, and rehydrate the bounded snapshot on foreground resume so cross-shell approval/input decisions reconcile. Remaining work: broader end-to-end device validation.
