@@ -16,8 +16,10 @@ import {
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   ProjectIdSchema,
+  ProjectAgentWorkspaceSchema,
   RequestIdSchema,
   ThreadIdSchema,
+  TaskIdSchema,
   SafeClientErrorSchema,
   UserInputAnswerRequestSchema,
   boundedListSchema,
@@ -59,9 +61,17 @@ import {
 } from "./source-control.js";
 import type { CodingAgentNotificationPreferenceStore } from "./notification-preferences.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
+import { CodingAgentProjectWorkspaceError } from "./project-workspace.js";
 
 export interface CodingAgentRouteDeps {
   service: CodingAgentRuntimeSummaryService;
+  projectWorkspaces?: {
+    getProjectWorkspace(
+      principal: RequestPrincipal,
+      projectId: string,
+      query: ProjectWorkspaceQuery,
+    ): Promise<unknown>;
+  };
   threads?: CodingAgentThreadStore;
   reviews?: CodingAgentReviewSummaryStore;
   files?: CodingAgentFileStore;
@@ -89,6 +99,29 @@ const SummaryQuerySchema = z.object({
     message: "Invalid project id",
   }).optional(),
 }).strict();
+const ProjectWorkspaceProjectIdSchema = ProjectIdSchema.refine(
+  (value) => /^[a-z0-9][a-z0-9-]{0,62}$/.test(value),
+  { message: "Invalid project id" },
+);
+const ProjectWorkspaceQuerySchema = z.object({
+  taskCursor: TaskIdSchema.optional(),
+  taskLimit: z.coerce.number().int().min(1).max(100).default(50),
+  projectThreadCursor: ThreadIdSchema.optional(),
+  projectThreadLimit: z.coerce.number().int().min(1).max(100).default(50),
+  taskThreadCursor: ThreadIdSchema.optional(),
+  taskThreadLimit: z.coerce.number().int().min(1).max(100).default(50),
+}).strict();
+const SingleProjectWorkspaceQueryValueSchema = z.array(z.string()).length(1).transform((values) => values[0]!);
+const ProjectWorkspaceRawQuerySchema = z.object({
+  taskCursor: SingleProjectWorkspaceQueryValueSchema.optional(),
+  taskLimit: SingleProjectWorkspaceQueryValueSchema.optional(),
+  projectThreadCursor: SingleProjectWorkspaceQueryValueSchema.optional(),
+  projectThreadLimit: SingleProjectWorkspaceQueryValueSchema.optional(),
+  taskThreadCursor: SingleProjectWorkspaceQueryValueSchema.optional(),
+  taskThreadLimit: SingleProjectWorkspaceQueryValueSchema.optional(),
+}).strict();
+
+type ProjectWorkspaceQuery = z.infer<typeof ProjectWorkspaceQuerySchema>;
 
 function summaryUnavailable() {
   return SafeClientErrorSchema.parse({
@@ -105,6 +138,23 @@ function threadsUnavailable() {
     safeMessage: "Agent thread state is temporarily unavailable. Try again.",
     retryable: true,
     recoveryActions: ["retry"],
+  });
+}
+
+function projectWorkspaceUnavailable() {
+  return SafeClientErrorSchema.parse({
+    code: "project_workspace_unavailable",
+    safeMessage: "Project workspace is temporarily unavailable. Refresh and try again.",
+    retryable: true,
+    recoveryActions: ["retry"],
+  });
+}
+
+function projectWorkspaceNotFound() {
+  return SafeClientErrorSchema.parse({
+    code: "project_not_found",
+    safeMessage: "Project workspace is unavailable. Refresh and try again.",
+    retryable: false,
   });
 }
 
@@ -258,6 +308,40 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
       return c.json({ error: summaryUnavailable() }, 503);
     }
   });
+
+  if (deps.projectWorkspaces) {
+    app.get("/projects/:projectId/workspace", async (c) => {
+      try {
+        const principal = principalFor(c);
+        const projectId = ProjectWorkspaceProjectIdSchema.parse(c.req.param("projectId"));
+        const query = ProjectWorkspaceQuerySchema.parse(
+          ProjectWorkspaceRawQuerySchema.parse(c.req.queries()),
+        );
+        return c.json(ProjectAgentWorkspaceSchema.parse(
+          await deps.projectWorkspaces!.getProjectWorkspace(principal, projectId, query),
+        ));
+      } catch (err: unknown) {
+        if (isRequestPrincipalError(err)) {
+          const mapped = mapRequestPrincipalError(err);
+          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+        }
+        if (err instanceof z.ZodError) {
+          return c.json({ error: validationFailed() }, 400);
+        }
+        if (err instanceof CodingAgentProjectWorkspaceError) {
+          if (err.code === "project_not_found") {
+            return c.json({ error: projectWorkspaceNotFound() }, 404);
+          }
+          if (err.code === "invalid_cursor") {
+            return c.json({ error: validationFailed() }, 400);
+          }
+          return c.json({ error: projectWorkspaceUnavailable() }, 503);
+        }
+        logCodingAgentWarning("project workspace route failed", err);
+        return c.json({ error: projectWorkspaceUnavailable() }, 503);
+      }
+    });
+  }
 
   if (deps.threads) {
     app.post("/threads", threadMutationBodyLimit, async (c) => {
