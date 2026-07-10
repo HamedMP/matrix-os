@@ -19,10 +19,16 @@ import {
   type SourceControlCreatePullRequestResponse,
   type SourceControlPrepareCommitRequest,
 } from "@matrix-os/contracts";
+import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import { Button, EmptyState, StatusDot } from "../../design/primitives";
 import { invoke } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
-import { codingAgentApprovalActionKey, codingAgentInputActionKey, useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import {
+  clearCodingAgentRuntimeSelection,
+  codingAgentApprovalActionKey,
+  codingAgentInputActionKey,
+  useCodingAgentWorkspace,
+} from "../../stores/coding-agent-workspace";
 import { useCodingAgentProjectWorkspace } from "../../stores/coding-agent-project-workspace";
 import { useTabs } from "../../stores/tabs";
 import { AgentPreviewList, AgentTerminalList } from "./AgentWorkspaceContext";
@@ -1884,7 +1890,7 @@ function reviewHunkFollowUpDraft(summary: RuntimeSummary, snapshot: ReviewSnapsh
 }
 
 export default function AgentWorkspace() {
-  const runtimeSlot = useConnection((s) => s.runtimeSlot);
+  const runtimeScope = useConnection(codingAgentRuntimeScope);
   const status = useCodingAgentWorkspace((s) => s.status);
   const summary = useCodingAgentWorkspace((s) => s.summary);
   const error = useCodingAgentWorkspace((s) => s.error);
@@ -1899,17 +1905,64 @@ export default function AgentWorkspace() {
   const requestComposerFocus = useCodingAgentWorkspace((s) => s.requestComposerFocus);
   const composerFocusRequestId = useCodingAgentWorkspace((s) => s.composerFocusRequestId);
   const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
+  const [summaryRuntimeScope, setSummaryRuntimeScope] = useState<string | null>(null);
+  const previousRuntimeScope = useRef(runtimeScope);
+
+  const retryCurrentScope = () => {
+    void refresh().then(() => {
+      if (useCodingAgentWorkspace.getState().status === "ready") {
+        setSummaryRuntimeScope(runtimeScope);
+      }
+    });
+  };
 
   useEffect(() => {
-    void refresh();
+    const scopeChanged = previousRuntimeScope.current !== runtimeScope;
+    previousRuntimeScope.current = runtimeScope;
+    let active = true;
+    setSummaryRuntimeScope(null);
+    if (scopeChanged) {
+      clearCodingAgentRuntimeSelection();
+      setComposerSeed(null);
+    }
+    void refresh().then(() => {
+      if (active && useCodingAgentWorkspace.getState().status === "ready") {
+        setSummaryRuntimeScope(runtimeScope);
+      }
+    });
     void loadNotificationPreferences();
-  }, [loadNotificationPreferences, refresh, runtimeSlot]);
+    return () => {
+      active = false;
+    };
+  }, [loadNotificationPreferences, refresh, runtimeScope]);
 
   useEffect(() => {
     if (!activeThreadId) return;
     if (threadSnapshotStatus === "ready" && threadSnapshot?.thread.id === activeThreadId) return;
     void loadThreadSnapshot(activeThreadId);
-  }, [activeThreadId, loadThreadSnapshot, runtimeSlot, threadSnapshot?.thread.id, threadSnapshotStatus]);
+  }, [activeThreadId, loadThreadSnapshot, runtimeScope, threadSnapshot?.thread.id, threadSnapshotStatus]);
+
+  const summaryScopeReady = summaryRuntimeScope === runtimeScope;
+
+  if (!summaryScopeReady) {
+    if (status === "error") {
+      return (
+        <EmptyState
+          icon={<Server size={28} />}
+          headline={error ?? "Runtime summary unavailable"}
+          description="Refresh the workspace or check your selected runtime."
+          action={<Button onClick={retryCurrentScope}>Retry</Button>}
+        />
+      );
+    }
+    return (
+      <EmptyState
+        icon={<Server size={28} />}
+        headline="Loading workspace..."
+        description="Fetching runtime state from your Matrix computer."
+      />
+    );
+  }
 
   if (status === "loading" && !summary) {
     return (
@@ -1927,7 +1980,7 @@ export default function AgentWorkspace() {
         icon={<Server size={28} />}
         headline={error ?? "Runtime summary unavailable"}
         description="Refresh the workspace or check your selected runtime."
-        action={<Button onClick={() => void refresh()}>Retry</Button>}
+        action={<Button onClick={retryCurrentScope}>Retry</Button>}
       />
     );
   }

@@ -24,6 +24,14 @@ export type CodingAgentWorkspaceResumeState = z.infer<
   typeof CodingAgentWorkspaceResumeStateSchema
 >;
 
+export function codingAgentRuntimeScope(input: {
+  handle: string | null;
+  platformHost: string;
+  runtimeSlot: string;
+}): string {
+  return [input.handle ?? "signed-out", input.platformHost, input.runtimeSlot].join("|");
+}
+
 export const CodingAgentProjectWorkspaceRequestSchema = z.object({
   projectId: ProjectIdSchema,
   taskCursor: TaskIdSchema.optional(),

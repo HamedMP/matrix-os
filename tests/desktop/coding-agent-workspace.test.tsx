@@ -745,6 +745,66 @@ describe("AgentWorkspace", () => {
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-summary", {});
   });
 
+  it("hides the prior account summary until the full connection scope refresh completes", async () => {
+    const firstSummary = summaryFixture();
+    const secondSummary = {
+      ...firstSummary,
+      activeThreads: {
+        ...firstSummary.activeThreads,
+        items: firstSummary.activeThreads.items.map((thread) => ({
+          ...thread,
+          title: "Second account thread",
+        })),
+      },
+    };
+    let resolveSecondSummary: ((value: typeof secondSummary) => void) | undefined;
+    const pendingSecondSummary = new Promise<typeof secondSummary>((resolve) => {
+      resolveSecondSummary = resolve;
+    });
+    let summaryRequests = 0;
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") {
+        summaryRequests += 1;
+        return summaryRequests === 1
+          ? Promise.resolve(firstSummary)
+          : pendingSecondSummary;
+      }
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-notification-preferences") {
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
+      }
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+
+    render(<AgentWorkspace />);
+    await screen.findByText("Fix settings route");
+    act(() => {
+      useCodingAgentWorkspace.setState({
+        createdThreadHandles: [...firstSummary.activeThreads.items],
+      });
+    });
+
+    act(() => {
+      useConnection.setState({
+        handle: "second-account",
+        platformHost: "https://second.platform.test",
+      });
+    });
+
+    await waitFor(() => {
+      expect(summaryRequests).toBe(2);
+    });
+    expect(screen.queryByText("Fix settings route")).toBeNull();
+    expect(screen.getByText("Loading workspace...")).toBeTruthy();
+    expect(useCodingAgentWorkspace.getState().createdThreadHandles).toEqual([]);
+
+    await act(async () => {
+      resolveSecondSummary?.(secondSummary);
+      await pendingSecondSummary;
+    });
+    await screen.findByText("Second account thread");
+  });
+
   it("DT-001 through DT-003 hydrates the persistent project and conversation navigator", async () => {
     const baseSummary = summaryFixture({ threadCreate: true });
     const summary = {
@@ -3343,13 +3403,24 @@ describe("AgentWorkspace", () => {
   });
 
   it("shows a generic safe error when summary refresh fails", async () => {
-    window.operator.invoke = vi.fn().mockRejectedValue(
-      new Error("connect ECONNREFUSED /home/matrix/private"),
-    );
+    let summaryRequests = 0;
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") {
+        summaryRequests += 1;
+        return summaryRequests === 1
+          ? Promise.reject(new Error("connect ECONNREFUSED /home/matrix/private"))
+          : Promise.resolve(summaryFixture());
+      }
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      return Promise.reject(new Error("unavailable"));
+    });
 
     render(<AgentWorkspace />);
 
     await screen.findByText("Runtime summary unavailable");
     expect(screen.queryByText(/home\/matrix/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("Fix settings route");
   });
 });

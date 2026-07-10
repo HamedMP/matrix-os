@@ -338,6 +338,11 @@ export function clearCodingAgentThreadSelection(): void {
   });
 }
 
+export function clearCodingAgentRuntimeSelection(): void {
+  clearCodingAgentThreadSelection();
+  useCodingAgentWorkspace.setState({ createdThreadHandles: [] });
+}
+
 function attachActiveThreadEventStream(snapshot: AgentThreadSnapshot): void {
   const threadId = snapshot.thread.id;
   if (activeThreadEventSubscriptionId === threadId) return;

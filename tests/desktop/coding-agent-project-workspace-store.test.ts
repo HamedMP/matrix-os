@@ -414,6 +414,45 @@ describe("coding-agent project workspace store", () => {
     });
   });
 
+  it("keeps the selected task and chat when the active project is selected again", async () => {
+    const projectWorkspace = workspace("matrix-os", "task_auth", "thread_plan");
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "state:get") return { value: null };
+      if (channel === "runtime:get-project-workspace") return projectWorkspace;
+      if (channel === "state:set") return { ok: true };
+      throw new Error(`unexpected channel ${channel}`);
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+
+    await useCodingAgentProjectWorkspace.getState().hydrate(
+      summary("rt_primary", "matrix-os", "Matrix OS"),
+    );
+    await useCodingAgentProjectWorkspace.getState().selectProject("matrix-os");
+
+    expect(invoke.mock.calls.filter(([channel]) => (
+      channel === "runtime:get-project-workspace"
+    ))).toHaveLength(1);
+    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
+      status: "ready",
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_auth",
+      selectedThreadId: "thread_plan",
+    });
+
+    useCodingAgentProjectWorkspace.setState({ status: "error", workspace: null });
+    await useCodingAgentProjectWorkspace.getState().selectProject("matrix-os");
+    expect(invoke.mock.calls.filter(([channel]) => (
+      channel === "runtime:get-project-workspace"
+    ))).toHaveLength(2);
+    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
+      status: "ready",
+      selectedProjectId: "matrix-os",
+    });
+  });
+
   it("keeps an externally focused chat selected when it is outside the bounded task chat page", async () => {
     const projectWorkspace = workspace("matrix-os", "task_auth", "thread_visible");
     projectWorkspace.taskThreads.hasMore = true;

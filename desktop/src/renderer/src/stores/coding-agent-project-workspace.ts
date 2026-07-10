@@ -199,6 +199,7 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
 
     selectProject: async (projectId) => {
       const state = useCodingAgentProjectWorkspace.getState();
+      if (projectId === state.selectedProjectId && state.status !== "error") return;
       const summaryProject = state.summary?.projects.items.some(
         (project) => project.id === projectId,
       ) ?? false;

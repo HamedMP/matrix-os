@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import type { RuntimeSummary } from "@matrix-os/contracts";
+import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import {
   clearCodingAgentThreadSelection,
   useCodingAgentWorkspace,
@@ -43,11 +44,7 @@ export function AgentProjectWorkspaceShell({
   const focusExternalThread = useCodingAgentProjectWorkspace(
     (state) => state.focusExternalThread,
   );
-  const runtimeScope = useConnection((state) => [
-    state.handle ?? "signed-out",
-    state.platformHost,
-    state.runtimeSlot,
-  ].join("|"));
+  const runtimeScope = useConnection(codingAgentRuntimeScope);
   const activeThreadId = useCodingAgentWorkspace((state) => state.activeThreadId);
   const activeThread = useCodingAgentWorkspace((state) =>
     state.threadSnapshot?.thread.id === state.activeThreadId
