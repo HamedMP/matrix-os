@@ -318,6 +318,12 @@ describe("AgentProjectWorkspaceShell", () => {
 
   it("does not replace a pending notification thread when project hydration finishes first", async () => {
     const projectWorkspace = workspace();
+    const pagedSummary = summary();
+    pagedSummary.projects = {
+      items: pagedSummary.projects.items.filter((project) => project.id === "matrix-os"),
+      hasMore: true,
+      limit: pagedSummary.projects.limit,
+    };
     const websiteWorkspace: ProjectAgentWorkspace = {
       ...projectWorkspace,
       project: {
@@ -364,8 +370,8 @@ describe("AgentProjectWorkspaceShell", () => {
     window.operator = { invoke, on: vi.fn(() => () => undefined) };
 
     void useCodingAgentWorkspace.getState().loadThreadSnapshot("thread_external");
-    render(
-      <AgentProjectWorkspaceShell summary={summary()} onNewChat={vi.fn()}>
+    const view = render(
+      <AgentProjectWorkspaceShell summary={pagedSummary} onNewChat={vi.fn()}>
         <div>Workspace</div>
       </AgentProjectWorkspaceShell>,
     );
@@ -388,6 +394,9 @@ describe("AgentProjectWorkspaceShell", () => {
         selectedProjectId: "website",
         selectedThreadId: "thread_external",
       });
+      expect(
+        view.getByRole("button", { name: "Project Website" }).getAttribute("aria-expanded"),
+      ).toBe("true");
     });
   });
 

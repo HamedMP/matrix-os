@@ -112,6 +112,10 @@ export function AgentProjectNavigator({
   onNewChat,
 }: AgentProjectNavigatorProps) {
   const grouped = workspace ? groupProjectWorkspaceThreads(workspace) : null;
+  const projects = workspace
+    && !summary.projects.items.some((project) => project.id === workspace.project.id)
+    ? [workspace.project, ...summary.projects.items]
+    : summary.projects.items;
   const projectedThreads = new Map(
     [...summary.activeThreads.items, ...summary.attentionThreads.items]
       .map((thread) => [thread.id, thread] as const),
@@ -133,12 +137,12 @@ export function AgentProjectNavigator({
         <span className="text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>
           Projects
         </span>
-        <CountBadge>{summary.projects.items.length}</CountBadge>
+        <CountBadge>{projects.length}</CountBadge>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
         <div className="space-y-1">
-          {summary.projects.items.map((project) => {
+          {projects.map((project) => {
             const selected = project.id === selectedProjectId;
             return (
               <div key={project.id}>
@@ -293,7 +297,7 @@ export function AgentProjectNavigator({
           ) : null}
         </div>
 
-        {summary.projects.items.length === 0 ? (
+        {projects.length === 0 ? (
           <div className="px-3 py-8 text-center">
             <FolderKanban size={20} className="mx-auto mb-2" style={{ color: "var(--text-tertiary)" }} />
             <p className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>No projects yet</p>

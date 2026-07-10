@@ -73,10 +73,17 @@ async function loadProjectWorkspace(
   summary: RuntimeSummary,
   preferred: ProjectWorkspaceSelection,
   generation: number,
-  preserveSelectionOnError = true,
-  preserveMissingPreferredThread = false,
+  options: {
+    preserveSelectionOnError?: boolean;
+    preserveMissingPreferredThread?: boolean;
+    preserveMissingPreferredProject?: boolean;
+  } = {},
 ): Promise<void> {
-  const selectedProjectId = resolveSelectedProjectId(summary, preferred.selectedProjectId);
+  const preserveSelectionOnError = options.preserveSelectionOnError ?? true;
+  const selectedProjectId = options.preserveMissingPreferredProject
+    && preferred.selectedProjectId
+    ? preferred.selectedProjectId
+    : resolveSelectedProjectId(summary, preferred.selectedProjectId);
   if (!selectedProjectId) {
     const selection = {
       selectedProjectId: null,
@@ -103,7 +110,7 @@ async function loadProjectWorkspace(
     const selection = reconcileProjectWorkspaceSelection(workspace, {
       ...preferred,
       selectedProjectId,
-    }, preserveMissingPreferredThread);
+    }, options.preserveMissingPreferredThread ?? false);
     useCodingAgentProjectWorkspace.setState({
       status: "ready",
       workspace,
@@ -154,7 +161,9 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
       const persisted = sameScope ? null : await readPersistedSelection();
       if (generation !== hydrationGeneration) return;
       const preferred = persisted ?? currentSelection(state);
-      await loadProjectWorkspace(summary, preferred, generation, sameScope);
+      await loadProjectWorkspace(summary, preferred, generation, {
+        preserveSelectionOnError: sameScope,
+      });
     },
 
     refresh: async () => {
@@ -250,7 +259,6 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
       if (
         !state.summary
         || !projectId
-        || !state.summary.projects.items.some((project) => project.id === projectId)
       ) {
         return;
       }
@@ -268,7 +276,11 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
         error: null,
         ...preferred,
       });
-      await loadProjectWorkspace(state.summary, preferred, generation, true, true);
+      await loadProjectWorkspace(state.summary, preferred, generation, {
+        preserveSelectionOnError: true,
+        preserveMissingPreferredThread: true,
+        preserveMissingPreferredProject: true,
+      });
     },
 
     setViewMode: (viewMode) => {
