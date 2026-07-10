@@ -545,7 +545,7 @@ mkdir -p "$STAGING_DIR"
 clean_staging
 clean_legacy_upgrade_artifacts || true
 last_staging_cleanup="$(date +%s)"
-bootstrap_linux_tools_service
+bootstrap_linux_tools_service || true
 
 while true; do
   # React to trigger files and signals
