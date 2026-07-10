@@ -17,7 +17,12 @@ import {
   type ProjectAgentWorkspace,
   type RuntimeSummary,
 } from "@matrix-os/contracts";
-import type { ConnectionState, GatewayClient } from "@/lib/gateway-client";
+import type {
+  CodingAgentProjectWorkspaceOptions,
+  CodingAgentProjectWorkspaceResult,
+  ConnectionState,
+  GatewayClient,
+} from "@/lib/gateway-client";
 import {
   loadAgentWorkspaceState,
   reconcileAgentWorkspaceState,
@@ -44,6 +49,7 @@ interface ReadyWorkspaceState {
   workspace: ProjectAgentWorkspace;
   selection: AgentWorkspaceState;
   refreshing: boolean;
+  loadingMore: boolean;
   warning: string | null;
 }
 
@@ -62,6 +68,7 @@ interface AgentProjectWorkspaceScreenProps {
 }
 
 const PROJECT_WORKSPACE_ERROR = "Project workspace unavailable. Refresh or choose another project.";
+const MAX_ACCUMULATED_WORKSPACE_ITEMS = 300;
 
 export function AgentProjectList({
   summary,
@@ -130,7 +137,7 @@ export function AgentProjectWorkspaceScreen({
     generationRef.current = generation;
     const retained = stateRef.current.status === "ready" ? stateRef.current.value : null;
     if (retained) {
-      setState({ status: "ready", value: { ...retained, refreshing: true, warning: null } });
+      setState({ status: "ready", value: { ...retained, refreshing: true, loadingMore: false, warning: null } });
     } else {
       setState({ status: "loading" });
     }
@@ -155,14 +162,26 @@ export function AgentProjectWorkspaceScreen({
       return;
     }
 
-    let selection = reconcileAgentWorkspaceState(restored, summaryResult.summary);
-    const requestedExists = summaryResult.summary.projects.items.some(
+    let liveSummary = summaryResult.summary;
+    let selection = reconcileAgentWorkspaceState(restored, liveSummary);
+    let requestedExists = liveSummary.projects.items.some(
       (project) => project.id === parsedRequestedProject.data,
     );
+    let workspaceResult: CodingAgentProjectWorkspaceResult | null = null;
+    const requestedWorkspaceResult = requestedExists
+      ? null
+      : await client.getCodingAgentProjectWorkspace({ projectId: parsedRequestedProject.data });
+    if (generation !== generationRef.current) return;
+    if (requestedWorkspaceResult?.ok && requestedWorkspaceResult.workspace.project.id === parsedRequestedProject.data) {
+      workspaceResult = requestedWorkspaceResult;
+      liveSummary = includeWorkspaceProject(liveSummary, requestedWorkspaceResult.workspace);
+      selection = reconcileAgentWorkspaceState(restored, liveSummary);
+      requestedExists = true;
+    }
     if (requestedExists) {
       selection = selectAgentWorkspaceProject(
         selection,
-        summaryResult.summary,
+        liveSummary,
         parsedRequestedProject.data,
       );
     }
@@ -172,7 +191,7 @@ export function AgentProjectWorkspaceScreen({
       return;
     }
 
-    const workspaceResult = await client.getCodingAgentProjectWorkspace({ projectId: selectedProjectId });
+    workspaceResult ??= await client.getCodingAgentProjectWorkspace({ projectId: selectedProjectId });
     if (generation !== generationRef.current) return;
     if (!workspaceResult.ok || workspaceResult.workspace.project.id !== selectedProjectId) {
       setHydrationFailure(generationRef, generation, retained, setState);
@@ -180,7 +199,7 @@ export function AgentProjectWorkspaceScreen({
     }
 
     selection = {
-      ...reconcileAgentWorkspaceState(selection, summaryResult.summary, workspaceResult.workspace),
+      ...reconcileAgentWorkspaceState(selection, liveSummary, workspaceResult.workspace),
       updatedAt: new Date().toISOString(),
     };
     await persistSelection(selection);
@@ -188,10 +207,11 @@ export function AgentProjectWorkspaceScreen({
     setState({
       status: "ready",
       value: {
-        summary: summaryResult.summary,
+        summary: liveSummary,
         workspace: workspaceResult.workspace,
         selection,
         refreshing: false,
+        loadingMore: false,
         warning: requestedExists ? null : "The previous project was unavailable. Showing a live project instead.",
       },
     });
@@ -248,9 +268,35 @@ export function AgentProjectWorkspaceScreen({
     );
   }
 
-  const { summary, workspace, selection, refreshing, warning } = state.value;
+  const { summary, workspace, selection, refreshing, loadingMore, warning } = state.value;
   const offline = connectionState !== "connected";
   const tablet = width >= 768;
+  const canCreateConversations = runtimeCapabilityEnabled(summary, "codingAgentsThreadCreate");
+  const canLoadMore = workspaceHasNextPage(workspace);
+
+  const loadMore = async () => {
+    const current = stateRef.current;
+    if (!client || current.status !== "ready" || current.value.loadingMore) return;
+    const options = nextWorkspacePageOptions(current.value.workspace);
+    if (!options) return;
+    const generation = generationRef.current;
+    setState({ status: "ready", value: { ...current.value, loadingMore: true, warning: null } });
+    const result = await client.getCodingAgentProjectWorkspace(options);
+    if (generation !== generationRef.current) return;
+    const latest = stateRef.current;
+    if (latest.status !== "ready" || !result.ok || result.workspace.project.id !== latest.value.workspace.project.id) {
+      setHydrationFailure(generationRef, generation, latest.status === "ready" ? latest.value : null, setState);
+      return;
+    }
+    setState({
+      status: "ready",
+      value: {
+        ...latest.value,
+        workspace: mergeWorkspacePage(latest.value.workspace, result.workspace, options),
+        loadingMore: false,
+      },
+    });
+  };
 
   const openProject = (projectId: string) => {
     const nextSelection = {
@@ -297,7 +343,7 @@ export function AgentProjectWorkspaceScreen({
           <Text selectable style={styles.heading}>{workspace.project.label}</Text>
           <Text selectable style={styles.subheading}>Conversations by project and task</Text>
         </View>
-        <Pressable
+        {canCreateConversations ? <Pressable
           accessibilityRole="button"
           accessibilityLabel="New project conversation"
           onPress={() => onNewConversation({ projectId: workspace.project.id, taskId: null })}
@@ -305,7 +351,7 @@ export function AgentProjectWorkspaceScreen({
         >
           <Ionicons name="add" size={17} color={theme.colors.primaryForeground} />
           <Text style={styles.primaryButtonText}>New chat</Text>
-        </Pressable>
+        </Pressable> : null}
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.projectSelector}>
@@ -356,14 +402,14 @@ export function AgentProjectWorkspaceScreen({
                     {countLabel(task.threadCount, "conversation")} · {task.status.replace(/_/g, " ")}
                   </Text>
                 </View>
-                <Pressable
+                {canCreateConversations ? <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`New conversation for ${task.title}`}
                   onPress={() => onNewConversation({ projectId: workspace.project.id, taskId: task.id })}
                   style={styles.secondaryButton}
                 >
                   <Ionicons name="add" size={16} color={theme.colors.forest} />
-                </Pressable>
+                </Pressable> : null}
               </View>
               {threads.length === 0 ? (
                 <Text selectable style={styles.emptyText}>No conversations for this task.</Text>
@@ -375,6 +421,18 @@ export function AgentProjectWorkspaceScreen({
           );
         })}
       </View>
+      {canLoadMore ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Load more project workspace"
+          accessibilityState={{ busy: loadingMore, disabled: loadingMore }}
+          disabled={loadingMore}
+          onPress={() => void loadMore()}
+          style={styles.retryButton}
+        >
+          {loadingMore ? <ActivityIndicator color={theme.colors.primaryForeground} /> : <Text style={styles.retryButtonText}>Load more</Text>}
+        </Pressable>
+      ) : null}
     </ScrollView>
   );
 }
@@ -433,6 +491,10 @@ function projectWorkspaceCapabilitiesEnabled(summary: RuntimeSummary): boolean {
   return enabled("codingAgentsProjectWorkspace") && enabled("codingAgentsConversationView");
 }
 
+function runtimeCapabilityEnabled(summary: RuntimeSummary, id: RuntimeSummary["capabilities"][number]["id"]): boolean {
+  return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
+}
+
 function setHydrationFailure(
   generationRef: React.MutableRefObject<number>,
   generation: number,
@@ -444,11 +506,64 @@ function setHydrationFailure(
   if (retained) {
     setState({
       status: "ready",
-      value: { ...retained, refreshing: false, warning: message },
+      value: { ...retained, refreshing: false, loadingMore: false, warning: message },
     });
     return;
   }
   setState({ status: "error", message });
+}
+
+function includeWorkspaceProject(summary: RuntimeSummary, workspace: ProjectAgentWorkspace): RuntimeSummary {
+  const items = [...summary.projects.items.filter((project) => project.id !== workspace.project.id), workspace.project]
+    .slice(-summary.projects.limit);
+  return { ...summary, projects: { ...summary.projects, items } };
+}
+
+function workspaceHasNextPage(workspace: ProjectAgentWorkspace): boolean {
+  return Boolean(
+    (workspace.tasks.hasMore && workspace.tasks.nextCursor)
+    || (workspace.projectThreads.hasMore && workspace.projectThreads.nextCursor)
+    || (workspace.taskThreads.hasMore && workspace.taskThreads.nextCursor),
+  );
+}
+
+function nextWorkspacePageOptions(workspace: ProjectAgentWorkspace): CodingAgentProjectWorkspaceOptions | null {
+  const options: CodingAgentProjectWorkspaceOptions = { projectId: workspace.project.id };
+  if (workspace.tasks.hasMore && workspace.tasks.nextCursor) {
+    options.taskCursor = workspace.tasks.nextCursor;
+    options.taskLimit = workspace.tasks.limit;
+  }
+  if (workspace.projectThreads.hasMore && workspace.projectThreads.nextCursor) {
+    options.projectThreadCursor = workspace.projectThreads.nextCursor;
+    options.projectThreadLimit = workspace.projectThreads.limit;
+  }
+  if (workspace.taskThreads.hasMore && workspace.taskThreads.nextCursor) {
+    options.taskThreadCursor = workspace.taskThreads.nextCursor;
+    options.taskThreadLimit = workspace.taskThreads.limit;
+  }
+  return Object.keys(options).length > 1 ? options : null;
+}
+
+function mergeWorkspacePage(current: ProjectAgentWorkspace, page: ProjectAgentWorkspace, options: CodingAgentProjectWorkspaceOptions): ProjectAgentWorkspace {
+  return {
+    ...current,
+    project: page.project,
+    tasks: options.taskCursor ? mergeWorkspaceList(current.tasks, page.tasks) : current.tasks,
+    projectThreads: options.projectThreadCursor ? mergeWorkspaceList(current.projectThreads, page.projectThreads) : current.projectThreads,
+    taskThreads: options.taskThreadCursor ? mergeWorkspaceList(current.taskThreads, page.taskThreads) : current.taskThreads,
+    updatedAt: page.updatedAt,
+  };
+}
+
+function mergeWorkspaceList<T extends { id: string }>(
+  current: { items: T[]; hasMore: boolean; nextCursor?: string; limit: number },
+  page: { items: T[]; hasMore: boolean; nextCursor?: string; limit: number },
+) {
+  const byId = new Map(current.items.map((item) => [item.id, item]));
+  for (const item of page.items) byId.set(item.id, item);
+  const items = [...byId.values()].slice(0, MAX_ACCUMULATED_WORKSPACE_ITEMS);
+  const hasMore = page.hasMore && items.length < MAX_ACCUMULATED_WORKSPACE_ITEMS;
+  return { items, hasMore, ...(hasMore && page.nextCursor ? { nextCursor: page.nextCursor } : {}), limit: page.limit };
 }
 
 async function persistSelection(selection: AgentWorkspaceState): Promise<void> {

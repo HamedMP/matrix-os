@@ -23,6 +23,7 @@ const summary = {
   capabilities: [
     { id: "codingAgentsProjectWorkspace", enabled: true },
     { id: "codingAgentsConversationView", enabled: true },
+    { id: "codingAgentsThreadCreate", enabled: true },
   ],
   providers: [],
   projects: {
@@ -194,6 +195,77 @@ describe("mobile project-first coding-agent workspace", () => {
     );
   });
 
+  it("opens a valid routed project beyond the summary page", async () => {
+    const requestedWorkspace: ProjectAgentWorkspace = {
+      ...workspace,
+      project: { ...workspace.project, id: "older-project", label: "Older Project" },
+      tasks: { items: [], hasMore: false, limit: 100 },
+      projectThreads: { items: [], hasMore: false, limit: 100 },
+      taskThreads: { items: [], hasMore: false, limit: 100 },
+    };
+    const client = clientFixture();
+    client.getCodingAgentRuntimeSummary.mockResolvedValue({
+      ok: true,
+      summary: { ...summary, projects: { ...summary.projects, hasMore: true, nextCursor: "website" } },
+    });
+    client.getCodingAgentProjectWorkspace.mockResolvedValue({ ok: true, workspace: requestedWorkspace });
+    const onOpenProject = jest.fn();
+
+    render(<AgentProjectWorkspaceScreen client={client as never} connectionState="connected" requestedProjectId="older-project" onOpenProject={onOpenProject} onOpenThread={jest.fn()} onNewConversation={jest.fn()} />);
+
+    expect(await screen.findByRole("button", { name: "Open project Older Project" })).toBeTruthy();
+    expect(client.getCodingAgentProjectWorkspace).toHaveBeenCalledWith({ projectId: "older-project" });
+    expect(onOpenProject).not.toHaveBeenCalled();
+  });
+
+  it("loads and merges bounded project workspace cursors", async () => {
+    const firstPage: ProjectAgentWorkspace = {
+      ...workspace,
+      tasks: { ...workspace.tasks, hasMore: true, nextCursor: "task_auth" },
+      projectThreads: { ...workspace.projectThreads, hasMore: true, nextCursor: "thread_audit" },
+      taskThreads: { ...workspace.taskThreads, hasMore: true, nextCursor: "thread_fix" },
+    };
+    const secondPage: ProjectAgentWorkspace = {
+      ...workspace,
+      tasks: { items: [{ ...workspace.tasks.items[0], id: "task_release", title: "Ship release" }], hasMore: false, limit: 100 },
+      projectThreads: { items: [{ ...workspace.projectThreads.items[0], id: "thread_docs", title: "Write release notes" }], hasMore: false, limit: 100 },
+      taskThreads: { items: [{ ...workspace.taskThreads.items[0], id: "thread_ship", taskId: "task_release", title: "Publish candidate" }], hasMore: false, limit: 100 },
+    };
+    const client = clientFixture();
+    client.getCodingAgentProjectWorkspace
+      .mockResolvedValueOnce({ ok: true, workspace: firstPage })
+      .mockResolvedValueOnce({ ok: true, workspace: secondPage });
+
+    render(<AgentProjectWorkspaceScreen client={client as never} connectionState="connected" requestedProjectId="matrix-os" onOpenProject={jest.fn()} onOpenThread={jest.fn()} onNewConversation={jest.fn()} />);
+    fireEvent.press(await screen.findByRole("button", { name: "Load more project workspace" }));
+
+    expect(await screen.findByText("Ship release")).toBeTruthy();
+    expect(screen.getByText("Write release notes")).toBeTruthy();
+    expect(screen.getByText("Publish candidate")).toBeTruthy();
+    expect(client.getCodingAgentProjectWorkspace).toHaveBeenLastCalledWith({
+      projectId: "matrix-os",
+      taskCursor: "task_auth",
+      taskLimit: 100,
+      projectThreadCursor: "thread_audit",
+      projectThreadLimit: 100,
+      taskThreadCursor: "thread_fix",
+      taskThreadLimit: 100,
+    });
+  });
+
+  it("hides creation affordances when thread creation is disabled", async () => {
+    const client = clientFixture();
+    client.getCodingAgentRuntimeSummary.mockResolvedValue({
+      ok: true,
+      summary: { ...summary, capabilities: summary.capabilities.filter(({ id }) => id !== "codingAgentsThreadCreate") },
+    });
+    render(<AgentProjectWorkspaceScreen client={client as never} connectionState="connected" requestedProjectId="matrix-os" onOpenProject={jest.fn()} onOpenThread={jest.fn()} onNewConversation={jest.fn()} />);
+
+    await screen.findByText("Project audit");
+    expect(screen.queryByRole("button", { name: "New project conversation" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New conversation for Repair authentication" })).toBeNull();
+  });
+
   it("restores safe selection, drops stale child references, and refreshes on foreground", async () => {
     jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify({
       selectedRuntimeId: "rt_primary",
@@ -251,6 +323,9 @@ describe("mobile project-first coding-agent workspace", () => {
       return { remove: jest.fn() } as never;
     });
     const client = clientFixture();
+    client.getCodingAgentProjectWorkspace
+      .mockResolvedValueOnce({ ok: true, workspace })
+      .mockResolvedValueOnce({ ok: false, error: "Project workspace unavailable" });
     client.getCodingAgentRuntimeSummary
       .mockResolvedValueOnce({ ok: true, summary })
       .mockResolvedValueOnce({
