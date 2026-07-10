@@ -41,7 +41,7 @@ Every clarified functional requirement and buildable success criterion has at le
 | CT-003 | Project workspace has independent bounded task, project-thread, and task-thread lists with truncation/cursors. | Oversized nested/list fixtures reject; boundary-size fixtures pass. |
 | CT-004 | Thread list filters validate required project and optional task IDs independently. | Valid project-only/task filter plus malformed/cross-field rejection fixtures. |
 | CT-005 | Turn request bounds message, attachments, and idempotency key. | Empty/oversized/unsafe ID/too-many attachment cases reject. |
-| CT-006 | Turn response and lifecycle events never include provider credentials or resume identity. | Valid safe fixtures and forbidden/unknown-field rejection. |
+| CT-006 | Turn response/error/lifecycle contracts never include provider credentials or resume identity. | Valid `thread_busy`/`thread_not_found`/`turn_unavailable` safe errors plus forbidden/unknown-field rejection. |
 | CT-007 | Additive capability IDs parse for project workspaces, same-thread turns, and Conversation/Kanban views. | Runtime summary schema compatibility tests for enabled/disabled flags. |
 
 ## Gateway Tests

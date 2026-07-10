@@ -339,6 +339,14 @@ type TaskAgentSummary = {
   latestThreadAt?: string;
   revision?: number;
 };
+
+type ProjectAgentWorkspace = {
+  project: ProjectSummary;
+  tasks: BoundedList<TaskAgentSummary>;
+  projectThreads: BoundedList<AgentThreadSummary>;
+  taskThreads: BoundedList<AgentThreadSummary>;
+  updatedAt: string;
+};
 ```
 
 Rules:
@@ -414,6 +422,11 @@ type CreateAgentTurnResponse = {
   status: "accepted" | "already_accepted";
   acceptedAt: string;
 };
+
+type CreateAgentTurnErrorCode =
+  | "thread_busy"
+  | "thread_not_found"
+  | "turn_unavailable";
 ```
 
 Route: `POST /api/coding-agents/threads/:threadId/turns`.
@@ -422,7 +435,8 @@ Rules:
 
 - Authenticate, validate body under the same prompt/attachment limits, check ownership, and apply `bodyLimit` before parsing.
 - Enforce idempotency on `(ownerId, threadId, clientRequestId)` in the same persistence transaction as the user-turn event.
-- Enforce one active normal turn through an atomic compare/update or owner/thread lock. Return safe `thread_busy` when another turn is active; do not queue silently.
+- Enforce one active normal turn through an atomic compare/update or owner/thread lock. Return HTTP 409 with `SafeClientErrorSchema.code = "thread_busy"` and generic recovery copy when another turn is active; do not queue silently.
+- Return `thread_not_found` only through the existing owner-safe not-found mapping, and `turn_unavailable` for a generic non-busy state that cannot accept a turn. No turn error includes provider, path, database, token, or resume details.
 - Resume the thread's server-owned provider identity. Provider credentials and resume tokens never cross HTTP/WS/IPC contracts.
 - Publish accepted/status events only after persistence succeeds.
 
@@ -707,19 +721,19 @@ Renderer must call trusted core for:
 Add grouped channels or a typed method object:
 
 - `runtime:get-summary`
+- `runtime:get-project-workspace`
 - `runtime:select`
-- `agents:create-thread`
-- `agents:abort-thread`
-- `agents:submit-approval`
-- `agents:submit-input`
-- `agents:subscribe-thread`
-- `terminal:list-sessions`
-- `terminal:create-session`
-- `terminal:terminate-session`
-- `workspace:get-review`
-- `workspace:read-file`
-- `workspace:write-file`
-- `preview:open`
+- `runtime:create-thread`
+- `runtime:create-turn`
+- `runtime:abort-thread`
+- `runtime:get-thread-snapshot`
+- `runtime:subscribe-thread-events`
+- `runtime:unsubscribe-thread-events`
+- `runtime:submit-approval-decision`
+- `runtime:submit-input-answer`
+- Existing `runtime:get-reviews`, `runtime:get-review-snapshot`, and `runtime:*file*` channels remain canonical.
+
+Do not introduce a parallel `agents:*` IPC namespace. Extend the existing `runtime:*` coding-agent bridge and keep terminal, workspace task, preview, and external-open operations on their existing typed operator/IPC paths.
 
 Every channel:
 
