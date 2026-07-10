@@ -131,11 +131,12 @@ describe('platform/customer-vps', () => {
     expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '2.5' }).previewProvisioningLimit).toBe(8);
   });
 
-  it('classifies only dedicated and legacy preview runtime slots as previews', () => {
-    expect(isPreviewMachine({ handle: 'pr-897', runtimeSlot: 'pr-897' })).toBe(true);
-    expect(isPreviewMachine({ handle: 'pr-703', runtimeSlot: 'preview' })).toBe(true);
-    expect(isPreviewMachine({ handle: 'pr-897', runtimeSlot: 'primary' })).toBe(false);
-    expect(isPreviewMachine({ handle: 'alice', runtimeSlot: 'pr-897' })).toBe(false);
+  it('classifies only server-marked dedicated and legacy preview runtime slots as previews', () => {
+    expect(isPreviewMachine({ handle: 'pr-897', runtimeSlot: 'pr-897', provisioningClass: 'preview' })).toBe(true);
+    expect(isPreviewMachine({ handle: 'pr-703', runtimeSlot: 'preview', provisioningClass: 'preview' })).toBe(true);
+    expect(isPreviewMachine({ handle: 'pr-897', runtimeSlot: 'pr-897', provisioningClass: 'customer' })).toBe(false);
+    expect(isPreviewMachine({ handle: 'pr-897', runtimeSlot: 'primary', provisioningClass: 'preview' })).toBe(false);
+    expect(isPreviewMachine({ handle: 'alice', runtimeSlot: 'pr-897', provisioningClass: 'preview' })).toBe(false);
   });
 
   it('provisions a user machine idempotently by clerkUserId', async () => {
@@ -149,6 +150,7 @@ describe('platform/customer-vps', () => {
     expect(hetzner.createServer).toHaveBeenCalledTimes(1);
     const row = await getActiveUserMachineByClerkId(db, 'user_123');
     expect(row?.hetznerServerId).toBe(123456);
+    expect(row?.provisioningClass).toBe('customer');
     expect(row?.registrationTokenHash).toBe(hashRegistrationToken('registration-token'));
     expect(row?.developerTools).toEqual(['codex', 'pi']);
     const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
@@ -294,6 +296,9 @@ describe('platform/customer-vps', () => {
       serverType: 'cpx22',
     });
     expect(resolveBillingEntitlement).toHaveBeenCalledOnce();
+    await expect(getUserMachine(db, preview.machineId)).resolves.toMatchObject({
+      provisioningClass: 'preview',
+    });
   });
 
   it('does not let an existing preview consume a customer billing slot', async () => {
@@ -308,6 +313,67 @@ describe('platform/customer-vps', () => {
     });
 
     await service.provisionPreview({ clerkUserId: 'user_123', handle: 'pr-897', runtimeSlot: 'pr-897' });
+    await expect(service.provision({
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      runtimeSlot: 'primary',
+    })).resolves.toMatchObject({ status: 'provisioning' });
+
+    expect(hetzner.createServer).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps customer-provisioned preview-shaped machines in billing slot counts', async () => {
+    let nextId = 0;
+    const ids = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+    ];
+    const { service, hetzner } = createService({
+      machineIdFactory: () => ids[nextId++] ?? ids[1]!,
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({ maxRuntimeSlots: 1 })),
+    });
+
+    await service.provision({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'pr-897',
+    });
+    await expect(service.provision({
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      runtimeSlot: 'primary',
+    })).rejects.toMatchObject({
+      status: 402,
+      publicMessage: 'Billing upgrade required',
+    });
+
+    expect(hetzner.createServer).toHaveBeenCalledOnce();
+  });
+
+  it('lets the operator path adopt an existing preview-shaped row before excluding it from billing', async () => {
+    let nextId = 0;
+    const ids = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+    ];
+    const { service, hetzner } = createService({
+      machineIdFactory: () => ids[nextId++] ?? ids[1]!,
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({ maxRuntimeSlots: 1 })),
+    });
+
+    const previewShapedCustomer = await service.provision({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'pr-897',
+    });
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'pr-897',
+    })).resolves.toEqual(previewShapedCustomer);
+    await expect(getUserMachine(db, previewShapedCustomer.machineId)).resolves.toMatchObject({
+      provisioningClass: 'preview',
+    });
     await expect(service.provision({
       clerkUserId: 'user_123',
       handle: 'alice',

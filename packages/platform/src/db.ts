@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Kysely, PostgresDialect, sql, type InsertObject, type Transaction } from 'kysely';
 import pg from 'pg';
+import { z } from 'zod/v4';
 import type {
   BillingEntitlementSource,
   BillingEntitlementStatus,
@@ -50,6 +51,7 @@ interface UserMachinesTable {
   clerk_user_id: string;
   handle: string;
   runtime_slot: string;
+  provisioning_class: string;
   developer_tools: string;
   hetzner_server_id: number | null;
   public_ipv4: string | null;
@@ -375,6 +377,7 @@ export interface UserMachineRecord {
   clerkUserId: string;
   handle: string;
   runtimeSlot: string;
+  provisioningClass: UserMachineProvisioningClass;
   developerTools: DeveloperToolId[];
   hetznerServerId: number | null;
   publicIPv4: string | null;
@@ -567,6 +570,7 @@ export interface NewUserMachine {
   clerkUserId: string;
   handle: string;
   runtimeSlot?: string;
+  provisioningClass?: UserMachineProvisioningClass;
   developerTools?: DeveloperToolId[];
   hetznerServerId?: number | null;
   publicIPv4?: string | null;
@@ -585,6 +589,9 @@ export interface NewUserMachine {
   resizeTargetServerType?: string | null;
   attempt?: number;
 }
+
+export const UserMachineProvisioningClassSchema = z.enum(['customer', 'preview']);
+export type UserMachineProvisioningClass = z.infer<typeof UserMachineProvisioningClassSchema>;
 
 export interface NewProviderDeletionQueueRecord {
   id: string;
@@ -659,6 +666,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       clerk_user_id TEXT NOT NULL,
       handle TEXT NOT NULL,
       runtime_slot TEXT NOT NULL DEFAULT 'primary',
+      provisioning_class TEXT NOT NULL DEFAULT 'customer',
       developer_tools TEXT NOT NULL DEFAULT '["codex","claude-code","opencode","pi"]',
       hetzner_server_id INTEGER,
       public_ipv4 TEXT,
@@ -679,6 +687,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     )
   `.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS runtime_slot TEXT NOT NULL DEFAULT 'primary'`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS provisioning_class TEXT NOT NULL DEFAULT 'customer'`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS developer_tools TEXT NOT NULL DEFAULT '["codex","claude-code","opencode","pi"]'`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS server_type TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS resize_started_at TEXT`.execute(db);
@@ -1151,6 +1160,7 @@ function mapUserMachine(row: UserMachinesTable): UserMachineRecord {
     clerkUserId: row.clerk_user_id,
     handle: row.handle,
     runtimeSlot: row.runtime_slot,
+    provisioningClass: UserMachineProvisioningClassSchema.parse(row.provisioning_class),
     developerTools: parseDeveloperToolsJson(row.developer_tools),
     hetznerServerId: row.hetzner_server_id,
     publicIPv4: row.public_ipv4,
@@ -1177,6 +1187,7 @@ function toUserMachineRow(record: NewUserMachine): UserMachinesTable {
     clerk_user_id: record.clerkUserId,
     handle: record.handle,
     runtime_slot: record.runtimeSlot ?? 'primary',
+    provisioning_class: record.provisioningClass ?? 'customer',
     developer_tools: serializeDeveloperTools(record.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
     hetzner_server_id: record.hetznerServerId ?? null,
     public_ipv4: record.publicIPv4 ?? null,
@@ -1203,6 +1214,7 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
   if (values.clerkUserId !== undefined) update.clerk_user_id = values.clerkUserId;
   if (values.handle !== undefined) update.handle = values.handle;
   if (values.runtimeSlot !== undefined) update.runtime_slot = values.runtimeSlot;
+  if (values.provisioningClass !== undefined) update.provisioning_class = values.provisioningClass;
   if (values.developerTools !== undefined) update.developer_tools = serializeDeveloperTools(values.developerTools);
   if (values.hetznerServerId !== undefined) update.hetzner_server_id = values.hetznerServerId;
   if (values.publicIPv4 !== undefined) update.public_ipv4 = values.publicIPv4;

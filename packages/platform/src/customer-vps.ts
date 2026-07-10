@@ -593,7 +593,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       request.clerkUserId,
       request.runtimeSlot,
     );
-    if (existingBeforeBundleResolve && existingBeforeBundleResolve.status !== 'failed') {
+    if (
+      existingBeforeBundleResolve
+      && existingBeforeBundleResolve.status !== 'failed'
+      && (provisioningClass === 'customer' || existingBeforeBundleResolve.provisioningClass === 'preview')
+    ) {
       return activeProvisionResponse(existingBeforeBundleResolve, deps.config.provisionEtaSeconds);
     }
 
@@ -617,6 +621,12 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       let attempt = 1;
       if (existing) {
         if (existing.status !== 'failed') {
+          if (provisioningClass === 'preview' && existing.provisioningClass !== 'preview') {
+            const retainedMachines = await listNonDeletedUserMachinesByClerkId(trx, request.clerkUserId);
+            assertPreviewProvisioningCapacity(retainedMachines, deps.config.previewProvisioningLimit);
+            await updateUserMachine(trx, existing.machineId, { provisioningClass: 'preview' });
+            return { existing: { ...existing, provisioningClass: 'preview' as const } };
+          }
           return { existing };
         }
         // The active slot is held by a failed attempt. Retire it, enqueue its
@@ -654,6 +664,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         clerkUserId: request.clerkUserId,
         handle: request.handle,
         runtimeSlot: request.runtimeSlot,
+        provisioningClass,
         status: 'provisioning',
         imageVersion: bundleRef.imageVersion,
         serverType: billingContext?.serverType ?? deps.config.serverType,

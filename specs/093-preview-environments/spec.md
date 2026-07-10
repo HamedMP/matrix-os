@@ -111,7 +111,7 @@ connect to, CLI betas need a paired shell), and today each is assembled by hand.
 | `logs.matrix-os.com` (ingest) | HTTP basic auth (bcrypt hash in Caddy config, secret from `.env`) | push-only: `POST /loki/api/v1/push`; all other paths 404 | Tunnel-only; no host port. Query APIs are NOT exposed. |
 | Loki query | none (loopback) | reachable only from ops VPS / docker network | Agents query via `preview-logs.sh` on the ops box or via Grafana |
 | Platform API calls in CI | `Authorization: Bearer PLATFORM_SECRET` (repo secret) | existing platform route guards | Same secret host-bundle-release.yml already uses |
-| `POST /vps/preview/provision` | `Authorization: Bearer PLATFORM_SECRET` | operator-only preview provisioning | Accepts only identical `pr-<N>` handles and runtime slots, rejects caller-selected server types, and uses a separate bounded preview capacity limit without weakening customer billing entitlements. |
+| `POST /vps/preview/provision` | `Authorization: Bearer PLATFORM_SECRET` | operator-only preview provisioning | Accepts only identical `pr-<N>` handles and runtime slots, rejects caller-selected server types, writes a server-owned preview class, and uses a separate bounded preview capacity limit without weakening customer billing entitlements. |
 | Preview VPS shell | Clerk (existing) | VPS bound to `PREVIEW_CLERK_USER_ID` | Team members use the runtime switcher with their own Clerk session per existing platform rules |
 | Staging slots | Tunnel hostname only | no new auth (matches existing `staging.matrix-os.com` posture) | Slots run branch code with dev credentials only; never production secrets |
 | Cloud Run preview | gcloud OIDC (existing workflow auth) | dedicated preview service + preview secrets | Production service and secrets are never referenced |
@@ -126,6 +126,11 @@ connect to, CLI betas need a paired shell), and today each is assembled by hand.
 - Preview provisioning validates the CI-derived handle and runtime slot again at the
   platform boundary, requires them to be identical, rejects unknown fields, and uses
   the mutating-route body limit before JSON parsing.
+- Preview accounting requires both the validated `pr-<N>` shape and the persisted
+  server-owned `preview` provisioning class. Normal customer provisioning always
+  writes `customer`, so customer-selected handles or runtime slots cannot bypass
+  billing slot enforcement. The authenticated operator path may adopt an existing
+  matching row before excluding it from customer billing.
 - `matrix-install-logship`: URL must be `https://`, handle must match
   `^[a-z0-9][a-z0-9-]{1,62}$`, env must be one of `preview|prod|staging`; the Alloy
   binary download is pinned to an exact version and verified against a recorded
