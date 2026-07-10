@@ -106,6 +106,7 @@ import { configuredWorkspaceProviderAgents } from "./coding-agents/workspace-pro
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
 import { createCodingAgentPreviewSummaryStore } from "./coding-agents/preview-summary.js";
+import { createOwnerCodingAgentProjectSummaryStore } from "./coding-agents/project-summary.js";
 import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
@@ -569,19 +570,23 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentThreadStream = codingAgentThreadStore
     ? createCodingAgentThreadStream({ threads: codingAgentThreadStore })
     : undefined;
+  const codingAgentProjectSummaryStore = createOwnerCodingAgentProjectSummaryStore({
+    homePath,
+    threads: codingAgentThreadStore,
+    principalOwnerIds: codingAgentOwnerIds,
+  });
   const codingAgentPreviewSummaryStore = createCodingAgentPreviewSummaryStore({
     homePath,
     previewManager: createPreviewManager({ homePath }),
     ownerId: process.env.MATRIX_USER_ID,
-    principalOwnerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(
-      (id): id is string => typeof id === "string" && id.length > 0,
-    ),
+    principalOwnerIds: codingAgentOwnerIds,
   });
   const codingAgentRuntimeSummaryService = createCodingAgentRuntimeSummaryService({
     homePath,
     terminalRegistry: zellijShellRegistry,
     providerRegistry: codingAgentProviderRegistry,
     threads: codingAgentThreadStore,
+    projects: codingAgentProjectSummaryStore,
     previews: codingAgentPreviewSummaryStore,
     capabilities: {
       workspace: codingAgentWorkspaceEnabled,

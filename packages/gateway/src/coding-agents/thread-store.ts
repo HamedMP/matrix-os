@@ -139,6 +139,11 @@ export interface CodingAgentThreadStore {
   createThread(principal: RequestPrincipal, request: CreateAgentThreadRequest): Promise<ThreadCreateResult>;
   listThreads(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
   listAttentionThreads(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
+  listProjectCounts(principal: RequestPrincipal): Promise<Array<{
+    projectId: string;
+    threadCount: number;
+    attentionCount: number;
+  }>>;
   getThread(principal: RequestPrincipal, threadId: string, cursor?: string): Promise<AgentThreadSnapshot>;
   abortThread(principal: RequestPrincipal, threadId: string, clientRequestId: string): Promise<AgentThreadSnapshot>;
   submitApproval(
@@ -726,6 +731,21 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
         hasMore: ownerThreads.length > THREAD_LIST_LIMIT,
         limit: THREAD_LIST_LIMIT,
       };
+    },
+    async listProjectCounts(principal) {
+      const state = await readState(options.homePath);
+      const counts: Array<{ projectId: string; threadCount: number; attentionCount: number }> = [];
+      for (const thread of state.threads) {
+        if (thread.ownerId !== principal.userId || !thread.projectId || !activeThread(thread)) continue;
+        let count = counts.find((candidate) => candidate.projectId === thread.projectId);
+        if (!count) {
+          count = { projectId: thread.projectId, threadCount: 0, attentionCount: 0 };
+          counts.push(count);
+        }
+        count.threadCount += 1;
+        if (attentionThread(thread)) count.attentionCount += 1;
+      }
+      return counts;
     },
     async getThread(principal, threadId, cursor) {
       const state = await readState(options.homePath);

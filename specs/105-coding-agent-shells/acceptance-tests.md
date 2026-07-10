@@ -1,6 +1,6 @@
 # Acceptance Tests: Project Conversations And Kanban
 
-**Status**: Phase 18 contract evidence added; gateway, shell, security, and cross-shell evidence remains planned
+**Status**: Phase 18 contracts and Phase 19 project-summary evidence added; remaining gateway, shell, security, and cross-shell evidence remains planned
 **Updated**: 2026-07-10
 
 This matrix is the executable acceptance contract for the clarified coding-agent shell model. A task checkbox in `tasks.md` is complete only when its named test IDs have current evidence on the exact implementation head. Existing checkpoint tests remain required regressions but do not prove these new cases.
@@ -48,9 +48,9 @@ Every clarified functional requirement and buildable success criterion has at le
 
 | ID | Requirement | Expected Evidence |
 | --- | --- | --- |
-| GW-001 | Runtime summary returns canonical projects when projects exist. | `coding-agents-summary` test with non-empty project service fixture. |
-| GW-002 | Project summaries are stable sorted and capped. | More-than-limit fixture returns deterministic items and `hasMore`. |
-| GW-003 | Project adapter failure produces safe degraded state without raw error data. | Failure/timeout tests inspect response and logs. |
+| GW-001 | Runtime summary returns canonical projects when projects exist. | Canonical owner-service wiring and non-empty fixtures in `tests/gateway/coding-agents-project-summary.test.ts`. |
+| GW-002 | Project summaries are stable sorted and capped. | More-than-limit fixture returns deterministic items and `hasMore` in `tests/gateway/coding-agents-project-summary.test.ts`. |
+| GW-003 | Project adapter failure produces safe degraded state without raw error data. | Failure, timeout, stalled-dependency, response, and log assertions in `tests/gateway/coding-agents-project-summary.test.ts`. |
 | GW-004 | Project workspace route authenticates before success. | Missing/invalid principal returns generic 401/403. |
 | GW-005 | Project workspace validates path/query/cursors/limits. | Malformed and oversized queries rejected before service use. |
 | GW-006 | One task projects two independent threads. | Fixture returns `thread_plan` and `thread_fix` under `task_auth` with count 2. |

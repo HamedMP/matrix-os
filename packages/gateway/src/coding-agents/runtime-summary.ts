@@ -1,5 +1,6 @@
 import {
   PreviewSessionSummarySchema,
+  ProjectSummarySchema,
   RuntimeSummarySchema,
   SafeDisplayStringSchema,
   TerminalSessionIdSchema,
@@ -21,6 +22,11 @@ import type { CodingAgentProviderRegistry } from "./provider-registry.js";
 
 const TERMINAL_SUMMARY_LIMIT = 20;
 const PREVIEW_SUMMARY_LIMIT = 50;
+export const CODING_AGENT_PROJECT_SUMMARY_LIMIT = 50;
+const DEFAULT_PROJECT_SUMMARY_TIMEOUT_MS = 2_000;
+const MAX_PROJECT_SUMMARY_TIMEOUT_MS = 10_000;
+
+type ProjectSummary = ReturnType<typeof ProjectSummarySchema.parse>;
 
 export interface CodingAgentTerminalSession {
   name: string;
@@ -56,6 +62,13 @@ export interface CodingAgentPreviewSummaryStore {
   ): Promise<{ items: PreviewSessionSummary[]; hasMore: boolean; limit: number }>;
 }
 
+export interface CodingAgentProjectSummaryStore {
+  listProjectSummaries(
+    principal: RequestPrincipal,
+    signal: AbortSignal,
+  ): Promise<{ items: ProjectSummary[]; hasMore: boolean; limit: number }>;
+}
+
 export interface CodingAgentRuntimeSummaryOptions {
   homePath: string;
   terminalRegistry?: CodingAgentTerminalSessionRegistry;
@@ -63,6 +76,7 @@ export interface CodingAgentRuntimeSummaryOptions {
   agentCredentials?: Pick<AgentCredentialStatusService, "getStatus">;
   threads?: CodingAgentThreadSummaryStore;
   previews?: CodingAgentPreviewSummaryStore;
+  projects?: CodingAgentProjectSummaryStore;
   capabilities?: {
     workspace?: boolean;
     approvals?: boolean;
@@ -71,6 +85,7 @@ export interface CodingAgentRuntimeSummaryOptions {
     files?: boolean;
     sourceControl?: boolean;
   };
+  projectSummaryTimeoutMs?: number;
   providerIds?: readonly string[];
   terminalOwnerId?: string;
   filesOwnerId?: string;
@@ -136,10 +151,14 @@ function terminalSummaryFromSession(
   };
 }
 
-function capability(input: { id: RuntimeSummary["capabilities"][number]["id"]; enabled: boolean }) {
+function capability(input: {
+  id: RuntimeSummary["capabilities"][number]["id"];
+  enabled: boolean;
+  reason?: string;
+}) {
   return input.enabled
     ? { id: input.id, enabled: true }
-    : { id: input.id, enabled: false, reason: "Not enabled yet" };
+    : { id: input.id, enabled: false, reason: input.reason ?? "Not enabled yet" };
 }
 
 function statusToProviderSummary(agent: AgentCredentialSummary): AgentProviderSummary {
@@ -263,6 +282,31 @@ async function readPreviewSessions(
   }
 }
 
+async function readProjects(
+  store: CodingAgentProjectSummaryStore | undefined,
+  principal: RequestPrincipal,
+  timeoutMs: number,
+): Promise<{ items: ProjectSummary[]; hasMore: boolean; limit: number }> {
+  const empty = { items: [], hasMore: false, limit: CODING_AGENT_PROJECT_SUMMARY_LIMIT };
+  if (!store) return empty;
+  try {
+    const result = await store.listProjectSummaries(principal, AbortSignal.timeout(timeoutMs));
+    const items: ProjectSummary[] = [];
+    for (const item of result.items.slice(0, CODING_AGENT_PROJECT_SUMMARY_LIMIT + 1)) {
+      const parsed = ProjectSummarySchema.safeParse(item);
+      if (parsed.success) items.push(parsed.data);
+    }
+    return {
+      items: items.slice(0, CODING_AGENT_PROJECT_SUMMARY_LIMIT),
+      hasMore: result.hasMore || result.items.length > CODING_AGENT_PROJECT_SUMMARY_LIMIT,
+      limit: CODING_AGENT_PROJECT_SUMMARY_LIMIT,
+    };
+  } catch (err: unknown) {
+    logCodingAgentWarning("project summary unavailable", err);
+    return empty;
+  }
+}
+
 async function readTerminalSessions(
   registry: CodingAgentTerminalSessionRegistry | undefined,
   homePath: string,
@@ -314,6 +358,11 @@ export function createCodingAgentRuntimeSummaryService(
         : await readProviders(options.agentCredentials, principal, options.providerIds);
       const activeThreads = await readActiveThreads(options.threads, principal);
       const attentionThreads = await readAttentionThreads(options.threads, principal);
+      const projectSummaryTimeoutMs = Math.min(
+        Math.max(options.projectSummaryTimeoutMs ?? DEFAULT_PROJECT_SUMMARY_TIMEOUT_MS, 10),
+        MAX_PROJECT_SUMMARY_TIMEOUT_MS,
+      );
+      const projectRead = await readProjects(options.projects, principal, projectSummaryTimeoutMs);
       const previewSessions = readPreviewSessions(options.previews, principal, summaryOptions);
       const threadsEnabled = Boolean(options.threads);
       const workspaceEnabled = threadsEnabled && options.capabilities?.workspace === true;
@@ -346,7 +395,7 @@ export function createCodingAgentRuntimeSummaryService(
           capability({ id: "codingAgentsNativeMobileTerminal", enabled: terminalEnabled }),
         ],
         providers,
-        projects: { items: [], hasMore: false, limit: 20 },
+        projects: projectRead,
         activeThreads,
         attentionThreads,
         terminalSessions: await terminalSessions,
