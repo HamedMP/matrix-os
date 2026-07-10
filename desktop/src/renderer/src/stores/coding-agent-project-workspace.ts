@@ -180,7 +180,11 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
 
     selectProject: async (projectId) => {
       const state = useCodingAgentProjectWorkspace.getState();
-      if (!state.summary?.projects.items.some((project) => project.id === projectId)) return;
+      const summaryProject = state.summary?.projects.items.some(
+        (project) => project.id === projectId,
+      ) ?? false;
+      const visibleWorkspaceProject = state.workspace?.project.id === projectId;
+      if (!state.summary || (!summaryProject && !visibleWorkspaceProject)) return;
       const generation = ++hydrationGeneration;
       const preferred = {
         selectedProjectId: projectId,
@@ -194,7 +198,9 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
         error: null,
         ...preferred,
       });
-      await loadProjectWorkspace(state.summary, preferred, generation);
+      await loadProjectWorkspace(state.summary, preferred, generation, {
+        preserveMissingPreferredProject: visibleWorkspaceProject,
+      });
     },
 
     selectTask: (taskId) => {

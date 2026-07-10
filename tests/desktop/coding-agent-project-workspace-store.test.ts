@@ -291,6 +291,46 @@ describe("coding-agent project workspace store", () => {
     expect(useCodingAgentProjectWorkspace.getState().workspace?.project.id).toBe("website");
   });
 
+  it("selects the visible workspace project when it is outside the summary page", async () => {
+    const pagedSummary = summary("rt_primary", "matrix-os", "Matrix OS");
+    pagedSummary.projects.hasMore = true;
+    const websiteWorkspace = workspace("website", "task_docs", "thread_docs");
+    const invoke = vi.fn(async (channel: string, payload: unknown) => {
+      if (channel === "runtime:get-project-workspace") {
+        expect(payload).toEqual({ projectId: "website" });
+        return websiteWorkspace;
+      }
+      if (channel === "state:set") return { ok: true };
+      throw new Error(`unexpected channel ${channel}`);
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+    useCodingAgentProjectWorkspace.setState({
+      status: "ready",
+      runtimeId: "rt_primary",
+      runtimeScope: "rt_primary",
+      summary: pagedSummary,
+      workspace: websiteWorkspace,
+      selectedProjectId: "matrix-os",
+      selectedTaskId: null,
+      selectedThreadId: null,
+    });
+
+    await useCodingAgentProjectWorkspace.getState().selectProject("website");
+
+    expect(invoke).toHaveBeenCalledWith("runtime:get-project-workspace", {
+      projectId: "website",
+    });
+    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
+      status: "ready",
+      selectedProjectId: "website",
+      selectedTaskId: "task_docs",
+      selectedThreadId: "thread_docs",
+    });
+  });
+
   it("keeps an externally focused chat selected when it is outside the bounded task chat page", async () => {
     const projectWorkspace = workspace("matrix-os", "task_auth", "thread_visible");
     projectWorkspace.taskThreads.hasMore = true;

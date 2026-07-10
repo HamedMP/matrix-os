@@ -55,6 +55,7 @@ export function AgentProjectWorkspaceShell({
       : null);
   const loadThreadSnapshot = useCodingAgentWorkspace((state) => state.loadThreadSnapshot);
   const previousActiveThreadId = useRef<string | null>(null);
+  const previousSelectedThreadId = useRef<string | null>(selectedThreadId);
   const attemptedExternalThreadId = useRef<string | null>(null);
   const projectSignature = [
     ...summary.projects.items.map((project) => [
@@ -77,12 +78,18 @@ export function AgentProjectWorkspaceShell({
     if (!enabled) return;
     const currentThreadState = useCodingAgentWorkspace.getState();
     const currentActiveThreadId = currentThreadState.activeThreadId;
+    const previousSelectedThread = previousSelectedThreadId.current;
+    previousSelectedThreadId.current = selectedThreadId;
     if (!selectedThreadId) {
       if (
-        currentActiveThreadId
-        && currentThreadState.threadSnapshot?.thread.id === currentActiveThreadId
-        && currentThreadState.threadSnapshot.thread.projectId
+        previousSelectedThread
+        || (
+          currentActiveThreadId
+          && currentThreadState.threadSnapshot?.thread.id === currentActiveThreadId
+          && currentThreadState.threadSnapshot.thread.projectId
+        )
       ) {
+        attemptedExternalThreadId.current = currentActiveThreadId;
         clearCodingAgentThreadSelection();
       }
       return;
@@ -152,29 +159,44 @@ export function AgentProjectWorkspaceShell({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-      <AgentProjectNavigator
-        summary={summary}
-        workspace={scopeMatches ? workspace : null}
-        liveThread={scopeMatches ? activeThread : null}
-        status={scopeMatches ? status : "loading"}
-        error={scopeMatches ? error : null}
-        selectedProjectId={scopeMatches ? selectedProjectId : null}
-        selectedTaskId={scopeMatches ? selectedTaskId : null}
-        selectedThreadId={scopeMatches ? selectedThreadId : null}
-        canCreate={capabilityEnabled(summary, "codingAgentsThreadCreate")}
-        onSelectProject={(projectId) => {
-          void selectProject(projectId);
-        }}
-        onSelectTask={selectTask}
-        onSelectThread={(threadId) => {
-          const currentActiveThreadId = useCodingAgentWorkspace.getState().activeThreadId;
-          selectThread(threadId);
-          if (currentActiveThreadId !== threadId) {
-            void loadThreadSnapshot(threadId);
-          }
-        }}
-        onNewChat={onNewChat}
-      />
+      {scopeMatches ? (
+        <AgentProjectNavigator
+          summary={summary}
+          workspace={workspace}
+          liveThread={activeThread}
+          status={status}
+          error={error}
+          selectedProjectId={selectedProjectId}
+          selectedTaskId={selectedTaskId}
+          selectedThreadId={selectedThreadId}
+          canCreate={capabilityEnabled(summary, "codingAgentsThreadCreate")}
+          onSelectProject={(projectId) => {
+            void selectProject(projectId);
+          }}
+          onSelectTask={selectTask}
+          onSelectThread={(threadId) => {
+            const currentActiveThreadId = useCodingAgentWorkspace.getState().activeThreadId;
+            selectThread(threadId);
+            if (currentActiveThreadId !== threadId) {
+              void loadThreadSnapshot(threadId);
+            }
+          }}
+          onNewChat={onNewChat}
+        />
+      ) : (
+        <nav
+          aria-label="Projects and conversations"
+          className="flex min-h-0 w-[clamp(220px,24vw,288px)] shrink-0 flex-col border-r"
+          style={{ borderColor: "var(--border-subtle)", background: "var(--bg-secondary)" }}
+        >
+          <div
+            className="px-3 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-[0.12em]"
+            style={{ color: "var(--text-tertiary)" }}
+          >
+            Projects
+          </div>
+        </nav>
+      )}
       <main className="flex min-h-0 min-w-[320px] flex-1 flex-col overflow-hidden">
         {scopeMatches ? children : (
           <div

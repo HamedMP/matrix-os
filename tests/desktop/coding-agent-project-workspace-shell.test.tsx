@@ -179,6 +179,8 @@ describe("AgentProjectWorkspaceShell", () => {
       </AgentProjectWorkspaceShell>,
     );
 
+    expect(html).not.toContain("Matrix OS");
+    expect(html).not.toContain("Website");
     expect(html).not.toContain("Project chat");
     expect(html).not.toContain("Prior conversation content");
     expect(html).toContain("Switching computer");
@@ -431,6 +433,71 @@ describe("AgentProjectWorkspaceShell", () => {
       expect(
         view.getByRole("button", { name: "Project Website" }).getAttribute("aria-expanded"),
       ).toBe("true");
+    });
+  });
+
+  it("cancels a pending selected chat when task navigation clears the selection", async () => {
+    const taskWorkspace: ProjectAgentWorkspace = {
+      ...workspace(),
+      tasks: {
+        items: [{
+          id: "task_auth",
+          projectId: "matrix-os",
+          title: "Authentication",
+          status: "todo",
+          priority: "normal",
+          order: 0,
+          threadCount: 0,
+          activeThreadCount: 0,
+          attentionCount: 0,
+        }],
+        hasMore: false,
+        limit: 100,
+      },
+    };
+    let resolveSnapshot: ((value: AgentThreadSnapshot) => void) | undefined;
+    const pendingSnapshot = new Promise<AgentThreadSnapshot>((resolve) => {
+      resolveSnapshot = resolve;
+    });
+    const invoke = vi.fn((channel: string) => {
+      if (channel === "state:get") return Promise.resolve({ value: null });
+      if (channel === "state:set") return Promise.resolve({ ok: true });
+      if (channel === "runtime:get-project-workspace") return Promise.resolve(taskWorkspace);
+      if (channel === "runtime:get-thread-snapshot") return pendingSnapshot;
+      if (channel === "runtime:subscribe-thread-events" || channel === "runtime:unsubscribe-thread-events") {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+    window.operator = { invoke, on: vi.fn(() => () => undefined) };
+
+    render(
+      <AgentProjectWorkspaceShell summary={summary()} onNewChat={vi.fn()}>
+        <div>Workspace</div>
+      </AgentProjectWorkspaceShell>,
+    );
+    await waitFor(() => {
+      expect(useCodingAgentWorkspace.getState()).toMatchObject({
+        activeThreadId: "thread_project",
+        threadSnapshotStatus: "loading",
+      });
+    });
+
+    act(() => {
+      useCodingAgentProjectWorkspace.getState().selectTask("task_auth");
+    });
+
+    await waitFor(() => {
+      expect(useCodingAgentWorkspace.getState().activeThreadId).toBeNull();
+    });
+    await act(async () => {
+      resolveSnapshot?.(snapshot("thread_project", "matrix-os"));
+      await pendingSnapshot;
+    });
+    expect(useCodingAgentWorkspace.getState()).toMatchObject({
+      activeThreadId: null,
+      threadSnapshotStatus: "idle",
+      threadSnapshot: null,
     });
   });
 
