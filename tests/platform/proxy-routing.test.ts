@@ -3769,7 +3769,7 @@ describe("platform proxy routing", () => {
     });
     const fetchMock = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response(
-        '<!doctype html><link rel="stylesheet" href="/_next/static/css/app.css"><script src="/_next/static/chunks/app.js"></script><script>self.__next_f.push([":HL[\\"/_next/static/media/font.woff2\\",\\"font\\"]"])</script>',
+        '<!doctype html><link rel="stylesheet" href="/_next/static/css/app.css"><script src="/_next/static/chunks/app.js"></script><img src="/_next/image?url=%2Ficon.png&w=64&q=75"><script>self.__next_f.push([":HL[\\"/_next/static/media/font.woff2\\",\\"font\\"],\\"/_next/image?url=%2Fhero.png&w=256&q=75\\""])</script>',
         {
           status: 200,
           headers: { "content-type": "text/html; charset=utf-8" },
@@ -3799,8 +3799,11 @@ describe("platform proxy routing", () => {
     const html = await htmlResponse.text();
     expect(html).toContain('href="/vm/alice-staging/_next/static/css/app.css"');
     expect(html).toContain('src="/vm/alice-staging/_next/static/chunks/app.js"');
+    expect(html).toContain('src="/vm/alice-staging/_next/image?url=%2Ficon.png&w=64&q=75"');
     expect(html).toContain('\\"/vm/alice-staging/_next/static/media/font.woff2\\"');
+    expect(html).toContain('\\"/vm/alice-staging/_next/image?url=%2Fhero.png&w=256&q=75\\"');
     expect(html).not.toContain('"/_next/static/');
+    expect(html).not.toContain('"/_next/image');
     expect(htmlResponse.headers.get("set-cookie")).toContain("matrix_shell_route=alice-staging");
 
     const assetResponse = await app.request("/vm/alice-staging/_next/static/chunks/app.js", {

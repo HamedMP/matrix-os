@@ -1380,9 +1380,10 @@ function rewriteSandboxedViteJsAssetImports(js: string, assetToken: string | nul
 
 function rewriteExplicitVmShellAssetUrls(html: string, handle: string): string {
   const prefix = `/vm/${handle}`;
-  return html
-    .replaceAll('"/_next/static/', `"${prefix}/_next/static/`)
-    .replaceAll("'/_next/static/", `'${prefix}/_next/static/`);
+  return html.replace(
+    /(["'])\/(_next\/(?:static\/|image(?:[/?]|(?=["']))))/g,
+    `$1${prefix}/$2`,
+  );
 }
 
 async function buildAppDomainProxyResponse(input: {
