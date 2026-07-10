@@ -10,6 +10,7 @@ import {
   insertUserMachine,
   insertProviderDeletion,
   listActiveUserMachinesByClerkId,
+  listNonDeletedUserMachinesByClerkId,
   listPendingProviderDeletions,
   listAllUserMachines,
   listRunningUserMachines,
@@ -51,7 +52,7 @@ import type {
   RecoverRequest,
   ResizeMachineRequest,
 } from './customer-vps-schema.js';
-import { assertPreviewProvisioningCapacity } from './customer-vps-preview.js';
+import { assertPreviewProvisioningCapacity, isPreviewMachine } from './customer-vps-preview.js';
 import {
   getRuntimeAccessDecision,
   type BillingEntitlement,
@@ -638,11 +639,13 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           });
         }
       }
-      if (billingContext || provisioningClass === 'preview') {
+      if (provisioningClass === 'preview') {
+        const retainedMachines = await listNonDeletedUserMachinesByClerkId(trx, request.clerkUserId);
+        assertPreviewProvisioningCapacity(retainedMachines, deps.config.previewProvisioningLimit);
+      } else if (billingContext) {
         const activeMachines = await listActiveUserMachinesByClerkId(trx, request.clerkUserId);
-        if (provisioningClass === 'preview') {
-          assertPreviewProvisioningCapacity(activeMachines, deps.config.previewProvisioningLimit);
-        } else if (billingContext && activeMachines.length >= billingContext.entitlement.maxRuntimeSlots) {
+        const customerMachines = activeMachines.filter((machine) => !isPreviewMachine(machine));
+        if (customerMachines.length >= billingContext.entitlement.maxRuntimeSlots) {
           throw billingUpgradeRequired();
         }
       }

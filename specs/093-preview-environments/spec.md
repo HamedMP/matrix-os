@@ -176,7 +176,9 @@ connect to, CLI betas need a paired shell), and today each is assembled by hand.
 - Preview VPSes: hard TTL 72h via reaper; one VPS per PR (idempotent provision).
 - Concurrent preview provisioning is serialized by the owner provisioning lock and
   capped separately from customer billing slots. `CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT`
-  defaults to 8 and rejects values outside the bounded range 1-16.
+  defaults to 8 and rejects values outside the bounded range 1-16. Preview rows are
+  excluded from customer entitlement counts, while non-deleted failed preview rows
+  continue to consume preview capacity until their slot is retried or deleted.
 - Cloud Run preview revisions: deleted on PR close (see Architecture); bounded by
   open labeled PRs.
 - Logship enrollment inventory: `enable-vps-logship.sh` records every enrolled

@@ -1937,6 +1937,22 @@ export async function listActiveUserMachinesByClerkId(
   return rows.map(mapUserMachine);
 }
 
+export async function listNonDeletedUserMachinesByClerkId(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<UserMachineRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .where('deleted_at', 'is', null)
+    .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
+    .orderBy('provisioned_at', 'desc')
+    .execute();
+  return rows.map(mapUserMachine);
+}
+
 export async function updateUserMachine(
   db: PlatformDB,
   machineId: string,

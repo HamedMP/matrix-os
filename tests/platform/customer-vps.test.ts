@@ -19,6 +19,7 @@ import { createCustomerVpsService } from '../../packages/platform/src/customer-v
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { CustomerVpsError } from '../../packages/platform/src/customer-vps-errors.js';
+import { isPreviewMachine } from '../../packages/platform/src/customer-vps-preview.js';
 import type { BillingEntitlement } from '../../packages/platform/src/billing.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
 import {
@@ -128,6 +129,13 @@ describe('platform/customer-vps', () => {
     expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '0' }).previewProvisioningLimit).toBe(8);
     expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '17' }).previewProvisioningLimit).toBe(8);
     expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '2.5' }).previewProvisioningLimit).toBe(8);
+  });
+
+  it('classifies only dedicated and legacy preview runtime slots as previews', () => {
+    expect(isPreviewMachine({ handle: 'pr-897', runtimeSlot: 'pr-897' })).toBe(true);
+    expect(isPreviewMachine({ handle: 'pr-703', runtimeSlot: 'preview' })).toBe(true);
+    expect(isPreviewMachine({ handle: 'pr-897', runtimeSlot: 'primary' })).toBe(false);
+    expect(isPreviewMachine({ handle: 'alice', runtimeSlot: 'pr-897' })).toBe(false);
   });
 
   it('provisions a user machine idempotently by clerkUserId', async () => {
@@ -286,6 +294,64 @@ describe('platform/customer-vps', () => {
       serverType: 'cpx22',
     });
     expect(resolveBillingEntitlement).toHaveBeenCalledOnce();
+  });
+
+  it('does not let an existing preview consume a customer billing slot', async () => {
+    let nextId = 0;
+    const ids = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+    ];
+    const { service, hetzner } = createService({
+      machineIdFactory: () => ids[nextId++] ?? ids[1]!,
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({ maxRuntimeSlots: 1 })),
+    });
+
+    await service.provisionPreview({ clerkUserId: 'user_123', handle: 'pr-897', runtimeSlot: 'pr-897' });
+    await expect(service.provision({
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      runtimeSlot: 'primary',
+    })).resolves.toMatchObject({ status: 'provisioning' });
+
+    expect(hetzner.createServer).toHaveBeenCalledTimes(2);
+  });
+
+  it('counts failed distinct previews until they are retried or deleted', async () => {
+    let nextId = 0;
+    const ids = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      '721c3ef8-23f6-47e4-a890-6f6dc14759d1',
+      '188d9ce1-395d-4d4c-a7b7-22754c3ab991',
+    ];
+    const { service, hetzner } = createService({
+      config: createTestConfig({ previewProvisioningLimit: 1 }),
+      machineIdFactory: () => ids[nextId++] ?? ids[2]!,
+    });
+
+    const failedPreview = await service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'pr-897',
+    });
+    await updateUserMachine(db, failedPreview.machineId, {
+      status: 'failed',
+      failureCode: 'provider_unavailable',
+      failureAt: '2026-04-26T12:05:00.000Z',
+    });
+
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-898',
+      runtimeSlot: 'pr-898',
+    })).rejects.toMatchObject({ code: 'quota_exceeded' });
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'pr-897',
+    })).resolves.toMatchObject({ status: 'provisioning' });
+
+    expect(hetzner.createServer).toHaveBeenCalledTimes(2);
   });
 
   it('rejects requested Hetzner server types outside the entitlement catalog', async () => {

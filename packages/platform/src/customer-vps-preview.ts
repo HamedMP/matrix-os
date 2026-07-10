@@ -2,12 +2,15 @@ import type { UserMachineRecord } from './db.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import { PREVIEW_RUNTIME_SLOT_PATTERN } from './customer-vps-schema.js';
 
-function isPreviewMachine(machine: Pick<UserMachineRecord, 'handle'>): boolean {
-  return PREVIEW_RUNTIME_SLOT_PATTERN.test(machine.handle);
+export function isPreviewMachine(
+  machine: Pick<UserMachineRecord, 'handle' | 'runtimeSlot'>,
+): boolean {
+  return PREVIEW_RUNTIME_SLOT_PATTERN.test(machine.handle)
+    && (machine.runtimeSlot === machine.handle || machine.runtimeSlot === 'preview');
 }
 
 export function assertPreviewProvisioningCapacity(
-  activeMachines: ReadonlyArray<Pick<UserMachineRecord, 'handle'>>,
+  activeMachines: ReadonlyArray<Pick<UserMachineRecord, 'handle' | 'runtimeSlot'>>,
   limit: number,
 ): void {
   const activePreviews = activeMachines.filter(isPreviewMachine).length;
