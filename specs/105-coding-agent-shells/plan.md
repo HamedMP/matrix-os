@@ -1,6 +1,6 @@
 # Implementation Plan: Coding Agent Shells
 
-**Status**: Draft
+**Status**: Awaiting product-model confirmation
 **Created**: 2026-07-06
 **Planning horizon**: Incremental PR series, not a single mega-branch.
 
@@ -8,7 +8,7 @@
 
 This plan upgrades Matrix OS desktop and mobile into first-class coding-agent interfaces while preserving current behavior. The sequence intentionally starts with contracts and read-only projections, then adds agent thread creation, streaming, approvals, terminal binding, review, preview, and notification polish.
 
-The guiding rule is simple: build shared runtime primitives first, then render them differently per shell.
+The guiding rule is simple: build shared runtime primitives first, then render them differently per shell. The clarified final experience is project-first: one visible chat/session is one resumable `AgentThread`, each message is one server-side `AgentTurn`, and one task may own several independent threads. Desktop and mobile expose Conversation and Kanban views over that same runtime model.
 
 ## Strategic Choices
 
@@ -133,7 +133,60 @@ Pattern:
 - Add native renderer as optional capability after spike.
 - Keep fallback until native is proven across required devices.
 
+### Choice 7 - One Chat Is One Resumable Thread
+
+Do not model each prompt as a new thread.
+
+Why:
+
+- Users reason about a visible chat/session as one agent conversation.
+- Provider resume state, approvals, transcript, terminal binding, and review context must remain isolated per chat.
+- Creating a replacement thread for a follow-up breaks navigation and cross-shell continuity.
+
+Pattern:
+
+- Thread create accepts the first message and creates the provider conversation.
+- `POST /api/coding-agents/threads/:threadId/turns` accepts later messages idempotently.
+- The runtime stores provider resume identity; shells receive only safe thread/turn/event projections.
+- One normal turn runs at a time per thread. Busy submissions fail safely rather than entering an invisible client queue.
+
+### Choice 8 - Canonical Tasks Own Many Threads
+
+Reuse existing Matrix projects/tasks and Kanban status instead of creating an agent-only board.
+
+Why:
+
+- The desktop already has canonical project task routes and `todo`, `running`, `waiting`, `blocked`, `complete`, `archived` states.
+- A task can need separate planning, implementation, review, and repair conversations.
+- A singular task-session link cannot represent multi-agent work.
+
+Pattern:
+
+- New threads require `projectId` and optionally reference one task in that project.
+- Project workspace read models join canonical task summaries with bounded coding-thread aggregates.
+- Task writes remain on canonical task routes.
+- Thread status renders as task-card badges/attention and never silently moves the task.
+
+### Choice 9 - Conversation And Kanban Are Views, Not Stores
+
+Both modes consume the same project/task/thread projections.
+
+Why:
+
+- Switching modes must preserve identity and avoid state drift.
+- Desktop needs dense project/session navigation while mobile needs route-based phone ergonomics.
+- Runtime ownership stays independent of either renderer.
+
+Pattern:
+
+- Persist only selected runtime/project/task/thread and view mode as bounded safe references.
+- Reconcile those references on hydration and runtime switch.
+- Conversation view focuses one thread and contextual tools.
+- Kanban view focuses canonical tasks and bounded thread aggregates; opening a thread returns to the same conversation identity.
+
 ## Phase Roadmap
+
+Phases A-H describe the landed/checkpoint foundation and remain required regression context. Phases I-M are the active clarified path and cannot begin until Gate 0 receives explicit product-owner confirmation.
 
 ### Phase A - Foundation
 
@@ -321,6 +374,108 @@ Primary PRs:
 3. `feat(notifications): route coding-agent attention`
 4. `feat(mobile): add native terminal capability`
 
+### Phase I - Product Model And Project Read Models
+
+Scope:
+
+- Product-owner confirmation of the hierarchy and interaction rules.
+- Project/task/thread/turn contracts and schema tests.
+- Real canonical project summary adapter.
+- Bounded project workspace projection with task/thread aggregates.
+- Owner/project/task relation validation.
+
+Exit criteria:
+
+- Confirmation gate is recorded before implementation starts.
+- Runtime summary returns actual projects when they exist.
+- One task can project several threads without nested unbounded arrays.
+- Cross-project task bindings are rejected.
+
+Primary PRs:
+
+1. `docs(agent-shells): define project conversation model`
+2. `contracts(agent-shells): add project task and turn schemas`
+3. `feat(gateway): hydrate project agent workspaces`
+
+### Phase J - Same-Thread Conversation Turns
+
+Scope:
+
+- Idempotent turn mutation and event contracts.
+- Atomic active-turn ownership.
+- Provider resume support through normalized adapters.
+- Desktop/mobile trusted clients.
+
+Exit criteria:
+
+- Two sequential messages remain in one thread/provider conversation.
+- Duplicate turn retries return the original accepted turn.
+- Concurrent normal turns fail with a safe busy state.
+- Abort/failure releases active-turn ownership without affecting other threads.
+
+Primary PRs:
+
+1. `feat(agents): add resumable conversation turns`
+2. `feat(desktop): send same-thread follow-ups`
+3. `feat(mobile): send same-thread follow-ups`
+
+### Phase K - Desktop Project Conversation And Kanban
+
+Scope:
+
+- Persistent project/task/thread navigator.
+- Conversation/Kanban segmented mode.
+- Task cards with bounded multi-thread aggregates.
+- Same-thread composer and contextual inspector.
+- Selection reconciliation and keyboard paths.
+
+Exit criteria:
+
+- Project-level and task-bound chats are visible in the navigator.
+- A task with multiple threads exposes every thread independently.
+- Mode switching preserves valid project/task/thread selection.
+- Existing Board, Terminal, Chat, Apps, Settings, auth, embeds, updater, and menus regressions pass.
+
+Primary PRs:
+
+1. `feat(desktop): add project conversation navigator`
+2. `feat(desktop): integrate agent Kanban mode`
+
+### Phase L - Mobile Project Conversation And Kanban
+
+Scope:
+
+- Project-first route hierarchy.
+- Task groups with multiple thread rows.
+- Phone/tablet Conversation/Kanban mode.
+- Same-thread composer and safe resume-state reconciliation.
+
+Exit criteria:
+
+- Mobile can select every thread attached to a task.
+- Kanban uses canonical task columns and preserves selected context.
+- Background/resume rehydrates project/task/thread state before navigation.
+- Existing SDK 57 mobile regression and device-smoke gates pass.
+
+Primary PRs:
+
+1. `feat(mobile): add project conversation routes`
+2. `feat(mobile): add agent Kanban mode`
+
+### Phase M - Final Cross-Shell Acceptance
+
+Scope:
+
+- Desktop/mobile real-runtime scenario with two projects, one multi-thread task, and sequential turns.
+- Conversation/Kanban identity continuity.
+- Security/error audit, performance caps, public/internal docs.
+
+Exit criteria:
+
+- Every acceptance case in `acceptance-tests.md` has current evidence.
+- No clarified requirement remains represented only by a placeholder adapter or checkpoint dashboard.
+- Product owner confirms the final shell behavior after real-device testing.
+
 ## Workstream Ownership
 
 ### Gateway/Core Workstream
@@ -336,6 +491,8 @@ Owns:
 - File/review/preview APIs.
 - Safe errors.
 - Auth/resource limits.
+- Canonical project/task adapters and bounded workspace projections.
+- Same-thread turn ownership, idempotency, and provider resume state.
 
 Must coordinate with:
 
@@ -356,6 +513,7 @@ Owns:
 - Terminal/review/preview panels.
 - Notifications/deep links.
 - Runtime switch behavior.
+- Project/task/thread navigator and Conversation/Kanban modes.
 
 Must preserve:
 
@@ -379,6 +537,7 @@ Owns:
 - Review/files/preview screens.
 - Mobile resume state.
 - Native terminal spike.
+- Project-first routes, multi-thread task groups, and Conversation/Kanban modes.
 
 Must preserve:
 
@@ -406,6 +565,17 @@ Must preserve:
 - App launcher/app runtime behavior.
 
 ## Decision Gates
+
+### Gate 0 - Product Model Confirmation
+
+Do not begin Phase I implementation until:
+
+- Product owner confirms one visible chat/session equals one resumable thread.
+- Product owner confirms new chats require a project and task binding is optional.
+- Product owner confirms one task may own several threads.
+- Product owner confirms task status remains explicit canonical board state while thread state is an aggregate badge/attention projection.
+- Product owner confirms Conversation and Kanban are the two primary views on desktop and mobile.
+- `SPEC.md`, `ARCHITECTURE.md`, `plan.md`, `tasks.md`, and `acceptance-tests.md` use the same terminology/cardinality.
 
 ### Gate 1 - Contract Acceptance
 
@@ -461,6 +631,16 @@ Proceed only when:
 - Error-path audit passes.
 - Public docs are updated or explicitly deferred.
 - Deployment path is documented for platform/app-shell/host-bundle/native mobile impacts.
+
+### Gate 7 - Project Conversation Acceptance
+
+Proceed to final rollout only when:
+
+- Runtime hydration returns canonical projects and bounded task/thread projections.
+- Same-thread follow-up resumes one provider conversation and passes idempotency/busy tests.
+- A task with several threads is navigable from both shells.
+- Conversation/Kanban mode switching preserves valid identity across desktop/mobile.
+- Existing project board and task mutations remain canonical and regression tests pass.
 
 ## Risk Register
 
@@ -552,6 +732,37 @@ Mitigation:
 - Device validation.
 - No removal of existing terminal until native is proven.
 
+### Risk: Singular Task Session Assumptions
+
+Existing task UI has a singular `linkedSessionId` and may treat a live session as the only agent for a task.
+
+Mitigation:
+
+- Keep canonical terminal linkage for compatibility, but add a separate one-to-many task/thread projection.
+- Never infer coding-thread cardinality from `linkedSessionId`.
+- Add tests with at least two threads on one task in contracts, gateway, desktop, mobile, and E2E.
+
+### Risk: Follow-Up Creates Replacement Threads
+
+Current checkpoint follow-up behavior can seed a new thread with a structured reference instead of resuming the selected conversation.
+
+Mitigation:
+
+- Add a dedicated idempotent turn route and provider resume contract.
+- Make selected-thread composer call the turn route.
+- Keep "new chat from this context" as a separate explicit command.
+- Assert thread ID and provider conversation identity remain stable across sequential turns.
+
+### Risk: Task Status Drift From Agent Status
+
+Several threads on one task may be running, blocked, failed, and complete simultaneously.
+
+Mitigation:
+
+- Keep task status canonical and explicitly mutated.
+- Compute bounded thread aggregates for display only.
+- Never auto-move cards from a renderer effect or thread reducer.
+
 ## Implementation Patterns
 
 ### Pattern: Additive Route
@@ -624,6 +835,8 @@ Support:
 
 ## Recommended First Three PRs
 
+The original first three PRs below are historical and have landed. The next implementation stack begins only after Gate 0 confirmation.
+
 ### PR 1 - Contracts
 
 Deliver:
@@ -661,6 +874,31 @@ Deliver:
 Why third:
 
 - Verifies cross-client shape early and gives product feedback before mutating runtime.
+
+## Recommended Next PR Stack
+
+1. **`contracts(agent-shells): add project task and turn schemas`**
+   - Project/task aggregates, workspace projection, same-thread turn request/response.
+   - Schema tests only.
+
+2. **`feat(gateway): hydrate project agent workspaces`**
+   - Real project adapter, task/thread grouping, relation validation, caps, safe errors.
+   - Read-only gateway tests.
+
+3. **`feat(agents): add resumable conversation turns`**
+   - Idempotent turn route, atomic active-turn ownership, provider resume, fake-provider tests.
+
+4. **`feat(desktop): add project conversation navigator`**
+   - Project/task/thread left navigator and same-thread Conversation view behind capability.
+
+5. **`feat(desktop): integrate agent Kanban mode`**
+   - Canonical task board projection with multi-thread badges and view identity continuity.
+
+6. **`feat(mobile): add project conversation routes`**
+   - Project/task/thread hierarchy and same-thread follow-up on SDK 57.
+
+7. **`feat(mobile): add agent Kanban mode`**
+   - Phone/tablet board and cross-view selection continuity.
 
 ## Stop Conditions
 

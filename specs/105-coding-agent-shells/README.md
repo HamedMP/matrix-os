@@ -1,8 +1,8 @@
 # 105 - Coding Agent Shells
 
-**Status**: Implementation checkpoint
+**Status**: Product-model confirmation checkpoint
 **Created**: 2026-07-06
-**Branch**: `chore/mobile-expo-sdk-57`
+**Lineage**: `spec/coding-agent-shells`, rebased onto the Expo SDK 57 mobile foundation and current `main`
 **Scope**: Desktop and mobile shell upgrade for multi-agent coding work on the user's Matrix computer.
 
 ## Documents
@@ -13,6 +13,7 @@
 - [tasks.md](./tasks.md) - Phase-by-phase implementation checklist for coding agents.
 - [current-state.md](./current-state.md) - Current route, contract, client, shell, and test inventory.
 - [completion-audit.md](./completion-audit.md) - Evidence-based completion audit for the landed implementation checkpoint.
+- [acceptance-tests.md](./acceptance-tests.md) - Named contract, gateway, desktop, mobile, security, and cross-shell tests required for the clarified final experience.
 
 ## Intent
 
@@ -21,6 +22,9 @@ Matrix OS already has the pieces of a developer operating environment: per-user 
 The work must preserve all current mobile and desktop functionality. The upgrade adds first-class coding-agent workflows:
 
 - Manage multiple coding agents and agent threads.
+- Treat each visible chat/session as one resumable coding-agent thread, with every message creating a turn in that same conversation.
+- Group project-level chats and multiple task-bound chats beneath projects.
+- Switch the same project/task/thread records between Conversation and Kanban views.
 - Connect desktop and mobile shells to the same remote Matrix computer.
 - Create, attach, resume, and terminate named remote terminal sessions.
 - Open projects, files, diffs, previews, apps, and task workspaces from either shell.
