@@ -444,7 +444,7 @@ function setHydrationFailure(
   if (retained) {
     setState({
       status: "ready",
-      value: { ...retained, refreshing: false, warning: PROJECT_WORKSPACE_ERROR },
+      value: { ...retained, refreshing: false, warning: message },
     });
     return;
   }

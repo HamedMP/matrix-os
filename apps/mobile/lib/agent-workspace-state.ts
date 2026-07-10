@@ -11,6 +11,7 @@ import {
 import { z } from "zod/v4";
 
 export const AGENT_WORKSPACE_STATE_STORAGE_KEY = "matrix.agentWorkspaceState.v2";
+const AGENT_WORKSPACE_STATE_LEGACY_STORAGE_KEY = "matrix.agentWorkspaceState.v1";
 
 export const AgentWorkspaceViewModeSchema = z.enum(["conversation", "kanban"]);
 export type AgentWorkspaceViewMode = z.infer<typeof AgentWorkspaceViewModeSchema>;
@@ -24,7 +25,8 @@ export interface AgentWorkspaceState {
   updatedAt: string | null;
 }
 
-type AgentWorkspaceStorage = Pick<typeof AsyncStorage, "getItem" | "setItem">;
+type AgentWorkspaceStorage = Pick<typeof AsyncStorage, "getItem" | "setItem">
+  & Partial<Pick<typeof AsyncStorage, "removeItem">>;
 
 export function createEmptyAgentWorkspaceState(): AgentWorkspaceState {
   return {
@@ -55,6 +57,11 @@ export function parseAgentWorkspaceState(value: unknown): AgentWorkspaceState {
 export async function loadAgentWorkspaceState(
   storage: AgentWorkspaceStorage = AsyncStorage,
 ): Promise<AgentWorkspaceState> {
+  try {
+    await storage.removeItem?.(AGENT_WORKSPACE_STATE_LEGACY_STORAGE_KEY);
+  } catch (error: unknown) {
+    console.warn("[mobile] legacy agent workspace selection could not be removed", safeStorageError(error));
+  }
   try {
     const raw = await storage.getItem(AGENT_WORKSPACE_STATE_STORAGE_KEY);
     if (!raw) return createEmptyAgentWorkspaceState();

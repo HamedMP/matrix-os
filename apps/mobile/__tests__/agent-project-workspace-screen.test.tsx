@@ -2,6 +2,7 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
   __esModule: true,
   default: {
     getItem: jest.fn(),
+    removeItem: jest.fn(),
     setItem: jest.fn(),
   },
 }));
@@ -134,6 +135,7 @@ describe("mobile project-first coding-agent workspace", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+    jest.mocked(AsyncStorage.removeItem).mockResolvedValue(undefined);
     jest.mocked(AsyncStorage.setItem).mockResolvedValue(undefined);
   });
 
@@ -240,6 +242,43 @@ describe("mobile project-first coding-agent workspace", () => {
 
     view.unmount();
     expect(remove).toHaveBeenCalled();
+  });
+
+  it("keeps the specific recovery message when a refresh retains the last projection", async () => {
+    let appStateListener: ((state: string) => void) | undefined;
+    jest.spyOn(AppState, "addEventListener").mockImplementation((_, listener) => {
+      appStateListener = listener as (state: string) => void;
+      return { remove: jest.fn() } as never;
+    });
+    const client = clientFixture();
+    client.getCodingAgentRuntimeSummary
+      .mockResolvedValueOnce({ ok: true, summary })
+      .mockResolvedValueOnce({
+        ok: true,
+        summary: {
+          ...summary,
+          projects: { items: [], hasMore: false, limit: 50 },
+        },
+      });
+
+    render(
+      <AgentProjectWorkspaceScreen
+        client={client as never}
+        connectionState="connected"
+        requestedProjectId="matrix-os"
+        onOpenProject={jest.fn()}
+        onOpenThread={jest.fn()}
+        onNewConversation={jest.fn()}
+      />,
+    );
+
+    await screen.findByText("Project audit");
+    await act(async () => {
+      appStateListener?.("active");
+    });
+
+    expect(await screen.findByText("No coding projects are available.")).toBeTruthy();
+    expect(screen.getByText("Project audit")).toBeTruthy();
   });
 
   it("keeps the last bounded projection visible while reconnecting and offers retry", async () => {

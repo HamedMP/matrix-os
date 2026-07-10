@@ -2,6 +2,7 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
   __esModule: true,
   default: {
     getItem: jest.fn(),
+    removeItem: jest.fn(),
     setItem: jest.fn(),
   },
 }));
@@ -211,6 +212,7 @@ describe("agent workspace state", () => {
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     const storage = {
       getItem: jest.fn().mockResolvedValue("{not json"),
+      removeItem: jest.fn().mockResolvedValue(undefined),
       setItem: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -245,5 +247,18 @@ describe("agent workspace state", () => {
       { name: "SyntaxError" },
     );
     warnSpy.mockRestore();
+  });
+
+  it("removes the superseded safe-reference storage key during hydration", async () => {
+    const storage = {
+      getItem: jest.fn().mockResolvedValue(null),
+      removeItem: jest.fn().mockResolvedValue(undefined),
+      setItem: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await loadAgentWorkspaceState(storage);
+
+    expect(storage.removeItem).toHaveBeenCalledWith("matrix.agentWorkspaceState.v1");
+    expect(storage.getItem).toHaveBeenCalledWith(AGENT_WORKSPACE_STATE_STORAGE_KEY);
   });
 });
