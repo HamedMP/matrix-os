@@ -935,26 +935,37 @@ Before merging each mobile phase:
 
 ### Route Design
 
-Prefer routes under `/api/coding-agents` or an equivalent clear namespace:
+Current canonical routes under `/api/coding-agents`:
 
 - `GET /api/coding-agents/summary`
-- `GET /api/coding-agents/providers`
 - `POST /api/coding-agents/threads`
 - `GET /api/coding-agents/threads`
 - `GET /api/coding-agents/threads/:threadId`
-- `POST /api/coding-agents/threads/:threadId/abort`
-- `POST /api/coding-agents/approvals/:approvalId/decision`
-- `POST /api/coding-agents/input/:requestId/answer`
 - `GET /api/coding-agents/threads/:threadId/events`
-- `GET /api/coding-agents/threads/:threadId/review`
-- `GET /api/coding-agents/projects/:projectId/files`
-- `GET /api/coding-agents/projects/:projectId/files/read`
-- `PUT /api/coding-agents/projects/:projectId/files/write`
+- `POST /api/coding-agents/threads/:threadId/abort`
+- `POST /api/coding-agents/threads/:threadId/approvals/:approvalId/decision`
+- `POST /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer`
+- `GET /api/coding-agents/reviews`
+- `GET /api/coding-agents/reviews/:reviewId`
+- `GET /api/coding-agents/files/browse`
+- `GET /api/coding-agents/files/search`
+- `GET /api/coding-agents/files/read`
+- `POST /api/coding-agents/files/write`
+- `POST /api/coding-agents/source-control/prepare-commit`
+- `POST /api/coding-agents/source-control/pull-requests`
+- `GET /api/coding-agents/notification-preferences`
+- `PUT /api/coding-agents/notification-preferences`
 
-WebSocket:
+Planned additive routes after Gate 0:
 
-- `/ws/coding-agents/runtime`
-- `/ws/coding-agents/threads/:threadId`
+- `GET /api/coding-agents/projects/:projectId/workspace` returns `ProjectAgentWorkspaceSchema`; validates the owner-scoped project path param plus independent bounded task/thread cursors and limits before reading canonical project/task/thread services.
+- `POST /api/coding-agents/threads/:threadId/turns` accepts `CreateAgentTurnRequestSchema` and returns `CreateAgentTurnResponseSchema`; applies auth, `bodyLimit`, path/body validation, ownership/project/task checks, persisted idempotency, atomic active-turn ownership, and safe turn error mapping.
+
+Current canonical coding-agent WebSocket:
+
+- `/ws/coding-agents/thread/:threadId`
+
+Project/task summary updates should reuse the existing authenticated workspace event path or a separately specified bounded runtime projection stream. Do not add `/ws/coding-agents/runtime` without its own schemas, auth registration, subscriber caps, stale cleanup, shutdown drain, and tests.
 
 Compatibility:
 
