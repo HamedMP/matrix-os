@@ -55,6 +55,7 @@ export function AgentProjectWorkspaceShell({
       : null);
   const loadThreadSnapshot = useCodingAgentWorkspace((state) => state.loadThreadSnapshot);
   const previousActiveThreadId = useRef<string | null>(null);
+  const previousHydratedRuntimeScope = useRef<string | null>(hydratedRuntimeScope);
   const previousSelectedThreadId = useRef<string | null>(selectedThreadId);
   const attemptedExternalThreadId = useRef<string | null>(null);
   const projectSignature = [
@@ -78,13 +79,16 @@ export function AgentProjectWorkspaceShell({
     if (!enabled) return;
     const currentThreadState = useCodingAgentWorkspace.getState();
     const currentActiveThreadId = currentThreadState.activeThreadId;
+    const scopeChanged = previousHydratedRuntimeScope.current !== hydratedRuntimeScope;
     const previousSelectedThread = previousSelectedThreadId.current;
+    previousHydratedRuntimeScope.current = hydratedRuntimeScope;
     previousSelectedThreadId.current = selectedThreadId;
     if (!selectedThreadId) {
       if (
         previousSelectedThread
         || (
-          currentActiveThreadId
+          scopeChanged
+          && currentActiveThreadId
           && currentThreadState.threadSnapshot?.thread.id === currentActiveThreadId
           && currentThreadState.threadSnapshot.thread.projectId
         )
@@ -106,7 +110,7 @@ export function AgentProjectWorkspaceShell({
     if (currentActiveThreadId !== selectedThreadId) {
       void loadThreadSnapshot(selectedThreadId);
     }
-  }, [enabled, loadThreadSnapshot, selectedThreadId, status]);
+  }, [enabled, hydratedRuntimeScope, loadThreadSnapshot, selectedThreadId, status]);
 
   useEffect(() => {
     const previous = previousActiveThreadId.current;

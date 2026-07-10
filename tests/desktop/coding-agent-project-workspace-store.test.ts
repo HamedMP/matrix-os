@@ -172,6 +172,44 @@ describe("coding-agent project workspace store", () => {
     expect(useCodingAgentProjectWorkspace.getState().workspace?.project.id).toBe("website");
   });
 
+  it("restores a persisted project that is outside the bounded summary page", async () => {
+    const pagedSummary = summary("rt_primary", "matrix-os", "Matrix OS");
+    pagedSummary.projects.hasMore = true;
+    const websiteWorkspace = workspace("website", "task_docs", "thread_docs");
+    const invoke = vi.fn(async (channel: string, payload: unknown) => {
+      if (channel === "state:get") {
+        return {
+          value: {
+            selectedProjectId: "website",
+            selectedTaskId: "task_docs",
+            selectedThreadId: "thread_docs",
+            viewMode: "conversation",
+            updatedAt: NOW,
+          },
+        };
+      }
+      if (channel === "runtime:get-project-workspace") {
+        expect(payload).toEqual({ projectId: "website" });
+        return websiteWorkspace;
+      }
+      if (channel === "state:set") return { ok: true };
+      throw new Error(`unexpected channel ${channel}`);
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+
+    await useCodingAgentProjectWorkspace.getState().hydrate(pagedSummary);
+
+    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
+      status: "ready",
+      selectedProjectId: "website",
+      selectedTaskId: "task_docs",
+      selectedThreadId: "thread_docs",
+    });
+  });
+
   it("clears a same-runtime workspace while revalidating a potentially new account", async () => {
     const previousWorkspace = workspace("matrix-os", "task_auth", "thread_plan");
     const nextWorkspace = workspace("matrix-os", "task_docs", "thread_docs");
@@ -352,6 +390,7 @@ describe("coding-agent project workspace store", () => {
       "thread_outside_page",
       { projectId: "matrix-os", taskId: "task_auth" },
     );
+    await useCodingAgentProjectWorkspace.getState().refresh();
 
     expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
       status: "ready",

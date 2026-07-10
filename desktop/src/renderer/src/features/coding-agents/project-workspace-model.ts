@@ -83,7 +83,13 @@ export function reconcileProjectWorkspaceSelection(
     return selectionForThread(workspace, selectedThread, preferred.viewMode);
   }
 
-  if (preserveMissingPreferredThread && preferred.selectedThreadId) {
+  const preferredThreadMayBePaged = preferred.selectedTaskId
+    ? workspace.taskThreads.hasMore
+    : workspace.projectThreads.hasMore;
+  if (
+    preferred.selectedThreadId
+    && (preserveMissingPreferredThread || preferredThreadMayBePaged)
+  ) {
     return {
       selectedProjectId: workspace.project.id,
       selectedTaskId: preferred.selectedTaskId,

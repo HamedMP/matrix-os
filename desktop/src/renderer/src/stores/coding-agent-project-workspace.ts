@@ -163,6 +163,9 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
       const preferred = persisted ?? currentSelection(state);
       await loadProjectWorkspace(summary, preferred, generation, {
         preserveSelectionOnError: sameScope,
+        preserveMissingPreferredProject: Boolean(
+          preferred.selectedProjectId && summary.projects.hasMore,
+        ),
       });
     },
 
@@ -175,6 +178,11 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
         state.summary,
         currentSelection(state),
         generation,
+        {
+          preserveMissingPreferredProject: Boolean(
+            state.selectedProjectId && state.summary.projects.hasMore,
+          ),
+        },
       );
     },
 

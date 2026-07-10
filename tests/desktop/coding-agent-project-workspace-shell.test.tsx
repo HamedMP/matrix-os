@@ -583,4 +583,58 @@ describe("AgentProjectWorkspaceShell", () => {
     });
     expect(useCodingAgentWorkspace.getState().threadSnapshot?.thread.id).toBe("thread_legacy");
   });
+
+  it("preserves a project chat during same-scope hydration without a selection change", async () => {
+    const emptyWorkspace: ProjectAgentWorkspace = {
+      ...workspace(),
+      project: { ...workspace().project, threadCount: 0 },
+      projectThreads: { items: [], hasMore: false, limit: 100 },
+    };
+    let resolveWorkspace: ((value: ProjectAgentWorkspace) => void) | undefined;
+    const pendingWorkspace = new Promise<ProjectAgentWorkspace>((resolve) => {
+      resolveWorkspace = resolve;
+    });
+    const invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-project-workspace") return pendingWorkspace;
+      if (channel === "state:set") return Promise.resolve({ ok: true });
+      if (channel === "runtime:subscribe-thread-events" || channel === "runtime:unsubscribe-thread-events") {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+    window.operator = { invoke, on: vi.fn(() => () => undefined) };
+    useCodingAgentProjectWorkspace.setState({
+      status: "ready",
+      runtimeId: "rt_primary",
+      runtimeScope: "operator|https://app.matrix-os.com|primary",
+      summary: summary(),
+      workspace: emptyWorkspace,
+      selectedProjectId: "matrix-os",
+      selectedTaskId: null,
+      selectedThreadId: null,
+    });
+    useCodingAgentWorkspace.setState({
+      activeThreadId: "thread_project",
+      threadSnapshotStatus: "ready",
+      threadSnapshot: snapshot("thread_project", "matrix-os"),
+    });
+
+    render(
+      <AgentProjectWorkspaceShell summary={summary()} onNewChat={vi.fn()}>
+        <div>Workspace</div>
+      </AgentProjectWorkspaceShell>,
+    );
+    await waitFor(() => {
+      expect(useCodingAgentProjectWorkspace.getState().status).toBe("loading");
+    });
+    expect(useCodingAgentWorkspace.getState()).toMatchObject({
+      activeThreadId: "thread_project",
+      threadSnapshotStatus: "ready",
+    });
+
+    await act(async () => {
+      resolveWorkspace?.(emptyWorkspace);
+      await pendingWorkspace;
+    });
+  });
 });
