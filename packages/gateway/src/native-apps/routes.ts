@@ -203,10 +203,23 @@ function sanitizeProxyRequestHeaders(headers: Headers): Headers {
   return out;
 }
 
-function streamSubPath(c: Context, sessionId: string): string {
+function streamRequestPath(c: Context, sessionId: string): {
+  capabilityToken: string | null;
+  upstreamPath: string;
+} {
   const prefix = `/api/native-apps/sessions/${sessionId}/stream`;
   const raw = c.req.path.slice(prefix.length) || "/";
-  return raw.startsWith("/") ? raw : `/${raw}`;
+  const normalized = raw.startsWith("/") ? raw : `/${raw}`;
+  const nextSlash = normalized.indexOf("/", 1);
+  const firstSegment = nextSlash === -1 ? normalized.slice(1) : normalized.slice(1, nextSlash);
+  const parsed = NativeStreamTokenSchema.safeParse(firstSegment);
+  if (!parsed.success) {
+    return { capabilityToken: null, upstreamPath: normalized };
+  }
+  return {
+    capabilityToken: parsed.data,
+    upstreamPath: nextSlash === -1 ? "/" : normalized.slice(nextSlash),
+  };
 }
 
 function streamSearchWithoutBootstrapToken(c: Context): string {
@@ -253,13 +266,16 @@ async function proxyStreamRequest(c: Context, service: NativeAppSessionService):
     if (err instanceof z.ZodError) return c.json({ error: "Invalid request" }, 400);
     throw err;
   }
-  const token = getCookie(c, service.streamCookieName(sessionId)) ?? bootstrapToken;
+  const requestPath = streamRequestPath(c, sessionId);
+  const token = requestPath.capabilityToken
+    ?? getCookie(c, service.streamCookieName(sessionId))
+    ?? bootstrapToken;
   if (!token) return c.json({ error: "Unauthorized" }, 401);
   const target = service.getStreamTarget(sessionId, token);
   if (!target) return c.json({ error: "Unauthorized" }, 401);
   if (streamRequestHasBody(c)) return c.json({ error: "Native app stream request body is too large" }, 413);
 
-  const upstream = new URL(`http://127.0.0.1:${target.port}${streamSubPath(c, sessionId)}`);
+  const upstream = new URL(`http://127.0.0.1:${target.port}${requestPath.upstreamPath}`);
   upstream.search = streamSearchWithoutBootstrapToken(c);
   const response = await fetch(upstream, {
     method: c.req.method,
@@ -269,8 +285,9 @@ async function proxyStreamRequest(c: Context, service: NativeAppSessionService):
     signal: AbortSignal.timeout(STREAM_FETCH_TIMEOUT_MS),
   });
   const headers = sanitizeProxyHeaders(response.headers);
-  if (bootstrapToken) {
-    headers.append("Set-Cookie", nativeStreamCookieHeader(c, service, sessionId, bootstrapToken));
+  const responseToken = requestPath.capabilityToken ?? bootstrapToken;
+  if (responseToken) {
+    headers.append("Set-Cookie", nativeStreamCookieHeader(c, service, sessionId, responseToken));
   }
   return new Response(response.body, {
     status: response.status,
@@ -295,16 +312,18 @@ export function createNativeWebSocketHandler(c: Context, service: NativeAppSessi
     }
     bootstrapToken = null;
   }
-  const token = getCookie(c, service.streamCookieName(sessionId)) ?? bootstrapToken;
+  const requestPath = streamRequestPath(c, sessionId);
+  const token = requestPath.capabilityToken
+    ?? getCookie(c, service.streamCookieName(sessionId))
+    ?? bootstrapToken;
   const target = token ? service.getStreamTarget(sessionId, token) : null;
   if (!target) {
     return {
       onOpen: (_evt: unknown, ws: { close(): void }) => ws.close(),
     };
   }
-  const subPath = streamSubPath(c, sessionId);
   const search = streamSearchWithoutBootstrapToken(c);
-  const upstreamUrl = `ws://127.0.0.1:${target.port}${subPath}${search}`;
+  const upstreamUrl = `ws://127.0.0.1:${target.port}${requestPath.upstreamPath}${search}`;
 
   return {
     onOpen(_evt: unknown, ws: NativeWebSocketState) {

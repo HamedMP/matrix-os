@@ -118,7 +118,7 @@ function sessionView(record: NativeAppSessionRecord): NativeAppSession {
   } = record;
   return {
     ...session,
-    streamUrl: `${session.streamUrl}?nativeStreamToken=${encodeURIComponent(streamToken)}`,
+    streamUrl: `${session.streamUrl}${encodeURIComponent(streamToken)}/`,
   };
 }
 

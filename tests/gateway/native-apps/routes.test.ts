@@ -128,7 +128,7 @@ describe("native app routes", () => {
       id: "session_aaaaaaaaaaaaaaaaaaaaaaaa",
       appId: "xterm",
       status: "running",
-      streamUrl: "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/?nativeStreamToken=stream_bbbbbbbbbbbbbbbbbbbbbbbb",
+      streamUrl: "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/stream_bbbbbbbbbbbbbbbbbbbbbbbb/",
     });
     expect(body.session).not.toHaveProperty("port");
     expect(body.session).not.toHaveProperty("display");
@@ -162,6 +162,29 @@ describe("native app routes", () => {
     expect(stream.status).toBe(200);
     expect(await stream.text()).toBe("<html>xpra</html>");
     expect(stream.headers.get("set-cookie")).toContain("matrix_native_session__session_aaaaaaaaaaaaaaaaaaaaaaaa=");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("authenticates opaque iframe assets through the stream capability path", async () => {
+    const { app, service } = createApp("alice");
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    const streamToken = service.streamCookieValue(session.id);
+    const fetchMock = vi.fn(async (url: URL) => {
+      expect(url.pathname).toBe("/css/client.css");
+      return new Response("body { color: black; }", {
+        status: 200,
+        headers: { "Content-Type": "text/css" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const stream = await app.request(
+      `/api/native-apps/sessions/${session.id}/stream/${streamToken}/css/client.css`,
+    );
+
+    expect(stream.status).toBe(200);
+    expect(stream.headers.get("content-type")).toContain("text/css");
+    expect(await stream.text()).toBe("body { color: black; }");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -397,6 +420,31 @@ describe("native app routes", () => {
     await vi.waitFor(() => expect(wsMock.WebSocket).toHaveBeenCalledTimes(1));
 
     expect(wsMock.instances[0]?.url).toBe("ws://127.0.0.1:46000/websocket");
+    handler.onClose(null, ws);
+  });
+
+  it("authenticates opaque iframe websockets through the stream capability path", async () => {
+    const { service } = createApp("alice");
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    const streamToken = service.streamCookieValue(session.id);
+    const context = {
+      req: {
+        param: (name: string) => name === "sessionId" ? session.id : "",
+        path: `/api/native-apps/sessions/${session.id}/stream/${streamToken}/`,
+        raw: { headers: new Headers() },
+        url: `http://matrix.local/api/native-apps/sessions/${session.id}/stream/${streamToken}/`,
+      },
+    };
+    const handler = createNativeWebSocketHandler(context as never, service);
+    const ws = {
+      close: vi.fn(),
+      send: vi.fn(),
+    };
+
+    handler.onOpen(null, ws);
+    await vi.waitFor(() => expect(wsMock.WebSocket).toHaveBeenCalledTimes(1));
+
+    expect(wsMock.instances[0]?.url).toBe("ws://127.0.0.1:46000/");
     handler.onClose(null, ws);
   });
 

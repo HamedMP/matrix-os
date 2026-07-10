@@ -3743,14 +3743,14 @@ describe("platform proxy routing", () => {
   });
 
   it("maps explicit VM native app WebSocket paths to the selected customer VPS route", () => {
-    const path = "/vm/alice-staging/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/websocket?nativeStreamToken=stream_bbbbbbbbbbbbbbbbbbbbbbbb";
+    const path = "/vm/alice-staging/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/stream_bbbbbbbbbbbbbbbbbbbbbbbb/";
 
     expect(readExplicitVmWebSocketRoute(path)).toEqual({
       handle: "alice-staging",
-      upstreamPath: "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/websocket",
+      upstreamPath: "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/stream_bbbbbbbbbbbbbbbbbbbbbbbb/",
     });
     expect(buildExplicitVmWebSocketUpstreamPath(path)).toBe(
-      "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/websocket?nativeStreamToken=stream_bbbbbbbbbbbbbbbbbbbbbbbb",
+      "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/stream_bbbbbbbbbbbbbbbbbbbbbbbb/",
     );
   });
 

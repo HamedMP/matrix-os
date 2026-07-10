@@ -89,7 +89,7 @@ describe("NativeAppSessionService", () => {
       ownerId: "alice",
       appId: "xterm",
       status: "running",
-      streamUrl: "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/?nativeStreamToken=stream_bbbbbbbbbbbbbbbbbbbbbbbb",
+      streamUrl: "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/stream_bbbbbbbbbbbbbbbbbbbbbbbb/",
     });
     expect(launched).toHaveLength(1);
     expect(launched[0].command).toBe("xpra");
