@@ -317,7 +317,13 @@ describe("coding agent runtime summary", () => {
       threads: {
         listThreads: async () => ({ items: [], hasMore: false, limit: 50 }),
       },
+      projects: {
+        listProjectSummaries: async () => ({ items: [], hasMore: false, limit: 50 }),
+      },
       capabilities: {
+        projectWorkspace: true,
+        conversationView: true,
+        kanbanView: true,
         workspace: true,
         approvals: true,
         sameThreadTurns: true,
@@ -334,6 +340,9 @@ describe("coding agent runtime summary", () => {
       expect.objectContaining({ id: "codingAgentsMobileWorkspace", enabled: true }),
       expect.objectContaining({ id: "codingAgentsThreadCreate", enabled: true }),
       expect.objectContaining({ id: "codingAgentsSameThreadTurns", enabled: true }),
+      expect.objectContaining({ id: "codingAgentsProjectWorkspace", enabled: true }),
+      expect.objectContaining({ id: "codingAgentsConversationView", enabled: true }),
+      expect.objectContaining({ id: "codingAgentsKanbanView", enabled: true }),
       expect.objectContaining({ id: "codingAgentsApprovals", enabled: true }),
       expect.objectContaining({ id: "codingAgentsNativeMobileTerminal", enabled: true }),
     ]));
