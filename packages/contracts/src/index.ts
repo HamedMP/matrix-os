@@ -16,6 +16,12 @@ function byteLength(value: string): number {
   return textEncoder.encode(value).byteLength;
 }
 
+function hasIpv4AddressInVersionSuffix(value: string): boolean {
+  const suffixStart = value.indexOf("-");
+  if (suffixStart === -1) return false;
+  return /(?:^|[^0-9])(?:\d{1,3}\.){3}\d{1,3}(?:$|[^0-9])/.test(value.slice(suffixStart + 1));
+}
+
 function boundedText(maxChars: number, maxBytes = maxChars * 4) {
   return z.string()
     .min(1)
@@ -103,7 +109,10 @@ export const MatrixComputerVersionLabelSchema = z.union([
       "Invalid Matrix computer version label",
     )
     .refine(
-      (value) => !UNSAFE_ASSISTANT_PREVIEW_TEXT.test(value) && !/(?:machine|server)[._-]?id/i.test(value),
+      (value) =>
+        !UNSAFE_ASSISTANT_PREVIEW_TEXT.test(value) &&
+        !/(?:machine|server)[._-]?id/i.test(value) &&
+        !hasIpv4AddressInVersionSuffix(value),
       { message: "Matrix computer version label is not safe for display" },
     ),
 ]);

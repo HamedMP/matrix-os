@@ -176,6 +176,8 @@ describe("Matrix computer contracts", () => {
       { ...mainComputer, versionLabel: "matrix-os-host-machineIdm123" },
       { ...mainComputer, versionLabel: "v1machineIdm123" },
       { ...mainComputer, versionLabel: "v0.9.1-db.internal" },
+      { ...mainComputer, versionLabel: "v1.2.3-10.0.0.8" },
+      { ...mainComputer, versionLabel: "v1.2.3-192.168.1.10" },
       { ...mainComputer, versionLabel: "v1.2.3-machineIdm123" },
       { ...mainComputer, versionLabel: "db.internal" },
       { ...mainComputer, versionLabel: "accessToken=secret-value" },
