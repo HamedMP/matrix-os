@@ -168,10 +168,13 @@ if (!gotLock) {
       const credentialStore = createCredentialStore({ dir: userData, safeStorage });
 
       const platformHost = process.env.OPERATOR_GATEWAY_URL ?? DEFAULT_PLATFORM_HOST;
+      const runtimeSelectionOrigin = process.env.MATRIX_API_ORIGIN
+        ?? (platformHost === DEFAULT_PLATFORM_HOST ? "https://api.matrix-os.com" : platformHost);
 
       const auth = new AuthService({
         credentialStore,
         platformHost,
+        runtimeSelectionOrigin,
         loadProfile: () => store.get("profile"),
         saveProfile: (profile) => store.set("profile", profile),
         clearProfile: () => store.delete("profile"),

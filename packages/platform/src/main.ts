@@ -475,10 +475,12 @@ export function createApp(deps: {
   app.route('/', createComputerRoutes({
     db,
     clerkAuth,
+    appEnv,
     platformJwtSecret,
     legacyContainerRoutingEnabled,
     applyNoStoreHeaders,
     logRouteError: logPlatformRouteError,
+    getGatewayUrlForHandle,
   }));
 
   app.route('/', createAppSessionRoutes({

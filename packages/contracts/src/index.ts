@@ -174,6 +174,19 @@ export type MatrixComputerCapabilityId = z.infer<typeof MatrixComputerCapability
 export type MatrixComputer = z.infer<typeof MatrixComputerSchema>;
 export type MatrixComputerList = z.infer<typeof MatrixComputerListSchema>;
 
+export const RuntimeSelectionRequestSchema = z.object({
+  slot: MatrixComputerRuntimeSlotSchema,
+}).strict();
+export const RuntimeSelectionResponseSchema = z.object({
+  accessToken: z.string().min(32).max(8192),
+  expiresAt: z.number().int().min(1_000_000_000_000).max(Number.MAX_SAFE_INTEGER),
+  handle: MatrixComputerHandleSchema,
+  slot: MatrixComputerRuntimeSlotSchema,
+}).strict();
+
+export type RuntimeSelectionRequest = z.infer<typeof RuntimeSelectionRequestSchema>;
+export type RuntimeSelectionResponse = z.infer<typeof RuntimeSelectionResponseSchema>;
+
 export const RecoveryActionSchema = z.enum([
   "retry",
   "sign_in",

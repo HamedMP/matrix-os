@@ -69,7 +69,14 @@ strict shared response validation, fixed safe labels, coarse release labels,
 and no-store generic failures. Plain Clerk sessions do not imply a selected
 runtime; only a verified native/sync principal bound back to its current owner
 machine can publish `selectedSlot`. The paused desktop and mobile branches still
-need to adopt this shared route after the trusted selection slice lands.
+need to adopt this shared route.
+
+The backend stack also implements runtime credential replacement only on an
+explicit dedicated API origin. The selection route accepts one Authorization
+sync bearer, ignores cookies and Clerk fallback, rebinds its claims to the
+current owner machine, requires a running owner target, and never extends the
+source credential expiry. App/code hosts receive no replacement bearer; mobile
+continues to use validated same-origin `/vm/{handle}` routing.
 
 The existing Platform Preview and Preview VPS workflows do not yet form one
 isolated authority. The target preview environment owns a dedicated preview

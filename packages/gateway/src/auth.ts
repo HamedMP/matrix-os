@@ -158,6 +158,7 @@ export function authMiddleware(
     // are picked up without recreating the middleware.
     const jwtKey = await readJwtKeyConfig();
     const expectedHandle = process.env.MATRIX_HANDLE;
+    const expectedRuntimeSlot = process.env.MATRIX_RUNTIME_SLOT;
 
     const normalizedPath = c.req.path;
     if (PUBLIC_PATHS.some((p) => normalizedPath === p) ||
@@ -261,6 +262,7 @@ export function authMiddleware(
         const claims = await validateSyncJwt(presentedToken, {
           ...jwtKey,
           expectedHandle,
+          expectedRuntimeSlot,
         });
         // Stash claims on the Hono context so downstream handlers can
         // resolve the authenticated Clerk userId through the request principal.

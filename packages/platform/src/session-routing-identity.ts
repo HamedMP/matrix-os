@@ -37,6 +37,13 @@ export interface AppDomainIdentity {
   source?: 'auth' | 'mobile-session' | 'static-route';
 }
 
+export interface SyncBearerIdentity {
+  handle: string;
+  userId: string;
+  runtimeSlot?: string;
+  expiresAt: number;
+}
+
 export function readMobileAppSessionRoutingHandle(path: string, rawUrl: string): string | null {
   if (!(path === '/apps' || path.startsWith('/apps/'))) {
     return null;
@@ -157,6 +164,49 @@ function isSyncJwtAuthError(err: unknown): boolean {
     err.message === 'Invalid sync JWT claims' ||
     err.message.startsWith('JWT handle ')
   );
+}
+
+export async function resolveSyncBearerIdentity(opts: {
+  authorization: string | undefined;
+  db: PlatformDB;
+  platformJwtSecret: string;
+  legacyContainerRoutingEnabled?: boolean;
+}): Promise<SyncBearerIdentity | null> {
+  const match = /^Bearer ([^\s]+)$/.exec(opts.authorization ?? '');
+  const token = match?.[1];
+  if (!token || token.length < 32 || token.length > 8192) return null;
+
+  let claims: Awaited<ReturnType<typeof verifySyncJwt>>;
+  try {
+    claims = await verifySyncJwt(token, { secret: opts.platformJwtSecret });
+  } catch (err: unknown) {
+    if (isSyncJwtAuthError(err)) return null;
+    throw err;
+  }
+
+  const runtimeSlot = RuntimeSlotSchema.safeParse(claims.runtime_slot).success
+    ? claims.runtime_slot
+    : undefined;
+  const record = opts.legacyContainerRoutingEnabled === false
+    ? undefined
+    : await getContainer(opts.db, claims.handle);
+  if (record?.clerkUserId === claims.sub) {
+    return {
+      handle: record.handle,
+      userId: record.clerkUserId,
+      runtimeSlot,
+      expiresAt: claims.exp,
+    };
+  }
+
+  const machine = await getActiveUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
+  if (!machine || machine.clerkUserId !== claims.sub) return null;
+  return {
+    handle: machine.handle,
+    userId: machine.clerkUserId,
+    runtimeSlot: machine.runtimeSlot,
+    expiresAt: claims.exp,
+  };
 }
 
 export async function resolveAppDomainIdentity(opts: {
