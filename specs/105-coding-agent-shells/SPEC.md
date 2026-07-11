@@ -73,6 +73,7 @@ Task status remains canonical task state and is changed through existing validat
 - Duplicating project/task/session storage in local client databases.
 - Replacing the existing Canvas, app launcher, mobile terminal, desktop embeds, auth flow, update flow, or sync client.
 - Implementing every possible provider-specific capability in the first PR.
+- Supporting Gemini CLI in the Full Workspace first release.
 - Storing provider credentials in desktop renderer, mobile JS state, embedded app frames, or local shell stores.
 - Adding unreviewed third-party native dependencies before a spike and explicit license/security review.
 
@@ -310,10 +311,12 @@ viewer read-only behavior, revoke both, and audit every grant/decision/revoke.
 ### Agent Providers
 
 - **FR-010**: The runtime MUST support multiple coding-agent providers as configured tools, not hardcoded UI-only options.
-- **FR-011**: Each provider MUST report `id`, `displayName`, `kind`, `availability`, `authStatus`, `installStatus`, `defaultModel`, `supportedModes`, and safe setup actions.
+- **FR-011**: Each provider MUST report stable `id`, safe `displayName`, `protocol`, `supportTier`, `availability`, `authStatus`, `installStatus`, `executionReady`, granular `capabilities`, optional default model/modes, and safe setup actions.
 - **FR-012**: Provider setup/install actions MUST run on the Matrix computer in foreground terminal sessions when user interaction may be required.
 - **FR-013**: Provider health checks MUST be timeout-bound and return coarse status only.
 - **FR-014**: Provider-specific errors MUST never be rendered raw to users; clients receive safe states and recovery actions.
+- **FR-015**: The Full Workspace first release MUST ship first-class normalized adapters for Claude Code, Codex, Pi, OpenCode, and custom ACP-compatible backends. It MUST also ship capability-gated compatibility adapters for Kiro, GitHub Copilot CLI, Qwen Code, Kimi CLI, Kilo Code, and Auggie. Gemini CLI is explicitly outside this release scope.
+- **FR-016**: A provider is not release-supported merely because its executable is detected. Every listed adapter MUST pass install/auth health, create, normalized stream, abort, safe-error, restart, and capability-reporting tests. Same-thread resume, session discovery/import, fork, rollback, steering, approvals, images, models/modes, and handoff MUST be advertised only when real-process evidence proves that provider/runtime combination.
 
 ### Agent Threads
 
@@ -422,7 +425,7 @@ viewer read-only behavior, revoke both, and audit every grant/decision/revoke.
 - **FR-133**: Collaboration MUST use explicit owner/editor/viewer grants aligned with Matrix owner/org/shared authorization; provider credentials and owner-only setup permissions never transfer to participants.
 - **FR-134**: Participant grants, revocations, approval decisions, terminal/file/source-control mutations, and runtime handoffs MUST emit owner-visible audit events.
 - **FR-135**: Every new list, transcript window, queue, graph, attachment set, terminal binding set, subscriber registry, cache, and in-memory index MUST have a tested cap plus cleanup/eviction policy.
-- **FR-136**: Complete coding-workspace durable state MUST use existing owner-controlled Postgres/Kysely; the bounded legacy owner file is an import/export compatibility projection, not the V2 source of truth.
+- **FR-136**: Until Full Workspace Gate B0 is confirmed and the reviewed B25-009 cutover transaction commits its authoritative marker, the bounded legacy owner file remains the active source. After that marker commits, complete coding-workspace durable state MUST use existing owner-controlled Postgres/Kysely, and the owner file remains bounded import/export/rollback compatibility only.
 - **FR-137**: Every durable coding-workspace record MUST carry explicit personal, org, or shared scope and scope ID. Authorization, retention, export, deletion, collaboration, and audit MUST preserve strict scope separation.
 - **FR-138**: Owners and authorized org administrators MUST be able to export and delete coding-workspace records through the canonical Matrix export/delete lifecycle. Normal reads exclude soft-deleted records; cleanup removes attachment objects and derived indexes under bounded retry/audit policy.
 
@@ -589,6 +592,7 @@ Participant access never transfers provider credentials.
 7. Network loss -> clients mark reconnecting -> streams resume by cursor -> no duplicate terminal output or thread events.
 8. Project navigator -> task with two threads -> select either conversation -> switch to Kanban -> open the same task/thread -> selection remains coherent.
 9. Idle thread -> idempotent follow-up turn -> provider resumes the same conversation identity -> desktop and mobile show one shared transcript.
+10. Provider matrix -> each required adapter reports its tier/readiness/capabilities -> one preview conversation completes or aborts safely -> unsupported controls remain disabled without substitution or a replacement conversation.
 
 ## Success Criteria
 
@@ -617,6 +621,7 @@ Participant access never transfers provider credentials.
 - **SC-023**: The exact backend top deploys to a disposable preview computer and passes real-provider transcript, queue, approval, child-run, terminal, repository, review, preview, reconnect, restart, and rollback smoke before shell release approval.
 - **SC-024**: Desktop and physical mobile authenticate to one non-promoted candidate, list and select the same disposable computer through the canonical contract, launch native app streaming, and observe route denial plus complete resource teardown after preview removal.
 - **SC-025**: Personal/org/shared export-delete tests prove complete portable output, strict scope separation, exclusion after delete, attachment/index cleanup, and auditable bounded retries.
+- **SC-026**: Every first-release provider passes its required fake and real-process conformance tier on the exact preview bundle; Gemini CLI has no built-in adapter/setup option, and no provider advertises an advanced capability without matching evidence.
 
 ## Rollout Strategy
 

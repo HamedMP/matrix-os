@@ -23,6 +23,7 @@ Tests must also cover another owner to prove isolation.
 
 | Requirement group | Acceptance evidence |
 | --- | --- |
+| `FR-010` through `FR-016`, `FR-110` through `FR-113`, `SC-003`, `SC-023`, `SC-026` | `CT-104`; `GW-103`, `GW-105`, `GW-112`, `GW-118`; `E2E-104` |
 | `FR-006`, `FR-007`, `FR-028`, `SC-011`, `SC-014` | `CT-001` through `CT-004`; `GW-001` through `GW-011`; `E2E-002` |
 | `FR-020`, `FR-026`, `FR-027`, `FR-029`, `SC-003`, `SC-013` | `CT-005` through `CT-007`; `GW-012` through `GW-018`; `E2E-001`, `E2E-003` |
 | `FR-062`, `FR-066`, `FR-067`, `SC-011`, `SC-012` | `DT-001` through `DT-011`; `E2E-002`, `E2E-004`, `E2E-005` |
@@ -135,9 +136,11 @@ Every clarified functional requirement and buildable success criterion has at le
 | CT-101 | Transcript pages validate monotonic sequences, direction, caps, gaps, structured entry kinds, and forbidden server-only fields. | `tests/contracts/coding-agent-workspace-v2.test.ts`. |
 | CT-102 | Lifecycle, import, queue, steering, interrupt, run, binding, attachment, attention, handoff, and participant mutations have bounded discriminated schemas. | Valid/invalid parse matrix with unknown/oversized/unsafe payload rejection. |
 | CT-103 | Capability/version negotiation remains additive for old shell/runtime combinations. | Old and V2 runtime summary fixtures parse with explicit disabled capability behavior. |
+| CT-104 | Provider summaries use stable IDs plus protocol, support tier, readiness, and granular capabilities; the exact release roster parses while unknown built-ins, capability escalation, and oversized custom ACP profiles reject. | Zod 4 roster/tier/protocol/capability matrix with custom ACP handshake/version fixtures and Gemini built-in exclusion. |
 | DB-101 | All V2 records are owner-scoped and multi-write operations are transactional. | Kysely repository tests with forced intermediate failures and cross-owner reads/writes. |
 | DB-102 | Sequence allocation, pending claims, handoff transitions, and optimistic revisions are race-safe in the write statement. | Parallel transaction tests proving one winner and deterministic conflicts. |
 | DB-103 | Legacy owner-file import is idempotent, preserves IDs/order/relations, and emits a rollback export. | Import twice, restart, malformed-record quarantine, and rollback tests. |
+| DB-104 | Cutover serializes by scope, quiesces mutations, verifies the import checksum, and changes authority only when the `postgres_active` marker commits atomically. | Mutex/advisory-lock integration with concurrent mutation, checksum mismatch, and crashes immediately before/after commit; post-marker restart never reactivates file writes. |
 
 ## Full Workspace V2 Gateway Tests
 
@@ -160,6 +163,7 @@ Every clarified functional requirement and buildable success criterion has at le
 | GW-115 | Feature/retention policy, org/offboarding authorization, recovery checkpoints, and diagnostic snapshots remain server-enforced and redacted. | Policy disable, dry-run cleanup, restart/crash, offboarding, and forbidden-content tests. |
 | GW-116 | Personal/org/shared export and deletion preserve scope separation, portability, tombstone exclusion, attachment/index cleanup, and audit/retry state. | Repository plus canonical export/delete integration tests. |
 | GW-117 | Source-control mutations enforce their operation-specific preconditions and reconcile ambiguous remote outcomes without destructive fallback. | Per-action schema/service tests for dirty state, expected head, configured remote, conflict, timeout, idempotent retry, and audit. |
+| GW-118 | Claude Code, Codex, Pi, OpenCode, custom ACP-compatible backends, Kiro, GitHub Copilot CLI, Qwen Code, Kimi CLI, Kilo Code, and Auggie pass the required provider conformance tier; Gemini CLI remains absent and unsupported capabilities are reported truthfully. | Table-driven fake adapters plus flagged real-process install/auth/create/stream/abort/restart/safe-error tests and per-capability negative cases. |
 
 ## Full Workspace V2 Shell And Preview Tests
 
@@ -172,6 +176,7 @@ Every clarified functional requirement and buildable success criterion has at le
 | E2E-101 | Desktop and mobile target the same exact preview runtime and page one long transcript without duplicates. | Recorded backend SHA, bundle, runtime ID, thread ID, sequence bounds, and reconnect evidence. |
 | E2E-102 | Provider controls, queued message, approval, child run, two terminals, attachment, file edit, review comment, commit/PR, preview, archive/fork, memory anchor, automation run, policy disable, recovery, and attention resolve propagate cross-shell. | One seeded owner project scenario on the disposable preview computer. |
 | E2E-103 | Compatible runtime handoff succeeds; incompatible/failed handoff remains safely recoverable. | Two disposable runtime scenario with audit records and unchanged conversation ID. |
+| E2E-104 | Every first-release provider starts one bounded preview conversation and completes or aborts safely without transcript/provider-state mixing; advanced actions appear only for providers with verified support. | Exact provider versions, runtime kinds, capability snapshots, thread IDs, and real-process smoke evidence recorded against the disposable preview computer. |
 
 ## Required Commands By Slice
 

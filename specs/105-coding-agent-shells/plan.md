@@ -977,6 +977,11 @@ phase publishes the versioned shell handoff.
 - Add steering and active-turn interruption behind provider capabilities.
 - Add bounded parent/child execution graph and normalized run events.
 - Add durable attention inbox and acknowledgement.
+- Add the first-release provider conformance harness and normalized adapters for
+  Claude Code, Codex, Pi, OpenCode, custom ACP-compatible backends, Kiro,
+  GitHub Copilot CLI, Qwen Code, Kimi CLI, Kilo Code, and Auggie.
+- Keep Gemini CLI outside this release and publish granular capabilities from
+  real-process evidence rather than binary detection.
 
 ### Phase Q - Complete Project Tooling
 
@@ -1012,11 +1017,13 @@ phase publishes the versioned shell handoff.
 6. Transcript and lifecycle.
 7. Queue and steering.
 8. Execution graph, provider profiles/assets, and attention.
-9. Terminal/repository/review/attachment bindings.
-10. Handoff and collaboration.
-11. Memory, automation, voice-action, policy, retention, and recovery integration.
-12. Non-visual desktop/mobile client plumbing.
-13. Preview smoke, security, performance, docs, and rollback evidence.
+9. First-class provider adapters and conformance harness.
+10. Compatibility provider adapters.
+11. Terminal/repository/review/attachment bindings.
+12. Handoff and collaboration.
+13. Memory, automation, voice-action, policy, retention, and recovery integration.
+14. Non-visual desktop/mobile client plumbing.
+15. Preview smoke, security, performance, docs, and rollback evidence.
 
 Each layer opens ready for review, targets fewer than 1,000 additions and 20
 files where practical, and receives current-head CI plus Greptile 5/5 before

@@ -2,7 +2,7 @@
 
 **Status**: Proposed expansion; implementation requires product-owner confirmation
 **Scope**: Gateway/runtime capabilities required for a complete Matrix coding workspace across desktop, mobile, browser, and CLI
-**Source of truth**: The user's Matrix computer and owner-controlled Postgres
+**Target source of truth after B25-009 cutover**: The user's Matrix computer and owner-controlled Postgres; the bounded owner file remains active until the authoritative marker commits
 
 ## Product Thesis
 
@@ -334,12 +334,14 @@ no transcript/file/terminal bytes and is consumed during gateway startup.
 
 ## Persistence And Migration
 
-The current bounded owner file at `system/coding-agents/threads.json` is a
-compatibility projection, not sufficient durable storage for complete transcript
-history, queues, graphs, bindings, or collaboration.
+The current bounded owner file at `system/coding-agents/threads.json` remains the
+active source until the B25-009 cutover transaction commits its authoritative
+marker. It is not sufficient durable storage for complete transcript history,
+queues, graphs, bindings, or collaboration.
 
-The V2 source of truth MUST use the existing owner-controlled Postgres and the
-gateway's existing Kysely lifecycle. Additive tables:
+After that marker commits, the V2 source of truth MUST use the existing
+owner-controlled Postgres and the gateway's existing Kysely lifecycle; the file
+becomes bounded import/export/rollback compatibility only. Additive tables:
 
 - `coding_agent_threads`
 - `coding_agent_turns`
@@ -593,6 +595,26 @@ capability error and does not silently convert it into another behavior.
 Secret values are write-only through trusted setup paths. Read responses contain
 safe labels, availability, and secret-reference presence only.
 
+### First-Release Provider Matrix
+
+All provider-specific behavior stays behind normalized gateway adapters. A
+detected executable is an installation signal, not proof of lifecycle support.
+
+| Release tier | Required providers | Release expectation |
+| --- | --- | --- |
+| First-class | Claude Code, Codex, Pi, OpenCode | Install/auth health, create, normalized streaming, abort, restart recovery, safe errors, and every advertised capability pass fake plus real-process tests. |
+| First-class protocol family | Custom ACP-compatible backends | Validated command/profile configuration and ACP protocol conformance; no arbitrary argument execution or client-held credentials. |
+| Compatibility | Kiro, GitHub Copilot CLI, Qwen Code, Kimi CLI, Kilo Code, Auggie | Shipped behind per-provider flags with the same baseline lifecycle tests; unsupported advanced controls remain explicitly disabled. |
+| Excluded | Gemini CLI | No dedicated built-in adapter, setup action, release promise, or shell option in this release. A safe user-controlled custom ACP label does not become a built-in identity and is not rejected solely for matching this name. |
+
+The capability registry is granular by provider and runtime kind. Same-thread
+resume, session discovery/import, fork, rollback, steering, approvals, image
+input/output, model/mode/reasoning controls, and cross-computer handoff are never
+inferred from another provider and never emulated by silently creating a new
+conversation. A compatibility adapter may ship with fewer controls, but it must
+still preserve canonical Matrix thread identity and return a safe unsupported
+state for unavailable operations.
+
 ### Terminals, Attachments, Repository, And Review
 
 - `POST /api/coding-agents/terminal-bindings`
@@ -776,6 +798,8 @@ surfaces against a preview computer.
 
 - Pending queue, steering/interrupt, child execution graph, and durable attention
   inbox pass fake and real-provider tests.
+- The complete first-release provider matrix passes its conformance tier and
+  publishes a real-process-backed capability snapshot.
 
 ### Gate B4 - Terminals, Repository, Review, And Attachments
 
@@ -809,11 +833,13 @@ Each layer is ready for review and stays under repository review-size limits:
 7. `feat(gateway): add queue and steering lifecycle`
 8. `feat(gateway): add execution graph and attention inbox`
 9. `feat(gateway): add provider profiles and assets`
-10. `feat(gateway): add terminal and repository bindings`
-11. `feat(gateway): add runtime handoff and collaboration`
-12. `feat(coding-agents): integrate memory automation and policy`
-13. `feat(coding-agents): add thin shell v2 clients`
-14. `test(coding-agents): validate preview workspace backend`
+10. `feat(coding-agents): add first-class provider adapters`
+11. `feat(coding-agents): add compatibility provider adapters`
+12. `feat(gateway): add terminal and repository bindings`
+13. `feat(gateway): add runtime handoff and collaboration`
+14. `feat(coding-agents): integrate memory automation and policy`
+15. `feat(coding-agents): add thin shell v2 clients`
+16. `test(coding-agents): validate preview workspace backend`
 
 The spec PR is independent of the current desktop and mobile UI stacks. Backend
 implementation starts from current `main`. A disposable integration/preview

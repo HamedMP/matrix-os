@@ -363,10 +363,14 @@ Rules:
 type AgentProviderSummary = {
   id: string;
   displayName: string;
-  kind: "claude" | "codex" | "opencode" | "cursor" | "custom";
+  adapterFamily: "built_in" | "custom_acp";
+  protocol: "native_cli" | "app_server" | "acp" | "mcp" | "shell_bridge";
+  supportTier: "first_class" | "compatibility";
   availability: "available" | "setup_required" | "auth_required" | "installing" | "unavailable" | "unknown";
   installStatus: "installed" | "missing" | "installing" | "failed" | "unknown";
   authStatus: "authenticated" | "missing" | "expired" | "unknown";
+  executionReady: boolean;
+  capabilities: AgentProviderCapabilities;
   supportedModes: Array<"default" | "plan" | "review" | "full_access">;
   defaultMode: "default" | "plan" | "review" | "full_access";
   defaultModel?: string;
@@ -378,6 +382,12 @@ type AgentProviderSummary = {
 Guidance:
 
 - `displayName` is safe UI text controlled by the server.
+- Provider IDs are stable registry IDs. Protocol, release tier, readiness, and
+  operation capabilities are separate validated fields; no closed brand union
+  or executable detection implies support.
+- Custom ACP-compatible profiles complete a bounded handshake/version and
+  capability negotiation. A user-controlled label cannot grant a built-in
+  provider identity or capabilities.
 - `setupActions` should contain safe action IDs and labels, not raw arbitrary commands unless explicitly marked as foreground terminal actions.
 - Health checks must be timeout-bound.
 

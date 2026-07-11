@@ -170,6 +170,7 @@ Acceptance:
 - [ ] Add `AgentProviderSummary`.
 - [ ] Add `SafeSetupAction`.
 - [ ] Add provider availability/auth/install enums.
+- [ ] Add provider protocol, support-tier, execution-readiness, and granular capability schemas without a closed brand-kind union.
 - [ ] Add supported modes and sandbox/approval policy enums.
 - [ ] Add tests rejecting raw command setup actions unless explicitly marked foreground terminal and bounded.
 
@@ -177,6 +178,7 @@ Acceptance:
 
 - [ ] Unknown providers can be represented only through validated custom provider shape.
 - [ ] Provider display metadata is safe.
+- [ ] Exact first-release registry fixtures parse; Gemini CLI is absent as a built-in while arbitrary custom ACP labels cannot acquire built-in identity/capabilities.
 
 ### 1.5 Agent Thread Schemas
 
@@ -414,8 +416,8 @@ Tests:
 
 ### 4.2 First Provider Path
 
-- [ ] Select the first existing provider path already most integrated with Matrix.
-- [ ] Implement adapter through existing kernel/dispatcher/session manager.
+- [ ] Stabilize Claude Code and Codex first through existing kernel/dispatcher/session manager paths.
+- [ ] Implement Pi and OpenCode plus bounded custom ACP-compatible adapters against the same normalized lifecycle.
 - [ ] Bind provider run to project/task/session when supplied.
 - [ ] Stream assistant text, tool activity, status, approval/input requests, and completion.
 
@@ -428,7 +430,7 @@ Tests:
 
 ### 4.3 Multi-Provider Registry
 
-- [ ] Add additional configured providers after first path is stable.
+- [ ] Add capability-gated Kiro, GitHub Copilot CLI, Qwen Code, Kimi CLI, Kilo Code, and Auggie adapters after the first-class paths are stable; keep Gemini CLI out of this release.
 - [ ] Add provider-specific setup actions that open foreground terminal sessions.
 - [ ] Add provider auth status refresh.
 - [ ] Add provider model/mode options as safe metadata.
@@ -438,6 +440,7 @@ Tests:
 - [ ] Multiple providers can be listed.
 - [ ] Thread create picks provider by ID.
 - [ ] Missing provider does not crash dashboard.
+- [ ] Registry order, stable IDs, protocol, tier, setup state, execution readiness, and disabled capabilities match the exact release matrix.
 
 ### 4.4 Approvals And Input
 
@@ -1262,7 +1265,7 @@ agents depend on new fields.
 - [ ] B24-008 Implement preview-scoped provisioning that fails closed when preview credentials are absent and never falls back to production authority.
 - [ ] B24-009 Add workflow tests and gating so Preview Platform and Preview VPS label events/concurrency groups cannot cancel each other.
 - [ ] B24-010 Deploy a non-promoted combined candidate and prove desktop plus physical mobile list/select the same non-primary disposable computer while native streams still pass.
-- [ ] B24-011 [P] Add failing Zod 4 tests for transcript pages, lifecycle mutations, provider-session imports, pending messages, steering/interrupt, execution graphs, terminal bindings, repository state, attachments, attention, handoff, and participants in `tests/contracts/coding-agent-workspace-v2.test.ts`.
+- [ ] B24-011 [P] Add failing Zod 4 tests for transcript pages, lifecycle mutations, provider roster/tier/protocol/capabilities, provider-session imports, pending messages, steering/interrupt, execution graphs, terminal bindings, repository state, attachments, attention, handoff, and participants in `tests/contracts/coding-agent-workspace-v2.test.ts`.
 - [ ] B24-012 Implement schema-only V2 contracts in `packages/contracts/src/coding-agents-v2.ts` and export them from `packages/contracts/src/index.ts`.
 - [ ] B24-013 Add forbidden-key/size/cap compatibility tests proving credentials, provider resume identity, private runtime data, and unbounded payloads reject.
 - [ ] B24-014 Publish capability IDs and contract version negotiation without enabling runtime behavior.
@@ -1328,8 +1331,14 @@ composer turns, and lifecycle actions.
 - [ ] B28-008 Implement normalized provider option discovery and immutable thread-start configuration snapshots using canonical owner skills and write-only secret references.
 - [ ] B28-009 Implement owner-scoped profile metadata, connected-service materialization state, and coarse quota snapshots without expanding legacy SQLite persistence.
 - [ ] B28-010 Add safe setup/switch/recovery tests and publish provider-control capabilities to the shell handoff.
+- [ ] B28-011 Write a table-driven provider conformance harness covering install/auth health, create, normalized stream, abort, restart, safe errors, capability truthfulness, timeout, and cleanup for every first-release adapter.
+- [ ] B28-012 Implement and real-process test first-class adapters for Claude Code, Codex, Pi, and OpenCode plus a validated custom ACP-compatible adapter family; keep credentials and native resume identities server-side.
+- [ ] B28-013 Implement capability-gated compatibility adapters for Kiro, GitHub Copilot CLI, Qwen Code, Kimi CLI, Kilo Code, and Auggie without generic shell-command escape hatches.
+- [ ] B28-014 Prove each provider/runtime combination advertises only verified resume, discovery/import, fork, rollback, steering, approval, image, model/mode, and handoff capabilities; reject Gemini CLI as unsupported for this release.
 
-Gate B3: desktop/mobile may consume queue, run graph, and attention inbox.
+Gate B3: desktop/mobile may consume queue, run graph, attention inbox, and the
+versioned provider matrix only after the conformance harness and required
+real-process smokes pass.
 
 ## Phase 29 - Terminal, Repository, Review, And Attachment Backend
 
@@ -1387,7 +1396,7 @@ final experience against it.
 
 - [ ] B33-001 Open every backend layer ready for review in one Graphite stack and reach current-head CI plus Greptile 5/5 per layer.
 - [ ] B33-002 Deploy the exact backend top to a disposable preview computer through the end-to-end preview workflow.
-- [ ] B33-003 Seed one safe project fixture with two task conversations, long transcript, queue, child runs, two terminals, repository changes, review comment, attachment, preview, attention, memory reference, and automation.
+- [ ] B33-003 Seed one safe project fixture with two task conversations, long transcript, queue, child runs, two terminals, repository changes, review comment, attachment, preview, attention, memory reference, automation, and the exact provider tier/capability matrix.
 - [ ] B33-004 Give desktop/mobile agents the exact backend SHA, preview handle, runtime capability list, fixture IDs, and `backend-v2-shell-handoff.md` before final shell implementation begins.
 - [ ] B33-005 Run a current-head clean-room scan proving no external evaluation source name, provenance, path, copied code/test/UI text/asset, or dependency appears in repository files, commits, PR metadata, generated artifacts, or shipped UI.
 
@@ -1406,10 +1415,10 @@ the local agents concentrate on polished Matrix-native UX.
 - [ ] UI34-004 Preserve PR #914 parent lineage, reconcile the canonical computer contract at Gate B0.5, and restack bottom-up after its backend layer merges.
 - [ ] UI34-005 Mobile agent implements attention/working conversation home, full-screen transcript/composer, and phone/tablet Chat/Files/Review/Terminal/Activity navigation using Phase 32 clients only.
 - [ ] UI34-006 Mobile agent preserves project/task multi-chat and Conversation/Kanban identity plus keyboard, safe areas, orientation, foreground, reconnect, and terminal fallback behavior.
-- [ ] UI34-007 Desktop and mobile expose normalized provider/profile/model/mode/reasoning/approval controls plus prompt/skill/MCP/connected-service/quota state without rendering or persisting secret-bearing effective configuration.
+- [ ] UI34-007 Desktop and mobile expose normalized provider tier/readiness/profile/model/mode/reasoning/approval controls plus prompt/skill/MCP/connected-service/quota state, render unsupported operations as disabled, and never render or persist secret-bearing effective configuration.
 - [ ] UI34-008 Desktop and mobile add authorized memory-result attachment, automation create/history/disable, and explicit policy-disabled/recovery states using Phase 32 clients; voice remains an existing channel surface rather than a duplicate shell recorder.
 - [ ] UI34-009 Both agents run accessibility, dynamic text, loading/empty/error/offline, long transcript, large diff, queue, approval, provider controls, memory, automation, policy-disabled, recovery, and narrow/wide screenshot/device checks.
-- [ ] B34-001 Run desktop and mobile against the same preview runtime for transcript pagination, same-thread turns, queue, approvals, child runs, terminals, repository/review, preview, memory, automation, reconnect, restart, and runtime switch.
+- [ ] B34-001 Run desktop and mobile against the same preview runtime for the complete provider conformance matrix, disabled controls, transcript pagination, same-thread turns, queue, approvals, child runs, terminals, repository/review, preview, memory, automation, reconnect, restart, and runtime switch.
 - [ ] B34-002 Run performance, resource-cap, unsafe-error, persistence migration, export/delete, rollback, host-bundle, desktop regression, and SDK 57 device gates.
 - [ ] B34-003 Update `completion-audit.md`, internal docs, public docs only for verified behavior, and obtain product-owner release confirmation.
 
