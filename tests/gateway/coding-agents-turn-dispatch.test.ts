@@ -142,8 +142,17 @@ describe("coding agent turn dispatch", () => {
         join(harness.homePath, "system", "coding-agents", "threads.json"),
         "utf-8",
       );
-      expect(persisted).not.toContain("Implement the route.");
-      expect(persisted).not.toContain("Now add the regression test.");
+      const persistedDocument = JSON.parse(persisted) as {
+        threads: unknown[];
+        events: Array<{ type?: string; text?: string }>;
+      };
+      expect(persistedDocument.events.filter((event) => event.type === "user.message"))
+        .toEqual(expect.arrayContaining([
+          expect.objectContaining({ text: "Implement the route." }),
+          expect.objectContaining({ text: "Now add the regression test." }),
+        ]));
+      expect(JSON.stringify(persistedDocument.threads)).not.toContain("Implement the route.");
+      expect(JSON.stringify(persistedDocument.threads)).not.toContain("Now add the regression test.");
       expect(JSON.stringify(
         await harness.threads.getThread(ownerPrincipal, harness.threadId),
       )).not.toContain("provider_conversation_stable");
