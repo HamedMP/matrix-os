@@ -527,7 +527,9 @@ exit 99
     expect(syncAgent).toContain('systemctl start --no-block matrix-linux-tools.service');
     expect(syncAgent).toContain('Linux tools service enabled');
     expect(syncAgent).toContain('LINUX_TOOLS_BOOTSTRAP_MARKER');
-    expect(syncAgent).toContain('bootstrap_linux_tools_service || true\n\nwhile true; do');
+    expect(syncAgent).toContain(
+      'bootstrap_linux_tools_service || true\nconfigure_gateway_proxy || true\n\nwhile true; do',
+    );
   });
 
   it('forwards native app websocket upgrades through the customer nginx API route', () => {
@@ -548,8 +550,9 @@ exit 99
     expect(cloudInit).not.toContain('ExecStartPre=+/opt/matrix/bin/matrix-configure-gateway-proxy');
     expect(gatewayUnit).not.toContain('ExecStartPre=+/opt/matrix/bin/matrix-configure-gateway-proxy');
     expect(syncAgent).toContain(
-      'sudo /opt/matrix/bin/matrix-configure-gateway-proxy || log "WARN: failed to update customer nginx API proxy"',
+      'configure_gateway_proxy || true\n  log "Starting services..."',
     );
+    expect(syncAgent).toContain('configure_gateway_proxy || true\n\nwhile true; do');
   });
 
   it('installs a customer host code-server service behind restore completion', () => {

@@ -329,7 +329,7 @@ apply_update() {
   fi
 
   # Start services and health-check
-  sudo /opt/matrix/bin/matrix-configure-gateway-proxy || log "WARN: failed to update customer nginx API proxy"
+  configure_gateway_proxy || true
   log "Starting services..."
   sudo systemctl start matrix-gateway matrix-shell
   log "Running health check..."
@@ -540,6 +540,18 @@ bootstrap_linux_tools_service() {
   fi
 }
 
+configure_gateway_proxy() {
+  if [ ! -x /opt/matrix/bin/matrix-configure-gateway-proxy ]; then
+    return 0
+  fi
+  if sudo /opt/matrix/bin/matrix-configure-gateway-proxy; then
+    log "Customer nginx API proxy is current"
+  else
+    log "WARN: failed to update customer nginx API proxy"
+    return 1
+  fi
+}
+
 # ── Main loop ────────────────────────────────────────────────────────
 log "Started for ${MATRIX_MACHINE_ID} (version: $(current_version))"
 mkdir -p "$STAGING_DIR"
@@ -547,6 +559,7 @@ clean_staging
 clean_legacy_upgrade_artifacts || true
 last_staging_cleanup="$(date +%s)"
 bootstrap_linux_tools_service || true
+configure_gateway_proxy || true
 
 while true; do
   # React to trigger files and signals
