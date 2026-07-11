@@ -179,7 +179,7 @@ export const RuntimeSelectionRequestSchema = z.object({
 }).strict();
 export const RuntimeSelectionResponseSchema = z.object({
   accessToken: z.string().min(32).max(8192),
-  expiresAt: z.number().int().positive(),
+  expiresAt: z.number().int().min(1_000_000_000_000).max(Number.MAX_SAFE_INTEGER),
   handle: MatrixComputerHandleSchema,
   slot: MatrixComputerRuntimeSlotSchema,
 }).strict();
