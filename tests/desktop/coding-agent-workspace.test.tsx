@@ -710,6 +710,7 @@ describe("AgentWorkspace", () => {
       turnRetry: null,
       turnThreadId: null,
       composerFocusRequestId: 0,
+      reviewFocusRequestId: 0,
       approvalActionStatus: "idle",
       pendingApprovalId: null,
       approvalActionError: null,
@@ -1630,6 +1631,7 @@ describe("AgentWorkspace", () => {
 
     expect(await screen.findByText("Review ready")).toBeTruthy();
     expect(screen.getByText("2 files changed, +12 -4, partial")).toBeTruthy();
+    await selectInspectorTab("Activity");
     fireEvent.click(screen.getByRole("button", { name: "Open review from thread" }));
 
     await waitFor(() => {
@@ -1637,6 +1639,7 @@ describe("AgentWorkspace", () => {
         reviewId: "rev_desktop_1",
       });
     });
+    expect(screen.getByRole("tab", { name: /^Changes\b/ }).getAttribute("aria-selected")).toBe("true");
     expect(await screen.findByText("PR #758 review details")).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
   });

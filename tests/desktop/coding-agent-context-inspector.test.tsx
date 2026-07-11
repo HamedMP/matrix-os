@@ -95,6 +95,39 @@ describe("AgentConversationInspector", () => {
     expect(screen.getByText("Changed files")).toBeTruthy();
   });
 
+  it("reveals Changes when an external review action requests focus", () => {
+    const counts = { changes: 2, terminal: 1, preview: 3, activity: 4 };
+    const view = render(
+      <AgentConversationInspector
+        defaultTab="changes"
+        changesFocusRequestId={0}
+        counts={counts}
+        toolbar={<div>Tools</div>}
+        changes={<div>Changed files</div>}
+        terminal={<div>Matrix shell</div>}
+        preview={<div>Preview sessions</div>}
+        activity={<div>Workspace activity</div>}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Activity 4" }));
+
+    view.rerender(
+      <AgentConversationInspector
+        defaultTab="changes"
+        changesFocusRequestId={1}
+        counts={counts}
+        toolbar={<div>Tools</div>}
+        changes={<div>Changed files</div>}
+        terminal={<div>Matrix shell</div>}
+        preview={<div>Preview sessions</div>}
+        activity={<div>Workspace activity</div>}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: "Changes 2" }).getAttribute("aria-selected")).toBe("true");
+    expect(controlledPanel("Changes").hidden).toBe(false);
+  });
+
   it("supports keyboard arrow navigation without losing the selected pane", () => {
     renderInspector();
 

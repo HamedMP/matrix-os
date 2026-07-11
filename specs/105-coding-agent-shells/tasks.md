@@ -1248,6 +1248,7 @@ Gate:
 - [x] Keep canonical Matrix shell sessions under Terminal and safe preview summaries under Preview.
 - [x] Preserve attention, active/created chat handles, provider state, and notification preferences under Activity.
 - [x] Show bounded server-derived counts and keep exactly one inspector surface visible at a time.
+- [x] Bring externally opened reviews into Changes while preserving unsaved file drafts across tab switches.
 - [x] Support arrow, Home, and End keyboard navigation with a single responsive narrow/desktop layout.
 
 Tests: `DT-012` plus the existing file, review, source-control, terminal,

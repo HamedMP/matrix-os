@@ -84,7 +84,7 @@ Every clarified functional requirement and buildable success criterion has at le
 | DT-009 | Kanban uses canonical task columns/order and task mutation path. | The integrated `AgentWorkspace` test joins the project projection to the existing board store and asserts the canonical `/api/projects/:slug/tasks/:taskId` PATCH; `tests/desktop/board-store.test.ts` remains the mutation source-of-truth coverage. |
 | DT-010 | Task card shows bounded count/active/attention aggregates and opens either attached thread. | `tests/desktop/coding-agent-kanban.test.tsx` renders both task chats and all three bounded aggregate types. |
 | DT-011 | Thread status updates badges but never dispatch task movement. | `tests/desktop/coding-agent-kanban.test.tsx` rerenders mixed thread state and proves no task movement callback occurs. |
-| DT-012 | Contextual files/diff/git, terminal, preview, and activity tools render as one accessible responsive inspector without changing their source of truth. | `tests/desktop/coding-agent-context-inspector.test.tsx` proves tab selection/counts/keyboard behavior; `tests/desktop/coding-agent-workspace.test.tsx` proves the existing trusted IPC actions after explicit surface selection. |
+| DT-012 | Contextual files/diff/git, terminal, preview, and activity tools render as one accessible responsive inspector without changing their source of truth. | `tests/desktop/coding-agent-context-inspector.test.tsx` proves tab selection/counts/keyboard behavior, draft preservation, and external Changes focus; `tests/desktop/coding-agent-workspace.test.tsx` proves the existing trusted IPC actions after explicit surface selection. |
 
 ## Mobile Tests
 
@@ -257,7 +257,7 @@ generic desktop copy.
 Current contextual conversation-inspector evidence:
 
 - `pnpm exec vitest run tests/desktop/coding-agent-context-inspector.test.tsx tests/desktop/coding-agent-workspace.test.tsx`
-- `pnpm exec vitest run tests/desktop --reporter=dot` (98 files, 907 tests)
+- `pnpm exec vitest run tests/desktop --reporter=dot` (98 files, 908 tests)
 - `pnpm --dir desktop typecheck`
 - `bun run typecheck`
 - `bun run check:patterns` (zero violations; repository baseline warnings only)
@@ -270,6 +270,8 @@ These checks prove `DT-012`: Changes, Terminal, Preview, and Activity expose one
 bounded surface at a time, publish live counts from the current runtime summary,
 support complete keyboard tab navigation, retain the new-chat controls, and
 preserve the existing trusted file/review/source-control/terminal/preview paths.
+External review actions reveal Changes, while hidden panes retain bounded
+unsaved editor state.
 
 Gateway/contract PRs additionally run the exact focused Vitest files named in their PR body. Desktop UI PRs run the operator E2E and screenshot checks. Mobile UI PRs run the SDK 57 dev-client device smoke before their rollout gate. `vp` commands may be reported unavailable, but they are not silently substituted for repository commands.
 

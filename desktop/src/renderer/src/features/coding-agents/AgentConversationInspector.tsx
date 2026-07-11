@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
 export type AgentConversationInspectorTab = "changes" | "terminal" | "preview" | "activity";
 
@@ -6,6 +6,7 @@ type InspectorCounts = Record<AgentConversationInspectorTab, number>;
 
 interface AgentConversationInspectorProps {
   defaultTab: AgentConversationInspectorTab;
+  changesFocusRequestId?: number;
   counts: InspectorCounts;
   toolbar: ReactNode;
   composer?: ReactNode;
@@ -27,6 +28,7 @@ const TABS: Array<{
 
 export function AgentConversationInspector({
   defaultTab,
+  changesFocusRequestId = 0,
   counts,
   toolbar,
   composer,
@@ -44,6 +46,10 @@ export function AgentConversationInspector({
     preview,
     activity,
   };
+
+  useEffect(() => {
+    if (changesFocusRequestId > 0) setSelectedTab("changes");
+  }, [changesFocusRequestId]);
 
   function selectTab(index: number) {
     const tab = TABS[index];

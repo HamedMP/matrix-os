@@ -84,6 +84,7 @@ interface CodingAgentWorkspaceState {
   turnRetry: TurnRetry | null;
   turnThreadId: string | null;
   composerFocusRequestId: number;
+  reviewFocusRequestId: number;
   approvalActionStatus: ActionStatus;
   pendingApprovalId: string | null;
   approvalActionError: string | null;
@@ -502,6 +503,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   turnRetry: null,
   turnThreadId: null,
   composerFocusRequestId: 0,
+  reviewFocusRequestId: 0,
   approvalActionStatus: "idle",
   pendingApprovalId: null,
   approvalActionError: null,
@@ -652,6 +654,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   selectReview: async (reviewId) => {
     const seq = ++reviewSnapshotSeq;
     set((state) => ({
+      reviewFocusRequestId: state.reviewFocusRequestId + 1,
       selectedReviewId: reviewId,
       reviewSnapshotStatus: state.reviewSnapshot?.review.id === reviewId ? "ready" : "loading",
       reviewSnapshotError: null,
