@@ -1,10 +1,10 @@
 # Completion Audit: Coding Agent Shells
 
-**Audited implementation head**: `f6322b3ab`
+**Audited implementation head**: `269fc766e93e414ff4a142c97c94e7b778e73735`
 **Date**: 2026-07-11
 **Scope**: Evidence review for the Matrix OS coding-agent desktop, mobile, browser, and gateway shell implementation checkpoint.
 
-The audited stack is PR #911 at `653f0e465b069be1f3226a95d8fde40ec472c981`, PR #912 at `c8dae7439023691099258ff3d7a585279e0e6a38`, PR #913 at `443acc88002cd794a77881955aeecfc996e03b5e`, and PR #914 at implementation commit `f6322b3ab`. Each upper branch contains its current lower branch as an ancestor. It includes the earlier `87bc72d0fdd9067fcec395c479de80fcaccfe641` deployment checkpoint as an ancestor. Repository CI, Docker, and Host Bundle Release evidence below is tied to that earlier checkpoint; the open stacked PR evidence is listed separately and does not change what the earlier release evidence proves.
+The audited stack is PR #911 at `57aff474d3248da8f6a3018f9afeed06bc46be48`, PR #912 at `6d02271cb74c6bd39e86fb77d1b311454f34fe2b`, PR #913 at `fd7db13324349819aec0794577982ea1756dc7ea`, and PR #914 at implementation commit `269fc766e93e414ff4a142c97c94e7b778e73735`. Each upper branch contains its current lower branch as an ancestor. It includes the earlier `87bc72d0fdd9067fcec395c479de80fcaccfe641` deployment checkpoint as an ancestor. Repository CI, Docker, and Host Bundle Release evidence below is tied to that earlier checkpoint; the open stacked PR evidence is listed separately and does not change what the earlier release evidence proves.
 
 This audit records current evidence through the project-first mobile Conversation/Kanban stack, its remote-computer chooser, and the exact-version preview deployment. It does not mark the full rollout complete while interactive physical-device, physical-tablet, desktop, and broader cross-shell validation remain outstanding.
 
@@ -129,7 +129,7 @@ The Phase 22 mobile implementation is split into ready-for-review stacked PRs wi
 Deployment evidence for the exact top stack head is deliberately non-production:
 
 - Preview VPS workflow run `29126211996` built and deployed `v2026.07.10-pr914-00909cc-r29126211996` to `pr-914`.
-- Exact reviewed-head workflow run `29131576445` built, published, and deployed `v2026.07.10-pr914-bf7e174-r29131576445` to `pr-914`.
+- Exact reviewed-head workflow run `29134043580` built, published, and deployed `v2026.07.11-pr914-269fc76-r29134043580` to `pr-914`.
 - Platform Cloud Run run `29128264329` built and smoke-tested zero-traffic candidate revision `matrix-platform-00296-man` from `00909ccf8431`; the promote and promoted-traffic verification steps were skipped.
 - The local physical-phone build intentionally overrides only the computer-list origin to that zero-traffic candidate. The override is not committed or included in any PR.
 - The Expo SDK 57 dev client is installed on the paired physical iPhone 14 Pro, Metro bundled the exact top stack successfully, and the computer chooser route was opened. User confirmation of the rendered list, runtime switch, and subsequent project/task/thread walkthrough is still pending and is not inferred from deployment success.
