@@ -35,7 +35,51 @@ const COMPUTER_QUERY_LIMIT = COMPUTER_LIST_LIMIT + 1;
 const COMPUTER_CAPABILITIES = ['matrixComputerInventoryV1'] as const;
 const RUNTIME_SELECTION_BODY_LIMIT = 1024;
 const RUNTIME_SELECTION_EXPIRY_SKEW_SECONDS = 60;
+const RUNTIME_SELECTION_RATE_WINDOW_MS = 60_000;
+const RUNTIME_SELECTION_SOURCE_RATE_MAX = 60;
+const RUNTIME_SELECTION_PRINCIPAL_RATE_MAX = 30;
+const RUNTIME_SELECTION_RATE_MAX_KEYS = 10_000;
 const RELEASE_DATE_PATTERN = /^(?:v|matrix-os-host-)(\d{4}\.\d{2}\.\d{2})(?:$|-)/;
+
+interface RateWindow {
+  count: number;
+  resetAt: number;
+}
+
+function createBoundedRateLimiter(maxAttempts: number) {
+  const windows = new Map<string, RateWindow>();
+  return {
+    check(key: string): boolean {
+      const now = Date.now();
+      const existing = windows.get(key);
+      const window = !existing || existing.resetAt <= now
+        ? { count: 0, resetAt: now + RUNTIME_SELECTION_RATE_WINDOW_MS }
+        : existing;
+      if (window.count >= maxAttempts) {
+        windows.delete(key);
+        windows.set(key, window);
+        return false;
+      }
+      window.count += 1;
+      windows.delete(key);
+      windows.set(key, window);
+      if (windows.size > RUNTIME_SELECTION_RATE_MAX_KEYS) {
+        const oldestKey = windows.keys().next().value;
+        if (oldestKey !== undefined && oldestKey !== key) windows.delete(oldestKey);
+      }
+      return true;
+    },
+  };
+}
+
+function runtimeSelectionSourceKey(c: Context): string {
+  const forwarded = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
+  const source = c.req.header('cf-connecting-ip')?.trim()
+    ?? c.req.header('x-real-ip')?.trim()
+    ?? forwarded
+    ?? 'unknown';
+  return source.slice(0, 128);
+}
 
 function computerAvailability(status: string): MatrixComputerAvailability {
   if (status === 'running') return 'available';
@@ -106,6 +150,14 @@ export function createComputerRoutes(opts: {
   const routes = new Hono();
   const resolveIdentity = opts.resolveIdentity ?? resolveAppDomainIdentity;
   const resolveSyncIdentity = opts.resolveSyncIdentity ?? resolveSyncBearerIdentity;
+  const sourceRateLimiter = createBoundedRateLimiter(RUNTIME_SELECTION_SOURCE_RATE_MAX);
+  const principalRateLimiter = createBoundedRateLimiter(RUNTIME_SELECTION_PRINCIPAL_RATE_MAX);
+
+  function tooManyRuntimeSelectionRequests(c: Context) {
+    opts.applyNoStoreHeaders(c);
+    c.header('Retry-After', '60');
+    return c.json({ error: 'Too many requests' }, 429);
+  }
 
   routes.get('/api/auth/computers', async (c) => {
     if (!opts.platformJwtSecret && !opts.clerkAuth) {
@@ -195,6 +247,9 @@ export function createComputerRoutes(opts: {
       opts.applyNoStoreHeaders(c);
       return c.json({ error: 'Runtime selection unavailable' }, 503);
     }
+    if (!sourceRateLimiter.check(runtimeSelectionSourceKey(c))) {
+      return tooManyRuntimeSelectionRequests(c);
+    }
     const authHeader = c.req.header('authorization');
 
     let identity: Awaited<ReturnType<typeof resolveSyncBearerIdentity>>;
@@ -215,6 +270,9 @@ export function createComputerRoutes(opts: {
     if (!identity || remainingLifetime <= RUNTIME_SELECTION_EXPIRY_SKEW_SECONDS) {
       opts.applyNoStoreHeaders(c);
       return c.json({ error: 'Unauthorized' }, 401);
+    }
+    if (!principalRateLimiter.check(identity.userId)) {
+      return tooManyRuntimeSelectionRequests(c);
     }
 
     let rawBody: unknown;

@@ -303,4 +303,43 @@ describe("trusted runtime selection route", () => {
       expect(JSON.stringify(await response.json())).not.toMatch(/token|eyJ|alice-source/i);
     }
   });
+
+  it("rate limits unauthenticated source attempts before repeated verification", async () => {
+    const app = createTestApp(db);
+    let response: Response | undefined;
+    for (let attempt = 0; attempt <= 60; attempt += 1) {
+      response = await app.request("/api/auth/runtime-selection", {
+        method: "POST",
+        headers: {
+          host: "api.matrix-os.com",
+          authorization: "Bearer invalid-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ slot: "primary" }),
+      });
+    }
+
+    expect(response?.status).toBe(429);
+    await expect(response?.json()).resolves.toEqual({ error: "Too many requests" });
+  });
+
+  it("rate limits repeated credential exchanges for one authenticated principal", async () => {
+    const sourceToken = await issueSourceToken(db);
+    const app = createTestApp(db);
+    let response: Response | undefined;
+    for (let attempt = 0; attempt <= 30; attempt += 1) {
+      response = await app.request("/api/auth/runtime-selection", {
+        method: "POST",
+        headers: {
+          host: "api.matrix-os.com",
+          authorization: `Bearer ${sourceToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ slot: "primary" }),
+      });
+    }
+
+    expect(response?.status).toBe(429);
+    await expect(response?.json()).resolves.toEqual({ error: "Too many requests" });
+  });
 });
