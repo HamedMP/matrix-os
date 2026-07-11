@@ -3,7 +3,8 @@ import {
   type PlatformDB,
 } from './db.js';
 
-export const HANDLE_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}$/;
+export const HANDLE_PATTERN_SOURCE = '^[a-z0-9][a-z0-9-]{1,62}$';
+export const HANDLE_PATTERN = new RegExp(HANDLE_PATTERN_SOURCE);
 
 export function logPlatformRouteError(route: string, err: unknown): void {
   console.error(

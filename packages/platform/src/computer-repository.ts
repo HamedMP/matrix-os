@@ -4,6 +4,7 @@ import type {
   PlatformDB,
   UserMachineProvisioningClass,
 } from './db.js';
+import { HANDLE_PATTERN_SOURCE } from './platform-route-utils.js';
 
 export interface UserRuntimeComputerRecord {
   handle: string;
@@ -27,7 +28,7 @@ export async function listUserRuntimeComputersByClerkId(
     .where('clerk_user_id', '=', clerkUserId)
     .where('deleted_at', 'is', null)
     .where('provisioning_class', 'in', ['customer', 'preview'])
-    .where(sql<boolean>`${sql.ref('handle')} ~ ${'^[a-z][a-z0-9-]{2,30}$'}`)
+    .where(sql<boolean>`${sql.ref('handle')} ~ ${HANDLE_PATTERN_SOURCE}`)
     .where(sql<boolean>`${sql.ref('runtime_slot')} ~ ${'^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$'}`)
     .where(sql<boolean>`char_length(${sql.ref('runtime_slot')}) <= 32`);
   if (selectedRuntimeSlot) {

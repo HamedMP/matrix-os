@@ -273,6 +273,16 @@ describe("canonical computer inventory route", () => {
       platformSecret: "platform-secret-123",
     });
 
+    const inventoryResponse = await app.request("/api/auth/computers", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+    expect(inventoryResponse.status).toBe(200);
+    const inventory = MatrixComputerListSchema.parse(await inventoryResponse.json());
+    expect(inventory.items.map((item) => item.handle)).toContain(handle);
+
     const response = await app.request(`/vm/${handle}/projects`, {
       headers: {
         host: "app.matrix-os.com",
