@@ -1024,6 +1024,33 @@ describe("AgentThreadRoute", () => {
     expect(client.createCodingAgentTurn).not.toHaveBeenCalled();
   });
 
+  it.each(["queued", "waiting_for_approval", "waiting_for_input", "archived"] as const)(
+    "does not offer a same-thread composer while the thread is %s",
+    async (status) => {
+      const snapshot = threadSnapshotFixture();
+      snapshot.thread.status = status;
+      const client = {
+        getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+          ok: true,
+          summary: { capabilities: [{ id: "codingAgentsSameThreadTurns", enabled: true }] },
+        }),
+        getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({ ok: true, snapshot }),
+        createCodingAgentTurn: jest.fn(),
+      };
+      useGatewayMock.mockReturnValue(gatewayContext({
+        client: client as unknown as GatewayClient,
+        connectionState: "connected",
+      }));
+
+      render(<AgentThreadRoute />);
+
+      expect(await screen.findByText("Repair mobile route")).toBeTruthy();
+      expect(screen.queryByLabelText("Message current conversation")).toBeNull();
+      expect(client.getCodingAgentRuntimeSummary).not.toHaveBeenCalled();
+      expect(client.createCodingAgentTurn).not.toHaveBeenCalled();
+    },
+  );
+
   it("submits an approval decision and applies the returned thread snapshot", async () => {
     const client = {
       getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({

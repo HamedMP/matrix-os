@@ -352,7 +352,7 @@ export default function AgentThreadRoute() {
           </Pressable>
         </View>
       </View>
-      {client ? (
+      {client && canAcceptSameThreadTurn(thread.status) ? (
         <AgentThreadTurnComposer
           client={client}
           connectionState={connectionState}
@@ -398,6 +398,10 @@ export default function AgentThreadRoute() {
       ) : null}
     </ScrollView>
   );
+}
+
+function canAcceptSameThreadTurn(status: AgentThreadSummary["status"]): boolean {
+  return status === "running" || status === "completed" || status === "failed" || status === "aborted";
 }
 
 function CurrentActionPanel({
