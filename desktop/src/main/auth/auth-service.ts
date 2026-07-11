@@ -192,6 +192,7 @@ export class AuthService {
           try {
             credential = await this.exchangeRuntimeCredential(credential, runtimeSlot);
           } catch (err: unknown) {
+            if (nonce !== this.flowNonce) return;
             runtimeSlot = "primary";
             console.warn(
               "[auth] runtime restore failed; using primary:",
@@ -199,6 +200,7 @@ export class AuthService {
             );
           }
         }
+        if (nonce !== this.flowNonce) return;
         this.credential = credential;
         const profile: ConnectionProfile = {
           handle: credential.handle,
@@ -316,24 +318,41 @@ export class AuthService {
     if (!currentCredential || !currentProfile) {
       throw new Error(RUNTIME_SELECTION_ERROR);
     }
+    const nonce = ++this.flowNonce;
+    const isCurrentSelection = () => (
+      nonce === this.flowNonce
+      && this.credential === currentCredential
+      && this.profile === currentProfile
+    );
 
     try {
       const nextCredential = await this.exchangeRuntimeCredential(currentCredential, slot);
+      if (!isCurrentSelection()) throw new Error("stale runtime selection");
       const nextProfile: ConnectionProfile = {
         ...currentProfile,
         handle: nextCredential.handle,
         runtimeSlot: slot,
       };
       await this.deps.credentialStore.save(nextCredential);
+      if (!isCurrentSelection()) {
+        await this.clearStaleFlowPersistence();
+        throw new Error("stale runtime selection");
+      }
       try {
         await this.deps.saveProfile(nextProfile);
+        if (!isCurrentSelection()) {
+          await this.clearStaleFlowPersistence();
+          throw new Error("stale runtime selection");
+        }
       } catch (err: unknown) {
-        await this.deps.credentialStore.save(currentCredential).catch((rollbackErr: unknown) => {
-          console.warn(
-            "[auth] failed to restore credential after runtime switch:",
-            rollbackErr instanceof Error ? rollbackErr.name : typeof rollbackErr,
-          );
-        });
+        if (isCurrentSelection()) {
+          await this.deps.credentialStore.save(currentCredential).catch((rollbackErr: unknown) => {
+            console.warn(
+              "[auth] failed to restore credential after runtime switch:",
+              rollbackErr instanceof Error ? rollbackErr.name : typeof rollbackErr,
+            );
+          });
+        }
         throw err;
       }
       this.credential = nextCredential;
@@ -352,6 +371,7 @@ export class AuthService {
   // one-click re-auth, then notify the renderer to show sign-in. Idempotent.
   async expireSession(): Promise<void> {
     if (!this.credential) return;
+    this.flowNonce += 1;
     this.credential = null;
     this.flowState = "idle";
     try {

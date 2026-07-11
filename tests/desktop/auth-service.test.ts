@@ -172,6 +172,37 @@ describe("AuthService token expiry", () => {
 });
 
 describe("AuthService runtime selection", () => {
+  it("does not restore a selected runtime after sign-out wins a slow exchange", async () => {
+    const exchangeStarted = deferred<void>();
+    const finishExchange = deferred<Response>();
+    const fetchFn = vi.fn(async () => {
+      exchangeStarted.resolve();
+      return finishExchange.promise;
+    });
+    const { auth, getProfile, peekCredential } = makeService({
+      credential: VALID,
+      profile: PROFILE,
+      now: 10_000,
+      fetchFn,
+    });
+    await auth.init();
+
+    const selection = auth.selectRuntime("review");
+    await exchangeStarted.promise;
+    await auth.signOut();
+    finishExchange.resolve(jsonResponse({
+      accessToken: "r".repeat(64),
+      expiresAt: 1_800_000_000_000,
+      handle: "neo-review",
+      slot: "review",
+    }));
+
+    await expect(selection).rejects.toThrow("Computer switch failed. Try again.");
+    expect(auth.getStatus().signedIn).toBe(false);
+    expect(peekCredential()).toBeNull();
+    expect(getProfile()).toBeNull();
+  });
+
   it("exchanges and persists a slot-bound credential before changing runtime", async () => {
     const replacementToken = "r".repeat(64);
     const fetchFn = vi.fn(async () => jsonResponse({
@@ -255,6 +286,53 @@ describe("AuthService runtime selection", () => {
 });
 
 describe("AuthService device flow", () => {
+  it("does not restore a non-primary runtime after sign-out wins the exchange", async () => {
+    const exchangeStarted = deferred<void>();
+    const finishExchange = deferred<Response>();
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/auth/device/code")) {
+        return jsonResponse({
+          deviceCode: "device-1",
+          userCode: "ABCD",
+          verificationUri: "https://app.matrix-os.com/device",
+          expiresIn: 600,
+          interval: 5,
+        });
+      }
+      if (url === "https://api.matrix-os.com/api/auth/runtime-selection") {
+        exchangeStarted.resolve();
+        return finishExchange.promise;
+      }
+      return jsonResponse({
+        accessToken: "fresh-device-token",
+        expiresAt: 1_800_000_000_000,
+        userId: "user-1",
+        handle: "neo",
+      });
+    });
+    const { auth, getProfile, peekCredential } = makeService({
+      profile: { ...PROFILE, runtimeSlot: "review" },
+      now: 10_000,
+      fetchFn,
+    });
+    await auth.init();
+
+    await auth.startDeviceFlow();
+    await exchangeStarted.promise;
+    await auth.signOut();
+    finishExchange.resolve(jsonResponse({
+      accessToken: "s".repeat(64),
+      expiresAt: 1_800_000_000_000,
+      handle: "neo-review",
+      slot: "review",
+    }));
+    await flushAuthFlow();
+
+    expect(auth.getStatus().signedIn).toBe(false);
+    expect(peekCredential()).toBeNull();
+    expect(getProfile()).toBeNull();
+  });
+
   it("exchanges a fresh device credential before restoring a non-primary runtime", async () => {
     const replacementToken = "s".repeat(64);
     const fetchFn = vi.fn(async (url: string) => {
