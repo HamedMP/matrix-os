@@ -199,15 +199,17 @@ describe("canonical computer inventory route", () => {
   });
 
   it("quarantines a malformed persisted provisioning class without hiding valid computers", async () => {
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "false";
     await insertMachine(db, {
-      handle: "alice-primary",
-      runtimeSlot: "primary",
+      handle: "alice-review",
+      runtimeSlot: "review",
       imageVersion: "stable",
     });
     await insertMachine(db, {
       handle: "alice-corrupt",
-      runtimeSlot: "corrupt",
+      runtimeSlot: "primary",
       imageVersion: "stable",
+      provisionedAt: "2026-07-11T01:00:00.000Z",
     });
     await sql`UPDATE user_machines SET provisioning_class = 'operator-data' WHERE handle = 'alice-corrupt'`
       .execute(db.executor);
@@ -229,7 +231,7 @@ describe("canonical computer inventory route", () => {
 
     expect(response.status).toBe(200);
     const body = MatrixComputerListSchema.parse(await response.json());
-    expect(body.items.map((item) => item.handle)).toEqual(["alice-primary"]);
+    expect(body.items.map((item) => item.handle)).toEqual(["alice-review"]);
     expect(JSON.stringify(body)).not.toContain("operator-data");
   });
 

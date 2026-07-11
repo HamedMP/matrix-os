@@ -145,6 +145,7 @@ export async function resolveAppDomainIdentity(opts: {
   db: PlatformDB;
   platformJwtSecret: string;
   allowUnroutedClerkIdentity?: boolean;
+  clerkPrincipalOnly?: boolean;
   legacyContainerRoutingEnabled?: boolean;
   requestedHandle?: string | null;
   runtimeSlot: string;
@@ -221,6 +222,13 @@ export async function resolveAppDomainIdentity(opts: {
   const result = await opts.clerkAuth.verify(token);
   if (!result.authenticated || !result.userId) {
     return null;
+  }
+
+  if (opts.clerkPrincipalOnly) {
+    return {
+      handle: '',
+      userId: result.userId,
+    };
   }
 
   if (opts.requestedHandle) {

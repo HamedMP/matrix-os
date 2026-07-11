@@ -84,6 +84,7 @@ export function createComputerRoutes(opts: {
         db: opts.db,
         platformJwtSecret: opts.platformJwtSecret,
         allowUnroutedClerkIdentity: true,
+        clerkPrincipalOnly: true,
         legacyContainerRoutingEnabled: opts.legacyContainerRoutingEnabled,
         runtimeSlot: 'primary',
       });
