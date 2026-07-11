@@ -1224,12 +1224,14 @@ thread-driven task movement. Surface validation is recorded in
 
 - [x] Replace free-text runtime entry with an owner-scoped computer list.
 - [x] Exchange and persist a runtime-scoped credential only in Electron main.
+- [x] Reuse the trusted computer list in a persistent sidebar dropdown above Settings.
+- [x] Keep platform-control-plane auth traffic separate from selected-runtime traffic.
 - [x] Rehydrate project/task/thread state after the selected computer changes.
 - [x] Keep machine identifiers, network details, credentials, and raw failures out of the renderer.
 
 Tests: runtime computer contracts, platform owner/auth route coverage, trusted
 auth and credential-store tests, IPC boundary tests, renderer switching/error
-tests, and desktop settings coverage.
+tests, sidebar dropdown coverage, and desktop settings coverage.
 
 Evidence: the platform returns a capped safe projection and rejects invalid,
 unauthenticated, or cross-owner selection; the trusted core rotates the bearer

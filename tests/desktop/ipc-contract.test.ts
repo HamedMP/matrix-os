@@ -31,6 +31,7 @@ describe("IPC contract", () => {
       "runtime:get-reviews",
       "runtime:get-summary",
       "runtime:get-project-workspace",
+      "runtime:list-computers",
       "runtime:select",
       "state:get",
       "state:set",
@@ -707,6 +708,42 @@ describe("IPC contract", () => {
     expect(schema.safeParse({ slot: "../private" }).success).toBe(false);
     expect(schema.safeParse({ slot: "review computer" }).success).toBe(false);
     expect(schema.safeParse({}).success).toBe(false);
+  });
+
+  it("returns only bounded safe computer summaries", () => {
+    const request = INVOKE_CHANNELS["runtime:list-computers"].request;
+    const response = INVOKE_CHANNELS["runtime:list-computers"].response;
+    expect(request.safeParse({}).success).toBe(true);
+    expect(request.safeParse({ accessToken: "secret" }).success).toBe(false);
+    expect(response.safeParse({
+      items: [{
+        handle: "operator",
+        runtimeSlot: "primary",
+        label: "Main Computer",
+        availability: "available",
+        kind: "customer",
+        gatewayPath: "/vm/operator",
+        capabilities: [],
+      }],
+      selectedSlot: "primary",
+      hasMore: false,
+      limit: 20,
+    }).success).toBe(true);
+    expect(response.safeParse({
+      items: [{
+        handle: "operator",
+        runtimeSlot: "primary",
+        label: "Main Computer",
+        availability: "available",
+        kind: "customer",
+        gatewayPath: "/vm/operator",
+        capabilities: [],
+        accessToken: "secret",
+      }],
+      selectedSlot: "primary",
+      hasMore: false,
+      limit: 20,
+    }).success).toBe(false);
   });
 
   it("bounds notify payloads", () => {

@@ -26,6 +26,7 @@ import {
   ProjectAgentWorkspaceSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
+  MatrixComputerListSchema,
   RuntimeSelectionRequestSchema,
   RuntimeSummarySchema,
   SafeClientErrorSchema,
@@ -135,6 +136,10 @@ export const INVOKE_CHANNELS = {
   },
   "auth:sign-out": { request: Empty, response: Ok },
   "auth:session-expired": { request: Empty, response: Ok },
+  "runtime:list-computers": {
+    request: Empty,
+    response: MatrixComputerListSchema,
+  },
   "runtime:select": {
     request: RuntimeSelectionRequestSchema,
     response: Ok,

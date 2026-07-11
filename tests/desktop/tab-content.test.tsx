@@ -3,7 +3,7 @@
 import React from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import TabContent from "@desktop/renderer/src/features/mission-control/TabContent";
+import TabContent, { TabErrorBoundary } from "@desktop/renderer/src/features/mission-control/TabContent";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 
@@ -85,5 +85,21 @@ describe("TabContent", () => {
     render(<TabContent />);
 
     expect(screen.getByRole("heading", { name: /^(Apps|Loading apps)$/ })).toBeTruthy();
+  });
+
+  it("contains a task panel exception without blanking the desktop renderer", () => {
+    function BrokenPanel(): React.ReactNode {
+      throw new Error("private terminal failure");
+    }
+
+    render(
+      <TabErrorBoundary tabTitle="Task A" onClose={vi.fn()}>
+        <BrokenPanel />
+      </TabErrorBoundary>,
+    );
+
+    expect(screen.getByRole("heading", { name: "Task A couldn't open" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Close tab" })).toBeTruthy();
+    expect(screen.queryByText(/private terminal failure/i)).toBeNull();
   });
 });

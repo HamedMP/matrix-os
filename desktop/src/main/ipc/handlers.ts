@@ -120,6 +120,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     return { ok: true };
   });
 
+  handle("runtime:list-computers", () => ctx.auth.listRuntimeComputers());
   handle("runtime:select", async ({ slot }) => {
     await ctx.auth.selectRuntime(slot);
     ctx.onRuntimeChanged(slot);

@@ -181,10 +181,15 @@ export const useWorkspace = create<WorkspaceState>()((set, get) => {
       }
       try {
         const loaded = await persistence.loadLayouts();
+        const normalizedLoaded = loaded
+          ? Object.fromEntries(
+              Object.entries(loaded).map(([taskId, layout]) => [taskId, normalizeLayout(layout)]),
+            )
+          : null;
         // In-memory layouts win: they were touched during this session.
         set((state) => ({
           hydrated: true,
-          layouts: loaded ? { ...loaded, ...state.layouts } : state.layouts,
+          layouts: normalizedLoaded ? { ...normalizedLoaded, ...state.layouts } : state.layouts,
         }));
       } catch (err: unknown) {
         console.warn("[workspace] Failed to load persisted layouts:", err);

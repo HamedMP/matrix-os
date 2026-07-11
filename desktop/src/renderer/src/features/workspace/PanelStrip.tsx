@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { Component, useMemo, type ErrorInfo, type ReactNode } from "react";
 import { Group, Panel, Separator, type Layout as GroupLayout } from "react-resizable-panels";
 import {
   useWorkspace,
@@ -18,6 +18,36 @@ export const PANEL_TITLES: Record<PanelKind, string> = {
   processes: "Processes",
   timeline: "Timeline",
 };
+
+export class PanelErrorBoundary extends Component<{
+  children: ReactNode;
+  panel: PanelKind;
+}, { failed: boolean }> {
+  override state = { failed: false };
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  override componentDidCatch(error: Error, info: ErrorInfo): void {
+    console.warn(
+      `[task-workspace] ${this.props.panel} panel failed (${error.name}; component stack: ${info.componentStack ? "present" : "missing"})`,
+    );
+  }
+
+  override render(): ReactNode {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div
+        role="alert"
+        className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-sm"
+        style={{ color: "var(--text-secondary)" }}
+      >
+        {PANEL_TITLES[this.props.panel]} panel couldn&apos;t open.
+      </div>
+    );
+  }
+}
 
 interface PanelStripProps {
   taskId: string;
@@ -117,7 +147,9 @@ function PanelHost({
         >
           {PANEL_TITLES[panel]}
         </header>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">{renderPanel(panel)}</div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <PanelErrorBoundary panel={panel}>{renderPanel(panel)}</PanelErrorBoundary>
+        </div>
       </Panel>
     </>
   );

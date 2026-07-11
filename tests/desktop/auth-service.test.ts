@@ -760,4 +760,70 @@ describe("AuthService expireSession", () => {
     expect(getProfile()).toBeNull();
     expect(store.save).not.toHaveBeenCalled();
   });
+
+  it("lists the canonical bounded computer inventory through trusted main", async () => {
+    const inventory = {
+      items: [{
+        handle: "neo",
+        runtimeSlot: "primary",
+        label: "Main Computer",
+        availability: "available",
+        kind: "customer",
+        gatewayPath: "/vm/neo",
+        capabilities: [],
+      }],
+      selectedSlot: "primary",
+      hasMore: false,
+      limit: 20,
+    };
+    const fetchFn = vi.fn(async () => jsonResponse(inventory));
+    const { auth } = makeService({
+      now: 10_000,
+      credential: {
+        accessToken: "opaque-runtime-token",
+        expiresAt: HOUR_MS,
+        userId: "user-1",
+        handle: "neo",
+      },
+      profile: {
+        handle: "neo",
+        userId: "user-1",
+        platformHost: "https://app.matrix-os.com",
+        runtimeSlot: "primary",
+      },
+      fetchFn,
+    });
+    await auth.init();
+
+    await expect(auth.listRuntimeComputers()).resolves.toEqual(inventory);
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://api.matrix-os.com/api/auth/computers",
+      expect.objectContaining({
+        method: "GET",
+        headers: { authorization: "Bearer opaque-runtime-token" },
+      }),
+    );
+  });
+
+  it("contains malformed computer inventory responses behind a generic error", async () => {
+    const { auth } = makeService({
+      now: 10_000,
+      credential: {
+        accessToken: "opaque-runtime-token",
+        expiresAt: HOUR_MS,
+        userId: "user-1",
+        handle: "neo",
+      },
+      profile: {
+        handle: "neo",
+        userId: "user-1",
+        platformHost: "https://app.matrix-os.com",
+        runtimeSlot: "primary",
+      },
+      fetchFn: async () => jsonResponse({ accessToken: "leaked", items: [] }),
+    });
+    await auth.init();
+
+    await expect(auth.listRuntimeComputers()).rejects.toThrow("Runtime computers unavailable");
+  });
 });

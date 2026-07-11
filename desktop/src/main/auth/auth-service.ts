@@ -1,6 +1,8 @@
 import {
+  MatrixComputerListSchema,
   RuntimeSelectionRequestSchema,
   RuntimeSelectionResponseSchema,
+  type MatrixComputerList,
 } from "@matrix-os/contracts";
 // Trusted-core auth orchestration: owns the device flow, the credential, and
 // the connection profile. The renderer only ever sees status snapshots.
@@ -372,6 +374,35 @@ export class AuthService {
         err instanceof Error ? err.name : typeof err,
       );
       throw new Error(RUNTIME_SELECTION_ERROR);
+    }
+  }
+
+  async listRuntimeComputers(): Promise<MatrixComputerList> {
+    this.expireCredentialIfNeeded();
+    const currentCredential = this.credential;
+    if (!currentCredential) throw new Error("Runtime computers unavailable");
+
+    const endpoint = new URL("/api/auth/computers", this.deps.runtimeSelectionOrigin);
+    const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
+    try {
+      const response = await fetchFn(endpoint.toString(), {
+        method: "GET",
+        headers: { authorization: `Bearer ${currentCredential.accessToken}` },
+        signal: AbortSignal.timeout(RUNTIME_SELECTION_TIMEOUT_MS),
+      });
+      if (!response.ok) throw new Error("computer inventory rejected");
+      const contentLength = Number(response.headers.get("content-length"));
+      if (Number.isFinite(contentLength) && contentLength > RUNTIME_SELECTION_RESPONSE_LIMIT) {
+        throw new Error("computer inventory response too large");
+      }
+      const text = await readBoundedResponseText(response);
+      return MatrixComputerListSchema.parse(JSON.parse(text));
+    } catch (err: unknown) {
+      console.warn(
+        "[auth] computer inventory unavailable:",
+        err instanceof Error ? err.name : typeof err,
+      );
+      throw new Error("Runtime computers unavailable");
     }
   }
 
