@@ -19,6 +19,7 @@ import {
 async function insertMachine(
   db: PlatformDB,
   input: {
+    machineId?: string;
     clerkUserId?: string;
     handle: string;
     runtimeSlot: string;
@@ -26,17 +27,18 @@ async function insertMachine(
     imageVersion?: string | null;
     provisioningClass?: "customer" | "preview";
     provisionedAt?: string;
+    publicIPv4?: string;
   },
 ): Promise<void> {
   await insertUserMachine(db, {
-    machineId: `machine-${input.handle}`,
+    machineId: input.machineId ?? `machine-${input.handle}`,
     clerkUserId: input.clerkUserId ?? "user_alice",
     handle: input.handle,
     runtimeSlot: input.runtimeSlot,
     status: input.status ?? "running",
     provisioningClass: input.provisioningClass,
     hetznerServerId: 100,
-    publicIPv4: "203.0.113.10",
+    publicIPv4: input.publicIPv4 ?? "203.0.113.10",
     imageVersion: input.imageVersion,
     serverType: "cpx22",
     provisionedAt: input.provisionedAt ?? "2026-07-11T00:00:00.000Z",
@@ -138,7 +140,7 @@ describe("canonical computer inventory route", () => {
           availability: "unavailable",
           kind: "customer",
           versionLabel: "Version pending",
-          gatewayPath: "/vm/alice-review",
+          gatewayPath: "/vm/alice-review?runtime=review",
           capabilities: ["matrixComputerInventoryV1"],
         },
         {
@@ -148,7 +150,7 @@ describe("canonical computer inventory route", () => {
           availability: "starting",
           kind: "preview",
           versionLabel: "v2026.07.10",
-          gatewayPath: "/vm/pr-921",
+          gatewayPath: "/vm/pr-921?runtime=pr-921",
           capabilities: ["matrixComputerInventoryV1"],
         },
       ],
@@ -196,6 +198,42 @@ describe("canonical computer inventory route", () => {
     expect(body.selectedSlot).toBe("review");
     expect(body.items.map((item) => item.handle)).toContain("alice-review");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("routes a slot-qualified computer path to the matching shared-handle runtime", async () => {
+    await insertMachine(db, {
+      machineId: "machine-shared-primary",
+      handle: "alice-shared",
+      runtimeSlot: "primary",
+      publicIPv4: "203.0.113.20",
+    });
+    await insertMachine(db, {
+      machineId: "machine-shared-review",
+      handle: "alice-shared",
+      runtimeSlot: "review",
+      publicIPv4: "203.0.113.21",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("review", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const response = await app.request("/vm/alice-shared/projects?runtime=review", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.21:443/projects");
   });
 
   it("quarantines a malformed persisted provisioning class without hiding valid computers", async () => {

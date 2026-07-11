@@ -51,7 +51,9 @@ function projectComputer(machine: UserRuntimeComputerRecord): MatrixComputer | n
     availability: computerAvailability(machine.status),
     kind: preview ? 'preview' : 'customer',
     versionLabel: computerVersionLabel(machine.imageVersion),
-    gatewayPath: `/vm/${machine.handle}`,
+    gatewayPath: machine.runtimeSlot === 'primary'
+      ? `/vm/${machine.handle}`
+      : `/vm/${machine.handle}?runtime=${machine.runtimeSlot}`,
     capabilities: COMPUTER_CAPABILITIES,
   });
   return parsed.success ? parsed.data : null;

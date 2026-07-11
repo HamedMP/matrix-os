@@ -449,7 +449,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
       }
-      const machine = await getActiveUserMachineByHandle(db, explicitVmRoute.handle);
+      const machine = await getActiveUserMachineByHandle(
+        db,
+        explicitVmRoute.handle,
+        runtimeSelection.source === 'query' ? requestRuntimeSlot : undefined,
+      );
       if (!machine || (identity.userId && machine.clerkUserId !== identity.userId)) {
         applyNoStoreHeaders(c);
         return c.text('Matrix OS computer unavailable', 404);
