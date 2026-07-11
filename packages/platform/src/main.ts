@@ -181,6 +181,8 @@ const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
 const APP_ASSET_ROUTE_TOKEN_PARAM = 'matrix_asset_token';
 const APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS = [APP_ASSET_ROUTE_TOKEN_PARAM] as const;
+const NATIVE_APP_STREAM_PATH = /^\/api\/native-apps\/sessions\/session_[A-Za-z0-9_-]{24,96}\/stream(?:\/|$)/;
+const NATIVE_APP_STREAM_CAPABILITY_PATH = /^\/api\/native-apps\/sessions\/session_[A-Za-z0-9_-]{24,96}\/stream\/stream_[A-Za-z0-9_-]{24,96}(?:\/|$)/;
 const HOST_BUNDLE_READ_TIMEOUT_MS = 30_000;
 const HOST_BUNDLE_IMAGE_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 const HOST_BUNDLE_FILES = new Set([
@@ -674,6 +676,11 @@ function hasValidExplicitVmAppAssetToken(input: {
     console.warn('[platform] Failed to parse explicit VM asset URL:', err instanceof Error ? err.message : String(err));
     return false;
   }
+}
+
+function hasExplicitVmNativeAppStreamCapability(method: string, route: ExplicitVmRoute): boolean {
+  return (method === 'GET' || method === 'HEAD')
+    && NATIVE_APP_STREAM_CAPABILITY_PATH.test(route.upstreamPath);
 }
 
 function readGatewayRouteCookie(path: string, cookieHeader: string | undefined): string | null {
@@ -3279,6 +3286,11 @@ export function createApp(deps: {
         platformSecret,
       }),
     );
+    const explicitVmRouteHasNativeAppStreamCapability = Boolean(
+      explicitVmRoute && hasExplicitVmNativeAppStreamCapability(c.req.method, explicitVmRoute),
+    );
+    const explicitVmRouteHasCredentiallessCapability =
+      explicitVmRouteHasValidAppAssetToken || explicitVmRouteHasNativeAppStreamCapability;
     const runtimeSelection = readRuntimeSlotSelection(c.req.url);
     const requestRuntimeSlot = runtimeSelection.slot;
     let singleMachineRuntimeSlot: string | null = null;
@@ -3321,7 +3333,7 @@ export function createApp(deps: {
     if (
       !identity &&
       explicitVmRoute &&
-      explicitVmRouteHasValidAppAssetToken
+      explicitVmRouteHasCredentiallessCapability
     ) {
       identity = {
         handle: explicitVmRoute.handle,
@@ -3361,6 +3373,10 @@ export function createApp(deps: {
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
       }
+      if (isAppDomain && explicitVmRoute && NATIVE_APP_STREAM_PATH.test(explicitVmRoute.upstreamPath)) {
+        applyNoStoreHeaders(c);
+        return c.text('Unauthorized', 401);
+      }
       if (isAppDomain && isAppDomainStaticAssetPath(path)) {
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
@@ -3388,7 +3404,7 @@ export function createApp(deps: {
       return c.text('Invalid Matrix OS computer', 400);
     }
     if (isAppDomain && explicitVmRoute) {
-      if ((!identity.userId || identity.source === 'mobile-session' || identity.source === 'static-route') && !explicitVmRouteHasValidAppAssetToken) {
+      if ((!identity.userId || identity.source === 'mobile-session' || identity.source === 'static-route') && !explicitVmRouteHasCredentiallessCapability) {
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
       }
@@ -4967,6 +4983,17 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         runtimeSlot: requestRuntimeSlot,
         wsToken,
       });
+      if (
+        !identity
+        && explicitVmRoute
+        && NATIVE_APP_STREAM_CAPABILITY_PATH.test(explicitVmRoute.upstreamPath)
+      ) {
+        identity = {
+          handle: explicitVmRoute.handle,
+          userId: '',
+          source: 'static-route',
+        };
+      }
     } catch (err: unknown) {
       console.warn(
         `[platform] websocket auth failed host=${host} pathClass=${pathClass} error=${describeError(err)}`,

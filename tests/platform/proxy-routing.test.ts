@@ -3742,6 +3742,71 @@ describe("platform proxy routing", () => {
     expect(setCookie).not.toContain("Path=/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/");
   });
 
+  it("routes explicit VM native app capability assets without browser cookies", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff141",
+      clerkUserId: "user_alice",
+      handle: "alice-staging",
+      runtimeSlot: "staging",
+      status: "running",
+      hetznerServerId: 123485,
+      publicIPv4: "203.0.113.35",
+      imageVersion: "v082-login-shell-8935a7cd",
+      provisionedAt: "2026-05-25T11:23:51.076Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("window.Utilities = {};", {
+        status: 200,
+        headers: { "content-type": "application/javascript" },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request(
+      "/vm/alice-staging/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/stream_bbbbbbbbbbbbbbbbbbbbbbbb/js/Utilities.js",
+      {
+        headers: {
+          host: "app.matrix-os.com",
+          origin: "null",
+        },
+      },
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("window.Utilities = {};");
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe(
+      "https://203.0.113.35:443/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/stream_bbbbbbbbbbbbbbbbbbbbbbbb/js/Utilities.js",
+    );
+    const headers = init?.headers as Headers;
+    expect(headers.get("cookie")).toBeNull();
+    expect(headers.get("x-platform-user-id")).toBeNull();
+  });
+
+  it("rejects explicit VM native app stream assets without a capability token", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("unexpected", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request(
+      "/vm/alice-staging/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/js/Utilities.js",
+      { headers: { host: "app.matrix-os.com", origin: "null" } },
+    );
+
+    expect(res.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("maps explicit VM native app WebSocket paths to the selected customer VPS route", () => {
     const path = "/vm/alice-staging/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/stream_bbbbbbbbbbbbbbbbbbbbbbbb/";
 
