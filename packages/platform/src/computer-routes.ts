@@ -90,7 +90,24 @@ function runtimeSelectionSourceKey(c: Context, edgeSecret: string | undefined): 
     return `edge:${edgeSource.slice(0, 128)}`;
   }
 
-  // Forwarding headers are client-controlled unless the edge secret verifies.
+  if (process.env.K_SERVICE) {
+    const forwarded = c.req.header('x-forwarded-for')
+      ?.split(',')
+      .map((part) => part.trim())
+      .filter(Boolean);
+    const clientAddress = forwarded?.at(-2);
+    const loadBalancerAddress = forwarded?.at(-1);
+    if (
+      clientAddress
+      && loadBalancerAddress
+      && isIP(clientAddress) !== 0
+      && isIP(loadBalancerAddress) !== 0
+    ) {
+      return `cloud-run:${clientAddress.slice(0, 128)}`;
+    }
+  }
+
+  // Outside verified proxy paths, forwarding headers are client-controlled.
   try {
     const directAddress = getConnInfo(c).remote.address;
     if (typeof directAddress === 'string' && isIP(directAddress) !== 0) {

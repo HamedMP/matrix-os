@@ -79,6 +79,7 @@ describe("trusted runtime selection route", () => {
     delete process.env.MATRIX_API_ORIGIN;
     delete process.env.PLATFORM_PUBLIC_URL;
     delete process.env.EDGE_ROUTER_SECRET;
+    delete process.env.K_SERVICE;
   });
 
   it("fails closed when the dedicated API origin is absent or aliases an app host", async () => {
@@ -345,6 +346,47 @@ describe("trusted runtime selection route", () => {
       body: JSON.stringify({ slot: "primary" }),
     }, directPeer("198.51.100.11"));
     expect(otherPeerResponse.status).toBe(401);
+  });
+
+  it("uses the load-balancer-appended client address for direct Cloud Run requests", async () => {
+    process.env.K_SERVICE = "matrix-platform-preview";
+    const app = createTestApp(db);
+    const cloudRunPeer = {
+      incoming: {
+        socket: {
+          remoteAddress: "169.254.1.1",
+          remotePort: 443,
+          remoteFamily: "IPv4",
+        },
+      },
+    } as never;
+    let response: Response | undefined;
+    for (let attempt = 0; attempt <= 60; attempt += 1) {
+      response = await app.request("/api/auth/runtime-selection", {
+        method: "POST",
+        headers: {
+          host: "api.matrix-os.com",
+          authorization: "Bearer invalid-token",
+          "content-type": "application/json",
+          "x-forwarded-for": `192.0.2.${attempt}, 198.51.100.10, 203.0.113.254`,
+        },
+        body: JSON.stringify({ slot: "primary" }),
+      }, cloudRunPeer);
+    }
+
+    expect(response?.status).toBe(429);
+
+    const otherClientResponse = await app.request("/api/auth/runtime-selection", {
+      method: "POST",
+      headers: {
+        host: "api.matrix-os.com",
+        authorization: "Bearer invalid-token",
+        "content-type": "application/json",
+        "x-forwarded-for": "192.0.2.250, 198.51.100.11, 203.0.113.254",
+      },
+      body: JSON.stringify({ slot: "primary" }),
+    }, cloudRunPeer);
+    expect(otherClientResponse.status).toBe(401);
   });
 
   it("rate limits repeated credential exchanges for one authenticated principal", async () => {
