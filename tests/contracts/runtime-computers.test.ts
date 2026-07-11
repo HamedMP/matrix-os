@@ -302,7 +302,7 @@ describe("trusted runtime selection contracts", () => {
       { accessToken: "x".repeat(8193), expiresAt: 1_800_000_000_000, handle: "alice-review", slot: "review" },
       { accessToken: "x".repeat(64), expiresAt: 0, handle: "alice-review", slot: "review" },
       { accessToken: "x".repeat(64), expiresAt: 1_800_000_000, handle: "alice-review", slot: "review" },
-      { accessToken: "x".repeat(64), expiresAt: 1_800_000_000_000, handle: "1a", slot: "review" },
+      { accessToken: "x".repeat(64), expiresAt: 1_800_000_000_000, handle: "a", slot: "review" },
       {
         accessToken: "x".repeat(64),
         expiresAt: 1_800_000_000_000,
