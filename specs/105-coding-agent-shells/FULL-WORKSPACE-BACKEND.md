@@ -83,7 +83,9 @@ Canonical bounded response:
 - each record: validated `handle`, authoritative `runtimeSlot`, safe `label`,
   coarse `availability`, safe `kind` (`customer` or `preview`), optional safe
   `versionLabel`, bounded capability IDs, and derived same-origin `gatewayPath`
-- `gatewayPath` is exactly `/vm/{validatedHandle}`
+- `gatewayPath` is derived from validated server fields: primary uses
+  `/vm/{validatedHandle}`; non-primary uses
+  `/vm/{validatedHandle}?runtime={validatedRuntimeSlot}`
 
 Authentication accepts only principals resolved by the shared server-side
 identity resolver: verified Clerk user or trusted native/sync identity. Owner

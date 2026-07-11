@@ -127,7 +127,7 @@ Every clarified functional requirement and buildable success criterion has at le
 | ID | Requirement | Expected Evidence |
 | --- | --- | --- |
 | PL-101 | Clerk and native/sync principals receive the same bounded canonical computer list; unauthenticated and cross-owner requests fail. | Shared contract plus platform route principal matrix. |
-| PL-102 | `selected`, `runtimeSlot`, and `/vm/{handle}` path are server-derived; no machine IDs, IPs, credentials, private hosts, or operator data appear. | Valid/invalid projection and forbidden-key tests. |
+| PL-102 | `selected`, `runtimeSlot`, and the same-origin path (`/vm/{handle}` for primary, validated `runtime` query for non-primary) are server-derived; no machine IDs, IPs, credentials, private hosts, or operator data appear. | Valid/invalid projection and forbidden-key tests. |
 | PL-103 | Desktop replacement bearer remains in trusted main while mobile switches same-origin gateway routing without bearer persistence. | Desktop auth/IPC and mobile storage/client tests. |
 | PL-104 | Native identity fallback is emitted only from a server-verified native session and ignores client identity headers. | Auth/session route tests and shell fallback test. |
 | PV-101 | Preview platform/VPS use isolated DB/JWT/edge/provisioning/Hetzner authority and fail closed without preview credentials. | Workflow/platform integration tests with production-secret fallback forbidden. |

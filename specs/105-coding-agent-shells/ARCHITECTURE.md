@@ -1147,17 +1147,19 @@ Platform owns one bounded computer inventory projection for verified Clerk and
 native/sync principals. A nullable selected slot is derived only from the
 verified principal; individual computer rows never infer client-local selection.
 Electron main may exchange its native/sync principal for a runtime-scoped bearer
-and stores it in the native credential store. Mobile selects a validated
-same-origin `/vm/{handle}` route and continues using Clerk/platform session
-routing. No renderer/mobile state receives a runtime bearer.
+and stores it in the native credential store. Mobile selects a server-derived
+same-origin route: `/vm/{handle}` for primary or the same path with a validated
+`runtime` query for non-primary slots, then continues using Clerk/platform
+session routing. No renderer/mobile state receives a runtime bearer.
 
 Preview environments use a dedicated platform authority keyed by repository,
 PR, and exact head SHA. One generation owns isolated database/JWT/edge/provider/
 object resources, platform revision, disposable VPS, expiry, cleanup state, and
 compare-and-swap generation. Production credentials are unavailable to the
 preview service. Native app HTTP/WebSocket routes remain ordinary runtime routes
-through explicit `/vm/{handle}` forwarding and retain current owner/session
-proofs, limits, TTL, and shutdown cleanup.
+through explicit `/vm/{handle}` forwarding with an optional validated runtime
+slot selector and retain current owner/session proofs, limits, TTL, and shutdown
+cleanup.
 
 ### Durable Store Boundary
 
