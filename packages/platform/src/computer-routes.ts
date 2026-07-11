@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import {
   MatrixComputerListSchema,
   MatrixComputerSchema,
@@ -7,6 +8,7 @@ import {
   type MatrixComputerAvailability,
   type MatrixComputerVersionLabel,
 } from '@matrix-os/contracts';
+import { getConnInfo } from '@hono/node-server/conninfo';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 
@@ -89,6 +91,16 @@ function runtimeSelectionSourceKey(c: Context, edgeSecret: string | undefined): 
   }
 
   // Forwarding headers are client-controlled unless the edge secret verifies.
+  try {
+    const directAddress = getConnInfo(c).remote.address;
+    if (typeof directAddress === 'string' && isIP(directAddress) !== 0) {
+      return `direct:${directAddress.slice(0, 128)}`;
+    }
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) {
+      console.warn('[platform] Direct connection source unavailable:', err instanceof Error ? err.name : typeof err);
+    }
+  }
   return 'direct';
 }
 

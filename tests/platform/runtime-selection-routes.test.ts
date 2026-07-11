@@ -306,6 +306,15 @@ describe("trusted runtime selection route", () => {
 
   it("rate limits unauthenticated source attempts before repeated verification", async () => {
     const app = createTestApp(db);
+    const directPeer = (address: string) => ({
+      incoming: {
+        socket: {
+          remoteAddress: address,
+          remotePort: 443,
+          remoteFamily: "IPv4",
+        },
+      },
+    }) as never;
     let response: Response | undefined;
     for (let attempt = 0; attempt <= 60; attempt += 1) {
       response = await app.request("/api/auth/runtime-selection", {
@@ -319,11 +328,23 @@ describe("trusted runtime selection route", () => {
           "x-forwarded-for": `192.0.2.${attempt}, 203.0.113.254`,
         },
         body: JSON.stringify({ slot: "primary" }),
-      });
+      }, directPeer("198.51.100.10"));
     }
 
     expect(response?.status).toBe(429);
     await expect(response?.json()).resolves.toEqual({ error: "Too many requests" });
+
+    const otherPeerResponse = await app.request("/api/auth/runtime-selection", {
+      method: "POST",
+      headers: {
+        host: "api.matrix-os.com",
+        authorization: "Bearer invalid-token",
+        "content-type": "application/json",
+        "x-forwarded-for": "192.0.2.250, 203.0.113.254",
+      },
+      body: JSON.stringify({ slot: "primary" }),
+    }, directPeer("198.51.100.11"));
+    expect(otherPeerResponse.status).toBe(401);
   });
 
   it("rate limits repeated credential exchanges for one authenticated principal", async () => {
