@@ -186,7 +186,16 @@ describe("Matrix computer contracts", () => {
       expect(MatrixComputerSchema.parse({ ...mainComputer, label }).label).toBe(label);
     }
 
-    for (const versionLabel of ["v2026.07.11", "stable", "dev", "canary", "beta", "Version pending"]) {
+    for (const versionLabel of [
+      "v2026.07.11",
+      "v2026.07.11-42",
+      "v2026.07.11-pr921-802ee13",
+      "stable",
+      "dev",
+      "canary",
+      "beta",
+      "Version pending",
+    ]) {
       expect(MatrixComputerSchema.parse({ ...mainComputer, versionLabel }).versionLabel).toBe(versionLabel);
     }
 
