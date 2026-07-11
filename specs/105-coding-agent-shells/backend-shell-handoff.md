@@ -88,6 +88,30 @@ Transcript parity requires a gateway-owned provider ingestion adapter that:
 Until that adapter and schema extension exist, shells must label the current view as an activity
 timeline and must not claim provider-complete transcript support.
 
+### Project/chat terminal relation contract gap
+
+Canonical terminal sessions are currently projected as a flat bounded `RuntimeSummarySchema.terminalSessions`
+list. `AgentThreadSummarySchema` and the create-thread request expose only one optional
+`terminalSessionId`, while `TerminalSessionSummarySchema` carries no `projectId`, `taskId`, or
+`threadId`. A `terminal.bound` event can identify a terminal observed during one thread, but it is
+not an authoritative bounded one-to-many read model and cannot group existing TUI sessions under a
+project or conversation after replay truncation.
+
+Project and conversation shells therefore cannot truthfully represent the required relationships:
+
+- one project owning multiple shell or coding-agent TUI terminals;
+- one conversation being associated with multiple terminals over its lifetime; and
+- one terminal remaining project-scoped without being owned by a conversation.
+
+Parity requires a gateway-owned terminal-binding contract. Before shells render grouped terminal
+collections, the backend must define a bounded relation schema containing `terminalSessionId`,
+`projectId`, optional `taskId`, optional `threadId`, a safe display label, relation role, lifecycle
+timestamps, and attachability; expose those bindings in the project workspace read route (or a
+dedicated bounded project-terminal route); and define authenticated bind/unbind or terminal-create
+inputs that validate project/task/thread ownership. The gateway must remain the source of truth and
+emit a generic project refresh event after relation mutations. A shell must not infer these
+relations from terminal names, working directories, the selected chat, or local persistence.
+
 ## Error And Recovery Rules
 
 - Render only allowlisted bounded `safeMessage` values; use a generic refresh/retry fallback for unknown client errors.

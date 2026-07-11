@@ -187,7 +187,7 @@ describe("mobile app helpers", () => {
       const apps = appsModule.mergeNativeAndRemoteApps([]);
 
       expect(apps.map((entry) => entry.name)).toContain("Agents");
-      expect(appsModule.getNativeAppRoute(app({ name: "Agents", slug: "agents", file: "agents/index.html" }))).toBe("/agents");
+      expect(appsModule.getNativeAppRoute(app({ name: "Agents", slug: "agents", file: "agents/index.html" }))).toBe("/(tabs)/workspaces");
     });
 
     if (originalValue === undefined) {
