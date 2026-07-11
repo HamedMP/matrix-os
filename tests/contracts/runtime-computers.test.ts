@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   MatrixComputerListSchema,
   MatrixComputerSchema,
+  RuntimeSelectionRequestSchema,
+  RuntimeSelectionResponseSchema,
 } from "@matrix-os/contracts";
 
 const mainComputer = {
@@ -268,5 +270,47 @@ describe("Matrix computer contracts", () => {
       hasMore: false,
       limit: 20,
     }).success).toBe(false);
+  });
+});
+
+describe("trusted runtime selection contracts", () => {
+  it("accepts one bounded slot request and replacement credential response", () => {
+    expect(RuntimeSelectionRequestSchema.parse({ slot: "review" })).toEqual({ slot: "review" });
+    expect(RuntimeSelectionResponseSchema.parse({
+      accessToken: "x".repeat(64),
+      expiresAt: 1_800_000_000,
+      handle: "alice-review",
+      slot: "review",
+    })).toEqual({
+      accessToken: "x".repeat(64),
+      expiresAt: 1_800_000_000,
+      handle: "alice-review",
+      slot: "review",
+    });
+  });
+
+  it("rejects malformed slots, handles, credentials, and extra fields", () => {
+    for (const invalid of [
+      { slot: "../review" },
+      { slot: "review", ownerId: "user_bob" },
+    ]) {
+      expect(RuntimeSelectionRequestSchema.safeParse(invalid).success).toBe(false);
+    }
+
+    for (const invalid of [
+      { accessToken: "short", expiresAt: 1_800_000_000, handle: "alice-review", slot: "review" },
+      { accessToken: "x".repeat(8193), expiresAt: 1_800_000_000, handle: "alice-review", slot: "review" },
+      { accessToken: "x".repeat(64), expiresAt: 0, handle: "alice-review", slot: "review" },
+      { accessToken: "x".repeat(64), expiresAt: 1_800_000_000, handle: "1a", slot: "review" },
+      {
+        accessToken: "x".repeat(64),
+        expiresAt: 1_800_000_000,
+        handle: "alice-review",
+        slot: "review",
+        providerToken: "secret",
+      },
+    ]) {
+      expect(RuntimeSelectionResponseSchema.safeParse(invalid).success).toBe(false);
+    }
   });
 });

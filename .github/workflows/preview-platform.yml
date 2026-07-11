@@ -115,9 +115,13 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
-          # Derive the deterministic service URL (no hardcoded project number).
-          project_number="$(gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectNumber)')"
-          public_url="https://${CLOUD_RUN_PREVIEW_SERVICE}-${project_number}.${GCP_REGION}.run.app"
+          service_base_url="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          if [ -z "$service_base_url" ]; then
+            echo "Preview service URL is unavailable; refusing a shared control-plane fallback." >&2
+            exit 1
+          fi
+          PREVIEW_API_ORIGIN="https://pr-${PR_NUMBER}---${service_base_url#https://}"
           # Browser-reachable preview host (custom domain routed to this service).
           # Origins/redirects and Stripe return URLs resolve to this host.
           PREVIEW_PUBLIC_URL="${PREVIEW_PUBLIC_URL:-https://preview.matrix-os.com}"
@@ -134,21 +138,47 @@ jobs:
             --tag "pr-${PR_NUMBER}" \
             --no-traffic \
             --allow-unauthenticated \
-            --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PREVIEW=true,CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_IMAGE_VERSION=dev,CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,MATRIX_STRIPE_BILLING_ENABLED=true,PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL},MATRIX_APP_URL=${PREVIEW_PUBLIC_URL},MATRIX_APP_DOMAIN_HOSTS=${PREVIEW_DOMAIN}" \
+            --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PREVIEW=true,CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_IMAGE_VERSION=dev,CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,MATRIX_STRIPE_BILLING_ENABLED=true,PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL},MATRIX_API_ORIGIN=${PREVIEW_API_ORIGIN},MATRIX_APP_URL=${PREVIEW_PUBLIC_URL},MATRIX_APP_DOMAIN_HOSTS=${PREVIEW_DOMAIN}" \
             --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest" \
             --cpu 1 --memory 1Gi --concurrency 10 --timeout 300 --min-instances 0 --max-instances 2 \
             --quiet
-          desc="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
-            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format json)"
-          url="$(jq -r --arg tag "pr-${PR_NUMBER}" \
-            '[(.status.traffic // [])[] | select(.tag == $tag) | .url] | first // ""' <<< "$desc")"
-          if [ -z "$url" ]; then
-            # Describe can lag a fresh deploy; tagged URLs are deterministic.
-            base="$(jq -r '.status.url' <<< "$desc")"
-            url="https://pr-${PR_NUMBER}---${base#https://}"
+          url=""
+          revision=""
+          for _attempt in {1..10}; do
+            desc="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
+              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format json)"
+            url="$(jq -r --arg tag "pr-${PR_NUMBER}" \
+              '[(.status.traffic // [])[] | select(.tag == $tag) | .url] | first // ""' <<< "$desc")"
+            revision="$(jq -r --arg tag "pr-${PR_NUMBER}" \
+              '[(.status.traffic // [])[] | select(.tag == $tag) | .revisionName] | first // ""' <<< "$desc")"
+            if [ -n "$url" ] && [ -n "$revision" ]; then
+              break
+            fi
+            sleep 3
+          done
+          if [ -z "$url" ] || [ -z "$revision" ]; then
+            echo "PR-tagged preview revision metadata did not become ready." >&2
+            exit 1
           fi
+          if [ "$url" != "$PREVIEW_API_ORIGIN" ]; then
+            echo "Tagged preview URL does not match MATRIX_API_ORIGIN." >&2
+            exit 1
+          fi
+          expected_digest="$(gcloud artifacts docker images describe "$IMAGE" \
+            --project "$GCP_PROJECT_ID" --format='value(image_summary.digest)')"
+          revision_image="$(gcloud run revisions describe "$revision" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --format='value(spec.containers[0].image)')"
+          expected_digest_image="${IMAGE%:*}@${expected_digest}"
+          if [ -z "$expected_digest" ] || { [ "$revision_image" != "$IMAGE" ] && [ "$revision_image" != "$expected_digest_image" ]; }; then
+            echo "PR-tagged preview revision does not run the exact built image." >&2
+            exit 1
+          fi
+          curl --fail --silent --show-error --retry 5 --retry-all-errors \
+            --connect-timeout 5 --max-time 10 "${PREVIEW_API_ORIGIN}/health" > /dev/null
           echo "PREVIEW_URL=$url" >> "$GITHUB_ENV"
           echo "PREVIEW_PUBLIC_URL=$PREVIEW_PUBLIC_URL" >> "$GITHUB_ENV"
+          echo "PREVIEW_API_ORIGIN=$PREVIEW_API_ORIGIN" >> "$GITHUB_ENV"
 
       - name: Comment preview URL on PR
         if: steps.config.outputs.configured == 'true' && github.event_name == 'pull_request'
@@ -159,6 +189,7 @@ jobs:
           body="**Platform preview revision deployed**
 
           - Browser-reachable host: ${PREVIEW_PUBLIC_URL} (route this PR's tag to it: \`gcloud run services update-traffic ${CLOUD_RUN_PREVIEW_SERVICE} --region ${GCP_REGION} --to-tags pr-${PR_NUMBER}=100\`, then reset when done)
+          - Desktop control-plane origin: ${PREVIEW_API_ORIGIN}
           - Revision URL: ${PREVIEW_URL}
           - Service: \`${CLOUD_RUN_PREVIEW_SERVICE}\` (deployed zero-traffic, tag \`pr-${PR_NUMBER}\`)
 

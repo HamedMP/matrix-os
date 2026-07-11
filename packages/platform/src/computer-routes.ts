@@ -1,14 +1,20 @@
 import {
   MatrixComputerListSchema,
   MatrixComputerSchema,
+  RuntimeSelectionRequestSchema,
+  RuntimeSelectionResponseSchema,
   type MatrixComputer,
   type MatrixComputerAvailability,
   type MatrixComputerVersionLabel,
 } from '@matrix-os/contracts';
 import { Hono, type Context } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 
 import type { ClerkAuth } from './clerk-auth.js';
-import type { PlatformDB } from './db.js';
+import {
+  getRunningUserMachineByClerkId,
+  type PlatformDB,
+} from './db.js';
 import {
   listUserRuntimeComputersByClerkId,
   type UserRuntimeComputerRecord,
@@ -16,12 +22,19 @@ import {
 import { isPreviewMachine } from './customer-vps-preview.js';
 import {
   resolveAppDomainIdentity,
+  resolveSyncBearerIdentity,
   type AppDomainIdentity,
 } from './session-routing-identity.js';
+import { EDGE_SECRET_HEADER } from './session-routing-proxy.js';
+import { getTrustedSessionRouteHost } from './session-routing-websocket.js';
+import { issueSyncJwt } from './sync-jwt.js';
+import { isAppDomainHost, isCodeDomainHost } from './ws-upgrade.js';
 
 const COMPUTER_LIST_LIMIT = 20;
 const COMPUTER_QUERY_LIMIT = COMPUTER_LIST_LIMIT + 1;
 const COMPUTER_CAPABILITIES = ['matrixComputerInventoryV1'] as const;
+const RUNTIME_SELECTION_BODY_LIMIT = 1024;
+const RUNTIME_SELECTION_EXPIRY_SKEW_SECONDS = 60;
 const RELEASE_DATE_PATTERN = /^(?:v|matrix-os-host-)(\d{4}\.\d{2}\.\d{2})(?:$|-)/;
 
 function computerAvailability(status: string): MatrixComputerAvailability {
@@ -59,17 +72,40 @@ function projectComputer(machine: UserRuntimeComputerRecord): MatrixComputer | n
   return parsed.success ? parsed.data : null;
 }
 
+function controlPlaneHost(env: NodeJS.ProcessEnv): string | null {
+  const configuredOrigin = env.MATRIX_API_ORIGIN?.trim();
+  if (!configuredOrigin) return null;
+  try {
+    const url = new URL(configuredOrigin);
+    const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]';
+    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) return null;
+    if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) return null;
+    const host = url.host.toLowerCase();
+    if (isAppDomainHost(host) || isCodeDomainHost(host)) return null;
+    return host;
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) {
+      console.warn('[platform] API origin validation failed:', typeof err);
+    }
+    return null;
+  }
+}
+
 export function createComputerRoutes(opts: {
   db: PlatformDB;
   clerkAuth?: ClerkAuth;
   platformJwtSecret: string;
   legacyContainerRoutingEnabled: boolean;
   resolveIdentity?: typeof resolveAppDomainIdentity;
+  resolveSyncIdentity?: typeof resolveSyncBearerIdentity;
+  appEnv: NodeJS.ProcessEnv;
   applyNoStoreHeaders: (c: Context) => void;
   logRouteError: (route: string, err: unknown) => void;
+  getGatewayUrlForHandle: (handle: string) => string;
 }) {
   const routes = new Hono();
   const resolveIdentity = opts.resolveIdentity ?? resolveAppDomainIdentity;
+  const resolveSyncIdentity = opts.resolveSyncIdentity ?? resolveSyncBearerIdentity;
 
   routes.get('/api/auth/computers', async (c) => {
     if (!opts.platformJwtSecret && !opts.clerkAuth) {
@@ -130,6 +166,108 @@ export function createComputerRoutes(opts: {
       opts.logRouteError('/api/auth/computers', err);
       opts.applyNoStoreHeaders(c);
       return c.json({ error: 'Computers unavailable' }, 503);
+    }
+  });
+
+  routes.post('/api/auth/runtime-selection', bodyLimit({
+    maxSize: RUNTIME_SELECTION_BODY_LIMIT,
+    onError: (c) => {
+      opts.applyNoStoreHeaders(c);
+      return c.json({ error: 'Request too large' }, 413);
+    },
+  }), async (c) => {
+    const expectedHost = controlPlaneHost(opts.appEnv);
+    if (!expectedHost) {
+      opts.applyNoStoreHeaders(c);
+      return c.json({ error: 'Runtime selection unavailable' }, 503);
+    }
+    const requestHost = getTrustedSessionRouteHost(
+      c.req.header('host'),
+      c.req.header('x-forwarded-host'),
+      c.req.header(EDGE_SECRET_HEADER),
+      opts.appEnv.EDGE_ROUTER_SECRET,
+    ).toLowerCase();
+    if (requestHost !== expectedHost) {
+      opts.applyNoStoreHeaders(c);
+      return c.json({ error: 'Not found' }, 404);
+    }
+    if (!opts.platformJwtSecret) {
+      opts.applyNoStoreHeaders(c);
+      return c.json({ error: 'Runtime selection unavailable' }, 503);
+    }
+    const authHeader = c.req.header('authorization');
+
+    let identity: Awaited<ReturnType<typeof resolveSyncBearerIdentity>>;
+    try {
+      identity = await resolveSyncIdentity({
+        authorization: authHeader,
+        db: opts.db,
+        platformJwtSecret: opts.platformJwtSecret,
+        legacyContainerRoutingEnabled: opts.legacyContainerRoutingEnabled,
+      });
+    } catch (err: unknown) {
+      opts.logRouteError('/api/auth/runtime-selection auth', err);
+      opts.applyNoStoreHeaders(c);
+      return c.json({ error: 'Runtime selection unavailable' }, 503);
+    }
+    const now = Math.floor(Date.now() / 1000);
+    const remainingLifetime = identity ? identity.expiresAt - now : 0;
+    if (!identity || remainingLifetime <= RUNTIME_SELECTION_EXPIRY_SKEW_SECONDS) {
+      opts.applyNoStoreHeaders(c);
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'BodyLimitError') {
+        opts.applyNoStoreHeaders(c);
+        return c.json({ error: 'Request too large' }, 413);
+      }
+      if (!(err instanceof SyntaxError)) {
+        opts.logRouteError('/api/auth/runtime-selection parse', err);
+      }
+      opts.applyNoStoreHeaders(c);
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+    const parsedBody = RuntimeSelectionRequestSchema.safeParse(rawBody);
+    if (!parsedBody.success) {
+      opts.applyNoStoreHeaders(c);
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+
+    try {
+      const machine = await getRunningUserMachineByClerkId(
+        opts.db,
+        identity.userId,
+        parsedBody.data.slot,
+      );
+      if (!machine) {
+        opts.applyNoStoreHeaders(c);
+        return c.json({ error: 'Computer unavailable' }, 404);
+      }
+      const issued = await issueSyncJwt({
+        secret: opts.platformJwtSecret,
+        clerkUserId: identity.userId,
+        handle: machine.handle,
+        gatewayUrl: opts.getGatewayUrlForHandle(machine.handle),
+        runtimeSlot: machine.runtimeSlot,
+        expiresInSec: remainingLifetime,
+        now,
+      });
+      const payload = RuntimeSelectionResponseSchema.parse({
+        accessToken: issued.token,
+        expiresAt: issued.expiresAt,
+        handle: machine.handle,
+        slot: machine.runtimeSlot,
+      });
+      opts.applyNoStoreHeaders(c);
+      return c.json(payload);
+    } catch (err: unknown) {
+      opts.logRouteError('/api/auth/runtime-selection', err);
+      opts.applyNoStoreHeaders(c);
+      return c.json({ error: 'Runtime selection unavailable' }, 503);
     }
   });
 
