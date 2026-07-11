@@ -22,6 +22,56 @@ The landed checkpoint is not the confirmed final information architecture. Curre
 
 The clarified target and required evidence are defined in `SPEC.md`, `ARCHITECTURE.md`, `plan.md`, `tasks.md`, and `acceptance-tests.md`. No implementation completion claim should treat the existing dashboard/create path as proof of those requirements.
 
+### Full Workspace Backend Gap
+
+The current gateway is also not yet the complete backend required by the final
+session-first coding workspace. The proposed expansion is specified in
+`FULL-WORKSPACE-BACKEND.md`. Current limitations include:
+
+- the bounded owner file is not suitable for complete durable transcript,
+  pending queue, execution graph, binding, attention, or collaboration history
+- snapshots expose bounded recent events but not stable backward/forward
+  transcript pages or provider-session discovery/import
+- busy turns reject correctly, but there is no explicit durable pending-message
+  queue, edit/reorder/remove lifecycle, or normalized steering operation
+- provider options do not yet provide the complete normalized model/mode/
+  reasoning/profile/prompt/skill/MCP capability surface
+- one task supports many conversations, but conversations do not yet expose a
+  durable bounded parent/child execution graph
+- coding-agent state can reference a terminal, but it does not yet model several
+  role-labelled canonical terminal bindings per project/task/thread/run
+- file/review/preview/source-control foundations exist, but repository status,
+  full bounded Git operations, durable review comments, and attachment objects
+  are incomplete
+- attention notifications exist, but there is no durable paged inbox with
+  acknowledgement/resolution semantics across all attention kinds
+- cross-computer conversation handoff and owner/editor/viewer collaboration are
+  not implemented
+
+The current desktop preview stack and mobile stack are visual/client
+checkpoints. The backend expansion remains based on `main` and will deploy to a
+separate disposable preview computer. Both clients will test against that same
+backend preview after Gate B2; no shell branch becomes the backend source of
+truth.
+
+### Computer And Preview Contract Conflict
+
+The paused desktop and mobile stacks independently introduced different computer
+inventory schemas and read routes. The canonical decision is one bounded
+`GET /api/auth/computers` contract with server-derived runtime slot, route,
+availability, capabilities, and nullable selected slot. Verified Clerk and
+native/sync principals use the same owner-scoped projection. Desktop runtime
+credential exchange remains native/sync-authenticated and main-process-only;
+mobile uses validated same-origin routing and does not persist runtime bearers.
+
+The existing Platform Preview and Preview VPS workflows do not yet form one
+isolated authority. The target preview environment owns a dedicated preview
+database/JWT/edge/provisioning/provider boundary, exact PR/head/bundle,
+disposable computer, TTL/reaper, and teardown. It cannot access production
+provisioning credentials and must preserve existing native app HTTP/WebSocket
+streaming behavior. This Gate B0.5 work precedes merging either shell's computer
+selection layer.
+
 The stack currently has shared contracts, a gateway runtime summary read model, a gateway-owned bounded attention summary, a read-only preview summary adapter, owner-worktree file browse/search/read/write routes, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, desktop/mobile read-only review summary panels, and a read-only coding-agent review snapshot route with bounded file metadata from safe owner worktree diffs plus findings fallback metadata. Review snapshots can include bounded per-hunk diff lines with truncation markers. Runtime summaries now include bounded `previewSessions` from existing workspace preview records and expose only local preview origins without path/query data. Preview summaries carry an optional bounded project reference for project-scoped shell filtering. Desktop and mobile render those safe preview summary rows in their Agents workspaces when the runtime advertises `codingAgentsPreview`; desktop preview rows open a local inspector with an external-open action only for HTTPS origins through the existing safe desktop IPC path, mobile preview rows open a phone-first preview route that accepts only the bounded preview id, rehydrates the current authenticated runtime summary, renders only currently running HTTPS origins through the existing app runtime frame, and can hand that same authoritative HTTPS origin to the OS browser, and the browser Workspace preview panel validates the same `RuntimeSummarySchema` before showing active-project coding-agent preview origin/status rows, with direct browser launch limited to HTTPS origins. Gateway file browse/search requires project/worktree references, optional bounded directory paths, capped limits, owner access, safe worktree-root validation, and symlink skipping; desktop and mobile have thin validated clients for those read-only file list/search routes without storing file contents or credentials. Desktop and mobile review details now expose transient browse/search controls that call those trusted clients, render only bounded file metadata, and hand selected files to the existing bounded editor path without persisting file contents. Gateway file reads require project/worktree/file references, stay inside validated owner worktree roots, reject symlinks, cap text content at 64 KiB, and expose a `codingAgentsFiles` capability. Gateway file writes require the same owner worktree references, a matching whole-file etag or explicit create intent, UTF-8 content within the shared cap, and return only bounded file metadata. Gateway source control can prepare a local commit and create or return an existing GitHub pull request from a validated owner worktree without exposing credentials or raw command errors to clients; desktop and mobile review details can open the returned HTTPS pull request URL through their existing platform opener paths without exposing credentials. Desktop review details can request one selected review file through trusted main-process IPC, validate `FileReadResponseSchema`, render a bounded text editor, and save edited non-truncated files through a trusted main-process IPC call that validates `FileWriteRequestSchema`/`FileWriteResponseSchema` without exposing bearer credentials to the renderer. Mobile review details can request one selected review file through the authenticated gateway client, validate `FileReadResponseSchema`, render a bounded transient editor, and save edited non-truncated files through the authenticated gateway client without persisting file bytes. When the runtime advertises `codingAgentsSourceControl`, desktop and mobile review details can prepare a local source-control commit for bounded reviewed file paths through trusted clients that validate `SourceControlPrepareCommitRequestSchema`/`SourceControlPrepareCommitResponseSchema`, generate shell-local idempotency request ids, and surface only generic recovery errors. Desktop and mobile dashboards render the gateway-owned `attentionThreads` summary separately from active threads so waiting and failed runs can be found without changing active-thread list semantics. Desktop and mobile review details render changed-file counts, selectable hunk coordinate metadata, and gateway-bounded diff lines. Desktop and mobile can seed their existing agent composers from a selected review hunk using bounded prompt context and a `structured_ref` attachment. Desktop Settings now shows runtime provider install/auth/setup status from the trusted summary bridge and opens foreground setup actions through canonical terminal sessions without rendering setup commands or credentials. Mobile active thread rows now open a bounded thread detail route that hydrates `AgentThreadSnapshotSchema` through the authenticated gateway client, renders safe thread metadata, event counts, in-app attention labels, and snapshot event timeline, subscribes to the existing gateway-owned coding-agent thread stream with Zod-validated frames, can hand a bound canonical terminal session to the existing mobile Terminal tab, can submit approval decisions plus user-input answers through the authenticated gateway client, and can seed the existing mobile composer with a bounded source-thread `structured_ref` follow-up without persisting transcript or terminal data. Gateway thread-event batches for approval-required, input-required, failed, and successfully completed coding-agent runs can emit owner-scoped safe push-channel notification payloads that contain only generic copy plus a bounded `threadId`, deduped by owner/thread/attention-kind inside a capped TTL registry; push registration binds tokens to the authenticated request principal, replay preserves owner and routing metadata, and mobile notification tap routing recognizes those payloads and opens the matching thread detail route when `threadId` passes the shared contract, otherwise falling back to the agent workspace. Desktop active thread rows can open a matching attachable bound canonical terminal session in the existing Terminal tab model and selected desktop threads now hydrate `AgentThreadSnapshotSchema` through trusted main-process IPC for safe metadata and event timeline rendering. Desktop approval-request events can submit allowed decisions, and desktop user-input request events can submit bounded answers, through trusted main-process IPC and replace local details with the gateway-returned bounded thread snapshot. Desktop native notification clicks focus the Agents tab and visibly select the bounded coding-agent workspace thread reference in the active thread list while attention-thread rows can open the same bounded detail path. Desktop badge counts include the gateway-owned bounded coding-agent `attentionThreads` count in addition to existing local thread attention, and use the badge overflow cap when that bounded list is truncated.
 
 Current source-of-truth boundaries:

@@ -43,6 +43,8 @@ Runtime
     Task (0..n)
       Agent thread / chat session (0..n)
         User and assistant turns (1..n)
+        Parent/child execution runs (0..n)
+        Canonical terminal bindings (0..n)
 ```
 
 - A new shell-created coding thread MUST belong to exactly one project.
@@ -50,7 +52,7 @@ Runtime
 - A task MAY own multiple threads; no task-level singleton session assumption is allowed.
 - A thread is one resumable provider conversation, not one prompt. Each accepted user turn calls the normalized provider adapter with the thread's server-owned resume identity.
 - Existing standalone threads created before this rule remain readable under a bounded `Unassigned` compatibility group and can be attached to a project through an explicit server mutation. New desktop/mobile flows do not create additional unassigned threads.
-- A provider run/turn and a terminal session are different objects. A thread may bind one canonical named terminal session, and several threads may refer to the same task without sharing transcript or provider resume state.
+- A provider run/turn and a terminal session are different objects. A thread may bind several role-labelled canonical named terminal sessions, and several threads may refer to the same task without sharing transcript or provider resume state.
 
 ### Two Views Over One Runtime Model
 
@@ -88,6 +90,7 @@ As a user, I want the desktop app to sign in, select my Matrix computer, and sho
 2. Given the user has one or more runtimes, when sign-in completes, then the app shows the selected runtime and allows switching through an authenticated runtime selector.
 3. Given the runtime is reachable, when the app opens, then project/task/thread/terminal summaries load through gateway contracts.
 4. Given connectivity is lost, when the app reconnects, then open views recover without clearing local UI state or duplicating terminal output.
+5. Given Main and a disposable preview computer exist, desktop lists both through the canonical owner inventory and keeps any runtime bearer inside trusted main-process storage.
 
 ### US2 - Connect Mobile To The Same Work (P1)
 
@@ -101,6 +104,7 @@ As a user, I want the mobile app to open the same Matrix computer, resume recent
 2. Given a terminal session exists, when the user opens Terminal on mobile, then the app can attach to that named session or create a new one.
 3. Given an agent thread is running, when the user opens mobile, then the thread appears with live or resumable status.
 4. Given the app is backgrounded, when the user returns, then mobile reconciles live runtime state before trusting stale local resume state.
+5. Given the same disposable preview computer, mobile lists the same bounded record and switches through validated same-origin routing without storing a runtime bearer.
 
 ### US3 - Manage Multiple Coding Conversations (P1)
 
@@ -198,6 +202,97 @@ As a current mobile user, I want chat, terminal, apps, canvas entry, settings, p
 3. Mobile safe areas, keyboard avoidance, orientation, offline banners, and persisted mobile shell state keep working.
 4. No route introduces Expo Go assumptions; native builds use the Expo dev client.
 
+### US10 - Resume Complete Conversation History (P1)
+
+As a developer, I want every coding conversation to reopen with its complete
+paged transcript and current provider state so switching devices or restarting a
+shell never reduces the conversation to recent event summaries.
+
+**Independent Test**: Create a conversation with more events than one live
+window, restart the gateway and both clients, page backward to the first user
+message, then reconnect through a replay gap without duplicates.
+
+**Acceptance Criteria**
+
+1. Transcript entries have stable monotonic sequence numbers per conversation.
+2. Latest, backward, and forward pages are bounded and report explicit gaps.
+3. Provider session discovery/import never exposes provider paths or resume IDs.
+4. Archived and imported conversations retain project/task relations and history.
+
+### US11 - Control Busy Work (P1)
+
+As a developer, I want to queue later messages, edit their order, steer supported
+active work, or interrupt one turn so I can manage long-running agents without
+creating replacement conversations.
+
+**Independent Test**: While one turn runs, add three pending messages, edit and
+reorder them, remove one, steer the active turn, interrupt it, and verify exactly
+the remaining queued messages dispatch once in server order.
+
+**Acceptance Criteria**
+
+1. Pending messages are durable server records with optimistic revisions.
+2. Queueing is explicit; a busy normal turn still returns a safe conflict.
+3. Unsupported steering fails safely and is never simulated client-side.
+4. Queue claims and interrupt decisions are idempotent and atomic.
+
+### US12 - Configure Each Coding Runtime (P1)
+
+As a developer, I want provider, model, mode, reasoning, permissions, sandbox,
+profile, prompt, skill, and MCP selections to follow the conversation across
+shells without exposing credentials.
+
+**Independent Test**: Start conversations with two provider profiles, inspect
+their safe effective configuration from desktop and mobile, then confirm secrets
+and provider resume state never appear in either client.
+
+### US13 - Inspect Delegated Runs (P2)
+
+As a developer, I want to see parent and child execution runs, status, attention,
+and bounded tool summaries so parallel review, planning, and delegated work is
+understandable from any shell.
+
+**Independent Test**: Start one parent run with two child runs, complete one and
+fail one, reconnect another shell, and verify the same bounded acyclic graph.
+
+### US14 - Use Complete Project Tooling (P1)
+
+As a developer, I want multiple terminals, files, repository state, diffs,
+reviews, attachments, previews, and source-control operations attached to the
+selected project/conversation so I can finish work without leaving Matrix.
+
+**Independent Test**: Bind two canonical terminals, upload one attachment, edit a
+file with etag protection, comment on a diff, commit to a branch, and create a
+pull request from both shells against one preview computer.
+
+### US15 - Work From One Attention Inbox (P1)
+
+As a developer, I want approvals, questions, failures, completions, unread work,
+and review-ready events ordered in one durable inbox so no active conversation is
+lost across projects or computers.
+
+**Independent Test**: Generate each attention kind in separate conversations,
+acknowledge on mobile, and verify desktop receives the resolved state once.
+
+### US16 - Move Work Between Computers (P2)
+
+As a developer, I want to hand a resumable conversation to another compatible
+Matrix computer without changing its identity or losing the source conversation
+if destination startup fails.
+
+**Independent Test**: Handoff to a compatible preview computer, then attempt an
+incompatible destination and a timed-out destination; verify transactional state,
+idempotency, and safe recovery.
+
+### US17 - Collaborate With Explicit Roles (P3)
+
+As an owner or organization member, I want to grant owner/editor/viewer access to
+a coding conversation while retaining explicit authority over approvals,
+terminals, files, and source-control mutations.
+
+**Independent Test**: Invite an editor and viewer, verify editor policy and
+viewer read-only behavior, revoke both, and audit every grant/decision/revoke.
+
 ## Functional Requirements
 
 ### Runtime And Contracts
@@ -209,6 +304,8 @@ As a current mobile user, I want chat, terminal, apps, canvas entry, settings, p
 - **FR-005**: The gateway MUST expose a single runtime summary endpoint that desktop and mobile can use to hydrate: active runtime, available agents, projects, active threads, terminal sessions, recent activity, and feature availability.
 - **FR-006**: Runtime hydration MUST include real bounded project summaries. A project workspace read model MUST expose canonical task summaries plus project-level and task-bound thread summaries with independent cursors/caps.
 - **FR-007**: Project/task/thread relations MUST be validated server-side. A task-bound thread's `projectId` MUST equal the canonical task's project, and inaccessible or stale references MUST fail with safe errors.
+- **FR-008**: Platform MUST expose one bounded owner-scoped computer inventory contract to verified Clerk and native/sync principals. Runtime slot, route path, availability, capabilities, and any selected slot MUST be server-derived; machine IDs, IPs, credentials, private hosts, and operator data MUST be absent.
+- **FR-009**: Preview platform and computer resources MUST use isolated preview database, JWT, edge, provisioning, provider, object, TTL, reaper, and teardown authority that fails closed without preview credentials and never mutates a primary runtime. Existing native app HTTP/WebSocket streaming MUST remain compatible.
 
 ### Agent Providers
 
@@ -285,6 +382,60 @@ As a current mobile user, I want chat, terminal, apps, canvas entry, settings, p
 - **FR-082**: Desktop local logs MUST be rotated and size-capped.
 - **FR-083**: Mobile debug logs MUST remain bounded and not persist sensitive content.
 
+### Complete Conversation History And Lifecycle
+
+- **FR-090**: The runtime MUST persist provider-neutral transcript entries with a monotonic sequence scoped to one conversation and expose bounded latest, backward, and forward pages with explicit replay/compaction gaps.
+- **FR-091**: Transcript entries MUST distinguish user, assistant, reasoning-summary, tool, approval/input, lifecycle, file/review, child-run, terminal-reference, safe-error, and completion records without exposing provider resume identity.
+- **FR-092**: Conversation rename, archive, unarchive, fork-at-turn, abort, provider-session discovery, and provider-session import MUST be authenticated, owner-scoped, validated, bounded, and idempotent where retryable.
+- **FR-093**: Provider-session discovery MUST return only safe display metadata and an expiring opaque import token; raw provider paths, credentials, logs, and resume IDs MUST remain server-side.
+- **FR-094**: Complete transcript history MUST survive gateway restart and MUST NOT depend on a client remaining connected.
+
+### Queue, Steering, And Execution
+
+- **FR-100**: Pending messages MUST be durable server-owned records with stable order, optimistic revision, edit/reorder/remove operations, and atomic single-delivery claims.
+- **FR-101**: Queueing MUST be explicit. A normal turn submitted to a busy conversation MUST continue to return a safe conflict rather than silently queueing.
+- **FR-102**: Steering and interruption MUST be separate idempotent mutations against one active turn and MUST be enabled only when the selected provider advertises support.
+- **FR-103**: The runtime MUST persist parent/child execution runs as a bounded acyclic graph with depth, child-count, concurrency, and event-rate limits.
+- **FR-104**: Child execution/provider identities remain server-only; shells receive safe roles, labels, status, attention, timing, and bounded usage/tool summaries.
+
+### Provider Controls And Reusable Assets
+
+- **FR-110**: Provider adapters MUST advertise validated models, modes, reasoning levels, approval/sandbox policies, steering/fork/handoff support, and safe usage summaries through normalized contracts.
+- **FR-111**: Owner-scoped runtime profiles MUST reference provider configuration and write-only secrets without returning secret values to any renderer or mobile client.
+- **FR-112**: Conversations MAY reference reusable prompt, skill, and MCP configuration assets by validated owner-scoped IDs; clients MUST NOT expand or persist secret-bearing effective configuration.
+- **FR-113**: Every provider, source-control host, object-store, preview, and platform call MUST accept cancellation and enforce a bounded timeout.
+
+### Terminals, Repository, Review, And Attachments
+
+- **FR-120**: A project, task, conversation, or execution run MUST support several role-labelled bindings to canonical Matrix terminal sessions without storing terminal output in coding-agent persistence.
+- **FR-121**: Terminal bind/unbind mutations MUST validate ownership and relation integrity, be idempotent, and publish a bounded projection refresh after persistence.
+- **FR-122**: Repository status MUST expose bounded branch/upstream/head and staged/unstaged/untracked/conflict metadata for validated owner worktrees.
+- **FR-123**: Source-control operations MUST support bounded commit, branch, stash, pull, push, worktree, and pull-request workflows with transactional or compensating behavior documented per operation.
+- **FR-124**: Review comments MUST use structured file/hunk references, optimistic revisions, explicit resolution state, and owner/shared authorization.
+- **FR-125**: Attachments MUST use server-owned bounded metadata/object references with MIME, size, count, quota, ownership, expiry, and cleanup enforcement.
+
+### Attention, Handoff, And Collaboration
+
+- **FR-130**: The runtime MUST persist an owner-scoped paged attention inbox for approvals, input, failures, completions, review-ready, unread, and handoff records with dedupe and explicit open/acknowledged/resolved/expired state.
+- **FR-131**: Notification routing MUST reference one validated attention/conversation target and MUST coalesce duplicates without losing the durable inbox record.
+- **FR-132**: Cross-computer conversation handoff MUST validate destination project/worktree/provider/policy compatibility and use an idempotent transactional state machine that preserves or safely detaches the source on failure.
+- **FR-133**: Collaboration MUST use explicit owner/editor/viewer grants aligned with Matrix owner/org/shared authorization; provider credentials and owner-only setup permissions never transfer to participants.
+- **FR-134**: Participant grants, revocations, approval decisions, terminal/file/source-control mutations, and runtime handoffs MUST emit owner-visible audit events.
+- **FR-135**: Every new list, transcript window, queue, graph, attachment set, terminal binding set, subscriber registry, cache, and in-memory index MUST have a tested cap plus cleanup/eviction policy.
+- **FR-136**: Complete coding-workspace durable state MUST use existing owner-controlled Postgres/Kysely; the bounded legacy owner file is an import/export compatibility projection, not the V2 source of truth.
+- **FR-137**: Every durable coding-workspace record MUST carry explicit personal, org, or shared scope and scope ID. Authorization, retention, export, deletion, collaboration, and audit MUST preserve strict scope separation.
+- **FR-138**: Owners and authorized org administrators MUST be able to export and delete coding-workspace records through the canonical Matrix export/delete lifecycle. Normal reads exclude soft-deleted records; cleanup removes attachment objects and derived indexes under bounded retry/audit policy.
+
+### Memory, Automation, Policy, And Recovery
+
+- **FR-140**: Coding-conversation memory search MUST use owner Postgres, return bounded authorized result anchors, preserve personal/org/shared scope, and enforce explicit backfill, retention, and derived-index cleanup state.
+- **FR-141**: Coding automations MUST reuse the canonical Matrix scheduler and normal thread operations. Durable automation runs MUST use leases, idempotency, bounded retries, history, and explicit thread/project scope so duplicate workers cannot deliver a turn twice.
+- **FR-142**: An existing Matrix voice session MAY bind to one validated coding conversation and invoke only the same turn, queue, approval, and attention actions allowed to its verified principal; voice MUST NOT bypass provider, file, terminal, or source-control policy.
+- **FR-143**: One server-owned feature catalog and effective-policy projection MUST govern provider controls, collaboration, automations, retention, and shell capability visibility. Disabled or unsupported behavior MUST fail closed with a generic recovery-oriented state.
+- **FR-144**: Verified org roles and offboarding state MUST come from the existing identity provider and centralized authorization policy; the coding workspace MUST NOT implement a second identity federation or credential system.
+- **FR-145**: Gateway startup MUST reconcile bounded durable checkpoints for active turns, queue claims, execution runs, handoffs, terminal bindings, and attention so crash recovery does not duplicate work or silently discard recoverable state.
+- **FR-146**: Coding-workspace diagnostics and bug reports MUST be explicit-consent, bounded, redacted projections through the canonical Matrix support path and MUST exclude transcript text, terminal output, file contents, credentials, private hosts, and raw provider errors.
+
 ## Key Entities
 
 ### RuntimeTarget
@@ -297,7 +448,7 @@ A configured coding-agent provider available on the Matrix computer. Includes di
 
 ### AgentThread
 
-A single resumable coding conversation. Belongs to owner/runtime and one project, may be bound to one task/worktree/terminal session, has a server-owned provider resume identity, status, transcript cursor, event cursor, attention state, and lifecycle timestamps. It contains many turns but never more than one active normal provider turn.
+A single resumable coding conversation. Belongs to one explicit personal/org/shared scope, runtime, and project; may be bound to one task/worktree and several canonical terminal sessions; has a server-owned provider resume identity, status, transcript cursor, event cursor, attention state, and lifecycle timestamps. It contains many turns but never more than one active normal provider turn.
 
 ### AgentTurn
 
@@ -339,6 +490,41 @@ Owner-scoped preview target for app/runtime/dev server with origin policy, statu
 
 Local client UI state for last selected runtime/project/thread/session/screen. It is advisory only and reconciled against runtime state on every load.
 
+### TranscriptEntry
+
+Durable provider-neutral display record with one monotonic conversation sequence,
+turn/run correlation, structured bounded content, and truncation/gap metadata.
+
+### PendingMessage
+
+Server-owned queued message with stable position, optimistic revision,
+idempotency key, attachment references, and single-delivery lifecycle.
+
+### ExecutionRun
+
+Bounded parent/child execution node for one turn, delegated run, plan, or review.
+The client-visible record excludes provider execution identity.
+
+### RuntimeBinding
+
+Audited state machine linking one conversation to its active Matrix computer and
+validated project/worktree/provider compatibility context.
+
+### TerminalBinding
+
+Role-labelled reference between a project/task/thread/run and an existing
+canonical Matrix terminal session. It contains no terminal output.
+
+### AttentionItem
+
+Durable owner-scoped approval/input/failure/completion/review/unread/handoff item
+with dedupe, acknowledgement, resolution, expiry, and safe routing metadata.
+
+### ConversationParticipant
+
+Explicit owner/editor/viewer grant aligned with Matrix owner/org/shared access.
+Participant access never transfers provider credentials.
+
 ## Security Architecture
 
 ### Auth Matrix
@@ -354,6 +540,9 @@ Local client UI state for last selected runtime/project/thread/session/screen. I
 | Provider setup | Install/auth/check provider | Authenticated owner, explicit user action | No | Runs on Matrix computer, foreground when interactive. |
 | App embeds/previews | Open app/shell/preview | Short-lived owner-scoped launch handoff | No | Origin allowlist and isolated session partitions. |
 | Notifications/deep links | Focus target thread/task/session | Local validated payload + existing signed-in state | No | Deep link only selects UI target, never authenticates. |
+| Transcript/queue/run routes | Read history or mutate pending/active work | Authenticated owner or authorized participant role | No | Every page is capped; every mutation has body limit and idempotency. |
+| Runtime handoff | Move one resumable conversation | Authenticated owner plus destination runtime authorization | No | Compatibility and source/destination state verified server-side. |
+| Collaboration | Grant/revoke conversation roles | Owner or org-authorized admin | No | Audit event required; viewer remains read-only. |
 
 ### Validation Rules
 
@@ -417,6 +606,17 @@ Local client UI state for last selected runtime/project/thread/session/screen. I
 - **SC-012**: Desktop and mobile can switch between Conversation and Kanban views without duplicating records or losing the selected project/task/thread.
 - **SC-013**: Sending two sequential messages to one thread produces one thread with two user turns and one stable provider conversation identity; duplicate retries do not create an extra turn.
 - **SC-014**: The runtime summary returns real project data when projects exist; no final shell may ship with a permanently empty project adapter.
+- **SC-015**: A conversation with 1,000 transcript entries can reopen after gateway restart, page to its first message, and resume live streaming with zero duplicate sequence numbers.
+- **SC-016**: Three pending messages can be edited, reordered, removed, and delivered exactly once in authoritative server order after an active turn completes.
+- **SC-017**: One parent execution with at least two child runs renders the same graph and attention state on desktop and mobile after reconnect.
+- **SC-018**: One conversation can expose at least two role-labelled canonical terminal sessions to both shells without duplicating terminal process state.
+- **SC-019**: A desktop-created attachment, file edit, review comment, commit, and pull-request result can be inspected safely from mobile against the same preview computer.
+- **SC-020**: Acknowledging an approval/failure/completion item in one shell updates the other shell once and does not suppress unrelated attention.
+- **SC-021**: Conversation handoff succeeds between compatible computers and preserves the source binding on destination preflight/start failure.
+- **SC-022**: Owner/editor/viewer tests prove viewer read-only behavior and no participant receives provider or platform credentials.
+- **SC-023**: The exact backend top deploys to a disposable preview computer and passes real-provider transcript, queue, approval, child-run, terminal, repository, review, preview, reconnect, restart, and rollback smoke before shell release approval.
+- **SC-024**: Desktop and physical mobile authenticate to one non-promoted candidate, list and select the same disposable computer through the canonical contract, launch native app streaming, and observe route denial plus complete resource teardown after preview removal.
+- **SC-025**: Personal/org/shared export-delete tests prove complete portable output, strict scope separation, exclusion after delete, attachment/index cleanup, and auditable bounded retries.
 
 ## Rollout Strategy
 
@@ -429,5 +629,10 @@ Local client UI state for last selected runtime/project/thread/session/screen. I
 7. Expand provider setup, health, and cross-shell notifications.
 8. Replace the checkpoint dashboard with project-first Conversation/Kanban views only after the product-model confirmation gate.
 9. Enable same-thread follow-up turns and multi-thread task projections behind additive capabilities before removing compatibility paths.
+10. Migrate durable coding-workspace state from the bounded owner-file projection to owner Postgres through an idempotent reviewed cutover.
+11. Enable paged transcript and lifecycle capabilities before shell transcript redesigns consume them.
+12. Enable queue/steering, execution graphs, attention, terminal/repository bindings, and attachments in separate backend stack layers.
+13. Enable runtime handoff and collaboration only after owner/org authorization and audit evidence pass.
+14. Deploy the backend top to a disposable preview computer and require both native shells to test against the same exact runtime bundle.
 
 Every phase must preserve current desktop and mobile behavior and include compatibility checks before replacing existing surfaces.

@@ -31,6 +31,13 @@ This audit records current evidence through the desktop operator palette smoke a
 | One canonical task supports several independently selectable coding threads | The gateway project workspace projects several threads per task, separates project chats, validates new shell-created relations, supports one-time idempotent adoption of legacy unassigned threads, and publishes post-persistence projection events; desktop/mobile navigation remains incomplete and legacy task UI still has a singular session link | **Incomplete** |
 | Desktop project/task/thread navigator with Conversation and Kanban modes | Current `AgentWorkspace.tsx` is a sectioned dashboard and existing Board is a separate surface | **Incomplete** |
 | Mobile project-first task/thread navigation with Conversation and Kanban modes | Current `/agents` stack has recent work/thread detail but no project Kanban hierarchy | **Incomplete** |
+| Complete durable transcript pagination and provider-session discovery/import | Current snapshots/replay expose bounded event windows; no stable backward/forward transcript store or safe discovery/import contract exists | **Not implemented** |
+| Explicit pending queue, steering/interrupt, and parent/child execution graph | Busy conflicts and abort exist, but queue editing/order, normalized steering, and durable child-run projections do not | **Not implemented** |
+| Several role-labelled canonical terminals per project/task/thread/run | Canonical terminal handoff exists, but the coding workspace has no many-binding relation or bind/unbind lifecycle | **Not implemented** |
+| Complete repository, review-comment, and attachment backend | Bounded files/diffs/commit/PR foundations exist; repository status/full Git operations, durable comments, and attachment objects remain incomplete | **Incomplete** |
+| Durable attention inbox, runtime handoff, and collaboration roles | Safe notifications/attention summaries exist; paged acknowledgement, handoff saga, and owner/editor/viewer access do not | **Not implemented** |
+| Canonical shared computer inventory and isolated end-to-end preview authority | Desktop/mobile candidate branches use incompatible inventory contracts; current preview platform/VPS lanes do not share isolated credentials, database, routing authority, and teardown lifecycle | **Not implemented** |
+| Owner export/delete and personal/org/shared separation for complete workspace state | Current bounded personal thread projection has no V2 export/delete adapter or collaboration scope model | **Not implemented** |
 
 The named evidence required to close these rows is in `acceptance-tests.md`. Existing checkpoint tests are regression evidence only and cannot be reused as proof of the clarified behavior unless they are extended to exercise the named fixture/cardinality.
 
@@ -38,11 +45,17 @@ The named evidence required to close these rows is in `acceptance-tests.md`. Exi
 
 The 2026-07-10 clarification package was checked before implementation:
 
-- All 58 acceptance-test IDs in `acceptance-tests.md` are referenced by the active Phase 18-23 checklist, with no missing or orphan IDs.
+- All 58 original Phase 18-23 acceptance-test IDs are referenced by that checkpoint checklist. The expanded acceptance catalog and its planned coverage are tracked separately in `full-workspace-coverage.md`.
 - Every clarified functional requirement and buildable success criterion (`FR-006`, `FR-007`, `FR-020`, `FR-026` through `FR-029`, `FR-062`, `FR-066`, `FR-067`, `FR-070`, `FR-075` through `FR-077`, and `SC-011` through `SC-014`) appears in the acceptance requirement-coverage matrix.
 - Relative Markdown links in the spec package resolve.
 - The project/task/thread cardinality, same-thread turn behavior, canonical task-status rule, and Conversation/Kanban terminology agree across `SPEC.md`, `ARCHITECTURE.md`, `plan.md`, `tasks.md`, and `acceptance-tests.md`.
 - Gate 0 passed on 2026-07-10 after explicit product-owner confirmation. These checks prove specification alignment only; implementation evidence remains tracked separately below.
+
+The proposed Full Workspace expansion is not covered by that earlier Gate 0.
+Its requirement/task/test mapping is in `full-workspace-coverage.md` and remains
+planned until product-owner Gate B0 confirmation. No existing checkpoint, open
+shell PR, or preview environment closes a V2 row without the named current-head
+evidence.
 
 ## Validation Evidence
 
