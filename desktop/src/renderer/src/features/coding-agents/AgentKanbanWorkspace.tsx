@@ -53,7 +53,14 @@ export function AgentKanbanWorkspace({
     try {
       await moveBoardTask(api, projectId, taskId, nextStatus, order);
       if (useCodingAgentProjectWorkspace.getState().selectedProjectId === projectId) {
-        await refreshWorkspace();
+        try {
+          await refreshWorkspace();
+        } catch (err: unknown) {
+          const failureKind = err instanceof Error ? err.name : typeof err;
+          console.warn(
+            `[coding-agents] project workspace refresh failed after task move (${failureKind})`,
+          );
+        }
       }
     } finally {
       setMovingTaskId((current) => (current === taskId ? null : current));

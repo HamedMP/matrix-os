@@ -1,13 +1,18 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
 import {
   AgentKanbanBoard,
   AgentWorkspaceViewSwitch,
 } from "../../desktop/src/renderer/src/features/coding-agents/AgentKanbanBoard";
+import { AgentKanbanWorkspace } from "../../desktop/src/renderer/src/features/coding-agents/AgentKanbanWorkspace";
+import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
+import { useBoard } from "../../desktop/src/renderer/src/stores/board";
+import { useCodingAgentProjectWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-project-workspace";
+import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 
 const NOW = "2026-07-10T12:00:00.000Z";
 
@@ -129,24 +134,26 @@ describe("AgentKanbanBoard", () => {
   });
 
   it("opens either attached chat and moves only through the explicit canonical task action", () => {
+    const onSelectTask = vi.fn();
     const onOpenThread = vi.fn();
     const onMoveTask = vi.fn();
     render(
       <AgentKanbanBoard
         workspace={workspace()}
         providers={providers}
-        selectedTaskId="task_auth"
+        selectedTaskId="task_release"
         selectedThreadId="thread_one"
         canMoveTasks
         movingTaskId={null}
         mutationError={null}
-        onSelectTask={vi.fn()}
+        onSelectTask={onSelectTask}
         onOpenThread={onOpenThread}
         onMoveTask={onMoveTask}
       />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Open chat Add regression coverage" }));
+    expect(onSelectTask).toHaveBeenCalledWith("task_auth");
     expect(onOpenThread).toHaveBeenCalledWith("thread_two");
 
     fireEvent.change(screen.getByLabelText("Move Desktop auth"), {
@@ -193,6 +200,67 @@ describe("AgentKanbanBoard", () => {
     );
 
     expect(onMoveTask).not.toHaveBeenCalled();
+  });
+});
+
+describe("AgentKanbanWorkspace", () => {
+  afterEach(() => {
+    cleanup();
+    useBoard.setState(useBoard.getInitialState(), true);
+    useCodingAgentProjectWorkspace.setState(
+      useCodingAgentProjectWorkspace.getInitialState(),
+      true,
+    );
+    useConnection.setState(useConnection.getInitialState(), true);
+    vi.restoreAllMocks();
+  });
+
+  it("contains projection refresh failures after a successful canonical task move", async () => {
+    const refresh = vi.fn().mockRejectedValue(new Error("private upstream detail"));
+    const moveTask = vi.fn().mockResolvedValue(undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    useConnection.setState({ api: {} as ApiClient });
+    useCodingAgentProjectWorkspace.setState({
+      workspace: workspace(),
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_auth",
+      selectedThreadId: "thread_one",
+      refresh,
+    });
+    useBoard.setState({
+      cardsByProject: {
+        "matrix-os": workspace().tasks.items.map((task) => ({
+          id: task.id,
+          projectSlug: task.projectId,
+          title: task.title,
+          description: "",
+          status: task.status,
+          priority: task.priority,
+          order: task.order,
+          parentTaskId: null,
+          linkedSessionId: null,
+          linkedWorktreeId: null,
+          previewIds: [],
+          tags: [],
+          updatedAt: null,
+          revision: null,
+        })),
+      },
+      selectProject: vi.fn().mockResolvedValue(undefined),
+      moveTask,
+      error: null,
+    });
+
+    render(<AgentKanbanWorkspace providers={providers} />);
+    fireEvent.change(screen.getByLabelText("Move Desktop auth"), {
+      target: { value: "blocked" },
+    });
+
+    await waitFor(() => expect(moveTask).toHaveBeenCalled());
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    await waitFor(() => expect(warn).toHaveBeenCalledWith(
+      "[coding-agents] project workspace refresh failed after task move (Error)",
+    ));
   });
 });
 

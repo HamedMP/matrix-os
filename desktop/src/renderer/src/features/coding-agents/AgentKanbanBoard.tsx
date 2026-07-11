@@ -148,7 +148,10 @@ function TaskCard({
               thread={thread}
               providers={providers}
               selected={thread.id === selectedThreadId}
-              onOpen={() => onOpenThread(thread.id)}
+              onOpen={() => {
+                onSelectTask(task.id);
+                onOpenThread(thread.id);
+              }}
             />
           ))}
         </div>
