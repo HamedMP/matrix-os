@@ -1,6 +1,6 @@
 # Acceptance Tests: Project Conversations And Kanban
 
-**Status**: Phase 18-20 backend evidence and Phase 21.1-21.3 desktop navigator/conversation/Kanban evidence added; mobile and cross-shell evidence remains planned
+**Status**: Phase 18-20 backend evidence and Phase 21 desktop navigator/conversation/Kanban/computer/inspector evidence added; mobile and cross-shell evidence remains planned
 **Updated**: 2026-07-10
 
 This matrix is the executable acceptance contract for the clarified coding-agent shell model. A task checkbox in `tasks.md` is complete only when its named test IDs have current evidence on the exact implementation head. Existing checkpoint tests remain required regressions but do not prove these new cases.
@@ -26,7 +26,7 @@ Tests must also cover another owner to prove isolation.
 | `FR-010` through `FR-016`, `FR-110` through `FR-113`, `SC-003`, `SC-023`, `SC-026` | `CT-104`; `GW-103`, `GW-105`, `GW-112`, `GW-118`; `E2E-104` |
 | `FR-006`, `FR-007`, `FR-028`, `SC-011`, `SC-014` | `CT-001` through `CT-004`; `GW-001` through `GW-011`; `E2E-002` |
 | `FR-020`, `FR-026`, `FR-027`, `FR-029`, `SC-003`, `SC-013` | `CT-005` through `CT-007`; `GW-012` through `GW-018`; `E2E-001`, `E2E-003` |
-| `FR-062`, `FR-066`, `FR-067`, `SC-011`, `SC-012` | `DT-001` through `DT-011`; `E2E-002`, `E2E-004`, `E2E-005` |
+| `FR-062`, `FR-066`, `FR-067`, `SC-011`, `SC-012` | `DT-001` through `DT-012`; `E2E-002`, `E2E-004`, `E2E-005` |
 | `FR-070`, `FR-075`, `FR-076`, `FR-077`, `SC-002`, `SC-011`, `SC-012` | `MB-001` through `MB-010`; `E2E-002` through `E2E-004` |
 | `FR-002`, `FR-004`, `FR-061`, `FR-072`, `FR-075`, `FR-080` through `FR-083`, `SC-009`, `SC-010` | `SEC-001` through `SEC-006`; all layer-specific failure tests |
 | Existing terminal/review/preview/approval/notification and preservation requirements | `E2E-006` plus the existing regression suites inventoried in `current-state.md` |
@@ -84,6 +84,7 @@ Every clarified functional requirement and buildable success criterion has at le
 | DT-009 | Kanban uses canonical task columns/order and task mutation path. | The integrated `AgentWorkspace` test joins the project projection to the existing board store and asserts the canonical `/api/projects/:slug/tasks/:taskId` PATCH; `tests/desktop/board-store.test.ts` remains the mutation source-of-truth coverage. |
 | DT-010 | Task card shows bounded count/active/attention aggregates and opens either attached thread. | `tests/desktop/coding-agent-kanban.test.tsx` renders both task chats and all three bounded aggregate types. |
 | DT-011 | Thread status updates badges but never dispatch task movement. | `tests/desktop/coding-agent-kanban.test.tsx` rerenders mixed thread state and proves no task movement callback occurs. |
+| DT-012 | Contextual files/diff/git, terminal, preview, and activity tools render as one accessible responsive inspector without changing their source of truth. | `tests/desktop/coding-agent-context-inspector.test.tsx` proves tab selection/counts/keyboard behavior; `tests/desktop/coding-agent-workspace.test.tsx` proves the existing trusted IPC actions after explicit surface selection. |
 
 ## Mobile Tests
 
@@ -252,6 +253,23 @@ summaries, rotates the selected runtime credential inside Electron main,
 persists a bounded slot, rejects invalid or cross-owner selection, rehydrates
 after `runtime:changed`, and contains raw platform or filesystem failures behind
 generic desktop copy.
+
+Current contextual conversation-inspector evidence:
+
+- `pnpm exec vitest run tests/desktop/coding-agent-context-inspector.test.tsx tests/desktop/coding-agent-workspace.test.tsx`
+- `pnpm exec vitest run tests/desktop --reporter=dot` (98 files, 906 tests)
+- `pnpm --dir desktop typecheck`
+- `bun run typecheck`
+- `bun run check:patterns` (zero violations; repository baseline warnings only)
+- `bun run build:desktop`
+- `pnpm exec vitest run tests/e2e/desktop/operator.e2e.test.ts` (7 tests)
+- Built-app screenshots: `desktop/screenshots/04d-agents-changes-inspector.png`
+  and `desktop/screenshots/04e-agents-changes-inspector-narrow.png`
+
+These checks prove `DT-012`: Changes, Terminal, Preview, and Activity expose one
+bounded surface at a time, publish live counts from the current runtime summary,
+support complete keyboard tab navigation, retain the new-chat controls, and
+preserve the existing trusted file/review/source-control/terminal/preview paths.
 
 Gateway/contract PRs additionally run the exact focused Vitest files named in their PR body. Desktop UI PRs run the operator E2E and screenshot checks. Mobile UI PRs run the SDK 57 dev-client device smoke before their rollout gate. `vp` commands may be reported unavailable, but they are not silently substituted for repository commands.
 

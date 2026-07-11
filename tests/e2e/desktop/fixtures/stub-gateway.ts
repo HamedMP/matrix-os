@@ -269,6 +269,10 @@ export function codingAgentSummary(): RuntimeSummary {
       { id: "codingAgentsKanbanView", enabled: true },
       { id: "codingAgentsSameThreadTurns", enabled: true },
       { id: "codingAgentsThreadCreate", enabled: true },
+      { id: "codingAgentsReview", enabled: true },
+      { id: "codingAgentsFiles", enabled: true },
+      { id: "codingAgentsSourceControl", enabled: true },
+      { id: "codingAgentsPreview", enabled: true },
       { id: "codingAgentsNativeMobileTerminal", enabled: true },
     ],
     providers: [
@@ -324,7 +328,13 @@ export function codingAgentSummary(): RuntimeSummary {
       limit: 50,
     },
     previewSessions: {
-      items: [],
+      items: [{
+        id: "preview-operator-1",
+        label: "Matrix OS web",
+        status: "running",
+        origin: "https://preview.matrix-os.test",
+        updatedAt: NOW,
+      }],
       hasMore: false,
       limit: 50,
     },
@@ -545,7 +555,74 @@ export async function startStubGateway(): Promise<StubGateway> {
       return;
     }
     if (req.method === "GET" && path === "/api/coding-agents/reviews") {
-      json(res, 200, { items: [], hasMore: false, limit: 50 });
+      json(res, 200, {
+        items: [{
+          id: "rev_operator_1",
+          projectId: "matrix-os",
+          worktreeId: "wt_abcdef123456",
+          status: "reviewing",
+          pullRequestNumber: 917,
+          round: 2,
+          maxRounds: 3,
+          reviewer: "matrix-reviewer",
+          implementer: "matrix-implementer",
+          findings: { total: 2, high: 0, medium: 1, low: 1 },
+          updatedAt: NOW,
+        }],
+        hasMore: false,
+        limit: 50,
+      });
+      return;
+    }
+    if (req.method === "GET" && path === "/api/coding-agents/reviews/rev_operator_1") {
+      json(res, 200, {
+        review: {
+          id: "rev_operator_1",
+          projectId: "matrix-os",
+          worktreeId: "wt_abcdef123456",
+          status: "reviewing",
+          pullRequestNumber: 917,
+          round: 2,
+          maxRounds: 3,
+          reviewer: "matrix-reviewer",
+          implementer: "matrix-implementer",
+          findings: { total: 2, high: 0, medium: 1, low: 1 },
+          updatedAt: NOW,
+        },
+        files: {
+          items: [{
+            path: "desktop/src/renderer/src/features/coding-agents/AgentWorkspace.tsx",
+            status: "modified",
+            additions: 48,
+            deletions: 22,
+            partial: false,
+            hunks: [{
+              id: "hunk_operator_1",
+              oldStart: 1548,
+              oldLines: 3,
+              newStart: 1548,
+              newLines: 5,
+              heading: "Contextual inspector",
+              partial: false,
+              lines: [
+                { kind: "context", oldLine: 1548, newLine: 1548, content: "<aside aria-label=\"Conversation tools\">" },
+                { kind: "remove", oldLine: 1549, content: "<AgentWorkspaceStack>" },
+                { kind: "add", newLine: 1549, content: "<AgentConversationInspector" },
+              ],
+            }],
+            findings: [{
+              id: "MEDIUM-1",
+              severity: "medium",
+              line: 1549,
+              summary: "Keep contextual tools keyboard accessible.",
+            }],
+          }],
+          hasMore: false,
+          limit: 100,
+        },
+        partial: false,
+        updatedAt: NOW,
+      });
       return;
     }
     if (req.method === "POST" && path === "/api/coding-agents/threads") {
