@@ -123,6 +123,14 @@ describe("Matrix computer contracts", () => {
       versionLabel: "matrix-os-host-2026.04.26-1",
     });
     expect(computer.versionLabel).toBe("v2026.04.26");
+
+    for (const channel of ["stable", "dev", "canary", "beta"] as const) {
+      const channelComputer = MatrixComputerSchema.parse({
+        ...mainComputer,
+        versionLabel: `matrix-os-host-${channel}`,
+      });
+      expect(channelComputer.versionLabel).toBe(channel);
+    }
   });
 
   it("rejects mismatched routes, unsafe fields, client selection, and unbounded lists", () => {

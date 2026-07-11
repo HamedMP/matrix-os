@@ -101,6 +101,8 @@ export const MatrixComputerKindSchema = z.enum(["customer", "preview"]);
 export const MatrixComputerLabelSchema = z.enum(["Main Computer", "Preview Computer", "Additional Computer"]);
 export const MatrixComputerVersionLabelSchema = z.preprocess((value) => {
   if (typeof value !== "string" || value.length > 128) return value;
+  const legacyChannel = value.match(/^matrix-os-host-(stable|dev|canary|beta)$/)?.[1];
+  if (legacyChannel) return legacyChannel;
   const legacyRelease = value.match(/^matrix-os-host-(\d{4}\.\d{2}\.\d{2})(?:$|-)/)?.[1];
   return legacyRelease ? `v${legacyRelease}` : value;
 }, z.union([
