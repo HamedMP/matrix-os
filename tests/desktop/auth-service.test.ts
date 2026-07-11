@@ -31,6 +31,7 @@ function makeService(opts: {
   const auth = new AuthService({
     credentialStore: store,
     platformHost: "https://app.matrix-os.com",
+    runtimeSelectionOrigin: "https://api.matrix-os.com",
     ...(opts.fetchFn ? { fetchFn: opts.fetchFn } : {}),
     now: () => (typeof opts.now === "function" ? opts.now() : opts.now),
     loadProfile: async () => profile,
@@ -170,6 +171,89 @@ describe("AuthService token expiry", () => {
   });
 });
 
+describe("AuthService runtime selection", () => {
+  it("exchanges and persists a slot-bound credential before changing runtime", async () => {
+    const replacementToken = "r".repeat(64);
+    const fetchFn = vi.fn(async () => jsonResponse({
+      accessToken: replacementToken,
+      expiresAt: 1_800_000_000_000,
+      handle: "neo-review",
+      slot: "review",
+    }));
+    const { auth, getProfile, peekCredential } = makeService({
+      credential: VALID,
+      profile: PROFILE,
+      now: 10_000,
+      fetchFn,
+    });
+    await auth.init();
+
+    await auth.selectRuntime("review");
+
+    expect(fetchFn).toHaveBeenCalledOnce();
+    const [url, init] = fetchFn.mock.calls[0]!;
+    expect(url).toBe("https://api.matrix-os.com/api/auth/runtime-selection");
+    expect(init).toMatchObject({
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${VALID.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ slot: "review" }),
+    });
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+    expect(peekCredential()).toEqual({
+      accessToken: replacementToken,
+      expiresAt: 1_800_000_000_000,
+      userId: "user-1",
+      handle: "neo-review",
+    });
+    expect(getProfile()).toEqual({
+      ...PROFILE,
+      handle: "neo-review",
+      runtimeSlot: "review",
+    });
+    expect(auth.getStatus()).toMatchObject({
+      signedIn: true,
+      handle: "neo-review",
+      runtimeSlot: "review",
+    });
+  });
+
+  it("keeps the current credential and profile when the exchange fails", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ error: "private upstream detail" }, 503));
+    const { auth, getProfile, peekCredential } = makeService({
+      credential: VALID,
+      profile: PROFILE,
+      now: 10_000,
+      fetchFn,
+    });
+    await auth.init();
+
+    await expect(auth.selectRuntime("review")).rejects.toThrow("Computer switch failed. Try again.");
+
+    expect(peekCredential()).toEqual(VALID);
+    expect(getProfile()).toEqual(PROFILE);
+    expect(auth.getStatus().runtimeSlot).toBe("primary");
+  });
+
+  it("rejects oversized exchange responses without replacing trusted state", async () => {
+    const fetchFn = vi.fn(async () => new Response("x".repeat(16 * 1024 + 1), { status: 200 }));
+    const { auth, getProfile, peekCredential } = makeService({
+      credential: VALID,
+      profile: PROFILE,
+      now: 10_000,
+      fetchFn,
+    });
+    await auth.init();
+
+    await expect(auth.selectRuntime("review")).rejects.toThrow("Computer switch failed. Try again.");
+
+    expect(peekCredential()).toEqual(VALID);
+    expect(getProfile()).toEqual(PROFILE);
+  });
+});
+
 describe("AuthService device flow", () => {
   it("reuses a pending device flow instead of launching parallel poll loops", async () => {
     let codeRequests = 0;
@@ -277,6 +361,7 @@ describe("AuthService device flow", () => {
     const auth = new AuthService({
       credentialStore,
       platformHost: "https://app.matrix-os.com",
+      runtimeSelectionOrigin: "https://api.matrix-os.com",
       fetchFn,
       now: () => 10_000,
       loadProfile: async () => profile,

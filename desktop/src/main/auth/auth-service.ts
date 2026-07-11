@@ -1,3 +1,7 @@
+import {
+  RuntimeSelectionRequestSchema,
+  RuntimeSelectionResponseSchema,
+} from "@matrix-os/contracts";
 // Trusted-core auth orchestration: owns the device flow, the credential, and
 // the connection profile. The renderer only ever sees status snapshots.
 import type { CredentialStore, StoredCredential } from "./credential-store";
@@ -37,10 +41,37 @@ type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 // Re-authenticate slightly before the token's real expiry so an in-flight
 // request doesn't race the cutoff.
 const EXPIRY_SKEW_MS = 30_000;
+const RUNTIME_SELECTION_TIMEOUT_MS = 10_000;
+const RUNTIME_SELECTION_RESPONSE_LIMIT = 16 * 1024;
+const RUNTIME_SELECTION_ERROR = "Computer switch failed. Try again.";
+
+async function readBoundedResponseText(response: Response): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let totalBytes = 0;
+  let text = "";
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      totalBytes += chunk.value.byteLength;
+      if (totalBytes > RUNTIME_SELECTION_RESPONSE_LIMIT) {
+        await reader.cancel();
+        throw new Error("runtime selection response too large");
+      }
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+    return text + decoder.decode();
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 interface AuthServiceDeps {
   credentialStore: CredentialStore;
   platformHost: string;
+  runtimeSelectionOrigin: string;
   fetchFn?: FetchFn;
   now?: () => number;
   loadProfile: () => Promise<ConnectionProfile | null>;
@@ -235,9 +266,67 @@ export class AuthService {
   }
 
   async selectRuntime(slot: string): Promise<void> {
-    if (!this.profile) return;
-    this.profile = { ...this.profile, runtimeSlot: slot };
-    await this.deps.saveProfile(this.profile);
+    this.expireCredentialIfNeeded();
+    const currentCredential = this.credential;
+    const currentProfile = this.profile;
+    if (!currentCredential || !currentProfile) {
+      throw new Error(RUNTIME_SELECTION_ERROR);
+    }
+
+    try {
+      const request = RuntimeSelectionRequestSchema.parse({ slot });
+      const endpoint = new URL("/api/auth/runtime-selection", this.deps.runtimeSelectionOrigin);
+      const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
+      const response = await fetchFn(endpoint.toString(), {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${currentCredential.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(request),
+        signal: AbortSignal.timeout(RUNTIME_SELECTION_TIMEOUT_MS),
+      });
+      if (!response.ok) throw new Error("runtime selection rejected");
+      const contentLength = Number(response.headers.get("content-length"));
+      if (Number.isFinite(contentLength) && contentLength > RUNTIME_SELECTION_RESPONSE_LIMIT) {
+        throw new Error("runtime selection response too large");
+      }
+      const text = await readBoundedResponseText(response);
+      const replacement = RuntimeSelectionResponseSchema.parse(JSON.parse(text));
+      if (replacement.slot !== request.slot) throw new Error("runtime selection mismatch");
+
+      const nextCredential: StoredCredential = {
+        accessToken: replacement.accessToken,
+        expiresAt: replacement.expiresAt,
+        userId: currentCredential.userId,
+        handle: replacement.handle,
+      };
+      const nextProfile: ConnectionProfile = {
+        ...currentProfile,
+        handle: replacement.handle,
+        runtimeSlot: replacement.slot,
+      };
+      await this.deps.credentialStore.save(nextCredential);
+      try {
+        await this.deps.saveProfile(nextProfile);
+      } catch (err: unknown) {
+        await this.deps.credentialStore.save(currentCredential).catch((rollbackErr: unknown) => {
+          console.warn(
+            "[auth] failed to restore credential after runtime switch:",
+            rollbackErr instanceof Error ? rollbackErr.name : typeof rollbackErr,
+          );
+        });
+        throw err;
+      }
+      this.credential = nextCredential;
+      this.profile = nextProfile;
+    } catch (err: unknown) {
+      console.warn(
+        "[auth] runtime switch failed:",
+        err instanceof Error ? err.name : typeof err,
+      );
+      throw new Error(RUNTIME_SELECTION_ERROR);
+    }
   }
 
   // The session token expired or the gateway rejected it (401). Drop the
