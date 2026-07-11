@@ -1,12 +1,18 @@
 import { useCallback } from "react";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useGateway } from "@/app/_layout";
 import {
   AgentProjectWorkspaceScreen,
   type AgentConversationIdentity,
 } from "@/components/agents/agent-project-workspace-screen";
+import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 
 export default function ProjectAgentRoute() {
+  if (!CODING_AGENTS_MOBILE_WORKSPACE) return <Redirect href="/agents" />;
+  return <EnabledProjectAgentRoute />;
+}
+
+function EnabledProjectAgentRoute() {
   const params = useLocalSearchParams<{ projectId?: string | string[] }>();
   const router = useRouter();
   const { client, connectionState } = useGateway();

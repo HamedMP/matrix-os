@@ -4,8 +4,20 @@ jest.mock("@/app/_layout", () => ({
 
 const mockRouterPush = jest.fn();
 const mockRouterReplace = jest.fn();
+let mockWorkspaceEnabled = true;
+
+jest.mock("@/lib/feature-flags", () => ({
+  get CODING_AGENTS_MOBILE_WORKSPACE() {
+    return mockWorkspaceEnabled;
+  },
+}));
 
 jest.mock("expo-router", () => ({
+  Redirect: ({ href }: { href: string }) => {
+    const React = require("react") as typeof import("react");
+    const { Text } = require("react-native") as typeof import("react-native");
+    return React.createElement(Text, null, `redirect:${href}`);
+  },
   useLocalSearchParams: () => ({ projectId: "matrix-os" }),
   useRouter: () => ({ push: mockRouterPush, replace: mockRouterReplace }),
 }));
@@ -54,6 +66,7 @@ import { useGateway } from "@/app/_layout";
 describe("project coding-agent Expo route", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockWorkspaceEnabled = true;
     jest.mocked(useGateway).mockReturnValue({
       client: {} as never,
       connectionState: "connected",
@@ -90,5 +103,14 @@ describe("project coding-agent Expo route", () => {
       pathname: "/agents/new",
       params: { projectId: "matrix-os", taskId: "task_auth" },
     });
+  });
+
+  it("does not mount a project deep link when the mobile workspace rollout is disabled", () => {
+    mockWorkspaceEnabled = false;
+
+    render(<ProjectAgentRoute />);
+
+    expect(screen.getByText("redirect:/agents")).toBeTruthy();
+    expect(screen.queryByText("matrix-os")).toBeNull();
   });
 });
