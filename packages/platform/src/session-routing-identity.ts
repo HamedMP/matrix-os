@@ -16,6 +16,7 @@ import {
   CODE_SESSION_COOKIE,
   NATIVE_APP_SESSION_COOKIE,
   SHELL_ROUTE_COOKIE,
+  SHELL_RUNTIME_SLOT_COOKIE,
   isValidNativeAppSessionProof,
   readCookie,
 } from './session-cookies.js';
@@ -102,9 +103,29 @@ export function buildShellRouteCookie(handle: string): string {
   ].join('; ');
 }
 
+export function buildShellRuntimeSlotCookie(runtimeSlot: string): string {
+  return [
+    `${SHELL_RUNTIME_SLOT_COOKIE}=${encodeURIComponent(runtimeSlot)}`,
+    'Path=/',
+    'HttpOnly',
+    'Secure',
+    'SameSite=Lax',
+    'Max-Age=600',
+  ].join('; ');
+}
+
+export function readShellRuntimeSlotCookie(path: string, cookieHeader: string | undefined): string | null {
+  if (!isAppDomainGatewayPath(path) && !isAppDomainStaticAssetPath(path)) {
+    return null;
+  }
+  const runtimeSlot = readCookie(cookieHeader, SHELL_RUNTIME_SLOT_COOKIE);
+  const parsed = RuntimeSlotSchema.safeParse(runtimeSlot);
+  return parsed.success ? parsed.data : null;
+}
+
 export function readExplicitVmRoute(path: string): ExplicitVmRoute | null {
-  const match = path.match(/^\/vm\/([a-z][a-z0-9-]{2,30})(?:\/(.*))?$/);
-  if (!match?.[1]) return null;
+  const match = path.match(/^\/vm\/([^/]+)(?:\/(.*))?$/);
+  if (!match?.[1] || !HANDLE_PATTERN.test(match[1])) return null;
   const rest = match[2];
   return {
     handle: match[1],
@@ -145,6 +166,7 @@ export async function resolveAppDomainIdentity(opts: {
   db: PlatformDB;
   platformJwtSecret: string;
   allowUnroutedClerkIdentity?: boolean;
+  clerkPrincipalOnly?: boolean;
   legacyContainerRoutingEnabled?: boolean;
   requestedHandle?: string | null;
   runtimeSlot: string;
@@ -169,6 +191,17 @@ export async function resolveAppDomainIdentity(opts: {
           }
         }
       }
+      const runtimeSlot = RuntimeSlotSchema.safeParse(claims.runtime_slot).success
+        ? claims.runtime_slot
+        : undefined;
+      if (opts.clerkPrincipalOnly) {
+        return {
+          handle: claims.handle,
+          userId: claims.sub,
+          runtimeSlot,
+          source: 'auth',
+        };
+      }
       const record = opts.legacyContainerRoutingEnabled === false
         ? undefined
         : await getContainer(opts.db, claims.handle);
@@ -179,9 +212,6 @@ export async function resolveAppDomainIdentity(opts: {
           source: 'auth',
         };
       }
-      const runtimeSlot = RuntimeSlotSchema.safeParse(claims.runtime_slot).success
-        ? claims.runtime_slot
-        : undefined;
       const machine = await getRunningUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
       if (machine?.clerkUserId === claims.sub) {
         return {
@@ -223,8 +253,22 @@ export async function resolveAppDomainIdentity(opts: {
     return null;
   }
 
+  if (opts.clerkPrincipalOnly) {
+    return {
+      handle: '',
+      userId: result.userId,
+    };
+  }
+
   if (opts.requestedHandle) {
-    const requestedMachine = await getActiveUserMachineByHandle(opts.db, opts.requestedHandle);
+    let requestedMachine = await getActiveUserMachineByHandle(
+      opts.db,
+      opts.requestedHandle,
+      opts.runtimeSlot,
+    );
+    if (!requestedMachine && opts.runtimeSlot === 'primary') {
+      requestedMachine = await getActiveUserMachineByHandle(opts.db, opts.requestedHandle);
+    }
     if (requestedMachine && requestedMachine.clerkUserId === result.userId) {
       return {
         handle: requestedMachine.handle,

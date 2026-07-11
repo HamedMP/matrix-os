@@ -1257,7 +1257,7 @@ agents depend on new fields.
 
 - [x] B24-001 Product owner confirms the scope/non-goals in `FULL-WORKSPACE-BACKEND.md`.
 - [x] B24-002 Write failing shared contract tests for bounded `MatrixComputerListSchema`, authoritative selection, derived gateway paths, and forbidden machine/operator fields in `tests/contracts/runtime-computers.test.ts`.
-- [ ] B24-003 Implement one canonical `GET /api/auth/computers` contract/route for server-verified Clerk and native/sync principals; remove duplicate desktop read shape or document a bounded expiring alias.
+- [x] B24-003 Implement one canonical `GET /api/auth/computers` contract/route for server-verified Clerk and native/sync principals; remove duplicate desktop read shape or document a bounded expiring alias.
 - [ ] B24-004 Preserve trusted-main-only `POST /api/auth/runtime-selection` bearer replacement while mobile continues authenticated same-origin platform/session routing.
 - [ ] B24-005 Write failing auth tests, then add a bounded server-verified native identity projection for shell display fallback without trusting client headers.
 - [ ] B24-006 Rebase/preserve current native Linux app streaming and capability routing when composing the canonical platform candidate.

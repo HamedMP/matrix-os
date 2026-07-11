@@ -1,8 +1,10 @@
 import { createHmac } from 'node:crypto';
+import { z } from 'zod/v4';
 import {
   NATIVE_APP_SESSION_PROXY_HEADER,
   PLATFORM_SESSION_PROXY_HEADER,
 } from './session-cookies.js';
+import { RuntimeSlotSchema } from './customer-vps-schema.js';
 import { timingSafeTokenEquals } from './platform-token.js';
 
 export const EDGE_SECRET_HEADER = 'x-matrix-edge-secret';
@@ -115,10 +117,15 @@ export function hasValidExplicitVmAppAssetToken(input: {
   if (!slug) return false;
   try {
     const url = new URL(input.rawUrl, 'https://app.matrix-os.com');
+    const runtimeParam = url.searchParams.get('runtime');
+    if (runtimeParam !== null && !RuntimeSlotSchema.safeParse(runtimeParam).success) {
+      return false;
+    }
     return verifyAppAssetRouteToken({
       token: url.searchParams.get(APP_ASSET_ROUTE_TOKEN_PARAM),
       expectedHandle: input.route.handle,
       expectedSlug: slug,
+      expectedRuntimeSlot: runtimeParam ?? 'primary',
       platformSecret: input.platformSecret,
     });
   } catch (err: unknown) {
@@ -132,11 +139,14 @@ function getViteAppHtmlSlug(path: string): string | null {
   return match?.[1] ?? null;
 }
 
-interface AppAssetRouteTokenPayload {
-  v: 1;
-  handle: string;
-  slug: string;
-}
+const AppAssetRouteTokenPayloadSchema = z.object({
+  v: z.literal(1),
+  handle: z.string().min(1).max(64),
+  slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
+  runtimeSlot: RuntimeSlotSchema.optional(),
+}).strict();
+
+type AppAssetRouteTokenPayload = z.infer<typeof AppAssetRouteTokenPayloadSchema>;
 
 function signAppAssetRouteToken(
   payload: AppAssetRouteTokenPayload,
@@ -152,6 +162,7 @@ function signAppAssetRouteToken(
 function buildAppAssetRouteToken(
   handle: string,
   slug: string,
+  runtimeSlot: string,
   platformSecret: string,
 ): string {
   // Vite can lazy-load chunks long after initial HTML render, and browser
@@ -161,6 +172,7 @@ function buildAppAssetRouteToken(
     v: 1,
     handle,
     slug,
+    runtimeSlot,
   }, platformSecret);
 }
 
@@ -168,6 +180,7 @@ export function verifyAppAssetRouteToken(input: {
   token: string | null;
   expectedHandle: string;
   expectedSlug: string;
+  expectedRuntimeSlot: string;
   platformSecret: string;
 }): boolean {
   if (!input.token || !input.platformSecret) return false;
@@ -179,11 +192,17 @@ export function verifyAppAssetRouteToken(input: {
   if (!timingSafeTokenEquals(signature, expectedSignature)) return false;
 
   try {
-    const parsed = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8')) as Partial<AppAssetRouteTokenPayload>;
+    const parsed = AppAssetRouteTokenPayloadSchema.safeParse(
+      JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8')),
+    );
+    if (!parsed.success) return false;
     return (
-      parsed.v === 1 &&
-      parsed.handle === input.expectedHandle &&
-      parsed.slug === input.expectedSlug
+      parsed.data.handle === input.expectedHandle &&
+      parsed.data.slug === input.expectedSlug &&
+      (
+        parsed.data.runtimeSlot === input.expectedRuntimeSlot ||
+        (parsed.data.runtimeSlot === undefined && input.expectedRuntimeSlot === 'primary')
+      )
     );
   } catch (err: unknown) {
     console.warn('[platform] Failed to parse app asset route token:', err instanceof Error ? err.message : String(err));
@@ -209,15 +228,31 @@ export function readAppAssetRouteToken(rawUrl: string): string | null {
   }
 }
 
+function addAppAssetRouteParams(path: string, runtimeSlot: string, assetToken: string): string {
+  const hashStart = path.indexOf('#');
+  const pathAndQuery = hashStart === -1 ? path : path.slice(0, hashStart);
+  const hash = hashStart === -1 ? '' : path.slice(hashStart);
+  const queryStart = pathAndQuery.indexOf('?');
+  const pathname = queryStart === -1 ? pathAndQuery : pathAndQuery.slice(0, queryStart);
+  const params = new URLSearchParams(queryStart === -1 ? '' : pathAndQuery.slice(queryStart + 1));
+  params.delete('runtime');
+  if (runtimeSlot !== 'primary') {
+    params.set('runtime', runtimeSlot);
+  }
+  params.set(APP_ASSET_ROUTE_TOKEN_PARAM, assetToken);
+  return `${pathname}?${params.toString()}${hash}`;
+}
+
 function rewriteSandboxedViteAppAssetUrls(
   html: string,
   handle: string,
   path: string,
+  runtimeSlot: string,
   platformSecret: string,
 ): string {
   const slug = getViteAppHtmlSlug(path);
   if (!slug || !platformSecret) return html;
-  const assetToken = buildAppAssetRouteToken(handle, slug, platformSecret);
+  const assetToken = buildAppAssetRouteToken(handle, slug, runtimeSlot, platformSecret);
   const appAssetPrefix = `/apps/${slug}/assets/`;
   const rewriteTag = (tag: string): string => tag.replace(
     /\b(src|href)=(["'])([^"']+)\2/g,
@@ -228,9 +263,9 @@ function rewriteSandboxedViteAppAssetUrls(
           ? value.slice(appAssetPrefix.length)
           : null;
       if (!assetRemainder) return match;
-      const explicitAssetPath = appendQueryParamToPath(
+      const explicitAssetPath = addAppAssetRouteParams(
         `/vm/${handle}/apps/${slug}/assets/${assetRemainder}`,
-        APP_ASSET_ROUTE_TOKEN_PARAM,
+        runtimeSlot,
         assetToken,
       );
       return `${attr}=${quote}${explicitAssetPath}${quote}`;
@@ -269,13 +304,39 @@ function rewriteSandboxedViteAppAssetUrls(
   return rewritten;
 }
 
-function rewriteSandboxedViteJsAssetImports(js: string, assetToken: string | null): string {
+function rewriteSandboxedViteJsAssetImports(
+  js: string,
+  runtimeSlot: string,
+  assetToken: string | null,
+): string {
   if (!assetToken) return js;
   return js.replace(
     /((?:\bimport\s*\(\s*)|(?:\bimport\s*)|(?:\b(?:import|export)[^"']*?\bfrom\s*))(["'])(\.\/[^"']+\.(?:js|css)(?:\?[^"'#]*)?(?:#[^"']*)?)\2/g,
-    (match: string, prefix: string, quote: string, value: string) => {
-      if (value.includes(`${APP_ASSET_ROUTE_TOKEN_PARAM}=`)) return match;
-      return `${prefix}${quote}${appendQueryParamToPath(value, APP_ASSET_ROUTE_TOKEN_PARAM, assetToken)}${quote}`;
+    (_match: string, prefix: string, quote: string, value: string) => {
+      return `${prefix}${quote}${addAppAssetRouteParams(value, runtimeSlot, assetToken)}${quote}`;
+    },
+  );
+}
+
+function rewriteSandboxedViteCssAssetUrls(
+  css: string,
+  runtimeSlot: string,
+  assetToken: string | null,
+): string {
+  if (!assetToken) return css;
+  const withImports = css.replace(
+    /(@import\s+)(["'])(\.\/[^"']+)\2/gi,
+    (_match: string, prefix: string, quote: string, value: string) => {
+      return `${prefix}${quote}${addAppAssetRouteParams(value, runtimeSlot, assetToken)}${quote}`;
+    },
+  );
+  return withImports.replace(
+    /\burl\(\s*(?:(["'])(\.\/[^"']+)\1|(\.\/[^)\s]+))\s*\)/gi,
+    (_match: string, quote: string | undefined, quotedValue: string | undefined, unquotedValue: string | undefined) => {
+      const value = quotedValue ?? unquotedValue;
+      if (!value) return _match;
+      const rewritten = addAppAssetRouteParams(value, runtimeSlot, assetToken);
+      return `url(${quote ?? ''}${rewritten}${quote ?? ''})`;
     },
   );
 }
@@ -285,13 +346,20 @@ export async function buildAppDomainProxyResponse(input: {
   responseHeaders: Headers;
   path: string;
   handle: string;
+  runtimeSlot: string;
   platformSecret: string;
   assetRouteToken?: string | null;
 }): Promise<Response> {
   if (getViteAppHtmlSlug(input.path) && input.responseHeaders.get('content-type')?.includes('text/html')) {
     const html = await input.upstream.text();
     input.responseHeaders.delete('content-length');
-    return new Response(rewriteSandboxedViteAppAssetUrls(html, input.handle, input.path, input.platformSecret), {
+    return new Response(rewriteSandboxedViteAppAssetUrls(
+      html,
+      input.handle,
+      input.path,
+      input.runtimeSlot,
+      input.platformSecret,
+    ), {
       status: input.upstream.status,
       headers: input.responseHeaders,
     });
@@ -303,7 +371,19 @@ export async function buildAppDomainProxyResponse(input: {
   ) {
     const js = await input.upstream.text();
     input.responseHeaders.delete('content-length');
-    return new Response(rewriteSandboxedViteJsAssetImports(js, input.assetRouteToken), {
+    return new Response(rewriteSandboxedViteJsAssetImports(js, input.runtimeSlot, input.assetRouteToken), {
+      status: input.upstream.status,
+      headers: input.responseHeaders,
+    });
+  }
+  if (
+    getViteAppAssetSlug(input.path) &&
+    input.assetRouteToken &&
+    input.responseHeaders.get('content-type')?.includes('text/css')
+  ) {
+    const css = await input.upstream.text();
+    input.responseHeaders.delete('content-length');
+    return new Response(rewriteSandboxedViteCssAssetUrls(css, input.runtimeSlot, input.assetRouteToken), {
       status: input.upstream.status,
       headers: input.responseHeaders,
     });
