@@ -255,6 +255,102 @@ describe("AuthService runtime selection", () => {
 });
 
 describe("AuthService device flow", () => {
+  it("exchanges a fresh device credential before restoring a non-primary runtime", async () => {
+    const replacementToken = "s".repeat(64);
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/auth/device/code")) {
+        return jsonResponse({
+          deviceCode: "device-1",
+          userCode: "ABCD",
+          verificationUri: "https://app.matrix-os.com/device",
+          expiresIn: 600,
+          interval: 5,
+        });
+      }
+      if (url === "https://api.matrix-os.com/api/auth/runtime-selection") {
+        return jsonResponse({
+          accessToken: replacementToken,
+          expiresAt: 1_800_000_000_000,
+          handle: "neo-review",
+          slot: "review",
+        });
+      }
+      return jsonResponse({
+        accessToken: "fresh-device-token",
+        expiresAt: 1_800_000_000_000,
+        userId: "user-1",
+        handle: "neo",
+      });
+    });
+    const { auth, getProfile, peekCredential } = makeService({
+      profile: { ...PROFILE, runtimeSlot: "review" },
+      now: 10_000,
+      fetchFn,
+    });
+    await auth.init();
+
+    await auth.startDeviceFlow();
+    await flushAuthFlow();
+
+    expect(auth.getStatus()).toMatchObject({
+      signedIn: true,
+      handle: "neo-review",
+      runtimeSlot: "review",
+    });
+    expect(peekCredential()).toMatchObject({
+      accessToken: replacementToken,
+      handle: "neo-review",
+    });
+    expect(getProfile()).toMatchObject({
+      handle: "neo-review",
+      runtimeSlot: "review",
+    });
+  });
+
+  it("falls back to primary when a non-primary re-auth exchange is unavailable", async () => {
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/auth/device/code")) {
+        return jsonResponse({
+          deviceCode: "device-1",
+          userCode: "ABCD",
+          verificationUri: "https://app.matrix-os.com/device",
+          expiresIn: 600,
+          interval: 5,
+        });
+      }
+      if (url === "https://api.matrix-os.com/api/auth/runtime-selection") {
+        return jsonResponse({ error: "unavailable" }, 503);
+      }
+      return jsonResponse({
+        accessToken: "fresh-device-token",
+        expiresAt: 1_800_000_000_000,
+        userId: "user-1",
+        handle: "neo",
+      });
+    });
+    const { auth, getProfile, peekCredential } = makeService({
+      profile: { ...PROFILE, runtimeSlot: "review" },
+      now: 10_000,
+      fetchFn,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await auth.init();
+      await auth.startDeviceFlow();
+      await flushAuthFlow();
+
+      expect(auth.getStatus()).toMatchObject({
+        signedIn: true,
+        handle: "neo",
+        runtimeSlot: "primary",
+      });
+      expect(peekCredential()).toMatchObject({ accessToken: "fresh-device-token", handle: "neo" });
+      expect(getProfile()).toMatchObject({ handle: "neo", runtimeSlot: "primary" });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("reuses a pending device flow instead of launching parallel poll loops", async () => {
     let codeRequests = 0;
     const tokenPromise = new Promise<Response>(() => undefined);

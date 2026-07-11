@@ -181,18 +181,30 @@ export class AuthService {
         if (nonce !== this.flowNonce) return;
         // The encrypted credential holds only the secret token + identity; the
         // non-secret display profile lives in the plain profile store.
-        const credential: StoredCredential = {
+        let credential: StoredCredential = {
           accessToken: token.accessToken,
           expiresAt: token.expiresAt,
           userId: token.userId,
           handle: token.handle,
         };
+        let runtimeSlot = this.profile?.runtimeSlot ?? "primary";
+        if (runtimeSlot !== "primary") {
+          try {
+            credential = await this.exchangeRuntimeCredential(credential, runtimeSlot);
+          } catch (err: unknown) {
+            runtimeSlot = "primary";
+            console.warn(
+              "[auth] runtime restore failed; using primary:",
+              err instanceof Error ? err.name : typeof err,
+            );
+          }
+        }
         this.credential = credential;
         const profile: ConnectionProfile = {
-          handle: token.handle,
+          handle: credential.handle,
           userId: token.userId,
           platformHost: baseUrl,
-          runtimeSlot: this.profile?.runtimeSlot ?? "primary",
+          runtimeSlot,
           ...(token.displayName ? { displayName: token.displayName } : {}),
           ...(token.imageUrl ? { imageUrl: token.imageUrl } : {}),
           ...(token.email ? { email: token.email } : {}),
@@ -265,6 +277,38 @@ export class AuthService {
     return { status: "pending" };
   }
 
+  private async exchangeRuntimeCredential(
+    currentCredential: StoredCredential,
+    slot: string,
+  ): Promise<StoredCredential> {
+    const request = RuntimeSelectionRequestSchema.parse({ slot });
+    const endpoint = new URL("/api/auth/runtime-selection", this.deps.runtimeSelectionOrigin);
+    const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
+    const response = await fetchFn(endpoint.toString(), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${currentCredential.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(RUNTIME_SELECTION_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new Error("runtime selection rejected");
+    const contentLength = Number(response.headers.get("content-length"));
+    if (Number.isFinite(contentLength) && contentLength > RUNTIME_SELECTION_RESPONSE_LIMIT) {
+      throw new Error("runtime selection response too large");
+    }
+    const text = await readBoundedResponseText(response);
+    const replacement = RuntimeSelectionResponseSchema.parse(JSON.parse(text));
+    if (replacement.slot !== request.slot) throw new Error("runtime selection mismatch");
+    return {
+      accessToken: replacement.accessToken,
+      expiresAt: replacement.expiresAt,
+      userId: currentCredential.userId,
+      handle: replacement.handle,
+    };
+  }
+
   async selectRuntime(slot: string): Promise<void> {
     this.expireCredentialIfNeeded();
     const currentCredential = this.credential;
@@ -274,37 +318,11 @@ export class AuthService {
     }
 
     try {
-      const request = RuntimeSelectionRequestSchema.parse({ slot });
-      const endpoint = new URL("/api/auth/runtime-selection", this.deps.runtimeSelectionOrigin);
-      const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
-      const response = await fetchFn(endpoint.toString(), {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${currentCredential.accessToken}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(request),
-        signal: AbortSignal.timeout(RUNTIME_SELECTION_TIMEOUT_MS),
-      });
-      if (!response.ok) throw new Error("runtime selection rejected");
-      const contentLength = Number(response.headers.get("content-length"));
-      if (Number.isFinite(contentLength) && contentLength > RUNTIME_SELECTION_RESPONSE_LIMIT) {
-        throw new Error("runtime selection response too large");
-      }
-      const text = await readBoundedResponseText(response);
-      const replacement = RuntimeSelectionResponseSchema.parse(JSON.parse(text));
-      if (replacement.slot !== request.slot) throw new Error("runtime selection mismatch");
-
-      const nextCredential: StoredCredential = {
-        accessToken: replacement.accessToken,
-        expiresAt: replacement.expiresAt,
-        userId: currentCredential.userId,
-        handle: replacement.handle,
-      };
+      const nextCredential = await this.exchangeRuntimeCredential(currentCredential, slot);
       const nextProfile: ConnectionProfile = {
         ...currentProfile,
-        handle: replacement.handle,
-        runtimeSlot: replacement.slot,
+        handle: nextCredential.handle,
+        runtimeSlot: slot,
       };
       await this.deps.credentialStore.save(nextCredential);
       try {
