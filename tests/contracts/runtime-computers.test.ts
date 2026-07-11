@@ -106,6 +106,17 @@ describe("Matrix computer contracts", () => {
     expect(computer.capabilities).toHaveLength(41);
   });
 
+  it("accepts the complete platform-provisioned handle domain", () => {
+    for (const handle of ["1a", "ab", `a${"1".repeat(60)}`, `a${"1".repeat(62)}`]) {
+      const computer = MatrixComputerSchema.parse({
+        ...mainComputer,
+        handle,
+        gatewayPath: `/vm/${handle}`,
+      });
+      expect(computer.handle).toBe(handle);
+    }
+  });
+
   it("rejects mismatched routes, unsafe fields, client selection, and unbounded lists", () => {
     expect(MatrixComputerSchema.safeParse({
       ...mainComputer,
@@ -152,12 +163,12 @@ describe("Matrix computer contracts", () => {
 
     for (const invalid of [
       { ...mainComputer, handle: "N" },
-      { ...mainComputer, handle: "1a", gatewayPath: "/vm/1a" },
-      { ...mainComputer, handle: "ab", gatewayPath: "/vm/ab" },
+      { ...mainComputer, handle: "a", gatewayPath: "/vm/a" },
+      { ...mainComputer, handle: "-bad", gatewayPath: "/vm/-bad" },
       {
         ...mainComputer,
-        handle: "a1234567890123456789012345678901",
-        gatewayPath: "/vm/a1234567890123456789012345678901",
+        handle: `a${"1".repeat(63)}`,
+        gatewayPath: `/vm/a${"1".repeat(63)}`,
       },
       { ...mainComputer, runtimeSlot: "review_slot" },
       { ...mainComputer, gatewayPath: "https://example.com/vm/neo" },

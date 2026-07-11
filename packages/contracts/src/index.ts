@@ -89,9 +89,9 @@ export const SafeAssistantPreviewTextSchema = boundedText(243, 1024)
 export const BoundedTextSchema = (maxChars = 4000, maxBytes = 16 * 1024) => boundedText(maxChars, maxBytes);
 
 export const MatrixComputerHandleSchema = z.string()
-  .min(3)
-  .max(31)
-  .regex(/^[a-z][a-z0-9-]{2,30}$/, "Invalid Matrix computer handle");
+  .min(2)
+  .max(63)
+  .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, "Invalid Matrix computer handle");
 export const MatrixComputerRuntimeSlotSchema = z.string()
   .min(1)
   .max(32)
