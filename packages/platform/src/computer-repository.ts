@@ -1,0 +1,49 @@
+import { sql } from 'kysely';
+
+import type {
+  PlatformDB,
+  UserMachineProvisioningClass,
+} from './db.js';
+
+export interface UserRuntimeComputerRecord {
+  handle: string;
+  runtimeSlot: string;
+  provisioningClass: UserMachineProvisioningClass;
+  status: string;
+  imageVersion: string | null;
+}
+
+export async function listUserRuntimeComputersByClerkId(
+  db: PlatformDB,
+  clerkUserId: string,
+  limit: number,
+  selectedRuntimeSlot?: string,
+): Promise<UserRuntimeComputerRecord[]> {
+  await db.ready;
+  const boundedLimit = Math.max(1, Math.min(limit, 21));
+  let query = db.executor
+    .selectFrom('user_machines')
+    .select(['handle', 'runtime_slot', 'provisioning_class', 'status', 'image_version'])
+    .where('clerk_user_id', '=', clerkUserId)
+    .where('deleted_at', 'is', null)
+    .where('provisioning_class', 'in', ['customer', 'preview'])
+    .where(sql<boolean>`${sql.ref('handle')} ~ ${'^[a-z][a-z0-9-]{2,30}$'}`)
+    .where(sql<boolean>`${sql.ref('runtime_slot')} ~ ${'^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$'}`)
+    .where(sql<boolean>`char_length(${sql.ref('runtime_slot')}) <= 32`);
+  if (selectedRuntimeSlot) {
+    query = query.orderBy(sql`CASE WHEN runtime_slot = ${selectedRuntimeSlot} THEN 0 WHEN runtime_slot = 'primary' THEN 1 ELSE 2 END`);
+  } else {
+    query = query.orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`);
+  }
+  const rows = await query
+    .orderBy('provisioned_at', 'desc')
+    .limit(boundedLimit)
+    .execute();
+  return rows.map((row) => ({
+    handle: row.handle,
+    runtimeSlot: row.runtime_slot,
+    provisioningClass: row.provisioning_class === 'preview' ? 'preview' : 'customer',
+    status: row.status,
+    imageVersion: row.image_version,
+  }));
+}

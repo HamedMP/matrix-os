@@ -64,6 +64,13 @@ native/sync principals use the same owner-scoped projection. Desktop runtime
 credential exchange remains native/sync-authenticated and main-process-only;
 mobile uses validated same-origin routing and does not persist runtime bearers.
 
+The backend stack now implements that read route with a SQL-bounded owner query,
+strict shared response validation, fixed safe labels, coarse release labels,
+and no-store generic failures. Plain Clerk sessions do not imply a selected
+runtime; only a verified native/sync principal bound back to its current owner
+machine can publish `selectedSlot`. The paused desktop and mobile branches still
+need to adopt this shared route after the trusted selection slice lands.
+
 The existing Platform Preview and Preview VPS workflows do not yet form one
 isolated authority. The target preview environment owns a dedicated preview
 database/JWT/edge/provisioning/provider boundary, exact PR/head/bundle,
