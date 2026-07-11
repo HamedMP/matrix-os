@@ -99,7 +99,11 @@ export const MatrixComputerRuntimeSlotSchema = z.string()
 export const MatrixComputerAvailabilitySchema = z.enum(["available", "starting", "unavailable"]);
 export const MatrixComputerKindSchema = z.enum(["customer", "preview"]);
 export const MatrixComputerLabelSchema = z.enum(["Main Computer", "Preview Computer", "Additional Computer"]);
-export const MatrixComputerVersionLabelSchema = z.union([
+export const MatrixComputerVersionLabelSchema = z.preprocess((value) => {
+  if (typeof value !== "string" || value.length > 128) return value;
+  const legacyRelease = value.match(/^matrix-os-host-(\d{4}\.\d{2}\.\d{2})(?:$|-)/)?.[1];
+  return legacyRelease ? `v${legacyRelease}` : value;
+}, z.union([
   z.literal("Version pending"),
   z.enum(["stable", "dev", "canary", "beta"]),
   z.string()
@@ -115,7 +119,7 @@ export const MatrixComputerVersionLabelSchema = z.union([
         !hasIpv4AddressInVersionSuffix(value),
       { message: "Matrix computer version label is not safe for display" },
     ),
-]);
+]));
 export const MatrixComputerCapabilityIdSchema = z.string()
   .min(1)
   .max(80)

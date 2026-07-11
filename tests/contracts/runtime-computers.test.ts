@@ -117,6 +117,14 @@ describe("Matrix computer contracts", () => {
     }
   });
 
+  it("normalizes legacy host-bundle versions to a coarse release label", () => {
+    const computer = MatrixComputerSchema.parse({
+      ...mainComputer,
+      versionLabel: "matrix-os-host-2026.04.26-1",
+    });
+    expect(computer.versionLabel).toBe("v2026.04.26");
+  });
+
   it("rejects mismatched routes, unsafe fields, client selection, and unbounded lists", () => {
     expect(MatrixComputerSchema.safeParse({
       ...mainComputer,
