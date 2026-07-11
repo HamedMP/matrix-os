@@ -190,6 +190,8 @@ describe("Matrix computer contracts", () => {
       "v2026.07.11",
       "v2026.07.11-42",
       "v2026.07.11-pr921-802ee13",
+      "v0.9.1",
+      "v0.9.1-rc.1",
       "stable",
       "dev",
       "canary",
