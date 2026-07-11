@@ -14,11 +14,12 @@ import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
 function summaryFixture({
   threadCreate = false,
+  sameThreadTurns = true,
   files = false,
   sourceControl = false,
   threadTerminalSessionId,
   terminalSessionName = "matrix-abc1234",
-}: { threadCreate?: boolean; files?: boolean; sourceControl?: boolean; threadTerminalSessionId?: string; terminalSessionName?: string } = {}) {
+}: { threadCreate?: boolean; sameThreadTurns?: boolean; files?: boolean; sourceControl?: boolean; threadTerminalSessionId?: string; terminalSessionName?: string } = {}) {
   return {
     runtime: {
       id: "rt_primary",
@@ -34,6 +35,11 @@ function summaryFixture({
         id: "codingAgentsThreadCreate",
         enabled: threadCreate,
         ...(threadCreate ? {} : { reason: "Not enabled yet" }),
+      },
+      {
+        id: "codingAgentsSameThreadTurns",
+        enabled: sameThreadTurns,
+        ...(sameThreadTurns ? {} : { reason: "Not enabled yet" }),
       },
       {
         id: "codingAgentsReview",
@@ -1250,6 +1256,28 @@ describe("AgentWorkspace", () => {
       });
     });
     await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe(""));
+  });
+
+  it("withholds the same-thread composer when the runtime does not support turns", async () => {
+    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") {
+        return Promise.resolve(summaryFixture({ sameThreadTurns: false }));
+      }
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-notification-preferences") {
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
+      }
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(threadSnapshotFixture());
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+
+    render(<AgentWorkspace />);
+
+    expect(await screen.findByRole("region", { name: "Conversation Fix settings route" })).toBeTruthy();
+    expect(screen.queryByLabelText("Message conversation")).toBeNull();
+    expect(screen.getByText("Follow-ups are unavailable on this computer.")).toBeTruthy();
+    expect(screen.queryByText(/send a message to continue/i)).toBeNull();
   });
 
   it("keeps the conversation draft and shows allowlisted recovery copy after a send conflict", async () => {

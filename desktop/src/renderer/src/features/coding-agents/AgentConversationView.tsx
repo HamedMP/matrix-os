@@ -280,7 +280,17 @@ function ConversationComposer({ threadId }: { threadId: string }) {
   );
 }
 
-export function AgentConversationView({ status, snapshot, error }: { status: ConversationStatus; snapshot: AgentThreadSnapshot | null; error: string | null }) {
+export function AgentConversationView({
+  status,
+  snapshot,
+  error,
+  canSendTurns,
+}: {
+  status: ConversationStatus;
+  snapshot: AgentThreadSnapshot | null;
+  error: string | null;
+  canSendTurns: boolean;
+}) {
   const endRef = useRef<HTMLDivElement | null>(null);
   const items = useMemo(() => conversationItems(snapshot?.events.items ?? []), [snapshot?.events.items]);
   const answeredInputs = useMemo(() => new Set((snapshot?.events.items ?? [])
@@ -312,10 +322,23 @@ export function AgentConversationView({ status, snapshot, error }: { status: Con
           : item.kind === "tool" ? <ToolActivity key={item.key} events={item.events} />
             : item.event.type === "user.message" ? <UserBubble key={item.event.eventId} event={item.event} />
               : <SystemEvent key={item.event.eventId} event={item.event} answeredInputs={answeredInputs} />)}
-        {items.length === 0 ? <p className="py-12 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>This conversation is ready. Send a message to continue.</p> : null}
+        {items.length === 0 ? (
+          <p className="py-12 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>
+            {canSendTurns ? "This conversation is ready. Send a message to continue." : "No messages yet."}
+          </p>
+        ) : null}
         <div ref={endRef} />
       </div>
-      <ConversationComposer threadId={snapshot.thread.id} />
+      {canSendTurns ? (
+        <ConversationComposer threadId={snapshot.thread.id} />
+      ) : (
+        <p
+          className="shrink-0 border-t px-4 py-3 text-center text-xs"
+          style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)", background: "var(--bg-surface)" }}
+        >
+          Follow-ups are unavailable on this computer.
+        </p>
+      )}
     </section>
   );
 }

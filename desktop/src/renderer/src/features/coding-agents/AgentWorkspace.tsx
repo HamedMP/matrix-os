@@ -1522,6 +1522,7 @@ export default function AgentWorkspace() {
               status={threadSnapshotStatus}
               snapshot={threadSnapshot}
               error={threadSnapshotError}
+              canSendTurns={capabilityEnabled(summary, "codingAgentsSameThreadTurns")}
             />
           </div>
           <aside aria-label="Conversation tools" className="min-h-0 min-w-0 overflow-y-auto" style={{ background: "var(--bg-secondary)" }}>
