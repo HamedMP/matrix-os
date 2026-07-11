@@ -101,6 +101,7 @@ describe("NativeAppSessionService", () => {
       "start",
       ":100",
       "--start-child=xterm",
+      "--terminate-children=yes",
       "--exit-with-children",
       "--bind=none",
       "--bind-tcp=127.0.0.1:46000",
@@ -202,16 +203,30 @@ describe("NativeAppSessionService", () => {
     expect(displayPool.release).toHaveBeenCalledTimes(1);
   });
 
-  it("signals the detached xpra process group when terminating a session", async () => {
+  it("terminates xpra directly before force-killing its detached process group", async () => {
     const killProcess = vi.fn();
     const { service, children } = createService({ killProcess });
     const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
 
     await service.terminateSession("alice", session.id);
 
-    expect(killProcess).toHaveBeenCalledWith(-(children[0].pid ?? 0), "SIGTERM");
+    expect(children[0].kill).toHaveBeenCalledWith("SIGTERM");
     expect(killProcess).toHaveBeenCalledWith(-(children[0].pid ?? 0), "SIGKILL");
-    expect(children[0].kill).not.toHaveBeenCalled();
+  });
+
+  it("allows a gracefully exiting xpra server to clean its X server", async () => {
+    const killProcess = vi.fn();
+    const { service, children } = createService({ killProcess });
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    children[0].kill = vi.fn((signal?: NodeJS.Signals) => {
+      if (signal === "SIGTERM") children[0].emit("exit", 0, signal);
+      return true;
+    });
+
+    await service.terminateSession("alice", session.id);
+
+    expect(children[0].kill).toHaveBeenCalledWith("SIGTERM");
+    expect(killProcess).not.toHaveBeenCalled();
   });
 
   it("kills remaining process-group members when the xpra parent exits", async () => {

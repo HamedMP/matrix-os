@@ -375,6 +375,7 @@ export class NativeAppSessionService {
       "start",
       `:${display}`,
       `--start-child=${app.command.join(" ")}`,
+      "--terminate-children=yes",
       "--exit-with-children",
       "--bind=none",
       `--bind-tcp=127.0.0.1:${port}`,
@@ -431,7 +432,7 @@ export class NativeAppSessionService {
       }
       if (record.status === "starting") record.status = "failed";
       else if (record.status !== "terminated" && record.status !== "failed") record.status = "exited";
-      this.signalProcessGroup(record, "SIGKILL");
+      if (record.status !== "terminated") this.signalProcessGroup(record, "SIGKILL");
       this.releaseRecord(record);
       this.sessions.delete(record.id);
     });
@@ -540,7 +541,7 @@ export class NativeAppSessionService {
         clearTimeout(timer);
         resolve();
       });
-      if (!this.signalProcessGroup(record, "SIGTERM") && !this.signalChild(child, "SIGTERM")) {
+      if (!this.signalChild(child, "SIGTERM")) {
         clearTimeout(timer);
         resolve();
       }
