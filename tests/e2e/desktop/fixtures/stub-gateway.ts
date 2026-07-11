@@ -203,6 +203,15 @@ export function codingAgentSnapshot(prompt = "Fix the failing auth tests"): Agen
           thread,
         },
         {
+          type: "user.message",
+          eventId: "evt_operator_user_message",
+          threadId: thread.id,
+          occurredAt: NOW,
+          messageId: "msg_operator_user_1",
+          text: prompt,
+          clientRequestId: "req_operator_user_1",
+        },
+        {
           type: "assistant.text.delta",
           eventId: "evt_operator_text",
           threadId: thread.id,

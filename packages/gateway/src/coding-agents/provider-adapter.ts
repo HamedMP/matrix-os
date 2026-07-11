@@ -97,6 +97,9 @@ export function parseCodingAgentProviderEvents(
   if (parsed.some((event) => event.threadId !== threadId)) {
     throw new Error("Provider emitted event for another thread");
   }
+  if (parsed.some((event) => event.type === "user.message")) {
+    throw new Error("Provider cannot emit user messages");
+  }
   return parsed;
 }
 

@@ -260,6 +260,7 @@ describe("coding agent workspace provider", () => {
     });
     expect(snapshot.events.items.map((event) => event.type)).toEqual([
       "thread.created",
+      "user.message",
       "thread.status",
       "terminal.bound",
       "assistant.text.delta",
@@ -338,6 +339,7 @@ describe("coding agent workspace provider", () => {
     expect(created.snapshot.thread).toMatchObject({ status: "failed", attention: "failed" });
     expect(created.snapshot.events.items.map((event) => event.type)).toEqual([
       "thread.created",
+      "user.message",
       "thread.error",
       "thread.completed",
     ]);

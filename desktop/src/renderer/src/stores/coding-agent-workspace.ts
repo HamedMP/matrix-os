@@ -7,6 +7,7 @@ import {
   type AgentThreadComposerDraft,
   type CodingAgentNotificationPreferences,
   type CodingAgentNotificationPreferencesUpdate,
+  type CreateAgentTurnError,
   type FileReadRequest,
   type FileReadResponse,
   type FileWriteRequest,
@@ -30,10 +31,12 @@ type SourceCommitStatus = "idle" | "preparing" | "prepared" | "error";
 type SourcePullRequestStatus = "idle" | "creating" | "ready" | "error";
 type NotificationPreferencesStatus = "idle" | "loading" | "ready" | "saving" | "error";
 type CreateStatus = "idle" | "submitting";
+type TurnStatus = "idle" | "submitting" | "error";
 type ActionStatus = "idle" | "submitting";
 type AgentThreadSnapshotEvent = AgentThreadSnapshot["events"]["items"][number];
 type FileReference = Pick<FileReadRequest, "projectId" | "worktreeId" | "path">;
 type AttentionPushPreferences = CodingAgentNotificationPreferences["attentionPush"];
+type TurnRetry = { threadId: string; message: string; clientRequestId: string };
 type ReviewSummaryList = {
   items: ReviewSummary[];
   hasMore: boolean;
@@ -76,6 +79,10 @@ interface CodingAgentWorkspaceState {
   threadSnapshotError: string | null;
   createStatus: CreateStatus;
   createError: string | null;
+  turnStatus: TurnStatus;
+  turnError: string | null;
+  turnRetry: TurnRetry | null;
+  turnThreadId: string | null;
   composerFocusRequestId: number;
   approvalActionStatus: ActionStatus;
   pendingApprovalId: string | null;
@@ -112,6 +119,7 @@ interface CodingAgentWorkspaceState {
   }) => Promise<void>;
   requestComposerFocus: () => void;
   createThread: (draft: AgentThreadComposerDraft) => Promise<string | null>;
+  sendThreadMessage: (input: { threadId: string; message: string }) => Promise<boolean>;
 }
 
 let refreshSeq = 0;
@@ -163,6 +171,10 @@ function clearThreadSnapshotState() {
     threadSnapshotStatus: "idle" as const,
     threadSnapshot: null,
     threadSnapshotError: null,
+    turnStatus: "idle" as const,
+    turnError: null,
+    turnRetry: null,
+    turnThreadId: null,
   };
 }
 
@@ -174,6 +186,16 @@ function nextCreateRequestId(): string {
 function nextActionRequestId(): string {
   actionRequestSeq += 1;
   return `req_desktop_${Date.now().toString(36)}_${actionRequestSeq}`;
+}
+
+function safeTurnError(code: CreateAgentTurnError["code"]): string {
+  if (code === "thread_busy") {
+    return "This conversation is already running. Wait for it to finish and try again.";
+  }
+  if (code === "thread_not_found") {
+    return "Conversation is unavailable. Refresh and try again.";
+  }
+  return "This conversation cannot accept a message right now. Refresh and try again.";
 }
 
 function withoutRecordKey<T>(record: Record<string, T>, key: string): Record<string, T> {
@@ -475,6 +497,10 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   threadSnapshotError: null,
   createStatus: "idle",
   createError: null,
+  turnStatus: "idle",
+  turnError: null,
+  turnRetry: null,
+  turnThreadId: null,
   composerFocusRequestId: 0,
   approvalActionStatus: "idle",
   pendingApprovalId: null,
@@ -850,6 +876,9 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
       threadSnapshotStatus: state.threadSnapshot?.thread.id === threadId ? "ready" : "loading",
       threadSnapshot: state.threadSnapshot?.thread.id === threadId ? state.threadSnapshot : null,
       threadSnapshotError: null,
+      ...(state.activeThreadId === threadId
+        ? {}
+        : { turnStatus: "idle" as const, turnError: null, turnRetry: null, turnThreadId: null }),
     }));
     try {
       const snapshot = await invoke("runtime:get-thread-snapshot", { threadId });
@@ -1068,6 +1097,87 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
       console.warn("[coding-agents] thread create failed");
       set({ createStatus: "idle", createError: "Agent run could not be started. Try again." });
       return null;
+    }
+  },
+
+  sendThreadMessage: async ({ threadId, message }) => {
+    const initial = useCodingAgentWorkspace.getState();
+    if (
+      initial.turnStatus === "submitting"
+      || initial.activeThreadId !== threadId
+      || initial.threadSnapshot?.thread.id !== threadId
+    ) {
+      return false;
+    }
+    const retry = initial.turnRetry?.threadId === threadId && initial.turnRetry.message === message
+      ? initial.turnRetry
+      : { threadId, message, clientRequestId: nextActionRequestId() };
+    const selectionSeq = threadSnapshotSeq;
+    set({
+      turnStatus: "submitting",
+      turnError: null,
+      turnRetry: retry,
+      turnThreadId: threadId,
+    });
+
+    try {
+      const result = await invoke("runtime:create-turn", retry);
+      const stillSelected = () => {
+        const state = useCodingAgentWorkspace.getState();
+        return threadSnapshotSeq === selectionSeq
+          && state.activeThreadId === threadId
+          && state.threadSnapshot?.thread.id === threadId;
+      };
+      if (!result.ok) {
+        set((state) => state.turnThreadId === threadId
+          ? {
+              turnStatus: stillSelected() ? "error" : "idle",
+              turnError: stillSelected() ? safeTurnError(result.error.code) : null,
+              turnRetry: stillSelected() ? retry : null,
+              turnThreadId: stillSelected() ? threadId : null,
+            }
+          : {});
+        return false;
+      }
+
+      set((state) => state.turnThreadId === threadId
+        ? { turnStatus: "idle", turnError: null, turnRetry: null, turnThreadId: null }
+        : {});
+      if (!stillSelected()) return true;
+
+      try {
+        const snapshot = await invoke("runtime:get-thread-snapshot", { threadId });
+        if (!stillSelected()) return true;
+        set((state) => {
+          if (state.activeThreadId !== threadId || state.threadSnapshot?.thread.id !== threadId) return {};
+          const merged = mergeSelectedThreadSnapshot(state.threadSnapshot, snapshot);
+          return {
+            threadSnapshotStatus: "ready",
+            threadSnapshot: merged,
+            threadSnapshotError: null,
+            summary: state.summary ? reconcileSummaryThread(state.summary, merged.thread) : state.summary,
+          };
+        });
+        attachActiveThreadEventStream(snapshot);
+      } catch {
+        console.warn("[coding-agents] accepted turn refresh failed");
+      }
+      return true;
+    } catch {
+      console.warn("[coding-agents] thread turn failed");
+      set((state) => {
+        const selected = threadSnapshotSeq === selectionSeq
+          && state.activeThreadId === threadId
+          && state.threadSnapshot?.thread.id === threadId;
+        if (state.turnThreadId !== threadId) return {};
+        return {
+          turnStatus: selected ? "error" : "idle",
+          turnError: selected ? "Message could not be sent. Try again." : null,
+          turnRetry: selected ? retry : null,
+          turnThreadId: selected ? threadId : null,
+        };
+      });
+      return false;
     }
   },
 }));

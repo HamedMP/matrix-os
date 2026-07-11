@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createCodingAgentThread,
+  createCodingAgentTurn,
   createCodingAgentSourcePullRequest,
   fetchCodingAgentProjectWorkspace,
   fetchCodingAgentFileBrowse,
@@ -279,6 +280,85 @@ describe("coding agent desktop runtime client", () => {
       "https://runtime.test/api/coding-agents/threads?runtime=secondary",
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  it("creates same-thread turns against the selected runtime without exposing credentials", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      threadId: "thread_desktop_1",
+      turnId: "turn_desktop_1",
+      status: "accepted",
+      acceptedAt: "2026-07-06T00:01:00.000Z",
+    }), { status: 202 }));
+
+    await expect(createCodingAgentTurn(auth("secondary"), {
+      threadId: "thread_desktop_1",
+      message: "Continue with the focused tests.",
+      clientRequestId: "req_desktop_turn_1",
+    }, fetchFn)).resolves.toEqual({
+      ok: true,
+      response: expect.objectContaining({
+        threadId: "thread_desktop_1",
+        turnId: "turn_desktop_1",
+        status: "accepted",
+      }),
+    });
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://runtime.test/api/coding-agents/threads/thread_desktop_1/turns?runtime=secondary",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ Authorization: "Bearer desktop-token" }),
+        body: JSON.stringify({
+          message: "Continue with the focused tests.",
+          clientRequestId: "req_desktop_turn_1",
+        }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("maps expected turn conflicts to bounded local recovery copy", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: {
+        code: "thread_busy",
+        safeMessage: "Please retry this provider operation.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    }), { status: 409 }));
+
+    const result = await createCodingAgentTurn(auth(), {
+      threadId: "thread_desktop_1",
+      message: "Continue with the focused tests.",
+      clientRequestId: "req_desktop_turn_1",
+    }, fetchFn);
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "thread_busy",
+        safeMessage: "This conversation is already running. Wait for it to finish and try again.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/home\/matrix|provider/i);
+  });
+
+  it("rejects unsafe turn conflict envelopes with generic local copy", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: {
+        code: "thread_busy",
+        safeMessage: "Provider failed in /home/matrix/private.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    }), { status: 409 }));
+
+    await expect(createCodingAgentTurn(auth(), {
+      threadId: "thread_desktop_1",
+      message: "Continue with the focused tests.",
+      clientRequestId: "req_desktop_turn_1",
+    }, fetchFn)).rejects.toThrow("conversation turn unavailable");
   });
 
   it("rejects unsafe or malformed thread snapshot responses with a generic error", async () => {

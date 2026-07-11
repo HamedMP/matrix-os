@@ -274,6 +274,20 @@ describe("coding agent project conversation contracts", () => {
       clientRequestId: "req_turn_fix_2",
       acceptedAt: now,
     }).type).toBe("turn.accepted");
+    expect(AgentThreadEventSchema.parse({
+      type: "user.message",
+      eventId: "evt_user_message",
+      threadId: "thread_fix",
+      occurredAt: now,
+      messageId: "msg_user_turn_2",
+      text: "Continue with the gateway fix.",
+      clientRequestId: "req_turn_fix_2",
+      turnId: "turn_fix_2",
+    })).toMatchObject({
+      type: "user.message",
+      text: "Continue with the gateway fix.",
+      turnId: "turn_fix_2",
+    });
 
     const unsafeValues = [
       {

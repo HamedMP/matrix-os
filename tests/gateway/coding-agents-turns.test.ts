@@ -36,6 +36,12 @@ describe("coding agent same-thread turns", () => {
         turnId: accepted.turnId,
         clientRequestId: turnBody.clientRequestId,
       }));
+      expect(snapshot.events.items).toContainEqual(expect.objectContaining({
+        type: "user.message",
+        turnId: accepted.turnId,
+        text: turnBody.message,
+        clientRequestId: turnBody.clientRequestId,
+      }));
       expect(harness.validateThread).toHaveBeenCalledWith(ownerPrincipal, {
         projectId: "matrix-os",
         taskId: "task_auth",

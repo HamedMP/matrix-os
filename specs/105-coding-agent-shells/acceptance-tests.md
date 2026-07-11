@@ -1,6 +1,6 @@
 # Acceptance Tests: Project Conversations And Kanban
 
-**Status**: Phase 18-20 backend evidence and Phase 21.1 desktop navigator evidence added; Conversation, Kanban, mobile, and cross-shell evidence remains planned
+**Status**: Phase 18-20 backend evidence and Phase 21.1-21.2 desktop navigator/conversation evidence added; Kanban, mobile, and cross-shell evidence remains planned
 **Updated**: 2026-07-10
 
 This matrix is the executable acceptance contract for the clarified coding-agent shell model. A task checkbox in `tasks.md` is complete only when its named test IDs have current evidence on the exact implementation head. Existing checkpoint tests remain required regressions but do not prove these new cases.
@@ -77,9 +77,9 @@ Every clarified functional requirement and buildable success criterion has at le
 | DT-002 | One task expands to two independently selectable thread rows. | Accessible independent-row assertions in `tests/desktop/coding-agent-project-navigator.test.tsx` plus grouping-model coverage. |
 | DT-003 | Project-level thread is not rendered as task-bound. | `tests/desktop/coding-agent-project-workspace.test.ts` and the project-chat/task-group component assertions. |
 | DT-004 | Stale persisted project/task/thread references reconcile to a valid fallback. | `tests/desktop/coding-agent-project-workspace-store.test.ts` covers initial hydration and runtime switching; model tests cover stale task/thread fallback. |
-| DT-005 | Selected-thread composer invokes turn IPC, not create-thread IPC. | Exact invocation test with thread ID/idempotency key. |
-| DT-006 | Busy/offline/duplicate turn outcomes keep draft/selection safely recoverable. | Store/component failure tests with generic copy. |
-| DT-007 | Explicit new-chat action remains separate and can target project plus optional task. | Composer routing and contract tests. |
+| DT-005 | Selected-thread composer invokes turn IPC, not create-thread IPC. | Exact trusted-client, IPC handler, store, and conversation-component invocation tests with thread ID and bounded idempotency key. |
+| DT-006 | Busy/offline/duplicate turn outcomes keep draft/selection safely recoverable. | Store/component tests prove allowlisted copy, identical retry-key reuse, edited-message key rotation, retained draft, and stale-selection protection. |
+| DT-007 | Explicit new-chat action remains separate and can target project plus optional task. | Navigator/composer routing tests plus gateway workspace-provider coverage for server-owned worktree provisioning when the optional worktree reference is absent. |
 | DT-008 | Conversation/Kanban segmented control preserves selected project. | Component/store mode-switch test. |
 | DT-009 | Kanban uses canonical task columns/order and task mutation path. | Board integration test; no duplicate agent-only task store. |
 | DT-010 | Task card shows bounded count/active/attention aggregates and opens either attached thread. | Card/detail component tests. |
@@ -203,7 +203,23 @@ Current Phase 21.1 evidence on the desktop navigator slice:
 These checks prove `DT-001` through `DT-004` and the desktop portion of
 `SEC-003`. The integrated desktop tests additionally preserve external thread
 focus and explicit projection refresh behavior from `E2E-006`; they do not
-prove the still-open Conversation/Kanban or cross-shell acceptance cases.
+by themselves prove the later Conversation, Kanban, or cross-shell acceptance
+cases.
+
+Current Phase 21.2 evidence on the desktop Conversation slice:
+
+- `pnpm exec vitest run tests/desktop/ipc-contract.test.ts tests/desktop/ipc-handlers.test.ts tests/desktop/coding-agent-runtime-client.test.ts tests/desktop/coding-agent-workspace.test.tsx tests/desktop/coding-agent-project-workspace-shell.test.tsx tests/desktop/coding-agent-project-workspace-store.test.ts tests/desktop/coding-agent-project-workspace.test.ts tests/gateway/coding-agents-provider-adapter.test.ts tests/gateway/coding-agents-threads.test.ts tests/gateway/coding-agents-turns.test.ts tests/gateway/coding-agents-workspace-provider.test.ts tests/gateway/workspace-session-orchestrator.test.ts tests/contracts/coding-agent-project-conversations.test.ts`
+- `pnpm --filter desktop run typecheck`
+- `bun run typecheck`
+- `bun run check:patterns` (zero violations; repository baseline warnings only)
+- `bun run build:desktop`
+- `pnpm exec vitest run tests/e2e/desktop/operator.e2e.test.ts`
+
+These checks prove `DT-005` through `DT-007`: selected conversations replay
+gateway-owned user/assistant activity, the same-thread composer crosses strict
+trusted IPC, busy/offline retry state stays recoverable without exposing raw
+errors, and new-chat worktree creation remains a server-owned lifecycle. The
+Kanban and cross-shell cases remain open.
 
 Gateway/contract PRs additionally run the exact focused Vitest files named in their PR body. Desktop UI PRs run the operator E2E and screenshot checks. Mobile UI PRs run the SDK 57 dev-client device smoke before their rollout gate. `vp` commands may be reported unavailable, but they are not silently substituted for repository commands.
 

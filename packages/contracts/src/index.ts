@@ -586,6 +586,14 @@ const CoreAgentThreadEventSchema = z.discriminatedUnion("type", [
     status: AgentThreadStatusSchema,
   }).strict(),
   BaseThreadEventSchema.extend({
+    type: z.literal("user.message"),
+    messageId: referenceId(128),
+    text: boundedText(24_000, 96 * 1024),
+    clientRequestId: RequestIdSchema,
+    turnId: AgentTurnIdSchema.optional(),
+    attachments: z.array(AgentAttachmentSchema).max(8).optional(),
+  }).strict(),
+  BaseThreadEventSchema.extend({
     type: z.literal("assistant.text.delta"),
     messageId: referenceId(128),
     delta: boundedText(4000, 16 * 1024),

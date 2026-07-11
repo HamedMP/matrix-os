@@ -14,6 +14,7 @@ describe("IPC contract", () => {
       "auth:status",
       "auth:sign-out",
       "runtime:create-thread",
+      "runtime:create-turn",
       "runtime:subscribe-thread-events",
       "runtime:unsubscribe-thread-events",
       "runtime:get-notification-preferences",
@@ -125,6 +126,44 @@ describe("IPC contract", () => {
         },
       }).success,
     ).toBe(true);
+  });
+
+  it("validates runtime:create-turn success and safe conflict results", () => {
+    const request = {
+      threadId: "thread_desktop_1",
+      message: "Continue with the focused tests.",
+      clientRequestId: "req_desktop_turn_1",
+    };
+    const channel = INVOKE_CHANNELS["runtime:create-turn"];
+
+    expect(channel.request.safeParse(request).success).toBe(true);
+    expect(channel.request.safeParse({ ...request, bearerToken: "secret" }).success).toBe(false);
+    expect(channel.response.safeParse({
+      ok: true,
+      response: {
+        threadId: "thread_desktop_1",
+        turnId: "turn_desktop_1",
+        status: "accepted",
+        acceptedAt: "2026-07-06T00:01:00.000Z",
+      },
+    }).success).toBe(true);
+    expect(channel.response.safeParse({
+      ok: false,
+      error: {
+        code: "thread_busy",
+        safeMessage: "This conversation is already running.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    }).success).toBe(true);
+    expect(channel.response.safeParse({
+      ok: false,
+      error: {
+        code: "provider_error",
+        safeMessage: "/home/matrix/secret",
+        retryable: true,
+      },
+    }).success).toBe(false);
   });
 
   it("validates runtime:get-thread-snapshot requests and rejects credential leakage shapes", () => {
