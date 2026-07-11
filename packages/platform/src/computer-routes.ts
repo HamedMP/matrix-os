@@ -101,18 +101,23 @@ export function createComputerRoutes(opts: {
     }
 
     try {
-      const selectedSlot = identity.source === 'auth' ? identity.runtimeSlot ?? null : null;
+      const requestedSelectedSlot = identity.source === 'auth' ? identity.runtimeSlot ?? null : null;
       const records = await listUserRuntimeComputersByClerkId(
         opts.db,
         identity.userId,
         COMPUTER_QUERY_LIMIT,
-        selectedSlot ?? undefined,
+        requestedSelectedSlot ?? undefined,
       );
       const projected = records.flatMap((record) => {
         const computer = projectComputer(record);
         return computer ? [computer] : [];
       });
       const items = projected.slice(0, COMPUTER_LIST_LIMIT);
+      const selectedSlot = requestedSelectedSlot !== null && items.some(
+        (item) => item.runtimeSlot === requestedSelectedSlot,
+      )
+        ? requestedSelectedSlot
+        : null;
       const payload = MatrixComputerListSchema.parse({
         items,
         selectedSlot,

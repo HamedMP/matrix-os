@@ -290,6 +290,50 @@ describe("canonical computer inventory route", () => {
     expect(JSON.stringify(body)).not.toContain("operator-data");
   });
 
+  it("quarantines a malformed selected machine for a verified native principal", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "false";
+    await insertMachine(db, {
+      handle: "alice-review",
+      runtimeSlot: "review",
+      imageVersion: "stable",
+    });
+    await insertMachine(db, {
+      handle: "alice-corrupt",
+      runtimeSlot: "primary",
+      imageVersion: "stable",
+      provisionedAt: "2026-07-11T01:00:00.000Z",
+    });
+    await sql`UPDATE user_machines SET provisioning_class = 'operator-data' WHERE handle = 'alice-corrupt'`
+      .execute(db.executor);
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: "alice-corrupt",
+      gatewayUrl: "https://app.matrix-os.com/vm/alice-corrupt",
+      runtimeSlot: "primary",
+    });
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({ verifyToken: vi.fn().mockResolvedValue(null) }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const response = await app.request("/api/auth/computers", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: `Bearer ${issued.token}`,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    const body = MatrixComputerListSchema.parse(await response.json());
+    expect(body.selectedSlot).toBeNull();
+    expect(body.items.map((item) => item.handle)).toEqual(["alice-review"]);
+    expect(JSON.stringify(body)).not.toContain("operator-data");
+  });
+
   it("caps inventory at twenty records and reports remaining rows", async () => {
     for (let index = 0; index < 21; index += 1) {
       await insertMachine(db, {

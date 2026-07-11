@@ -191,6 +191,17 @@ export async function resolveAppDomainIdentity(opts: {
           }
         }
       }
+      const runtimeSlot = RuntimeSlotSchema.safeParse(claims.runtime_slot).success
+        ? claims.runtime_slot
+        : undefined;
+      if (opts.clerkPrincipalOnly) {
+        return {
+          handle: claims.handle,
+          userId: claims.sub,
+          runtimeSlot,
+          source: 'auth',
+        };
+      }
       const record = opts.legacyContainerRoutingEnabled === false
         ? undefined
         : await getContainer(opts.db, claims.handle);
@@ -201,9 +212,6 @@ export async function resolveAppDomainIdentity(opts: {
           source: 'auth',
         };
       }
-      const runtimeSlot = RuntimeSlotSchema.safeParse(claims.runtime_slot).success
-        ? claims.runtime_slot
-        : undefined;
       const machine = await getRunningUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
       if (machine?.clerkUserId === claims.sub) {
         return {
