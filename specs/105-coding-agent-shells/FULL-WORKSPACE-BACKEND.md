@@ -511,7 +511,7 @@ no client-supplied owner ID or client-type header grants access.
 | POST | `/api/coding-agents/source-control/worktrees` | Owner or Editor; validated project/branch/root | No |
 | DELETE | `/api/coding-agents/source-control/worktrees/:worktreeId` | Owner; Matrix-created clean worktree plus confirmation token | No |
 | POST | `/api/coding-agents/source-control/pull-requests` | Owner or Editor; configured Git host/repository | No |
-| POST | `/api/coding-agents/source-control/prepare-commit` | Owner or Editor; compatibility alias to bounded commit preparation | No |
+| POST | `/api/coding-agents/source-control/prepare-commit` | Owner or Editor with source-control permission; compatibility alias to bounded commit preparation | No |
 | GET | `/api/coding-agents/reviews/:reviewId/comments` | Owner, Editor, or Viewer | No |
 | POST | `/api/coding-agents/reviews/:reviewId/comments` | Owner or Editor | No |
 | PATCH | `/api/coding-agents/reviews/:reviewId/comments/:commentId` | Comment author or Owner; optimistic revision | No |
