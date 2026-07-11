@@ -159,6 +159,11 @@ suite("operator desktop e2e", () => {
     await page.locator("aside button", { hasText: "Settings" }).first().click();
     await page.getByRole("heading", { name: "Settings" }).waitFor({ timeout: 10_000 });
     await expect.poll(attachedNativeViewCount).toBe(0);
+    await page.getByRole("button", { name: "Computers" }).click();
+    await page.getByText("Additional Computer").waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Use Additional Computer" }).click();
+    await expect.poll(() => gateway.state.runtimeSelections).toEqual(["review"]);
+    await page.getByRole("button", { name: "Current computer" }).waitFor({ timeout: 10_000 });
     await page.screenshot({ path: join(SCREENSHOT_DIR, "09-settings-no-shell-overlay.png") });
 
     await page.locator("aside button", { hasText: "Chat" }).first().click();

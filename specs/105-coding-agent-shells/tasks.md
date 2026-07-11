@@ -1220,6 +1220,23 @@ path, multi-chat selection, cross-view identity continuity, and the absence of
 thread-driven task movement. Surface validation is recorded in
 `acceptance-tests.md`.
 
+### 21.4 Native Computer Selection
+
+- [x] Replace free-text runtime entry with an owner-scoped computer list.
+- [x] Exchange and persist a runtime-scoped credential only in Electron main.
+- [x] Rehydrate project/task/thread state after the selected computer changes.
+- [x] Keep machine identifiers, network details, credentials, and raw failures out of the renderer.
+
+Tests: runtime computer contracts, platform owner/auth route coverage, trusted
+auth and credential-store tests, IPC boundary tests, renderer switching/error
+tests, and desktop settings coverage.
+
+Evidence: the platform returns a capped safe projection and rejects invalid,
+unauthenticated, or cross-owner selection; the trusted core rotates the bearer
+before broadcasting `runtime:changed`; the desktop renders only available,
+starting, and unavailable states with generic failure copy. Surface validation
+is recorded in `acceptance-tests.md`.
+
 Gate:
 
 - [x] Desktop typecheck, focused Vitest, operator E2E, Canvas/Desktop regression, pattern scan, and screenshot checks pass.

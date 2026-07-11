@@ -704,6 +704,8 @@ describe("IPC contract", () => {
     expect(schema.safeParse({ slot: "primary" }).success).toBe(true);
     expect(schema.safeParse({ slot: "" }).success).toBe(false);
     expect(schema.safeParse({ slot: "x".repeat(65) }).success).toBe(false);
+    expect(schema.safeParse({ slot: "../private" }).success).toBe(false);
+    expect(schema.safeParse({ slot: "review computer" }).success).toBe(false);
     expect(schema.safeParse({}).success).toBe(false);
   });
 

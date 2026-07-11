@@ -37,7 +37,7 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode; group: st
   { id: "billing", label: "Billing", icon: <CreditCard size={15} />, group: "You" },
   { id: "appearance", label: "Appearance", icon: <Palette size={15} />, group: "You" },
   { id: "agent", label: "Agent (Hermes)", icon: <Sparkles size={15} />, group: "Machine" },
-  { id: "runtime", label: "Runtime", icon: <Server size={15} />, group: "Machine" },
+  { id: "runtime", label: "Computers", icon: <Server size={15} />, group: "Machine" },
   { id: "channels", label: "Channels", icon: <MonitorCog size={15} />, group: "Machine" },
   { id: "integrations", label: "Integrations", icon: <Blocks size={15} />, group: "Machine" },
   { id: "cron", label: "Schedules", icon: <Clock size={15} />, group: "Machine" },

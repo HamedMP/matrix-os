@@ -24,10 +24,12 @@ export interface StubGateway {
     kernelMessages: Array<Record<string, unknown>>;
     codingAgentCreates: Array<Record<string, unknown>>;
     taskUpdates: Array<Record<string, unknown>>;
+    runtimeSelections: string[];
   };
 }
 
 const TOKEN = "stub-token-1";
+const REVIEW_TOKEN = "stub-review-token-with-enough-entropy-1";
 const NOW = "2026-07-08T00:00:00.000Z";
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -350,7 +352,9 @@ export async function startStubGateway(): Promise<StubGateway> {
     kernelMessages: [],
     codingAgentCreates: [],
     taskUpdates: [],
+    runtimeSelections: [],
   };
+  let currentToken = TOKEN;
 
   const server: Server = createServer((req, res) => {
     void handle(req, res);
@@ -404,8 +408,54 @@ export async function startStubGateway(): Promise<StubGateway> {
     }
 
     // Everything below requires the bearer header (verifies header injection).
-    if (req.headers.authorization !== `Bearer ${TOKEN}`) {
+    if (req.headers.authorization !== `Bearer ${currentToken}`) {
       json(res, 401, { error: "unauthorized" });
+      return;
+    }
+
+    if (req.method === "GET" && path === "/api/auth/computers") {
+      json(res, 200, {
+        items: [
+          {
+            handle: "neo",
+            runtimeSlot: "primary",
+            label: "Main Computer",
+            availability: "available",
+            kind: "customer",
+            gatewayPath: "/vm/neo",
+            capabilities: [],
+          },
+          {
+            handle: "neo-review",
+            runtimeSlot: "review",
+            label: "Additional Computer",
+            availability: "available",
+            kind: "preview",
+            gatewayPath: "/vm/neo-review?runtime=review",
+            capabilities: [],
+          },
+        ],
+        selectedSlot: currentToken === REVIEW_TOKEN ? "review" : "primary",
+        hasMore: false,
+        limit: 20,
+      });
+      return;
+    }
+
+    if (req.method === "POST" && path === "/api/auth/runtime-selection") {
+      const body = await readBody(req);
+      if (body.slot !== "review") {
+        json(res, 404, { error: "Computer unavailable" });
+        return;
+      }
+      state.runtimeSelections.push("review");
+      currentToken = REVIEW_TOKEN;
+      json(res, 200, {
+        accessToken: REVIEW_TOKEN,
+        expiresAt: Date.now() + 3_600_000,
+        handle: "neo-review",
+        slot: "review",
+      });
       return;
     }
 
@@ -545,7 +595,7 @@ export async function startStubGateway(): Promise<StubGateway> {
   server.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     // WS upgrades carry the bearer header via the app's header injection.
-    if (req.headers.authorization !== `Bearer ${TOKEN}`) {
+    if (req.headers.authorization !== `Bearer ${currentToken}`) {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
       return;

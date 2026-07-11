@@ -238,6 +238,21 @@ bounded multi-chat aggregates, task moves reuse the existing canonical task
 store and route, opening a card chat returns to the same conversation, and
 thread state alone cannot mutate task status.
 
+Current native computer-selection evidence:
+
+- `pnpm exec vitest run tests/contracts/runtime-computers.test.ts tests/platform/proxy-routing.test.ts tests/desktop/auth-service.test.ts tests/desktop/credential-store.test.ts tests/desktop/ipc-contract.test.ts tests/desktop/ipc-handlers.test.ts tests/desktop/runtime-section.test.tsx tests/desktop/settings-view.test.tsx tests/desktop/embed-host.test.tsx`
+- `pnpm --filter desktop run typecheck`
+- `bun run typecheck`
+- `bun run check:patterns`
+- `bun run build:desktop`
+- `pnpm exec vitest run tests/e2e/desktop/operator.e2e.test.ts`
+
+These checks prove the desktop discovers only capped owner-scoped computer
+summaries, rotates the selected runtime credential inside Electron main,
+persists a bounded slot, rejects invalid or cross-owner selection, rehydrates
+after `runtime:changed`, and contains raw platform or filesystem failures behind
+generic desktop copy.
+
 Gateway/contract PRs additionally run the exact focused Vitest files named in their PR body. Desktop UI PRs run the operator E2E and screenshot checks. Mobile UI PRs run the SDK 57 dev-client device smoke before their rollout gate. `vp` commands may be reported unavailable, but they are not silently substituted for repository commands.
 
 ## Confirmation Boundary
