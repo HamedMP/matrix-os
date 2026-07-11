@@ -20,6 +20,7 @@ import {
   type UserRuntimeComputerRecord,
 } from './computer-repository.js';
 import { isPreviewMachine } from './customer-vps-preview.js';
+import { timingSafeTokenEquals } from './platform-token.js';
 import {
   resolveAppDomainIdentity,
   resolveSyncBearerIdentity,
@@ -72,13 +73,30 @@ function createBoundedRateLimiter(maxAttempts: number) {
   };
 }
 
-function runtimeSelectionSourceKey(c: Context): string {
-  const forwarded = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
-  const source = c.req.header('cf-connecting-ip')?.trim()
-    ?? c.req.header('x-real-ip')?.trim()
-    ?? forwarded
-    ?? 'unknown';
-  return source.slice(0, 128);
+function runtimeSelectionSourceKey(c: Context, edgeSecret: string | undefined): string {
+  const presentedEdgeSecret = c.req.header(EDGE_SECRET_HEADER);
+  const trustedEdge = Boolean(
+    edgeSecret
+    && presentedEdgeSecret
+    && timingSafeTokenEquals(presentedEdgeSecret, edgeSecret),
+  );
+  if (trustedEdge) {
+    const edgeSource = c.req.header('cf-connecting-ip')?.trim()
+      ?? c.req.header('x-real-ip')?.trim()
+      ?? c.req.header('x-forwarded-for')?.split(',')[0]?.trim()
+      ?? 'unknown';
+    return `edge:${edgeSource.slice(0, 128)}`;
+  }
+
+  const forwarded = (c.req.header('x-forwarded-for') ?? '')
+    .slice(0, 1024)
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (forwarded.length >= 2) {
+    return `proxy:${forwarded.slice(-2).join('|').slice(0, 256)}`;
+  }
+  return 'direct';
 }
 
 function computerAvailability(status: string): MatrixComputerAvailability {
@@ -247,7 +265,7 @@ export function createComputerRoutes(opts: {
       opts.applyNoStoreHeaders(c);
       return c.json({ error: 'Runtime selection unavailable' }, 503);
     }
-    if (!sourceRateLimiter.check(runtimeSelectionSourceKey(c))) {
+    if (!sourceRateLimiter.check(runtimeSelectionSourceKey(c, opts.appEnv.EDGE_ROUTER_SECRET))) {
       return tooManyRuntimeSelectionRequests(c);
     }
     const authHeader = c.req.header('authorization');
