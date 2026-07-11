@@ -458,7 +458,7 @@ no client-supplied owner ID or client-type header grants access.
 | GET | `/api/coding-agents/threads/:threadId/runs` | Owner, Editor, or Viewer | No |
 | GET | `/api/coding-agents/threads/:threadId/terminals` | Owner, Editor, or Viewer; references only | No |
 | GET | `/api/coding-agents/attention` | Authenticated principal; own attention only | No |
-| POST | `/api/coding-agents/threads` | Owner or Editor with project create permission | No |
+| POST | `/api/coding-agents/threads` | Owner or Editor with project create permission, execution-policy permission, and an authorized provider profile owned by the executing principal or explicitly delegated without credential transfer | No |
 | POST | `/api/coding-agents/threads/:threadId/adopt` | Owner only; legacy unassigned conversation plus target project/task ownership | No |
 | PATCH | `/api/coding-agents/threads/:threadId` | Owner or Editor; rename/metadata revision | No |
 | DELETE | `/api/coding-agents/threads/:threadId` | Owner or authorized org/shared admin; explicit delete confirmation | No |
@@ -478,7 +478,7 @@ no client-supplied owner ID or client-type header grants access.
 | POST | `/api/coding-agents/threads/:threadId/pending-messages` | Owner or Editor allowed by execution policy | No |
 | PATCH | `/api/coding-agents/threads/:threadId/pending-messages/:pendingMessageId` | Creator or Owner; pending state/revision required | No |
 | DELETE | `/api/coding-agents/threads/:threadId/pending-messages/:pendingMessageId` | Creator or Owner; pending state/revision required | No |
-| POST | `/api/coding-agents/threads/:threadId/pending-messages/reorder` | Owner or Editor; all records within same thread/revision | No |
+| POST | `/api/coding-agents/threads/:threadId/pending-messages/reorder` | Owner, or Editor authorized as creator of every reordered record; all records within same thread/revision | No |
 | GET | `/api/coding-agents/providers` | Owner, Editor, or Viewer; safe metadata only | No |
 | GET | `/api/coding-agents/providers/:providerId/options` | Owner or Editor; safe supported options only | No |
 | GET | `/api/coding-agents/profiles` | Owner only | No |
