@@ -4,10 +4,14 @@ import type { CredentialStore, StoredCredential } from "@desktop/main/auth/crede
 
 const HOUR_MS = 3_600_000;
 
-function makeCredentialStore(initial: StoredCredential | null = null) {
+function makeCredentialStore(
+  initial: StoredCredential | null = null,
+  beforeSave?: (credential: StoredCredential) => Promise<void>,
+) {
   let stored = initial;
   const store: CredentialStore = {
     save: vi.fn(async (credential: StoredCredential) => {
+      if (beforeSave) await beforeSave(credential);
       stored = credential;
     }),
     load: vi.fn(async () => stored),
@@ -24,8 +28,9 @@ function makeService(opts: {
   now: number | (() => number);
   fetchFn?: (input: string, init?: RequestInit) => Promise<Response>;
   saveProfile?: (profile: ConnectionProfile) => Promise<void>;
+  beforeSaveCredential?: (credential: StoredCredential) => Promise<void>;
 }) {
-  const { store, peek } = makeCredentialStore(opts.credential ?? null);
+  const { store, peek } = makeCredentialStore(opts.credential ?? null, opts.beforeSaveCredential);
   let profile = opts.profile ?? null;
   const changes: AuthStatus[] = [];
   const auth = new AuthService({
@@ -172,6 +177,40 @@ describe("AuthService token expiry", () => {
 });
 
 describe("AuthService runtime selection", () => {
+  it("keeps the profile when expiry wins during credential persistence", async () => {
+    const saveStarted = deferred<void>();
+    const finishSave = deferred<void>();
+    const fetchFn = vi.fn(async () => jsonResponse({
+      accessToken: "r".repeat(64),
+      expiresAt: 1_800_000_000_000,
+      handle: "neo-review",
+      slot: "review",
+    }));
+    const { auth, getProfile, peekCredential } = makeService({
+      credential: VALID,
+      profile: PROFILE,
+      now: 10_000,
+      fetchFn,
+      beforeSaveCredential: async (credential) => {
+        if (credential.accessToken === VALID.accessToken) return;
+        saveStarted.resolve();
+        await finishSave.promise;
+      },
+    });
+    await auth.init();
+
+    const selection = auth.selectRuntime("review");
+    await saveStarted.promise;
+    const expiry = auth.expireSession();
+    finishSave.resolve();
+    await expiry;
+
+    await expect(selection).rejects.toThrow("Computer switch failed. Try again.");
+    expect(auth.getStatus().signedIn).toBe(false);
+    expect(peekCredential()).toBeNull();
+    expect(getProfile()).toEqual(PROFILE);
+  });
+
   it("does not restore a selected runtime after sign-out wins a slow exchange", async () => {
     const exchangeStarted = deferred<void>();
     const finishExchange = deferred<Response>();

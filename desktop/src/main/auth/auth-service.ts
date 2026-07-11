@@ -85,6 +85,7 @@ export class AuthService {
   private profile: ConnectionProfile | null = null;
   private flowState: "idle" | "pending" | "authorized" | "expired" = "idle";
   private flowNonce = 0;
+  private persistenceTail: Promise<void> = Promise.resolve();
   private pendingDeviceCode: Pick<DeviceCodeResponse, "userCode" | "verificationUri" | "expiresIn"> | null = null;
   private readonly deps: AuthServiceDeps;
 
@@ -110,6 +111,12 @@ export class AuthService {
 
   private now(): number {
     return this.deps.now ? this.deps.now() : Date.now();
+  }
+
+  private runPersistence<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.persistenceTail.then(operation, operation);
+    this.persistenceTail = result.then(() => undefined, () => undefined);
+    return result;
   }
 
   // A credential past (or within the skew window of) its expiry is unusable;
@@ -333,30 +340,32 @@ export class AuthService {
         handle: nextCredential.handle,
         runtimeSlot: slot,
       };
-      await this.deps.credentialStore.save(nextCredential);
-      if (!isCurrentSelection()) {
-        await this.clearStaleFlowPersistence();
-        throw new Error("stale runtime selection");
-      }
-      try {
-        await this.deps.saveProfile(nextProfile);
+      await this.runPersistence(async () => {
+        if (!isCurrentSelection()) throw new Error("stale runtime selection");
+        await this.deps.credentialStore.save(nextCredential);
         if (!isCurrentSelection()) {
-          await this.clearStaleFlowPersistence();
+          await this.deps.credentialStore.save(currentCredential);
           throw new Error("stale runtime selection");
         }
-      } catch (err: unknown) {
-        if (isCurrentSelection()) {
+        try {
+          await this.deps.saveProfile(nextProfile);
+          if (!isCurrentSelection()) {
+            await this.deps.credentialStore.save(currentCredential);
+            await this.deps.saveProfile(currentProfile);
+            throw new Error("stale runtime selection");
+          }
+        } catch (err: unknown) {
           await this.deps.credentialStore.save(currentCredential).catch((rollbackErr: unknown) => {
             console.warn(
               "[auth] failed to restore credential after runtime switch:",
               rollbackErr instanceof Error ? rollbackErr.name : typeof rollbackErr,
             );
           });
+          throw err;
         }
-        throw err;
-      }
-      this.credential = nextCredential;
-      this.profile = nextProfile;
+        this.credential = nextCredential;
+        this.profile = nextProfile;
+      });
     } catch (err: unknown) {
       console.warn(
         "[auth] runtime switch failed:",
@@ -375,7 +384,7 @@ export class AuthService {
     this.credential = null;
     this.flowState = "idle";
     try {
-      await this.deps.credentialStore.clear();
+      await this.runPersistence(() => this.deps.credentialStore.clear());
     } catch (err: unknown) {
       console.warn(
         "[auth] failed to clear expired credential:",
@@ -395,24 +404,26 @@ export class AuthService {
     this.deps.onAuthChanged(this.getStatus());
 
     let cleanupError: unknown = null;
-    try {
-      await this.deps.credentialStore.clear();
-    } catch (err: unknown) {
-      cleanupError = err;
-      console.warn(
-        "[auth] failed to clear credential store:",
-        err instanceof Error ? err.message : String(err),
-      );
-    }
-    try {
-      await this.deps.clearProfile();
-    } catch (err: unknown) {
-      cleanupError ??= err;
-      console.warn(
-        "[auth] failed to clear connection profile:",
-        err instanceof Error ? err.message : String(err),
-      );
-    }
+    await this.runPersistence(async () => {
+      try {
+        await this.deps.credentialStore.clear();
+      } catch (err: unknown) {
+        cleanupError = err;
+        console.warn(
+          "[auth] failed to clear credential store:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      try {
+        await this.deps.clearProfile();
+      } catch (err: unknown) {
+        cleanupError ??= err;
+        console.warn(
+          "[auth] failed to clear connection profile:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    });
     if (cleanupError) throw cleanupError;
   }
 
@@ -442,7 +453,7 @@ export class AuthService {
     this.credential = null;
     this.flowState = "idle";
     this.deps.onAuthChanged(this.currentStatus());
-    void this.deps.credentialStore.clear().catch((err: unknown) => {
+    void this.runPersistence(() => this.deps.credentialStore.clear()).catch((err: unknown) => {
       console.warn(
         "[auth] failed to clear expired credential:",
         err instanceof Error ? err.message : String(err),
