@@ -124,8 +124,8 @@ export function readShellRuntimeSlotCookie(path: string, cookieHeader: string | 
 }
 
 export function readExplicitVmRoute(path: string): ExplicitVmRoute | null {
-  const match = path.match(/^\/vm\/([a-z][a-z0-9-]{2,30})(?:\/(.*))?$/);
-  if (!match?.[1]) return null;
+  const match = path.match(/^\/vm\/([^/]+)(?:\/(.*))?$/);
+  if (!match?.[1] || !HANDLE_PATTERN.test(match[1])) return null;
   const rest = match[2];
   return {
     handle: match[1],

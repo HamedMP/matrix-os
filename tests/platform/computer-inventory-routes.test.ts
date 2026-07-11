@@ -253,6 +253,37 @@ describe("canonical computer inventory route", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.21:443/api/projects");
   });
 
+  it("routes an existing long platform-provisioned computer handle", async () => {
+    const handle = `a${"1".repeat(60)}`;
+    await insertMachine(db, {
+      machineId: "machine-long-handle",
+      handle,
+      runtimeSlot: "primary",
+      publicIPv4: "203.0.113.22",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("long handle", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const response = await app.request(`/vm/${handle}/projects`, {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.22:443/projects");
+  });
+
   it("quarantines a malformed persisted provisioning class without hiding valid computers", async () => {
     process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "false";
     await insertMachine(db, {

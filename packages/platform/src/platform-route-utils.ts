@@ -3,7 +3,7 @@ import {
   type PlatformDB,
 } from './db.js';
 
-export const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
+export const HANDLE_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}$/;
 
 export function logPlatformRouteError(route: string, err: unknown): void {
   console.error(
