@@ -329,6 +329,7 @@ apply_update() {
   fi
 
   # Start services and health-check
+  sudo /opt/matrix/bin/matrix-configure-gateway-proxy || log "WARN: failed to update customer nginx API proxy"
   log "Starting services..."
   sudo systemctl start matrix-gateway matrix-shell
   log "Running health check..."

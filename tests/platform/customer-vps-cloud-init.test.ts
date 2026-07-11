@@ -534,6 +534,7 @@ exit 99
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
     const gatewayUnit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-gateway.service'), 'utf8');
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
     const configuratorPath = join(root, 'distro/customer-vps/host-bin/matrix-configure-gateway-proxy');
 
     const apiLocation = cloudInit.slice(
@@ -544,8 +545,11 @@ exit 99
     expect(apiLocation).toContain('proxy_set_header Upgrade $http_upgrade;');
     expect(apiLocation).toContain('proxy_set_header Connection "upgrade";');
     expect(existsSync(configuratorPath)).toBe(true);
-    expect(cloudInit).toContain('ExecStartPre=+/opt/matrix/bin/matrix-configure-gateway-proxy');
-    expect(gatewayUnit).toContain('ExecStartPre=+/opt/matrix/bin/matrix-configure-gateway-proxy');
+    expect(cloudInit).not.toContain('ExecStartPre=+/opt/matrix/bin/matrix-configure-gateway-proxy');
+    expect(gatewayUnit).not.toContain('ExecStartPre=+/opt/matrix/bin/matrix-configure-gateway-proxy');
+    expect(syncAgent).toContain(
+      'sudo /opt/matrix/bin/matrix-configure-gateway-proxy || log "WARN: failed to update customer nginx API proxy"',
+    );
   });
 
   it('installs a customer host code-server service behind restore completion', () => {

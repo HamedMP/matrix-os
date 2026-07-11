@@ -32,46 +32,46 @@ path = sys.argv[1]
 with open(path, encoding="utf-8") as handle:
     text = handle.read()
 
-start_marker = "        location /api/ {"
-end_marker = "        location /files/ {"
-start = text.find(start_marker)
-end = text.find(end_marker, start + len(start_marker))
-if start < 0 or end < 0:
-    raise SystemExit("customer nginx API location not found")
+lines = text.splitlines(keepends=True)
+location_indexes = [
+    index for index, line in enumerate(lines)
+    if line.strip() == "location /api/ {"
+]
+if len(location_indexes) != 1:
+    raise SystemExit("expected exactly one customer nginx API location")
 
-block = text[start:end]
+start = location_indexes[0]
+depth = 0
+end = None
+for index in range(start, len(lines)):
+    depth += lines[index].count("{") - lines[index].count("}")
+    if depth == 0:
+        end = index
+        break
+if end is None:
+    raise SystemExit("unterminated customer nginx API location")
+
+block_lines = lines[start:end + 1]
 required = (
-    "          proxy_http_version 1.1;",
-    "          proxy_set_header Upgrade $http_upgrade;",
-    '          proxy_set_header Connection "upgrade";',
+    "proxy_http_version 1.1;",
+    "proxy_set_header Upgrade $http_upgrade;",
+    'proxy_set_header Connection "upgrade";',
 )
-if all(line in block for line in required):
+if all(any(line.strip() == directive for line in block_lines) for directive in required):
     print("unchanged")
     raise SystemExit(0)
 
-expected = """        location /api/ {
-          proxy_pass http://127.0.0.1:4000;
-        }
-
-"""
-if block != expected:
-    raise SystemExit("customer nginx API location has unexpected contents")
-
-replacement = """        location /api/ {
-          proxy_http_version 1.1;
-          proxy_set_header Upgrade $http_upgrade;
-          proxy_set_header Connection "upgrade";
-          proxy_pass http://127.0.0.1:4000;
-        }
-
-"""
+indent = block_lines[0][:-len(block_lines[0].lstrip())] + "  "
+existing_directives = {line.strip() for line in block_lines}
+missing = [directive for directive in required if directive not in existing_directives]
+replacement_lines = [block_lines[0], *(f"{indent}{directive}\n" for directive in missing), *block_lines[1:]]
 metadata = os.stat(path, follow_symlinks=False)
 fd, temp_path = tempfile.mkstemp(prefix=".matrix.native-apps.", dir=os.path.dirname(path))
 try:
     os.fchmod(fd, stat.S_IMODE(metadata.st_mode))
     os.fchown(fd, metadata.st_uid, metadata.st_gid)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(text[:start] + replacement + text[end:])
+        handle.writelines([*lines[:start], *replacement_lines, *lines[end + 1:]])
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temp_path, path)
