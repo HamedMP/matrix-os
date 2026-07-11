@@ -227,5 +227,15 @@ describe("Matrix computer contracts", () => {
       hasMore: false,
       limit: 20,
     }).success).toBe(false);
+
+    expect(MatrixComputerListSchema.safeParse({
+      items: [
+        mainComputer,
+        { ...mainComputer, handle: "neo-two", gatewayPath: "/vm/neo-two" },
+      ],
+      selectedSlot: "primary",
+      hasMore: false,
+      limit: 20,
+    }).success).toBe(false);
   });
 });

@@ -135,6 +135,9 @@ export const MatrixComputerListSchema = z.object({
 }).strict().refine((list) => list.items.length <= list.limit, {
   message: "Items cannot exceed the requested limit",
   path: ["items"],
+}).refine((list) => new Set(list.items.map((item) => item.runtimeSlot)).size === list.items.length, {
+  message: "Runtime slots must be unique within the computer inventory",
+  path: ["items"],
 }).refine((list) => list.selectedSlot === null || list.items.some((item) => item.runtimeSlot === list.selectedSlot), {
   message: "Selected slot must be present in the computer inventory",
   path: ["selectedSlot"],
