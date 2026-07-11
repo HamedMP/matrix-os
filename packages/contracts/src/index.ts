@@ -112,13 +112,16 @@ export const MatrixComputerSchema = z.object({
   availability: MatrixComputerAvailabilitySchema,
   kind: MatrixComputerKindSchema,
   versionLabel: MatrixComputerVersionLabelSchema.optional(),
-  gatewayPath: z.string().min(6).max(67),
+  gatewayPath: z.string().min(6).max(108),
   capabilities: z.array(MatrixComputerCapabilityIdSchema).max(64),
 }).strict().superRefine((computer, ctx) => {
-  if (computer.gatewayPath !== `/vm/${computer.handle}`) {
+  const expectedGatewayPath = computer.runtimeSlot === "primary"
+    ? `/vm/${computer.handle}`
+    : `/vm/${computer.handle}?runtime=${computer.runtimeSlot}`;
+  if (computer.gatewayPath !== expectedGatewayPath) {
     ctx.addIssue({
       code: "custom",
-      message: "Gateway path must match the Matrix computer handle",
+      message: "Gateway path must match the Matrix computer handle and runtime slot",
       path: ["gatewayPath"],
     });
   }

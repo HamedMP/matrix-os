@@ -72,7 +72,7 @@ describe("Matrix computer contracts", () => {
           availability: "starting",
           kind: "preview",
           versionLabel: "Version pending",
-          gatewayPath: "/vm/pr-920",
+          gatewayPath: "/vm/pr-920?runtime=pr-920",
           capabilities: ["matrixComputerInventoryV1"],
         },
       ],
@@ -83,7 +83,7 @@ describe("Matrix computer contracts", () => {
 
     expect(response.items).toHaveLength(2);
     expect(response.selectedSlot).toBe("primary");
-    expect(response.items[1]?.gatewayPath).toBe("/vm/pr-920");
+    expect(response.items[1]?.gatewayPath).toBe("/vm/pr-920?runtime=pr-920");
   });
 
   it("represents a verified principal without an authoritative runtime selection", () => {
@@ -131,7 +131,7 @@ describe("Matrix computer contracts", () => {
         ...mainComputer,
         handle: `neo-${index}`,
         runtimeSlot: `slot-${index}`,
-        gatewayPath: `/vm/neo-${index}`,
+        gatewayPath: `/vm/neo-${index}?runtime=slot-${index}`,
       })),
       selectedSlot: null,
       hasMore: true,
@@ -143,7 +143,7 @@ describe("Matrix computer contracts", () => {
         ...mainComputer,
         handle: `neo-${index}`,
         runtimeSlot: `slot-${index}`,
-        gatewayPath: `/vm/neo-${index}`,
+        gatewayPath: `/vm/neo-${index}?runtime=slot-${index}`,
       })),
       selectedSlot: null,
       hasMore: false,
