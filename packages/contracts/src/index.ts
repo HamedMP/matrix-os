@@ -82,6 +82,68 @@ export const SafeAssistantPreviewTextSchema = boundedText(243, 1024)
   .refine((value) => !UNSAFE_ASSISTANT_PREVIEW_TEXT.test(value), { message: "Text is not safe for assistant preview display" });
 export const BoundedTextSchema = (maxChars = 4000, maxBytes = 16 * 1024) => boundedText(maxChars, maxBytes);
 
+export const MatrixComputerHandleSchema = z.string()
+  .min(3)
+  .max(31)
+  .regex(/^[a-z][a-z0-9-]{2,30}$/, "Invalid Matrix computer handle");
+export const MatrixComputerRuntimeSlotSchema = z.string()
+  .min(1)
+  .max(32)
+  .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/, "Invalid Matrix computer runtime slot");
+export const MatrixComputerAvailabilitySchema = z.enum(["available", "starting", "unavailable"]);
+export const MatrixComputerKindSchema = z.enum(["customer", "preview"]);
+export const MatrixComputerLabelSchema = z.enum(["Main Computer", "Preview Computer", "Additional Computer"]);
+export const MatrixComputerVersionLabelSchema = z.union([
+  z.literal("Version pending"),
+  z.enum(["stable", "dev", "canary", "beta"]),
+  z.string().regex(/^v\d{4}\.\d{2}\.\d{2}$/, "Invalid Matrix computer version label"),
+]);
+export const MatrixComputerCapabilityIdSchema = z.string()
+  .min(1)
+  .max(80)
+  .regex(/^[a-z][A-Za-z0-9]{0,79}$/, "Invalid Matrix computer capability id");
+export const MatrixComputerSchema = z.object({
+  handle: MatrixComputerHandleSchema,
+  runtimeSlot: MatrixComputerRuntimeSlotSchema,
+  label: MatrixComputerLabelSchema,
+  availability: MatrixComputerAvailabilitySchema,
+  kind: MatrixComputerKindSchema,
+  versionLabel: MatrixComputerVersionLabelSchema.optional(),
+  gatewayPath: z.string().min(6).max(67),
+  capabilities: z.array(MatrixComputerCapabilityIdSchema).max(64),
+}).strict().superRefine((computer, ctx) => {
+  if (computer.gatewayPath !== `/vm/${computer.handle}`) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Gateway path must match the Matrix computer handle",
+      path: ["gatewayPath"],
+    });
+  }
+});
+
+export const MatrixComputerListSchema = z.object({
+  items: z.array(MatrixComputerSchema).max(20),
+  hasMore: z.boolean(),
+  limit: z.number().int().min(1).max(20),
+  selectedSlot: MatrixComputerRuntimeSlotSchema.nullable(),
+}).strict().refine((list) => list.items.length <= list.limit, {
+  message: "Items cannot exceed the requested limit",
+  path: ["items"],
+}).refine((list) => list.selectedSlot === null || list.items.some((item) => item.runtimeSlot === list.selectedSlot), {
+  message: "Selected slot must be present in the computer inventory",
+  path: ["selectedSlot"],
+});
+
+export type MatrixComputerHandle = z.infer<typeof MatrixComputerHandleSchema>;
+export type MatrixComputerRuntimeSlot = z.infer<typeof MatrixComputerRuntimeSlotSchema>;
+export type MatrixComputerAvailability = z.infer<typeof MatrixComputerAvailabilitySchema>;
+export type MatrixComputerKind = z.infer<typeof MatrixComputerKindSchema>;
+export type MatrixComputerLabel = z.infer<typeof MatrixComputerLabelSchema>;
+export type MatrixComputerVersionLabel = z.infer<typeof MatrixComputerVersionLabelSchema>;
+export type MatrixComputerCapabilityId = z.infer<typeof MatrixComputerCapabilityIdSchema>;
+export type MatrixComputer = z.infer<typeof MatrixComputerSchema>;
+export type MatrixComputerList = z.infer<typeof MatrixComputerListSchema>;
+
 export const RecoveryActionSchema = z.enum([
   "retry",
   "sign_in",
