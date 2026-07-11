@@ -1,6 +1,6 @@
 # Acceptance Tests: Project Conversations And Kanban
 
-**Status**: Phase 18-20 backend evidence and Phase 21.1-21.2 desktop navigator/conversation evidence added; Kanban, mobile, and cross-shell evidence remains planned
+**Status**: Phase 18-20 backend evidence and Phase 21.1-21.3 desktop navigator/conversation/Kanban evidence added; mobile and cross-shell evidence remains planned
 **Updated**: 2026-07-10
 
 This matrix is the executable acceptance contract for the clarified coding-agent shell model. A task checkbox in `tasks.md` is complete only when its named test IDs have current evidence on the exact implementation head. Existing checkpoint tests remain required regressions but do not prove these new cases.
@@ -80,10 +80,10 @@ Every clarified functional requirement and buildable success criterion has at le
 | DT-005 | Selected-thread composer invokes turn IPC, not create-thread IPC. | Exact trusted-client, IPC handler, store, and conversation-component invocation tests with thread ID and bounded idempotency key. |
 | DT-006 | Busy/offline/duplicate turn outcomes keep draft/selection safely recoverable. | Store/component tests prove allowlisted copy, identical retry-key reuse, edited-message key rotation, retained draft, and stale-selection protection. |
 | DT-007 | Explicit new-chat action remains separate and can target project plus optional task. | Navigator/composer routing tests plus gateway workspace-provider coverage for server-owned worktree provisioning when the optional worktree reference is absent. |
-| DT-008 | Conversation/Kanban segmented control preserves selected project. | Component/store mode-switch test. |
-| DT-009 | Kanban uses canonical task columns/order and task mutation path. | Board integration test; no duplicate agent-only task store. |
-| DT-010 | Task card shows bounded count/active/attention aggregates and opens either attached thread. | Card/detail component tests. |
-| DT-011 | Thread status updates badges but never dispatch task movement. | Reducer/effect regression with mixed thread states. |
+| DT-008 | Conversation/Kanban segmented control preserves selected project. | `tests/desktop/coding-agent-kanban.test.tsx`, `tests/desktop/coding-agent-project-workspace-store.test.ts`, and the integrated workspace mode-switch assertion preserve project/task/thread identity. |
+| DT-009 | Kanban uses canonical task columns/order and task mutation path. | The integrated `AgentWorkspace` test joins the project projection to the existing board store and asserts the canonical `/api/projects/:slug/tasks/:taskId` PATCH; `tests/desktop/board-store.test.ts` remains the mutation source-of-truth coverage. |
+| DT-010 | Task card shows bounded count/active/attention aggregates and opens either attached thread. | `tests/desktop/coding-agent-kanban.test.tsx` renders both task chats and all three bounded aggregate types. |
+| DT-011 | Thread status updates badges but never dispatch task movement. | `tests/desktop/coding-agent-kanban.test.tsx` rerenders mixed thread state and proves no task movement callback occurs. |
 
 ## Mobile Tests
 
@@ -199,6 +199,8 @@ Current Phase 21.1 evidence on the desktop navigator slice:
 - `bun run check:patterns`
 - `bun run build:desktop`
 - `pnpm exec vitest run tests/e2e/desktop/operator.e2e.test.ts`
+- Built-app screenshots: `desktop/screenshots/04b-agents-kanban.png` and
+  `desktop/screenshots/04c-agents-kanban-narrow.png`
 
 These checks prove `DT-001` through `DT-004` and the desktop portion of
 `SEC-003`. The integrated desktop tests additionally preserve external thread
@@ -219,7 +221,22 @@ These checks prove `DT-005` through `DT-007`: selected conversations replay
 gateway-owned user/assistant activity, the same-thread composer crosses strict
 trusted IPC, busy/offline retry state stays recoverable without exposing raw
 errors, and new-chat worktree creation remains a server-owned lifecycle. The
-Kanban and cross-shell cases remain open.
+cross-shell cases remain open.
+
+Current Phase 21.3 evidence on the desktop Kanban slice:
+
+- `pnpm exec vitest run tests/desktop/coding-agent-kanban.test.tsx tests/desktop/coding-agent-project-workspace-store.test.ts tests/desktop/coding-agent-workspace.test.tsx tests/desktop/board-store.test.ts`
+- `pnpm --filter desktop run typecheck`
+- `bun run typecheck`
+- `bun run check:patterns`
+- `bun run build:desktop`
+- `pnpm exec vitest run tests/e2e/desktop/operator.e2e.test.ts`
+
+These checks prove `DT-008` through `DT-011`: the view switch preserves the
+selected project/task/chat references, the board renders canonical columns and
+bounded multi-chat aggregates, task moves reuse the existing canonical task
+store and route, opening a card chat returns to the same conversation, and
+thread state alone cannot mutate task status.
 
 Gateway/contract PRs additionally run the exact focused Vitest files named in their PR body. Desktop UI PRs run the operator E2E and screenshot checks. Mobile UI PRs run the SDK 57 dev-client device smoke before their rollout gate. `vp` commands may be reported unavailable, but they are not silently substituted for repository commands.
 

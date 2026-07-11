@@ -525,4 +525,42 @@ describe("coding-agent project workspace store", () => {
       selectedThreadId: "thread_outside_page",
     });
   });
+
+  it("DT-008 switches view mode without changing project, task, or chat identity", () => {
+    const invoke = vi.fn().mockResolvedValue({ ok: true });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+    useCodingAgentProjectWorkspace.setState({
+      status: "ready",
+      runtimeId: "rt_primary",
+      runtimeScope: "operator|https://app.matrix-os.com|primary",
+      summary: summary("rt_primary", "matrix-os", "Matrix OS"),
+      workspace: workspace("matrix-os", "task_auth", "thread_plan"),
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_auth",
+      selectedThreadId: "thread_plan",
+      viewMode: "conversation",
+    });
+
+    useCodingAgentProjectWorkspace.getState().setViewMode("kanban");
+
+    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_auth",
+      selectedThreadId: "thread_plan",
+      viewMode: "kanban",
+    });
+    expect(invoke).toHaveBeenCalledWith("state:set", {
+      key: "codingAgentWorkspace",
+      value: expect.objectContaining({
+        runtimeScope: "operator|https://app.matrix-os.com|primary",
+        selectedProjectId: "matrix-os",
+        selectedTaskId: "task_auth",
+        selectedThreadId: "thread_plan",
+        viewMode: "kanban",
+      }),
+    });
+  });
 });

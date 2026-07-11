@@ -28,6 +28,8 @@ import { AgentPreviewList, AgentTerminalList } from "./AgentWorkspaceContext";
 import { AgentRuntimeHeader } from "./AgentRuntimeHeader";
 import { AgentProjectWorkspaceShell } from "./AgentProjectWorkspaceShell";
 import { AgentConversationView } from "./AgentConversationView";
+import { AgentWorkspaceViewSwitch } from "./AgentKanbanBoard";
+import { AgentKanbanWorkspace } from "./AgentKanbanWorkspace";
 import {
   AgentWorkspaceSection as Section,
   AgentWorkspaceStack,
@@ -1398,6 +1400,9 @@ export default function AgentWorkspace() {
   const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
   const loadNotificationPreferences = useCodingAgentWorkspace((s) => s.loadNotificationPreferences);
   const refreshProjectWorkspace = useCodingAgentProjectWorkspace((s) => s.refresh);
+  const projectWorkspace = useCodingAgentProjectWorkspace((s) => s.workspace);
+  const viewMode = useCodingAgentProjectWorkspace((s) => s.viewMode);
+  const setViewMode = useCodingAgentProjectWorkspace((s) => s.setViewMode);
   const requestComposerFocus = useCodingAgentWorkspace((s) => s.requestComposerFocus);
   const composerFocusRequestId = useCodingAgentWorkspace((s) => s.composerFocusRequestId);
   const selectedProjectId = useCodingAgentProjectWorkspace((s) => s.selectedProjectId);
@@ -1441,6 +1446,9 @@ export default function AgentWorkspace() {
   }, [activeThreadId, loadThreadSnapshot, runtimeScope, threadSnapshot?.thread.id, threadSnapshotStatus]);
 
   const summaryScopeReady = summaryRuntimeScope === runtimeScope;
+  const kanbanEnabled = summary
+    ? capabilityEnabled(summary, "codingAgentsKanbanView")
+    : false;
 
   if (!summaryScopeReady) {
     if (status === "error") {
@@ -1501,6 +1509,8 @@ export default function AgentWorkspace() {
     requestComposerFocus();
   }
 
+  const showKanban = kanbanEnabled && viewMode === "kanban" && projectWorkspace;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <AgentRuntimeHeader
@@ -1516,17 +1526,30 @@ export default function AgentWorkspace() {
         summary={summary}
         onNewChat={openNewChat}
       >
-        <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(360px,1fr)_minmax(340px,clamp(340px,34vw,520px))] lg:overflow-hidden">
-          <div className="flex min-h-[460px] min-w-0 flex-col overflow-hidden border-b lg:min-h-0 lg:border-b-0 lg:border-r" style={{ borderColor: "var(--border-subtle)" }}>
-            <AgentConversationView
-              status={threadSnapshotStatus}
-              snapshot={threadSnapshot}
-              error={threadSnapshotError}
-              canSendTurns={capabilityEnabled(summary, "codingAgentsSameThreadTurns")}
-            />
-          </div>
-          <aside aria-label="Conversation tools" className="min-h-0 min-w-0 overflow-y-auto" style={{ background: "var(--bg-secondary)" }}>
-            <AgentWorkspaceStack>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {projectWorkspace ? (
+            <header className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-2.5" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
+              <div className="min-w-0">
+                <p className="truncate text-xs font-semibold" style={{ color: "var(--text-primary)" }}>{projectWorkspace.project.label}</p>
+                <p className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>{showKanban ? "Project tasks" : "Project conversations"}</p>
+              </div>
+              {kanbanEnabled ? <AgentWorkspaceViewSwitch viewMode={viewMode} onChange={setViewMode} /> : null}
+            </header>
+          ) : null}
+          {showKanban ? (
+            <AgentKanbanWorkspace providers={summary.providers} />
+          ) : (
+            <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(360px,1fr)_minmax(340px,clamp(340px,34vw,520px))] lg:overflow-hidden">
+              <div className="flex min-h-[460px] min-w-0 flex-col overflow-hidden border-b lg:min-h-0 lg:border-b-0 lg:border-r" style={{ borderColor: "var(--border-subtle)" }}>
+                <AgentConversationView
+                  status={threadSnapshotStatus}
+                  snapshot={threadSnapshot}
+                  error={threadSnapshotError}
+                  canSendTurns={capabilityEnabled(summary, "codingAgentsSameThreadTurns")}
+                />
+              </div>
+              <aside aria-label="Conversation tools" className="min-h-0 min-w-0 overflow-y-auto" style={{ background: "var(--bg-secondary)" }}>
+                <AgentWorkspaceStack>
               {projectWorkspaceEnabled ? (
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -1585,8 +1608,10 @@ export default function AgentWorkspace() {
               <CreatedThreadHandleList summary={summary} />
               <ProviderList summary={summary} />
               <NotificationPreferencesPanel />
-            </AgentWorkspaceStack>
-          </aside>
+                </AgentWorkspaceStack>
+              </aside>
+            </div>
+          )}
         </div>
       </AgentProjectWorkspaceShell>
     </div>
