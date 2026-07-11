@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly CONFIG_PATH="/etc/nginx/sites-available/matrix"
+
+if [ ! -f "$CONFIG_PATH" ]; then
+  exit 0
+fi
+if [ -L "$CONFIG_PATH" ]; then
+  echo "Refusing to update symlinked nginx configuration" >&2
+  exit 1
+fi
+
+backup="$(mktemp /etc/nginx/sites-available/.matrix.backup.XXXXXX)"
+restore_tmp=""
+cleanup() {
+  rm -f "$backup"
+  if [ -n "$restore_tmp" ]; then
+    rm -f "$restore_tmp"
+  fi
+}
+trap cleanup EXIT
+cp --preserve=mode,ownership,timestamps "$CONFIG_PATH" "$backup"
+
+result="$(python3 - "$CONFIG_PATH" <<'PY'
+import os
+import stat
+import sys
+import tempfile
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    text = handle.read()
+
+start_marker = "        location /api/ {"
+end_marker = "        location /files/ {"
+start = text.find(start_marker)
+end = text.find(end_marker, start + len(start_marker))
+if start < 0 or end < 0:
+    raise SystemExit("customer nginx API location not found")
+
+block = text[start:end]
+required = (
+    "          proxy_http_version 1.1;",
+    "          proxy_set_header Upgrade $http_upgrade;",
+    '          proxy_set_header Connection "upgrade";',
+)
+if all(line in block for line in required):
+    print("unchanged")
+    raise SystemExit(0)
+
+expected = """        location /api/ {
+          proxy_pass http://127.0.0.1:4000;
+        }
+
+"""
+if block != expected:
+    raise SystemExit("customer nginx API location has unexpected contents")
+
+replacement = """        location /api/ {
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection "upgrade";
+          proxy_pass http://127.0.0.1:4000;
+        }
+
+"""
+metadata = os.stat(path, follow_symlinks=False)
+fd, temp_path = tempfile.mkstemp(prefix=".matrix.native-apps.", dir=os.path.dirname(path))
+try:
+    os.fchmod(fd, stat.S_IMODE(metadata.st_mode))
+    os.fchown(fd, metadata.st_uid, metadata.st_gid)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text[:start] + replacement + text[end:])
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temp_path, path)
+finally:
+    if os.path.exists(temp_path):
+        os.unlink(temp_path)
+print("changed")
+PY
+)"
+
+if [ "$result" = "unchanged" ]; then
+  exit 0
+fi
+if [ "$result" != "changed" ]; then
+  echo "Unexpected nginx configuration update result" >&2
+  exit 1
+fi
+
+restore_config() {
+  restore_tmp="$(mktemp /etc/nginx/sites-available/.matrix.restore.XXXXXX)"
+  cp --preserve=mode,ownership,timestamps "$backup" "$restore_tmp"
+  mv -f "$restore_tmp" "$CONFIG_PATH"
+  restore_tmp=""
+}
+
+if ! nginx -t; then
+  restore_config
+  nginx -t || true
+  exit 1
+fi
+if ! systemctl reload nginx; then
+  restore_config
+  nginx -t || true
+  systemctl reload nginx || true
+  exit 1
+fi

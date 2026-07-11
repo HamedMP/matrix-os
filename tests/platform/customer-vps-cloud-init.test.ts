@@ -530,6 +530,24 @@ exit 99
     expect(syncAgent).toContain('bootstrap_linux_tools_service || true\n\nwhile true; do');
   });
 
+  it('forwards native app websocket upgrades through the customer nginx API route', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const gatewayUnit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-gateway.service'), 'utf8');
+    const configuratorPath = join(root, 'distro/customer-vps/host-bin/matrix-configure-gateway-proxy');
+
+    const apiLocation = cloudInit.slice(
+      cloudInit.indexOf('        location /api/ {'),
+      cloudInit.indexOf('        location /files/ {'),
+    );
+    expect(apiLocation).toContain('proxy_http_version 1.1;');
+    expect(apiLocation).toContain('proxy_set_header Upgrade $http_upgrade;');
+    expect(apiLocation).toContain('proxy_set_header Connection "upgrade";');
+    expect(existsSync(configuratorPath)).toBe(true);
+    expect(cloudInit).toContain('ExecStartPre=+/opt/matrix/bin/matrix-configure-gateway-proxy');
+    expect(gatewayUnit).toContain('ExecStartPre=+/opt/matrix/bin/matrix-configure-gateway-proxy');
+  });
+
   it('installs a customer host code-server service behind restore completion', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');

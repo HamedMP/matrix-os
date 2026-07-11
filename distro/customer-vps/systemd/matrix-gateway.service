@@ -11,6 +11,7 @@ Group=matrix
 EnvironmentFile=/opt/matrix/env/host.env
 Environment=SYMPHONY_PORT=4766
 WorkingDirectory=/opt/matrix
+ExecStartPre=+/opt/matrix/bin/matrix-configure-gateway-proxy
 ExecStart=/opt/matrix/bin/matrix-gateway
 Restart=on-failure
 RestartSec=5
