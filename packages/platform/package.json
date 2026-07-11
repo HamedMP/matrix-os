@@ -24,6 +24,7 @@
     "@clerk/backend": "2.33.0",
     "@hono/node-server": "^1.19.9",
     "@matrix-os/clerk-sync": "workspace:*",
+    "@matrix-os/contracts": "workspace:*",
     "@matrix-os/observability": "workspace:*",
     "dockerode": "^4.0.7",
     "hono": "^4.11.9",

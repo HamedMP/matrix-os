@@ -695,6 +695,9 @@ importers:
       '@matrix-os/clerk-sync':
         specifier: workspace:*
         version: link:../clerk-sync
+      '@matrix-os/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@matrix-os/observability':
         specifier: workspace:*
         version: link:../observability
