@@ -1,5 +1,12 @@
 # Coding-Agent Backend Shell Handoff
 
+> This file describes the currently implemented Phase 18-20 contract. Full
+> transcript pages, session discovery/import/fork/archive/handoff, pending queue,
+> steering, execution graphs, many-terminal bindings, complete repository
+> operations, attachments, durable attention, and collaboration are proposed in
+> `FULL-WORKSPACE-BACKEND.md` and MUST NOT be invented by shell clients. Gate B2
+> will publish `backend-v2-shell-handoff.md` with exact implemented versions.
+
 This note is the stable integration boundary for desktop and mobile Conversation/Kanban work. The gateway and canonical workspace services remain the source of truth; shell clients render bounded projections and persist only safe selection references.
 
 ## Hydration

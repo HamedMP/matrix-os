@@ -363,10 +363,14 @@ Rules:
 type AgentProviderSummary = {
   id: string;
   displayName: string;
-  kind: "claude" | "codex" | "opencode" | "cursor" | "custom";
+  adapterFamily: "built_in" | "custom_acp";
+  protocol: "native_cli" | "app_server" | "acp" | "mcp" | "shell_bridge";
+  supportTier: "first_class" | "compatibility";
   availability: "available" | "setup_required" | "auth_required" | "installing" | "unavailable" | "unknown";
   installStatus: "installed" | "missing" | "installing" | "failed" | "unknown";
   authStatus: "authenticated" | "missing" | "expired" | "unknown";
+  executionReady: boolean;
+  capabilities: AgentProviderCapabilities;
   supportedModes: Array<"default" | "plan" | "review" | "full_access">;
   defaultMode: "default" | "plan" | "review" | "full_access";
   defaultModel?: string;
@@ -378,6 +382,12 @@ type AgentProviderSummary = {
 Guidance:
 
 - `displayName` is safe UI text controlled by the server.
+- Provider IDs are stable registry IDs. Protocol, release tier, readiness, and
+  operation capabilities are separate validated fields; no closed brand union
+  or executable detection implies support.
+- Custom ACP-compatible profiles complete a bounded handshake/version and
+  capability negotiation. A user-controlled label cannot grant a built-in
+  provider identity or capabilities.
 - `setupActions` should contain safe action IDs and labels, not raw arbitrary commands unless explicitly marked as foreground terminal actions.
 - Health checks must be timeout-bound.
 
@@ -1006,7 +1016,8 @@ For every new WS:
 Canonical persistence:
 
 - Project/task metadata: existing canonical workspace project/task services and their current owner-controlled persistence.
-- Thread/turn metadata and bounded event history: the existing owner coding-thread store (`system/coding-agents/threads.json`) for this additive stack. Persist idempotency and active-turn ownership with the thread record through the store's atomic single-writer mutation path; do not rely on renderer/mobile state or an in-memory-only lock. A future Postgres migration requires a separate reviewed plan.
+- Phase 18-20 thread/turn metadata and bounded event history: the existing owner coding-thread store (`system/coding-agents/threads.json`). Persist idempotency and active-turn ownership with the thread record through the store's atomic single-writer mutation path; do not rely on renderer/mobile state or an in-memory-only lock.
+- Full Workspace V2 durable state: the separately reviewed owner-Postgres migration defined in `FULL-WORKSPACE-BACKEND.md`. After its cutover marker, Postgres is authoritative and the owner file remains bounded import/export/rollback compatibility only.
 - Provider conversation resume identity: server-only field in the existing owner thread/provider persistence, excluded from every shell projection, export intended for UI, diagnostic, and notification payload.
 - Runtime/provider config: owner files and/or Postgres according to existing Matrix ownership rules.
 - App/project files: owner filesystem under scoped project/app directories.
@@ -1116,8 +1127,120 @@ Use flags/capabilities for:
 12. Same-thread turns.
 13. Desktop project navigator and Conversation/Kanban modes.
 14. Mobile project/task/thread navigation and Kanban mode.
+15. Owner-Postgres coding-workspace repository and legacy import.
+16. Stable transcript pages and complete lifecycle operations.
+17. Pending queue, steering/interrupt, execution graph, and attention inbox.
+18. Many-terminal bindings, repository operations, review comments, and attachments.
+19. Runtime handoff and role-based collaboration.
+20. Shared preview-computer acceptance by desktop and mobile.
 
 Each stage must be revertible without losing user data.
+
+## Full Workspace V2 Architecture
+
+The detailed capability, data, route, migration, and delivery contract is
+authoritative in [FULL-WORKSPACE-BACKEND.md](./FULL-WORKSPACE-BACKEND.md).
+
+### Computer And Preview Control Plane
+
+Platform owns one bounded computer inventory projection for verified Clerk and
+native/sync principals. A nullable selected slot is derived only from the
+verified principal; individual computer rows never infer client-local selection.
+Electron main may exchange its native/sync principal for a runtime-scoped bearer
+and stores it in the native credential store. Mobile selects a server-derived
+same-origin route: `/vm/{handle}` for primary or the same path with a validated
+`runtime` query for non-primary slots, then continues using Clerk/platform
+session routing. No renderer/mobile state receives a runtime bearer.
+
+Preview environments use a dedicated platform authority keyed by repository,
+PR, and exact head SHA. One generation owns isolated database/JWT/edge/provider/
+object resources, platform revision, disposable VPS, expiry, cleanup state, and
+compare-and-swap generation. Production credentials are unavailable to the
+preview service. Native app HTTP/WebSocket routes remain ordinary runtime routes
+through explicit `/vm/{handle}` forwarding with an optional validated runtime
+slot selector and retain current owner/session proofs, limits, TTL, and shutdown
+cleanup.
+
+### Durable Store Boundary
+
+`system/coding-agents/threads.json` remains a bounded compatibility
+import/export projection. Complete conversation history, turns, pending
+messages, execution graphs, runtime/terminal bindings, attachments, attention,
+review comments, participants, and idempotency records move to additive tables
+in the existing owner-controlled Postgres through the gateway's owned Kysely
+lifecycle.
+
+The repository owns transaction boundaries and accepts an executor for nested
+transactions. Only the gateway bootstrap that creates the shared Kysely/pool may
+destroy it. Required atomic groups include:
+
+- thread plus initial turn/transcript/idempotency
+- pending-message reorder with optimistic queue revision
+- queue claim plus accepted turn
+- transcript append plus thread sequence/status projection
+- attention transition plus approval/input/lifecycle transition
+- terminal binding plus projection event
+- handoff source/destination state transition plus audit event
+- participant grant/revoke plus audit event
+
+Every optimistic update includes its base revision in the write predicate.
+Every retryable create uses a unique key and `ON CONFLICT` rather than a
+check-then-insert flow.
+
+### Transcript And Stream Boundary
+
+The durable transcript is optimized for display and replay; provider execution
+state remains opaque and server-only. Stream reducers receive normalized
+entries with one monotonic conversation sequence. HTTP pages are authoritative
+for hydration and gap recovery. WebSocket delivery is an invalidation/live-tail
+optimization and never the only copy of a transcript record.
+
+Streaming assistant/tool updates may replace one aggregation key while a turn is
+active. Finalization persists one bounded normalized entry representation and
+advances the conversation sequence atomically. Raw provider errors are logged
+only after redaction and map to safe lifecycle entries.
+
+### Session Discovery And Handoff Boundary
+
+Provider discovery adapters inspect only server-side owner runtime state and
+return expiring opaque import handles. Import validates project/worktree/provider
+compatibility, then creates or links canonical Matrix conversation records
+without revealing provider resume identity.
+
+Cross-computer handoff is a saga with persisted phases. Destination preflight
+must complete before source detachment. A destination failure keeps the source
+active when possible; otherwise it records a recoverable detached state. Clients
+never transfer credentials, process IDs, paths, or provider state directly.
+
+### Queue And Steering Boundary
+
+Normal turns preserve the one-active-turn safe conflict. Pending messages are a
+separate explicit durable queue. Dispatch claims one pending record through an
+atomic state transition. Steering and interruption target the active turn and
+are never emulated as queued messages when the adapter lacks support.
+
+### Execution Graph Boundary
+
+Parent/child runs use stable IDs and a bounded acyclic relation. Provider-native
+subagents and Matrix-spawned delegated runs normalize into the same read model,
+but adapters retain provider-specific execution identity. Runtime limits cap
+depth, children, active runs, event rate, and transcript expansion.
+
+### Terminal And Repository Boundary
+
+Terminal bindings reference canonical `/api/terminal/sessions` records and
+`/ws/terminal` process streams. They do not persist terminal bytes. Repository,
+file, review, preview, and source-control services resolve a validated owner
+project/worktree root on every operation and return only bounded structured
+metadata/content allowed by their contract.
+
+### Preview Integration Boundary
+
+The backend Graphite stack is based on `main`, not a shell branch. Once a backend
+gate is green, its exact top SHA is deployed to a disposable preview computer.
+Desktop and mobile development branches point to that same preview runtime.
+Temporary integration branches may combine shell and backend heads for visual
+testing but are not merged and do not become a source of truth.
 
 ## Implementation Invariants
 

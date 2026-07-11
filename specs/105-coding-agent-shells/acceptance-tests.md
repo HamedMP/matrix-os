@@ -23,6 +23,7 @@ Tests must also cover another owner to prove isolation.
 
 | Requirement group | Acceptance evidence |
 | --- | --- |
+| `FR-010` through `FR-016`, `FR-110` through `FR-113`, `SC-003`, `SC-023`, `SC-026` | `CT-104`; `GW-103`, `GW-105`, `GW-112`, `GW-118`; `E2E-104` |
 | `FR-006`, `FR-007`, `FR-028`, `SC-011`, `SC-014` | `CT-001` through `CT-004`; `GW-001` through `GW-011`; `E2E-002` |
 | `FR-020`, `FR-026`, `FR-027`, `FR-029`, `SC-003`, `SC-013` | `CT-005` through `CT-007`; `GW-012` through `GW-018`; `E2E-001`, `E2E-003` |
 | `FR-062`, `FR-066`, `FR-067`, `SC-011`, `SC-012` | `DT-001` through `DT-011`; `E2E-002`, `E2E-004`, `E2E-005` |
@@ -121,6 +122,62 @@ Every clarified functional requirement and buildable success criterion has at le
 | E2E-005 | Explicit task move propagates while mixed thread states do not auto-move it. | Gateway workspace event plus both-shell projection smoke. |
 | E2E-006 | Terminal, approval, review, preview, notification, offline/reconnect, and runtime-switch regressions pass with the project hierarchy enabled. | Existing suites plus updated desktop operator and SDK 57 device checklists. |
 
+## Full Workspace V2 Contract And Persistence Tests
+
+| ID | Requirement | Expected Evidence |
+| --- | --- | --- |
+| PL-101 | Clerk and native/sync principals receive the same bounded canonical computer list; unauthenticated and cross-owner requests fail. | Shared contract plus platform route principal matrix. |
+| PL-102 | `selected`, `runtimeSlot`, and the same-origin path (`/vm/{handle}` for primary, validated `runtime` query for non-primary) are server-derived; no machine IDs, IPs, credentials, private hosts, or operator data appear. | Valid/invalid projection and forbidden-key tests. |
+| PL-103 | Desktop replacement bearer remains in trusted main while mobile switches same-origin gateway routing without bearer persistence. | Desktop auth/IPC and mobile storage/client tests. |
+| PL-104 | Native identity fallback is emitted only from a server-verified native session and ignores client identity headers. | Auth/session route tests and shell fallback test. |
+| PV-101 | Preview platform/VPS use isolated DB/JWT/edge/provisioning/Hetzner authority and fail closed without preview credentials. | Workflow/platform integration tests with production-secret fallback forbidden. |
+| PV-102 | Preview lane label events and concurrency groups do not cancel each other; close/label removal reaps exact disposable resources. | Workflow contract tests and two-lane run evidence. |
+| PV-103 | Existing native Linux app streaming/capability routes pass on the non-promoted combined candidate. | Exact-head candidate smoke before any traffic promotion. |
+| CT-101 | Transcript pages validate monotonic sequences, direction, caps, gaps, structured entry kinds, and forbidden server-only fields. | `tests/contracts/coding-agent-workspace-v2.test.ts`. |
+| CT-102 | Lifecycle, import, queue, steering, interrupt, run, binding, attachment, attention, handoff, and participant mutations have bounded discriminated schemas. | Valid/invalid parse matrix with unknown/oversized/unsafe payload rejection. |
+| CT-103 | Capability/version negotiation remains additive for old shell/runtime combinations. | Old and V2 runtime summary fixtures parse with explicit disabled capability behavior. |
+| CT-104 | Provider summaries use stable IDs plus protocol, support tier, readiness, and granular capabilities; the exact release roster parses while unknown built-ins, capability escalation, and oversized custom ACP profiles reject. | Zod 4 roster/tier/protocol/capability matrix with custom ACP handshake/version fixtures and Gemini built-in exclusion. |
+| DB-101 | All V2 records are owner-scoped and multi-write operations are transactional. | Kysely repository tests with forced intermediate failures and cross-owner reads/writes. |
+| DB-102 | Sequence allocation, pending claims, handoff transitions, and optimistic revisions are race-safe in the write statement. | Parallel transaction tests proving one winner and deterministic conflicts. |
+| DB-103 | Legacy owner-file import is idempotent, preserves IDs/order/relations, and emits a rollback export. | Import twice, restart, malformed-record quarantine, and rollback tests. |
+| DB-104 | Cutover serializes by scope, quiesces mutations, verifies the import checksum, and changes authority only when the `postgres_active` marker commits atomically. | Mutex/advisory-lock integration with concurrent mutation, checksum mismatch, and crashes immediately before/after commit; post-marker restart never reactivates file writes. |
+
+## Full Workspace V2 Gateway Tests
+
+| ID | Requirement | Expected Evidence |
+| --- | --- | --- |
+| GW-101 | Latest/backward/forward transcript pages survive restart and report gaps without duplicate sequences. | 1,000-entry repository/route fixture and WebSocket reconnect integration. |
+| GW-102 | Rename/archive/unarchive/fork/import operations enforce auth, body limits, validation, ownership, idempotency, and safe errors. | Route matrix including stale/cross-owner/import-token expiry. |
+| GW-103 | Provider discovery/import returns safe metadata only and preserves one server-owned provider conversation identity. | Fake and first flagged real-provider tests plus forbidden-field scan. |
+| GW-104 | Pending messages edit/reorder/remove by revision and dispatch exactly once in server order. | Concurrent claim, stale revision, restart, cap, and duplicate request tests. |
+| GW-105 | Steering/interrupt targets one active turn and unsupported providers fail without queue fallback. | Adapter capability and route tests with timeout/abort. |
+| GW-106 | Parent/child execution graph is acyclic and enforces depth, child, concurrency, and event-rate caps. | Repository/adapter tests with malicious and oversized graphs. |
+| GW-107 | Durable attention dedupes and resolves approval/input/failure/completion/review/unread/handoff independently. | Two-subscriber replay/ack/resolve/expiry tests. |
+| GW-108 | Several role-labelled terminal bindings reference canonical sessions and never persist output. | Bind/list/unbind/session-end/restart/cross-owner tests. |
+| GW-109 | Repository, review-comment, and attachment operations remain inside owner worktrees and enforce revisions, quotas, cleanup, timeouts, and safe errors. | Traversal/symlink/SSRF/large-output/conflict/expiry matrices. |
+| GW-110 | Runtime handoff preserves source on failed destination and commits one active destination on success. | Two-runtime saga tests with duplicate, timeout, restart, and compensation cases. |
+| GW-111 | Owner/editor/viewer authorization and audit records cover every shared mutation. | Principal matrix over turns, approvals, terminals, files, repository, participants, and revocation. |
+| GW-112 | Provider options, profiles, prompt/skill/MCP references, connected-service state, and quota summaries normalize safely without returning secret values. | Adapter/repository/route tests with immutable thread-start configuration snapshots. |
+| GW-113 | Conversation memory search returns authorized bounded anchors and respects backfill/retention/scope without expanding embedded stores. | Owner-Postgres index/search authorization and cleanup tests. |
+| GW-114 | Automations use durable leased/idempotent runs and invoke normal thread operations; voice uses the same actions and approval policy. | Scheduler/voice adapter tests with duplicate lease, retry, expiry, and unauthorized action cases. |
+| GW-115 | Feature/retention policy, org/offboarding authorization, recovery checkpoints, and diagnostic snapshots remain server-enforced and redacted. | Policy disable, dry-run cleanup, restart/crash, offboarding, and forbidden-content tests. |
+| GW-116 | Personal/org/shared export and deletion preserve scope separation, portability, tombstone exclusion, attachment/index cleanup, and audit/retry state. | Repository plus canonical export/delete integration tests. |
+| GW-117 | Source-control mutations enforce their operation-specific preconditions and reconcile ambiguous remote outcomes without destructive fallback. | Per-action schema/service tests for dirty state, expected head, configured remote, conflict, timeout, idempotent retry, and audit. |
+| GW-118 | Claude Code, Codex, Pi, OpenCode, custom ACP-compatible backends, Kiro, GitHub Copilot CLI, Qwen Code, Kimi CLI, Kilo Code, and Auggie pass the required provider conformance tier; Gemini CLI remains absent and unsupported capabilities are reported truthfully. | Table-driven fake adapters plus flagged real-process install/auth/create/stream/abort/restart/safe-error tests and per-capability negative cases. |
+
+## Full Workspace V2 Shell And Preview Tests
+
+| ID | Requirement | Expected Evidence |
+| --- | --- | --- |
+| DT-101 | Desktop renders status-grouped conversations, complete paged transcript, pending queue, run graph, attention, contextual project tooling, provider controls, memory anchors, automation history, and policy/recovery states from trusted IPC only. | Focused renderer/store/IPC tests and desktop operator E2E against backend preview. |
+| MB-101 | Mobile renders the same selected conversation, provider controls, memory/automation/policy states, and cockpit surfaces with safe resume, keyboard, orientation, foreground, and reconnect behavior. | SDK 57 Jest plus physical phone/tablet preview smoke. |
+| SEC-101 | No V2 UI, log, notification, transcript envelope, or persisted client state exposes credentials, provider IDs intended to remain opaque, raw errors, private hosts, or unbounded owner data. | Forbidden-key/log/UI/persistence scans and manual unsafe-error audit. |
+| SEC-102 | Repository files, commits, PR metadata, generated artifacts, tests, snapshots, and shipped UI contain no external evaluation source names/provenance/paths, copied code/test/UI text/assets, or imported dependency. | Current-head clean-room scan plus dependency/diff review recorded before every backend and shell handoff. |
+| E2E-101 | Desktop and mobile target the same exact preview runtime and page one long transcript without duplicates. | Recorded backend SHA, bundle, runtime ID, thread ID, sequence bounds, and reconnect evidence. |
+| E2E-102 | Provider controls, queued message, approval, child run, two terminals, attachment, file edit, review comment, commit/PR, preview, archive/fork, memory anchor, automation run, policy disable, recovery, and attention resolve propagate cross-shell. | One seeded owner project scenario on the disposable preview computer. |
+| E2E-103 | Compatible runtime handoff succeeds; incompatible/failed handoff remains safely recoverable. | Two disposable runtime scenario with audit records and unchanged conversation ID. |
+| E2E-104 | Every first-release provider starts one bounded preview conversation and completes or aborts safely without transcript/provider-state mixing; advanced actions appear only for providers with verified support. | Exact provider versions, runtime kinds, capability snapshots, thread IDs, and real-process smoke evidence recorded against the disposable preview computer. |
+
 ## Required Commands By Slice
 
 Every implementation PR runs focused tests for its IDs plus applicable repository gates:
@@ -138,4 +195,4 @@ Gateway/contract PRs additionally run the exact focused Vitest files named in th
 
 ## Confirmation Boundary
 
-This file defines planned evidence only. It must not be cited as proof that the clarified experience exists. Implementation begins only after the product owner confirms Gate 0 in `plan.md` and `tasks.md`.
+This file defines planned evidence only. It must not be cited as proof that the clarified experience exists. The original project model began after Gate 0. The Full Workspace V2 backend begins only after the product owner confirms Gate B0 in `FULL-WORKSPACE-BACKEND.md` and `tasks.md`.

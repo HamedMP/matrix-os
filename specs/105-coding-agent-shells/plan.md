@@ -1,6 +1,6 @@
 # Implementation Plan: Coding Agent Shells
 
-**Status**: Awaiting product-model confirmation
+**Status**: Original product model confirmed; Full Workspace Gate B0 awaiting confirmation
 **Created**: 2026-07-06
 **Planning horizon**: Incremental PR series, not a single mega-branch.
 
@@ -186,7 +186,7 @@ Pattern:
 
 ## Phase Roadmap
 
-Phases A-H describe the landed/checkpoint foundation and remain required regression context. Phases I-M are the active clarified path and cannot begin until Gate 0 receives explicit product-owner confirmation.
+Phases A-H describe the landed/checkpoint foundation and remain required regression context. Phases I-M began after Gate 0 received explicit product-owner confirmation. The later Full Workspace expansion remains separately gated by Gate B0.
 
 ### Phase A - Foundation
 
@@ -589,6 +589,27 @@ Mechanical readiness checks:
 - Product-owner confirmation of all four decisions is recorded in `tasks.md`.
 - `SPEC.md`, `ARCHITECTURE.md`, `plan.md`, `tasks.md`, and `acceptance-tests.md` use the same terminology/cardinality and all acceptance IDs are mapped.
 
+### Gate B0 - Full Workspace Confirmation
+
+**Status**: Awaiting product-owner confirmation.
+
+Confirm `FULL-WORKSPACE-BACKEND.md`, explicit non-goals, owner-Postgres migration,
+personal/org/shared export-delete model, canonical computer contract, isolated
+preview authority, backend Graphite stack, and gate-specific shell handoffs.
+
+### Gate B0.5 - Canonical Computer And Preview Acceptance
+
+Proceed with current shell computer-selection layers only when:
+
+- Clerk and native/sync principals consume one bounded computer schema and route.
+- Selected slot is server-derived only from a principal that carries it.
+- Desktop bearer rotation remains native/sync-authenticated and main-process-only;
+  mobile persists validated same-origin routing only.
+- Native Linux app HTTP/WebSocket streaming passes unchanged.
+- One isolated PR/head-SHA preview environment owns platform plus disposable VPS,
+  fails closed without preview credentials, and tears down completely.
+- Desktop and physical mobile list/select the same non-primary computer.
+
 ### Gate 1 - Contract Acceptance
 
 Proceed only when:
@@ -847,7 +868,7 @@ Support:
 
 ## Recommended First Three PRs
 
-The original first three PRs below are historical and have landed. The next implementation stack begins only after Gate 0 confirmation.
+The original first three PRs below are historical and have landed. The Full Workspace implementation stack begins only after Gate B0 confirmation.
 
 ### PR 1 - Contracts
 
@@ -911,6 +932,124 @@ Why third:
 
 7. **`feat(mobile): add agent Kanban mode`**
    - Phone/tablet board and cross-view selection continuity.
+
+## Full Workspace Backend Roadmap
+
+The complete backend expansion follows
+[FULL-WORKSPACE-BACKEND.md](./FULL-WORKSPACE-BACKEND.md) and does not stack on a
+desktop or mobile branch.
+
+### Phase N - Durable Workspace Store
+
+- Add Zod V2 contracts and Kysely schema/repository tests first.
+- Add owner-Postgres tables for conversations, turns, transcript, queue, runs,
+  bindings, attachments, attention, review comments, participants, and
+  idempotency.
+- Import the legacy owner file idempotently and preserve a rollback export.
+- Cut writes over once; avoid indefinite dual-write state.
+
+### Phase M0 - Canonical Computer And Preview Foundation
+
+- Reconcile the independently proposed desktop/mobile computer schemas into one
+  bounded `GET /api/auth/computers` projection.
+- Keep selected slot server-derived only for principals that carry one; desktop
+  bearer rotation stays behind verified native/sync auth and trusted IPC, while
+  mobile persists only validated same-origin routing.
+- Preserve current native Linux app HTTP/WebSocket streaming behavior.
+- Replace split preview authority with one isolated PR/head-SHA environment,
+  exact bundle, fail-closed credentials, TTL/reaper, and teardown.
+- Prove desktop and physical mobile can list/select the same disposable computer
+  before either current shell stack merges its computer-selection layer.
+
+### Phase O - Complete Transcript And Session Lifecycle
+
+- Add stable latest/backward/forward transcript pages and explicit replay gaps.
+- Add rename/archive/unarchive/fork and complete replay after restart.
+- Add safe provider-session discovery/import.
+- Run fake-provider and first real-provider continuity smoke.
+
+Desktop/mobile may begin final transcript and session-list work only after this
+phase publishes the versioned shell handoff.
+
+### Phase P - Busy Work And Execution Graph
+
+- Add explicit pending-message queue with edit/reorder/remove and atomic claims.
+- Add steering and active-turn interruption behind provider capabilities.
+- Add bounded parent/child execution graph and normalized run events.
+- Add durable attention inbox and acknowledgement.
+- Add the first-release provider conformance harness and normalized adapters for
+  Claude Code, Codex, Pi, OpenCode, custom ACP-compatible backends, Kiro,
+  GitHub Copilot CLI, Qwen Code, Kimi CLI, Kilo Code, and Auggie.
+- Keep Gemini CLI outside this release and publish granular capabilities from
+  real-process evidence rather than binary detection.
+
+### Phase Q - Complete Project Tooling
+
+- Add many-terminal bindings over canonical Matrix sessions.
+- Add repository status and bounded branch/stash/pull/push/worktree operations.
+- Add durable structured review comments and bounded attachments.
+- Keep file/review/preview/source-control roots owner-validated.
+
+### Phase R - Handoff And Collaboration
+
+- Add persisted runtime compatibility and handoff saga.
+- Add owner/editor/viewer participants aligned with owner/org/shared access.
+- Add audit events for grants, decisions, handoffs, terminal/file/repository
+  mutations, and revocations.
+
+### Phase S - Shared Preview Acceptance
+
+- Deploy the exact backend top to a disposable preview computer.
+- Point desktop and mobile clients at the same preview runtime.
+- Use one project fixture with two task conversations, imported history, queued
+  work, child runs, two terminals, repository changes, review comments,
+  attachment, preview, approval, attention, reconnect, restart, and handoff.
+- Keep the current shell preview computer available as a visual baseline only;
+  do not make backend persistence or contracts depend on that shell PR.
+
+## Full Workspace Graphite Stack
+
+1. Spec confirmation.
+2. Canonical computer inventory/native identity.
+3. Isolated end-to-end preview authority and native-stream preservation.
+4. Workspace V2 contracts.
+5. Postgres schema/repository/import/export/delete.
+6. Transcript and lifecycle.
+7. Queue and steering.
+8. Execution graph, provider profiles/assets, and attention.
+9. First-class provider adapters and conformance harness.
+10. Compatibility provider adapters.
+11. Terminal/repository/review/attachment bindings.
+12. Handoff and collaboration.
+13. Memory, automation, voice-action, policy, retention, and recovery integration.
+14. Non-visual desktop/mobile client plumbing.
+15. Preview smoke, security, performance, docs, and rollback evidence.
+
+Each layer opens ready for review, targets fewer than 1,000 additions and 20
+files where practical, and receives current-head CI plus Greptile 5/5 before
+merge. Lower layers may merge while higher layers continue only when their
+published contracts are stable and their rollback boundary is independently
+valid.
+
+## Shell Coordination During Backend Work
+
+- Desktop freezes backend field/route invention at its current preview
+  checkpoint and may continue Matrix-native visual work against deterministic
+  fixtures.
+- Mobile freezes backend field/route invention at its current stack top and may
+  continue responsive navigation/composer work against the same fixtures.
+- At Gate B0.5, the existing desktop and mobile stacks reconcile only their
+  overlapping computer-contract layers, preserving each stack's current parent
+  lineage. Once that backend layer merges, restack each stack bottom-up rather
+  than rebasing an isolated top directly onto `main`.
+- Current computer/navigation layers may finish after B0.5; complete transcript,
+  lifecycle, queue, run, terminal/repository, and attention UI waits for the
+  corresponding B2/B3/B4 handoff.
+- At Backend Gate B2, both agents consume `backend-v2-shell-handoff.md` and
+  target the backend preview computer. Non-visual trusted-core/mobile client
+  plumbing is delivered by the backend workstream before final screen work.
+- Each shell PR records the exact backend SHA, preview bundle, capabilities, and
+  focused/manual acceptance exercised.
 
 ## Stop Conditions
 

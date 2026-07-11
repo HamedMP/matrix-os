@@ -1,6 +1,6 @@
 # 105 - Coding Agent Shells
 
-**Status**: Backend Phases 18-20 implemented; Phase 21 shell implementation next; real-process Gate 3 smoke pending
+**Status**: Backend Phases 18-20 implemented; full-workspace backend expansion proposed and awaiting product confirmation
 **Created**: 2026-07-06
 **Lineage**: `spec/coding-agent-shells`, rebased onto the Expo SDK 57 mobile foundation and current `main`
 **Scope**: Desktop and mobile shell upgrade for multi-agent coding work on the user's Matrix computer.
@@ -15,6 +15,8 @@
 - [completion-audit.md](./completion-audit.md) - Evidence-based completion audit for the landed implementation checkpoint.
 - [acceptance-tests.md](./acceptance-tests.md) - Named contract, gateway, desktop, mobile, security, and cross-shell tests required for the clarified final experience.
 - [backend-shell-handoff.md](./backend-shell-handoff.md) - Stable gateway contracts, capabilities, lifecycle rules, and validation commands for desktop/mobile implementation.
+- [FULL-WORKSPACE-BACKEND.md](./FULL-WORKSPACE-BACKEND.md) - Proposed durable transcript, lifecycle, queue, execution, terminal, repository, attention, handoff, and collaboration backend required for the complete coding workspace.
+- [full-workspace-coverage.md](./full-workspace-coverage.md) - Requirement-to-task-to-test coverage for the proposed backend and shared preview gates.
 
 ## Intent
 
@@ -31,6 +33,9 @@ The work must preserve all current mobile and desktop functionality. The upgrade
 - Open projects, files, diffs, previews, apps, and task workspaces from either shell.
 - Keep mobile and desktop as thin interfaces over the same headless runtime.
 - Use typed, validated contracts across gateway, desktop trusted core, renderer, mobile, and shell clients.
+- Discover/import/fork/archive/handoff conversations and page complete transcript history.
+- Queue, edit, reorder, steer, and interrupt work through server-owned lifecycle state.
+- Inspect child execution runs, multiple terminal bindings, repository state, review comments, attachments, and attention from any shell.
 
 ## Implementation Rule
 
