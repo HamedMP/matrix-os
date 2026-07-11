@@ -105,6 +105,7 @@ Every clarified functional requirement and buildable success criterion has at le
 ### Phase 22.1 Evidence
 
 - `MB-001`: `apps/mobile/__tests__/agent-project-entry-route.test.tsx` proves the Agents entry opens a gateway-projected project and starts creation with that exact project ID; the existing attention/recent-work assertions remain in `apps/mobile/__tests__/agents-screen.test.tsx`.
+- `MB-001`: the project-route regression proves a stale or external project deep link redirects through the guarded Agents entry without mounting or fetching the project workspace when `EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE` is disabled.
 - `MB-002`: `apps/mobile/__tests__/agent-project-workspace-screen.test.tsx` hydrates the shared `ProjectAgentWorkspaceSchema` projection and renders the project chat plus its task group.
 - `MB-002`: review regressions additionally prove that a valid routed project beyond the bounded summary page is resolved from `GET /api/coding-agents/projects/:projectId/workspace`, and that task, project-thread, and task-thread cursors request and merge bounded follow-up pages without moving the source of truth client-side.
 - `MB-003`: the same component test opens both `thread_plan` and `thread_fix` independently with the exact `projectId`/`taskId`/`threadId`; `apps/mobile/__tests__/agent-project-route.test.tsx` verifies those IDs cross the Expo Router boundary unchanged.
@@ -115,7 +116,7 @@ Every clarified functional requirement and buildable success criterion has at le
 
 - `MB-005`: `apps/mobile/__tests__/gateway-client.test.ts` validates the authenticated, schema-checked `POST /api/coding-agents/threads/:threadId/turns` client. `apps/mobile/__tests__/agent-thread-screen.test.tsx` proves the Conversation composer posts to the currently selected thread, refreshes that bounded snapshot, clears the accepted draft, and never calls create-thread.
 - `MB-005`: the client regression uses the gateway route's authoritative `{ error: CreateAgentTurnError }` response shape and proves `thread_busy` remains a retryable busy state instead of degrading to a generic unavailable error.
-- `MB-006`: the thread-route tests cover busy retry with the same idempotency key, duplicate-submit suppression, offline draft retention, fail-closed capability checks, reconnect rehydration, and foreground snapshot refresh. Drafts stay transient component state and are not added to AsyncStorage.
+- `MB-006`: the thread-route tests cover busy retry with the same idempotency key, duplicate-submit suppression, offline draft retention, fail-closed capability checks, reconnect rehydration, foreground snapshot refresh, and suppression of the composer for queued, approval-waiting, input-waiting, and archived states that the gateway turn contract rejects. Drafts stay transient component state and are not added to AsyncStorage.
 - `MB-007`: the existing thread-route terminal regression still persists and opens only the canonical bounded `terminalSessionId`; the project-route fixtures keep the exact selected project/task/thread identity. Device keyboard, safe-area, background, and terminal handoff smoke remain part of the Phase 22 gate and are not proven by Jest.
 
 ### Phase 22.3 Evidence
