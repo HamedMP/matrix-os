@@ -544,6 +544,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           responseHeaders,
           path: explicitVmRoute.upstreamPath,
           handle: machine.handle,
+          runtimeSlot: machine.runtimeSlot,
           platformSecret,
           assetRouteToken: readAppAssetRouteToken(c.req.url),
         });
@@ -734,6 +735,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
             responseHeaders,
             path,
             handle: runningMachine.handle,
+            runtimeSlot: runningMachine.runtimeSlot,
             platformSecret,
             assetRouteToken: readAppAssetRouteToken(c.req.url),
           });
@@ -914,6 +916,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
             responseHeaders,
             path,
             handle: record.handle,
+            runtimeSlot: 'primary',
             platformSecret,
             assetRouteToken: readAppAssetRouteToken(c.req.url),
           });

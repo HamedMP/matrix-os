@@ -3077,6 +3077,97 @@ describe("platform proxy routing", () => {
     expect(js).toContain('Array.from("./plain.js")');
   });
 
+  it("binds cookie-free Vite assets and lazy chunks to the selected same-handle runtime", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff150",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123500,
+      publicIPv4: "203.0.113.50",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff151",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "review",
+      status: "running",
+      hetznerServerId: 123501,
+      publicIPv4: "203.0.113.51",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:01:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response('<!doctype html><script type="module" src="./assets/index.js"></script>', {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response('import("./editor.js")', {
+          status: 200,
+          headers: { "content-type": "application/javascript" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response("export const editor = true", {
+          status: 200,
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const htmlRes = await app.request("/vm/alice/apps/chess/?runtime=review", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(htmlRes.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.51:443/apps/chess/");
+    const html = await htmlRes.text();
+    const entryAssetPath = html.match(/src="([^"]+)"/)?.[1];
+    expect(entryAssetPath).toMatch(
+      /^\/vm\/alice\/apps\/chess\/assets\/index\.js\?runtime=review&matrix_asset_token=/,
+    );
+
+    const entryRes = await app.request(entryAssetPath ?? "/invalid", {
+      headers: { host: "app.matrix-os.com", origin: "null" },
+    });
+    expect(entryRes.status).toBe(200);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("https://203.0.113.51:443/apps/chess/assets/index.js");
+    const entryJs = await entryRes.text();
+    const lazyImportPath = entryJs.match(/import\("([^"]+)"\)/)?.[1];
+    expect(lazyImportPath).toMatch(/^\.\/editor\.js\?runtime=review&matrix_asset_token=/);
+
+    const tamperedAssetPath = entryAssetPath?.replace("runtime=review", "runtime=primary");
+    const tamperedRes = await app.request(tamperedAssetPath ?? "/invalid", {
+      headers: { host: "app.matrix-os.com", origin: "null" },
+    });
+    expect(tamperedRes.status).toBe(401);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const lazyAssetUrl = new URL(lazyImportPath ?? "/invalid", `https://app.matrix-os.com${entryAssetPath}`);
+    const lazyRes = await app.request(`${lazyAssetUrl.pathname}${lazyAssetUrl.search}`, {
+      headers: { host: "app.matrix-os.com", origin: "null" },
+    });
+    expect(lazyRes.status).toBe(200);
+    expect(fetchMock.mock.calls[2]?.[0]).toBe("https://203.0.113.51:443/apps/chess/assets/editor.js");
+  });
+
   it("rejects unsigned explicit VM Vite app assets before probing a handle", async () => {
     await deleteContainer(db, "alice");
     await insertUserMachine(db, {
