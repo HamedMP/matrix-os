@@ -6,6 +6,19 @@ import { describe, expect, it } from "vitest";
 const root = process.cwd();
 
 describe("preview platform workflow", () => {
+  it("sources the deployed control-plane origin from the selected environment", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/platform-cloud-run.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain("MATRIX_API_ORIGIN: ${{ vars.MATRIX_API_ORIGIN }}");
+    expect(workflow).toContain("PLATFORM_PUBLIC_URL \\");
+    expect(workflow).toContain("MATRIX_API_ORIGIN \\");
+    expect(workflow).toContain("MATRIX_API_ORIGIN=${MATRIX_API_ORIGIN}");
+    expect(workflow).not.toContain("MATRIX_API_ORIGIN=https://api.matrix-os.com");
+  });
+
   it("bootstraps a missing Cloud Run service before deriving its dedicated API origin", () => {
     const workflow = readFileSync(
       join(root, ".github/workflows/preview-platform.yml"),

@@ -49,6 +49,7 @@ jobs:
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
       CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_SERVICE_ACCOUNT }}
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL }}
+      MATRIX_API_ORIGIN: ${{ vars.MATRIX_API_ORIGIN }}
       MATRIX_APP_URL: ${{ vars.MATRIX_APP_URL }}
       MATRIX_APP_DOMAIN_HOSTS: ${{ vars.MATRIX_APP_DOMAIN_HOSTS }}
       MATRIX_CODE_DOMAIN_HOSTS: ${{ vars.MATRIX_CODE_DOMAIN_HOSTS }}
@@ -71,6 +72,7 @@ jobs:
             CLOUD_RUN_SERVICE \
             CLOUD_RUN_SERVICE_ACCOUNT \
             PLATFORM_PUBLIC_URL \
+            MATRIX_API_ORIGIN \
             MATRIX_APP_URL \
             MATRIX_APP_DOMAIN_HOSTS \
             MATRIX_CODE_DOMAIN_HOSTS \
@@ -308,7 +310,7 @@ jobs:
             --ingress all \
             --allow-unauthenticated \
             "${traffic_flags[@]}" \
-            --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL},MATRIX_API_ORIGIN=https://api.matrix-os.com,CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_TLS_VERIFY=false,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_APP_DOMAIN_HOSTS=${MATRIX_APP_DOMAIN_HOSTS},MATRIX_CODE_DOMAIN_HOSTS=${MATRIX_CODE_DOMAIN_HOSTS},NEXT_PUBLIC_MATRIX_APP_URL=${MATRIX_APP_URL},MATRIX_BILLING_PROVIDER=stripe,POSTHOG_HOST=https://eu.i.posthog.com,POSTHOG_API_HOST=https://eu.i.posthog.com,NEXT_PUBLIC_POSTHOG_HOST=${POSTHOG_PUBLIC_HOST},NEXT_PUBLIC_POSTHOG_API_HOST=${POSTHOG_PUBLIC_API_HOST},R2_PREFIX_ROOT=matrixos-sync" \
+            --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL},MATRIX_API_ORIGIN=${MATRIX_API_ORIGIN},CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_TLS_VERIFY=false,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_APP_DOMAIN_HOSTS=${MATRIX_APP_DOMAIN_HOSTS},MATRIX_CODE_DOMAIN_HOSTS=${MATRIX_CODE_DOMAIN_HOSTS},NEXT_PUBLIC_MATRIX_APP_URL=${MATRIX_APP_URL},MATRIX_BILLING_PROVIDER=stripe,POSTHOG_HOST=https://eu.i.posthog.com,POSTHOG_API_HOST=https://eu.i.posthog.com,NEXT_PUBLIC_POSTHOG_HOST=${POSTHOG_PUBLIC_HOST},NEXT_PUBLIC_POSTHOG_API_HOST=${POSTHOG_PUBLIC_API_HOST},R2_PREFIX_ROOT=matrixos-sync" \
             --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual:latest,STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY=stripe-price-extra-runtime-monthly:latest,STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL=stripe-price-extra-runtime-annual:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,PIPEDREAM_ENVIRONMENT=pipedream-environment:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest" \
             --format=json); then
             exit 1
