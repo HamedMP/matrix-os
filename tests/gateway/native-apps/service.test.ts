@@ -102,6 +102,7 @@ describe("NativeAppSessionService", () => {
       ":100",
       "--start-child=xterm",
       "--exit-with-children",
+      "--bind=none",
       "--bind-tcp=127.0.0.1:46000",
       "--html=on",
       "--daemon=no",

@@ -376,6 +376,7 @@ export class NativeAppSessionService {
       `:${display}`,
       `--start-child=${app.command.join(" ")}`,
       "--exit-with-children",
+      "--bind=none",
       `--bind-tcp=127.0.0.1:${port}`,
       "--html=on",
       "--daemon=no",
