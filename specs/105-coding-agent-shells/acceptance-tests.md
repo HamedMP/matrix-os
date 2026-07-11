@@ -257,7 +257,7 @@ generic desktop copy.
 Current contextual conversation-inspector evidence:
 
 - `pnpm exec vitest run tests/desktop/coding-agent-context-inspector.test.tsx tests/desktop/coding-agent-workspace.test.tsx`
-- `pnpm exec vitest run tests/desktop --reporter=dot` (98 files, 906 tests)
+- `pnpm exec vitest run tests/desktop --reporter=dot` (98 files, 907 tests)
 - `pnpm --dir desktop typecheck`
 - `bun run typecheck`
 - `bun run check:patterns` (zero violations; repository baseline warnings only)

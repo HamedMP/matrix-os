@@ -119,15 +119,22 @@ export function AgentConversationInspector({
           );
         })}
       </div>
-      <div
-        id={`${instanceId}-${selectedTab}-panel`}
-        role="tabpanel"
-        aria-labelledby={`${instanceId}-${selectedTab}-tab`}
-        tabIndex={0}
-        className="min-h-0 flex-1 overflow-y-auto p-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
-      >
-        {content[selectedTab]}
-      </div>
+      {TABS.map((tab) => {
+        const selected = tab.id === selectedTab;
+        return (
+          <div
+            key={tab.id}
+            id={`${instanceId}-${tab.id}-panel`}
+            role="tabpanel"
+            aria-labelledby={`${instanceId}-${tab.id}-tab`}
+            tabIndex={selected ? 0 : -1}
+            hidden={!selected}
+            className="min-h-0 flex-1 overflow-y-auto p-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+          >
+            {content[tab.id]}
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -25,6 +25,14 @@ function renderInspector(defaultTab: AgentConversationInspectorTab = "changes") 
   );
 }
 
+function controlledPanel(tabName: string): HTMLElement {
+  const tab = screen.getByRole("tab", { name: new RegExp(`^${tabName}\\b`) });
+  const panelId = tab.getAttribute("aria-controls");
+  const panel = panelId ? document.getElementById(panelId) : null;
+  if (!panel) throw new Error(`Missing panel for ${tabName}`);
+  return panel;
+}
+
 describe("AgentConversationInspector", () => {
   it("shows one contextual surface at a time with live counts", () => {
     renderInspector();
@@ -33,21 +41,44 @@ describe("AgentConversationInspector", () => {
     expect(tablist).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Changes 2" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("Changed files")).toBeTruthy();
-    expect(screen.queryByText("Matrix shell")).toBeNull();
-    expect(screen.queryByText("Preview sessions")).toBeNull();
-    expect(screen.queryByText("Workspace activity")).toBeNull();
+    expect(controlledPanel("Changes").hidden).toBe(false);
+    expect(controlledPanel("Terminal").hidden).toBe(true);
+    expect(controlledPanel("Preview").hidden).toBe(true);
+    expect(controlledPanel("Activity").hidden).toBe(true);
 
     fireEvent.click(screen.getByRole("tab", { name: "Terminal 1" }));
 
     expect(screen.getByRole("tab", { name: "Terminal 1" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("Matrix shell")).toBeTruthy();
-    expect(screen.queryByText("Changed files")).toBeNull();
+    expect(controlledPanel("Terminal").hidden).toBe(false);
+    expect(controlledPanel("Changes").hidden).toBe(true);
 
     fireEvent.click(screen.getByRole("tab", { name: "Preview 3" }));
     expect(screen.getByText("Preview sessions")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("tab", { name: "Activity 4" }));
     expect(screen.getByText("Workspace activity")).toBeTruthy();
+  });
+
+  it("preserves an unsaved file draft while another surface is open", () => {
+    render(
+      <AgentConversationInspector
+        defaultTab="changes"
+        counts={{ changes: 1, terminal: 1, preview: 0, activity: 0 }}
+        toolbar={<div>Tools</div>}
+        changes={<input aria-label="Unsaved file draft" defaultValue="" />}
+        terminal={<div>Matrix shell</div>}
+        preview={<div>No previews</div>}
+        activity={<div>No activity</div>}
+      />,
+    );
+
+    const draft = screen.getByLabelText("Unsaved file draft") as HTMLInputElement;
+    fireEvent.change(draft, { target: { value: "keep this edit" } });
+    fireEvent.click(screen.getByRole("tab", { name: "Terminal 1" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Changes 1" }));
+
+    expect((screen.getByLabelText("Unsaved file draft") as HTMLInputElement).value).toBe("keep this edit");
   });
 
   it("keeps the toolbar and optional composer visible while switching surfaces", () => {
