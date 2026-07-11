@@ -3014,7 +3014,7 @@ describe("platform proxy routing", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(
         new Response(
-          '<!doctype html><script type="module" src="./assets/index.js"></script>',
+          '<!doctype html><script type="module" src="./assets/index.js"></script><link rel="stylesheet" href="./assets/index.css">',
           {
             status: 200,
             headers: {
@@ -3030,6 +3030,18 @@ describe("platform proxy routing", () => {
             "content-type": "application/javascript",
             vary: "Accept-Encoding",
           },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response('@import "./theme.css";@font-face{src:url("./font.woff2")}main{background:url(./image.png)}', {
+          status: 200,
+          headers: { "content-type": "text/css; charset=utf-8" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response("font-data", {
+          status: 200,
+          headers: { "content-type": "font/woff2" },
         }),
       );
     const app = createApp({
@@ -3050,7 +3062,9 @@ describe("platform proxy routing", () => {
     expect(htmlRes.status).toBe(200);
     const html = await htmlRes.text();
     const assetPath = html.match(/src="([^"]+)"/)?.[1];
+    const stylesheetPath = html.match(/href="([^"]+)"/)?.[1];
     expect(assetPath).toMatch(/^\/vm\/alice\/apps\/chess\/assets\/index\.js\?matrix_asset_token=/);
+    expect(stylesheetPath).toMatch(/^\/vm\/alice\/apps\/chess\/assets\/index\.css\?matrix_asset_token=/);
 
     const res = await app.request(assetPath ?? "/invalid", {
       headers: {
@@ -3075,6 +3089,23 @@ describe("platform proxy routing", () => {
     expect(js).toMatch(/from"\.\/react\.js\?matrix_asset_token=[^"]+"/);
     expect(js).toMatch(/import\("\.\/editor\.js\?matrix_asset_token=[^"]+"\)/);
     expect(js).toContain('Array.from("./plain.js")');
+
+    const cssRes = await app.request(stylesheetPath ?? "/invalid", {
+      headers: { host: "app.matrix-os.com", origin: "null" },
+    });
+    expect(cssRes.status).toBe(200);
+    const css = await cssRes.text();
+    expect(css).toMatch(/@import "\.\/theme\.css\?matrix_asset_token=[^"]+"/);
+    expect(css).toMatch(/url\("\.\/font\.woff2\?matrix_asset_token=[^"]+"\)/);
+    expect(css).toMatch(/url\(\.\/image\.png\?matrix_asset_token=[^)]+\)/);
+
+    const fontPath = css.match(/url\("([^"]+font\.woff2[^"]*)"\)/)?.[1];
+    const fontUrl = new URL(fontPath ?? "/invalid", `https://app.matrix-os.com${stylesheetPath}`);
+    const fontRes = await app.request(`${fontUrl.pathname}${fontUrl.search}`, {
+      headers: { host: "app.matrix-os.com", origin: "null" },
+    });
+    expect(fontRes.status).toBe(200);
+    expect(fetchMock.mock.calls[3]?.[0]).toBe("https://203.0.113.34:443/apps/chess/assets/font.woff2");
   });
 
   it("binds cookie-free Vite assets and lazy chunks to the selected same-handle runtime", async () => {

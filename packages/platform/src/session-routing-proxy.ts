@@ -318,6 +318,29 @@ function rewriteSandboxedViteJsAssetImports(
   );
 }
 
+function rewriteSandboxedViteCssAssetUrls(
+  css: string,
+  runtimeSlot: string,
+  assetToken: string | null,
+): string {
+  if (!assetToken) return css;
+  const withImports = css.replace(
+    /(@import\s+)(["'])(\.\/[^"']+)\2/gi,
+    (_match: string, prefix: string, quote: string, value: string) => {
+      return `${prefix}${quote}${addAppAssetRouteParams(value, runtimeSlot, assetToken)}${quote}`;
+    },
+  );
+  return withImports.replace(
+    /\burl\(\s*(?:(["'])(\.\/[^"']+)\1|(\.\/[^)\s]+))\s*\)/gi,
+    (_match: string, quote: string | undefined, quotedValue: string | undefined, unquotedValue: string | undefined) => {
+      const value = quotedValue ?? unquotedValue;
+      if (!value) return _match;
+      const rewritten = addAppAssetRouteParams(value, runtimeSlot, assetToken);
+      return `url(${quote ?? ''}${rewritten}${quote ?? ''})`;
+    },
+  );
+}
+
 export async function buildAppDomainProxyResponse(input: {
   upstream: Response;
   responseHeaders: Headers;
@@ -349,6 +372,18 @@ export async function buildAppDomainProxyResponse(input: {
     const js = await input.upstream.text();
     input.responseHeaders.delete('content-length');
     return new Response(rewriteSandboxedViteJsAssetImports(js, input.runtimeSlot, input.assetRouteToken), {
+      status: input.upstream.status,
+      headers: input.responseHeaders,
+    });
+  }
+  if (
+    getViteAppAssetSlug(input.path) &&
+    input.assetRouteToken &&
+    input.responseHeaders.get('content-type')?.includes('text/css')
+  ) {
+    const css = await input.upstream.text();
+    input.responseHeaders.delete('content-length');
+    return new Response(rewriteSandboxedViteCssAssetUrls(css, input.runtimeSlot, input.assetRouteToken), {
       status: input.upstream.status,
       headers: input.responseHeaders,
     });
