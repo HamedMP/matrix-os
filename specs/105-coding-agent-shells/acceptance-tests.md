@@ -1,6 +1,6 @@
 # Acceptance Tests: Project Conversations And Kanban
 
-**Status**: Phase 18-20 backend evidence, Phase 21 desktop navigator/conversation/Kanban/computer/inspector evidence, and Phase 22.1-22.3 mobile automated evidence added; device, security, and cross-shell evidence remains planned
+**Status**: Phase 18-20 backend evidence, Phase 21 desktop navigator/conversation/Kanban/computer/inspector evidence, and Phase 22.1-22.4 mobile automated evidence added; device, security, and cross-shell evidence remains planned
 **Updated**: 2026-07-10
 
 This matrix is the executable acceptance contract for the clarified coding-agent shell model. A task checkbox in `tasks.md` is complete only when its named test IDs have current evidence on the exact implementation head. Existing checkpoint tests remain required regressions but do not prove these new cases.
@@ -128,7 +128,7 @@ Every clarified functional requirement and buildable success criterion has at le
 
 ### Phase 22.4 Evidence
 
-- `MB-011`: `tests/platform/proxy-routing.test.ts` proves the Clerk-authenticated computer route returns only the current owner's bounded same-origin projection and rejects anonymous discovery. `apps/mobile/__tests__/mobile-computers.test.ts`, `storage.test.ts`, `computer-picker-screen.test.tsx`, and `settings-screen.test.tsx` prove response validation, credential-free selection persistence, Cloud sign-in recovery, load-error recovery, and same-session gateway switching. Preview VPS workflow run `29126211996` deployed exact top-stack bundle `v2026.07.10-pr914-00909cc-r29126211996`, and Platform Cloud Run run `29128264329` deployed and smoke-tested exact-head zero-traffic candidate revision `matrix-platform-00296-man` without promotion. The Expo SDK 57 dev client bundled and opened the chooser on the paired physical phone; the rendered list, selection, and post-switch workspace walkthrough still require direct user confirmation and remain part of the Phase 22 gate.
+- `MB-011`: `tests/platform/proxy-routing.test.ts` proves the Clerk-authenticated computer route returns only the current owner's bounded same-origin projection and rejects anonymous discovery. `apps/mobile/__tests__/mobile-computers.test.ts`, `storage.test.ts`, `computer-picker-screen.test.tsx`, and `settings-screen.test.tsx` prove response validation, credential-free selection persistence, Cloud sign-in recovery, load-error recovery, and same-session gateway switching. Preview VPS workflow run `29131576445` deployed reviewed implementation head `bf7e174ced0cc9664831394a6aac3a0cbd6d4404` as `v2026.07.10-pr914-bf7e174-r29131576445`, and Platform Cloud Run run `29128264329` deployed and smoke-tested zero-traffic candidate revision `matrix-platform-00296-man` without promotion. All reviewed implementation-head checks passed, every review thread is resolved, and Greptile reported 5/5. The Expo SDK 57 dev client bundled and opened the chooser on the paired physical phone; the rendered list, selection, and post-switch workspace walkthrough still require direct user confirmation and remain part of the Phase 22 gate.
 
 ## Security Tests
 
