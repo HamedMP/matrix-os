@@ -46,6 +46,7 @@ function threadSnapshotFixture() {
     thread: {
       id: "thread_mobile",
       providerId: "codex",
+      projectId: "matrix-os",
       title: "Repair mobile route",
       status: "running",
       attention: "none",
@@ -1050,6 +1051,31 @@ describe("AgentThreadRoute", () => {
       expect(client.createCodingAgentTurn).not.toHaveBeenCalled();
     },
   );
+
+  it("does not offer a same-thread composer for an unassigned legacy thread", async () => {
+    const snapshot = threadSnapshotFixture();
+    const { projectId: _projectId, ...unassignedThread } = snapshot.thread;
+    const unassignedSnapshot = { ...snapshot, thread: unassignedThread };
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: { capabilities: [{ id: "codingAgentsSameThreadTurns", enabled: true }] },
+      }),
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({ ok: true, snapshot: unassignedSnapshot }),
+      createCodingAgentTurn: jest.fn(),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Repair mobile route")).toBeTruthy();
+    expect(screen.queryByLabelText("Message current conversation")).toBeNull();
+    expect(client.getCodingAgentRuntimeSummary).not.toHaveBeenCalled();
+    expect(client.createCodingAgentTurn).not.toHaveBeenCalled();
+  });
 
   it("submits an approval decision and applies the returned thread snapshot", async () => {
     const client = {

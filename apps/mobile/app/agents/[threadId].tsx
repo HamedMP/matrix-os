@@ -352,7 +352,7 @@ export default function AgentThreadRoute() {
           </Pressable>
         </View>
       </View>
-      {client && canAcceptSameThreadTurn(thread.status) ? (
+      {client && thread.projectId && canAcceptSameThreadTurn(thread.status) ? (
         <AgentThreadTurnComposer
           client={client}
           connectionState={connectionState}
