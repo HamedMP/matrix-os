@@ -234,6 +234,23 @@ describe("canonical computer inventory route", () => {
 
     expect(response.status).toBe(200);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.21:443/projects");
+    const setCookie = response.headers.get("set-cookie") ?? "";
+    const handleCookie = setCookie.match(/matrix_shell_route=([^;,]+)/)?.[1];
+    const slotCookie = setCookie.match(/matrix_shell_runtime_slot=([^;,]+)/)?.[1];
+    expect(handleCookie).toBe("alice-shared");
+    expect(slotCookie).toBe("review");
+
+    fetchMock.mockClear();
+    const followUp = await app.request("/api/projects", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        cookie: `matrix_shell_route=${handleCookie}; matrix_shell_runtime_slot=${slotCookie}`,
+      },
+    });
+
+    expect(followUp.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.21:443/api/projects");
   });
 
   it("quarantines a malformed persisted provisioning class without hiding valid computers", async () => {

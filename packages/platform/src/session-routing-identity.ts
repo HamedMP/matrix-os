@@ -16,6 +16,7 @@ import {
   CODE_SESSION_COOKIE,
   NATIVE_APP_SESSION_COOKIE,
   SHELL_ROUTE_COOKIE,
+  SHELL_RUNTIME_SLOT_COOKIE,
   isValidNativeAppSessionProof,
   readCookie,
 } from './session-cookies.js';
@@ -100,6 +101,26 @@ export function buildShellRouteCookie(handle: string): string {
     'SameSite=Lax',
     'Max-Age=600',
   ].join('; ');
+}
+
+export function buildShellRuntimeSlotCookie(runtimeSlot: string): string {
+  return [
+    `${SHELL_RUNTIME_SLOT_COOKIE}=${encodeURIComponent(runtimeSlot)}`,
+    'Path=/',
+    'HttpOnly',
+    'Secure',
+    'SameSite=Lax',
+    'Max-Age=600',
+  ].join('; ');
+}
+
+export function readShellRuntimeSlotCookie(path: string, cookieHeader: string | undefined): string | null {
+  if (!isAppDomainGatewayPath(path) && !isAppDomainStaticAssetPath(path)) {
+    return null;
+  }
+  const runtimeSlot = readCookie(cookieHeader, SHELL_RUNTIME_SLOT_COOKIE);
+  const parsed = RuntimeSlotSchema.safeParse(runtimeSlot);
+  return parsed.success ? parsed.data : null;
 }
 
 export function readExplicitVmRoute(path: string): ExplicitVmRoute | null {
@@ -232,7 +253,14 @@ export async function resolveAppDomainIdentity(opts: {
   }
 
   if (opts.requestedHandle) {
-    const requestedMachine = await getActiveUserMachineByHandle(opts.db, opts.requestedHandle);
+    let requestedMachine = await getActiveUserMachineByHandle(
+      opts.db,
+      opts.requestedHandle,
+      opts.runtimeSlot,
+    );
+    if (!requestedMachine && opts.runtimeSlot === 'primary') {
+      requestedMachine = await getActiveUserMachineByHandle(opts.db, opts.requestedHandle);
+    }
     if (requestedMachine && requestedMachine.clerkUserId === result.userId) {
       return {
         handle: requestedMachine.handle,
