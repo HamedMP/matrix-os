@@ -96,10 +96,16 @@ export const MatrixComputerLabelSchema = z.enum(["Main Computer", "Preview Compu
 export const MatrixComputerVersionLabelSchema = z.union([
   z.literal("Version pending"),
   z.enum(["stable", "dev", "canary", "beta"]),
-  z.string().max(64).regex(
-    /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/,
-    "Invalid Matrix computer version label",
-  ),
+  z.string()
+    .max(64)
+    .regex(
+      /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/,
+      "Invalid Matrix computer version label",
+    )
+    .refine(
+      (value) => !UNSAFE_ASSISTANT_PREVIEW_TEXT.test(value) && !/(?:machine|server)[._-]?id/i.test(value),
+      { message: "Matrix computer version label is not safe for display" },
+    ),
 ]);
 export const MatrixComputerCapabilityIdSchema = z.string()
   .min(1)

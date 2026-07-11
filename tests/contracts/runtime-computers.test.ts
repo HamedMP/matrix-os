@@ -175,6 +175,8 @@ describe("Matrix computer contracts", () => {
       { ...mainComputer, versionLabel: "server/id=srv-123" },
       { ...mainComputer, versionLabel: "matrix-os-host-machineIdm123" },
       { ...mainComputer, versionLabel: "v1machineIdm123" },
+      { ...mainComputer, versionLabel: "v0.9.1-db.internal" },
+      { ...mainComputer, versionLabel: "v1.2.3-machineIdm123" },
       { ...mainComputer, versionLabel: "db.internal" },
       { ...mainComputer, versionLabel: "accessToken=secret-value" },
       { ...mainComputer, versionLabel: "Hetzner server 123" },
