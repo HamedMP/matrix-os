@@ -316,7 +316,7 @@ describe("trusted runtime selection route", () => {
           "content-type": "application/json",
           "cf-connecting-ip": `198.51.100.${attempt}`,
           "x-real-ip": `203.0.113.${attempt}`,
-          "x-forwarded-for": `192.0.2.${attempt}`,
+          "x-forwarded-for": `192.0.2.${attempt}, 203.0.113.254`,
         },
         body: JSON.stringify({ slot: "primary" }),
       });

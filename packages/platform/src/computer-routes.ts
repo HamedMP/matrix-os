@@ -88,14 +88,7 @@ function runtimeSelectionSourceKey(c: Context, edgeSecret: string | undefined): 
     return `edge:${edgeSource.slice(0, 128)}`;
   }
 
-  const forwarded = (c.req.header('x-forwarded-for') ?? '')
-    .slice(0, 1024)
-    .split(',')
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (forwarded.length >= 2) {
-    return `proxy:${forwarded.slice(-2).join('|').slice(0, 256)}`;
-  }
+  // Forwarding headers are client-controlled unless the edge secret verifies.
   return 'direct';
 }
 
