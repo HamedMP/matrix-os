@@ -668,26 +668,22 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('[ "${REQUESTED_VERSION##*-}" != "${head_sha:0:7}" ]');
   });
 
-  it('manual preview verification uses a temporary QA agent task and revokes it', () => {
+  it('manual preview verification uses a short-lived token from an active QA session', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
     expect(workflow).toContain('verify_inventory:');
     expect(workflow).toContain('action="verify"');
-    expect(workflow).toContain('https://api.clerk.com/v1/agents/tasks');
     expect(workflow).toContain('https://api.clerk.com/v1/users/${PREVIEW_CLERK_USER_ID}');
     expect(workflow).toContain('Configured preview verification user is unavailable (HTTP ${user_code}).');
-    expect(workflow).toContain('https://api.clerk.com/v1/agents/tasks/${task_id}/revoke');
+    expect(workflow).toContain('https://api.clerk.com/v1/sessions?user_id=${PREVIEW_CLERK_USER_ID}&status=active&limit=10');
+    expect(workflow).toContain('https://api.clerk.com/v1/sessions/${session_id}/tokens');
+    expect(workflow).toContain("--data-binary '{\"expires_in_seconds\":60}'");
     expect(workflow.match(/Clerk-API-Version: 2025-11-10/g)).toHaveLength(3);
-    expect(workflow).toContain("redirect_url: $redirect_url");
-    expect(workflow).toContain('task_error="$(jq -r');
-    expect(workflow).toContain('task_field="$(jq -r');
-    expect(workflow).toContain('test("^[a-z0-9_]{1,80}$")');
-    expect(workflow).toContain('--max-redirs 10 -c /tmp/clerk-cookies.txt -b /tmp/clerk-cookies.txt');
-    expect(workflow).toContain('-b /tmp/clerk-cookies.txt');
     expect(workflow).toContain('"${PLATFORM_PUBLIC_URL}/api/auth/computers"');
     expect(workflow).toContain('select(.handle == $h and .runtimeSlot == $h and .kind == "preview")');
-    expect(workflow).not.toContain('echo "$task_url"');
+    expect(workflow).not.toContain('echo "$session_token"');
+    expect(workflow).not.toContain('/sessions/${session_id}/revoke');
   });
 
   it('pinned preview redeploys skip bundle build and immutable publication', () => {
