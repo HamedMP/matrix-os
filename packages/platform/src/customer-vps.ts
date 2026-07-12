@@ -313,6 +313,8 @@ function buildHostConfig(
 }
 
 const HOST_BUNDLE_CHANNELS = new Set(['stable', 'canary', 'beta', 'dev']);
+const MAX_LOCAL_PROVISION_LOCKS = 1_024;
+const MAX_LOCAL_PROVISION_QUEUE_DEPTH = 20;
 
 interface HostBundleRef {
   imageVersion: string;
@@ -443,6 +445,39 @@ function sleep(ms: number): Promise<void> {
 export function createCustomerVpsService(deps: CustomerVpsServiceDeps): CustomerVpsService {
   const machineIdFactory = deps.machineIdFactory ?? randomUUID;
   const provisioningJobIdFactory = deps.provisioningJobIdFactory ?? randomUUID;
+  const localProvisionLocks = new Map<string, { tail: Promise<void>; depth: number }>();
+
+  async function withLocalProvisionLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    let lock = localProvisionLocks.get(key);
+    if (!lock) {
+      if (localProvisionLocks.size >= MAX_LOCAL_PROVISION_LOCKS) {
+        throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
+      }
+      lock = { tail: Promise.resolve(), depth: 0 };
+      localProvisionLocks.set(key, lock);
+    }
+    if (lock.depth >= MAX_LOCAL_PROVISION_QUEUE_DEPTH) {
+      throw new CustomerVpsError(429, 'provider_unavailable', 'Try again later');
+    }
+
+    const predecessor = lock.tail;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    lock.tail = predecessor.then(() => gate);
+    lock.depth += 1;
+    await predecessor;
+    try {
+      return await fn();
+    } finally {
+      release();
+      lock.depth -= 1;
+      if (lock.depth === 0 && localProvisionLocks.get(key) === lock) {
+        localProvisionLocks.delete(key);
+      }
+    }
+  }
   const enqueueProvisioningJob = deps.enqueueProvisioningJob ?? insertProvisioningJob;
   const tokenFactory = deps.tokenFactory ?? createRegistrationToken;
   const postgresPasswordFactory = deps.postgresPasswordFactory ?? (() => randomBytes(24).toString('base64url'));
@@ -795,6 +830,14 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     return { checked: jobs.length, completed, failed };
   }
 
+  async function dispatchProvisioningJobBestEffort(jobId: string): Promise<void> {
+    try {
+      await dispatchProvisioningJob(jobId, true);
+    } catch (err: unknown) {
+      logCustomerVpsError('durable provisioning job immediate dispatch unavailable', err);
+    }
+  }
+
   async function provision(
     input: ProvisionRequest,
     provisioningClass: UserMachineProvisioningClass,
@@ -833,14 +876,16 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     ) {
       const existingJob = await getProvisioningJobByMachineId(deps.db, existingBeforeBundleResolve.machineId);
       if (existingJob && (existingJob.status === 'queued' || existingJob.status === 'running')) {
-        await dispatchProvisioningJob(existingJob.jobId, true);
+        await dispatchProvisioningJobBestEffort(existingJob.jobId);
       }
       return activeProvisionResponse(existingBeforeBundleResolve, deps.config.provisionEtaSeconds);
     }
 
     const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
 
-    const provisionRow = await runInPlatformTransaction(deps.db, async (trx) => {
+    let provisionRow: { existing: UserMachineRecord | null };
+    try {
+      provisionRow = await runInPlatformTransaction(deps.db, async (trx) => {
       // Preview capacity and customer entitlement checks share the owner lock
       // with insertion so concurrent platform instances cannot over-allocate.
       if (billingContext || provisioningClass === 'preview') {
@@ -937,17 +982,54 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         availableAt: currentTime.toISOString(),
         createdAt: currentTime.toISOString(),
       });
-      return { existing: null };
-    });
+        return { existing: null };
+      });
+    } catch (err: unknown) {
+      const errorCode = err instanceof Error
+        ? (err as Error & { code?: unknown }).code
+        : undefined;
+      const errorMessage = err instanceof Error ? err.message : '';
+      const raceLookupAttempts = errorCode === '23505'
+        || errorMessage.includes('idx_user_machines_clerk_slot_active')
+        || errorMessage.includes('current transaction is aborted')
+        ? 3
+        : 1;
+      let concurrent: UserMachineRecord | undefined;
+      for (let attempt = 0; attempt < raceLookupAttempts; attempt += 1) {
+        try {
+          concurrent = await findExistingProvisioningMachine(deps.db, request, provisioningClass);
+        } catch (lookupErr: unknown) {
+          logCustomerVpsError('provisioning convergence lookup unavailable', lookupErr);
+          throw err;
+        }
+        if (concurrent?.status !== 'failed') break;
+        if (attempt + 1 < raceLookupAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      if (
+        concurrent
+        && concurrent.status !== 'failed'
+        && !(provisioningClass === 'preview' && concurrent.runtimeSlot !== request.runtimeSlot)
+        && (provisioningClass === 'customer' || concurrent.provisioningClass === 'preview')
+      ) {
+        const concurrentJob = await getProvisioningJobByMachineId(deps.db, concurrent.machineId);
+        if (concurrentJob && (concurrentJob.status === 'queued' || concurrentJob.status === 'running')) {
+          await dispatchProvisioningJobBestEffort(concurrentJob.jobId);
+        }
+        return activeProvisionResponse(concurrent, deps.config.provisionEtaSeconds);
+      }
+      throw err;
+    }
     if (provisionRow.existing) {
       const existingJob = await getProvisioningJobByMachineId(deps.db, provisionRow.existing.machineId);
       if (existingJob && (existingJob.status === 'queued' || existingJob.status === 'running')) {
-        await dispatchProvisioningJob(existingJob.jobId, true);
+        await dispatchProvisioningJobBestEffort(existingJob.jobId);
       }
       return activeProvisionResponse(provisionRow.existing, deps.config.provisionEtaSeconds);
     }
 
-    await dispatchProvisioningJob(jobId, true);
+    await dispatchProvisioningJobBestEffort(jobId);
 
     return {
       machineId,
@@ -958,11 +1040,17 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
 
   return {
     async provision(input) {
-      return provision(input, 'customer');
+      return withLocalProvisionLock(
+        `${input.clerkUserId}:${input.runtimeSlot ?? 'primary'}`,
+        () => provision(input, 'customer'),
+      );
     },
 
     async provisionPreview(input) {
-      return provision(input, 'preview');
+      return withLocalProvisionLock(
+        `${input.clerkUserId}:${input.runtimeSlot ?? 'primary'}`,
+        () => provision(input, 'preview'),
+      );
     },
 
     async register(token, input) {

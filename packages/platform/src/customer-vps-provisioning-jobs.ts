@@ -8,6 +8,7 @@ const PAYLOAD_VERSION = 1;
 export const MAX_PROVISIONING_JOB_ATTEMPTS = 100;
 
 const ProvisioningJobStatusSchema = z.enum(['queued', 'running', 'completed', 'failed']);
+const MachineIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
 const ProvisioningPayloadSchema = z.object({
   registrationToken: z.string().min(8).max(512),
   postgresPassword: z.string().min(8).max(512),
@@ -15,7 +16,7 @@ const ProvisioningPayloadSchema = z.object({
 
 const ProvisioningJobRowSchema = z.object({
   job_id: z.uuid(),
-  machine_id: z.uuid(),
+  machine_id: MachineIdSchema,
   status: ProvisioningJobStatusSchema,
   attempts: z.number().int().min(0).max(MAX_PROVISIONING_JOB_ATTEMPTS),
   available_at: z.string().min(1).max(64),
