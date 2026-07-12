@@ -210,7 +210,16 @@ jobs:
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
             jq -c --arg h "$HANDLE" \
-              '[.machines[] | select(.handle == $h and .status != "deleted")] | .[0] // {status: "absent", machineId: ""}')"
+              '[.machines[]
+                | select(.handle == $h and .status != "deleted")
+                | . + { _preview_rank:
+                    (if .status == "running" then 0
+                     elif .status == "provisioning" then 1
+                     elif .status == "failed" then 2
+                     else 3 end) }]
+               | sort_by(._preview_rank, (if .runtimeSlot == $h then 0 else 1 end), .provisionedAt)
+               | (.[0] // {status: "absent", machineId: ""})
+               | del(._preview_rank)')"
           status="$(jq -r '.status' <<< "$fleet_machine")"
           accepted_machine_id="$(jq -r '.machineId // ""' <<< "$fleet_machine")"
           echo "Fleet status for ${HANDLE}: ${status}"

@@ -643,6 +643,16 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow.match(/\/vps\/preview\/provision/g)).toHaveLength(1);
   });
 
+  it('preview VPS workflow prefers active same-handle rows over failed history', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain('if .status == "running" then 0');
+    expect(workflow).toContain('elif .status == "provisioning" then 1');
+    expect(workflow).toContain('elif .status == "failed" then 2');
+    expect(workflow).toContain('sort_by(._preview_rank, (if .runtimeSlot == $h then 0 else 1 end), .provisionedAt)');
+  });
+
   it('host bundle release workflow can skip dev bundles only through explicit manual input', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
