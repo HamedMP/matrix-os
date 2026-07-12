@@ -452,80 +452,82 @@ export function createWorkspaceRoutes(options: {
     return c.json({ ok: true });
   });
 
-  app.post("/api/sessions", limited, async (c) => {
-    const body = await parseJson(c, StartSessionSchema);
-    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
-    let ownerScope: OwnerScope;
-    try {
-      ownerScope = getOwnerScope(c);
-    } catch (err: unknown) {
-      return principalError(c, err);
-    }
-    const result = await sessionOrchestrator.startSession({
-      ownerScope,
-      request: body.value,
-    });
-    if (!result.ok) {
-      if ("sandboxStatus" in result) {
-        return c.json({ error: result.error, sandboxStatus: result.sandboxStatus }, status(result.status));
+  for (const sessionBasePath of ["/api/workspace/sessions", "/api/sessions"] as const) {
+    app.post(sessionBasePath, limited, async (c) => {
+      const body = await parseJson(c, StartSessionSchema);
+      if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+      let ownerScope: OwnerScope;
+      try {
+        ownerScope = getOwnerScope(c);
+      } catch (err: unknown) {
+        return principalError(c, err);
       }
-      return c.json({ error: result.error }, status(result.status));
-    }
-    return c.json({ session: result.session }, status(result.status));
-  });
-
-  app.get("/api/sessions", async (c) => {
-    const prRaw = c.req.query("pr");
-    const limitRaw = c.req.query("limit");
-    const result = await sessionOrchestrator.listSessions({
-      projectSlug: c.req.query("projectSlug"),
-      taskId: c.req.query("taskId"),
-      status: c.req.query("status"),
-      pr: prRaw ? Number.parseInt(prRaw, 10) : undefined,
-      limit: limitRaw ? Number.parseInt(limitRaw, 10) : undefined,
-      cursor: c.req.query("cursor"),
+      const result = await sessionOrchestrator.startSession({
+        ownerScope,
+        request: body.value,
+      });
+      if (!result.ok) {
+        if ("sandboxStatus" in result) {
+          return c.json({ error: result.error, sandboxStatus: result.sandboxStatus }, status(result.status));
+        }
+        return c.json({ error: result.error }, status(result.status));
+      }
+      return c.json({ session: result.session }, status(result.status));
     });
-    if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json({ sessions: result.sessions, nextCursor: result.nextCursor });
-  });
 
-  app.get("/api/sessions/:sessionId", async (c) => {
-    const result = await sessionOrchestrator.getSession(c.req.param("sessionId"));
-    if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json({ session: result.session });
-  });
+    app.get(sessionBasePath, async (c) => {
+      const prRaw = c.req.query("pr");
+      const limitRaw = c.req.query("limit");
+      const result = await sessionOrchestrator.listSessions({
+        projectSlug: c.req.query("projectSlug"),
+        taskId: c.req.query("taskId"),
+        status: c.req.query("status"),
+        pr: prRaw ? Number.parseInt(prRaw, 10) : undefined,
+        limit: limitRaw ? Number.parseInt(limitRaw, 10) : undefined,
+        cursor: c.req.query("cursor"),
+      });
+      if (!result.ok) return c.json({ error: result.error }, status(result.status));
+      return c.json({ sessions: result.sessions, nextCursor: result.nextCursor });
+    });
 
-  app.post("/api/sessions/:sessionId/send", limited, async (c) => {
-    const body = await parseJson(c, SendSessionInputSchema);
-    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
-    const result = await sessionOrchestrator.sendInput(c.req.param("sessionId"), body.value.input);
-    if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json({ session: result.session });
-  });
+    app.get(`${sessionBasePath}/:sessionId`, async (c) => {
+      const result = await sessionOrchestrator.getSession(c.req.param("sessionId"));
+      if (!result.ok) return c.json({ error: result.error }, status(result.status));
+      return c.json({ session: result.session });
+    });
 
-  app.post("/api/sessions/:sessionId/observe", limited, async (c) => {
-    const body = await parseJson(c, EmptyObjectSchema);
-    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
-    const result = await sessionOrchestrator.attachSession(c.req.param("sessionId"), "observe");
-    if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json(result);
-  });
+    app.post(`${sessionBasePath}/:sessionId/send`, limited, async (c) => {
+      const body = await parseJson(c, SendSessionInputSchema);
+      if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+      const result = await sessionOrchestrator.sendInput(c.req.param("sessionId"), body.value.input);
+      if (!result.ok) return c.json({ error: result.error }, status(result.status));
+      return c.json({ session: result.session });
+    });
 
-  app.post("/api/sessions/:sessionId/takeover", limited, async (c) => {
-    const body = await parseJson(c, EmptyObjectSchema);
-    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
-    const result = await sessionOrchestrator.attachSession(c.req.param("sessionId"), "owner");
-    if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json(result);
-  });
+    app.post(`${sessionBasePath}/:sessionId/observe`, limited, async (c) => {
+      const body = await parseJson(c, EmptyObjectSchema);
+      if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+      const result = await sessionOrchestrator.attachSession(c.req.param("sessionId"), "observe");
+      if (!result.ok) return c.json({ error: result.error }, status(result.status));
+      return c.json(result);
+    });
 
-  app.delete("/api/sessions/:sessionId", limited, async (c) => {
-    const body = await parseJson(c, EmptyObjectSchema);
-    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
-    const result = await sessionOrchestrator.stopSession(c.req.param("sessionId"));
-    if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json({ session: result.session });
-  });
+    app.post(`${sessionBasePath}/:sessionId/takeover`, limited, async (c) => {
+      const body = await parseJson(c, EmptyObjectSchema);
+      if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+      const result = await sessionOrchestrator.attachSession(c.req.param("sessionId"), "owner");
+      if (!result.ok) return c.json({ error: result.error }, status(result.status));
+      return c.json(result);
+    });
+
+    app.delete(`${sessionBasePath}/:sessionId`, limited, async (c) => {
+      const body = await parseJson(c, EmptyObjectSchema);
+      if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+      const result = await sessionOrchestrator.stopSession(c.req.param("sessionId"));
+      if (!result.ok) return c.json({ error: result.error }, status(result.status));
+      return c.json({ session: result.session });
+    });
+  }
 
   app.get("/api/agents", async (c) => c.json(await agentLauncher.detectAgents()));
 
