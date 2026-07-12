@@ -289,6 +289,53 @@ describe("AgentComposerScreen", () => {
     expect(client.createCodingAgentThread).not.toHaveBeenCalled();
   });
 
+  it("offers project creation when every summary project is unavailable", async () => {
+    const summary = summaryFixture();
+    summary.projects.items = [{
+      ...summary.projects.items[0],
+      status: "stale",
+    }];
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({ ok: true, summary }),
+      createProject: jest.fn(),
+      createCodingAgentThread: jest.fn(),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentComposerScreen />);
+
+    expect(await screen.findByText("Create or import a project first")).toBeTruthy();
+    expect(screen.getByLabelText("New project name")).toBeTruthy();
+    expect(screen.queryByLabelText("Project Matrix OS")).toBeNull();
+  });
+
+  it("does not remap an explicit stale project route to an unrelated project", async () => {
+    mockSearchParams = {
+      ...reviewHunkRouteParams(),
+      projectId: "removed-project",
+    };
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({ ok: true, summary: summaryFixture() }),
+      createCodingAgentThread: jest.fn(),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentComposerScreen />);
+
+    expect(await screen.findByLabelText("Project None")).toBeTruthy();
+    expect(screen.getByLabelText("Agent run prompt").props.value).toContain("Project: removed-project");
+    fireEvent.press(screen.getByRole("button", { name: "Start run" }));
+
+    expect(await screen.findByText("Choose a project before starting an agent run.")).toBeTruthy();
+    expect(client.createCodingAgentThread).not.toHaveBeenCalled();
+  });
+
   it("covers empty runtime to project creation to canonical thread navigation", async () => {
     const emptySummary = summaryFixture();
     emptySummary.projects.items = [];

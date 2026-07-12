@@ -38,11 +38,12 @@ export function AgentProjectPicker({
 }: AgentProjectPickerProps) {
   const { theme } = useUnistyles();
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
+  const hasAvailableProjects = projects.some((project) => project.status === "available");
 
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>Project</Text>
-      {projects.length > 0 ? (
+      {hasAvailableProjects ? (
         <>
           <Pressable
             accessibilityRole="button"

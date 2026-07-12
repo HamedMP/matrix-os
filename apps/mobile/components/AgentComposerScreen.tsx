@@ -109,8 +109,9 @@ function availableProject(summary: RuntimeSummary, projectId: string | undefined
 }
 
 function defaultProjectId(summary: RuntimeSummary, requestedProjectId: string | undefined): string | undefined {
-  const requested = availableProject(summary, requestedProjectId);
-  if (requested) return requested.id;
+  if (requestedProjectId !== undefined) {
+    return availableProject(summary, requestedProjectId)?.id;
+  }
   const available = summary.projects.items.filter((project) => project.status === "available");
   return available.length === 1 ? available[0]?.id : undefined;
 }
