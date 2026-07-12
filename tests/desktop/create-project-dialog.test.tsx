@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import React, { useState } from "react";
+import * as Tooltip from "@radix-ui/react-tooltip";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CreateProjectDialog from "../../desktop/src/renderer/src/features/board/CreateProjectDialog";
@@ -86,14 +87,26 @@ describe("CreateProjectDialog", () => {
       localPath: "/home/matrix/home/workspaces/customer-app",
       githubBacked: false,
     }));
+    const get = vi.fn(async (requestPath: string) => {
+      if (requestPath === "/api/files/list?path=") {
+        return { entries: [{ name: "workspaces", type: "directory" }] };
+      }
+      if (requestPath === "/api/files/list?path=workspaces") {
+        return { entries: [{ name: "customer-app", type: "directory" }] };
+      }
+      return { entries: [] };
+    });
+    useConnection.setState({ api: { post: vi.fn(), get } as never });
     useBoard.setState({ createProject, selectProject: vi.fn(async () => undefined) });
-    render(<CreateProjectDialog open onClose={vi.fn()} />);
+    render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
 
     fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Customer app" } });
     fireEvent.click(screen.getByRole("button", { name: "Use existing folder" }));
-    fireEvent.change(screen.getByPlaceholderText("workspaces/customer-app"), {
-      target: { value: "workspaces/customer-app" },
-    });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open workspaces" })).not.toBeNull());
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Open workspaces" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open customer-app" })).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Open customer-app" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose customer-app" }));
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
     await waitFor(() => expect(createProject).toHaveBeenCalledWith(expect.anything(), {

@@ -273,6 +273,20 @@ preserve the existing trusted file/review/source-control/terminal/preview paths.
 External review actions reveal Changes, while hidden panes retain bounded
 unsaved editor state.
 
+Current Matrix computer Files evidence:
+
+- `bunx vitest run tests/desktop/create-project-dialog.test.tsx tests/desktop/files-workspace.test.tsx tests/desktop/files-panel.test.tsx tests/desktop/markdown-preview.test.ts`
+- `bunx vitest run tests/desktop` (99 files, 930 tests)
+- `pnpm --filter desktop typecheck`
+- `bun run typecheck`
+- `bun run check:patterns:diff` (zero violations; existing stack warnings only)
+- `bun run build:desktop`
+
+These checks prove the selected computer remains the source of folder listings,
+the project chooser submits a selected relative folder path, Files opens as a
+stable desktop destination, bounded text/code and Markdown previews use the
+gateway file routes, and image URLs contain runtime routing but no credentials.
+
 Gateway/contract PRs additionally run the exact focused Vitest files named in their PR body. Desktop UI PRs run the operator E2E and screenshot checks. Mobile UI PRs run the SDK 57 dev-client device smoke before their rollout gate. `vp` commands may be reported unavailable, but they are not silently substituted for repository commands.
 
 ## Confirmation Boundary

@@ -12,6 +12,7 @@ export type TabKind =
   | "terminal"
   | "terminals"
   | "agents"
+  | "files"
   | "thread"
   | "apps"
   | "app"
@@ -35,6 +36,13 @@ export const AGENTS_WORKSPACE_TAB_SPEC = {
   kind: "agents" as const,
   title: "Agents",
   slug: "agents",
+};
+
+export const FILES_WORKSPACE_TAB_SPEC = {
+  kind: "files" as const,
+  title: "Files",
+  slug: "files",
+  closable: false,
 };
 
 const MAX_TABS = 24;

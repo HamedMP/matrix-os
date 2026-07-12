@@ -2,6 +2,7 @@ import {
   Bot,
   ChevronRight,
   Home,
+  FolderTree,
   LayoutGrid,
   LogOut,
   PanelLeftClose,
@@ -18,7 +19,7 @@ import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { invoke } from "../../lib/operator";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
-import { AGENTS_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
+import { AGENTS_WORKSPACE_TAB_SPEC, FILES_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
 import RuntimeComputerMenu from "../runtime/RuntimeComputerMenu";
@@ -151,6 +152,7 @@ export default function Sidebar() {
             <NavRow icon={<Bot size={15} />} label="Agents" collapsed={collapsed} active={activeTab?.kind === "agents"} onClick={() => openTab(AGENTS_WORKSPACE_TAB_SPEC)} />
           ) : null}
           <NavRow icon={<SquareTerminal size={15} />} label="Terminal" collapsed={collapsed} active={activeTab?.kind === "terminals"} onClick={() => openTab({ kind: "terminals", title: "Terminal" })} />
+          <NavRow icon={<FolderTree size={15} />} label="Files" collapsed={collapsed} active={activeTab?.kind === "files"} onClick={() => openTab(FILES_WORKSPACE_TAB_SPEC)} />
           <NavRow icon={<LayoutGrid size={15} />} label="Apps" collapsed={collapsed} active={activeTab?.kind === "apps" || activeTab?.kind === "app"} onClick={() => openTab({ kind: "apps", title: "Apps" })} />
         </nav>
 
