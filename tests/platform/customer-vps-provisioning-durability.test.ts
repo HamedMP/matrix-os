@@ -210,4 +210,46 @@ describe('platform/customer-vps provisioning durability', () => {
       publicIPv4: '203.0.113.20',
     });
   });
+
+  it('fails an expired job at the bounded worker-attempt limit without corrupting its row', async () => {
+    const enqueueProvisioningJob = vi.fn(async (transaction: PlatformDB, job: NewProvisioningJob) => {
+      await insertProvisioningJob(transaction, {
+        ...job,
+        availableAt: '2026-07-12T01:01:00.000Z',
+      });
+    });
+    let currentTime = new Date('2026-07-12T01:00:00.000Z');
+    const { app, hetzner, service } = createHarness({
+      enqueueProvisioningJob,
+      now: () => currentTime,
+    });
+    expect((await previewProvision(app)).status).toBe(202);
+    await db.executor.updateTable('provisioning_jobs').set({
+      status: 'running',
+      attempts: 100,
+      claimed_at: '2026-07-12T00:50:00.000Z',
+      lease_expires_at: '2026-07-12T00:55:00.000Z',
+    }).execute();
+
+    currentTime = new Date('2026-07-12T01:02:00.000Z');
+    await expect(service.dispatchProvisioningJobs()).resolves.toEqual({
+      checked: 1,
+      completed: 0,
+      failed: 1,
+    });
+
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+    await expect(listProvisioningJobs(db, 10)).resolves.toEqual([
+      expect.objectContaining({
+        status: 'failed',
+        attempts: 100,
+        encryptedPayload: null,
+        lastErrorCode: 'retry_exhausted',
+      }),
+    ]);
+    await expect(getActiveUserMachineByHandle(db, 'pr-919', 'pr-919')).resolves.toMatchObject({
+      status: 'failed',
+      failureCode: 'retry_exhausted',
+    });
+  });
 });

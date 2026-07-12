@@ -5,6 +5,7 @@ import type { PlatformDB } from './db.js';
 const MAX_PROVISIONING_JOBS = 100;
 const MAX_ENCRYPTED_PAYLOAD_LENGTH = 8_192;
 const PAYLOAD_VERSION = 1;
+export const MAX_PROVISIONING_JOB_ATTEMPTS = 100;
 
 const ProvisioningJobStatusSchema = z.enum(['queued', 'running', 'completed', 'failed']);
 const ProvisioningPayloadSchema = z.object({
@@ -16,7 +17,7 @@ const ProvisioningJobRowSchema = z.object({
   job_id: z.uuid(),
   machine_id: z.uuid(),
   status: ProvisioningJobStatusSchema,
-  attempts: z.number().int().min(0).max(100),
+  attempts: z.number().int().min(0).max(MAX_PROVISIONING_JOB_ATTEMPTS),
   available_at: z.string().min(1).max(64),
   claimed_at: z.string().min(1).max(64).nullable(),
   lease_expires_at: z.string().min(1).max(64).nullable(),
@@ -155,6 +156,19 @@ export async function getProvisioningJobByMachineId(
   return row ? mapProvisioningJob(row) : undefined;
 }
 
+export async function getProvisioningJob(
+  db: PlatformDB,
+  jobId: string,
+): Promise<ProvisioningJobRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('provisioning_jobs')
+    .selectAll()
+    .where('job_id', '=', jobId)
+    .executeTakeFirst();
+  return row ? mapProvisioningJob(row) : undefined;
+}
+
 export async function listProvisioningJobs(db: PlatformDB, limit: number): Promise<ProvisioningJobRecord[]> {
   await db.ready;
   const boundedLimit = Math.max(1, Math.min(MAX_PROVISIONING_JOBS, Math.trunc(limit)));
@@ -204,6 +218,7 @@ export async function claimProvisioningJob(
       updated_at: now,
     }))
     .where('job_id', '=', jobId)
+    .where('attempts', '<', MAX_PROVISIONING_JOB_ATTEMPTS)
     .where((eb) => eb.or([
       eb.and([eb('status', '=', 'queued'), eb('available_at', '<=', now)]),
       eb.and([eb('status', '=', 'running'), eb('lease_expires_at', '<=', now)]),

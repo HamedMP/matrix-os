@@ -70,9 +70,11 @@ import {
   claimProvisioningJob,
   completeProvisioningJob,
   failProvisioningJob,
+  getProvisioningJob,
   getProvisioningJobByMachineId,
   insertProvisioningJob,
   listDispatchableProvisioningJobs,
+  MAX_PROVISIONING_JOB_ATTEMPTS,
   openProvisioningPayload,
   sealProvisioningPayload,
   type NewProvisioningJob,
@@ -614,6 +616,31 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     propagateFailure: boolean,
   ): Promise<'completed' | 'failed' | 'skipped'> {
     const claimedAt = now();
+    const pendingJob = await getProvisioningJob(deps.db, jobId);
+    if (
+      pendingJob?.status === 'running'
+      && pendingJob.attempts >= MAX_PROVISIONING_JOB_ATTEMPTS
+      && pendingJob.leaseExpiresAt
+      && pendingJob.leaseExpiresAt <= claimedAt.toISOString()
+    ) {
+      await runInPlatformTransaction(deps.db, async (trx) => {
+        await updateUserMachine(trx, pendingJob.machineId, {
+          status: 'failed',
+          failureCode: 'retry_exhausted',
+          failureAt: claimedAt.toISOString(),
+        });
+        await failProvisioningJob(
+          trx,
+          pendingJob.jobId,
+          claimedAt.toISOString(),
+          'retry_exhausted',
+        );
+      });
+      if (propagateFailure) {
+        throw new CustomerVpsError(500, 'retry_exhausted', 'Provisioning failed');
+      }
+      return 'failed';
+    }
     const job = await claimProvisioningJob(
       deps.db,
       jobId,
