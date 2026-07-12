@@ -40,7 +40,9 @@ async function createRouteHarness(options: {
   readLimitBytes?: number;
 } = {}) {
   const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-files-"));
+  const projectRoot = join(homePath, "projects", projectId, "repo");
   const worktreeRoot = join(homePath, "projects", projectId, "worktrees", worktreeId);
+  await mkdir(join(projectRoot, "src"), { recursive: true });
   await mkdir(join(worktreeRoot, "src"), { recursive: true });
   const app = new Hono();
   app.route("/api/coding-agents", createCodingAgentRoutes({
@@ -56,10 +58,68 @@ async function createRouteHarness(options: {
       return options.principal ?? testPrincipal;
     },
   }));
-  return { app, homePath, worktreeRoot };
+  return { app, homePath, projectRoot, worktreeRoot };
 }
 
 describe("coding agent file read route", () => {
+  it("browses, searches, and reads the primary project checkout when worktreeId is omitted", async () => {
+    const harness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+    });
+    try {
+      await writeFile(join(harness.projectRoot, "src", "primary.ts"), "export const checkout = 'primary';\n");
+
+      const browse = await harness.app.request(
+        `/api/coding-agents/files/browse?projectId=${projectId}&path=src&limit=10`,
+      );
+      const search = await harness.app.request(
+        `/api/coding-agents/files/search?projectId=${projectId}&query=primary&limit=10`,
+      );
+      const read = await harness.app.request(
+        `/api/coding-agents/files/read?projectId=${projectId}&path=src%2Fprimary.ts`,
+      );
+
+      expect(browse.status).toBe(200);
+      expect(await browse.json()).toMatchObject({
+        entries: { items: [{ path: "src/primary.ts", kind: "file" }] },
+      });
+      expect(search.status).toBe(200);
+      expect(await search.json()).toMatchObject({
+        matches: { items: [{ path: "src/primary.ts", kind: "file" }] },
+      });
+      expect(read.status).toBe(200);
+      expect(await read.json()).toMatchObject({
+        metadata: { path: "src/primary.ts", kind: "file" },
+        content: "export const checkout = 'primary';\n",
+      });
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps primary project checkout access owner-scoped and traversal-safe", async () => {
+    const harness = await createRouteHarness({
+      principal: { userId: "other_user", source: "jwt" },
+      ownerIds: [testPrincipal.userId],
+    });
+    try {
+      await writeFile(join(harness.projectRoot, "src", "primary.ts"), "private\n");
+
+      const unauthorized = await harness.app.request(
+        `/api/coding-agents/files/read?projectId=${projectId}&path=src%2Fprimary.ts`,
+      );
+      const traversal = await harness.app.request(
+        `/api/coding-agents/files/read?projectId=${projectId}&path=..%2Fsecret.txt`,
+      );
+
+      expect(unauthorized.status).toBe(404);
+      expect(traversal.status).toBe(400);
+      expect(JSON.stringify(await unauthorized.json())).not.toMatch(/other_user|primary\.ts|\/tmp/i);
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
   it("browses direct owner worktree entries without exposing symlinks or internal paths", async () => {
     const harness = await createRouteHarness({
       ownerIds: [testPrincipal.userId],

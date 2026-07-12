@@ -26,7 +26,7 @@ The coding-agent route module is `packages/gateway/src/coding-agents/routes.ts`,
 - `POST /threads/:threadId/approvals/:approvalId/decision` records an idempotent approval decision.
 - `POST /threads/:threadId/inputs/:inputRequestId/answer` records a bounded user-input answer.
 - `GET /reviews` and `GET /reviews/:reviewId` expose bounded review summaries and snapshots.
-- `GET /files/read` exposes bounded owner-worktree text snapshots.
+- `GET /files/read` exposes bounded owner-checkout text snapshots. Omitting `worktreeId` reads the project's primary checkout; providing it scopes the read to that worktree.
 - `GET /notification-preferences` returns coding-agent notification preferences for the authenticated owner.
 - `PUT /notification-preferences` updates coding-agent notification preferences for the authenticated owner with a small body limit and atomic per-owner file persistence.
 
