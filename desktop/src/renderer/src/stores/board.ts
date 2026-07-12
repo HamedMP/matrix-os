@@ -10,6 +10,7 @@ import { create } from "zustand";
 import { z } from "zod/v4";
 import { AppError, type AppErrorCategory } from "../../../shared/app-error";
 import type { ApiClient } from "../lib/api";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
 
 export type CardStatus = "todo" | "running" | "waiting" | "blocked" | "complete" | "archived";
 export type CardPriority = "low" | "normal" | "high" | "urgent";
@@ -252,12 +253,15 @@ export const useBoard = create<BoardState>()((set, get) => {
   }
 
   async function refreshInto(api: ApiClient, slug: string): Promise<void> {
+    const runtimeGeneration = captureRuntimeGeneration();
     set({ refreshing: true });
     try {
       const cards = await fetchAllTasks(api, slug);
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
       replaceProjectCards(slug, cards);
       set({ refreshing: false, error: null });
     } catch (err: unknown) {
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
       console.error("[board] Failed to load tasks:", err);
       set({ refreshing: false, error: categoryOf(err) });
     }
@@ -303,8 +307,10 @@ export const useBoard = create<BoardState>()((set, get) => {
     error: null,
 
     loadProjects: async (api) => {
+      const runtimeGeneration = captureRuntimeGeneration();
       try {
         const response = await api.get<{ projects: unknown[] }>("/api/workspace/projects");
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
         const projects: Project[] = [];
         for (const raw of response.projects ?? []) {
           const project = toProject(raw);
@@ -313,6 +319,7 @@ export const useBoard = create<BoardState>()((set, get) => {
         set({ projects, error: null });
         return true;
       } catch (err: unknown) {
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
         console.error("[board] Failed to load projects:", err);
         set({ error: categoryOf(err) });
         return false;

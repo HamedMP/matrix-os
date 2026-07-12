@@ -12,6 +12,7 @@ import {
   type ZellijSessionDTO,
 } from "../lib/session-merge";
 import { useBoard } from "./board";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
 
 export interface SessionCreateInput {
   kind: "shell" | "agent";
@@ -137,11 +138,12 @@ export const useSessions = create<SessionsState>()((set, get) => ({
   createError: null,
 
   load: async (api) => {
+    const runtimeGeneration = captureRuntimeGeneration();
     const sequence = ++loadSequence;
     set({ loading: true, error: null });
     try {
       const merged = await fetchMergedSessions(api);
-      if (sequence !== loadSequence) return;
+      if (sequence !== loadSequence || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
       set({
         sessions: merged.sessions,
         aliasMap: merged.aliasMap,
@@ -149,7 +151,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
         error: null,
       });
     } catch (err: unknown) {
-      if (sequence !== loadSequence) return;
+      if (sequence !== loadSequence || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
       console.error("[sessions] Failed to load sessions:", err);
       set({
         loading: false,

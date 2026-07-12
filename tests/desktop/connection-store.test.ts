@@ -6,6 +6,7 @@ import {
   useConnection,
   wireConnectionEvents,
 } from "@desktop/renderer/src/stores/connection";
+import { useBoard } from "@desktop/renderer/src/stores/board";
 
 type Listener = (payload: unknown) => void;
 
@@ -25,6 +26,22 @@ afterEach(() => {
 });
 
 describe("connection event wiring", () => {
+  it("invalidates the previous runtime before the trusted runtime switch", async () => {
+    useBoard.setState({ projects: [{ slug: "old", name: "Old" }], activeProjectSlug: "old" });
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "runtime:select") {
+        expect(useBoard.getState()).toMatchObject({ projects: [], activeProjectSlug: null });
+      }
+      return {};
+    });
+    window.operator = { invoke, on: vi.fn() };
+
+    await useConnection.getState().selectRuntime("preview");
+
+    expect(invoke).toHaveBeenCalledWith("runtime:select", { slot: "preview" });
+    expect(useConnection.getState().runtimeSlot).toBe("preview");
+  });
+
   it("recovers from an initial auth status failure instead of staying loading", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     window.operator = {

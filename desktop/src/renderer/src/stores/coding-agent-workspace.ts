@@ -364,8 +364,18 @@ export function clearCodingAgentThreadSelection(): void {
 
 export function clearCodingAgentRuntimeSelection(): void {
   clearCodingAgentThreadSelection();
+  refreshSeq += 1;
   reviewsSeq += 1;
+  reviewSnapshotSeq += 1;
+  fileReadSeq += 1;
+  threadSnapshotSeq += 1;
+  notificationPreferencesSeq += 1;
+  createRequestSeq += 1;
+  actionRequestSeq += 1;
   useCodingAgentWorkspace.setState({
+    status: "idle",
+    summary: null,
+    error: null,
     createdThreadHandles: [],
     reviewsStatus: "idle",
     reviews: null,

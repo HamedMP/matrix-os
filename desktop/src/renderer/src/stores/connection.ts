@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { invoke, onEvent } from "../lib/operator";
 import { createApiClient, type ApiClient } from "../lib/api";
+import { reconcileDesktopRuntimeChange } from "./runtime-transition";
 
 export type ConnectionStatus = "loading" | "signed-out" | "signed-in";
 
@@ -58,8 +59,16 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
   },
 
   selectRuntime: async (slot) => {
-    await invoke("runtime:select", { slot });
-    set({ runtimeSlot: slot });
+    reconcileDesktopRuntimeChange();
+    try {
+      await invoke("runtime:select", { slot });
+      set({ runtimeSlot: slot });
+    } catch (err: unknown) {
+      // Recreate the API client so runtime-bound surfaces reload the still
+      // selected computer after a failed switch.
+      await get().refresh();
+      throw err;
+    }
   },
 
   signOut: async () => {
