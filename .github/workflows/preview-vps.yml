@@ -405,6 +405,7 @@ jobs:
       CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://api.matrix-os.com' }}
+      APP_PUBLIC_URL: https://app.matrix-os.com
       HANDLE: ${{ needs.gate.outputs.handle }}
     steps:
       - name: Verify authenticated inventory projection
@@ -415,46 +416,43 @@ jobs:
             exit 1
           fi
 
-          session_id=""
+          task_id=""
           cleanup() {
-            if [ -n "$session_id" ]; then
+            if [ -n "$task_id" ]; then
               curl -fsS --max-time 30 -o /dev/null \
-                -X POST "https://api.clerk.com/v1/sessions/${session_id}/revoke" \
+                -X POST "https://api.clerk.com/v1/agents/tasks/${task_id}/revoke" \
                 -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
                 -H "Clerk-API-Version: 2025-11-10" || true
             fi
           }
           trap cleanup EXIT
 
-          session_body="$(jq -cn --arg user_id "$PREVIEW_CLERK_USER_ID" '{user_id: $user_id}')"
-          session_code="$(curl -sS --max-time 30 -o /tmp/clerk-session.json -w '%{http_code}' \
-            -X POST "https://api.clerk.com/v1/sessions" \
+          redirect_url="${APP_PUBLIC_URL}/runtime"
+          task_body="$(jq -cn \
+            --arg user_id "$PREVIEW_CLERK_USER_ID" \
+            --arg redirect_url "$redirect_url" \
+            '{on_behalf_of: {user_id: $user_id}, permissions: "*", agent_name: "matrix-preview-verifier", task_description: "Verify preview computer inventory", redirect_url: $redirect_url, session_max_duration_in_seconds: 300}')"
+          task_code="$(curl -sS --max-time 30 -o /tmp/clerk-task.json -w '%{http_code}' \
+            -X POST "https://api.clerk.com/v1/agents/tasks" \
             -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
             -H "Clerk-API-Version: 2025-11-10" \
             -H "content-type: application/json" \
-            --data-binary "$session_body")"
-          case "$session_code" in
+            --data-binary "$task_body")"
+          case "$task_code" in
             200|201) ;;
             *)
-              echo "Temporary preview verification session failed with HTTP ${session_code}." >&2
+              echo "Temporary preview verification task failed with HTTP ${task_code}." >&2
               exit 1
               ;;
           esac
-          session_id="$(jq -er '.id | select(type == "string" and test("^sess_[A-Za-z0-9]+$"))' /tmp/clerk-session.json)"
-
-          token_code="$(curl -sS --max-time 30 -o /tmp/clerk-token.json -w '%{http_code}' \
-            -X POST "https://api.clerk.com/v1/sessions/${session_id}/tokens" \
-            -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
-            -H "Clerk-API-Version: 2025-11-10")"
-          if [ "$token_code" != "200" ]; then
-            echo "Could not create the temporary preview verification token." >&2
-            exit 1
-          fi
-          session_token="$(jq -er '.jwt | select(type == "string" and length <= 8192)' /tmp/clerk-token.json)"
+          task_id="$(jq -er '.id | select(type == "string" and test("^[A-Za-z0-9_-]{1,128}$"))' /tmp/clerk-task.json)"
+          task_url="$(jq -er '.url | select(type == "string" and length <= 4096 and startswith("https://"))' /tmp/clerk-task.json)"
+          curl -fsS --max-time 30 --max-redirs 10 -c /tmp/clerk-cookies.txt -b /tmp/clerk-cookies.txt \
+            -o /dev/null -L "$task_url"
 
           inventory_code="$(curl -sS --max-time 30 -o /tmp/computers.json -w '%{http_code}' \
             "${PLATFORM_PUBLIC_URL}/api/auth/computers" \
-            -H "authorization: Bearer ${session_token}")"
+            -b /tmp/clerk-cookies.txt)"
           if [ "$inventory_code" != "200" ]; then
             echo "Authenticated computer inventory is unavailable." >&2
             exit 1
