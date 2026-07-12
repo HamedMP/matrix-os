@@ -176,4 +176,38 @@ describe('platform/customer-vps provisioning durability', () => {
       expect.objectContaining({ status: 'completed', attempts: 1, encryptedPayload: null }),
     ]);
   });
+
+  it('adopts a provider server created before an expired worker lease instead of duplicating it', async () => {
+    let currentTime = new Date('2026-07-12T01:00:00.000Z');
+    const enqueueProvisioningJob = vi.fn(async (transaction: PlatformDB, job: NewProvisioningJob) => {
+      await insertProvisioningJob(transaction, {
+        ...job,
+        availableAt: '2026-07-12T01:01:00.000Z',
+      });
+    });
+    const hetzner = createMockHetznerClient({
+      listServersByLabel: vi.fn().mockResolvedValue([{
+        id: 654321,
+        status: 'running',
+        serverType: 'cpx22',
+        publicIPv4: '203.0.113.20',
+        publicIPv6: '2001:db8::20',
+      }]),
+    });
+    const { app, service } = createHarness({
+      enqueueProvisioningJob,
+      hetzner,
+      now: () => currentTime,
+    });
+
+    expect((await previewProvision(app)).status).toBe(202);
+    currentTime = new Date('2026-07-12T01:02:00.000Z');
+    await expect(service.dispatchProvisioningJobs()).resolves.toMatchObject({ completed: 1 });
+
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+    await expect(getActiveUserMachineByHandle(db, 'pr-919', 'pr-919')).resolves.toMatchObject({
+      hetznerServerId: 654321,
+      publicIPv4: '203.0.113.20',
+    });
+  });
 });

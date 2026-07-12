@@ -640,6 +640,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     }
 
     let serverIdForCompensation: number | null = null;
+    let adoptedExistingServer = false;
     try {
       const payload = openProvisioningPayload(job.encryptedPayload, deps.config.platformSecret);
       const imageVersion = row.imageVersion ?? deps.config.imageVersion;
@@ -663,18 +664,38 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
         hostConfig,
       );
-      const server = await deps.hetzner.createServer({
-        name: buildServerName(row.handle),
-        serverType: row.serverType ?? deps.config.serverType,
-        userData,
-        labels: {
-          app: 'matrix-os',
-          clerk_user_id: row.clerkUserId,
-          runtime_slot: row.runtimeSlot,
-          machine_id: row.machineId,
-        },
-      });
-      serverIdForCompensation = server.id;
+      const existingServers = deps.hetzner.listServersByLabel
+        ? (await deps.hetzner.listServersByLabel(`machine_id=${row.machineId}`))
+          .toSorted((left, right) => left.id - right.id)
+        : [];
+      const existingServer = existingServers[0];
+      const server = existingServer ?? await deps.hetzner.createServer({
+          name: buildServerName(row.handle),
+          serverType: row.serverType ?? deps.config.serverType,
+          userData,
+          labels: {
+            app: 'matrix-os',
+            clerk_user_id: row.clerkUserId,
+            runtime_slot: row.runtimeSlot,
+            machine_id: row.machineId,
+          },
+        });
+      adoptedExistingServer = Boolean(existingServer);
+      if (!adoptedExistingServer) serverIdForCompensation = server.id;
+      for (const duplicate of existingServers.slice(1)) {
+        try {
+          await deps.hetzner.deleteServer(duplicate.id);
+        } catch (cleanupErr: unknown) {
+          logCustomerVpsError('duplicate provisioning server cleanup failed', cleanupErr);
+          await queueProviderDeletion({
+            providerServerId: duplicate.id,
+            reason: 'duplicate_provisioning_server',
+            machineId: row.machineId,
+            handle: row.handle,
+            err: cleanupErr,
+          });
+        }
+      }
       const completedAt = now().toISOString();
       await runInPlatformTransaction(deps.db, async (trx) => {
         await updateUserMachine(trx, row.machineId, {
@@ -703,6 +724,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             err: cleanupErr,
           });
         }
+      }
+      if (adoptedExistingServer) {
+        logCustomerVpsError(`adopted provisioning server persistence failed machineId=${row.machineId}`, err);
+        if (propagateFailure) throw mapped;
+        return 'skipped';
       }
       const failedAt = now().toISOString();
       try {
