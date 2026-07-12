@@ -789,8 +789,6 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       }
       if (adoptedExistingServer) {
         logCustomerVpsError(`adopted provisioning server persistence failed machineId=${row.machineId}`, err);
-        if (propagateFailure) throw mapped;
-        return 'skipped';
       }
       const failedAt = now().toISOString();
       try {
