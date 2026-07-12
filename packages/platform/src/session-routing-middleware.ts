@@ -524,7 +524,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       headers.set('x-forwarded-proto', 'https');
       headers.set('accept-encoding', 'identity');
       headers.set('connection', 'close');
-      if (platformSecret) {
+      // Capability-only requests must not inherit the platform's internal
+      // runtime credential. The gateway authorizes this exact stream path by
+      // validating its opaque token against the live native-app session.
+      if (platformSecret && !explicitVmRouteHasNativeAppStreamCapability) {
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(machine.handle, platformSecret)}`);
         if (identity.userId) {
           headers.set('x-platform-user-id', identity.userId);

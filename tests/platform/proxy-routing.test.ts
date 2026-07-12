@@ -3035,6 +3035,7 @@ describe("platform proxy routing", () => {
       "https://203.0.113.35:443/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/stream_bbbbbbbbbbbbbbbbbbbbbbbb/js/Utilities.js",
     );
     const headers = init?.headers as Headers;
+    expect(headers.get("authorization")).toBeNull();
     expect(headers.get("cookie")).toBeNull();
     expect(headers.get("x-platform-user-id")).toBeNull();
   });

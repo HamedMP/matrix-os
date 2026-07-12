@@ -239,7 +239,7 @@ export function registerPlatformWebSocketUpgradeHandler(
         handle,
         userId: identity.userId,
         platformSecret,
-        includePlatformProof,
+        includePlatformProof: includePlatformProof && identity.source !== 'static-route',
         isCodeDomain,
       })
     );

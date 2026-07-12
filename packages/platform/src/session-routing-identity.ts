@@ -173,6 +173,8 @@ export function hasExplicitVmNativeAppStreamCapability(
   method: string,
   route: ExplicitVmRoute,
 ): boolean {
+  // The route only selects the gateway capability endpoint. The gateway still
+  // timing-safely validates the full random stream token against a live session.
   return (method === 'GET' || method === 'HEAD')
     && NATIVE_APP_STREAM_CAPABILITY_PATH.test(route.upstreamPath);
 }
