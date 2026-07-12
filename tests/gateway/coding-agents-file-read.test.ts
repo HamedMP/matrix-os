@@ -37,6 +37,7 @@ function runtimeSummary() {
 async function createRouteHarness(options: {
   principal?: RequestPrincipal | null;
   ownerIds?: string[];
+  projectOwnerId?: string;
   readLimitBytes?: number;
 } = {}) {
   const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-files-"));
@@ -51,6 +52,14 @@ async function createRouteHarness(options: {
       homePath,
       ownerId: options.ownerIds?.[0],
       principalOwnerIds: options.ownerIds,
+      projects: {
+        getProject: async () => ({
+          ok: true,
+          project: {
+            ownerScope: { type: "user", id: options.projectOwnerId ?? testPrincipal.userId },
+          },
+        }),
+      },
       readLimitBytes: options.readLimitBytes,
     }),
     getPrincipal: () => {
@@ -115,6 +124,25 @@ describe("coding agent file read route", () => {
       expect(unauthorized.status).toBe(404);
       expect(traversal.status).toBe(400);
       expect(JSON.stringify(await unauthorized.json())).not.toMatch(/other_user|primary\.ts|\/tmp/i);
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("hides a primary checkout when the authenticated runtime owner does not own that project", async () => {
+    const harness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+      projectOwnerId: "other_project_owner",
+    });
+    try {
+      await writeFile(join(harness.projectRoot, "src", "primary.ts"), "private\n");
+
+      const response = await harness.app.request(
+        `/api/coding-agents/files/read?projectId=${projectId}&path=src%2Fprimary.ts`,
+      );
+
+      expect(response.status).toBe(404);
+      expect(JSON.stringify(await response.json())).not.toMatch(/other_project_owner|primary\.ts|\/tmp/i);
     } finally {
       await rm(harness.homePath, { recursive: true, force: true });
     }

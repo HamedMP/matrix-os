@@ -511,10 +511,12 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentOwnerIds = [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(
     (id): id is string => Boolean(id),
   );
+  const codingAgentProjectManager = createProjectManager({ homePath });
   const codingAgentFileStore = createCodingAgentFileStore({
     homePath,
     ownerId: process.env.MATRIX_USER_ID,
     principalOwnerIds: codingAgentOwnerIds,
+    projects: codingAgentProjectManager,
   });
   const codingAgentSourceControlStore = createCodingAgentSourceControlStore({
     homePath,
@@ -563,7 +565,7 @@ export async function createGateway(config: GatewayConfig) {
       homePath,
       providers: codingAgentProviders,
       relationValidator: createCodingAgentThreadRelationValidator({
-        projectManager: createProjectManager({ homePath }),
+        projectManager: codingAgentProjectManager,
         taskManager: createTaskManager({ homePath }),
         principalOwnerIds: codingAgentOwnerIds,
       }),
