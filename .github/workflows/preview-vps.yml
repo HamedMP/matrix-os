@@ -28,6 +28,10 @@ on:
         description: "PR number to deploy a preview VPS for"
         required: true
         type: string
+      version:
+        description: "Optional existing version pinned to this PR head"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -49,6 +53,9 @@ jobs:
       action: ${{ steps.decide.outputs.action }}
       pr: ${{ steps.decide.outputs.pr }}
       handle: ${{ steps.decide.outputs.handle }}
+      head_sha: ${{ steps.decide.outputs.head_sha }}
+      head_ref: ${{ steps.decide.outputs.head_ref }}
+      requested_version: ${{ steps.decide.outputs.requested_version }}
     steps:
       - name: Decide action
         id: decide
@@ -58,11 +65,29 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
           LABELED_NAME: ${{ github.event.label.name }}
           HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'preview-vps') }}
-          SAME_REPO: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           action="skip"
-          if [ "$SAME_REPO" != "true" ]; then
+          if ! printf '%s' "$PR_NUMBER" | grep -Eq '^[0-9]+$'; then
+            echo "Invalid PR number" >&2
+            exit 1
+          fi
+
+          head_sha="$EVENT_HEAD_SHA"
+          head_ref="$EVENT_HEAD_REF"
+          head_repo="$EVENT_HEAD_REPO"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+            head_sha="$(jq -r .head.sha <<< "$pr_json")"
+            head_ref="$(jq -r .head.ref <<< "$pr_json")"
+            head_repo="$(jq -r .head.repo.full_name <<< "$pr_json")"
+          fi
+          if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
             echo "Fork PRs never get preview VPSes (secrets are not exposed to them anyway)."
           elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             action="deploy"
@@ -73,14 +98,25 @@ jobs:
           elif [ "$HAS_LABEL" = "true" ]; then
             action="deploy"
           fi
-          if ! printf '%s' "$PR_NUMBER" | grep -Eq '^[0-9]+$'; then
-            echo "Invalid PR number" >&2
+          if [ "$action" = "deploy" ] && ! printf '%s' "$head_sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Invalid PR head SHA" >&2
             exit 1
+          fi
+          if [ -n "$REQUESTED_VERSION" ]; then
+            if ! printf '%s' "$REQUESTED_VERSION" |
+              grep -Eq "^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR_NUMBER}-[0-9a-f]{7}$" ||
+              [ "${REQUESTED_VERSION##*-}" != "${head_sha:0:7}" ]; then
+              echo "Invalid pinned preview version" >&2
+              exit 1
+            fi
           fi
           {
             echo "action=$action"
             echo "pr=$PR_NUMBER"
             echo "handle=pr-$PR_NUMBER"
+            echo "head_sha=$head_sha"
+            echo "head_ref=$head_ref"
+            echo "requested_version=$REQUESTED_VERSION"
           } >> "$GITHUB_OUTPUT"
           echo "action=$action pr=$PR_NUMBER"
 
@@ -101,7 +137,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ needs.gate.outputs.head_sha }}
 
       - uses: pnpm/action-setup@v6
 
@@ -133,10 +169,11 @@ jobs:
         id: version
         env:
           PR_NUMBER: ${{ needs.gate.outputs.pr }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
+          REQUESTED_VERSION: ${{ needs.gate.outputs.requested_version }}
         run: |
           set -euo pipefail
-          VERSION="v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}"
+          VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Preview version: $VERSION"
 
@@ -144,8 +181,8 @@ jobs:
         env:
           HOST_BUNDLE_VERSION: ${{ steps.version.outputs.version }}
           HOST_BUNDLE_CHANNEL: none
-          MATRIX_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          MATRIX_BUILD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          MATRIX_BUILD_SHA: ${{ needs.gate.outputs.head_sha }}
+          MATRIX_BUILD_REF: ${{ needs.gate.outputs.head_ref }}
         run: |
           set -euo pipefail
           ./scripts/build-host-bundle.sh
@@ -184,7 +221,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ needs.gate.outputs.head_sha }}
 
       - name: Download bundle artifact
         uses: actions/download-artifact@v8

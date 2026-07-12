@@ -595,7 +595,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
-    expect(workflow).toContain('VERSION="v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}"');
+    expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}}"');
     expect(workflow).toContain('dist/host-bundle/incremental-manifest.json');
     expect(workflow).toContain('dist/host-bundle/objects/**');
     expect(workflow).toContain('./scripts/publish-release.sh "$VERSION" --channel none');
@@ -651,6 +651,21 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('elif .status == "provisioning" then 1');
     expect(workflow).toContain('elif .status == "failed" then 2');
     expect(workflow).toContain('sort_by(._preview_rank, (if .runtimeSlot == $h then 0 else 1 end), .provisionedAt)');
+  });
+
+  it('manual preview dispatch resolves the target PR head and validates a pinned version', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain('gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"');
+    expect(workflow).toContain('head_sha="$(jq -r .head.sha <<< "$pr_json")"');
+    expect(workflow).toContain('head_repo="$(jq -r .head.repo.full_name <<< "$pr_json")"');
+    expect(workflow).toContain('if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then');
+    expect(workflow).toContain('ref: ${{ needs.gate.outputs.head_sha }}');
+    expect(workflow).toContain('REQUESTED_VERSION: ${{ needs.gate.outputs.requested_version }}');
+    expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}}"');
+    expect(workflow).toContain('Invalid pinned preview version');
+    expect(workflow).toContain('[ "${REQUESTED_VERSION##*-}" != "${head_sha:0:7}" ]');
   });
 
   it('host bundle release workflow can skip dev bundles only through explicit manual input', () => {
