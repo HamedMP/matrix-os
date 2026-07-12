@@ -441,7 +441,8 @@ jobs:
           case "$task_code" in
             200|201) ;;
             *)
-              echo "Temporary preview verification task failed with HTTP ${task_code}." >&2
+              task_error="$(jq -r '.errors[0].code // "unknown" | select(type == "string" and test("^[a-z0-9_]{1,80}$"))' /tmp/clerk-task.json 2>/dev/null || true)"
+              echo "Temporary preview verification task failed with HTTP ${task_code} (${task_error:-unknown})." >&2
               exit 1
               ;;
           esac
