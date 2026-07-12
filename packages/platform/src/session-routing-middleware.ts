@@ -425,6 +425,15 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       isAppDomain &&
       isAppDomainStaticAssetPath(path),
     );
+    const shouldPersistShellRoute = Boolean(
+      isAppDomain &&
+      identity &&
+      identity.source !== 'static-route' &&
+      (
+        requestedRouteHandle ||
+        (!isGatewayPath && !isAppDomainStaticAssetPath(path))
+      ),
+    );
 
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
@@ -731,7 +740,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           const routeCookie = buildAppRouteCookie(runningMachine.handle, path);
           if (routeCookie) responseHeaders.append('set-cookie', routeCookie);
         }
-        if (isAppDomain && identity.source !== 'static-route') {
+        if (shouldPersistShellRoute) {
           responseHeaders.append('set-cookie', buildShellRouteCookie(runningMachine.handle));
           responseHeaders.append('set-cookie', buildShellRuntimeSlotCookie(runningMachine.runtimeSlot));
         }
@@ -913,7 +922,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           const routeCookie = buildAppRouteCookie(record.handle, path);
           if (routeCookie) responseHeaders.append('set-cookie', routeCookie);
         }
-        if (isAppDomain && identity.source !== 'static-route') {
+        if (shouldPersistShellRoute) {
           responseHeaders.append('set-cookie', buildShellRouteCookie(record.handle));
           responseHeaders.append('set-cookie', buildShellRuntimeSlotCookie('primary'));
         }

@@ -73,6 +73,9 @@ describe("platform proxy routing", () => {
     const app = createApp({
       db,
       orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
       platformSecret: "platform-secret-123",
     });
 
@@ -98,6 +101,7 @@ describe("platform proxy routing", () => {
     expect(headers.get("x-platform-user-id")).toBe("user_alice");
     expect(headers.get("x-matrix-native-app-session")).toBeNull();
     expect(headers.get("x-matrix-platform-session")).toBeNull();
+    expect(res.headers.get("set-cookie") ?? "").not.toContain("matrix_shell_route=");
     expect(headers.get("cookie")).toBeNull();
   });
 
