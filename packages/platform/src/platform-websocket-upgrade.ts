@@ -29,6 +29,7 @@ import { EDGE_SECRET_HEADER } from './session-routing-proxy.js';
 import {
   buildExplicitVmWebSocketUpstreamPath,
   hasExplicitVmNativeAppStreamCapability,
+  isNativeAppStreamPath,
   readExplicitVmWebSocketRoute,
   resolveAppDomainIdentity,
   type AppDomainIdentity,
@@ -133,6 +134,14 @@ export function registerPlatformWebSocketUpgradeHandler(
       : path;
     const pathClass = classifyWebSocketPath(webSocketProxyPath);
     if (isAppDomain && path.startsWith('/vm/') && !explicitVmRoute) {
+      socket.destroy();
+      return;
+    }
+    if (
+      explicitVmRoute
+      && isNativeAppStreamPath(explicitVmRoute.upstreamPath)
+      && !hasExplicitVmNativeAppStreamCapability(req.method ?? '', explicitVmRoute)
+    ) {
       socket.destroy();
       return;
     }

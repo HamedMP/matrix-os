@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildExplicitVmWebSocketUpstreamPath,
   hasExplicitVmNativeAppStreamCapability,
+  isNativeAppStreamPath,
   readExplicitVmWebSocketRoute,
 } from "../../packages/platform/src/session-routing-identity.js";
 
@@ -25,10 +26,12 @@ describe("native app capability routing", () => {
       handle: "alice-staging",
       upstreamPath: "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/stream_bbbbbbbbbbbbbbbbbbbbbbbb/",
     })).toBe(false);
-    expect(hasExplicitVmNativeAppStreamCapability("GET", {
+    const tokenlessRoute = {
       handle: "alice-staging",
       upstreamPath: "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/js/Utilities.js",
-    })).toBe(false);
+    };
+    expect(isNativeAppStreamPath(tokenlessRoute.upstreamPath)).toBe(true);
+    expect(hasExplicitVmNativeAppStreamCapability("GET", tokenlessRoute)).toBe(false);
     expect(readExplicitVmWebSocketRoute("/vm/invalid%2Fhandle/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/stream_bbbbbbbbbbbbbbbbbbbbbbbb/")).toBeNull();
   });
 });
