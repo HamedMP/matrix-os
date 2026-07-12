@@ -677,6 +677,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('https://api.clerk.com/v1/sessions');
     expect(workflow).toContain('https://api.clerk.com/v1/sessions/${session_id}/tokens');
     expect(workflow).toContain('https://api.clerk.com/v1/sessions/${session_id}/revoke');
+    expect(workflow).toContain('Temporary preview verification session failed with HTTP ${session_code}.');
+    expect(workflow).toContain('case "$session_code" in');
+    expect(workflow).toContain('200|201) ;;');
     expect(workflow).toContain('"${PLATFORM_PUBLIC_URL}/api/auth/computers"');
     expect(workflow).toContain('select(.handle == $h and .runtimeSlot == $h and .kind == "preview")');
     expect(workflow).not.toContain('echo "$session_token"');
