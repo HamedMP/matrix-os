@@ -675,8 +675,10 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('verify_inventory:');
     expect(workflow).toContain('action="verify"');
     expect(workflow).toContain('https://api.clerk.com/v1/agents/tasks');
+    expect(workflow).toContain('https://api.clerk.com/v1/users/${PREVIEW_CLERK_USER_ID}');
+    expect(workflow).toContain('Configured preview verification user is unavailable (HTTP ${user_code}).');
     expect(workflow).toContain('https://api.clerk.com/v1/agents/tasks/${task_id}/revoke');
-    expect(workflow.match(/Clerk-API-Version: 2025-11-10/g)).toHaveLength(2);
+    expect(workflow.match(/Clerk-API-Version: 2025-11-10/g)).toHaveLength(3);
     expect(workflow).toContain("redirect_url: $redirect_url");
     expect(workflow).toContain('task_error="$(jq -r');
     expect(workflow).toContain('task_field="$(jq -r');

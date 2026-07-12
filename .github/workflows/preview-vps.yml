@@ -415,6 +415,18 @@ jobs:
             echo "Preview inventory verification is not configured." >&2
             exit 1
           fi
+          if ! printf '%s' "$PREVIEW_CLERK_USER_ID" | grep -Eq '^user_[A-Za-z0-9]+$'; then
+            echo "Preview inventory verification user is invalid." >&2
+            exit 1
+          fi
+          user_code="$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' \
+            "https://api.clerk.com/v1/users/${PREVIEW_CLERK_USER_ID}" \
+            -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
+            -H "Clerk-API-Version: 2025-11-10")"
+          if [ "$user_code" != "200" ]; then
+            echo "Configured preview verification user is unavailable (HTTP ${user_code})." >&2
+            exit 1
+          fi
 
           task_id=""
           cleanup() {
