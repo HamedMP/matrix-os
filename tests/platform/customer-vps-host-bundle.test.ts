@@ -677,6 +677,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('https://api.clerk.com/v1/sessions');
     expect(workflow).toContain('https://api.clerk.com/v1/sessions/${session_id}/tokens');
     expect(workflow).toContain('https://api.clerk.com/v1/sessions/${session_id}/revoke');
+    expect(workflow.match(/Clerk-API-Version: 2025-11-10/g)).toHaveLength(3);
     expect(workflow).toContain('Temporary preview verification session failed with HTTP ${session_code}.');
     expect(workflow).toContain('case "$session_code" in');
     expect(workflow).toContain('200|201) ;;');

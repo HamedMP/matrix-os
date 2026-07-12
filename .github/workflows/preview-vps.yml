@@ -420,7 +420,8 @@ jobs:
             if [ -n "$session_id" ]; then
               curl -fsS --max-time 30 -o /dev/null \
                 -X POST "https://api.clerk.com/v1/sessions/${session_id}/revoke" \
-                -H "authorization: Bearer ${CLERK_SECRET_KEY}" || true
+                -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
+                -H "Clerk-API-Version: 2025-11-10" || true
             fi
           }
           trap cleanup EXIT
@@ -429,6 +430,7 @@ jobs:
           session_code="$(curl -sS --max-time 30 -o /tmp/clerk-session.json -w '%{http_code}' \
             -X POST "https://api.clerk.com/v1/sessions" \
             -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
+            -H "Clerk-API-Version: 2025-11-10" \
             -H "content-type: application/json" \
             --data-binary "$session_body")"
           case "$session_code" in
@@ -442,7 +444,8 @@ jobs:
 
           token_code="$(curl -sS --max-time 30 -o /tmp/clerk-token.json -w '%{http_code}' \
             -X POST "https://api.clerk.com/v1/sessions/${session_id}/tokens" \
-            -H "authorization: Bearer ${CLERK_SECRET_KEY}")"
+            -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
+            -H "Clerk-API-Version: 2025-11-10")"
           if [ "$token_code" != "200" ]; then
             echo "Could not create the temporary preview verification token." >&2
             exit 1
