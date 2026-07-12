@@ -143,4 +143,36 @@ describe("sidebar computer menu", () => {
     expect(firstInvoke).toHaveBeenCalledWith("runtime:list-computers", {});
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:list-computers", {});
   });
+
+  it("clears owner-scoped inventory when a signed-in session is replaced in place", async () => {
+    useConnection.setState({ api: { get: vi.fn(), post: vi.fn(), delete: vi.fn() } as never });
+    const view = render(<RuntimeComputerMenu collapsed={false} />);
+    await waitFor(() => expect(screen.getByText("operator")).not.toBeNull());
+    view.unmount();
+
+    window.operator.invoke = vi.fn(async (channel: string) => {
+      if (channel === "runtime:list-computers") {
+        return {
+          ...computers,
+          items: [{
+            handle: "operator-new-session",
+            runtimeSlot: "primary",
+            label: "Main Computer",
+            availability: "available",
+            kind: "customer",
+            gatewayPath: "/vm/operator-new-session",
+            capabilities: [],
+          }],
+        };
+      }
+      return { ok: true };
+    });
+    act(() => {
+      useConnection.setState({ api: { get: vi.fn(), post: vi.fn(), delete: vi.fn() } as never });
+    });
+
+    render(<RuntimeComputerMenu collapsed={false} />);
+    await waitFor(() => expect(screen.getByText("operator-new-session")).not.toBeNull());
+    expect(window.operator.invoke).toHaveBeenCalledWith("runtime:list-computers", {});
+  });
 });

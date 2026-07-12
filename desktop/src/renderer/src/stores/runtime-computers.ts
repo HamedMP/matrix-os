@@ -106,7 +106,11 @@ export const useRuntimeComputers = create<RuntimeComputerState>()((set, get) => 
 }));
 
 useConnection.subscribe((connection, previous) => {
-  if (previous.status !== "signed-in" || connection.status === "signed-in") return;
+  const signedOut = previous.status === "signed-in" && connection.status !== "signed-in";
+  const signedInSessionReplaced = previous.status === "signed-in"
+    && connection.status === "signed-in"
+    && previous.api !== connection.api;
+  if (!signedOut && !signedInSessionReplaced) return;
   refreshGeneration += 1;
   useRuntimeComputers.setState({
     status: "idle",
