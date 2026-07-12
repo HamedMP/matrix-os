@@ -71,6 +71,21 @@ interface UserMachinesTable {
   attempt: number;
 }
 
+export interface ProvisioningJobsTable {
+  job_id: string;
+  machine_id: string;
+  status: string;
+  attempts: number;
+  available_at: string;
+  claimed_at: string | null;
+  lease_expires_at: string | null;
+  encrypted_payload: string | null;
+  last_error_code: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
 interface HostBundleReleasesTable {
   version: string;
   channel: string | null;
@@ -287,6 +302,7 @@ export interface PlatformDatabase {
   users: UsersTable;
   containers: ContainersTable;
   user_machines: UserMachinesTable;
+  provisioning_jobs: ProvisioningJobsTable;
   billing_checkout_attempts: BillingCheckoutAttemptsTable;
   onboarding_first_run: OnboardingFirstRunTable;
   onboarding_journey_events: OnboardingJourneyEventsTable;
@@ -713,6 +729,27 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_clerk_slot_status ON user_machines(clerk_user_id, runtime_slot, status)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_hetzner ON user_machines(hetzner_server_id)`.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS provisioning_jobs (
+      job_id TEXT PRIMARY KEY,
+      machine_id TEXT NOT NULL UNIQUE REFERENCES user_machines(machine_id) ON UPDATE CASCADE,
+      status TEXT NOT NULL DEFAULT 'queued',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      available_at TEXT NOT NULL,
+      claimed_at TEXT,
+      lease_expires_at TEXT,
+      encrypted_payload TEXT,
+      last_error_code TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_provisioning_jobs_dispatch
+    ON provisioning_jobs(status, available_at, lease_expires_at)
+  `.execute(db);
 
   // Onboarding journey (spec 092): server-owned signup-to-ready state. Schema is
   // uniformly TEXT/uuid/ISO-string to match the rest of this file (no jsonb/serial).

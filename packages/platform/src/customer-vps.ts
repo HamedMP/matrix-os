@@ -66,6 +66,17 @@ import {
   canonicalizeDeveloperTools,
   developerToolsShellList,
 } from './developer-tools.js';
+import {
+  claimProvisioningJob,
+  completeProvisioningJob,
+  failProvisioningJob,
+  getProvisioningJobByMachineId,
+  insertProvisioningJob,
+  listDispatchableProvisioningJobs,
+  openProvisioningPayload,
+  sealProvisioningPayload,
+  type NewProvisioningJob,
+} from './customer-vps-provisioning-jobs.js';
 
 export interface ProvisionResponse {
   machineId: string;
@@ -137,6 +148,7 @@ export interface CustomerVpsService {
   delete(machineId: string): Promise<DeleteResponse>;
   deploy(target?: DeployTarget): Promise<DeployResult>;
   listAllMachines(): Promise<StatusResponse[]>;
+  dispatchProvisioningJobs(): Promise<{ checked: number; completed: number; failed: number }>;
   reconcileProvisioning(): Promise<{ checked: number; failed: number; running: number }>;
 }
 
@@ -150,6 +162,8 @@ export interface CustomerVpsServiceDeps {
   tokenFactory?: (now: Date, ttlMs: number) => RegistrationToken;
   postgresPasswordFactory?: () => string;
   now?: () => Date;
+  provisioningJobIdFactory?: () => string;
+  enqueueProvisioningJob?: (db: PlatformDB, job: NewProvisioningJob) => Promise<void>;
   fetchDispatcher?: import('undici').Dispatcher;
   resolveBillingEntitlement?: (clerkUserId: string) => Promise<BillingEntitlement | null | undefined>;
 }
@@ -205,6 +219,7 @@ const PROVIDER_DELETION_RETRY_BASE_MS = 60_000;
 const PROVIDER_DELETION_RETRY_MAX_MS = 60 * 60_000;
 const RESIZE_STATUS_POLL_INTERVAL_MS = 1_000;
 const RESIZE_STATUS_POLL_TIMEOUT_MS = 90_000;
+const PROVISIONING_JOB_LEASE_MS = 5 * 60_000;
 
 function activeProvisionResponse(row: UserMachineRecord, etaSeconds: number): ProvisionResponse {
   if (row.status !== 'provisioning' && row.status !== 'running') {
@@ -425,6 +440,8 @@ function sleep(ms: number): Promise<void> {
 
 export function createCustomerVpsService(deps: CustomerVpsServiceDeps): CustomerVpsService {
   const machineIdFactory = deps.machineIdFactory ?? randomUUID;
+  const provisioningJobIdFactory = deps.provisioningJobIdFactory ?? randomUUID;
+  const enqueueProvisioningJob = deps.enqueueProvisioningJob ?? insertProvisioningJob;
   const tokenFactory = deps.tokenFactory ?? createRegistrationToken;
   const postgresPasswordFactory = deps.postgresPasswordFactory ?? (() => randomBytes(24).toString('base64url'));
   const now = deps.now ?? (() => new Date());
@@ -592,6 +609,139 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     }
   }
 
+  async function dispatchProvisioningJob(
+    jobId: string,
+    propagateFailure: boolean,
+  ): Promise<'completed' | 'failed' | 'skipped'> {
+    const claimedAt = now();
+    const job = await claimProvisioningJob(
+      deps.db,
+      jobId,
+      claimedAt.toISOString(),
+      new Date(claimedAt.getTime() + PROVISIONING_JOB_LEASE_MS).toISOString(),
+    );
+    if (!job) return 'skipped';
+
+    const row = await getUserMachine(deps.db, job.machineId);
+    if (!row || row.deletedAt || row.status !== 'provisioning' || !job.encryptedPayload) {
+      const failedAt = now().toISOString();
+      await failProvisioningJob(deps.db, job.jobId, failedAt, 'invalid_state');
+      if (row && !row.deletedAt && row.status === 'provisioning') {
+        await updateUserMachine(deps.db, row.machineId, {
+          status: 'failed',
+          failureCode: 'invalid_state',
+          failureAt: failedAt,
+        });
+      }
+      if (propagateFailure) {
+        throw new CustomerVpsError(500, 'invalid_state', 'Provisioning failed');
+      }
+      return 'failed';
+    }
+
+    let serverIdForCompensation: number | null = null;
+    try {
+      const payload = openProvisioningPayload(job.encryptedPayload, deps.config.platformSecret);
+      const imageVersion = row.imageVersion ?? deps.config.imageVersion;
+      const hostConfig = buildHostConfig(
+        deps.config,
+        {
+          clerkUserId: row.clerkUserId,
+          handle: row.handle,
+          runtimeSlot: row.runtimeSlot,
+          developerTools: row.developerTools,
+        },
+        row.machineId,
+        payload.registrationToken,
+        payload.postgresPassword,
+        {
+          imageVersion,
+          hostBundleUrl: hostBundleUrlForImageVersion(deps.config, imageVersion),
+        },
+      );
+      const userData = renderCloudInitTemplate(
+        deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
+        hostConfig,
+      );
+      const server = await deps.hetzner.createServer({
+        name: buildServerName(row.handle),
+        serverType: row.serverType ?? deps.config.serverType,
+        userData,
+        labels: {
+          app: 'matrix-os',
+          clerk_user_id: row.clerkUserId,
+          runtime_slot: row.runtimeSlot,
+          machine_id: row.machineId,
+        },
+      });
+      serverIdForCompensation = server.id;
+      const completedAt = now().toISOString();
+      await runInPlatformTransaction(deps.db, async (trx) => {
+        await updateUserMachine(trx, row.machineId, {
+          hetznerServerId: server.id,
+          publicIPv4: server.publicIPv4,
+          publicIPv6: server.publicIPv6,
+        });
+        const completed = await completeProvisioningJob(trx, job.jobId, completedAt);
+        if (!completed) {
+          throw new Error('Provisioning job completion lost its lease');
+        }
+      });
+      return 'completed';
+    } catch (err: unknown) {
+      const mapped = genericProviderError(err);
+      if (serverIdForCompensation !== null) {
+        try {
+          await deps.hetzner.deleteServer(serverIdForCompensation);
+        } catch (cleanupErr: unknown) {
+          logCustomerVpsError('provision compensation delete failed', cleanupErr);
+          await queueProviderDeletion({
+            providerServerId: serverIdForCompensation,
+            reason: 'provision_compensation',
+            machineId: row.machineId,
+            handle: row.handle,
+            err: cleanupErr,
+          });
+        }
+      }
+      const failedAt = now().toISOString();
+      try {
+        await runInPlatformTransaction(deps.db, async (trx) => {
+          await updateUserMachine(trx, row.machineId, {
+            status: 'failed',
+            failureCode: toFailureCode(err),
+            failureAt: failedAt,
+          });
+          await failProvisioningJob(trx, job.jobId, failedAt, toFailureCode(err));
+        });
+      } catch (statusErr: unknown) {
+        logCustomerVpsError('provision failure status update failed', statusErr);
+      }
+      if (propagateFailure) {
+        logCustomerVpsError(`provisioning job failed machineId=${row.machineId}`, err);
+        throw mapped;
+      }
+      logCustomerVpsError(`provisioning job failed machineId=${row.machineId}`, err);
+      return 'failed';
+    }
+  }
+
+  async function dispatchProvisioningJobs(): Promise<{ checked: number; completed: number; failed: number }> {
+    const jobs = await listDispatchableProvisioningJobs(
+      deps.db,
+      now().toISOString(),
+      deps.config.reconciliationBatchSize,
+    );
+    let completed = 0;
+    let failed = 0;
+    for (const job of jobs) {
+      const result = await dispatchProvisioningJob(job.jobId, false);
+      if (result === 'completed') completed += 1;
+      if (result === 'failed') failed += 1;
+    }
+    return { checked: jobs.length, completed, failed };
+  }
+
   async function provision(
     input: ProvisionRequest,
     provisioningClass: UserMachineProvisioningClass,
@@ -603,8 +753,13 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     };
     const currentTime = now();
     const machineId = machineIdFactory();
+    const jobId = provisioningJobIdFactory();
     const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
     const postgresPassword = postgresPasswordFactory();
+    const encryptedPayload = sealProvisioningPayload({
+      registrationToken: registration.token,
+      postgresPassword,
+    }, deps.config.platformSecret);
     const billingContext = provisioningClass === 'preview'
       ? null
       : await resolveBillingProvisionContext(deps, request, currentTime);
@@ -623,18 +778,14 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       && !(provisioningClass === 'preview' && existingBeforeBundleResolve.runtimeSlot !== request.runtimeSlot)
       && (provisioningClass === 'customer' || existingBeforeBundleResolve.provisioningClass === 'preview')
     ) {
+      const existingJob = await getProvisioningJobByMachineId(deps.db, existingBeforeBundleResolve.machineId);
+      if (existingJob && (existingJob.status === 'queued' || existingJob.status === 'running')) {
+        await dispatchProvisioningJob(existingJob.jobId, true);
+      }
       return activeProvisionResponse(existingBeforeBundleResolve, deps.config.provisionEtaSeconds);
     }
 
     const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
-    const hostConfig = buildHostConfig(
-      deps.config,
-      request,
-      machineId,
-      registration.token,
-      postgresPassword,
-      bundleRef,
-    );
 
     const provisionRow = await runInPlatformTransaction(deps.db, async (trx) => {
       // Preview capacity and customer entitlement checks share the owner lock
@@ -726,63 +877,24 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         provisionedAt: currentTime.toISOString(),
         attempt,
       });
+      await enqueueProvisioningJob(trx, {
+        jobId,
+        machineId,
+        encryptedPayload,
+        availableAt: currentTime.toISOString(),
+        createdAt: currentTime.toISOString(),
+      });
       return { existing: null };
     });
     if (provisionRow.existing) {
+      const existingJob = await getProvisioningJobByMachineId(deps.db, provisionRow.existing.machineId);
+      if (existingJob && (existingJob.status === 'queued' || existingJob.status === 'running')) {
+        await dispatchProvisioningJob(existingJob.jobId, true);
+      }
       return activeProvisionResponse(provisionRow.existing, deps.config.provisionEtaSeconds);
     }
 
-    const userData = renderCloudInitTemplate(
-      deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
-      hostConfig,
-    );
-
-    let serverIdForCompensation: number | null = null;
-    try {
-      const server = await deps.hetzner.createServer({
-        name: buildServerName(request.handle),
-        serverType: billingContext?.serverType ?? deps.config.serverType,
-        userData,
-        labels: {
-          app: 'matrix-os',
-          clerk_user_id: request.clerkUserId,
-          runtime_slot: request.runtimeSlot,
-          machine_id: machineId,
-        },
-      });
-      serverIdForCompensation = server.id;
-      await updateUserMachine(deps.db, machineId, {
-        hetznerServerId: server.id,
-        publicIPv4: server.publicIPv4,
-        publicIPv6: server.publicIPv6,
-      });
-    } catch (err: unknown) {
-      const mapped = genericProviderError(err);
-      if (serverIdForCompensation !== null) {
-        try {
-          await deps.hetzner.deleteServer(serverIdForCompensation);
-        } catch (cleanupErr: unknown) {
-          logCustomerVpsError('provision compensation delete failed', cleanupErr);
-          await queueProviderDeletion({
-            providerServerId: serverIdForCompensation,
-            reason: 'provision_compensation',
-            machineId,
-            handle: request.handle,
-            err: cleanupErr,
-          });
-        }
-      }
-      try {
-        await updateUserMachine(deps.db, machineId, {
-          status: 'failed',
-          failureCode: toFailureCode(err),
-          failureAt: now().toISOString(),
-        });
-      } catch (statusErr: unknown) {
-        logCustomerVpsError('provision failure status update failed', statusErr);
-      }
-      throw mapped;
-    }
+    await dispatchProvisioningJob(jobId, true);
 
     return {
       machineId,
@@ -1194,6 +1306,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       return machines.map(statusResponse);
     },
 
+    dispatchProvisioningJobs,
+
     async deploy(target?: DeployTarget): Promise<DeployResult> {
       const runningMachines = await listRunningUserMachines(deps.db, 500);
       const machines = target?.handle
@@ -1243,6 +1357,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async reconcileProvisioning() {
+      await dispatchProvisioningJobs();
       const staleBefore = new Date(now().getTime() - deps.config.reconciliationStaleAfterMs).toISOString();
       const rows = await listStaleUserMachines(
         deps.db,
