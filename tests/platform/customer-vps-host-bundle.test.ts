@@ -638,7 +638,10 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
     expect(workflow).toContain('provisioning|running)');
+    expect(workflow).toContain('if [ "$runtime_slot" = "$HANDLE" ]; then');
     expect(workflow).toContain('Reusing existing ${HANDLE} machine ${accepted_machine_id} (${status})');
+    expect(workflow).toContain('requires exact-slot adoption from ${runtime_slot:-unset}');
+    expect(workflow).toContain('needs_provision=true');
     expect(workflow).toContain('absent|failed)');
     expect(workflow.match(/\/vps\/preview\/provision/g)).toHaveLength(1);
   });
