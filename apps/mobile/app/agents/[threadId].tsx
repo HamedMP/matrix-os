@@ -181,6 +181,8 @@ export default function AgentThreadRoute() {
         sourceThreadId: state.snapshot.thread.id,
         sourceThreadTitle: state.snapshot.thread.title,
         sourceProviderId: state.snapshot.thread.providerId,
+        ...(state.snapshot.thread.projectId ? { projectId: state.snapshot.thread.projectId } : {}),
+        ...(state.snapshot.thread.taskId ? { taskId: state.snapshot.thread.taskId } : {}),
       },
     });
   }, [router, state]);

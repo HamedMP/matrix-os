@@ -29,6 +29,16 @@ Use `contentInsetAdjustmentBehavior="automatic"` on the route scroll view and pl
 
 Cockpit projection state remains in memory. Mobile storage may contain validated bounded selection references or drafts only, never runtime summaries, transcripts, terminal output, files, diffs, credentials, or approval payloads.
 
+The mobile new-run composer must bind every newly created chat to one available
+`RuntimeSummarySchema.projects` item. It may carry a validated optional task id
+from a canonical task route, but switching projects clears that task relation.
+When no project exists, the empty state creates a scratch project or imports a
+GitHub repository through canonical `POST /api/projects`, validates the returned
+slug, then refreshes the runtime summary before enabling thread submission. The
+thread request uses that canonical project slug and optional task id; it must
+not create a new unassigned thread. Project form values and mutation results
+remain transient and never enter AsyncStorage.
+
 ## Gateway Routes
 
 The coding-agent route module is `packages/gateway/src/coding-agents/routes.ts`, mounted under `/api/coding-agents`.

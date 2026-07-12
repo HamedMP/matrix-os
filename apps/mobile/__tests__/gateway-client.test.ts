@@ -494,6 +494,49 @@ describe("GatewayClient", () => {
     fetchMock.mockRestore();
   });
 
+  it("creates scratch and imported projects through the canonical project route", async () => {
+    const fetchMock = jest.spyOn(global, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ project: { slug: "mobile-scratch", name: "Mobile Scratch" } }, { status: 201 }))
+      .mockResolvedValueOnce(jsonResponse({ project: { slug: "matrix-mobile", name: "matrix-mobile" } }, { status: 201 }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.createProject({ mode: "scratch", name: "Mobile Scratch" })).resolves.toEqual({
+      ok: true,
+      projectId: "mobile-scratch",
+    });
+    await expect(client.createProject({ mode: "github", url: "https://github.com/acme/matrix-mobile" })).resolves.toEqual({
+      ok: true,
+      projectId: "matrix-mobile",
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "http://localhost:4000/api/projects", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ mode: "scratch", name: "Mobile Scratch" }),
+      signal: expect.any(Object),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "http://localhost:4000/api/projects", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ mode: "github", url: "https://github.com/acme/matrix-mobile" }),
+      signal: expect.any(Object),
+    }));
+
+    fetchMock.mockRestore();
+  });
+
+  it("fails closed when project creation does not return a valid canonical slug", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      project: { slug: "../../unsafe" },
+    }, { status: 201 }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+
+    await expect(client.createProject({ mode: "scratch", name: "Mobile Scratch" })).resolves.toEqual({
+      ok: false,
+      error: "Project could not be created. Try again.",
+    });
+    fetchMock.mockRestore();
+  });
+
   it("fetches coding agent thread snapshots with the existing auth header", async () => {
     const snapshot = {
       thread: {

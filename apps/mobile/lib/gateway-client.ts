@@ -22,6 +22,7 @@ import {
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   RequestIdSchema,
+  ProjectIdSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
@@ -119,6 +120,20 @@ export interface MatrixAppManifestResponse {
 export type CodingAgentRuntimeSummaryResult =
   | { ok: true; summary: RuntimeSummary }
   | { ok: false; error: "Runtime summary unavailable" };
+
+export type ProjectCreateRequest =
+  | { mode: "scratch"; name: string }
+  | { mode: "github"; url: string };
+
+export type ProjectCreateResult =
+  | { ok: true; projectId: string }
+  | { ok: false; error: "Project could not be created. Try again." };
+
+const ProjectCreateResponseSchema = z.object({
+  project: z.object({
+    slug: ProjectIdSchema,
+  }).passthrough(),
+}).passthrough();
 
 const CodingAgentNotificationPreferencesRouteResponseSchema = z.object({
   preferences: CodingAgentNotificationPreferencesSchema,
@@ -780,6 +795,29 @@ export class GatewayClient {
     } catch (err: unknown) {
       logCodingAgentCatchWarning("/api/coding-agents/summary unavailable", err);
       return { ok: false, error: "Runtime summary unavailable" };
+    }
+  }
+
+  async createProject(request: ProjectCreateRequest): Promise<ProjectCreateResult> {
+    try {
+      const res = await this.fetchGateway("/api/projects", {
+        method: "POST",
+        body: JSON.stringify(request),
+      });
+      if (!res.ok) {
+        logGatewayStatusWarning("/api/projects unavailable", res.status);
+        return { ok: false, error: "Project could not be created. Try again." };
+      }
+      const body = await res.json();
+      const parsed = ProjectCreateResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        logGatewayWarning("/api/projects returned invalid payload", "invalid payload");
+        return { ok: false, error: "Project could not be created. Try again." };
+      }
+      return { ok: true, projectId: parsed.data.project.slug };
+    } catch (err: unknown) {
+      logGatewayCatchWarning("/api/projects unavailable", err);
+      return { ok: false, error: "Project could not be created. Try again." };
     }
   }
 
