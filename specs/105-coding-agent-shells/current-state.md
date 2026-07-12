@@ -498,7 +498,7 @@ Server flags:
 
 - Fake provider: `MATRIX_CODING_AGENTS_FAKE_PROVIDER=1`.
 - Workspace provider projections: `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex` (bounded explicit list; Codex executable, Claude registry-only).
-- Legacy Codex-only workspace provider: `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1` when the explicit list is unset.
+- Customer host bundles set the legacy Codex-only workspace provider flag so thread routes are registered on fresh runtimes. Provider readiness still requires the installed and authenticated Codex CLI. An explicit `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` value overrides this default.
 
 Current behavior:
 
