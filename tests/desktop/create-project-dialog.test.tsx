@@ -73,4 +73,28 @@ describe("CreateProjectDialog", () => {
     expect(selectProject).not.toHaveBeenCalled();
     expect(openTab).not.toHaveBeenCalled();
   });
+
+  it("connects an existing computer folder without requiring GitHub", async () => {
+    const createProject = vi.fn(async () => ({
+      slug: "customer-app",
+      name: "Customer app",
+      localPath: "/home/matrix/home/workspaces/customer-app",
+      githubBacked: false,
+    }));
+    useBoard.setState({ createProject, selectProject: vi.fn(async () => undefined) });
+    render(<CreateProjectDialog open onClose={vi.fn()} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Customer app" } });
+    fireEvent.click(screen.getByRole("button", { name: "Use existing folder" }));
+    fireEvent.change(screen.getByPlaceholderText("workspaces/customer-app"), {
+      target: { value: "workspaces/customer-app" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(createProject).toHaveBeenCalledWith(expect.anything(), {
+      name: "Customer app",
+      mode: "folder",
+      path: "workspaces/customer-app",
+    }));
+  });
 });

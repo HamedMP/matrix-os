@@ -34,6 +34,8 @@ export interface Card {
 export interface Project {
   slug: string;
   name: string;
+  localPath?: string;
+  githubBacked?: boolean;
 }
 
 export const BOARD_COLUMNS: readonly CardStatus[] = [
@@ -66,7 +68,21 @@ const WireTaskSchema = z.object({
 const WireProjectSchema = z.object({
   slug: z.string().min(1),
   name: z.string().min(1),
+  localPath: z.string().min(1).optional(),
+  github: z.object({ owner: z.string(), repo: z.string() }).passthrough().optional(),
 });
+
+function toProject(raw: unknown): Project | null {
+  const parsed = WireProjectSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  return {
+    slug: parsed.data.slug,
+    name: parsed.data.name,
+    ...(parsed.data.localPath
+      ? { localPath: parsed.data.localPath, githubBacked: parsed.data.github !== undefined }
+      : {}),
+  };
+}
 
 function toCard(raw: unknown): Card | null {
   const parsed = WireTaskSchema.safeParse(raw);
@@ -195,7 +211,12 @@ interface BoardState {
   refreshing: boolean;
   error: AppErrorCategory | null;
   loadProjects(api: ApiClient): Promise<boolean>;
-  createProject(api: ApiClient, input: { name: string; mode: "scratch" | "github"; url?: string }): Promise<Project | null>;
+  createProject(api: ApiClient, input: {
+    name: string;
+    mode: "scratch" | "github" | "folder";
+    url?: string;
+    path?: string;
+  }): Promise<Project | null>;
   selectProject(api: ApiClient, slug: string): Promise<void>;
   refreshTasks(api: ApiClient, slug: string): Promise<void>;
   createTask(api: ApiClient, slug: string, input: CreateTaskInput): Promise<Card | null>;
@@ -286,8 +307,8 @@ export const useBoard = create<BoardState>()((set, get) => {
         const response = await api.get<{ projects: unknown[] }>("/api/workspace/projects");
         const projects: Project[] = [];
         for (const raw of response.projects ?? []) {
-          const parsed = WireProjectSchema.safeParse(raw);
-          if (parsed.success) projects.push({ slug: parsed.data.slug, name: parsed.data.name });
+          const project = toProject(raw);
+          if (project) projects.push(project);
         }
         set({ projects, error: null });
         return true;
@@ -300,15 +321,18 @@ export const useBoard = create<BoardState>()((set, get) => {
 
     createProject: async (api, input) => {
       try {
-        const body = input.mode === "github" ? { name: input.name, mode: "github", url: input.url } : { name: input.name, mode: "scratch" };
+        const body = input.mode === "github"
+          ? { name: input.name, mode: "github" as const, url: input.url }
+          : input.mode === "folder"
+            ? { name: input.name, mode: "folder" as const, path: input.path }
+            : { name: input.name, mode: "scratch" as const };
         const res = await api.post<{ project: unknown }>("/api/projects", body);
-        const parsed = WireProjectSchema.safeParse(res.project);
-        if (!parsed.success) {
+        const project = toProject(res.project);
+        if (!project) {
           const refreshed = await get().loadProjects(api);
           set({ error: refreshed ? "server" : get().error });
           return null;
         }
-        const project: Project = { slug: parsed.data.slug, name: parsed.data.name };
         // Refresh the list so the sidebar shows it immediately.
         const refreshed = await get().loadProjects(api);
         if (refreshed) set({ error: null });

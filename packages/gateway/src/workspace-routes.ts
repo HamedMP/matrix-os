@@ -41,7 +41,8 @@ const CreateProjectSchema = z.object({
   url: z.string().min(1).max(512).optional(),
   slug: z.string().min(1).max(63).optional(),
   name: z.string().trim().min(1).max(128).optional(),
-  mode: z.enum(["scratch", "github"]).optional(),
+  path: z.string().min(1).max(4096).optional(),
+  mode: z.enum(["scratch", "github", "folder"]).optional(),
   ownerScope: z.object({
     type: z.enum(["user", "org"]),
     id: z.string().min(1).max(128),
@@ -60,6 +61,13 @@ const CreateProjectSchema = z.object({
       code: "custom",
       path: ["name"],
       message: "Project name is required",
+    });
+  }
+  if (mode === "folder" && (!body.name || !body.path)) {
+    ctx.addIssue({
+      code: "custom",
+      path: [body.name ? "path" : "name"],
+      message: "Folder projects require a name and path",
     });
   }
 });
@@ -227,6 +235,7 @@ export function createWorkspaceRoutes(options: {
   const eventStore = options.eventStore ?? createWorkspaceEventStore({ homePath: options.homePath });
   const eventPublisher = options.eventPublisher ?? createWorkspaceEventPublisher({ eventStore });
   const sessionOrchestrator = options.sessionOrchestrator ?? createWorkspaceSessionOrchestrator({
+    projectManager,
     worktreeManager,
     agentSessionManager,
     agentSandbox,
@@ -294,6 +303,7 @@ export function createWorkspaceRoutes(options: {
       url: body.value.url,
       slug: body.value.slug,
       name: body.value.name,
+      path: body.value.path,
       mode: body.value.mode ?? (body.value.url ? "github" : "scratch"),
       ownerScope,
     });

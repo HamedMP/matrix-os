@@ -7,6 +7,7 @@ import {
 } from "../../stores/coding-agent-workspace";
 import { useCodingAgentProjectWorkspace } from "../../stores/coding-agent-project-workspace";
 import { useConnection } from "../../stores/connection";
+import { useUi } from "../../stores/ui";
 import { AgentProjectNavigator } from "./AgentProjectNavigator";
 
 function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
@@ -45,6 +46,7 @@ export function AgentProjectWorkspaceShell({
     (state) => state.focusExternalThread,
   );
   const runtimeScope = useConnection(codingAgentRuntimeScope);
+  const setCreateProjectOpen = useUi((state) => state.setCreateProjectOpen);
   const activeThreadId = useCodingAgentWorkspace((state) => state.activeThreadId);
   const activeThread = useCodingAgentWorkspace((state) =>
     state.threadSnapshot?.thread.id === state.activeThreadId
@@ -190,6 +192,7 @@ export function AgentProjectWorkspaceShell({
             }
           }}
           onNewChat={onNewChat}
+          onNewProject={() => setCreateProjectOpen(true)}
         />
       ) : (
         <nav

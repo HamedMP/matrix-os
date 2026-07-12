@@ -32,6 +32,7 @@ describe("workspace session orchestrator", () => {
       })),
     };
     const worktreeManager = {
+      createWorktree: vi.fn(async () => ({ ok: true, status: 201 as const, worktree })),
       listWorktrees: vi.fn(async () => ({ ok: true, worktrees: [worktree] })),
     };
     const agentSandbox = {
@@ -57,8 +58,8 @@ describe("workspace session orchestrator", () => {
       publishSessionStopped: vi.fn(async () => undefined),
     };
     return {
-      worktreeManager,
       projectManager,
+      worktreeManager,
       agentSandbox,
       agentSessionManager,
       sessionRuntimeBridge,
@@ -107,7 +108,8 @@ describe("workspace session orchestrator", () => {
     expect(d.eventPublisher.publishSessionStarted).toHaveBeenCalledWith(session);
   });
 
-  it("starts an agent in the validated primary project checkout when no worktree is selected", async () => {
+  it("runs an agent in the canonical project folder when no worktree is requested", async () => {
+    const projectRoot = join(homePath, "projects", "repo", "repo");
     const d = deps();
     const orchestrator = createWorkspaceSessionOrchestrator({
       ...d,
@@ -118,18 +120,26 @@ describe("workspace session orchestrator", () => {
       ownerScope: { type: "user", id: "user_workspace" },
       request: {
         projectSlug: "repo",
+        taskId: "task_abc123",
         kind: "agent",
         agent: "codex",
-        prompt: "inspect the project",
+        prompt: "fix tests",
       },
     });
 
     expect(result).toMatchObject({ ok: true, status: 201 });
     expect(d.projectManager.getProject).toHaveBeenCalledWith("repo");
+    expect(d.worktreeManager.createWorktree).not.toHaveBeenCalled();
     expect(d.worktreeManager.listWorktrees).not.toHaveBeenCalled();
     expect(d.agentSandbox.preflight).toHaveBeenCalledWith(expect.objectContaining({
-      worktreePath: join(homePath, "projects", "repo", "repo"),
+      sessionId: "sess_fixed",
+      worktreePath: projectRoot,
     }));
+    expect(d.agentSessionManager.startSession).toHaveBeenCalledWith(expect.objectContaining({
+      projectSlug: "repo",
+      ownerId: "user_workspace",
+    }));
+    expect(d.agentSessionManager.startSession.mock.calls[0]?.[0].worktreeId).toBeUndefined();
   });
 
   it("rejects legacy local primary checkouts when the authenticated owner does not match", async () => {

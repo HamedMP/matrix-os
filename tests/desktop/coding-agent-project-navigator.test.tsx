@@ -77,6 +77,28 @@ function workspaceFixture(): ProjectAgentWorkspace {
 afterEach(cleanup);
 
 describe("AgentProjectNavigator", () => {
+  it("creates Matrix projects from the Agents navigator", () => {
+    const onNewProject = vi.fn();
+    render(
+      <AgentProjectNavigator
+        summary={summaryFixture()}
+        workspace={workspaceFixture()}
+        status="ready"
+        selectedProjectId="matrix-os"
+        selectedTaskId={null}
+        selectedThreadId={null}
+        onSelectProject={vi.fn()}
+        onSelectTask={vi.fn()}
+        onSelectThread={vi.fn()}
+        onNewChat={vi.fn()}
+        onNewProject={onNewProject}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "New project" }));
+    expect(onNewProject).toHaveBeenCalledOnce();
+  });
+
   it("DT-001 renders every bounded project from the trusted projection", () => {
     render(
       <AgentProjectNavigator

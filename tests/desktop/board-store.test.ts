@@ -94,6 +94,24 @@ describe("groupCardsByColumn", () => {
 });
 
 describe("createProject", () => {
+  it("keeps the gateway-owned folder and optional GitHub capability", async () => {
+    const api = makeApi({
+      get: vi.fn().mockResolvedValue({
+        projects: [
+          { slug: "folder", name: "Folder", localPath: "/home/matrix/home/workspaces/folder" },
+          { slug: "repo", name: "Repo", localPath: "/home/matrix/home/projects/repo/repo", github: { owner: "o", repo: "r" } },
+        ],
+      }),
+    });
+
+    await useBoard.getState().loadProjects(api);
+
+    expect(useBoard.getState().projects).toEqual([
+      { slug: "folder", name: "Folder", localPath: "/home/matrix/home/workspaces/folder", githubBacked: false },
+      { slug: "repo", name: "Repo", localPath: "/home/matrix/home/projects/repo/repo", githubBacked: true },
+    ]);
+  });
+
   it("POSTs a scratch project and refreshes the list", async () => {
     const post = vi.fn().mockResolvedValue({ project: { slug: "my-app", name: "My App" } });
     const get = vi.fn().mockResolvedValue({ projects: [{ slug: "my-app", name: "My App" }] });
@@ -110,6 +128,25 @@ describe("createProject", () => {
     const api = makeApi({ post, get: vi.fn().mockResolvedValue({ projects: [] }) });
     await useBoard.getState().createProject(api, { name: "repo", mode: "github", url: "https://github.com/o/repo" });
     expect(post).toHaveBeenCalledWith("/api/projects", { name: "repo", mode: "github", url: "https://github.com/o/repo" });
+  });
+
+  it("connects a project to an existing computer folder", async () => {
+    const post = vi.fn().mockResolvedValue({
+      project: { slug: "app", name: "App", localPath: "/home/matrix/home/workspaces/app" },
+    });
+    const api = makeApi({ post, get: vi.fn().mockResolvedValue({ projects: [] }) });
+
+    await useBoard.getState().createProject(api, {
+      name: "App",
+      mode: "folder",
+      path: "workspaces/app",
+    });
+
+    expect(post).toHaveBeenCalledWith("/api/projects", {
+      name: "App",
+      mode: "folder",
+      path: "workspaces/app",
+    });
   });
 
   it("preserves the refresh error when creation succeeds but the project list reload fails", async () => {
@@ -205,7 +242,12 @@ describe("loadProjects", () => {
     });
     await useBoard.getState().loadProjects(api);
     expect(api.get).toHaveBeenCalledWith("/api/workspace/projects");
-    expect(useBoard.getState().projects).toEqual([{ slug: "proj", name: "Proj" }]);
+    expect(useBoard.getState().projects).toEqual([{
+      slug: "proj",
+      name: "Proj",
+      localPath: "/x",
+      githubBacked: false,
+    }]);
     expect(useBoard.getState().error).toBeNull();
   });
 

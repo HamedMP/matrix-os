@@ -538,6 +538,7 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentRegistryProviders: CodingAgentProviderAdapter[] = [];
   const codingAgentWorkspaceAgents = configuredWorkspaceProviderAgents(process.env);
   if (codingAgentWorkspaceAgents.length > 0) {
+    const codingAgentProjectManager = createProjectManager({ homePath });
     const codingAgentWorktreeManager = createWorktreeManager({ homePath });
     const codingAgentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
     const codingAgentSessionManager = createAgentSessionManager({
@@ -549,6 +550,7 @@ export async function createGateway(config: GatewayConfig) {
         workspaceZellijRuntime.sendInput(sessionId, input, signal),
     });
     const codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
+      projectManager: codingAgentProjectManager,
       worktreeManager: codingAgentWorktreeManager,
       projectManager: codingAgentProjectManager,
       agentSessionManager: codingAgentSessionManager,

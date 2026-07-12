@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
 import { atomicWriteJson, readJsonFile, withProjectLock, type OwnerScope } from "./state-ops.js";
+import { resolveExistingFileApiPath } from "./path-security.js";
 
 export const PROJECT_SLUG_REGEX = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
@@ -68,7 +69,7 @@ type CommandRunner = (
 
 type Result<T> = { ok: true; status?: number } & T;
 type Failure = { ok: false; status: number; error: WorkspaceError };
-type CreateProjectMode = "scratch" | "github";
+type CreateProjectMode = "scratch" | "github" | "folder";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const CLONE_TIMEOUT_MS = 5 * 60_000;
@@ -215,6 +216,7 @@ export function createProjectManager(options: {
       url?: string;
       slug?: string;
       name?: string;
+      path?: string;
       mode?: CreateProjectMode;
       ownerScope?: OwnerScope;
       clientRequestId?: string;
@@ -223,6 +225,37 @@ export function createProjectManager(options: {
         return genericError(400, "invalid_request", "Project request is invalid");
       }
       const mode = input.mode ?? (input.url ? "github" : "scratch");
+      if (mode === "folder") {
+        const name = input.name?.trim() || "";
+        if (!name) return genericError(400, "invalid_project_name", "Project name is required");
+        const slug = input.slug ? input.slug.trim() : slugify(name);
+        if (!SlugSchema.safeParse(slug).success) {
+          return genericError(400, "invalid_slug", "Project slug is invalid");
+        }
+        const localPath = input.path ? resolveExistingFileApiPath(homePath, input.path) : null;
+        const metadataPath = projectPath(homePath, slug);
+        if (!localPath || localPath === metadataPath || localPath.startsWith(`${metadataPath}/`)) {
+          return genericError(400, "invalid_project_path", "Project folder is invalid");
+        }
+        return withProjectLock(slug, async () => {
+          if (await pathExists(metadataPath)) {
+            return genericError(409, "slug_conflict", "Project slug already exists");
+          }
+          await mkdir(metadataPath, { recursive: true });
+          const timestamp = nowIso(options.now);
+          const project: ProjectConfig = {
+            id: `proj_${randomUUID()}`,
+            name,
+            slug,
+            localPath,
+            addedAt: timestamp,
+            updatedAt: timestamp,
+            ownerScope: input.ownerScope ?? { type: "user", id: "local" },
+          };
+          await atomicWriteJson(join(metadataPath, "config.json"), project);
+          return { ok: true, status: 201, project };
+        });
+      }
       if (mode === "scratch") {
         const name = input.name?.trim() || input.slug?.trim() || "";
         if (!name) {
@@ -422,7 +455,7 @@ export function createProjectManager(options: {
       if (!projectResult.ok) return projectResult;
       const project = projectResult.project;
       if (!project.github) {
-        return genericError(400, "not_github_project", "Project is not linked to GitHub");
+        return { ok: true, prs: [], refreshedAt: nowIso(options.now) };
       }
       try {
         const result = await runCommand(
@@ -445,6 +478,9 @@ export function createProjectManager(options: {
     async listBranches(slug: string): Promise<Result<{ branches: BranchSummary[]; refreshedAt: string }> | Failure> {
       const projectResult = await this.getProject(slug);
       if (!projectResult.ok) return projectResult;
+      if (!await pathExists(join(projectResult.project.localPath, ".git"))) {
+        return { ok: true, branches: [], refreshedAt: nowIso(options.now) };
+      }
       try {
         const result = await runCommand("git", ["branch", "--list", "--format=%(refname:short)"], {
           cwd: projectResult.project.localPath,

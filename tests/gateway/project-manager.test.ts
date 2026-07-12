@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdir, mkdtemp, readdir, readFile, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -115,6 +115,62 @@ describe("project-manager", () => {
       project: { slug: "mobile-workspace", createRequestId: "req_mobile_workspace_1" },
     });
     expect(changedPayload).toMatchObject({ ok: false, status: 409 });
+  });
+
+  it("treats Git and GitHub as optional capabilities for folder projects", async () => {
+    const runCommand = vi.fn();
+    const manager = createProjectManager({ homePath, runCommand, now: () => "2026-04-26T00:00:00.000Z" });
+    const created = await manager.createProject({
+      mode: "scratch",
+      name: "Plain folder",
+      slug: "plain-folder",
+      ownerScope: { type: "user", id: "user_123" },
+    });
+    expect(created.ok).toBe(true);
+
+    await expect(manager.listPullRequests("plain-folder")).resolves.toEqual({
+      ok: true,
+      prs: [],
+      refreshedAt: "2026-04-26T00:00:00.000Z",
+    });
+    await expect(manager.listBranches("plain-folder")).resolves.toEqual({
+      ok: true,
+      branches: [],
+      refreshedAt: "2026-04-26T00:00:00.000Z",
+    });
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("connects a project to an existing owner folder without moving or deleting it", async () => {
+    const existing = join(homePath, "workspaces", "customer-app");
+    await mkdir(existing, { recursive: true });
+    await writeFile(join(existing, "README.md"), "owner data");
+    const manager = createProjectManager({ homePath, runCommand: vi.fn(), now: () => "2026-04-26T00:00:00.000Z" });
+
+    const created = await manager.createProject({
+      mode: "folder",
+      name: "Customer app",
+      slug: "customer-app",
+      path: "workspaces/customer-app",
+      ownerScope: { type: "user", id: "user_123" },
+    });
+
+    expect(created).toMatchObject({
+      ok: true,
+      project: { localPath: existing },
+    });
+    if (created.ok) expect(created.project.github).toBeUndefined();
+    await expect(manager.deleteProject("customer-app")).resolves.toEqual({ ok: true });
+    await expect(readFile(join(existing, "README.md"), "utf-8")).resolves.toBe("owner data");
+  });
+
+  it("rejects project folders outside the Matrix home", async () => {
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+    await expect(manager.createProject({
+      mode: "folder",
+      name: "Outside",
+      path: "../../outside",
+    })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
   });
 
   it("rejects slug conflicts before cloning", async () => {

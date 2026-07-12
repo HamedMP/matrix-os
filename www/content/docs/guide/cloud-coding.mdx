@@ -5,6 +5,12 @@ description: Project workspaces, GitHub authentication, Browser IDE access, revi
 
 Matrix OS cloud coding workspaces turn each user VPS into a private development machine. Projects, tasks, worktrees, sessions, transcripts, reviews, and editor settings live in the user's Matrix home so the gateway, web desktop, CLI, TUI, and browser IDE all operate on the same records.
 
+## Projects and folders
+
+A Matrix project is a Kanban workspace connected to a folder on the selected Matrix computer. Create a new folder, connect an existing folder within your Matrix home, or optionally clone a GitHub repository. Git and GitHub are not required: every project can create tasks and run multiple durable Shell, Claude, or Codex sessions in its folder. A task uses the project folder by default and uses a git worktree only when you explicitly select one.
+
+Removing a project that connects an existing folder removes the Matrix project metadata, not the files in the owner folder.
+
 ## GitHub authentication
 
 Connect GitHub inside your Matrix workspace with the GitHub CLI. SSH keys and GitHub credentials are stored under your Matrix home, so terminal panes, agents, and the browser IDE see the same authenticated identity.
