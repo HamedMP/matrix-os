@@ -117,6 +117,7 @@ import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
 import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
+import { createCodingAgentProjectMutationService } from "./coding-agents/project-mutations.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -532,6 +533,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   const codingAgentProviders: CodingAgentProviderAdapter[] = [];
   const codingAgentRegistryProviders: CodingAgentProviderAdapter[] = [];
+  const codingAgentProjectManager = createProjectManager({ homePath });
   const codingAgentWorkspaceAgents = configuredWorkspaceProviderAgents(process.env);
   if (codingAgentWorkspaceAgents.length > 0) {
     const codingAgentWorktreeManager = createWorktreeManager({ homePath });
@@ -546,6 +548,7 @@ export async function createGateway(config: GatewayConfig) {
     });
     const codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
       worktreeManager: codingAgentWorktreeManager,
+      projectManager: codingAgentProjectManager,
       agentSessionManager: codingAgentSessionManager,
       agentSandbox: createAgentSandbox({ homePath }),
       sessionRuntimeBridge: workspaceSessionRuntimeBridge,
@@ -1654,6 +1657,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/coding-agents", createCodingAgentRoutes({
     service: codingAgentRuntimeSummaryService,
     projectWorkspaces: codingAgentProjectWorkspaceStore,
+    projectMutations: createCodingAgentProjectMutationService({ projects: codingAgentProjectManager }),
     threads: codingAgentThreadStore,
     turns: codingAgentTurnsEnabled ? codingAgentThreadStore : undefined,
     reviews: codingAgentReviewSummaryStore,

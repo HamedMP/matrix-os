@@ -38,6 +38,7 @@ import {
   SourceControlPrepareCommitResponseSchema,
   CodingAgentNotificationPreferencesSchema,
   CodingAgentNotificationPreferencesUpdateSchema,
+  CodingAgentProjectCreateRequestSchema,
 } from "@matrix-os/contracts";
 import {
   isRequestPrincipalError,
@@ -70,6 +71,10 @@ import type { CodingAgentNotificationPreferenceStore } from "./notification-pref
 import { logCodingAgentWarning } from "./diagnostics.js";
 import { CodingAgentProjectWorkspaceError } from "./project-workspace.js";
 import { CodingAgentThreadRelationError } from "./thread-relations.js";
+import {
+  CodingAgentProjectMutationError,
+  type CodingAgentProjectMutationService,
+} from "./project-mutations.js";
 
 export interface CodingAgentRouteDeps {
   service: CodingAgentRuntimeSummaryService;
@@ -80,6 +85,7 @@ export interface CodingAgentRouteDeps {
       query: ProjectWorkspaceQuery,
     ): Promise<unknown>;
   };
+  projectMutations?: CodingAgentProjectMutationService;
   threads?: CodingAgentThreadStore;
   turns?: CodingAgentTurnStore;
   reviews?: CodingAgentReviewSummaryStore;
@@ -98,6 +104,7 @@ const THREAD_INPUT_BODY_LIMIT = 40 * 1024;
 const FILE_WRITE_BODY_LIMIT = 512 * 1024;
 const SOURCE_CONTROL_BODY_LIMIT = 256 * 1024;
 const NOTIFICATION_PREFERENCES_BODY_LIMIT = 4 * 1024;
+const PROJECT_MUTATION_BODY_LIMIT = 4 * 1024;
 
 const AbortThreadBodySchema = z.object({
   clientRequestId: RequestIdSchema,
@@ -166,6 +173,26 @@ function projectWorkspaceNotFound() {
     code: "project_not_found",
     safeMessage: "Project workspace is unavailable. Refresh and try again.",
     retryable: false,
+  });
+}
+
+function projectCreateError(code: "project_invalid" | "project_conflict" | "project_create_unavailable") {
+  if (code === "project_invalid") {
+    return SafeClientErrorSchema.parse({
+      code,
+      safeMessage: "Project details are invalid or unavailable. Check them and try again.",
+      retryable: false,
+    });
+  }
+  return SafeClientErrorSchema.parse(code === "project_conflict" ? {
+    code,
+    safeMessage: "A project with that name already exists. Choose another name and try again.",
+    retryable: false,
+  } : {
+    code,
+    safeMessage: "Project could not be created. Check the project details and try again.",
+    retryable: true,
+    recoveryActions: ["retry"],
   });
 }
 
@@ -330,6 +357,10 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
     maxSize: THREAD_MUTATION_BODY_LIMIT,
     onError: (c) => c.json({ error: bodyTooLarge() }, 413),
   });
+  const projectMutationBodyLimit = bodyLimit({
+    maxSize: PROJECT_MUTATION_BODY_LIMIT,
+    onError: (c) => c.json({ error: bodyTooLarge() }, 413),
+  });
   const threadAdoptionBodyLimit = bodyLimit({
     maxSize: THREAD_ADOPTION_BODY_LIMIT,
     onError: (c) => c.json({ error: bodyTooLarge() }, 413),
@@ -399,6 +430,33 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         }
         logCodingAgentWarning("project workspace route failed", err);
         return c.json({ error: projectWorkspaceUnavailable() }, 503);
+      }
+    });
+  }
+
+  if (deps.projectMutations) {
+    app.post("/projects", projectMutationBodyLimit, async (c) => {
+      try {
+        const principal = principalFor(c);
+        const request = CodingAgentProjectCreateRequestSchema.parse(await c.req.json());
+        const result = await deps.projectMutations!.createProject(principal, request);
+        return c.json(result.response, result.status);
+      } catch (err: unknown) {
+        if (isBodyLimitError(err)) {
+          return c.json({ error: bodyTooLarge() }, 413);
+        }
+        if (isRequestPrincipalError(err)) {
+          const mapped = mapRequestPrincipalError(err);
+          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+        }
+        if (err instanceof z.ZodError || err instanceof SyntaxError) {
+          return c.json({ error: validationFailed() }, 400);
+        }
+        if (err instanceof CodingAgentProjectMutationError) {
+          return c.json({ error: projectCreateError(err.code) }, err.status);
+        }
+        logCodingAgentWarning("project mutation route failed", err);
+        return c.json({ error: projectCreateError("project_create_unavailable") }, 503);
       }
     });
   }

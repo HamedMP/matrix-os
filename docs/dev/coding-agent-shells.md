@@ -20,6 +20,7 @@ Browser Workspace remains Canvas-first and does not own coding-agent runtime sta
 The coding-agent route module is `packages/gateway/src/coding-agents/routes.ts`, mounted under `/api/coding-agents`.
 
 - `GET /summary` returns `RuntimeSummarySchema` and accepts an optional validated `projectId` query for project-scoped preview summaries.
+- `POST /projects` creates a scratch project or imports a GitHub project idempotently and returns only a bounded project summary.
 - `POST /threads` creates or returns an idempotent thread by `clientRequestId`.
 - `GET /threads`, `GET /threads/:threadId`, and `GET /threads/:threadId/events` return bounded summaries or snapshots.
 - `POST /threads/:threadId/abort` aborts idempotently.
@@ -31,6 +32,8 @@ The coding-agent route module is `packages/gateway/src/coding-agents/routes.ts`,
 - `PUT /notification-preferences` updates coding-agent notification preferences for the authenticated owner with a small body limit and atomic per-owner file persistence.
 
 Every mutating route needs auth, `bodyLimit`, Zod validation, an ownership check, safe error mapping, and focused tests.
+
+An agent thread may omit `worktreeId` to run in the validated owner project's primary checkout. Supplying `worktreeId` keeps the existing isolated worktree behavior. Both paths pass through the same gateway-owned sandbox preflight and terminal binding.
 
 ## Event Model
 

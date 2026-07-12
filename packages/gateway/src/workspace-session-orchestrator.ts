@@ -5,7 +5,7 @@ import type {
   createAgentSessionManager,
 } from "./agent-session-manager.js";
 import type { AgentLaunchSandbox, SupportedAgent } from "./agent-launcher.js";
-import type { WorkspaceError } from "./project-manager.js";
+import type { createProjectManager, WorkspaceError } from "./project-manager.js";
 import type { OwnerScope } from "./state-ops.js";
 import type { createAgentSandbox } from "./agent-sandbox.js";
 import type { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
@@ -13,6 +13,7 @@ import type { createWorktreeManager, WorktreeRecord } from "./worktree-manager.j
 import type { WorkspaceEventPublisher } from "./workspace-event-publisher.js";
 
 type WorktreeManager = Pick<ReturnType<typeof createWorktreeManager>, "listWorktrees">;
+type ProjectManager = Pick<ReturnType<typeof createProjectManager>, "getProject">;
 type AgentSessionManager = Pick<
   ReturnType<typeof createAgentSessionManager>,
   "startSession" | "listSessions" | "getSession" | "sendInput" | "killSession"
@@ -67,6 +68,27 @@ async function resolveRequestedWorktree(
   return worktree ? { ok: true, worktree } : failure(404, "not_found", "Worktree was not found");
 }
 
+async function resolveRequestedProject(
+  projectManager: ProjectManager | undefined,
+  ownerScope: OwnerScope,
+  projectSlug: string,
+): Promise<{ ok: true; path: string } | Failure> {
+  if (!projectManager) {
+    return failure(503, "sandbox_unavailable", "Agent sandbox is unavailable");
+  }
+  const result = await projectManager.getProject(projectSlug);
+  if (!result.ok) {
+    return result.status >= 500
+      ? failure(503, "sandbox_unavailable", "Agent sandbox is unavailable")
+      : failure(404, "not_found", "Project was not found");
+  }
+  const projectOwner = result.project.ownerScope;
+  if (projectOwner.id !== ownerScope.id && projectOwner.id !== "local") {
+    return failure(404, "not_found", "Project was not found");
+  }
+  return { ok: true, path: result.project.localPath };
+}
+
 function toLaunchApprovalPolicy(
   policy?: StartWorkspaceSessionRequest["approvalPolicy"],
 ): "untrusted" | "on-request" | "on-failure" | "never" | undefined {
@@ -80,12 +102,12 @@ async function resolveAgentSandbox(options: {
   agent: Extract<SupportedAgent, "claude" | "codex">;
   request: StartWorkspaceSessionRequest;
   sessionId: string;
-  worktree: WorktreeRecord;
+  workspacePath: string;
 }): Promise<{ ok: true; sandbox?: AgentLaunchSandbox } | Failure> {
   const preflight = await options.agentSandbox.preflight({
     agent: options.agent,
     sessionId: options.sessionId,
-    worktreePath: options.worktree.path,
+    worktreePath: options.workspacePath,
     adminOverride: options.request.adminSandboxOverride,
     mode: options.request.mode,
     approvalPolicy: toLaunchApprovalPolicy(options.request.approvalPolicy) ??
@@ -120,6 +142,7 @@ async function resolveAgentSandbox(options: {
 
 export function createWorkspaceSessionOrchestrator(options: {
   worktreeManager: WorktreeManager;
+  projectManager?: ProjectManager;
   agentSessionManager: AgentSessionManager;
   agentSandbox: AgentSandbox;
   sessionRuntimeBridge: SessionRuntimeBridge;
@@ -173,21 +196,19 @@ export function createWorkspaceSessionOrchestrator(options: {
       let sandbox: AgentLaunchSandbox | undefined;
 
       if (request.agent === "codex" || request.agent === "claude") {
-        if (!request.projectSlug || !request.worktreeId) {
+        if (!request.projectSlug) {
           return failure(400, "sandbox_unavailable", "Agent sandbox is unavailable");
         }
-        const worktree = await resolveRequestedWorktree(
-          options.worktreeManager,
-          request.projectSlug,
-          request.worktreeId,
-        );
-        if (!worktree.ok) return worktree;
+        const workspace = request.worktreeId
+          ? await resolveRequestedWorktree(options.worktreeManager, request.projectSlug, request.worktreeId)
+          : await resolveRequestedProject(options.projectManager, input.ownerScope, request.projectSlug);
+        if (!workspace.ok) return workspace;
         const preflight = await resolveAgentSandbox({
           agentSandbox: options.agentSandbox,
           agent: request.agent,
           request,
           sessionId,
-          worktree: worktree.worktree,
+          workspacePath: "worktree" in workspace ? workspace.worktree.path : workspace.path,
         });
         if (!preflight.ok) return preflight;
         sandbox = preflight.sandbox;

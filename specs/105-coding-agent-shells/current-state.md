@@ -135,6 +135,7 @@ Implemented routes:
 | Route | Method | State | Notes |
 | --- | --- | --- | --- |
 | `/api/coding-agents/summary` | `GET` | Implemented | Authenticated runtime summary. Returns `RuntimeSummarySchema`. |
+| `/api/coding-agents/projects` | `POST` | Implemented | Authenticated scratch-project create or GitHub import. Uses a 4 KiB body limit, validates `CodingAgentProjectCreateRequestSchema`, persists the verified principal as owner, retries idempotently by `clientRequestId`, and returns only `CodingAgentProjectCreateResponseSchema` without local paths or internal project metadata. |
 | `/api/coding-agents/projects/:projectId/workspace` | `GET` | Implemented | Authenticated owner-scoped project read model. Validates independent task/project-chat/task-chat cursors and limits, joins canonical tasks to bounded thread aggregates, and quarantines stale cross-project task relations. Returns `ProjectAgentWorkspaceSchema`. |
 | `/api/coding-agents/threads` | `POST` | Implemented | Validates `CreateAgentThreadRequestSchema`, body limit 128 KiB, requires an owned canonical project and same-project task when provided, and is idempotent by `clientRequestId` before relation validation or provider launch. |
 | `/api/coding-agents/threads/:threadId/adopt` | `POST` | Implemented | Validates `AdoptAgentThreadRequestSchema`, body limit 4 KiB, owner/project/task relations, and adopts only a fully unassigned legacy thread. Exact relation retries return `already_adopted`; assigned threads cannot be moved through this compatibility route. |
@@ -165,6 +166,7 @@ Security and ownership:
 - Gateway coding-agent route, summary, stream, provider lifecycle, and attention-notification failure diagnostics use the bounded redacted helper in `packages/gateway/src/coding-agents/diagnostics.ts` instead of raw `err.message` logging.
 - Mobile gateway-client warnings use `apps/mobile/lib/coding-agent-diagnostics.ts` to log only bounded warning scopes and redacted metadata for status, parse, stream detach/close, and catch paths without raw response bodies, filesystem paths, tokens, private hosts, or database details.
 - Thread store state is owner-scoped in the existing owner file convention at `system/coding-agents/threads.json`; no new embedded DB was added.
+- Claude and Codex workspace launches resolve either the requested owned worktree or, when `worktreeId` is omitted, the owned project's primary checkout before the same sandbox preflight and terminal binding.
 
 Related workspace routes in `packages/gateway/src/workspace-routes.ts`:
 

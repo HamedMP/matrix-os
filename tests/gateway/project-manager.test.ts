@@ -94,6 +94,29 @@ describe("project-manager", () => {
     expect(config.localPath).toBe(join(homePath, "projects", "empty-workspace", "repo"));
   });
 
+  it("returns the same project for an idempotent create request", async () => {
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+    const input = {
+      mode: "scratch" as const,
+      name: "Mobile Workspace",
+      slug: "mobile-workspace",
+      ownerScope: { type: "user" as const, id: "user_123" },
+      clientRequestId: "req_mobile_workspace_1",
+    };
+
+    const first = await manager.createProject(input);
+    const repeated = await manager.createProject(input);
+    const changedPayload = await manager.createProject({ ...input, name: "Different Workspace" });
+
+    expect(first).toMatchObject({ ok: true, status: 201 });
+    expect(repeated).toMatchObject({
+      ok: true,
+      status: 200,
+      project: { slug: "mobile-workspace", createRequestId: "req_mobile_workspace_1" },
+    });
+    expect(changedPayload).toMatchObject({ ok: false, status: 409 });
+  });
+
   it("rejects slug conflicts before cloning", async () => {
     await mkdir(join(homePath, "projects", "repo"), { recursive: true });
     const runCommand = vi.fn();

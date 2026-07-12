@@ -736,6 +736,28 @@ export const ProjectSummarySchema = z.object({
   updatedAt: IsoTimestampSchema.optional(),
 }).strict();
 
+const CodingAgentProjectSlugSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/);
+export const CodingAgentProjectCreateRequestSchema = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.literal("scratch"),
+    name: SafeDisplayStringSchema,
+    slug: CodingAgentProjectSlugSchema.optional(),
+    clientRequestId: RequestIdSchema,
+  }).strict(),
+  z.object({
+    mode: z.literal("github"),
+    repositoryUrl: z.string().trim().min(1).max(512),
+    slug: CodingAgentProjectSlugSchema.optional(),
+    clientRequestId: RequestIdSchema,
+  }).strict(),
+]);
+export const CodingAgentProjectCreateResponseSchema = z.object({
+  project: ProjectSummarySchema,
+  existing: z.boolean(),
+}).strict();
+export type CodingAgentProjectCreateRequest = z.infer<typeof CodingAgentProjectCreateRequestSchema>;
+export type CodingAgentProjectCreateResponse = z.infer<typeof CodingAgentProjectCreateResponseSchema>;
+
 export const CanonicalTaskStatusSchema = z.enum([
   "todo",
   "running",
