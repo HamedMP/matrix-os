@@ -57,7 +57,7 @@ export interface CodingAgentFileStore {
 }
 
 interface ProjectOwnershipSource {
-  getProject(projectId: string): Promise<
+  getProjectBySlug(projectSlug: string): Promise<
     | { ok: true; project: { ownerScope: { type: "user" | "org"; id: string } } }
     | { ok: false; status: number; error: unknown }
   >;
@@ -97,7 +97,7 @@ async function assertPrimaryProjectAccess(input: {
   if (!input.projects) {
     throw new CodingAgentFileReadError("file_unavailable");
   }
-  const result = await input.projects.getProject(input.request.projectId);
+  const result = await input.projects.getProjectBySlug(input.request.projectId);
   if (!result.ok) {
     throw new CodingAgentFileReadError(result.status >= 500 ? "file_unavailable" : "file_not_found");
   }

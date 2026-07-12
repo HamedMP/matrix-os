@@ -54,9 +54,10 @@ async function createRouteHarness(options: {
       ownerId: options.ownerIds?.[0],
       principalOwnerIds: options.ownerIds,
       projects: {
-        getProject: async () => ({
+        getProjectBySlug: async (projectSlug) => ({
           ok: true,
           project: {
+            slug: projectSlug,
             ownerScope: {
               type: options.projectOwnerType ?? "user",
               id: options.projectOwnerId ?? testPrincipal.userId,

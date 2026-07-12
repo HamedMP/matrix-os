@@ -516,7 +516,9 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     ownerId: process.env.MATRIX_USER_ID,
     principalOwnerIds: codingAgentOwnerIds,
-    projects: codingAgentProjectManager,
+    projects: {
+      getProjectBySlug: (projectSlug) => codingAgentProjectManager.getProject(projectSlug),
+    },
   });
   const codingAgentSourceControlStore = createCodingAgentSourceControlStore({
     homePath,
