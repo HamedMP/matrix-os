@@ -442,7 +442,8 @@ jobs:
             200|201) ;;
             *)
               task_error="$(jq -r '.errors[0].code // "unknown" | select(type == "string" and test("^[a-z0-9_]{1,80}$"))' /tmp/clerk-task.json 2>/dev/null || true)"
-              echo "Temporary preview verification task failed with HTTP ${task_code} (${task_error:-unknown})." >&2
+              task_field="$(jq -r '.errors[0].meta.name // "unknown" | select(type == "string" and test("^[a-z0-9_]{1,80}$"))' /tmp/clerk-task.json 2>/dev/null || true)"
+              echo "Temporary preview verification task failed with HTTP ${task_code} (${task_error:-unknown}, field ${task_field:-unknown})." >&2
               exit 1
               ;;
           esac

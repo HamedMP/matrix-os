@@ -679,6 +679,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow.match(/Clerk-API-Version: 2025-11-10/g)).toHaveLength(2);
     expect(workflow).toContain("redirect_url: $redirect_url");
     expect(workflow).toContain('task_error="$(jq -r');
+    expect(workflow).toContain('task_field="$(jq -r');
     expect(workflow).toContain('test("^[a-z0-9_]{1,80}$")');
     expect(workflow).toContain('--max-redirs 10 -c /tmp/clerk-cookies.txt -b /tmp/clerk-cookies.txt');
     expect(workflow).toContain('-b /tmp/clerk-cookies.txt');
