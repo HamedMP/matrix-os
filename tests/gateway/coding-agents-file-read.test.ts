@@ -38,6 +38,7 @@ async function createRouteHarness(options: {
   principal?: RequestPrincipal | null;
   ownerIds?: string[];
   projectOwnerId?: string;
+  projectOwnerType?: "user" | "org";
   readLimitBytes?: number;
 } = {}) {
   const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-files-"));
@@ -56,7 +57,10 @@ async function createRouteHarness(options: {
         getProject: async () => ({
           ok: true,
           project: {
-            ownerScope: { type: "user", id: options.projectOwnerId ?? testPrincipal.userId },
+            ownerScope: {
+              type: options.projectOwnerType ?? "user",
+              id: options.projectOwnerId ?? testPrincipal.userId,
+            },
           },
         }),
       },
@@ -143,6 +147,23 @@ describe("coding agent file read route", () => {
 
       expect(response.status).toBe(404);
       expect(JSON.stringify(await response.json())).not.toMatch(/other_project_owner|primary\.ts|\/tmp/i);
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("does not treat an organization project with the same id as a user-owned project", async () => {
+    const harness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+      projectOwnerId: testPrincipal.userId,
+      projectOwnerType: "org",
+    });
+    try {
+      await writeFile(join(harness.projectRoot, "src", "primary.ts"), "private\n");
+      const response = await harness.app.request(
+        `/api/coding-agents/files/read?projectId=${projectId}&path=src%2Fprimary.ts`,
+      );
+      expect(response.status).toBe(404);
     } finally {
       await rm(harness.homePath, { recursive: true, force: true });
     }

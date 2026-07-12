@@ -101,7 +101,7 @@ async function assertPrimaryProjectAccess(input: {
   if (!result.ok) {
     throw new CodingAgentFileReadError(result.status >= 500 ? "file_unavailable" : "file_not_found");
   }
-  if (result.project.ownerScope.id !== input.principal.userId) {
+  if (result.project.ownerScope.type !== "user" || result.project.ownerScope.id !== input.principal.userId) {
     throw new CodingAgentFileReadError("file_not_found");
   }
 }
