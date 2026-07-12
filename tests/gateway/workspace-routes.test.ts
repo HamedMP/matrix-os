@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-routes.js";
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
+import { createZellijRuntime } from "../../packages/gateway/src/zellij-runtime.js";
 
 function jsonRequest(path: string, body: unknown): Request {
   return new Request(`http://localhost${path}`, {
@@ -387,6 +388,50 @@ describe("workspace API routes", () => {
       available: true,
       enforced: true,
     });
+  });
+
+  it("wires default workspace session input to the injected Zellij runtime", async () => {
+    const sendInput = vi.fn(async () => undefined);
+    const zellijRuntime: ReturnType<typeof createZellijRuntime> = {
+      generateLayout: vi.fn(async ({ sessionId }) => ({
+        sessionName: `matrix-${sessionId}`,
+        layoutPath: join(homePath, "layouts", `${sessionId}.kdl`),
+      })),
+      start: vi.fn(async ({ sessionId }) => ({
+        ok: true,
+        status: "running",
+        sessionName: `matrix-${sessionId}`,
+        layoutPath: join(homePath, "layouts", `${sessionId}.kdl`),
+      })),
+      attachCommand: vi.fn((sessionId) => ["zellij", "attach", `matrix-${sessionId}`]),
+      observeCommand: vi.fn((sessionId) => ["zellij", "attach", `matrix-${sessionId}`, "--index", "0"]),
+      sendInput,
+      kill: vi.fn(async () => ({ ok: true })),
+      health: vi.fn(async () => ({
+        available: true,
+        status: "ok",
+        fallbackReason: null,
+        version: "zellij test",
+      })),
+    };
+    const app = createWorkspaceRoutes({
+      homePath,
+      zellijRuntime,
+      getOwnerScope: () => ({ type: "user", id: "user_workspace" }),
+    });
+
+    const created = await app.request(jsonRequest("/api/sessions", {
+      sessionId: "sess_route_input",
+      kind: "shell",
+    }));
+    expect(created.status).toBe(201);
+
+    const sent = await app.request(jsonRequest("/api/sessions/sess_route_input/send", {
+      input: "pwd\n",
+    }));
+
+    expect(sent.status).toBe(200);
+    expect(sendInput).toHaveBeenCalledWith("sess_route_input", "pwd\n", undefined);
   });
 
   it("checks default agent auth with the Matrix home", async () => {
