@@ -348,7 +348,7 @@ describe("workspace API routes", () => {
       getOwnerScope: () => ({ type: "user", id: "user_workspace" }),
     });
 
-    const created = await app.request(jsonRequest("/api/workspace/sessions", {
+    const created = await app.request(jsonRequest("/api/sessions", {
       projectSlug: "repo",
       worktreeId: "wt_abc123def456",
       kind: "agent",
@@ -367,17 +367,17 @@ describe("workspace API routes", () => {
       }),
     }));
 
-    await expect((await app.request("/api/workspace/sessions?projectSlug=repo&limit=10")).json()).resolves.toMatchObject({
+    await expect((await app.request("/api/sessions?projectSlug=repo&limit=10")).json()).resolves.toMatchObject({
       sessions: [expect.objectContaining({ id: "sess_abc123" })],
     });
-    await expect((await app.request(jsonRequest("/api/workspace/sessions/sess_abc123/send", { input: "pnpm test\n" }))).json()).resolves.toMatchObject({
+    await expect((await app.request(jsonRequest("/api/sessions/sess_abc123/send", { input: "pnpm test\n" }))).json()).resolves.toMatchObject({
       session: expect.objectContaining({ id: "sess_abc123" }),
     });
-    await expect((await app.request(jsonRequest("/api/workspace/sessions/sess_abc123/observe", {}))).json()).resolves.toMatchObject({
+    await expect((await app.request(jsonRequest("/api/sessions/sess_abc123/observe", {}))).json()).resolves.toMatchObject({
       terminalSessionId: "550e8400-e29b-41d4-a716-446655440000",
     });
     expect(sessionRuntimeBridge.registerSession).toHaveBeenCalledWith(expect.objectContaining({ id: "sess_abc123" }), { mode: "observe" });
-    await expect((await app.request(deleteJsonRequest("/api/workspace/sessions/sess_abc123", {}))).json()).resolves.toMatchObject({
+    await expect((await app.request(deleteJsonRequest("/api/sessions/sess_abc123", {}))).json()).resolves.toMatchObject({
       session: expect.objectContaining({ id: "sess_abc123" }),
     });
     await expect((await app.request("/api/agents")).json()).resolves.toMatchObject({
