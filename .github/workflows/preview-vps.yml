@@ -32,6 +32,11 @@ on:
         description: "Optional existing version pinned to this PR head"
         required: false
         type: string
+      verify_inventory:
+        description: "Only verify the deployed preview in the authenticated computer inventory"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -69,6 +74,7 @@ jobs:
           EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           REQUESTED_VERSION: ${{ inputs.version }}
+          VERIFY_INVENTORY: ${{ inputs.verify_inventory }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -90,7 +96,7 @@ jobs:
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
             echo "Fork PRs never get preview VPSes (secrets are not exposed to them anyway)."
           elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            action="deploy"
+            if [ "$VERIFY_INVENTORY" = "true" ]; then action="verify"; else action="deploy"; fi
           elif [ "$EVENT_ACTION" = "closed" ]; then
             if [ "$HAS_LABEL" = "true" ]; then action="teardown"; fi
           elif [ "$EVENT_ACTION" = "labeled" ]; then
@@ -98,11 +104,11 @@ jobs:
           elif [ "$HAS_LABEL" = "true" ]; then
             action="deploy"
           fi
-          if [ "$action" = "deploy" ] && ! printf '%s' "$head_sha" | grep -Eq '^[0-9a-f]{40}$'; then
+          if [ "$action" != "skip" ] && ! printf '%s' "$head_sha" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "Invalid PR head SHA" >&2
             exit 1
           fi
-          if [ -n "$REQUESTED_VERSION" ]; then
+          if [ "$action" = "deploy" ] && [ -n "$REQUESTED_VERSION" ]; then
             if ! printf '%s' "$REQUESTED_VERSION" |
               grep -Eq "^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR_NUMBER}-[0-9a-f]{7}$" ||
               [ "${REQUESTED_VERSION##*-}" != "${head_sha:0:7}" ]; then
@@ -377,8 +383,74 @@ jobs:
           if [ -n "$existing" ]; then
             gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" -f body="$body" > /dev/null
           else
-            gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -f body="$body" > /dev/null
+             gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -f body="$body" > /dev/null
+           fi
+
+  verify_inventory:
+    name: Verify preview computer inventory
+    needs: gate
+    if: needs.gate.outputs.action == 'verify'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+      PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://api.matrix-os.com' }}
+      HANDLE: ${{ needs.gate.outputs.handle }}
+    steps:
+      - name: Verify authenticated inventory projection
+        run: |
+          set -euo pipefail
+          if [ -z "${CLERK_SECRET_KEY:-}" ] || [ -z "${PREVIEW_CLERK_USER_ID:-}" ]; then
+            echo "Preview inventory verification is not configured." >&2
+            exit 1
           fi
+
+          session_id=""
+          cleanup() {
+            if [ -n "$session_id" ]; then
+              curl -fsS --max-time 30 -o /dev/null \
+                -X POST "https://api.clerk.com/v1/sessions/${session_id}/revoke" \
+                -H "authorization: Bearer ${CLERK_SECRET_KEY}" || true
+            fi
+          }
+          trap cleanup EXIT
+
+          session_body="$(jq -cn --arg user_id "$PREVIEW_CLERK_USER_ID" '{user_id: $user_id}')"
+          session_code="$(curl -sS --max-time 30 -o /tmp/clerk-session.json -w '%{http_code}' \
+            -X POST "https://api.clerk.com/v1/sessions" \
+            -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
+            -H "content-type: application/json" \
+            --data-binary "$session_body")"
+          if [ "$session_code" != "200" ]; then
+            echo "Could not create the temporary preview verification session." >&2
+            exit 1
+          fi
+          session_id="$(jq -er '.id | select(type == "string" and test("^sess_[A-Za-z0-9]+$"))' /tmp/clerk-session.json)"
+
+          token_code="$(curl -sS --max-time 30 -o /tmp/clerk-token.json -w '%{http_code}' \
+            -X POST "https://api.clerk.com/v1/sessions/${session_id}/tokens" \
+            -H "authorization: Bearer ${CLERK_SECRET_KEY}")"
+          if [ "$token_code" != "200" ]; then
+            echo "Could not create the temporary preview verification token." >&2
+            exit 1
+          fi
+          session_token="$(jq -er '.jwt | select(type == "string" and length <= 8192)' /tmp/clerk-token.json)"
+
+          inventory_code="$(curl -sS --max-time 30 -o /tmp/computers.json -w '%{http_code}' \
+            "${PLATFORM_PUBLIC_URL}/api/auth/computers" \
+            -H "authorization: Bearer ${session_token}")"
+          if [ "$inventory_code" != "200" ]; then
+            echo "Authenticated computer inventory is unavailable." >&2
+            exit 1
+          fi
+          if ! jq -e --arg h "$HANDLE" \
+            '[.items[] | select(.handle == $h and .runtimeSlot == $h and .kind == "preview")] | length == 1' \
+            /tmp/computers.json > /dev/null; then
+            echo "Preview computer is not selectable in the authenticated inventory." >&2
+            exit 1
+          fi
+          echo "Verified ${HANDLE} in the authenticated computer inventory."
 
   teardown:
     name: Teardown preview VPS

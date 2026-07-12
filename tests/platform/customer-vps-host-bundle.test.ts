@@ -668,6 +668,20 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('[ "${REQUESTED_VERSION##*-}" != "${head_sha:0:7}" ]');
   });
 
+  it('manual preview verification uses a temporary QA session and revokes it', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain('verify_inventory:');
+    expect(workflow).toContain('action="verify"');
+    expect(workflow).toContain('https://api.clerk.com/v1/sessions');
+    expect(workflow).toContain('https://api.clerk.com/v1/sessions/${session_id}/tokens');
+    expect(workflow).toContain('https://api.clerk.com/v1/sessions/${session_id}/revoke');
+    expect(workflow).toContain('"${PLATFORM_PUBLIC_URL}/api/auth/computers"');
+    expect(workflow).toContain('select(.handle == $h and .runtimeSlot == $h and .kind == "preview")');
+    expect(workflow).not.toContain('echo "$session_token"');
+  });
+
   it('host bundle release workflow can skip dev bundles only through explicit manual input', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
