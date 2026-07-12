@@ -345,6 +345,14 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     );
     const explicitVmRouteHasCredentiallessCapability =
       explicitVmRouteHasValidAppAssetToken || explicitVmRouteHasNativeAppStreamCapability;
+    if (
+      explicitVmRoute
+      && isNativeAppStreamPath(explicitVmRoute.upstreamPath)
+      && !explicitVmRouteHasNativeAppStreamCapability
+    ) {
+      applyNoStoreHeaders(c);
+      return c.text('Unauthorized', 401);
+    }
     const runtimeSelection = readRuntimeSlotSelection(c.req.url);
     const cookieRuntimeSlot = isAppDomain
       ? readShellRuntimeSlotCookie(path, cookieHeader)
@@ -429,10 +437,6 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         return c.text('Unauthorized', 401);
       }
       if (isAppDomain && explicitVmRoute && isViteAppAssetPath(explicitVmRoute.upstreamPath)) {
-        applyNoStoreHeaders(c);
-        return c.text('Unauthorized', 401);
-      }
-      if (isAppDomain && explicitVmRoute && isNativeAppStreamPath(explicitVmRoute.upstreamPath)) {
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
       }

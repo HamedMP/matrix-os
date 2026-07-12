@@ -73,9 +73,6 @@ describe("platform proxy routing", () => {
     const app = createApp({
       db,
       orchestrator: stubOrchestrator(),
-      clerkAuth: createClerkAuth({
-        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
-      }),
       platformSecret: "platform-secret-123",
     });
 
@@ -238,6 +235,9 @@ describe("platform proxy routing", () => {
     const app = createApp({
       db,
       orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
       platformSecret: "platform-secret-123",
     });
     const issued = await issueSyncJwt({
@@ -3047,6 +3047,9 @@ describe("platform proxy routing", () => {
     const app = createApp({
       db,
       orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
       platformSecret: "platform-secret-123",
     });
 
@@ -3056,6 +3059,20 @@ describe("platform proxy routing", () => {
     );
 
     expect(res.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const authenticatedRes = await app.request(
+      "/vm/alice-staging/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/js/Utilities.js",
+      {
+        headers: {
+          host: "app.matrix-os.com",
+          origin: "null",
+          authorization: "Bearer clerk-session",
+        },
+      },
+    );
+
+    expect(authenticatedRes.status).toBe(401);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
