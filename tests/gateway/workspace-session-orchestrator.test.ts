@@ -132,7 +132,7 @@ describe("workspace session orchestrator", () => {
     }));
   });
 
-  it("rejects primary checkout launches when the project owner does not match", async () => {
+  it("rejects legacy local primary checkouts when the authenticated owner does not match", async () => {
     const d = deps({
       projectManager: {
         getProject: vi.fn(async () => ({
@@ -140,7 +140,7 @@ describe("workspace session orchestrator", () => {
           project: {
             slug: "repo",
             localPath: join(homePath, "projects", "repo", "repo"),
-            ownerScope: { type: "user", id: "other_user" },
+            ownerScope: { type: "user", id: "local" },
           },
         })),
       },
