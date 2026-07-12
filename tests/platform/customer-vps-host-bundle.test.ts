@@ -682,6 +682,17 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).not.toContain('echo "$session_token"');
   });
 
+  it('pinned preview redeploys skip bundle build and immutable publication', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain('action="deploy_existing"');
+    expect(workflow).toContain("if: needs.gate.outputs.action == 'deploy'");
+    expect(workflow).toContain("if: always() && ((needs.gate.outputs.action == 'deploy' && needs.build.result == 'success') || needs.gate.outputs.action == 'deploy_existing')");
+    expect(workflow).toContain("if: needs.gate.outputs.action == 'deploy'");
+    expect(workflow).toContain("VERSION: ${{ needs.gate.outputs.action == 'deploy_existing' && needs.gate.outputs.requested_version || needs.build.outputs.version }}");
+  });
+
   it('host bundle release workflow can skip dev bundles only through explicit manual input', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');

@@ -96,7 +96,13 @@ jobs:
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
             echo "Fork PRs never get preview VPSes (secrets are not exposed to them anyway)."
           elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            if [ "$VERIFY_INVENTORY" = "true" ]; then action="verify"; else action="deploy"; fi
+            if [ "$VERIFY_INVENTORY" = "true" ]; then
+              action="verify"
+            elif [ -n "$REQUESTED_VERSION" ]; then
+              action="deploy_existing"
+            else
+              action="deploy"
+            fi
           elif [ "$EVENT_ACTION" = "closed" ]; then
             if [ "$HAS_LABEL" = "true" ]; then action="teardown"; fi
           elif [ "$EVENT_ACTION" = "labeled" ]; then
@@ -108,7 +114,7 @@ jobs:
             echo "Invalid PR head SHA" >&2
             exit 1
           fi
-          if [ "$action" = "deploy" ] && [ -n "$REQUESTED_VERSION" ]; then
+          if [ "$action" = "deploy_existing" ]; then
             if ! printf '%s' "$REQUESTED_VERSION" |
               grep -Eq "^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-pr${PR_NUMBER}-[0-9a-f]{7}$" ||
               [ "${REQUESTED_VERSION##*-}" != "${head_sha:0:7}" ]; then
@@ -210,7 +216,7 @@ jobs:
   deploy:
     name: Publish and deploy preview VPS
     needs: [gate, build]
-    if: needs.gate.outputs.action == 'deploy'
+    if: always() && ((needs.gate.outputs.action == 'deploy' && needs.build.result == 'success') || needs.gate.outputs.action == 'deploy_existing')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -223,19 +229,22 @@ jobs:
       PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
       HANDLE: ${{ needs.gate.outputs.handle }}
-      VERSION: ${{ needs.build.outputs.version }}
+      VERSION: ${{ needs.gate.outputs.action == 'deploy_existing' && needs.gate.outputs.requested_version || needs.build.outputs.version }}
     steps:
       - uses: actions/checkout@v6
+        if: needs.gate.outputs.action == 'deploy'
         with:
           ref: ${{ needs.gate.outputs.head_sha }}
 
       - name: Download bundle artifact
+        if: needs.gate.outputs.action == 'deploy'
         uses: actions/download-artifact@v8
         with:
           name: preview-bundle-${{ needs.gate.outputs.pr }}
           path: dist/host-bundle
 
       - name: Publish release (register-only, no channel)
+        if: needs.gate.outputs.action == 'deploy'
         run: |
           set -euo pipefail
           ./scripts/publish-release.sh "$VERSION" --channel none \
