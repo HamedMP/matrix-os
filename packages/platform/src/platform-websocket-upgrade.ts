@@ -18,6 +18,7 @@ import {
 import type { EntitlementAccessDecision } from './profile-routing.js';
 import {
   getWebSocketUpgradeToken,
+  isAppDomainHost,
   isCodeDomainHost,
   isSafeWebSocketUpgradePath,
   isSessionRoutedHost,
@@ -26,6 +27,9 @@ import {
 import { readRuntimeSlot } from './request-routing.js';
 import { EDGE_SECRET_HEADER } from './session-routing-proxy.js';
 import {
+  buildExplicitVmWebSocketUpstreamPath,
+  hasExplicitVmNativeAppStreamCapability,
+  readExplicitVmWebSocketRoute,
   resolveAppDomainIdentity,
   type AppDomainIdentity,
 } from './session-routing-identity.js';
@@ -109,7 +113,6 @@ export function registerPlatformWebSocketUpgradeHandler(
     }
 
     const path = req.url ?? '/';
-    const pathClass = classifyWebSocketPath(path);
     const host = getTrustedSessionRoutedWebSocketHost(
       req.headers.host,
       req.headers['x-forwarded-host'],
@@ -122,10 +125,20 @@ export function registerPlatformWebSocketUpgradeHandler(
       return;
     }
     const isCodeDomain = isCodeDomainHost(host);
+    const isAppDomain = isAppDomainHost(host);
     const hostClass = classifySessionRoutedHost(host);
+    const explicitVmRoute = isAppDomain ? readExplicitVmWebSocketRoute(path) : null;
+    const webSocketProxyPath = explicitVmRoute
+      ? buildExplicitVmWebSocketUpstreamPath(path)
+      : path;
+    const pathClass = classifyWebSocketPath(webSocketProxyPath);
+    if (isAppDomain && path.startsWith('/vm/') && !explicitVmRoute) {
+      socket.destroy();
+      return;
+    }
 
-    const requestRuntimeSlot = readRuntimeSlot(path);
-    const wsToken = getWebSocketUpgradeToken(path);
+    const requestRuntimeSlot = readRuntimeSlot(webSocketProxyPath);
+    const wsToken = getWebSocketUpgradeToken(webSocketProxyPath);
     let identity: AppDomainIdentity | null;
     try {
       identity = await resolveAppDomainIdentity({
@@ -135,9 +148,22 @@ export function registerPlatformWebSocketUpgradeHandler(
         db,
         platformJwtSecret,
         legacyContainerRoutingEnabled,
+        allowUnroutedClerkIdentity: Boolean(explicitVmRoute),
+        requestedHandle: explicitVmRoute?.handle,
         runtimeSlot: requestRuntimeSlot,
         wsToken,
       });
+      if (
+        !identity
+        && explicitVmRoute
+        && hasExplicitVmNativeAppStreamCapability(req.method ?? '', explicitVmRoute)
+      ) {
+        identity = {
+          handle: explicitVmRoute.handle,
+          userId: '',
+          source: 'static-route',
+        };
+      }
     } catch (err: unknown) {
       console.warn(
         `[platform] websocket auth failed host=${host} pathClass=${pathClass} error=${describeError(err)}`,
@@ -168,9 +194,19 @@ export function registerPlatformWebSocketUpgradeHandler(
 
     let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
     let requestedActiveMachine: UserMachineRecord | undefined;
-    let runningMachine = identity.userId
-      ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
-      : await getRunningUserMachineByHandle(db, identity.handle);
+    let runningMachine: UserMachineRecord | undefined;
+    if (explicitVmRoute) {
+      const explicitMachine = await getRunningUserMachineByHandle(db, explicitVmRoute.handle);
+      if (!explicitMachine || (identity.userId && explicitMachine.clerkUserId !== identity.userId)) {
+        socket.destroy();
+        return;
+      }
+      runningMachine = explicitMachine;
+    } else {
+      runningMachine = identity.userId
+        ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
+        : await getRunningUserMachineByHandle(db, identity.handle);
+    }
     if (!runningMachine && identity.userId) {
       requestedActiveMachine = await getActiveUserMachineByClerkId(db, identity.userId, runtimeSlot);
       if (!requestedActiveMachine) {
@@ -213,12 +249,12 @@ export function registerPlatformWebSocketUpgradeHandler(
       upstreamHostHeader: string,
       headers: string,
     ): void => {
-      if (!isSafeWebSocketUpgradePath(path)) {
+      if (!isSafeWebSocketUpgradePath(webSocketProxyPath)) {
         socket.destroy();
         upstream.destroy();
         return;
       }
-      const upstreamPath = stripWebSocketUpgradeToken(path);
+      const upstreamPath = stripWebSocketUpgradeToken(webSocketProxyPath);
       upstream.write(
         `${req.method} ${upstreamPath} HTTP/1.1\r\nHost: ${upstreamHostHeader}\r\n${headers}\r\n\r\n`,
       );

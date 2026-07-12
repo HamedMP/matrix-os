@@ -78,6 +78,8 @@ import {
   buildAppRouteCookie,
   buildShellRouteCookie,
   buildShellRuntimeSlotCookie,
+  hasExplicitVmNativeAppStreamCapability,
+  isNativeAppStreamPath,
   readAppDomainRouteCookie,
   readExplicitVmRoute,
   readMobileAppRouteCookie,
@@ -338,6 +340,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         platformSecret,
       }),
     );
+    const explicitVmRouteHasNativeAppStreamCapability = Boolean(
+      explicitVmRoute && hasExplicitVmNativeAppStreamCapability(c.req.method, explicitVmRoute),
+    );
+    const explicitVmRouteHasCredentiallessCapability =
+      explicitVmRouteHasValidAppAssetToken || explicitVmRouteHasNativeAppStreamCapability;
     const runtimeSelection = readRuntimeSlotSelection(c.req.url);
     const cookieRuntimeSlot = isAppDomain
       ? readShellRuntimeSlotCookie(path, cookieHeader)
@@ -385,7 +392,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     if (
       !identity &&
       explicitVmRoute &&
-      explicitVmRouteHasValidAppAssetToken
+      explicitVmRouteHasCredentiallessCapability
     ) {
       identity = {
         handle: explicitVmRoute.handle,
@@ -425,6 +432,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
       }
+      if (isAppDomain && explicitVmRoute && isNativeAppStreamPath(explicitVmRoute.upstreamPath)) {
+        applyNoStoreHeaders(c);
+        return c.text('Unauthorized', 401);
+      }
       if (isAppDomain && isAppDomainStaticAssetPath(path)) {
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
@@ -452,7 +463,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       return c.text('Invalid Matrix OS computer', 400);
     }
     if (isAppDomain && explicitVmRoute) {
-      if ((!identity.userId || identity.source === 'mobile-session' || identity.source === 'static-route') && !explicitVmRouteHasValidAppAssetToken) {
+      if ((!identity.userId || identity.source === 'mobile-session' || identity.source === 'static-route') && !explicitVmRouteHasCredentiallessCapability) {
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
       }
