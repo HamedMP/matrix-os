@@ -157,6 +157,30 @@ describe("workspace session orchestrator", () => {
     expect(d.agentSessionManager.startSession).not.toHaveBeenCalled();
   });
 
+  it("requires the persisted primary project owner type to match", async () => {
+    const d = deps({
+      projectManager: {
+        getProject: vi.fn(async () => ({
+          ok: true,
+          project: {
+            slug: "repo",
+            localPath: join(homePath, "projects", "repo", "repo"),
+            ownerScope: { type: "org", id: "user_workspace" },
+          },
+        })),
+      },
+    });
+    const orchestrator = createWorkspaceSessionOrchestrator({ ...d });
+
+    const result = await orchestrator.startSession({
+      ownerScope: { type: "user", id: "user_workspace" },
+      request: { projectSlug: "repo", kind: "agent", agent: "codex" },
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 404 });
+    expect(d.agentSandbox.preflight).not.toHaveBeenCalled();
+  });
+
   it("starts Claude sessions only after provider-specific sandbox preflight", async () => {
     const d = deps();
     const orchestrator = createWorkspaceSessionOrchestrator({

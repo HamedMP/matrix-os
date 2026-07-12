@@ -83,7 +83,7 @@ async function resolveRequestedProject(
       : failure(404, "not_found", "Project was not found");
   }
   const projectOwner = result.project.ownerScope;
-  if (projectOwner.id !== ownerScope.id) {
+  if (projectOwner.type !== ownerScope.type || projectOwner.id !== ownerScope.id) {
     return failure(404, "not_found", "Project was not found");
   }
   return { ok: true, path: result.project.localPath };
