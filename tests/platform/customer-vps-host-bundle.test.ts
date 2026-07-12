@@ -602,6 +602,47 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL}/vps/deploy"');
   });
 
+  it('preview VPS workflow uses the durable preview provision contract', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL}/vps/preview/provision"');
+    expect(workflow).toContain('{clerkUserId: $owner, handle: $handle, runtimeSlot: $handle}');
+    expect(workflow).not.toContain('-X POST "${PLATFORM_PUBLIC_URL}/vps/provision"');
+    expect(workflow).not.toContain('"runtimeSlot":"preview"');
+  });
+
+  it('preview VPS workflow accepts only a valid 202 provision response', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain('if [ "$code" != "202" ]; then');
+    expect(workflow).toContain('accepted_machine_id="$(jq -er');
+    expect(workflow).toContain('.status == "provisioning" or .status == "running"');
+    expect(workflow).toContain('.etaSeconds | type == "number" and . >= 0');
+  });
+
+  it('preview VPS workflow requires immediate fleet visibility after acceptance', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain('Immediate fleet visibility for ${HANDLE}: ${status}');
+    expect(workflow).toContain('select(.handle == $h and .machineId == $id)');
+    expect(workflow).toContain('if [ "$status" != "provisioning" ] && [ "$status" != "running" ]; then');
+    expect(workflow.indexOf('Immediate fleet visibility for ${HANDLE}: ${status}'))
+      .toBeLessThan(workflow.indexOf('deadline=$((SECONDS + 600))'));
+  });
+
+  it('preview VPS workflow safely resumes an existing active preview', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain('provisioning|running)');
+    expect(workflow).toContain('Reusing existing ${HANDLE} machine ${accepted_machine_id} (${status})');
+    expect(workflow).toContain('absent|failed)');
+    expect(workflow.match(/\/vps\/preview\/provision/g)).toHaveLength(1);
+  });
+
   it('host bundle release workflow can skip dev bundles only through explicit manual input', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');

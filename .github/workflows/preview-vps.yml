@@ -198,41 +198,84 @@ jobs:
           ./scripts/publish-release.sh "$VERSION" --channel none \
             --changelog "Preview bundle for PR #${{ needs.gate.outputs.pr }}"
 
-      - name: Provision preview VPS if absent
+      - name: Provision or resume preview VPS
         run: |
           set -euo pipefail
           if [ -z "${PREVIEW_CLERK_USER_ID:-}" ]; then
             echo "PREVIEW_CLERK_USER_ID secret is not configured." >&2
             exit 1
           fi
+
+          fleet_machine="$(curl -fsS --max-time 30 \
+            -H "authorization: Bearer ${PLATFORM_SECRET}" \
+            "${PLATFORM_PUBLIC_URL}/vps/fleet" |
+            jq -c --arg h "$HANDLE" \
+              '[.machines[] | select(.handle == $h and .status != "deleted")] | .[0] // {status: "absent", machineId: ""}')"
+          status="$(jq -r '.status' <<< "$fleet_machine")"
+          accepted_machine_id="$(jq -r '.machineId // ""' <<< "$fleet_machine")"
+          echo "Fleet status for ${HANDLE}: ${status}"
+
+          case "$status" in
+            provisioning|running)
+              if [ -z "$accepted_machine_id" ]; then
+                echo "Fleet returned an active preview without a machine ID." >&2
+                exit 1
+              fi
+              echo "Reusing existing ${HANDLE} machine ${accepted_machine_id} (${status})"
+              ;;
+            absent|failed)
+              provision_body="$(jq -cn \
+                --arg owner "$PREVIEW_CLERK_USER_ID" \
+                --arg handle "$HANDLE" \
+                '{clerkUserId: $owner, handle: $handle, runtimeSlot: $handle}')"
+              code="$(curl -sS --max-time 60 -o /tmp/provision.json -w '%{http_code}' \
+                -X POST "${PLATFORM_PUBLIC_URL}/vps/preview/provision" \
+                -H "authorization: Bearer ${PLATFORM_SECRET}" \
+                -H "content-type: application/json" \
+                --data-binary "$provision_body")"
+              if [ "$code" != "202" ]; then
+                echo "Preview provision failed with HTTP ${code}." >&2
+                exit 1
+              fi
+              if ! accepted_machine_id="$(jq -er '
+                if (
+                  type == "object"
+                  and (.machineId | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))
+                  and (.status == "provisioning" or .status == "running")
+                  and (.etaSeconds | type == "number" and . >= 0)
+                ) then .machineId else error("invalid response") end
+              ' /tmp/provision.json)"; then
+                echo "Preview provision returned an invalid response." >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Preview ${HANDLE} is in an unsupported state (${status})." >&2
+              exit 1
+              ;;
+          esac
+
           status="$(curl -fsS --max-time 30 \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
-            jq -r --arg h "$HANDLE" \
-              '[.machines[] | select(.handle == $h and .status != "deleted")] | .[0].status // "absent"')"
-          echo "Fleet status for ${HANDLE}: ${status}"
-          if [ "$status" = "absent" ]; then
-            code="$(curl -sS --max-time 60 -o /tmp/provision.json -w '%{http_code}' \
-              -X POST "${PLATFORM_PUBLIC_URL}/vps/provision" \
-              -H "authorization: Bearer ${PLATFORM_SECRET}" \
-              -H "content-type: application/json" \
-              -d "{\"clerkUserId\":\"${PREVIEW_CLERK_USER_ID}\",\"handle\":\"${HANDLE}\",\"runtimeSlot\":\"preview\"}")"
-            if [ "$code" != "202" ] && [ "$code" != "200" ]; then
-              echo "Provision failed with HTTP ${code} (body in workflow log)" >&2
-              cat /tmp/provision.json >&2
-              exit 1
-            fi
-            echo "Provision accepted; waiting for the VPS to come up..."
+            jq -r --arg h "$HANDLE" --arg id "$accepted_machine_id" \
+              '[.machines[] | select(.handle == $h and .machineId == $id)] | .[0].status // "absent"')"
+          echo "Immediate fleet visibility for ${HANDLE}: ${status}"
+          if [ "$status" != "provisioning" ] && [ "$status" != "running" ]; then
+            echo "Accepted preview machine is not durably visible in the fleet." >&2
+            exit 1
+          fi
+
+          if [ "$status" = "provisioning" ]; then
+            echo "Waiting for the VPS to come up..."
             deadline=$((SECONDS + 600))
             while true; do
-              # Let the record settle before reading; a fresh provision can
-              # transiently read as absent.
               sleep 15
               status="$(curl -fsS --max-time 30 \
                 -H "authorization: Bearer ${PLATFORM_SECRET}" \
                 "${PLATFORM_PUBLIC_URL}/vps/fleet" |
-                jq -r --arg h "$HANDLE" \
-                  '[.machines[] | select(.handle == $h)] | .[0].status // "absent"')"
+                jq -r --arg h "$HANDLE" --arg id "$accepted_machine_id" \
+                  '[.machines[] | select(.handle == $h and .machineId == $id)] | .[0].status // "absent"')"
               [ "$status" = "running" ] && break
               if [ "$status" = "failed" ]; then
                 echo "Provisioning failed for ${HANDLE}" >&2
