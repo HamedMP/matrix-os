@@ -331,7 +331,7 @@ jobs:
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
             jq -r --arg h "$HANDLE" --arg id "$accepted_machine_id" \
-              '[.machines[] | select(.handle == $h and .machineId == $id)] | .[0].status // "absent"')"
+              '[.machines[] | select(.handle == $h and .machineId == $id and .runtimeSlot == $h)] | .[0].status // "absent"')"
           echo "Immediate fleet visibility for ${HANDLE}: ${status}"
           if [ "$status" != "provisioning" ] && [ "$status" != "running" ]; then
             echo "Accepted preview machine is not durably visible in the fleet." >&2
