@@ -832,6 +832,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     try {
       await dispatchProvisioningJob(jobId, true);
     } catch (err: unknown) {
+      const code = err instanceof Error ? (err as Error & { code?: unknown }).code : undefined;
+      const message = err instanceof Error ? err.message : '';
+      if (code !== '25P02' && !message.includes('current transaction is aborted')) {
+        throw err;
+      }
       logCustomerVpsError('durable provisioning job immediate dispatch unavailable', err);
     }
   }
