@@ -9,6 +9,7 @@ import { useCodingAgentProjectWorkspace } from "../../stores/coding-agent-projec
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
 import { AgentProjectNavigator } from "./AgentProjectNavigator";
+import { useTabs } from "../../stores/tabs";
 
 function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
   return summary.capabilities.some(
@@ -46,7 +47,8 @@ export function AgentProjectWorkspaceShell({
     (state) => state.focusExternalThread,
   );
   const runtimeScope = useConnection(codingAgentRuntimeScope);
-  const setCreateProjectOpen = useUi((state) => state.setCreateProjectOpen);
+  const openCreateProject = useUi((state) => state.openCreateProject);
+  const openTab = useTabs((state) => state.openTab);
   const activeThreadId = useCodingAgentWorkspace((state) => state.activeThreadId);
   const activeThread = useCodingAgentWorkspace((state) =>
     state.threadSnapshot?.thread.id === state.activeThreadId
@@ -192,7 +194,8 @@ export function AgentProjectWorkspaceShell({
             }
           }}
           onNewChat={onNewChat}
-          onNewProject={() => setCreateProjectOpen(true)}
+          onNewProject={() => openCreateProject("agents")}
+          onOpenSettings={() => openTab({ kind: "settings", title: "Settings", slug: "settings" })}
         />
       ) : (
         <nav

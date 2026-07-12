@@ -8,6 +8,8 @@ import type { Project } from "../../desktop/src/renderer/src/stores/board";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 
 describe("CreateProjectDialog", () => {
   beforeEach(() => {
@@ -27,6 +29,7 @@ describe("CreateProjectDialog", () => {
       error: null,
     });
     useTabs.setState({ tabs: [], activeTabId: null });
+    useUi.setState({ createProjectDestination: "board" });
   });
 
   afterEach(() => {
@@ -96,5 +99,25 @@ describe("CreateProjectDialog", () => {
       mode: "folder",
       path: "workspaces/customer-app",
     }));
+  });
+
+  it("returns an Agents-created project to chats without opening a board tab", async () => {
+    const project = { slug: "desktop", name: "Desktop" };
+    const createProject = vi.fn(async () => project);
+    const selectProject = vi.fn(async () => undefined);
+    const refresh = vi.fn(async () => undefined);
+    const openTab = vi.fn();
+    useUi.setState({ createProjectDestination: "agents" });
+    useBoard.setState({ createProject, selectProject });
+    useCodingAgentWorkspace.setState({ refresh });
+    useTabs.setState({ openTab });
+
+    render(<CreateProjectDialog open onClose={vi.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Desktop" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    expect(selectProject).not.toHaveBeenCalled();
+    expect(openTab).not.toHaveBeenCalled();
   });
 });

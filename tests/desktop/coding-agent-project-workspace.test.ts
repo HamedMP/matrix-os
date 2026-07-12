@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
 import {
+  resolveNewChatRelation,
   groupProjectWorkspaceThreads,
   reconcileProjectWorkspaceSelection,
   resolveSelectedProjectId,
@@ -123,5 +124,14 @@ describe("coding-agent project workspace model", () => {
       "thread_plan",
       "thread_fix",
     ]);
+  });
+
+  it("accepts only the canonical workspace project slug and one of its tasks", () => {
+    expect(resolveNewChatRelation(workspace(), "matrix-os", "task_auth")).toEqual({
+      projectId: "matrix-os",
+      taskId: "task_auth",
+    });
+    expect(resolveNewChatRelation(workspace(), "proj_legacy", "task_auth")).toBeNull();
+    expect(resolveNewChatRelation(workspace(), "matrix-os", "task_other")).toBeNull();
   });
 });

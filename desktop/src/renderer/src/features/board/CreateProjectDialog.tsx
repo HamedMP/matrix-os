@@ -5,6 +5,8 @@ import { toUserMessage } from "../../lib/errors";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
+import { useUi } from "../../stores/ui";
+import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 
 type Mode = "scratch" | "folder" | "github";
 
@@ -15,6 +17,8 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   const createProject = useBoard((s) => s.createProject);
   const selectProject = useBoard((s) => s.selectProject);
   const openTab = useTabs((s) => s.openTab);
+  const destination = useUi((s) => s.createProjectDestination);
+  const refreshAgentWorkspace = useCodingAgentWorkspace((s) => s.refresh);
   const [name, setName] = useState("");
   const [mode, setMode] = useState<Mode>("scratch");
   const [url, setUrl] = useState("");
@@ -68,10 +72,16 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
         );
         return;
       }
-      await selectProject(api, project.slug);
+      if (destination === "agents") {
+        await refreshAgentWorkspace();
+      } else {
+        await selectProject(api, project.slug);
+      }
       if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
       closeFromUser();
-      openTab({ kind: "board", projectSlug: project.slug, title: project.name || project.slug });
+      if (destination === "board") {
+        openTab({ kind: "board", projectSlug: project.slug, title: project.name || project.slug });
+      }
     } catch (err: unknown) {
       if (!dialogClosedRef.current && dialogGenerationRef.current === submitGeneration) {
         setError(toUserMessage(err));

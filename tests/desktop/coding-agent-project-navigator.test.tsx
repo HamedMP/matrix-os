@@ -77,6 +77,52 @@ function workspaceFixture(): ProjectAgentWorkspace {
 afterEach(cleanup);
 
 describe("AgentProjectNavigator", () => {
+  it("offers recovery by creating a project when the selected computer is empty", () => {
+    const onNewProject = vi.fn();
+    const emptySummary = summaryFixture();
+    emptySummary.projects.items = [];
+    render(
+      <AgentProjectNavigator
+        summary={emptySummary}
+        workspace={null}
+        status="ready"
+        selectedProjectId={null}
+        selectedTaskId={null}
+        selectedThreadId={null}
+        onSelectProject={vi.fn()}
+        onSelectTask={vi.fn()}
+        onSelectThread={vi.fn()}
+        onNewChat={vi.fn()}
+        onNewProject={onNewProject}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+    expect(onNewProject).toHaveBeenCalledOnce();
+  });
+
+  it("offers provider recovery through Settings", () => {
+    const onOpenSettings = vi.fn();
+    render(
+      <AgentProjectNavigator
+        summary={summaryFixture()}
+        workspace={workspaceFixture()}
+        status="ready"
+        selectedProjectId="matrix-os"
+        selectedTaskId={null}
+        selectedThreadId={null}
+        onSelectProject={vi.fn()}
+        onSelectTask={vi.fn()}
+        onSelectThread={vi.fn()}
+        onNewChat={vi.fn()}
+        onOpenSettings={onOpenSettings}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Open agent settings" }));
+    expect(onOpenSettings).toHaveBeenCalledOnce();
+  });
+
   it("creates Matrix projects from the Agents navigator", () => {
     const onNewProject = vi.fn();
     render(

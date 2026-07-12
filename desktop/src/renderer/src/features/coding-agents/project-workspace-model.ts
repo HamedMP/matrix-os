@@ -3,6 +3,17 @@ import type {
   ProjectAgentWorkspace,
   RuntimeSummary,
 } from "@matrix-os/contracts";
+
+export function resolveNewChatRelation(
+  workspace: ProjectAgentWorkspace | null,
+  projectId: string,
+  taskId?: string,
+): { projectId: string; taskId?: string } | null {
+  if (!workspace || workspace.project.id !== projectId) return null;
+  if (!taskId) return { projectId: workspace.project.id };
+  if (!workspace.tasks.items.some((task) => task.id === taskId)) return null;
+  return { projectId: workspace.project.id, taskId };
+}
 import type {
   CodingAgentWorkspaceResumeState,
   CodingAgentWorkspaceViewMode,

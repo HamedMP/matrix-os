@@ -28,6 +28,7 @@ export interface AgentProjectNavigatorProps {
   onSelectThread: (threadId: string) => void;
   onNewChat: (projectId: string, taskId?: string) => void;
   onNewProject?: () => void;
+  onOpenSettings?: () => void;
 }
 
 function CountBadge({ children }: { children: number }) {
@@ -112,6 +113,7 @@ export function AgentProjectNavigator({
   onSelectThread,
   onNewChat,
   onNewProject,
+  onOpenSettings,
 }: AgentProjectNavigatorProps) {
   const grouped = workspace ? groupProjectWorkspaceThreads(workspace) : null;
   const projects = workspace
@@ -320,6 +322,35 @@ export function AgentProjectNavigator({
             <p className="mt-1 text-[11px]" style={{ color: "var(--text-tertiary)" }}>
               Create a project to start a coding conversation.
             </p>
+            {onNewProject ? (
+              <button
+                type="button"
+                onClick={onNewProject}
+                className="mt-3 rounded-md px-3 py-1.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                style={{ background: "var(--accent)", color: "var(--text-on-accent)" }}
+              >
+                Create project
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {summary.providers.length === 0 ? (
+          <div className="mx-2 mt-3 rounded-lg border px-3 py-3" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
+            <p className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>No coding agent connected</p>
+            <p className="mt-1 text-[11px]" style={{ color: "var(--text-tertiary)" }}>
+              Install or authenticate a provider for this computer, then refresh.
+            </p>
+            {onOpenSettings ? (
+              <button
+                type="button"
+                aria-label="Open agent settings"
+                onClick={onOpenSettings}
+                className="mt-2 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                style={{ color: "var(--accent)" }}
+              >
+                Open Settings
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>

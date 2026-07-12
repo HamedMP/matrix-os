@@ -32,6 +32,7 @@ import { AgentWorkspaceViewSwitch } from "./AgentKanbanBoard";
 import { AgentKanbanWorkspace } from "./AgentKanbanWorkspace";
 import { AgentConversationInspector } from "./AgentConversationInspector";
 import { AgentWorkspaceSection as Section } from "./AgentWorkspaceSection";
+import { resolveNewChatRelation } from "./project-workspace-model";
 
 const STATUS_COLOR: Record<string, string> = {
   available: "var(--success)",
@@ -1508,12 +1509,13 @@ export default function AgentWorkspace() {
   const projectWorkspaceEnabled = capabilityEnabled(summary, "codingAgentsProjectWorkspace");
 
   function openNewChat(projectId: string, taskId?: string) {
+    const relation = resolveNewChatRelation(projectWorkspace, projectId, taskId);
+    if (!relation) return;
     setComposerSeed({
       seedId: Date.now(),
       draft: {
         ...defaultAgentThreadComposerDraft(summary!),
-        projectId,
-        ...(taskId ? { taskId } : {}),
+        ...relation,
       },
     });
     setComposerOpen(true);
