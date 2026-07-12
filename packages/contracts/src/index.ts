@@ -954,10 +954,11 @@ export const FileMetadataSchema = z.object({
   updatedAt: IsoTimestampSchema.optional(),
 }).strict();
 export type FileMetadata = z.infer<typeof FileMetadataSchema>;
+const FileProjectSlugSchema = ProjectIdSchema.refine((value) => /^[a-z0-9][a-z0-9-]{0,62}$/.test(value), {
+  message: "Invalid project slug",
+});
 export const FileReadRequestSchema = z.object({
-  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
-    message: "Invalid project id",
-  }),
+  projectId: FileProjectSlugSchema,
   worktreeId: WorktreeIdSchema.optional(),
   path: FilePathSchema,
 }).strict();
@@ -981,9 +982,7 @@ export type FileReadResponse = z.infer<typeof FileReadResponseSchema>;
 const FileListLimitSchema = z.coerce.number().int().min(1).max(100).default(50);
 
 export const FileBrowseRequestSchema = z.object({
-  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
-    message: "Invalid project id",
-  }),
+  projectId: FileProjectSlugSchema,
   worktreeId: WorktreeIdSchema.optional(),
   path: FilePathSchema.optional(),
   limit: FileListLimitSchema,
@@ -999,9 +998,7 @@ export type FileBrowseRequest = z.infer<typeof FileBrowseRequestSchema>;
 export type FileBrowseResponse = z.infer<typeof FileBrowseResponseSchema>;
 
 export const FileSearchRequestSchema = z.object({
-  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
-    message: "Invalid project id",
-  }),
+  projectId: FileProjectSlugSchema,
   worktreeId: WorktreeIdSchema.optional(),
   path: FilePathSchema.optional(),
   query: boundedText(80, 256),

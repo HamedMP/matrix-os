@@ -170,6 +170,18 @@ describe("coding agent file read route", () => {
     }
   });
 
+  it("rejects non-canonical project identifiers before primary checkout lookup", async () => {
+    const harness = await createRouteHarness({ ownerIds: [testPrincipal.userId] });
+    try {
+      const response = await harness.app.request(
+        "/api/coding-agents/files/read?projectId=proj_internal_id&path=src%2Fprimary.ts",
+      );
+      expect(response.status).toBe(400);
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
   it("browses direct owner worktree entries without exposing symlinks or internal paths", async () => {
     const harness = await createRouteHarness({
       ownerIds: [testPrincipal.userId],
