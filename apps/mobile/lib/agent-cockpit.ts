@@ -3,7 +3,10 @@ import type { AgentThreadSummary, RuntimeSummary } from "@matrix-os/contracts";
 export type AgentCockpitModel = {
   needsAttention: AgentThreadSummary[];
   working: AgentThreadSummary[];
+  recent: AgentThreadSummary[];
 };
+
+const RECENT_THREAD_LIMIT = 5;
 
 type AgentCockpitSummary = Pick<RuntimeSummary, "activeThreads" | "attentionThreads">;
 
@@ -19,12 +22,33 @@ function attentionPriority(thread: AgentThreadSummary): number {
   return 10;
 }
 
-function needsAction(thread: AgentThreadSummary): boolean {
-  return attentionPriority(thread) < 10;
-}
+function threadGroup(thread: AgentThreadSummary): keyof AgentCockpitModel {
+  switch (thread.attention) {
+    case "approval_required":
+    case "input_required":
+    case "failed":
+      return "needsAttention";
+    case "completed":
+      return "recent";
+    case "none":
+      break;
+  }
 
-function isWorking(thread: AgentThreadSummary): boolean {
-  return thread.status === "queued" || thread.status === "starting" || thread.status === "running";
+  switch (thread.status) {
+    case "queued":
+    case "starting":
+    case "running":
+      return "working";
+    case "waiting_for_approval":
+    case "waiting_for_input":
+    case "failed":
+      return "needsAttention";
+    case "completed":
+    case "aborted":
+    case "stale":
+    case "archived":
+      return "recent";
+  }
 }
 
 export function buildAgentCockpit(summary: AgentCockpitSummary): AgentCockpitModel {
@@ -34,16 +58,18 @@ export function buildAgentCockpit(summary: AgentCockpitSummary): AgentCockpitMod
 
   const uniqueThreads = [...threadsById.values()];
   const needsAttention = uniqueThreads
-    .filter(needsAction)
+    .filter((thread) => threadGroup(thread) === "needsAttention")
     .sort((left, right) => {
       const priority = attentionPriority(left) - attentionPriority(right);
       return priority || updatedAtMs(right) - updatedAtMs(left);
     });
-  const attentionIds = new Set(needsAttention.map((thread) => thread.id));
-  const working = summary.activeThreads.items
-    .filter((thread, index, items) => items.findIndex((candidate) => candidate.id === thread.id) === index)
-    .filter((thread) => !attentionIds.has(thread.id) && isWorking(thread))
+  const working = uniqueThreads
+    .filter((thread) => threadGroup(thread) === "working")
     .sort((left, right) => updatedAtMs(right) - updatedAtMs(left));
+  const recent = uniqueThreads
+    .filter((thread) => threadGroup(thread) === "recent")
+    .sort((left, right) => updatedAtMs(right) - updatedAtMs(left))
+    .slice(0, RECENT_THREAD_LIMIT);
 
-  return { needsAttention, working };
+  return { needsAttention, working, recent };
 }

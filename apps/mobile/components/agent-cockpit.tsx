@@ -1,4 +1,4 @@
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -57,11 +57,13 @@ function SectionHeading({ title, count }: { title: string; count: number }) {
 function ThreadRow({
   thread,
   attention,
+  recent,
   onPress,
   last,
 }: {
   thread: AgentThreadSummary;
   attention: boolean;
+  recent?: boolean;
   onPress: () => void;
   last: boolean;
 }) {
@@ -93,13 +95,19 @@ function ThreadRow({
         />
       </View>
       <View style={styles.threadText}>
-        <Text numberOfLines={1} style={styles.threadTitle}>{thread.title}</Text>
+        <Text numberOfLines={2} style={styles.threadTitle}>{thread.title}</Text>
         <Text numberOfLines={1} style={styles.threadMeta}>{`${thread.providerId} · ${label}`}</Text>
       </View>
       {attentionState ? (
         <View style={styles.attentionDot} />
       ) : (
-        <ActivityIndicator size="small" color={theme.colors.moss} />
+        <View testID={`agent-thread-status-${thread.id}`} style={styles.staticStatus}>
+          <Ionicons
+            name={recent ? "time-outline" : "ellipse"}
+            size={recent ? 17 : 9}
+            color={recent ? theme.colors.mutedForeground : theme.colors.moss}
+          />
+        </View>
       )}
     </Pressable>
   );
@@ -173,6 +181,24 @@ export function AgentCockpit({ summary, canCreate, onCreate, onOpenThread }: Age
           </View>
         )}
       </View>
+
+      {model.recent.length > 0 ? (
+        <View style={styles.section}>
+          <SectionHeading title="Recent" count={model.recent.length} />
+          <View style={styles.threadGroup}>
+            {model.recent.map((thread, index) => (
+              <ThreadRow
+                key={thread.id}
+                thread={thread}
+                attention={false}
+                recent
+                last={index === model.recent.length - 1}
+                onPress={() => onOpenThread(thread)}
+              />
+            ))}
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -307,6 +333,12 @@ const styles = StyleSheet.create((theme) => ({
     height: 9,
     borderRadius: 5,
     backgroundColor: theme.colors.glow,
+  },
+  staticStatus: {
+    width: 20,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center",
   },
   emptyState: {
     minHeight: 78,

@@ -1700,15 +1700,15 @@ function EmptyText({ children }: { children: React.ReactNode }) {
   return <Text style={styles.emptyText}>{children}</Text>;
 }
 
-const styles = StyleSheet.create((theme, rt) => ({
+const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
   },
   content: {
-    paddingTop: rt.insets.top + theme.spacing.xl,
+    paddingTop: theme.spacing.xl,
     paddingHorizontal: theme.spacing.lg,
-    paddingBottom: rt.insets.bottom + 32,
+    paddingBottom: 32,
     gap: theme.spacing.lg,
   },
   centered: {

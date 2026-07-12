@@ -121,6 +121,13 @@ Mobile resume state is intentionally small and validated before use.
 
 Do not persist raw paths, user-controlled URLs, or unvalidated terminal identifiers in mobile shell state.
 
+The Agents route relies on its root scroll view's automatic iOS content inset.
+Keep top and bottom content padding independent of safe-area values so the
+notch and home-indicator insets are not applied twice. Its attention-first
+cockpit renders static Working status marks and reconciles the bounded gateway
+summary on pull-to-refresh; completed and recoverable stale threads stay
+reachable through the capped Recent group.
+
 ## Terminal Validation
 
 The mobile terminal path should be checked at three layers:
