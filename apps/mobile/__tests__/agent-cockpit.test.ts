@@ -72,7 +72,7 @@ describe("buildAgentCockpit", () => {
     expect(model.recent.map((item) => item.id)).toEqual(["thread_completed"]);
   });
 
-  it("preserves recoverable stale and terminal threads in a bounded recent group", () => {
+  it("preserves every recoverable stale and terminal thread from the bounded summary", () => {
     const terminalStatuses = ["completed", "aborted", "stale", "archived"] as const;
     const terminalThreads = terminalStatuses.map((status, index) => thread({
       id: `thread_${status}`,
@@ -90,13 +90,16 @@ describe("buildAgentCockpit", () => {
 
     const model = buildAgentCockpit(summaryLists([...terminalThreads, ...overflow], []));
 
-    expect(model.recent).toHaveLength(5);
+    expect(model.recent).toHaveLength(8);
     expect(model.recent.map((item) => item.id)).toEqual([
       "thread_archived",
       "thread_stale",
       "thread_aborted",
       "thread_completed",
       "thread_old_3",
+      "thread_old_2",
+      "thread_old_1",
+      "thread_old_0",
     ]);
   });
 });

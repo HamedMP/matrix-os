@@ -414,9 +414,9 @@ Screen:
 - `apps/mobile/app/agents/index.tsx`
 - `apps/mobile/app/agents/new.tsx`
 - `apps/mobile/app/agents/[threadId].tsx`
-- Read-only phone-first dashboard with Needs attention, Working, and a five-item Recent section, plus providers and canonical terminal sessions.
+- Read-only phone-first dashboard with Needs attention, Working, and a contract-bounded Recent section, plus providers and canonical terminal sessions.
 - The dashboard renders the shared mobile connection banner with agent-workspace labels for connecting, offline, and reconnecting states; the banner can retry the existing gateway client connection and does not hide the last hydrated gateway summary.
-- The cockpit is derived only from the bounded `RuntimeSummarySchema.activeThreads` and `attentionThreads` lists. Approval, input, and failed states sort into Needs attention; queued, starting, and running states sort into Working; completed attention plus completed, aborted, recoverable stale, and archived statuses remain reachable in the five-item Recent group. Duplicate thread ids are projected once and sorted by gateway timestamps.
+- The cockpit is derived only from the bounded `RuntimeSummarySchema.activeThreads` and `attentionThreads` lists. Approval, input, and failed states sort into Needs attention; queued, starting, and running states sort into Working; every completed attention plus completed, aborted, recoverable stale, and archived status supplied by those bounded lists remains reachable in Recent. Duplicate thread ids are projected once and sorted by gateway timestamps.
 - Working rows use static status UI because the summary screen has pull-to-refresh but no per-row live stream. The screen never implies continuous reconciliation with a perpetual spinner.
 - The Agents scroll view uses native automatic content-inset adjustment and content padding does not add the iOS safe-area values a second time.
 - The quick new-run action uses the existing `/agents/new` route when thread creation is enabled. Project selection and project creation remain follow-up work and must use the canonical project/thread contracts.

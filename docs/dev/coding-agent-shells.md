@@ -21,7 +21,7 @@ The mobile Agents landing screen is a thin projection of the bounded gateway run
 
 - Needs attention contains approval-required, input-required, and failed threads.
 - Working contains queued, starting, and running threads.
-- Recent keeps the five newest completed, aborted, recoverable stale, or archived threads reachable through the canonical thread-detail route. A `completed` attention value also belongs here.
+- Recent keeps every completed, aborted, recoverable stale, or archived thread from the contract-bounded runtime lists reachable through the canonical thread-detail route. A `completed` attention value also belongs here.
 - Duplicate ids across `activeThreads` and `attentionThreads` render once. Gateway timestamps determine ordering; mobile does not infer task status from thread status.
 - Working rows use static status marks. Pull-to-refresh reconciles the summary, so a row must not show a perpetual live spinner unless a future implementation adds an actual bounded stream or polling lifecycle.
 

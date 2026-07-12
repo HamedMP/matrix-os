@@ -126,7 +126,8 @@ Keep top and bottom content padding independent of safe-area values so the
 notch and home-indicator insets are not applied twice. Its attention-first
 cockpit renders static Working status marks and reconciles the bounded gateway
 summary on pull-to-refresh; completed and recoverable stale threads stay
-reachable through the capped Recent group.
+reachable through the contract-bounded Recent group without an additional UI
+cap that could hide older summary rows.
 
 ## Terminal Validation
 

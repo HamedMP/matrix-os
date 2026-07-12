@@ -6,8 +6,6 @@ export type AgentCockpitModel = {
   recent: AgentThreadSummary[];
 };
 
-const RECENT_THREAD_LIMIT = 5;
-
 type AgentCockpitSummary = Pick<RuntimeSummary, "activeThreads" | "attentionThreads">;
 
 function updatedAtMs(thread: AgentThreadSummary): number {
@@ -68,8 +66,7 @@ export function buildAgentCockpit(summary: AgentCockpitSummary): AgentCockpitMod
     .sort((left, right) => updatedAtMs(right) - updatedAtMs(left));
   const recent = uniqueThreads
     .filter((thread) => threadGroup(thread) === "recent")
-    .sort((left, right) => updatedAtMs(right) - updatedAtMs(left))
-    .slice(0, RECENT_THREAD_LIMIT);
+    .sort((left, right) => updatedAtMs(right) - updatedAtMs(left));
 
   return { needsAttention, working, recent };
 }
