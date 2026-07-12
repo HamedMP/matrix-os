@@ -496,27 +496,65 @@ describe("GatewayClient", () => {
 
   it("creates scratch and imported projects through the canonical project route", async () => {
     const fetchMock = jest.spyOn(global, "fetch")
-      .mockResolvedValueOnce(jsonResponse({ project: { slug: "mobile-scratch", name: "Mobile Scratch" } }, { status: 201 }))
-      .mockResolvedValueOnce(jsonResponse({ project: { slug: "matrix-mobile", name: "matrix-mobile" } }, { status: 201 }));
+      .mockResolvedValueOnce(jsonResponse({
+        project: {
+          id: "mobile-scratch",
+          label: "Mobile Scratch",
+          status: "available",
+          taskCount: 0,
+          threadCount: 0,
+          attentionCount: 0,
+        },
+        existing: false,
+      }, { status: 201 }))
+      .mockResolvedValueOnce(jsonResponse({
+        project: {
+          id: "matrix-mobile",
+          label: "matrix-mobile",
+          status: "available",
+          taskCount: 0,
+          threadCount: 0,
+          attentionCount: 0,
+        },
+        existing: true,
+      }));
 
     const client = new GatewayClient("http://localhost:4000", "token");
-    await expect(client.createProject({ mode: "scratch", name: "Mobile Scratch" })).resolves.toEqual({
+    await expect(client.createProject({
+      mode: "scratch",
+      name: "Mobile Scratch",
+      clientRequestId: "req_mobile_project_scratch",
+    })).resolves.toEqual({
       ok: true,
-      projectId: "mobile-scratch",
+      project: expect.objectContaining({ id: "mobile-scratch" }),
+      existing: false,
     });
-    await expect(client.createProject({ mode: "github", url: "https://github.com/acme/matrix-mobile" })).resolves.toEqual({
+    await expect(client.createProject({
+      mode: "github",
+      repositoryUrl: "https://github.com/acme/matrix-mobile",
+      clientRequestId: "req_mobile_project_import",
+    })).resolves.toEqual({
       ok: true,
-      projectId: "matrix-mobile",
+      project: expect.objectContaining({ id: "matrix-mobile" }),
+      existing: true,
     });
 
-    expect(fetchMock).toHaveBeenNthCalledWith(1, "http://localhost:4000/api/projects", expect.objectContaining({
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "http://localhost:4000/api/coding-agents/projects", expect.objectContaining({
       method: "POST",
-      body: JSON.stringify({ mode: "scratch", name: "Mobile Scratch" }),
+      body: JSON.stringify({
+        mode: "scratch",
+        name: "Mobile Scratch",
+        clientRequestId: "req_mobile_project_scratch",
+      }),
       signal: expect.any(Object),
     }));
-    expect(fetchMock).toHaveBeenNthCalledWith(2, "http://localhost:4000/api/projects", expect.objectContaining({
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "http://localhost:4000/api/coding-agents/projects", expect.objectContaining({
       method: "POST",
-      body: JSON.stringify({ mode: "github", url: "https://github.com/acme/matrix-mobile" }),
+      body: JSON.stringify({
+        mode: "github",
+        repositoryUrl: "https://github.com/acme/matrix-mobile",
+        clientRequestId: "req_mobile_project_import",
+      }),
       signal: expect.any(Object),
     }));
 
@@ -530,7 +568,11 @@ describe("GatewayClient", () => {
 
     const client = new GatewayClient("http://localhost:4000", "token");
 
-    await expect(client.createProject({ mode: "scratch", name: "Mobile Scratch" })).resolves.toEqual({
+    await expect(client.createProject({
+      mode: "scratch",
+      name: "Mobile Scratch",
+      clientRequestId: "req_mobile_project_invalid",
+    })).resolves.toEqual({
       ok: false,
       error: "Project could not be created. Try again.",
     });
@@ -1050,6 +1092,35 @@ describe("GatewayClient", () => {
       }),
     );
 
+    fetchMock.mockRestore();
+  });
+
+  it("browses primary project files without serializing an absent worktree", async () => {
+    const fetchMock = jest.spyOn(global, "fetch")
+      .mockResolvedValueOnce(jsonResponse(fileReadPayload()))
+      .mockResolvedValueOnce(jsonResponse(fileBrowsePayload()))
+      .mockResolvedValueOnce(jsonResponse(fileSearchPayload()));
+    const client = new GatewayClient("http://localhost:4000", "token");
+
+    await expect(client.getCodingAgentFileContent({
+      projectId: "matrix-os",
+      path: "README.md",
+    })).resolves.toMatchObject({ ok: true });
+    await expect(client.browseCodingAgentFiles({
+      projectId: "matrix-os",
+      limit: 20,
+    })).resolves.toMatchObject({ ok: true });
+    await expect(client.searchCodingAgentFiles({
+      projectId: "matrix-os",
+      query: "readme",
+      limit: 20,
+    })).resolves.toMatchObject({ ok: true });
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://localhost:4000/api/coding-agents/files/read?projectId=matrix-os&path=README.md",
+      "http://localhost:4000/api/coding-agents/files/browse?projectId=matrix-os&limit=20",
+      "http://localhost:4000/api/coding-agents/files/search?projectId=matrix-os&query=readme&limit=20",
+    ]);
     fetchMock.mockRestore();
   });
 

@@ -12,6 +12,8 @@ import {
   ApprovalIdSchema,
   CodingAgentNotificationPreferencesSchema,
   CodingAgentNotificationPreferencesUpdateSchema,
+  CodingAgentProjectCreateRequestSchema,
+  CodingAgentProjectCreateResponseSchema,
   CursorSchema,
   FileBrowseRequestSchema,
   FileBrowseResponseSchema,
@@ -22,7 +24,6 @@ import {
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   RequestIdSchema,
-  ProjectIdSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
@@ -37,6 +38,8 @@ import {
   type AgentThreadEvent,
   type CodingAgentNotificationPreferences,
   type CodingAgentNotificationPreferencesUpdate,
+  type CodingAgentProjectCreateRequest,
+  type CodingAgentProjectCreateResponse,
   type FileBrowseRequest,
   type FileBrowseResponse,
   type FileReadRequest,
@@ -121,19 +124,9 @@ export type CodingAgentRuntimeSummaryResult =
   | { ok: true; summary: RuntimeSummary }
   | { ok: false; error: "Runtime summary unavailable" };
 
-export type ProjectCreateRequest =
-  | { mode: "scratch"; name: string }
-  | { mode: "github"; url: string };
-
 export type ProjectCreateResult =
-  | { ok: true; projectId: string }
+  | ({ ok: true } & CodingAgentProjectCreateResponse)
   | { ok: false; error: "Project could not be created. Try again." };
-
-const ProjectCreateResponseSchema = z.object({
-  project: z.object({
-    slug: ProjectIdSchema,
-  }).passthrough(),
-}).passthrough();
 
 const CodingAgentNotificationPreferencesRouteResponseSchema = z.object({
   preferences: CodingAgentNotificationPreferencesSchema,
@@ -798,25 +791,29 @@ export class GatewayClient {
     }
   }
 
-  async createProject(request: ProjectCreateRequest): Promise<ProjectCreateResult> {
+  async createProject(request: CodingAgentProjectCreateRequest): Promise<ProjectCreateResult> {
     try {
-      const res = await this.fetchGateway("/api/projects", {
+      const parsedRequest = CodingAgentProjectCreateRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "Project could not be created. Try again." };
+      }
+      const res = await this.fetchGateway("/api/coding-agents/projects", {
         method: "POST",
-        body: JSON.stringify(request),
+        body: JSON.stringify(parsedRequest.data),
       });
       if (!res.ok) {
-        logGatewayStatusWarning("/api/projects unavailable", res.status);
+        logGatewayStatusWarning("/api/coding-agents/projects unavailable", res.status);
         return { ok: false, error: "Project could not be created. Try again." };
       }
       const body = await res.json();
-      const parsed = ProjectCreateResponseSchema.safeParse(body);
+      const parsed = CodingAgentProjectCreateResponseSchema.safeParse(body);
       if (!parsed.success) {
-        logGatewayWarning("/api/projects returned invalid payload", "invalid payload");
+        logGatewayWarning("/api/coding-agents/projects returned invalid payload", "invalid payload");
         return { ok: false, error: "Project could not be created. Try again." };
       }
-      return { ok: true, projectId: parsed.data.project.slug };
+      return { ok: true, ...parsed.data };
     } catch (err: unknown) {
-      logGatewayCatchWarning("/api/projects unavailable", err);
+      logGatewayCatchWarning("/api/coding-agents/projects unavailable", err);
       return { ok: false, error: "Project could not be created. Try again." };
     }
   }
@@ -1066,11 +1063,11 @@ export class GatewayClient {
       if (!parsedRequest.success) {
         return { ok: false, error: "File content unavailable" };
       }
-      const query = new URLSearchParams({
-        projectId: parsedRequest.data.projectId,
-        worktreeId: parsedRequest.data.worktreeId,
-        path: parsedRequest.data.path,
-      });
+      const query = new URLSearchParams({ projectId: parsedRequest.data.projectId });
+      if (parsedRequest.data.worktreeId) {
+        query.set("worktreeId", parsedRequest.data.worktreeId);
+      }
+      query.set("path", parsedRequest.data.path);
       const res = await this.fetchGateway(`/api/coding-agents/files/read?${query.toString()}`);
       if (!res.ok) {
         logCodingAgentStatusWarning("/api/coding-agents/files/read unavailable", res.status);
@@ -1097,10 +1094,10 @@ export class GatewayClient {
       if (!parsedRequest.success) {
         return { ok: false, error: "File list unavailable" };
       }
-      const query = new URLSearchParams({
-        projectId: parsedRequest.data.projectId,
-        worktreeId: parsedRequest.data.worktreeId,
-      });
+      const query = new URLSearchParams({ projectId: parsedRequest.data.projectId });
+      if (parsedRequest.data.worktreeId) {
+        query.set("worktreeId", parsedRequest.data.worktreeId);
+      }
       if (parsedRequest.data.path) {
         query.set("path", parsedRequest.data.path);
       }
@@ -1131,10 +1128,10 @@ export class GatewayClient {
       if (!parsedRequest.success) {
         return { ok: false, error: "File search unavailable" };
       }
-      const query = new URLSearchParams({
-        projectId: parsedRequest.data.projectId,
-        worktreeId: parsedRequest.data.worktreeId,
-      });
+      const query = new URLSearchParams({ projectId: parsedRequest.data.projectId });
+      if (parsedRequest.data.worktreeId) {
+        query.set("worktreeId", parsedRequest.data.worktreeId);
+      }
       if (parsedRequest.data.path) {
         query.set("path", parsedRequest.data.path);
       }

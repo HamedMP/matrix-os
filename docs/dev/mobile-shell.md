@@ -133,9 +133,9 @@ The new-agent composer asks for a project before it can submit. Available
 projects come from the current validated runtime summary. If none is available,
 including when the list contains only stale or missing rows,
 the phone-first empty state can create a scratch project or import a GitHub
-repository through `POST /api/projects`, then refreshes the runtime summary and
-selects the returned canonical slug. The project form, repository URL, runtime
-summary, and mutation response are transient and must not be written to
+repository through `POST /api/coding-agents/projects`, then refreshes the runtime
+summary and selects the returned canonical project id. The project form,
+repository URL, runtime summary, and mutation response are transient and must not be written to
 AsyncStorage. An explicit stale project route stays unselected rather than
 falling back to an unrelated project.
 

@@ -303,6 +303,7 @@ export default function AgentComposerScreen() {
   const [createError, setCreateError] = useState<string | null>(null);
   const generation = useRef(0);
   const submitInFlight = useRef(false);
+  const projectCreateRequest = useRef<{ key: string; clientRequestId: string } | null>(null);
 
   const loadSummary = useCallback(async () => {
     const nextGeneration = generation.current + 1;
@@ -383,10 +384,18 @@ export default function AgentComposerScreen() {
     }
     setProjectCreateStatus("submitting");
     setProjectCreateError(null);
+    const requestKey = `${projectMode}:${value}`;
+    if (projectCreateRequest.current?.key !== requestKey) {
+      projectCreateRequest.current = {
+        key: requestKey,
+        clientRequestId: nextClientRequestId(),
+      };
+    }
+    const clientRequestId = projectCreateRequest.current.clientRequestId;
     try {
       const result = await client.createProject(projectMode === "scratch"
-        ? { mode: "scratch", name: value }
-        : { mode: "github", url: value });
+        ? { mode: "scratch", name: value, clientRequestId }
+        : { mode: "github", repositoryUrl: value, clientRequestId });
       if (!result.ok) {
         setProjectCreateError(result.error);
         return;
@@ -396,11 +405,12 @@ export default function AgentComposerScreen() {
         setProjectCreateError("Project was created, but the project list could not be refreshed.");
         return;
       }
-      const project = availableProject(refreshed.summary, result.projectId);
+      const project = availableProject(refreshed.summary, result.project.id);
       if (!project) {
         setProjectCreateError("Project was created, but it is not ready yet. Reopen the composer to retry.");
         return;
       }
+      projectCreateRequest.current = null;
       setState({ status: "ready", summary: refreshed.summary, error: null });
       setDraft((current) => ({
         ...(current ?? defaultAgentThreadComposerDraft(refreshed.summary)),

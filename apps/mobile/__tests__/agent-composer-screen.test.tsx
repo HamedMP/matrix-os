@@ -349,7 +349,18 @@ describe("AgentComposerScreen", () => {
       getCodingAgentRuntimeSummary: jest.fn()
         .mockResolvedValueOnce({ ok: true, summary: emptySummary })
         .mockResolvedValueOnce({ ok: true, summary: hydratedSummary }),
-      createProject: jest.fn().mockResolvedValue({ ok: true, projectId: "mobile-project" }),
+      createProject: jest.fn().mockResolvedValue({
+        ok: true,
+        project: {
+          id: "mobile-project",
+          label: "Mobile Project",
+          status: "available",
+          taskCount: 0,
+          threadCount: 0,
+          attentionCount: 0,
+        },
+        existing: false,
+      }),
       createCodingAgentThread: jest.fn().mockResolvedValue({
         ok: true,
         snapshot: {
@@ -379,7 +390,11 @@ describe("AgentComposerScreen", () => {
     fireEvent.press(screen.getByRole("button", { name: "Create project" }));
 
     expect(await screen.findByLabelText("Project Mobile Project")).toBeTruthy();
-    expect(client.createProject).toHaveBeenCalledWith({ mode: "scratch", name: "Mobile Project" });
+    expect(client.createProject).toHaveBeenCalledWith({
+      mode: "scratch",
+      name: "Mobile Project",
+      clientRequestId: expect.stringMatching(/^req_mobile_/),
+    });
     fireEvent.changeText(screen.getByLabelText("Agent run prompt"), "Build project chat");
     fireEvent.press(screen.getByRole("button", { name: "Start run" }));
 
@@ -423,9 +438,40 @@ describe("AgentComposerScreen", () => {
     await waitFor(() => {
       expect(client.createProject).toHaveBeenCalledWith({
         mode: "github",
-        url: "https://github.com/acme/mobile",
+        repositoryUrl: "https://github.com/acme/mobile",
+        clientRequestId: expect.stringMatching(/^req_mobile_/),
       });
     });
+  });
+
+  it("reuses the project request id when the user retries the same create", async () => {
+    const summary = summaryFixture();
+    summary.projects.items = [];
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({ ok: true, summary }),
+      createProject: jest.fn()
+        .mockResolvedValueOnce({ ok: false, error: "Project could not be created. Try again." })
+        .mockResolvedValueOnce({ ok: false, error: "Project could not be created. Try again." }),
+      createCodingAgentThread: jest.fn(),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentComposerScreen />);
+
+    await screen.findByText("Create or import a project first");
+    fireEvent.changeText(screen.getByLabelText("New project name"), "Retry Project");
+    fireEvent.press(screen.getByRole("button", { name: "Create project" }));
+    await screen.findByText("Project could not be created. Try again.");
+    fireEvent.press(screen.getByRole("button", { name: "Create project" }));
+
+    await waitFor(() => expect(client.createProject).toHaveBeenCalledTimes(2));
+    const firstRequest = client.createProject.mock.calls[0]?.[0];
+    const secondRequest = client.createProject.mock.calls[1]?.[0];
+    expect(firstRequest.clientRequestId).toMatch(/^req_mobile_/);
+    expect(secondRequest.clientRequestId).toBe(firstRequest.clientRequestId);
   });
 
   it("seeds and submits a selected review hunk follow-up from route params", async () => {

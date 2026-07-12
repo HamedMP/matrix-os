@@ -34,9 +34,9 @@ The mobile new-run composer must bind every newly created chat to one available
 from a canonical task route, but switching projects clears that task relation.
 When no available project exists, including summaries with only stale or
 missing rows, the empty state creates a scratch project or imports a GitHub
-repository through canonical `POST /api/projects`, validates the returned
-slug, then refreshes the runtime summary before enabling thread submission. The
-thread request uses that canonical project slug and optional task id; it must
+repository through canonical `POST /api/coding-agents/projects`, validates the
+returned project id, then refreshes the runtime summary before enabling thread
+submission. The thread request uses that canonical project id and optional task id; it must
 not create a new unassigned thread. Explicit stale project links remain
 unselected and require recovery instead of being silently remapped. Project
 form values and mutation results remain transient and never enter AsyncStorage.
