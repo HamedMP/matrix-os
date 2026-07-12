@@ -129,8 +129,11 @@ export class KernelSocket {
     this.createWebSocket =
       options.createWebSocket ??
       ((url) => new WebSocket(url) as unknown as WebSocketLike);
-    this.setTimeoutFn = options.setTimeoutFn ?? setTimeout;
-    this.clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
+    // Browser timers perform a receiver check. Keeping the bare functions on
+    // the socket and later calling `this.setTimeoutFn(...)` binds `this` to the
+    // KernelSocket and throws "Illegal invocation" in Electron.
+    this.setTimeoutFn = options.setTimeoutFn ?? globalThis.setTimeout.bind(globalThis);
+    this.clearTimeoutFn = options.clearTimeoutFn ?? globalThis.clearTimeout.bind(globalThis);
     this.random = options.random ?? Math.random;
   }
 
