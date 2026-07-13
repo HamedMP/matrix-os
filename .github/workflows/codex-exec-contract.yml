@@ -1,0 +1,65 @@
+name: Codex Exec Contract
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 5 * * *"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/codex-exec-contract.yml"
+      - "packages/gateway/src/coding-agents/codex-exec-contract.json"
+      - "packages/gateway/src/coding-agents/codex-events.ts"
+      - "packages/gateway/src/coding-agents/codex-version.ts"
+      - "scripts/check-codex-exec-contract.mjs"
+  pull_request:
+    paths:
+      - ".github/workflows/codex-exec-contract.yml"
+      - "packages/gateway/src/coding-agents/codex-exec-contract.json"
+      - "packages/gateway/src/coding-agents/codex-events.ts"
+      - "packages/gateway/src/coding-agents/codex-version.ts"
+      - "scripts/check-codex-exec-contract.mjs"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-exec-contract
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify latest Codex JSONL contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Resolve latest published version
+        id: latest
+        run: |
+          set -euo pipefail
+          version="$(pnpm view @openai/codex version --json | node -e 'let value=""; process.stdin.on("data", chunk => value += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(value)))')"
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch tagged JSONL schema
+        env:
+          CODEX_VERSION: ${{ steps.latest.outputs.version }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --max-time 30 \
+            "https://raw.githubusercontent.com/openai/codex/rust-v${CODEX_VERSION}/codex-rs/exec/src/exec_events.rs" \
+            --output /tmp/codex-exec-events.rs
+          test -s /tmp/codex-exec-events.rs
+
+      - name: Verify published version and schema digest
+        env:
+          CODEX_VERSION: ${{ steps.latest.outputs.version }}
+        run: node scripts/check-codex-exec-contract.mjs "$CODEX_VERSION" /tmp/codex-exec-events.rs
