@@ -1363,6 +1363,42 @@ export class GatewayClient {
       body: JSON.stringify({ token, platform }),
     });
   }
+
+  /**
+   * Authenticated GET against an owner file-browser API path (`/api/files/*`,
+   * `/api/projects`). The caller builds the full path + query; auth headers, the
+   * base routing query, and the default timeout are applied here. Parsing lives
+   * in `lib/matrix-files.ts` so this only exposes a bounded read surface.
+   */
+  async fetchOwnerFilesApi(path: string): Promise<Response> {
+    return this.fetchGateway(path);
+  }
+
+  /**
+   * Authenticated GET of a raw owner home file (`/files/<rel-path>`). Path
+   * segments are URL-encoded while directory separators are preserved.
+   */
+  async fetchOwnerHomeFile(relPath: string, init: RequestInit = {}): Promise<Response> {
+    return this.fetchGateway(`/files/${encodeHomeFilePath(relPath)}`, init);
+  }
+
+  /**
+   * Absolute, base-query-aware URL for a raw owner home file. Used for
+   * authenticated `<Image>` loads that carry the Authorization header via
+   * `getAuthorizationHeader()` and cannot go through the fetch wrapper.
+   */
+  homeFileUrl(relPath: string): string {
+    return this.withBaseQuery(`${this.httpUrl}/files/${encodeHomeFilePath(relPath)}`);
+  }
+}
+
+/** Encodes each path segment while preserving `/` separators. */
+export function encodeHomeFilePath(relPath: string): string {
+  return relPath
+    .split("/")
+    .filter((segment) => segment.length > 0)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
 }
 
 function appendQuery(url: string, query: string): string {
