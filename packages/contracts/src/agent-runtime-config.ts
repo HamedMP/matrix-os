@@ -1,12 +1,9 @@
 import { z } from "zod/v4";
-
-const SAFE_SLUG = /^[a-z0-9][a-z0-9_-]{0,79}$/;
-const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+import { IsoTimestampSchema, SAFE_SLUG } from "./primitives.js";
 
 const SafeSlugSchema = z.string().min(1).max(80).regex(SAFE_SLUG);
 const SafeLabelSchema = z.string().trim().min(1).max(120);
 const ModelReferenceSchema = z.string().trim().min(1).max(160);
-const IsoTimestampSchema = z.string().regex(ISO_DATETIME);
 
 export const AgentRuntimeIdSchema = z.enum(["hermes", "openclaw"]);
 export const AgentEffortSchema = z.enum(["low", "medium", "high", "max"]);
@@ -41,6 +38,14 @@ export const AgentProviderAuthStatusSchema = z.object({
       code: "custom",
       path: ["authenticated"],
       message: "Authenticated status must agree with readiness",
+    });
+  }
+  if (status.state === "action_required"
+    && (status.action === undefined || status.action === "none")) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["action"],
+      message: "Action-required auth status must include a concrete action",
     });
   }
 });
@@ -192,12 +197,19 @@ export const AgentRuntimeSelectionSchema = z.object({
   }
 });
 
+// Custom base URLs configure messaging runtimes; the Chat kernel has no base-URL auth path.
+export const AgentChatAuthKindSchema = z.enum([
+  "platform",
+  "api_key",
+  "oauth_login",
+]);
+
 export const AgentChatSelectionSchema = z.object({
   provider: SafeSlugSchema,
   model: ModelReferenceSchema,
   effort: AgentEffortSchema,
   source: z.enum(["saved", "default"]),
-  authKind: z.enum(["platform", "api_key", "oauth_login"]),
+  authKind: AgentChatAuthKindSchema,
 }).strict();
 
 export const AgentMessagingSelectionSchema = z.object({
@@ -206,6 +218,13 @@ export const AgentMessagingSelectionSchema = z.object({
   model: ModelReferenceSchema.nullable(),
   configured: z.boolean(),
 }).strict().superRefine((selection, ctx) => {
+  if ((selection.provider === null) !== (selection.model === null)) {
+    ctx.addIssue({
+      code: "custom",
+      path: [selection.provider === null ? "provider" : "model"],
+      message: "Messaging provider and model must both be set or both be null",
+    });
+  }
   const hasPair = selection.provider !== null && selection.model !== null;
   if (selection.configured !== hasPair) {
     ctx.addIssue({
@@ -237,6 +256,12 @@ export const LegacyAgentSettingsViewSchema = z.object({
   availableEfforts: z.array(AgentEffortSchema).max(4),
   defaults: LegacyAgentKernelSchema,
 }).strict();
+const LegacyCompatibleAgentSettingsViewSchema = LegacyAgentSettingsViewSchema
+  .partial({
+    availableModels: true,
+    availableEfforts: true,
+    defaults: true,
+  });
 
 function chatSelectionsMatch(
   left: z.infer<typeof AgentChatSelectionSchema>,
@@ -267,16 +292,40 @@ export const AgentSettingsViewSchema = LegacyAgentSettingsViewSchema.extend({
       message: "Messaging runtime must be selected",
     });
   }
+  const effectiveLegacyModel = view.kernel.model ?? view.defaults.model;
+  const effectiveLegacyEffort = view.kernel.effort ?? view.defaults.effort;
+  if (effectiveLegacyModel !== view.chat.model
+    || effectiveLegacyEffort !== view.chat.effort) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["chat"],
+      message: "Chat selection must match effective legacy settings",
+    });
+  }
+  const expectedSource = view.kernel.model === null ? "default" : "saved";
+  if (view.chat.source !== expectedSource) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["chat", "source"],
+      message: "Chat source must match legacy model selection",
+    });
+  }
   const chatProvider = view.providers.find((provider) =>
     provider.runtime === null
     && provider.id === view.chat.provider
     && provider.scopes.includes("chat")
   );
-  if (!chatProvider?.models.some((model) => model.id === view.chat.model)) {
+  const chatModel = chatProvider?.models.find((model) => model.id === view.chat.model);
+  if (!chatModel) {
     ctx.addIssue({ code: "custom", path: ["chat", "model"], message: "Chat model is not cataloged" });
+  } else if (!chatModel.efforts.includes(view.chat.effort)) {
+    ctx.addIssue({ code: "custom", path: ["chat", "effort"], message: "Chat effort is not supported" });
   }
   if (!view.availableModels.some((model) => model.id === view.chat.model)) {
     ctx.addIssue({ code: "custom", path: ["availableModels"], message: "Legacy model catalog is incomplete" });
+  }
+  if (!view.availableEfforts.includes(view.chat.effort)) {
+    ctx.addIssue({ code: "custom", path: ["availableEfforts"], message: "Legacy effort catalog is incomplete" });
   }
   const messaging = view.currentSelection.messaging;
   if (messaging.configured) {
@@ -297,12 +346,15 @@ export const AgentSettingsViewSchema = LegacyAgentSettingsViewSchema.extend({
 
 export const AgentSettingsCompatibleViewSchema = z.union([
   AgentSettingsViewSchema,
-  LegacyAgentSettingsViewSchema,
+  LegacyCompatibleAgentSettingsViewSchema,
 ]);
 
 const HttpsUrlSchema = z.string().min(8).max(2048).url().refine(
-  (value) => URL.canParse(value) && new URL(value).protocol === "https:",
-  { message: "Provider base URL must use HTTPS" },
+  (value) => {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.username === "" && url.password === "";
+  },
+  { message: "Provider base URL must use HTTPS without embedded credentials" },
 );
 
 export const AgentSettingsUpdateSchema = z.object({

@@ -1,13 +1,13 @@
 import { z } from "zod/v4";
+import { IsoTimestampSchema, SAFE_SLUG } from "./primitives.js";
 
 export const CODEX_VERIFIED_VERSION = "0.146.0";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 export * from "./agent-runtime-config.js";
+export { IsoTimestampSchema } from "./primitives.js";
 
 const SAFE_ID_BODY = /^[A-Za-z0-9_-]+$/;
-const SAFE_SLUG = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const SAFE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
-const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const UNSAFE_DISPLAY_TEXT = /(stack trace|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+)/i;
 const UNSAFE_ASSISTANT_PREVIEW_TEXT =
   /(postgres(?:ql)?:\/\/|mysql:\/\/|sqlite:|pipedream|twilio|openai|anthropic|constraint|stack trace|zod|issues|\/home\/|\/tmp\/|\/var\/|\/opt\/|\/etc\/|\/root\/|\/Users\/|[A-Za-z]:[\\/]|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+|password\s*[=:]|eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}|ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{12,}|xox[baprs]-[A-Za-z0-9-]{10,}|sk_(?:live|test)_[A-Za-z0-9]{12,}|AKIA[0-9A-Z]{16}|token|secret|private key|db\.internal|localhost|127\.0\.0\.1)/i;
@@ -109,7 +109,6 @@ function pickShellSessionWord<T>(list: readonly T[]): T {
 export function createShellSessionName(): string {
   return `${pickShellSessionWord(SHELL_SESSION_ADJECTIVES)}-${pickShellSessionWord(SHELL_SESSION_NOUNS)}`;
 }
-
 export const SafeDisplayStringSchema = boundedDisplayText(120, 512);
 export const SafeAssistantPreviewSourceTextSchema = boundedText(16_000, 64 * 1024)
   .refine((value) => !UNSAFE_ASSISTANT_PREVIEW_TEXT.test(value), { message: "Text is not safe for assistant preview display" });
