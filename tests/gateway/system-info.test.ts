@@ -291,6 +291,41 @@ describe("T135: System info", () => {
     rmSync(homePath, { recursive: true, force: true });
   });
 
+  it("reports the active kernel model and effort from owner config", () => {
+    const homePath = tmpHome();
+    writeFileSync(
+      join(homePath, "system", "config.json"),
+      JSON.stringify({ kernel: { model: "claude-sonnet-4-5", effort: "max" } }),
+    );
+
+    const info = getSystemInfo(homePath);
+
+    expect(info.model).toBe("claude-sonnet-4-5");
+    expect(info.effort).toBe("max");
+    rmSync(homePath, { recursive: true, force: true });
+  });
+
+  it("reports the kernel defaults when owner config is absent", () => {
+    const homePath = tmpHome();
+
+    const info = getSystemInfo(homePath);
+
+    expect(info.model).toBe("claude-opus-4-6");
+    expect(info.effort).toBe("high");
+    rmSync(homePath, { recursive: true, force: true });
+  });
+
+  it("reports the kernel defaults when owner config is malformed", () => {
+    const homePath = tmpHome();
+    writeFileSync(join(homePath, "system", "config.json"), "{not json");
+
+    const info = getSystemInfo(homePath);
+
+    expect(info.model).toBe("claude-opus-4-6");
+    expect(info.effort).toBe("high");
+    rmSync(homePath, { recursive: true, force: true });
+  });
+
   it("counts skills", () => {
     const homePath = tmpHome();
     mkdirSync(join(homePath, ".agents", "skills", "summarize"), { recursive: true });
