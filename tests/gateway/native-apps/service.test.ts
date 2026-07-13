@@ -309,6 +309,24 @@ describe("NativeAppSessionService", () => {
     });
   });
 
+  it("does not evict a session while xpra is still starting", async () => {
+    let firstReady = false;
+    const { service, children } = createService({
+      maxSessionsTotal: 1,
+      readinessProbe: vi.fn(async () => firstReady),
+      readinessRetryMs: 5,
+      readinessTimeoutMs: 100,
+    });
+    const firstLaunch = service.launchSession({ ownerId: "alice", appId: "xterm" });
+    await vi.waitFor(() => expect(children).toHaveLength(1));
+
+    await expect(service.launchSession({ ownerId: "bob", appId: "xcalc" }))
+      .rejects.toMatchObject({ code: "session_limit" });
+    firstReady = true;
+
+    await expect(firstLaunch).resolves.toMatchObject({ status: "running" });
+  });
+
   it("rechecks owner capacity after asynchronous xpra availability checks", async () => {
     const resolvers: Array<(available: boolean) => void> = [];
     const commandExists = vi.fn(async () => new Promise<boolean>((resolve) => {
@@ -436,6 +454,26 @@ describe("NativeAppSessionService", () => {
     children[0].emit("error", new Error("spawn exploded"));
 
     expect(warn).toHaveBeenCalledWith("[native-apps] child error:", "spawn exploded", "stderr:", "display failed");
+    warn.mockRestore();
+  });
+
+  it("logs bounded xpra stderr when a child exits during graceful termination", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { service, children } = createService();
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    (children[0].stderr as EventEmitter).emit("data", Buffer.from("cleanup warning"));
+    children[0].kill = vi.fn((signal?: NodeJS.Signals) => {
+      if (signal === "SIGTERM") children[0].emit("exit", 0, signal);
+      return true;
+    });
+
+    await service.terminateSession("alice", session.id);
+
+    expect(warn).toHaveBeenCalledWith("[native-apps] child exited:", {
+      code: 0,
+      signal: "SIGTERM",
+      stderr: "cleanup warning",
+    });
     warn.mockRestore();
   });
 

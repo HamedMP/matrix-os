@@ -449,7 +449,7 @@ export class NativeAppSessionService {
     });
     child.on("exit", (code, signal) => {
       const stderr = stderrTail.trim();
-      if (stderr && record.status !== "terminated") {
+      if (stderr) {
         console.warn("[native-apps] child exited:", { code, signal, stderr });
       }
       if (record.status === "starting") record.status = "failed";
@@ -522,6 +522,7 @@ export class NativeAppSessionService {
   private async evictLeastRecentlyTouched(): Promise<void> {
     let candidate: NativeAppSessionRecord | null = null;
     for (const record of this.sessions.values()) {
+      if (record.status !== "running") continue;
       if (!candidate || record.lastTouched < candidate.lastTouched) {
         candidate = record;
       }
