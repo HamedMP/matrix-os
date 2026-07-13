@@ -73,7 +73,7 @@ As a user organizing terminal work, I want a default "main" workspace containing
 1. **Given** a fresh Matrix OS home, **When** the user opens the terminal, **Then** a `main` workspace exists (created on demand) and the first tab opens inside it.
 2. **Given** a workspace with tabs, **When** the user adds a terminal tab in the web shell, **Then** a zellij tab is created in the same workspace session instead of a new zellij session.
 3. **Given** two devices attached to the same workspace, **When** device A switches to tab 2, **Then** device B's focused tab is unchanged.
-4. **Given** existing per-tab legacy sessions from before this change, **When** the user opens the terminal, **Then** legacy sessions remain listed and attachable (no forced migration), and new tabs use the workspace model.
+4. **Given** existing per-tab legacy sessions from before this change, **When** the user opens the terminal, **Then** exited legacy sessions are converted into `main`-workspace tabs automatically, live legacy sessions remain attachable with a "Move to workspace" affordance (never force-killed), and all new tabs use the workspace model.
 5. **Given** the CLI, **When** the user runs `matrix shell ls`, **Then** workspaces are listed with their tabs, and `matrix shell connect -c <workspace>` attaches to the workspace (optionally `--tab <name>`).
 
 ---
@@ -132,8 +132,8 @@ As an operator of a small VPS, I want terminal infrastructure to have caps and c
 **Sizing**
 
 - **FR-006**: Each session MUST have a canonical size (cols x rows) owned by the gateway, persisted in the session registry, defaulting to 200x50 bounded by existing resize limits (cols 1-500, rows 1-200).
-- **FR-007**: Clients MUST declare a client class on attach: `hard` (cannot scale its render: CLI/TTY) or `soft` (can scale: web, native mobile). The WS attach handshake and both WS routes MUST carry this; absent declaration defaults to `hard` for `/ws/terminal/session` (CLI compatibility) and `soft` for web/mobile clients.
-- **FR-008**: Canonical size MUST equal the component-wise minimum across live hard clients' declared sizes; with no hard clients it retains the persisted value. Recomputation is debounced (default 500 ms).
+- **FR-007**: Clients MUST declare a client class on attach: `hard` (cannot scale its render: CLI/TTY) or `soft` (can scale: web, native mobile). Both WS routes MUST carry this in the attach handshake. A connection without a class declaration (pre-upgrade client on either route) is classified `legacy`, never `hard`: legacy resize frames are applied (today's behavior) only while zero classified clients are attached to the session; once any classified client attaches, legacy clients' resize frames become viewport hints only. This guarantees an un-upgraded phone or browser can never shrink a session that an upgraded client is using, while pure-legacy setups behave exactly as today.
+- **FR-008**: Canonical size MUST equal the component-wise minimum across live hard clients' declared sizes; with no hard clients it retains the persisted value (or, in legacy-only sessions, follows legacy resizes per FR-007). Recomputation is debounced (default 500 ms).
 - **FR-009**: The gateway MUST resize every attach PTY to the canonical size and MUST ignore (but record as hints) resize frames that did not come from a hard client's own declared-size change.
 - **FR-010**: The web shell MUST render soft-client views by scaling the canonical grid to fit the container (font-size fit plus CSS transform fallback), with horizontal pan when scaled below the legibility floor. The `FitAddon`-driven `sendTerminalResize` path is removed for zellij sessions.
 - **FR-011**: The native mobile client MUST stop sending resize frames for zellij sessions and MUST render the canonical grid scaled with pinch-zoom/pan.
@@ -142,9 +142,16 @@ As an operator of a small VPS, I want terminal infrastructure to have caps and c
 
 - **FR-012**: A workspace is exactly one zellij session. The gateway MUST expose workspace CRUD plus tab list/create/rename/close/focus via `/api/terminal` routes, validated with Zod at the boundary, all mutating endpoints behind `bodyLimit`.
 - **FR-013**: A `main` workspace MUST be created on demand at first terminal use.
-- **FR-014**: The web shell MUST map UI terminal tabs to zellij tabs within the active workspace and provide a workspace switcher. New tabs default into the active workspace; legacy per-tab sessions remain attachable without migration.
+- **FR-014**: The web shell MUST map UI terminal tabs to zellij tabs within the active workspace and provide a workspace switcher. New tabs default into the active workspace; legacy per-tab sessions remain attachable and migrate per FR-021..024.
 - **FR-015**: Per-device tab focus MUST be supported: switching tabs on one device does not change another device's focused tab. Mechanism is gated on Spike S1 (see Spikes); if zellij cannot provide per-client focus control programmatically, tab switching falls back to injecting the configured tab-navigation key sequence into that client's own attach PTY.
 - **FR-016**: The CLI MUST list workspaces with tabs (`matrix shell ls`), attach to a workspace (`matrix shell connect -c <workspace>`), and optionally select a tab (`--tab <name>`), reusing the existing create-if-missing semantics.
+
+**Migration of existing surfaces (web and CLI)**
+
+- **FR-021**: The gateway MUST classify every registry entry on load: sessions carrying workspace metadata are `workspace`; all others are `legacy`. Legacy sessions remain listable and attachable through both WS routes for the life of this feature; no data is dropped.
+- **FR-022**: The gateway MUST provide an idempotent migration operation (`POST /api/terminal/workspaces/migrate`) that converts legacy sessions into workspace tabs: for each exited or idle legacy session (no attached clients), create a tab in the target workspace with the same working directory and display name, seed the tab's scrollback reference from the legacy session's scrollback file, then delete the legacy zellij session and prune its registry entry. Live legacy sessions (attached clients or running foreground processes) are reported as skipped, never force-killed — a running process cannot be moved between zellij sessions.
+- **FR-023**: The web shell MUST migrate automatically and visibly: on first load with workspace support, persisted UI tabs that reference exited legacy sessions are recreated as `main`-workspace tabs via FR-022; UI tabs on live legacy sessions keep working unchanged and display a per-tab "Move to workspace" affordance that runs the same migration for that session once it is idle. All new tabs are created as workspace tabs from the first workspace-aware release.
+- **FR-024**: The CLI MUST resolve names across both models: `matrix shell connect -c <name>` matches a workspace first, then a legacy session, and prints a one-line notice when attaching to a legacy session (`legacy session; run 'matrix shell migrate' to convert`). `matrix shell ls` labels each entry `workspace` or `legacy`, and `matrix shell migrate [name]` invokes FR-022. `matrix run -it` creates its command surface as a tab in the target workspace (default `main`) instead of a new `run-*` session, keeping the existing `--session` flag as a workspace selector.
 
 **Resource management**
 
@@ -170,7 +177,7 @@ As an operator of a small VPS, I want terminal infrastructure to have caps and c
 ## Integration Wiring
 
 - **Startup**: gateway boots as today; the reaper sweep and coalescing flush timers are created in gateway startup and disposed in the shutdown drain path alongside existing WS shutdown handling.
-- **Registry migration**: `~/system/shell-sessions.json` gains optional fields (`kind: "workspace" | "legacy"`, `canonicalSize`, `tabs`). Old files load unchanged (fields optional, defaults applied); no schema-version break. Writes remain atomic via the existing atomic-write helper.
+- **Registry migration**: `~/system/shell-sessions.json` — the zellij `ShellRegistry` persist file (`packages/gateway/src/shell/registry.ts`) — gains optional fields (`kind: "workspace" | "legacy"`, `canonicalSize`, `tabs`). Old files load unchanged (fields optional, defaults applied); no schema-version break. Writes remain atomic via the existing atomic-write helper. This file is distinct from `~/system/terminal-sessions.json`, which belongs to the deprecated raw-PTY `SessionRegistry` (`packages/gateway/src/session-registry.ts`); that registry and file are untouched by this spec, and workspace metadata, canonical sizes, and reaper state live exclusively in `shell-sessions.json`.
 - **Cross-surface sync**: web shell (`TerminalApp`/`PaneGrid`/`TerminalPane`), CLI (`shell.ts`, `shell-client.ts`), native mobile (`terminal-client.ts`), and gateway must ship the attach-metadata change compatibly: the gateway treats missing client-class metadata with the FR-007 defaults so old clients keep working.
 - **Zellij config**: shipped config stays chrome-free; tab-navigation keybinds used by FR-015 fallback are pinned in the generated `config.kdl` so injection sequences are deterministic.
 
@@ -196,7 +203,7 @@ As an operator of a small VPS, I want terminal infrastructure to have caps and c
 
 1. **Phase 1 — output pipeline (gateway only)**: send-first delivery, recorder election, coalesced persistence, WS flow control, exited-session reaper. No client changes; largest latency and write-amplification win; independently shippable.
 2. **Phase 2 — canonical sizing**: attach metadata + canonical size arbiter in gateway; web scaled rendering; mobile stops resizing; CLI declares hard size. Shippable behind compatible defaults.
-3. **Phase 3 — workspaces/tabs**: gateway tab routes hardening, web workspace/tab UI, CLI `--tab`/workspace listing, mobile tab bar. Depends on Spike S1.
+3. **Phase 3 — workspaces/tabs with migration**: gateway tab routes hardening plus the FR-022 migration operation, web workspace/tab UI with automatic legacy conversion (FR-023), CLI workspace resolution, labeling, `migrate`, and `run -it` tab targeting (FR-024). Depends on Spike S1. Mobile and desktop surfaces adopt the same gateway contract in follow-up work coordinated against their in-flight PRs.
 
 ## Spikes (throwaway code before Phase 2/3 implementation)
 
@@ -216,5 +223,5 @@ As an operator of a small VPS, I want terminal infrastructure to have caps and c
 
 - True per-client reflow of one PTY (upstream zellij limitation; revisit if zellij ships independent per-client rendering).
 - Workspace-level layout persistence beyond zellij's own (`~/system/layouts/*.kdl` flows unchanged).
-- Desktop (Electron) and macOS terminal surfaces consume the same gateway contract; dedicated UI work tracked separately.
-- Automatic migration of legacy per-tab sessions into workspaces (manual/opportunistic only).
+- Desktop (Electron/macOS) and native mobile workspace UI: both consume the same gateway contract, but their migration lands as follow-up work coordinated against those surfaces' in-flight PRs (web and CLI migrate in Phase 3 per FR-021..024).
+- Force-migrating live legacy sessions with running foreground processes (impossible to move between zellij sessions; they migrate when idle or exit).
