@@ -1,6 +1,7 @@
+import { useEffect } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { RuntimeSummary } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
@@ -8,6 +9,7 @@ import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { AgentCockpit } from "@/components/agent-cockpit";
 import { AGENT_WORKSPACE_CONNECTION_LABELS, capabilityEnabled } from "@/components/agents/agent-workspace-shared";
 import { useRuntimeSummary } from "@/lib/use-runtime-summary";
+import { routedReviewIdParam } from "./reviews";
 
 type NavCard = {
   key: string;
@@ -50,8 +52,17 @@ function navCardsForSummary(summary: RuntimeSummary): NavCard[] {
 export default function AgentsScreen() {
   const { theme } = useUnistyles();
   const router = useRouter();
+  const routeParams = useLocalSearchParams<{ reviewId?: string | string[] }>();
+  const routedReviewId = routedReviewIdParam(routeParams.reviewId);
   const { client, connectionState } = useGateway();
   const { state, refreshing, onRefresh } = useRuntimeSummary();
+
+  // Existing notification links target /agents?reviewId=<id>; the reviews UI now
+  // lives on a dedicated screen, so forward valid review deep links there.
+  useEffect(() => {
+    if (!routedReviewId) return;
+    router.replace({ pathname: "/agents/reviews", params: { reviewId: routedReviewId } } as never);
+  }, [routedReviewId, router]);
 
   if (state.status === "loading") {
     return (

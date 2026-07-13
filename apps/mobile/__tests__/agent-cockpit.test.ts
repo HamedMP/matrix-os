@@ -210,6 +210,37 @@ describe("buildAgentCockpit", () => {
       expect(model.projects[0].label).toBe("deleted-project");
       expect(model.projects[0].threads.map((item) => item.id)).toEqual(["thread_ghost"]);
     });
+
+    it("keeps a group with an attention badge for attention-only unknown projects", () => {
+      const approval = thread({
+        id: "thread_approval",
+        projectId: "deleted-project",
+        status: "waiting_for_approval",
+        attention: "approval_required",
+      });
+      const model = buildAgentCockpit(summaryLists([approval], [approval], []));
+
+      const group = model.projects.find((entry) => entry.projectId === "deleted-project");
+      expect(group).toBeDefined();
+      expect(group?.label).toBe("deleted-project");
+      expect(group?.attentionCount).toBe(1);
+      expect(group?.threads).toEqual([]);
+    });
+
+    it("keeps a No project group for attention-only threads without a project", () => {
+      const approval = thread({
+        id: "thread_approval",
+        status: "waiting_for_approval",
+        attention: "approval_required",
+      });
+      const model = buildAgentCockpit(summaryLists([approval], [approval], []));
+
+      const group = model.projects.find((entry) => entry.projectId === null);
+      expect(group).toBeDefined();
+      expect(group?.label).toBe("No project");
+      expect(group?.attentionCount).toBe(1);
+      expect(group?.threads).toEqual([]);
+    });
   });
 });
 

@@ -7,6 +7,7 @@ jest.mock("@/lib/feature-flags", () => ({
 }));
 
 const mockRouterPush = jest.fn();
+const mockRouterReplace = jest.fn();
 const mockSearchParams: { reviewId?: string | string[] } = {};
 
 jest.mock("expo-router", () => ({
@@ -17,7 +18,9 @@ jest.mock("expo-router", () => ({
   },
   useRouter: () => ({
     push: mockRouterPush,
+    replace: mockRouterReplace,
   }),
+  Stack: { Screen: () => null },
 }));
 
 import React from "react";
@@ -300,6 +303,49 @@ describe("AgentsScreen", () => {
     expect(mockRouterPush).toHaveBeenCalledWith("/agents/providers");
     expect(mockRouterPush).toHaveBeenCalledWith("/agents/reviews");
     expect(mockRouterPush).toHaveBeenCalledWith("/agents/terminals");
+  });
+
+  it("forwards a valid review deep link to the reviews screen", async () => {
+    mockSearchParams.reviewId = "review_abc123";
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await act(async () => {});
+
+    expect(mockRouterReplace).toHaveBeenCalledWith({
+      pathname: "/agents/reviews",
+      params: { reviewId: "review_abc123" },
+    });
+  });
+
+  it("ignores an invalid review deep link without redirecting", async () => {
+    mockSearchParams.reviewId = "../etc/passwd";
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("Agent workspace");
+
+    expect(mockRouterReplace).not.toHaveBeenCalled();
   });
 
   it("shows an agent workspace offline banner without hiding the hydrated summary", async () => {

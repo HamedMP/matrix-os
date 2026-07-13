@@ -111,6 +111,14 @@ function buildProjectGroups(
     ensureGroup(project.id, project.label, project.status);
   }
 
+  // Attention threads are excluded from group thread lists but still drive the
+  // per-project attention badge; ensure their project renders even when it is
+  // unknown to the summary and has no other listed threads.
+  for (const thread of needsAttention) {
+    const projectId = thread.projectId ?? null;
+    ensureGroup(projectId, projectId === null ? "No project" : projectId, "unknown");
+  }
+
   for (const thread of groupedThreads) {
     if (attentionIds.has(thread.id)) continue;
     const projectId = thread.projectId ?? null;
