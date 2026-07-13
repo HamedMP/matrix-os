@@ -534,6 +534,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
       headers.set('host', `${machine.handle}.matrix-os.com`);
       headers.set('x-forwarded-host', host);
+      headers.set('x-forwarded-prefix', `/vm/${machine.handle}`);
       headers.set('x-forwarded-proto', 'https');
       headers.set('accept-encoding', 'identity');
       headers.set('connection', 'close');

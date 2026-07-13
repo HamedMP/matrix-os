@@ -76,6 +76,25 @@ describe("native app routes", () => {
     expect(response.status).toBe(401);
   });
 
+  it("uses the configured VPS handle as the single-user native app principal", async () => {
+    const previousHandle = process.env.MATRIX_HANDLE;
+    const previousUserId = process.env.MATRIX_USER_ID;
+    process.env.MATRIX_HANDLE = "alice";
+    delete process.env.MATRIX_USER_ID;
+    try {
+      const { app } = createApp();
+
+      const response = await app.request("/api/native-apps");
+
+      expect(response.status).toBe(200);
+    } finally {
+      if (previousHandle === undefined) delete process.env.MATRIX_HANDLE;
+      else process.env.MATRIX_HANDLE = previousHandle;
+      if (previousUserId === undefined) delete process.env.MATRIX_USER_ID;
+      else process.env.MATRIX_USER_ID = previousUserId;
+    }
+  });
+
   it("lists curated native apps for an authenticated owner", async () => {
     const { app } = createApp("alice");
 
@@ -135,6 +154,24 @@ describe("native app routes", () => {
     expect(body.session).not.toHaveProperty("pid");
     expect(response.headers.get("set-cookie")).toContain("matrix_native_session__session_aaaaaaaaaaaaaaaaaaaaaaaa=");
     expect(response.headers.get("set-cookie")).toContain("HttpOnly");
+  });
+
+  it("scopes stream cookies to the forwarded explicit VM route", async () => {
+    const { app } = createApp("alice");
+
+    const response = await app.request("/api/native-apps/xterm/sessions", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: {
+        "Content-Type": "application/json",
+        "X-Forwarded-Prefix": "/vm/7a",
+      },
+    });
+
+    expect(response.status).toBe(201);
+    expect(response.headers.get("set-cookie")).toContain(
+      "Path=/vm/7a/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/",
+    );
   });
 
   it("bootstraps the stream cookie from the launch stream URL when the launch Set-Cookie is unavailable", async () => {
@@ -281,6 +318,31 @@ describe("native app routes", () => {
     } finally {
       if (previous === undefined) delete process.env.NEXT_PUBLIC_GATEWAY_URL;
       else process.env.NEXT_PUBLIC_GATEWAY_URL = previous;
+    }
+  });
+
+  it("keeps production stream cookies secure when the configured gateway URL is loopback HTTP", async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousGatewayUrl = process.env.NEXT_PUBLIC_GATEWAY_URL;
+    process.env.NODE_ENV = "production";
+    process.env.NEXT_PUBLIC_GATEWAY_URL = "http://127.0.0.1:4000";
+    try {
+      const { app } = createApp("alice");
+
+      const response = await app.request("/api/native-apps/xterm/sessions", {
+        method: "POST",
+        body: JSON.stringify({}),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      expect(response.status).toBe(201);
+      expect(response.headers.get("set-cookie")).toContain("SameSite=None");
+      expect(response.headers.get("set-cookie")).toContain("Secure");
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousGatewayUrl === undefined) delete process.env.NEXT_PUBLIC_GATEWAY_URL;
+      else process.env.NEXT_PUBLIC_GATEWAY_URL = previousGatewayUrl;
     }
   });
 
@@ -546,6 +608,29 @@ describe("native app routes", () => {
     handler.onClose(null, ws);
     await new Promise<void>((resolve) => setImmediate(resolve));
 
+    expect(wsMock.WebSocket).not.toHaveBeenCalled();
+  });
+
+  it("closes oversized websocket frames before opening an upstream socket", async () => {
+    const { service } = createApp("alice");
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    const streamToken = service.streamCookieValue(session.id);
+    const context = {
+      req: {
+        param: (name: string) => name === "sessionId" ? session.id : "",
+        path: `/api/native-apps/sessions/${session.id}/stream/websocket`,
+        raw: { headers: new Headers({ Cookie: `${service.streamCookieName(session.id)}=${streamToken}` }) },
+        url: `http://matrix.local/api/native-apps/sessions/${session.id}/stream/websocket`,
+      },
+    };
+    const handler = createNativeWebSocketHandler(context as never, service);
+    const ws = { close: vi.fn(), send: vi.fn() };
+
+    handler.onOpen(null, ws);
+    handler.onMessage({ data: new Uint8Array(4 * 1024 * 1024 + 1) }, ws);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(ws.close).toHaveBeenCalledTimes(1);
     expect(wsMock.WebSocket).not.toHaveBeenCalled();
   });
 });

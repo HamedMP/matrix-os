@@ -2,7 +2,7 @@
 
 ## Summary
 
-Native Linux Apps lets the Matrix shell open a curated Linux desktop app running on the user's Matrix VPS/cloud runtime. The MVP supports `xterm` only, launched as the non-root runtime user through `xpra`, and streamed back into a Matrix window through same-origin authenticated gateway routes.
+Native Linux Apps lets the Matrix shell open curated Linux desktop apps running on the user's Matrix VPS/cloud runtime. The MVP supports `xterm` and `xcalc`, launched as the non-root runtime user through `xpra`, and streamed back into a Matrix window through same-origin authenticated gateway routes.
 
 This is intentionally not a general native app platform. There is no manifest-supplied command execution, app store installation, custom Wayland/WebRTC compositor, or broad filesystem/network permission UI in this slice.
 
@@ -10,7 +10,7 @@ This is intentionally not a general native app platform. There is no manifest-su
 
 - Add a `linux-native` runtime surface for curated apps.
 - List curated native apps alongside normal Matrix apps.
-- Launch `xterm` through `xpra` with bounded display and port allocation.
+- Launch curated `xterm` and `xcalc` apps through `xpra` with bounded display and port allocation.
 - Embed the xpra HTML5 stream inside Canvas, Desktop, and mobile shell windows.
 - Enforce owner-bound sessions, short TTL cleanup, max sessions per user, non-root launch, and generic client errors.
 - Document the security model, enablement steps, and limitations.
@@ -99,7 +99,7 @@ Install only the MVP dependencies on the user runtime host:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y xpra xterm
+sudo apt-get install -y xpra xpra-html5 xterm x11-apps
 ```
 
 Then restart the Matrix gateway so `/api/native-apps` can detect `xpra`:

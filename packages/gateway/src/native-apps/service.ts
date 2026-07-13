@@ -96,6 +96,7 @@ export interface NativeAppSessionServiceOptions {
 
 const DEFAULT_TTL_MS = 30 * 60 * 1000;
 const COMMAND_CHECK_CACHE_TTL_MS = 5 * 60 * 1000;
+const COMMAND_CHECK_CACHE_MAX = 16;
 const COMMAND_CHECK_TIMEOUT_MS = 3000;
 const READINESS_RETRY_MS = 100;
 const READINESS_TIMEOUT_MS = 5000;
@@ -176,7 +177,7 @@ async function sleep(ms: number): Promise<void> {
 
 export class NativeAppSessionService {
   private readonly commandExists: (command: string) => Promise<boolean>;
-  private commandExistsCache: { available: boolean; checkedAt: number; command: string } | null = null;
+  private readonly commandExistsCache = new Map<string, { available: boolean; checkedAt: number }>();
   private readonly commandExistsCacheTtlMs: number;
   private readonly displayPool: PortPool;
   private readonly getuid: () => number | undefined;
@@ -248,12 +249,19 @@ export class NativeAppSessionService {
     if (!app) {
       throw new NativeAppError("app_unavailable", 404, "Native app is not available");
     }
+    const executable = app.command[0];
+    if (!executable || app.command.some((arg) => !SAFE_XPRA_CHILD_ARG.test(arg))) {
+      throw new NativeAppError("misconfigured", 500, "Native apps are not available on this runtime", "unsafe native app command");
+    }
     if (this.getuid() === 0) {
       throw new NativeAppError("misconfigured", 500, "Native apps are not available on this runtime", "root launch refused");
     }
     await this.enforceSessionCapacity(input.ownerId);
     if (!await this.cachedCommandExists("xpra")) {
       throw new NativeAppError("native_unavailable", 503, "Native apps are not available on this runtime", "xpra missing");
+    }
+    if (!await this.cachedCommandExists(executable)) {
+      throw new NativeAppError("native_unavailable", 503, "Native apps are not available on this runtime", "native app binary missing");
     }
     this.assertSessionCapacity(input.ownerId);
 
@@ -337,6 +345,10 @@ export class NativeAppSessionService {
     return { port: record.port };
   }
 
+  touchStreamSession(sessionId: string, streamToken: string): boolean {
+    return this.getStreamTarget(sessionId, streamToken) !== null;
+  }
+
   streamCookieName(sessionId: string): string {
     return `matrix_native_session__${sessionId}`;
   }
@@ -368,9 +380,6 @@ export class NativeAppSessionService {
   }
 
   private buildXpraArgs(app: NativeAppDefinition, display: number, port: number): string[] {
-    if (app.command.length === 0 || app.command.some((arg) => !SAFE_XPRA_CHILD_ARG.test(arg))) {
-      throw new NativeAppError("misconfigured", 500, "Native apps are not available on this runtime", "unsafe native app command");
-    }
     return [
       "start",
       `:${display}`,
@@ -450,15 +459,20 @@ export class NativeAppSessionService {
 
   private async cachedCommandExists(command: string): Promise<boolean> {
     const now = this.now();
-    if (
-      this.commandExistsCache
-      && this.commandExistsCache.command === command
-      && now - this.commandExistsCache.checkedAt < this.commandExistsCacheTtlMs
-    ) {
-      return this.commandExistsCache.available;
+    const cached = this.commandExistsCache.get(command);
+    if (cached && now - cached.checkedAt < this.commandExistsCacheTtlMs) {
+      this.commandExistsCache.delete(command);
+      this.commandExistsCache.set(command, cached);
+      return cached.available;
     }
     const available = await this.commandExists(command);
-    this.commandExistsCache = { command, available, checkedAt: now };
+    this.commandExistsCache.delete(command);
+    this.commandExistsCache.set(command, { available, checkedAt: now });
+    while (this.commandExistsCache.size > COMMAND_CHECK_CACHE_MAX) {
+      const oldest = this.commandExistsCache.keys().next().value;
+      if (oldest === undefined) break;
+      this.commandExistsCache.delete(oldest);
+    }
     return available;
   }
 

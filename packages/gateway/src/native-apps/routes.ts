@@ -15,6 +15,7 @@ const STREAM_FETCH_TIMEOUT_MS = 30_000;
 const STREAM_RESPONSE_BODY_MAX_BYTES = 16 * 1024 * 1024;
 const WS_PENDING_MAX_MESSAGES = 32;
 const WS_PENDING_MAX_BYTES = 256 * 1024;
+const WS_FRAME_MAX_BYTES = 4 * 1024 * 1024;
 const HOP_BY_HOP = new Set([
   "connection",
   "keep-alive",
@@ -40,6 +41,7 @@ const SAFE_UPSTREAM_REQUEST_HEADERS = [
 const NativeAppIdSchema = z.string().regex(SAFE_NATIVE_APP_ID);
 const NativeSessionIdSchema = z.string().regex(SAFE_NATIVE_SESSION_ID);
 const NativeStreamTokenSchema = z.string().regex(SAFE_NATIVE_STREAM_TOKEN);
+const SAFE_EXPLICIT_VM_PREFIX = /^\/vm\/[a-z0-9][a-z0-9-]{0,62}$/;
 const LaunchBodySchema = z.object({
   width: z.number().int().min(320).max(3840).optional(),
   height: z.number().int().min(240).max(2160).optional(),
@@ -153,9 +155,12 @@ function mapError(c: Context, err: unknown): Response {
 }
 
 function readPrincipal(c: Context): string {
+  const configuredUserId = process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE;
   return requireRequestPrincipal(c, {
     authEnabled: true,
+    configuredUserId,
     isLocalDevelopment: false,
+    isTrustedSingleUserGateway: Boolean(configuredUserId),
     requireAuthContextReady: true,
   }).userId;
 }
@@ -181,20 +186,25 @@ function shouldUseSecureStreamCookie(c: Context): boolean {
   if (process.env.MATRIX_NATIVE_APP_INSECURE_COOKIES === "1") return false;
   if (process.env.MATRIX_NATIVE_APP_SECURE_COOKIES === "1") return true;
   const configuredHttps = configuredPublicSchemeIsHttps();
-  if (configuredHttps !== null) return configuredHttps;
+  if (configuredHttps === true) return true;
   if (process.env.NODE_ENV === "production") return true;
+  if (configuredHttps === false) return false;
   return c.req.url.startsWith("https://");
 }
 
-function streamCookiePath(sessionId: string): string {
-  return `/api/native-apps/sessions/${sessionId}/stream/`;
+function streamCookiePath(c: Context, sessionId: string): string {
+  const forwardedPrefix = c.req.header("x-forwarded-prefix");
+  const routePrefix = forwardedPrefix && SAFE_EXPLICIT_VM_PREFIX.test(forwardedPrefix)
+    ? forwardedPrefix
+    : "";
+  return `${routePrefix}/api/native-apps/sessions/${sessionId}/stream/`;
 }
 
 function nativeStreamCookieOptions(c: Context, sessionId: string) {
   const secureCookie = shouldUseSecureStreamCookie(c);
   return {
     httpOnly: true,
-    path: streamCookiePath(sessionId),
+    path: streamCookiePath(c, sessionId),
     sameSite: secureCookie ? "None" : "Lax",
     secure: secureCookie,
     maxAge: 30 * 60,
@@ -401,7 +411,13 @@ export function createNativeWebSocketHandler(c: Context, service: NativeAppSessi
   const token = requestPath.capabilityToken
     ?? getCookie(c, service.streamCookieName(sessionId))
     ?? bootstrapToken;
-  const target = token ? service.getStreamTarget(sessionId, token) : null;
+  const streamToken = token ?? null;
+  if (!streamToken) {
+    return {
+      onOpen: (_evt: unknown, ws: { close(): void }) => ws.close(),
+    };
+  }
+  const target = service.getStreamTarget(sessionId, streamToken);
   if (!target) {
     return {
       onOpen: (_evt: unknown, ws: { close(): void }) => ws.close(),
@@ -431,6 +447,12 @@ export function createNativeWebSocketHandler(c: Context, service: NativeAppSessi
           ws._nativeResetPendingBytes?.();
         });
         upstream.on("message", (data) => {
+          if (!service.touchStreamSession(sessionId, streamToken) || websocketPayloadBytes(data) > WS_FRAME_MAX_BYTES) {
+            ws._nativeMarkClosed?.();
+            upstream.close();
+            ws.close();
+            return;
+          }
           if (typeof data === "string") ws.send?.(data);
           else if (data instanceof ArrayBuffer) ws.send?.(data);
           else if (Array.isArray(data)) ws.send?.(uint8ArrayFromBuffer(Buffer.concat(data)));
@@ -445,15 +467,22 @@ export function createNativeWebSocketHandler(c: Context, service: NativeAppSessi
     },
     onMessage(evt: { data: unknown }, ws: NativeWebSocketState) {
       if (ws._nativeClosed?.()) return;
+      const nextBytes = websocketPayloadBytes(evt.data);
+      if (nextBytes > WS_FRAME_MAX_BYTES || !service.touchStreamSession(sessionId, streamToken)) {
+        ws._nativeMarkClosed?.();
+        ws._nativeUpstream?.close();
+        ws.close();
+        return;
+      }
       if (ws._nativeUpstream && ws._nativeUpstreamOpen?.()) {
         ws._nativeUpstream.send(evt.data as never);
       } else {
         const pending = ensureNativeWebSocketPendingState(ws);
-        const nextBytes = websocketPayloadBytes(evt.data);
         if (
           pending.length >= WS_PENDING_MAX_MESSAGES
           || (ws._nativePendingBytes?.() ?? 0) + nextBytes > WS_PENDING_MAX_BYTES
         ) {
+          ws._nativeMarkClosed?.();
           ws.close();
           return;
         }

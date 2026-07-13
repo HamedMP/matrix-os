@@ -3042,6 +3042,7 @@ describe("platform proxy routing", () => {
     expect(headers.get("authorization")).toBeNull();
     expect(headers.get("cookie")).toBeNull();
     expect(headers.get("x-platform-user-id")).toBeNull();
+    expect(headers.get("x-forwarded-prefix")).toBe("/vm/alice-staging");
   });
 
   it("rejects explicit VM native app stream assets without a capability token", async () => {

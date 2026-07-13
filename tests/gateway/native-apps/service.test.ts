@@ -23,7 +23,7 @@ function createService(options: Partial<ConstructorParameters<typeof NativeAppSe
   });
   const service = new NativeAppSessionService({
     registry: createDefaultNativeAppRegistry(),
-    commandExists: vi.fn(async (command) => command === "xpra"),
+    commandExists: vi.fn(async (command) => ["xpra", "xterm", "xcalc"].includes(command)),
     getuid: () => 1000,
     killProcess: missingProcessGroup,
     randomId: vi.fn()
@@ -80,6 +80,20 @@ describe("NativeAppSessionService", () => {
 
     await expect(service.launchSession({ ownerId: "alice", appId: "chrome", width: 1024, height: 768 }))
       .rejects.toMatchObject({ code: "app_unavailable" });
+    expect(launched).toEqual([]);
+  });
+
+  it("rejects a curated app when its binary is not installed", async () => {
+    const commandExists = vi.fn(async (command: string) => command === "xpra");
+    const { service, launched } = createService({ commandExists });
+
+    await expect(service.launchSession({ ownerId: "alice", appId: "xterm" }))
+      .rejects.toMatchObject({
+        code: "native_unavailable",
+        clientMessage: "Native apps are not available on this runtime",
+      });
+
+    expect(commandExists).toHaveBeenCalledWith("xterm");
     expect(launched).toEqual([]);
   });
 
@@ -260,7 +274,9 @@ describe("NativeAppSessionService", () => {
     const first = service.launchSession({ ownerId: "alice", appId: "xterm" });
     const second = service.launchSession({ ownerId: "alice", appId: "xterm" });
     await vi.waitFor(() => expect(resolvers).toHaveLength(2));
-    for (const resolve of resolvers) resolve(true);
+    for (const resolve of resolvers.slice(0, 2)) resolve(true);
+    await vi.waitFor(() => expect(resolvers).toHaveLength(4));
+    for (const resolve of resolvers.slice(2)) resolve(true);
 
     const results = await Promise.allSettled([first, second]);
 
@@ -324,6 +340,21 @@ describe("NativeAppSessionService", () => {
     expect(service.inspectSession("alice", session.id)?.status).toBe("running");
   });
 
+  it("refreshes the native session lease for websocket traffic", async () => {
+    let now = 1_000;
+    const { service } = createService({ now: () => now, sessionTtlMs: 10 });
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    const token = service.streamCookieValue(session.id) ?? "";
+
+    now = 1_009;
+    expect(service.touchStreamSession(session.id, token)).toBe(true);
+    now = 1_018;
+    expect(service.touchStreamSession(session.id, token)).toBe(true);
+    await service.cleanupExpiredSessions();
+
+    expect(service.inspectSession("alice", session.id)?.status).toBe("running");
+  });
+
   it("returns a generic unavailable error when xpra is missing", async () => {
     const { service } = createService({
       commandExists: vi.fn(async () => false),
@@ -343,8 +374,9 @@ describe("NativeAppSessionService", () => {
     await service.launchSession({ ownerId: "alice", appId: "xterm" });
     await service.launchSession({ ownerId: "alice", appId: "xterm" });
 
-    expect(commandExists).toHaveBeenCalledTimes(1);
+    expect(commandExists).toHaveBeenCalledTimes(2);
     expect(commandExists).toHaveBeenCalledWith("xpra");
+    expect(commandExists).toHaveBeenCalledWith("xterm");
   });
 
   it("logs bounded xpra stderr when a child process errors", async () => {

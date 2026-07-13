@@ -21,6 +21,7 @@ type ViewerState =
   | { status: "terminated" };
 
 const REQUEST_TIMEOUT_MS = 10_000;
+const TERMINATION_ATTEMPTS = 3;
 const MAX_NATIVE_SESSION_LEASES = 64;
 
 interface NativeSessionLease {
@@ -53,7 +54,7 @@ function nativeApiPath(path: string): string {
 
 function explicitVmPrefix(): string {
   if (typeof window === "undefined") return "";
-  const match = window.location.pathname.match(/^\/vm\/([a-z][a-z0-9-]{2,30})(?:\/|$)/);
+  const match = window.location.pathname.match(/^\/vm\/([a-z0-9][a-z0-9-]{0,62})(?:\/|$)/);
   return match?.[1] ? `/vm/${match[1]}` : "";
 }
 
@@ -85,12 +86,20 @@ async function launchNativeSession(appId: string): Promise<NativeAppSession> {
 }
 
 async function terminateNativeSession(sessionId: string): Promise<void> {
-  await fetch(nativeApiPath(`/sessions/${sessionId}`), {
-    method: "DELETE",
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  }).catch((err: unknown) => {
-    console.warn("[native-app-viewer] terminate failed:", err instanceof Error ? err.message : String(err));
-  });
+  let lastFailure = "request failed";
+  for (let attempt = 0; attempt < TERMINATION_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetch(nativeApiPath(`/sessions/${sessionId}`), {
+        method: "DELETE",
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      if (response.ok || response.status === 404) return;
+      lastFailure = `status ${response.status}`;
+    } catch (err: unknown) {
+      lastFailure = err instanceof Error ? err.message : String(err);
+    }
+  }
+  console.warn("[native-app-viewer] terminate failed after retries:", lastFailure);
 }
 
 function terminateLease(windowId: string, lease: NativeSessionLease): void {
