@@ -1,5 +1,7 @@
 import { z } from "zod/v4";
 
+export * from "./agent-runtime-config.js";
+
 const SAFE_ID_BODY = /^[A-Za-z0-9_-]+$/;
 const SAFE_SLUG = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const SAFE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
