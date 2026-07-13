@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Linking, Pressable, RefreshControl, ScrollView, Switch, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, AppState, Linking, Pressable, RefreshControl, ScrollView, Switch, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ReviewIdSchema, type CodingAgentNotificationPreferences, type CodingAgentNotificationPreferencesUpdate, type FileBrowseResponse, type FileReadRequest, type FileReadResponse, type FileSearchResponse, type FileWriteRequest, type PreviewSessionSummary, type ReviewSnapshot, type ReviewSummary, type RuntimeSummary, type SourceControlCreatePullRequestRequest, type SourceControlCreatePullRequestResponse, type SourceControlPrepareCommitRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
@@ -682,6 +682,31 @@ export default function AgentsScreen() {
     void loadSummary();
     void loadNotificationPreferences();
   }, [loadNotificationPreferences, loadSummary]);
+
+  // The cockpit is the attention surface: refresh whenever the screen regains
+  // focus (returning from a thread) or the app comes back to the foreground,
+  // so stale "working" rows and missed approvals do not linger until a manual
+  // pull-to-refresh. The first focus coincides with mount, which already
+  // loads, so skip it to avoid a duplicate request.
+  const hasFocusedOnceRef = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasFocusedOnceRef.current) {
+        hasFocusedOnceRef.current = true;
+        return;
+      }
+      void loadSummary();
+    }, [loadSummary]),
+  );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") void loadSummary();
+    });
+    return () => {
+      subscription?.remove?.();
+    };
+  }, [loadSummary]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

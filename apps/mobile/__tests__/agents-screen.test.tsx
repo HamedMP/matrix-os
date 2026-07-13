@@ -16,6 +16,10 @@ const mockSearchParams: { reviewId?: string | string[] } = {};
 
 jest.mock("expo-router", () => ({
   useLocalSearchParams: () => mockSearchParams,
+  useFocusEffect: (callback: () => void) => {
+    const React = require("react");
+    React.useEffect(callback, [callback]);
+  },
   useRouter: () => ({
     push: mockRouterPush,
   }),
