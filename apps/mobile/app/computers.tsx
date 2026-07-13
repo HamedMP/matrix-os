@@ -8,6 +8,7 @@ import type { MatrixComputer } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { fetchMatrixComputers } from "@/lib/mobile-computers";
 import { getSelectedGatewayConnection, saveSelectedHostedComputer } from "@/lib/storage";
+import { capture } from "@/lib/analytics";
 
 const CLOUD_SIGN_IN_ERROR = "Sign in to Matrix OS Cloud to choose a computer.";
 const COMPUTERS_UNAVAILABLE_ERROR = "Computers unavailable. Try again.";
@@ -109,6 +110,7 @@ export default function ComputerPickerScreen() {
     try {
       const gateway = await saveSelectedHostedComputer(computer);
       setGateway(gateway);
+      capture("computer_switched");
       router.back();
     } catch {
       dispatch({ type: "switchFailed", error: "Computer could not be selected. Try again." });

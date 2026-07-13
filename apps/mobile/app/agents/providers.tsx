@@ -10,6 +10,7 @@ import type { GatewayClient } from "@/lib/gateway-client";
 import { EmptyText, Section } from "@/components/agents/agent-workspace-shared";
 import { useRuntimeSummary } from "@/lib/use-runtime-summary";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
+import { capture } from "@/lib/analytics";
 
 function triggerSelectionHaptic(): void {
   if (process.env.EXPO_OS !== "ios" || typeof Haptics.selectionAsync !== "function") return;
@@ -319,6 +320,8 @@ function ProviderSetupSection({
   // shell state or rendered in the UI.
   const runSetupAction = useCallback(async (action: SafeSetupAction, key: string) => {
     triggerSelectionHaptic();
+    // Action kind only — never the setup command.
+    capture("provider_setup_started", { action_kind: action.kind });
     if (action.kind === "open_settings") {
       router.push("/(tabs)/settings");
       return;

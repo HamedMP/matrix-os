@@ -33,7 +33,14 @@
     },
     "production": {
       "extends": "base",
-      "autoIncrement": true
+      "autoIncrement": true,
+      // EXPO_PUBLIC_POSTHOG_API_KEY is intentionally NOT set here — provide it as
+      // an EAS secret/env var so the key is never committed. When it is absent the
+      // app runs analytics-free (see apps/mobile/lib/analytics.ts).
+      "env": {
+        "EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE": "1",
+        "EXPO_PUBLIC_POSTHOG_HOST": "https://eu.i.posthog.com"
+      }
     }
   },
   "submit": {

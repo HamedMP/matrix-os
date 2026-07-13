@@ -10,6 +10,7 @@ import { HOSTED_GATEWAY_URL, getMobileJourneyGatewayUrl, getSelectedGatewayConne
 import { JourneyGate } from "@/components/JourneyGate";
 import { fetchMobileJourney, isConnectablePhase, type JourneyFetchResult } from "@/lib/journey";
 import { clearAllScrollback } from "@/lib/terminal-scrollback";
+import { resetAnalytics } from "@/lib/analytics";
 
 // Re-poll cadence while the machine is building / payment is settling, so the
 // user isn't stranded on a static spinner waiting for a phase transition.
@@ -70,6 +71,7 @@ function SignedInJourneyGate() {
     // Clearing the Clerk session flips isSignedIn → false, so Index re-renders
     // the landing screen where the user can sign in again.
     clearAllScrollback();
+    resetAnalytics();
     try {
       await signOut();
     } catch (err: unknown) {

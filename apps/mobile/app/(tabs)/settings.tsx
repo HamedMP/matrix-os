@@ -23,6 +23,7 @@ import {
 } from "@/lib/storage";
 import { isBiometricAvailable, getSupportedBiometricTypes, getBiometricLabel } from "@/lib/auth";
 import { clearAllScrollback } from "@/lib/terminal-scrollback";
+import { resetAnalytics } from "@/lib/analytics";
 
 function SettingsSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -194,6 +195,7 @@ export default function SettingsScreen() {
         style: "destructive",
         onPress: () => {
           clearAllScrollback();
+          resetAnalytics();
           void signOut()
             .then(() => router.replace("/sign-in" as any))
             .catch((err: unknown) => {

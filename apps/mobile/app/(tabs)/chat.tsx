@@ -37,6 +37,7 @@ import {
   canRetry,
   type QueuedMessage,
 } from "@/lib/offline";
+import { AnalyticsMask, capture } from "@/lib/analytics";
 
 export interface Message {
   id: string;
@@ -287,6 +288,7 @@ export default function ChatScreen() {
       setMessages((prev) => [userMsg, ...prev]);
 
       const sent = client.sendMessage(trimmed, sessionIdRef.current);
+      capture("chat_message_sent", { queued: !sent });
       if (sent) {
         setBusy(true);
       } else {
@@ -362,6 +364,7 @@ export default function ChatScreen() {
       ]);
       return;
     }
+    capture("conversation_created");
     resetTranscript();
     sessionIdRef.current = id;
     setActiveSessionId(id);
@@ -393,7 +396,10 @@ export default function ChatScreen() {
 
   const renderItem = useCallback(
     ({ item }: ListRenderItemInfo<Message>) => (
-      <ChatMessage message={item} gatewayUrl={gatewayHttpUrl} client={client} />
+      // Chat transcript is never recorded in session replay.
+      <AnalyticsMask>
+        <ChatMessage message={item} gatewayUrl={gatewayHttpUrl} client={client} />
+      </AnalyticsMask>
     ),
     [gatewayHttpUrl, client],
   );
@@ -494,13 +500,13 @@ export default function ChatScreen() {
           </View>
         }
       />
-      <View style={{ paddingBottom: keyboardVisible ? 0 : bottomTabBarHeight(insets.bottom) }}>
+      <AnalyticsMask style={{ paddingBottom: keyboardVisible ? 0 : bottomTabBarHeight(insets.bottom) }}>
         <InputBar
           onSend={handleSend}
           busy={busy}
           connected={isConnected}
         />
-      </View>
+      </AnalyticsMask>
       <ChatConversationsSheet
         visible={conversationsVisible}
         loading={conversationsLoading}

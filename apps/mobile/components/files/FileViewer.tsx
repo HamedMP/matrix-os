@@ -4,6 +4,7 @@ import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { GatewayClient } from "@/lib/gateway-client";
+import { AnalyticsMask, capture } from "@/lib/analytics";
 import {
   formatFileSize,
   isImageFile,
@@ -65,12 +66,14 @@ export function FileViewer({
   );
 
   useEffect(() => {
+    // File kind only — never the path or file name.
+    capture("file_previewed", { kind: isImage ? "image" : "text" });
     let cancelled = false;
     void resolvePreview(() => cancelled);
     return () => {
       cancelled = true;
     };
-  }, [resolvePreview]);
+  }, [resolvePreview, isImage]);
 
   const handleRetry = useCallback(() => {
     dispatch({ status: "loading" });
@@ -80,7 +83,8 @@ export function FileViewer({
   const sizeLabel = formatFileSize(entry.size);
 
   return (
-    <View style={styles.container}>
+    // File name and contents are never recorded in session replay.
+    <AnalyticsMask style={styles.container}>
       <View style={styles.header}>
         <Pressable
           accessibilityRole="button"
@@ -161,7 +165,7 @@ export function FileViewer({
           </ScrollView>
         </ScrollView>
       ) : null}
-    </View>
+    </AnalyticsMask>
   );
 }
 

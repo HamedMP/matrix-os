@@ -5,9 +5,9 @@ import React, {
   useMemo,
   useRef,
 } from "react";
-import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
+import { AnalyticsMask } from "@/lib/analytics";
 import { colors } from "@/lib/theme";
 import { FIT_ADDON_JS, XTERM_CSS, XTERM_JS } from "@/components/terminal/xterm-bundle";
 
@@ -287,7 +287,8 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
     );
 
     return (
-      <View style={styles.container}>
+      // Terminal output is never recorded in session replay.
+      <AnalyticsMask style={styles.container}>
         <WebView
           key="terminal-webview-accessory-enabled"
           ref={webRef}
@@ -305,7 +306,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
           style={styles.web}
           containerStyle={styles.web}
         />
-      </View>
+      </AnalyticsMask>
     );
   },
 );
