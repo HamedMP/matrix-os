@@ -292,6 +292,14 @@ function websocketPayloadBytes(data: unknown): number {
   if (data instanceof ArrayBuffer) return data.byteLength;
   if (ArrayBuffer.isView(data)) return data.byteLength;
   if (Buffer.isBuffer(data)) return data.byteLength;
+  if (Array.isArray(data)) {
+    let totalBytes = 0;
+    for (const chunk of data) {
+      totalBytes += websocketPayloadBytes(chunk);
+      if (totalBytes > WS_FRAME_MAX_BYTES) return totalBytes;
+    }
+    return totalBytes;
+  }
   return 0;
 }
 

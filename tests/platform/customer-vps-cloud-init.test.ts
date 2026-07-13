@@ -575,14 +575,21 @@ exit 99
     const gatewayUnit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-gateway.service'), 'utf8');
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
     const configuratorPath = join(root, 'distro/customer-vps/host-bin/matrix-configure-gateway-proxy');
+    const configurator = readFileSync(configuratorPath, 'utf8');
 
     const apiLocation = cloudInit.slice(
       cloudInit.indexOf('        location /api/ {'),
       cloudInit.indexOf('        location /files/ {'),
     );
     expect(apiLocation).toContain('proxy_http_version 1.1;');
+    expect(apiLocation).toContain('proxy_set_header Host $host;');
+    expect(apiLocation).toContain('proxy_set_header X-Forwarded-Proto https;');
+    expect(apiLocation).toContain('proxy_set_header X-Real-IP $remote_addr;');
     expect(apiLocation).toContain('proxy_set_header Upgrade $http_upgrade;');
     expect(apiLocation).toContain('proxy_set_header Connection "upgrade";');
+    expect(configurator).toContain('"proxy_set_header Host $host;",');
+    expect(configurator).toContain('"proxy_set_header X-Forwarded-Proto https;",');
+    expect(configurator).toContain('"proxy_set_header X-Real-IP $remote_addr;",');
     expect(existsSync(configuratorPath)).toBe(true);
     expect(cloudInit).not.toContain('ExecStartPre=+/opt/matrix/bin/matrix-configure-gateway-proxy');
     expect(gatewayUnit).not.toContain('ExecStartPre=+/opt/matrix/bin/matrix-configure-gateway-proxy');

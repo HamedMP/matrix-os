@@ -2,12 +2,16 @@ import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const wsMock = vi.hoisted(() => {
-  const instances: Array<{ close: ReturnType<typeof vi.fn>; on: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn>; url: string }> = [];
-  const WebSocket = vi.fn(function MockWebSocket(this: { close: ReturnType<typeof vi.fn>; on: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn>; url: string }, url: string) {
+  const instances: Array<{ close: ReturnType<typeof vi.fn>; listeners: Map<string, (...args: unknown[]) => void>; on: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn>; url: string }> = [];
+  const WebSocket = vi.fn(function MockWebSocket(this: { close: ReturnType<typeof vi.fn>; listeners: Map<string, (...args: unknown[]) => void>; on: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn>; url: string }, url: string) {
     this.url = url;
     this.close = vi.fn();
     this.send = vi.fn();
-    this.on = vi.fn(() => this);
+    this.listeners = new Map();
+    this.on = vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+      this.listeners.set(event, listener);
+      return this;
+    });
     instances.push(this);
     return this;
   });
@@ -681,5 +685,33 @@ describe("native app routes", () => {
 
     expect(ws.close).toHaveBeenCalledTimes(1);
     expect(wsMock.WebSocket).not.toHaveBeenCalled();
+  });
+
+  it("closes oversized fragmented frames received from the upstream socket", async () => {
+    const { service } = createApp("alice");
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    const streamToken = service.streamCookieValue(session.id);
+    const context = {
+      req: {
+        param: (name: string) => name === "sessionId" ? session.id : "",
+        path: `/api/native-apps/sessions/${session.id}/stream/websocket`,
+        raw: { headers: new Headers({ Cookie: `${service.streamCookieName(session.id)}=${streamToken}` }) },
+        url: `http://matrix.local/api/native-apps/sessions/${session.id}/stream/websocket`,
+      },
+    };
+    const handler = createNativeWebSocketHandler(context as never, service);
+    const ws = { close: vi.fn(), send: vi.fn() };
+
+    handler.onOpen(null, ws);
+    await vi.waitFor(() => expect(wsMock.WebSocket).toHaveBeenCalledTimes(1));
+    const upstream = wsMock.instances[0]!;
+    upstream.listeners.get("message")?.([
+      Buffer.alloc(2 * 1024 * 1024),
+      Buffer.alloc(2 * 1024 * 1024 + 1),
+    ]);
+
+    expect(upstream.close).toHaveBeenCalledTimes(1);
+    expect(ws.close).toHaveBeenCalledTimes(1);
+    expect(ws.send).not.toHaveBeenCalled();
   });
 });
