@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  AgentChatAuthKindSchema,
+  AgentMessagingSelectionSchema,
+  AgentProviderAuthStatusSchema,
   AgentProviderDescriptorSchema,
   AgentRuntimeIdSchema,
   AgentSettingsCompatibleViewSchema,
@@ -116,6 +119,39 @@ describe("agent runtime configuration contracts", () => {
     expect(AgentProviderDescriptorSchema.parse(chatProvider)).toEqual(chatProvider);
   });
 
+  it("requires a concrete action for action-required auth status", () => {
+    expect(AgentProviderAuthStatusSchema.safeParse({
+      state: "action_required",
+      authenticated: false,
+    }).success).toBe(false);
+    expect(AgentProviderAuthStatusSchema.safeParse({
+      state: "action_required",
+      authenticated: false,
+      action: "none",
+    }).success).toBe(false);
+  });
+
+  it("publishes the Chat-specific auth kinds without messaging-only base URLs", () => {
+    expect(AgentChatAuthKindSchema.options).toEqual([
+      "platform",
+      "api_key",
+      "oauth_login",
+    ]);
+    expect(AgentChatAuthKindSchema.safeParse("base_url").success).toBe(false);
+  });
+
+  it("uses the shared ISO timestamp validation message", () => {
+    const result = AgentProviderAuthStatusSchema.safeParse({
+      state: "ready",
+      authenticated: true,
+      lastCheckedAt: "not-a-timestamp",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toBe("Invalid ISO timestamp");
+    }
+  });
+
   it("requires the effective auth kind to be supported", () => {
     const provider = {
       ...chatProvider,
@@ -140,6 +176,47 @@ describe("agent runtime configuration contracts", () => {
 
   it("accepts the complete additive settings view", () => {
     expect(AgentSettingsViewSchema.parse(makeView()).contractVersion).toBe(2);
+  });
+
+  it("aligns the additive Chat selection with legacy effective defaults", () => {
+    const defaultSelection = { ...chatSelection, source: "default" as const };
+    const view = makeView({
+      kernel: { model: null, effort: null },
+      chat: defaultSelection,
+      currentSelection: {
+        chat: defaultSelection,
+        messaging: makeView().currentSelection.messaging,
+      },
+    });
+    expect(AgentSettingsViewSchema.safeParse(view).success).toBe(true);
+
+    expect(AgentSettingsViewSchema.safeParse({
+      ...view,
+      defaults: { ...view.defaults, effort: "low" },
+    }).success).toBe(false);
+    expect(AgentSettingsViewSchema.safeParse({
+      ...makeView(),
+      chat: defaultSelection,
+      currentSelection: {
+        chat: defaultSelection,
+        messaging: makeView().currentSelection.messaging,
+      },
+    }).success).toBe(false);
+  });
+
+  it("requires the selected effort in both additive and legacy catalogs", () => {
+    const withoutHighEffort = {
+      ...chatProvider,
+      models: [{ ...chatProvider.models[0], efforts: ["low", "medium"] }],
+    } as const;
+    expect(AgentSettingsViewSchema.safeParse({
+      ...makeView(),
+      providers: [withoutHighEffort, hermesProvider],
+    }).success).toBe(false);
+    expect(AgentSettingsViewSchema.safeParse({
+      ...makeView(),
+      availableEfforts: ["low", "medium"],
+    }).success).toBe(false);
   });
 
   it("requires the top-level and grouped Chat selections to match", () => {
@@ -177,6 +254,18 @@ describe("agent runtime configuration contracts", () => {
     expect(AgentSettingsViewSchema.safeParse(view).success).toBe(false);
   });
 
+  it.each([
+    { provider: "nous", model: null },
+    { provider: null, model: "hermes-4-405b" },
+  ])("rejects a partial messaging provider/model pair", ({ provider, model }) => {
+    expect(AgentMessagingSelectionSchema.safeParse({
+      runtime: "hermes",
+      provider,
+      model,
+      configured: false,
+    }).success).toBe(false);
+  });
+
   it("rejects duplicate provider ids in the same runtime scope", () => {
     const view = makeView({ providers: [chatProvider, hermesProvider, hermesProvider] });
     expect(AgentSettingsViewSchema.safeParse(view).success).toBe(false);
@@ -208,6 +297,14 @@ describe("agent runtime configuration contracts", () => {
     expect(AgentSettingsCompatibleViewSchema.parse(legacy)).toEqual(legacy);
   });
 
+  it("parses catalog-less legacy responses through the compatibility schema", () => {
+    const legacy = {
+      identity: { name: "Matrix Owner" },
+      kernel: { model: null, effort: null },
+    };
+    expect(AgentSettingsCompatibleViewSchema.parse(legacy)).toEqual(legacy);
+  });
+
   it("keeps legacy model and effort-only updates valid", () => {
     expect(AgentSettingsUpdateSchema.parse({ model: "claude-opus-4-6", effort: "high" }))
       .toEqual({ model: "claude-opus-4-6", effort: "high" });
@@ -226,6 +323,16 @@ describe("agent runtime configuration contracts", () => {
       provider: "custom",
       messagingModel: "custom-model",
       baseUrl: "http://models.example.com/v1",
+      revision: 4,
+    };
+    expect(AgentSettingsUpdateSchema.safeParse(update).success).toBe(false);
+  });
+
+  it("rejects credentials embedded in provider base URLs", () => {
+    const update = {
+      provider: "custom",
+      messagingModel: "custom-model",
+      baseUrl: "https://token:secret@models.example.com/v1",
       revision: 4,
     };
     expect(AgentSettingsUpdateSchema.safeParse(update).success).toBe(false);
