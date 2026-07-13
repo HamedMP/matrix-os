@@ -627,6 +627,7 @@ export default function AppsScreen() {
         <View style={styles.headerTitleGroup}>
           <View style={styles.brandRow}>
             <Image
+              testID="apps-brand-logo"
               source={require("../../assets/icon.png")}
               style={styles.brandLogo}
               contentFit="contain"
