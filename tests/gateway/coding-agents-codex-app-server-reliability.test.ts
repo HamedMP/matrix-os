@@ -111,6 +111,56 @@ const initialize = "if (message.method === 'initialize') console.log(JSON.string
 const startThread = "else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread' }, model: 'codex', modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));";
 
 describe("Codex app-server runner reliability", () => {
+  it("answers duplicate input questions with a fail-closed empty result", async () => {
+    const runtime = await startFakeRuntime("duplicate_questions", [
+      initialize,
+      startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  console.log(JSON.stringify({ id: 42, method: 'item/tool/requestUserInput', params: { threadId: 'native-thread', turnId: 'native-turn', itemId: 'native-item', questions: [{ id: 'duplicate', header: 'First', question: 'First question' }, { id: 'duplicate', header: 'Second', question: 'Second question' }] } }));",
+      "} else if (message.id === 42 && JSON.stringify(message.result) === JSON.stringify({ answers: {} })) {",
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));",
+      "  process.exit(0);",
+      "}",
+    ]);
+
+    try {
+      await expect(waitForExit(runtime.child)).resolves.toBe(0);
+      expect(await readFile(runtime.eventPath, "utf8")).not.toContain("user_input.requested");
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
+  it("ignores unknown approval variants while preserving one safe known decision", async () => {
+    const runtime = await startFakeRuntime("unknown_decision", [
+      initialize,
+      startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  console.log(JSON.stringify({ id: 42, method: 'item/commandExecution/requestApproval', params: { threadId: 'native-thread', turnId: 'native-turn', itemId: 'native-item', availableDecisions: [{ futureGrant: { private: true } }, 'decline'] } }));",
+      "} else if (message.id === 42 && message.result?.decision === 'decline') {",
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));",
+      "  process.exit(0);",
+      "}",
+    ]);
+
+    try {
+      const transcript = await waitForTranscript(runtime.eventPath, /approval\.requested/);
+      const approval = transcript.trim().split("\n").map((line) => JSON.parse(line))[0];
+      expect(approval.allowedDecisions).toEqual(["decline"]);
+      await expect(sendControl(runtime.controlPath, {
+        type: "approval",
+        approvalId: approval.approvalId,
+        decision: "decline",
+        clientRequestId: "req_unknown_variant_decline",
+      })).resolves.toEqual({ ok: true });
+      await expect(waitForExit(runtime.child)).resolves.toBe(0);
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
   it("fails ambiguous native session grants closed", async () => {
     const runtime = await startFakeRuntime("ambiguous_grants", [
       initialize,

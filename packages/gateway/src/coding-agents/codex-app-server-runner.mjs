@@ -52,6 +52,11 @@ const NativeApprovalDecisionSchema = z.union([
     }).strict(),
   }).strict(),
 ]);
+const NativeApprovalDecisionListSchema = z.array(z.unknown()).max(16).transform((decisions) =>
+  decisions.flatMap((decision) => {
+    const parsed = NativeApprovalDecisionSchema.safeParse(decision);
+    return parsed.success ? [parsed.data] : [];
+  }));
 const RunnerConfigSchema = z.object({
   prompt: z.string().trim().min(1).max(64 * 1024),
   approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
@@ -65,7 +70,7 @@ const ApprovalRequestSchema = z.object({
     threadId: NativeReferenceSchema,
     turnId: NativeReferenceSchema,
     itemId: NativeReferenceSchema,
-    availableDecisions: z.array(NativeApprovalDecisionSchema).max(16).nullable().optional(),
+    availableDecisions: NativeApprovalDecisionListSchema.nullable().optional(),
   }).passthrough(),
 }).passthrough();
 const DisplayTextSchema = z.string()
@@ -343,7 +348,10 @@ async function handleInput(raw) {
   const parsed = InputRequestSchema.safeParse(raw);
   if (!parsed.success) return false;
   const nativeQuestionIds = parsed.data.params.questions.map((question) => question.id);
-  if (new Set(nativeQuestionIds).size !== nativeQuestionIds.length) return true;
+  if (new Set(nativeQuestionIds).size !== nativeQuestionIds.length) {
+    sendProvider({ id: parsed.data.id, result: { answers: {} } });
+    return true;
+  }
   if (pendingInputs.size >= MAX_PENDING_REQUESTS) {
     sendProvider({ id: parsed.data.id, result: { answers: {} } });
     return true;

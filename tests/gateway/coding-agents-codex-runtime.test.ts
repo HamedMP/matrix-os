@@ -39,7 +39,7 @@ function runProcess(command: string, args: string[], cwd: string, input = ""): P
 }
 
 describe("Codex structured event runtime", () => {
-  it("wraps Codex exec with the Matrix event runner and forces JSONL output", () => {
+  it("launches coding threads through the Matrix control-capable app-server runner", () => {
     const launch = buildAgentLaunch({
       agent: "codex",
       cwd: "/home/matrix/home/projects/repo",
@@ -54,14 +54,19 @@ describe("Codex structured event runtime", () => {
     });
 
     expect(launch.command).toBe(process.execPath);
-    expect(launch.args[0]).toMatch(/coding-agents\/codex-runner\.mjs$/);
-    expect(launch.args.slice(1, 3)).toEqual([
+    expect(launch.args[0]).toMatch(/coding-agents\/codex-app-server-runner\.mjs$/);
+    expect(launch.args.slice(1, 4)).toEqual([
       "/home/matrix/home/system/coding-agents/provider-events/sess_test.jsonl",
       "codex",
+      "app-server",
     ]);
-    expect(launch.args).toContain("--json");
-    expect(launch.args.indexOf("--sandbox")).toBeLessThan(launch.args.indexOf("exec"));
-    expect(launch.args.indexOf("--add-dir")).toBeLessThan(launch.args.indexOf("exec"));
+    const config = JSON.parse(Buffer.from(launch.args[4]!, "base64").toString("utf8"));
+    expect(config).toEqual({
+      prompt: "Fix the failing route.",
+      approvalPolicy: "never",
+      sandbox: "workspace-write",
+      writableRoots: ["/home/matrix/home/projects/repo"],
+    });
     expect(launch.args).not.toContain("sh");
     expect(launch.args).not.toContain("-c");
   });
