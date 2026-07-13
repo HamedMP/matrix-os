@@ -56,6 +56,13 @@ export interface CodingAgentFileStore {
   writeFile(principal: RequestPrincipal, request: FileWriteRequest): Promise<FileWriteResponse>;
 }
 
+interface ProjectOwnershipSource {
+  getProjectBySlug(projectSlug: string): Promise<
+    | { ok: true; project: { ownerScope: { type: "user" | "org"; id: string } } }
+    | { ok: false; status: number; error: unknown }
+  >;
+}
+
 function ownerIdsFor(options: { ownerId?: string; principalOwnerIds?: readonly string[] }): string[] {
   const ids: string[] = [];
   for (const id of [options.ownerId, ...(options.principalOwnerIds ?? [])]) {
@@ -75,8 +82,28 @@ function isWithin(base: string, target: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
-function worktreeRootFor(homePath: string, request: Pick<FileReadRequest, "projectId" | "worktreeId">): string {
-  return resolve(homePath, "projects", request.projectId, "worktrees", request.worktreeId);
+function checkoutRootFor(homePath: string, request: Pick<FileReadRequest, "projectId" | "worktreeId">): string {
+  return request.worktreeId
+    ? resolve(homePath, "projects", request.projectId, "worktrees", request.worktreeId)
+    : resolve(homePath, "projects", request.projectId, "repo");
+}
+
+async function assertPrimaryProjectAccess(input: {
+  principal: RequestPrincipal;
+  request: Pick<FileReadRequest, "projectId" | "worktreeId">;
+  projects?: ProjectOwnershipSource;
+}): Promise<void> {
+  if (input.request.worktreeId) return;
+  if (!input.projects) {
+    throw new CodingAgentFileReadError("file_unavailable");
+  }
+  const result = await input.projects.getProjectBySlug(input.request.projectId);
+  if (!result.ok) {
+    throw new CodingAgentFileReadError(result.status >= 500 ? "file_unavailable" : "file_not_found");
+  }
+  if (result.project.ownerScope.type !== "user" || result.project.ownerScope.id !== input.principal.userId) {
+    throw new CodingAgentFileReadError("file_not_found");
+  }
 }
 
 function normalizePath(path: string): string {
@@ -279,6 +306,7 @@ export function createCodingAgentFileStore(options: {
   homePath: string;
   ownerId?: string;
   principalOwnerIds?: readonly string[];
+  projects?: ProjectOwnershipSource;
   readLimitBytes?: number;
   writeLimitBytes?: number;
 }): CodingAgentFileStore {
@@ -294,8 +322,9 @@ export function createCodingAgentFileStore(options: {
         throw new CodingAgentFileReadError("file_not_found");
       }
       const request = FileBrowseRequestSchema.parse(rawRequest);
+      await assertPrimaryProjectAccess({ principal, request, projects: options.projects });
       const limit = Math.min(request.limit, MAX_FILE_LIST_LIMIT);
-      const worktreeRoot = worktreeRootFor(homePath, request);
+      const worktreeRoot = checkoutRootFor(homePath, request);
       const target = pathForRequest(worktreeRoot, request.path);
       if (!isWithin(worktreeRoot, target)) {
         throw new CodingAgentFileReadError("file_not_found");
@@ -377,7 +406,8 @@ export function createCodingAgentFileStore(options: {
         throw new CodingAgentFileReadError("file_not_found");
       }
       const request = FileReadRequestSchema.parse(rawRequest);
-      const worktreeRoot = worktreeRootFor(homePath, request);
+      await assertPrimaryProjectAccess({ principal, request, projects: options.projects });
+      const worktreeRoot = checkoutRootFor(homePath, request);
       const target = resolve(worktreeRoot, request.path);
       if (!isWithin(worktreeRoot, target)) {
         throw new CodingAgentFileReadError("file_not_found");
@@ -458,8 +488,9 @@ export function createCodingAgentFileStore(options: {
         throw new CodingAgentFileReadError("file_not_found");
       }
       const request = FileSearchRequestSchema.parse(rawRequest);
+      await assertPrimaryProjectAccess({ principal, request, projects: options.projects });
       const limit = Math.min(request.limit, MAX_FILE_LIST_LIMIT);
-      const worktreeRoot = worktreeRootFor(homePath, request);
+      const worktreeRoot = checkoutRootFor(homePath, request);
       const start = pathForRequest(worktreeRoot, request.path);
       if (!isWithin(worktreeRoot, start)) {
         throw new CodingAgentFileReadError("file_not_found");
@@ -578,7 +609,7 @@ export function createCodingAgentFileStore(options: {
       if (contentBuffer.byteLength > writeLimitBytes) {
         throw new CodingAgentFileWriteError("invalid_request");
       }
-      const worktreeRoot = worktreeRootFor(homePath, request);
+      const worktreeRoot = checkoutRootFor(homePath, request);
       const target = resolve(worktreeRoot, request.path);
       if (!isWithin(worktreeRoot, target)) {
         throw new CodingAgentFileWriteError("file_not_found");

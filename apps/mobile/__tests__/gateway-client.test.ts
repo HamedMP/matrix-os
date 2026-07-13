@@ -494,6 +494,91 @@ describe("GatewayClient", () => {
     fetchMock.mockRestore();
   });
 
+  it("creates scratch and imported projects through the canonical project route", async () => {
+    const fetchMock = jest.spyOn(global, "fetch")
+      .mockResolvedValueOnce(jsonResponse({
+        project: {
+          id: "mobile-scratch",
+          label: "Mobile Scratch",
+          status: "available",
+          taskCount: 0,
+          threadCount: 0,
+          attentionCount: 0,
+        },
+        existing: false,
+      }, { status: 201 }))
+      .mockResolvedValueOnce(jsonResponse({
+        project: {
+          id: "matrix-mobile",
+          label: "matrix-mobile",
+          status: "available",
+          taskCount: 0,
+          threadCount: 0,
+          attentionCount: 0,
+        },
+        existing: true,
+      }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.createProject({
+      mode: "scratch",
+      name: "Mobile Scratch",
+      clientRequestId: "req_mobile_project_scratch",
+    })).resolves.toEqual({
+      ok: true,
+      project: expect.objectContaining({ id: "mobile-scratch" }),
+      existing: false,
+    });
+    await expect(client.createProject({
+      mode: "github",
+      repositoryUrl: "https://github.com/acme/matrix-mobile",
+      clientRequestId: "req_mobile_project_import",
+    })).resolves.toEqual({
+      ok: true,
+      project: expect.objectContaining({ id: "matrix-mobile" }),
+      existing: true,
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "http://localhost:4000/api/coding-agents/projects", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        mode: "scratch",
+        name: "Mobile Scratch",
+        clientRequestId: "req_mobile_project_scratch",
+      }),
+      signal: expect.any(Object),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "http://localhost:4000/api/coding-agents/projects", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        mode: "github",
+        repositoryUrl: "https://github.com/acme/matrix-mobile",
+        clientRequestId: "req_mobile_project_import",
+      }),
+      signal: expect.any(Object),
+    }));
+
+    fetchMock.mockRestore();
+  });
+
+  it("fails closed when project creation does not return a valid canonical slug", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      project: { slug: "../../unsafe" },
+    }, { status: 201 }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+
+    await expect(client.createProject({
+      mode: "scratch",
+      name: "Mobile Scratch",
+      clientRequestId: "req_mobile_project_invalid",
+    })).resolves.toEqual({
+      ok: false,
+      error: "Project could not be created. Try again.",
+    });
+    fetchMock.mockRestore();
+  });
+
   it("fetches coding agent thread snapshots with the existing auth header", async () => {
     const snapshot = {
       thread: {
@@ -1007,6 +1092,35 @@ describe("GatewayClient", () => {
       }),
     );
 
+    fetchMock.mockRestore();
+  });
+
+  it("browses primary project files without serializing an absent worktree", async () => {
+    const fetchMock = jest.spyOn(global, "fetch")
+      .mockResolvedValueOnce(jsonResponse(fileReadPayload()))
+      .mockResolvedValueOnce(jsonResponse(fileBrowsePayload()))
+      .mockResolvedValueOnce(jsonResponse(fileSearchPayload()));
+    const client = new GatewayClient("http://localhost:4000", "token");
+
+    await expect(client.getCodingAgentFileContent({
+      projectId: "matrix-os",
+      path: "README.md",
+    })).resolves.toMatchObject({ ok: true });
+    await expect(client.browseCodingAgentFiles({
+      projectId: "matrix-os",
+      limit: 20,
+    })).resolves.toMatchObject({ ok: true });
+    await expect(client.searchCodingAgentFiles({
+      projectId: "matrix-os",
+      query: "readme",
+      limit: 20,
+    })).resolves.toMatchObject({ ok: true });
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://localhost:4000/api/coding-agents/files/read?projectId=matrix-os&path=README.md",
+      "http://localhost:4000/api/coding-agents/files/browse?projectId=matrix-os&limit=20",
+      "http://localhost:4000/api/coding-agents/files/search?projectId=matrix-os&query=readme&limit=20",
+    ]);
     fetchMock.mockRestore();
   });
 

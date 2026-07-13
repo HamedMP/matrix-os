@@ -88,6 +88,7 @@ write_files:
       Group=matrix
       EnvironmentFile=/opt/matrix/env/host.env
       Environment=SYMPHONY_PORT=4766
+      Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1
       WorkingDirectory=/opt/matrix
       ExecStart=/opt/matrix/bin/matrix-gateway
       Restart=on-failure

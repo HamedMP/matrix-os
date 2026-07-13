@@ -6,6 +6,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ReviewIdSchema, type CodingAgentNotificationPreferences, type CodingAgentNotificationPreferencesUpdate, type FileBrowseResponse, type FileReadRequest, type FileReadResponse, type FileSearchResponse, type FileWriteRequest, type PreviewSessionSummary, type ReviewSnapshot, type ReviewSummary, type RuntimeSummary, type SourceControlCreatePullRequestRequest, type SourceControlCreatePullRequestResponse, type SourceControlPrepareCommitRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
+import { AgentCockpit } from "@/components/agent-cockpit";
 import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
 import { isSafeShellSessionName } from "@/lib/terminal-state";
@@ -65,31 +66,8 @@ type SourcePullRequestState =
 type FileReference = Pick<FileReadRequest, "projectId" | "worktreeId" | "path">;
 type FileBrowserStatus = "idle" | "loading" | "ready" | "error";
 type SummaryProvider = RuntimeSummary["providers"][number];
-type SummaryThread = RuntimeSummary["activeThreads"]["items"][number];
 type SummaryTerminalSession = RuntimeSummary["terminalSessions"]["items"][number];
 type TerminalOpenError = "Terminal session unavailable. Try again.";
-type RecentWorkItem =
-  | {
-    kind: "thread";
-    key: string;
-    title: string;
-    subtitle: string;
-    meta: string;
-    attentionLabel: string | null;
-    updatedAt: string;
-    thread: SummaryThread;
-  }
-  | {
-    kind: "terminal";
-    key: string;
-    title: string;
-    subtitle: string;
-    meta: string;
-    attentionLabel: null;
-    updatedAt: string;
-    session: SummaryTerminalSession;
-  };
-
 type ReviewSnapshotHunk = ReviewSnapshot["files"]["items"][number]["hunks"][number];
 type ReviewSnapshotLine = NonNullable<ReviewSnapshotHunk["lines"]>[number];
 
@@ -140,8 +118,6 @@ const AGENT_WORKSPACE_CONNECTION_LABELS = {
   disconnected: "Agent workspace offline",
   error: "Agent workspace reconnecting",
 } as const;
-const MAX_RECENT_WORK_ITEMS = 6;
-
 const INITIAL_FILE_CONTENT_STATE: FileContentState = {
   status: "idle",
   selectedPath: null,
@@ -180,78 +156,6 @@ function routedReviewIdParam(value: string | string[] | undefined): string | nul
   const candidate = Array.isArray(value) ? value[0] : value;
   const parsed = ReviewIdSchema.safeParse(candidate);
   return parsed.success ? parsed.data : null;
-}
-
-function timestampMs(value: string): number {
-  const timestamp = Date.parse(value);
-  return Number.isNaN(timestamp) ? 0 : timestamp;
-}
-
-function recentThreadPriority(thread: SummaryThread): number {
-  switch (thread.attention) {
-    case "approval_required":
-      return 0;
-    case "input_required":
-      return 1;
-    case "failed":
-      return 2;
-    default:
-      return 10;
-  }
-}
-
-function recentWorkItems(summary: RuntimeSummary): RecentWorkItem[] {
-  const threads: SummaryThread[] = [];
-
-  for (const thread of summary.attentionThreads.items) {
-    if (!threads.some((candidate) => candidate.id === thread.id)) {
-      threads.push(thread);
-    }
-  }
-  for (const thread of summary.activeThreads.items) {
-    if (!threads.some((candidate) => candidate.id === thread.id)) {
-      threads.push(thread);
-    }
-  }
-
-  const threadItems = threads.map((thread) => {
-    const attentionLabel = attentionThreadLabel(thread.attention) ?? threadAttentionLabel(thread.attention);
-    return {
-      kind: "thread" as const,
-      key: `thread:${thread.id}`,
-      title: thread.title,
-      subtitle: attentionLabel ? `${thread.providerId} - ${attentionLabel}` : thread.providerId,
-      meta: thread.status.replace(/_/g, " "),
-      attentionLabel,
-      updatedAt: thread.updatedAt,
-      thread,
-    };
-  });
-  threadItems.sort((left, right) => {
-    const priority = recentThreadPriority(left.thread) - recentThreadPriority(right.thread);
-    if (priority !== 0) return priority;
-    return timestampMs(right.updatedAt) - timestampMs(left.updatedAt);
-  });
-
-  const terminalItems = summary.terminalSessions.items
-    .filter((session) => session.status === "running" && session.attachable)
-    .map((session) => ({
-      kind: "terminal" as const,
-      key: `terminal:${session.id}`,
-      title: session.name,
-      subtitle: "Terminal session",
-      meta: session.status,
-      attentionLabel: null,
-      updatedAt: session.updatedAt,
-      session,
-    }));
-  terminalItems.sort((left, right) => timestampMs(right.updatedAt) - timestampMs(left.updatedAt));
-
-  const threadLimit = terminalItems.length > 0 ? MAX_RECENT_WORK_ITEMS - 1 : MAX_RECENT_WORK_ITEMS;
-  return [
-    ...threadItems.slice(0, threadLimit),
-    ...terminalItems,
-  ].slice(0, MAX_RECENT_WORK_ITEMS);
 }
 
 function providerStatusLabel(value: string): string {
@@ -844,6 +748,7 @@ export default function AgentsScreen() {
   return (
     <ScrollView
       style={styles.container}
+      contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={styles.content}
       accessibilityLabel="Refresh agent workspace"
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.forest} />}
@@ -862,18 +767,32 @@ export default function AgentsScreen() {
           <Text style={styles.title}>Agent workspace</Text>
           <Text style={styles.subtitle}>{summary.runtime.label}</Text>
         </View>
-        {canCreate ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="New run"
-            onPress={() => router.push("/agents/new" as any)}
-            style={styles.newRunButton}
-          >
-            <Ionicons name="add" size={18} color={theme.colors.background} />
-            <Text style={styles.newRunText}>New</Text>
-          </Pressable>
-        ) : null}
       </View>
+
+      <AgentCockpit
+        summary={summary}
+        canCreate={canCreate}
+        onCreate={() => router.push("/agents/new")}
+        onOpenThread={(thread) => router.push(`/agents/${thread.id}` as any)}
+      />
+
+      <ProviderSetupSection summary={summary} />
+
+      <Section title="Providers" count={summary.providers.length}>
+        {summary.providers.length === 0 ? <EmptyText>No providers are ready.</EmptyText> : null}
+        {summary.providers.map((provider) => (
+          <View key={provider.id} style={styles.row}>
+            <View style={styles.rowIcon}>
+              <Ionicons name="cube-outline" size={18} color={theme.colors.moss} />
+            </View>
+            <View style={styles.rowText}>
+              <Text style={styles.rowTitle}>{provider.displayName}</Text>
+              <Text style={styles.rowSubtitle}>{providerStatusLabel(provider.availability)}</Text>
+            </View>
+            <Text style={styles.rowMeta}>{providerStatusLabel(provider.authStatus)}</Text>
+          </View>
+        ))}
+      </Section>
 
       <Section title="Notifications" count={NOTIFICATION_TOGGLES.length}>
         <View style={styles.notificationPanel}>
@@ -909,89 +828,6 @@ export default function AgentsScreen() {
             <Text style={styles.notificationError}>{notificationPreferencesState.error}</Text>
           ) : null}
         </View>
-      </Section>
-
-      <RecentWorkSection
-        summary={summary}
-        canCreate={canCreate}
-        terminalOpenError={terminalOpenError}
-        onCreate={() => router.push("/agents/new")}
-        onOpenThread={(thread) => router.push(`/agents/${thread.id}` as any)}
-        onOpenTerminal={(session) => void openTerminalSession(session)}
-      />
-
-      <ProviderSetupSection summary={summary} />
-
-      <Section title="Providers" count={summary.providers.length}>
-        {summary.providers.length === 0 ? <EmptyText>No providers are ready.</EmptyText> : null}
-        {summary.providers.map((provider) => (
-          <View key={provider.id} style={styles.row}>
-            <View style={styles.rowIcon}>
-              <Ionicons name="cube-outline" size={18} color={theme.colors.moss} />
-            </View>
-            <View style={styles.rowText}>
-              <Text style={styles.rowTitle}>{provider.displayName}</Text>
-              <Text style={styles.rowSubtitle}>{providerStatusLabel(provider.availability)}</Text>
-            </View>
-            <Text style={styles.rowMeta}>{providerStatusLabel(provider.authStatus)}</Text>
-          </View>
-        ))}
-      </Section>
-
-      <Section title="Needs Attention" count={summary.attentionThreads.items.length}>
-        {summary.attentionThreads.items.length === 0 ? <EmptyText>No attention needed.</EmptyText> : null}
-        {summary.attentionThreads.items.map((thread) => {
-          const attentionLabel = attentionThreadLabel(thread.attention) ?? thread.status.replace(/_/g, " ");
-
-          return (
-            <Pressable
-              key={thread.id}
-              accessibilityRole="button"
-              accessibilityLabel={`Open attention thread ${thread.title}, ${attentionLabel}`}
-              onPress={() => router.push(`/agents/${thread.id}` as any)}
-              style={styles.row}
-            >
-              <View style={styles.rowIcon}>
-                <Ionicons name="git-branch-outline" size={18} color={theme.colors.moss} />
-              </View>
-              <View style={styles.rowText}>
-                <Text style={styles.rowTitle}>{thread.title}</Text>
-                <Text style={styles.rowSubtitle}>{thread.providerId}</Text>
-                <Text style={styles.attentionBadge}>{attentionLabel}</Text>
-              </View>
-              <Text style={styles.rowMeta}>{thread.status.replace(/_/g, " ")}</Text>
-            </Pressable>
-          );
-        })}
-      </Section>
-
-      <Section title="Active Threads" count={summary.activeThreads.items.length}>
-        {summary.activeThreads.items.length === 0 ? <EmptyText>No active threads.</EmptyText> : null}
-        {summary.activeThreads.items.map((thread) => {
-          const attentionLabel = threadAttentionLabel(thread.attention);
-
-          return (
-            <Pressable
-              key={thread.id}
-              accessibilityRole="button"
-              accessibilityLabel={attentionLabel
-                ? `Open thread ${thread.title}, ${attentionLabel}`
-                : `Open thread ${thread.title}`}
-              onPress={() => router.push(`/agents/${thread.id}` as any)}
-              style={styles.row}
-            >
-              <View style={styles.rowIcon}>
-                <Ionicons name="git-branch-outline" size={18} color={theme.colors.moss} />
-              </View>
-              <View style={styles.rowText}>
-                <Text style={styles.rowTitle}>{thread.title}</Text>
-                <Text style={styles.rowSubtitle}>{thread.providerId}</Text>
-                {attentionLabel ? <Text style={styles.attentionBadge}>{attentionLabel}</Text> : null}
-              </View>
-              <Text style={styles.rowMeta}>{thread.status.replace(/_/g, " ")}</Text>
-            </Pressable>
-          );
-        })}
       </Section>
 
       {capabilityEnabled(summary, "codingAgentsPreview") ? (
@@ -1038,6 +874,7 @@ export default function AgentsScreen() {
             </Pressable>
           );
         })}
+        {terminalOpenError ? <Text style={styles.notificationError}>{terminalOpenError}</Text> : null}
       </Section>
 
       {capabilityEnabled(summary, "codingAgentsReview") ? (
@@ -1059,103 +896,6 @@ export default function AgentsScreen() {
         />
       ) : null}
     </ScrollView>
-  );
-}
-
-function RecentWorkSection({
-  summary,
-  canCreate,
-  terminalOpenError,
-  onCreate,
-  onOpenThread,
-  onOpenTerminal,
-}: {
-  summary: RuntimeSummary;
-  canCreate: boolean;
-  terminalOpenError: TerminalOpenError | null;
-  onCreate: () => void;
-  onOpenThread: (thread: SummaryThread) => void;
-  onOpenTerminal: (session: SummaryTerminalSession) => void;
-}) {
-  const { theme } = useUnistyles();
-  const items = recentWorkItems(summary);
-  const count = items.length + (canCreate ? 1 : 0);
-
-  return (
-    <Section title="Recent Work" count={count}>
-      {canCreate ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Start a new coding-agent run"
-          onPress={onCreate}
-          style={({ pressed }) => [
-            styles.row,
-            pressed ? styles.rowPressed : null,
-          ]}
-        >
-          <View style={styles.rowIcon}>
-            <Ionicons name="add" size={18} color={theme.colors.moss} />
-          </View>
-          <View style={styles.rowText}>
-            <Text style={styles.rowTitle}>New run</Text>
-            <Text style={styles.rowSubtitle}>Start from a fresh prompt</Text>
-          </View>
-          <Text style={styles.rowMeta}>Create</Text>
-        </Pressable>
-      ) : null}
-      {items.length === 0 ? <EmptyText>No recent work yet.</EmptyText> : null}
-      {items.map((item) => {
-        if (item.kind === "thread") {
-          return (
-            <Pressable
-              key={item.key}
-              accessibilityRole="button"
-              accessibilityLabel={item.attentionLabel
-                ? `Open recent work ${item.title}, ${item.attentionLabel}`
-                : `Open recent work ${item.title}`}
-              onPress={() => onOpenThread(item.thread)}
-              style={({ pressed }) => [
-                styles.row,
-                pressed ? styles.rowPressed : null,
-              ]}
-            >
-              <View style={styles.rowIcon}>
-                <Ionicons name="git-branch-outline" size={18} color={theme.colors.moss} />
-              </View>
-              <View style={styles.rowText}>
-                <Text style={styles.rowTitle}>{item.title}</Text>
-                <Text style={styles.rowSubtitle}>{item.subtitle}</Text>
-                {item.attentionLabel ? <Text style={styles.attentionBadge}>{item.attentionLabel}</Text> : null}
-              </View>
-              <Text style={styles.rowMeta}>{item.meta}</Text>
-            </Pressable>
-          );
-        }
-
-        return (
-          <Pressable
-            key={item.key}
-            accessibilityRole="button"
-            accessibilityLabel={`Open recent terminal ${item.title}`}
-            onPress={() => onOpenTerminal(item.session)}
-            style={({ pressed }) => [
-              styles.row,
-              pressed ? styles.rowPressed : null,
-            ]}
-          >
-            <View style={styles.rowIcon}>
-              <Ionicons name="terminal-outline" size={18} color={theme.colors.moss} />
-            </View>
-            <View style={styles.rowText}>
-              <Text style={styles.rowTitle}>{item.title}</Text>
-              <Text style={styles.rowSubtitle}>{item.subtitle}</Text>
-            </View>
-            <Text style={styles.rowMeta}>{item.meta}</Text>
-          </Pressable>
-        );
-      })}
-      {terminalOpenError ? <Text style={styles.notificationError}>{terminalOpenError}</Text> : null}
-    </Section>
   );
 }
 
@@ -1238,31 +978,6 @@ function PreviewSection({
 
 function reviewStatusLabel(status: ReviewSummary["status"]): string {
   return status.replace(/_/g, " ");
-}
-
-function threadAttentionLabel(attention?: string): string | null {
-  switch (attention) {
-    case "approval_required":
-      return "Approval needed";
-    case "input_required":
-      return "Input needed";
-    default:
-      return null;
-  }
-}
-
-function attentionThreadLabel(attention?: string): string | null {
-  switch (attention) {
-    case "approval_required":
-    case "input_required":
-      return threadAttentionLabel(attention);
-    case "failed":
-      return "Failed";
-    case "completed":
-      return "Completed";
-    default:
-      return null;
-  }
 }
 
 function ReviewSection({
@@ -1985,15 +1700,15 @@ function EmptyText({ children }: { children: React.ReactNode }) {
   return <Text style={styles.emptyText}>{children}</Text>;
 }
 
-const styles = StyleSheet.create((theme, rt) => ({
+const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
   },
   content: {
-    paddingTop: rt.insets.top + theme.spacing.xl,
+    paddingTop: theme.spacing.xl,
     paddingHorizontal: theme.spacing.lg,
-    paddingBottom: rt.insets.bottom + 32,
+    paddingBottom: 32,
     gap: theme.spacing.lg,
   },
   centered: {
@@ -2046,21 +1761,6 @@ const styles = StyleSheet.create((theme, rt) => ({
   headerText: {
     flex: 1,
     minWidth: 0,
-  },
-  newRunButton: {
-    minHeight: 38,
-    borderRadius: 19,
-    paddingHorizontal: theme.spacing.md,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing.xs,
-    backgroundColor: theme.colors.forest,
-  },
-  newRunText: {
-    fontFamily: theme.fonts.sansSemiBold,
-    fontSize: 13,
-    color: theme.colors.background,
   },
   notificationPanel: {
     borderRadius: 14,

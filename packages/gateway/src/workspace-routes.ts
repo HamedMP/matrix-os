@@ -208,6 +208,7 @@ export function createWorkspaceRoutes(options: {
     worktreeManager,
     agentLauncher,
     zellijRuntime,
+    inputWriter: (sessionId, input, signal) => zellijRuntime.sendInput(sessionId, input, signal),
   });
   const agentSandbox = options.agentSandbox ?? createAgentSandbox({ homePath: options.homePath });
   // Defense in depth: when the caller forgets to inject sessionRuntimeBridge,
