@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
@@ -36,6 +36,9 @@ export function FileViewer({
   const { theme } = useUnistyles();
   const [state, dispatch] = useReducer(viewerReducer, { status: "loading" });
   const isImage = isImageFile(entry.name);
+  // Shared cancellation flag so both the mount effect and manual retry stop
+  // dispatching once this view unmounts.
+  const cancelledRef = useRef(false);
 
   // Resolves the preview to its terminal state. Never dispatches "loading"
   // itself, so the mount effect stays cascading-render free; the initial state
@@ -65,16 +68,16 @@ export function FileViewer({
   );
 
   useEffect(() => {
-    let cancelled = false;
-    void resolvePreview(() => cancelled);
+    cancelledRef.current = false;
+    void resolvePreview(() => cancelledRef.current);
     return () => {
-      cancelled = true;
+      cancelledRef.current = true;
     };
   }, [resolvePreview]);
 
   const handleRetry = useCallback(() => {
     dispatch({ status: "loading" });
-    void resolvePreview(() => false);
+    void resolvePreview(() => cancelledRef.current);
   }, [resolvePreview]);
 
   const sizeLabel = formatFileSize(entry.size);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -116,13 +116,21 @@ export default function FilesScreen() {
   const { path, query } = state;
   const searching = query.trim() !== "";
 
+  // Generation guards drop resolutions from a folder/query the user has already
+  // navigated away from, so a slow response cannot overwrite the newer view.
+  const listingGeneration = useRef(0);
+  const searchGeneration = useRef(0);
+
   const loadListing = useCallback(async () => {
+    const generation = listingGeneration.current + 1;
+    listingGeneration.current = generation;
     if (!client) {
       dispatch({ type: "failed" });
       return;
     }
     dispatch({ type: "loadStart" });
     const result = await listFiles(client, path);
+    if (generation !== listingGeneration.current) return;
     if (result.ok) {
       dispatch({ type: "loaded", entries: result.entries, nowMs: Date.now() });
     } else {
@@ -147,13 +155,18 @@ export default function FilesScreen() {
     };
   }, [client, path]);
 
-  // Debounced search within the current directory.
+  // Debounced search within the current directory. Bump the generation on every
+  // run (including when search is cleared) so an in-flight search cannot dispatch
+  // results for a stale folder/query after the user moves on.
   useEffect(() => {
+    const generation = searchGeneration.current + 1;
+    searchGeneration.current = generation;
     if (!client || !searching) return;
     const timer = setTimeout(() => {
       dispatch({ type: "searchStart" });
       void (async () => {
         const result = await searchFiles(client, path, query);
+        if (generation !== searchGeneration.current) return;
         if (result.ok) {
           dispatch({ type: "searchLoaded", results: result.results, truncated: result.truncated });
         } else {
