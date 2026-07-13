@@ -73,6 +73,14 @@ describe("loadKernelConfigFile", () => {
     expect(loadKernelConfigFile(homePath)).toEqual({ effort: "max" });
   });
 
+  it("ignores path-like and oversized model values", () => {
+    writeConfig({ kernel: { model: "/opt/matrix/private", effort: "high" } });
+    expect(loadKernelConfigFile(homePath)).toEqual({ effort: "high" });
+
+    writeConfig({ kernel: { model: `claude-${"x".repeat(80)}`, effort: "low" } });
+    expect(loadKernelConfigFile(homePath)).toEqual({ effort: "low" });
+  });
+
   it("returns empty when there is no kernel section", () => {
     writeConfig({ channels: { telegram: { enabled: true } } });
     expect(loadKernelConfigFile(homePath)).toEqual({});

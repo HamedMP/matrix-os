@@ -70,7 +70,10 @@ function loadBrowserConfig(homePath: string): {
 }
 
 const KERNEL_EFFORT_VALUES = ["low", "medium", "high", "max"] as const;
-type KernelEffort = (typeof KERNEL_EFFORT_VALUES)[number];
+const SAFE_KERNEL_MODEL = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/;
+export type KernelEffort = (typeof KERNEL_EFFORT_VALUES)[number];
+export const DEFAULT_KERNEL_MODEL = "claude-opus-4-6";
+export const DEFAULT_KERNEL_EFFORT: KernelEffort = "high";
 
 // User-tunable kernel settings persisted by the gateway settings UI under the
 // `kernel` key of ~/system/config.json (Everything Is a File). Read at spawn so
@@ -82,13 +85,23 @@ export function loadKernelConfigFile(homePath: string): { model?: string; effort
     const config = JSON.parse(readFileSync(configPath, "utf-8"));
     const kernel = config.kernel;
     if (!kernel || typeof kernel !== "object") return {};
-    const model = typeof kernel.model === "string" && kernel.model.length > 0 ? kernel.model : undefined;
+    const model = typeof kernel.model === "string" && SAFE_KERNEL_MODEL.test(kernel.model)
+      ? kernel.model
+      : undefined;
     const effort = KERNEL_EFFORT_VALUES.includes(kernel.effort) ? (kernel.effort as KernelEffort) : undefined;
     return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
   } catch (err: unknown) {
     console.warn("[kernel-options] Could not load kernel config:", err instanceof Error ? err.message : String(err));
     return {};
   }
+}
+
+export function resolveKernelConfigFile(homePath: string): { model: string; effort: KernelEffort } {
+  const fileKernel = loadKernelConfigFile(homePath);
+  return {
+    model: fileKernel.model ?? DEFAULT_KERNEL_MODEL,
+    effort: fileKernel.effort ?? DEFAULT_KERNEL_EFFORT,
+  };
 }
 
 export async function tryCreateBrowserServer(
@@ -124,9 +137,9 @@ export async function kernelOptions(config: KernelConfig) {
 
   // Explicit per-call config wins; otherwise fall back to the persisted
   // ~/system/config.json kernel settings, then hardcoded defaults.
-  const fileKernel = loadKernelConfigFile(homePath);
-  const effort = (config.effort ?? fileKernel.effort) as KernelEffort | undefined;
-  const resolvedEffort = effort && KERNEL_EFFORT_VALUES.includes(effort) ? effort : undefined;
+  const fileKernel = resolveKernelConfigFile(homePath);
+  const effort = (config.effort ?? fileKernel.effort) as KernelEffort;
+  const resolvedEffort = KERNEL_EFFORT_VALUES.includes(effort) ? effort : DEFAULT_KERNEL_EFFORT;
 
   const ipcServer = await createIpcServer(db, homePath);
   const coreAgents = getCoreAgents(homePath);
@@ -151,8 +164,8 @@ export async function kernelOptions(config: KernelConfig) {
   }
 
   return {
-    model: config.model ?? fileKernel.model ?? "claude-opus-4-6",
-    ...(resolvedEffort ? { effort: resolvedEffort } : {}),
+    model: config.model ?? fileKernel.model,
+    effort: resolvedEffort,
     systemPrompt,
     cwd: homePath,
     ...(config.env ? { env: config.env } : {}),

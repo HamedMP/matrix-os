@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { cpus, freemem, loadavg, totalmem } from "node:os";
-import { loadSkills } from "@matrix-os/kernel";
+import { loadSkills, resolveKernelConfigFile } from "@matrix-os/kernel";
 import type { HostBundleRelease } from "./system-update.js";
 
 const startTime = Date.now();
@@ -122,6 +122,8 @@ export function getVersion(release?: HostBundleRelease): string {
 export interface SystemInfo {
   version: string;
   channel?: string;
+  model: string;
+  effort: string;
   image: string;
   runtime: {
     handle: string | null;
@@ -193,6 +195,7 @@ function readDiskUsage(path: string): { totalBytes: number; freeBytes: number } 
 }
 
 export function getSystemInfo(homePath: string): SystemInfo {
+  const kernel = resolveKernelConfigFile(homePath);
   let modules = 0;
   const modulesPath = join(homePath, "system", "modules.json");
   if (existsSync(modulesPath)) {
@@ -257,6 +260,8 @@ export function getSystemInfo(homePath: string): SystemInfo {
   return {
     version: getVersion(release),
     ...(channel ? { channel } : {}),
+    model: kernel.model,
+    effort: kernel.effort,
     image: process.env.MATRIX_IMAGE ?? "unknown",
     runtime: {
       handle: process.env.MATRIX_HANDLE ?? null,
