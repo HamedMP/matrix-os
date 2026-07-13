@@ -356,6 +356,27 @@ Every backend PR must include an "Invariants" section:
 
 Do not request review while still pushing commits. Either declare a review commit range or mark the PR as ready and stop pushing.
 
+### Stacked-PR Merge Safety (NON-NEGOTIABLE)
+
+Learned from the 2026-07-13 merge cascade (PRs #932/#934/#935/#926/#933/#941/#945/#948:
+children merged into parent branches instead of `main`, and four PRs became
+unrecoverable-closed, requiring reland PRs). When landing a stack:
+
+- **Merge a PR only when its base branch is `main`.** Verify first:
+  `gh pr view <n> --json baseRefName`. Merging a stacked PR whose base is another
+  PR's branch lands the child INTO that branch, not into `main`, while GitHub still
+  reports it "merged".
+- **Never pass `--delete-branch` while any later PR in the stack is open.** Branch
+  deletion races GitHub's automatic retargeting; the next merge in a loop can land in
+  the wrong base. Delete branches only after the entire stack has landed.
+- **Never loop `gh pr merge` over a stack.** Land strictly one at a time: merge the
+  bottom PR, wait until the next PR's base shows `main`, then merge it.
+- A closed PR whose base branch was deleted **cannot be reopened or retargeted**
+  (GitHub rejects both). Recovery requires fresh consolidation PRs from the surviving
+  branch tips and a full re-review — far more expensive than merging slowly.
+- Prefer Graphite for the whole lifecycle (`docs/dev/stacked-prs.md`): `gt`-tracked
+  stacks own retarget/restack sequencing and make this class of failure impossible.
+
 ### Hard Rules (never violate)
 
 - **All changes ship via PR from a manual `git worktree`** -- no direct commits to `main`, no exceptions. Create the worktree with `git worktree add -b <kebab-branch> ../<dir-name> origin/main` and do all work there. Applies to code AND docs.
