@@ -63,6 +63,35 @@ describe("Codex app-server request normalization", () => {
     expect(JSON.stringify(result.events)).not.toContain("42");
   });
 
+  it("preserves provider amendment decisions only in server-private pending state", () => {
+    const amendment = {
+      applyNetworkPolicyAmendment: {
+        network_policy_amendment: { action: "allow", host: "private.internal" },
+      },
+    };
+    const result = parseCodexAppServerRequestLine(JSON.stringify({
+      id: "rpc-amendment-1",
+      method: "item/commandExecution/requestApproval",
+      params: {
+        threadId: "provider-thread",
+        turnId: "provider-turn",
+        itemId: "item_command_amendment",
+        availableDecisions: [amendment, "decline", "cancel"],
+      },
+    }), context());
+
+    expect(result.events[0]).toMatchObject({
+      type: "approval.requested",
+      approval: { allowedDecisions: ["approve_for_session", "decline", "cancel"] },
+    });
+    expect(result.pending?.nativeDecisionByMatrixDecision).toEqual({
+      approve_for_session: amendment,
+      decline: "decline",
+      cancel: "cancel",
+    });
+    expect(JSON.stringify(result.events)).not.toContain("private.internal");
+  });
+
   it("normalizes file approvals with generic bounded preview text", () => {
     const result = parseCodexAppServerRequestLine(JSON.stringify({
       id: "rpc-file-1",
@@ -178,6 +207,32 @@ describe("Codex app-server request normalization", () => {
     expect(result.pending?.questionIds?.[0]?.nativeQuestionId).toBe("native-question-one");
     expect(JSON.stringify(result.events)).not.toContain("native-question-one");
     expect(JSON.stringify(result.events)).not.toContain("rpc-input-1");
+  });
+
+  it("bounds long option descriptions without dropping the provider request", () => {
+    const result = parseCodexAppServerRequestLine(JSON.stringify({
+      id: "rpc-input-long-description",
+      method: "item/tool/requestUserInput",
+      params: {
+        threadId: "provider-thread",
+        turnId: "provider-turn",
+        itemId: "item_input_long_description",
+        questions: [{
+          id: "native-question-long-description",
+          header: "Approach",
+          question: "Which implementation should be used?",
+          options: [{ label: "Minimal", description: "a".repeat(400) }],
+        }],
+      },
+    }), context());
+
+    expect(result.events).toHaveLength(1);
+    expect(result.pending?.requestId).toMatch(/^req_codex_/);
+    const event = result.events[0];
+    expect(event?.type).toBe("user_input.requested");
+    if (event?.type === "user_input.requested") {
+      expect(event.request.questions?.[0]?.options?.[0]?.description.length).toBe(300);
+    }
   });
 
   it("rejects unknown, oversized, and over-cap provider requests", () => {
