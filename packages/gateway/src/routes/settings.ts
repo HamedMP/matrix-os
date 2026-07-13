@@ -15,6 +15,15 @@ import { DEFAULT_ICON_STYLE, loadSkills } from "@matrix-os/kernel";
 import type { ChannelManager } from "../channels/manager.js";
 import type { ChannelConfig, ChannelId } from "../channels/types.js";
 import { validateApiKeyFormat, validateApiKeyLive, storeApiKey, hasApiKey } from "../onboarding/api-key.js";
+import { buildAgentProfileSummary } from "../agent-profile-summary.js";
+import {
+  KERNEL_DEFAULTS,
+  KERNEL_EFFORTS,
+  KERNEL_MODELS,
+  KERNEL_MODEL_IDS,
+  normalizeKernelEffort,
+  normalizeKernelModel,
+} from "../kernel-settings.js";
 
 const DESKTOP_DEFAULTS = {
   background: { type: "wallpaper", name: "moraine-lake.jpg" },
@@ -26,33 +35,12 @@ const DESKTOP_DEFAULTS = {
 const THEME_DEFAULTS = {};
 const SETTINGS_BODY_LIMIT = 256 * 1024;
 
-// Curated kernel model allowlist surfaced to the agent-config UI. Keep in sync
-// with the kernel runtime; users may only persist a model from this list.
-const KERNEL_MODELS = [
-  { id: "claude-opus-4-6", label: "Claude Opus 4.6", tier: "Most capable" },
-  { id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5", tier: "Balanced" },
-  { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", tier: "Fastest" },
-] as const;
-const KERNEL_MODEL_IDS = KERNEL_MODELS.map((m) => m.id) as [string, ...string[]];
-const KERNEL_EFFORTS = ["low", "medium", "high", "max"] as const;
-const KERNEL_DEFAULTS = { model: "claude-opus-4-6", effort: "high" } as const;
-
 const KernelPatchSchema = z
   .object({
     model: z.enum(KERNEL_MODEL_IDS).optional(),
     effort: z.enum(KERNEL_EFFORTS).optional(),
   })
   .strict();
-
-function normalizeKernelModel(value: unknown): string | null {
-  return typeof value === "string" && KERNEL_MODEL_IDS.includes(value) ? value : null;
-}
-
-function normalizeKernelEffort(value: unknown): string | null {
-  return typeof value === "string" && (KERNEL_EFFORTS as readonly string[]).includes(value)
-    ? value
-    : null;
-}
 
 const WALLPAPER_FILE_EXTENSIONS = new Set([
   ".avif",
@@ -251,6 +239,15 @@ export function createSettingsRoutes(opts: {
       availableEfforts: KERNEL_EFFORTS,
       defaults: KERNEL_DEFAULTS,
     });
+  });
+
+  app.get("/agent/summary", async (c) => {
+    try {
+      return c.json(await buildAgentProfileSummary(homePath));
+    } catch (err) {
+      console.warn("[settings] Failed to build agent summary:", err);
+      return c.json({ error: "Agent summary unavailable" }, 500);
+    }
   });
 
   app.put("/agent", bodyLimit({ maxSize: SETTINGS_BODY_LIMIT }), async (c) => {
