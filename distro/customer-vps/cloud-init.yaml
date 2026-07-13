@@ -435,6 +435,30 @@ write_files:
 runcmd:
   - |
     set -eu
+    # Swap first so nothing later in provisioning (or after) can OOM the box.
+    # Fleet default 8GiB, shrunk to keep >=10GiB free on /; skipped below 2GiB.
+    # matrix-ensure-swap (host bundle) reconciles the same policy on updates.
+    (
+      SWAP_GB=8
+      free_gb=$(( $(df -k --output=avail / | tail -1) / 1024 / 1024 ))
+      if [ "$free_gb" -lt $((SWAP_GB + 10)) ]; then SWAP_GB=$((free_gb - 10)); fi
+      in_fstab() { awk -v path="$1" '$1 == path { found = 1 } END { exit found ? 0 : 1 }' /etc/fstab 2>/dev/null; }
+      if [ "$SWAP_GB" -ge 2 ] && [ ! -e /swapfile ] && ! in_fstab /swapfile; then
+        if fallocate -l "${SWAP_GB}G" /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=$((SWAP_GB * 1024)) status=none; then
+          chmod 600 /swapfile
+          if mkswap /swapfile && swapon /swapfile; then
+            printf '/swapfile none swap sw 0 0\n' >> /etc/fstab
+          else
+            swapoff /swapfile 2>/dev/null || true
+            rm -f /swapfile
+          fi
+        else
+          rm -f /swapfile
+        fi
+      fi
+      printf 'vm.swappiness=10\n' > /etc/sysctl.d/99-matrix-swap.conf
+      sysctl -p /etc/sysctl.d/99-matrix-swap.conf
+    ) || echo "matrix-host: swap setup failed (non-fatal)" >&2
     apt_get_update() {
       apt-get update \
         -o Acquire::Retries=5 \
