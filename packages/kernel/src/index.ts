@@ -1,11 +1,14 @@
 export { spawnKernel } from "./kernel.js";
 export type { KernelEvent, KernelResult } from "./kernel.js";
+export { parseFrontmatter } from "./agents.js";
 export {
   DEFAULT_KERNEL_EFFORT,
   DEFAULT_KERNEL_MODEL,
   kernelOptions,
   loadKernelConfigFile,
+  loadKernelConfigFileAsync,
   resolveKernelConfigFile,
+  resolveKernelConfigFileAsync,
 } from "./options.js";
 export type { KernelConfig, KernelEffort } from "./options.js";
 export { createDB } from "./db.js";

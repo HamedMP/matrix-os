@@ -2,7 +2,11 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadKernelConfigFile, tryCreateBrowserServer } from "../../packages/kernel/src/options.js";
+import {
+  loadKernelConfigFile,
+  resolveKernelConfigFileAsync,
+  tryCreateBrowserServer,
+} from "../../packages/kernel/src/options.js";
 
 const browserServerMocks = vi.hoisted(() => ({
   createBrowserMcpServer: vi.fn((config: unknown) => ({
@@ -89,5 +93,32 @@ describe("loadKernelConfigFile", () => {
   it("does not throw on malformed JSON", () => {
     writeFileSync(join(homePath, "system", "config.json"), "{not json");
     expect(loadKernelConfigFile(homePath)).toEqual({});
+  });
+
+  it("resolves kernel config asynchronously with the runtime defaults", async () => {
+    writeConfig({ kernel: { model: "claude-sonnet-4-5", effort: "medium" } });
+    await expect(resolveKernelConfigFileAsync(homePath)).resolves.toEqual({
+      model: "claude-sonnet-4-5",
+      effort: "medium",
+    });
+
+    writeFileSync(join(homePath, "system", "config.json"), "{not json");
+    await expect(resolveKernelConfigFileAsync(homePath)).resolves.toEqual({
+      model: "claude-opus-4-6",
+      effort: "high",
+    });
+  });
+
+  it("bounds kernel config reads consistently across sync and async loaders", async () => {
+    writeConfig({
+      kernel: { model: "claude-sonnet-4-5", effort: "medium" },
+      padding: "x".repeat(300 * 1024),
+    });
+
+    expect(loadKernelConfigFile(homePath)).toEqual({});
+    await expect(resolveKernelConfigFileAsync(homePath)).resolves.toEqual({
+      model: "claude-opus-4-6",
+      effort: "high",
+    });
   });
 });
