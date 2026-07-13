@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -109,6 +109,41 @@ describe("Codex structured event runtime", () => {
         "item.completed",
         "turn.completed",
       ]);
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("sanitizes oversized command output without failing the Codex turn", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-runner-large-event-"));
+    const fakeCodexPath = join(homePath, "fake-codex-large-event.mjs");
+    const eventPath = codexProviderEventPath(homePath, "sess_runner_large_1");
+    await writeFile(fakeCodexPath, [
+      "#!/usr/bin/env node",
+      "console.log(JSON.stringify({type:'thread.started',thread_id:'019f-large-thread'}));",
+      "console.log(JSON.stringify({type:'item.completed',item:{id:'item_large',type:'command_execution',command:'run tests',aggregated_output:'secret-output-'.repeat(7000),exit_code:0,status:'completed'}}));",
+      "console.log(JSON.stringify({type:'turn.completed'}));",
+    ].join("\n"), "utf-8");
+    await chmod(fakeCodexPath, 0o700);
+
+    try {
+      const runnerPath = join(process.cwd(), "packages/gateway/src/coding-agents/codex-runner.mjs");
+      const result = await runProcess(process.execPath, [
+        runnerPath,
+        eventPath,
+        process.execPath,
+        fakeCodexPath,
+        "exec",
+        "--json",
+        "--",
+        "Run the tests.",
+      ], homePath);
+
+      expect(result.code).toBe(0);
+      const persisted = await readFile(eventPath, "utf-8");
+      expect(persisted).not.toContain("secret-output");
+      expect(persisted).toContain('"type":"command_execution"');
+      expect(persisted).toContain('"type":"turn.completed"');
     } finally {
       await rm(homePath, { recursive: true, force: true });
     }
@@ -417,6 +452,18 @@ describe("Codex structured event runtime", () => {
 
       await bridge.drain();
 
+      expect(bridge.watcherCount()).toBe(1);
+      await appendFile(codexProviderEventPath(homePath, sessionId), [
+        JSON.stringify({ type: "turn.started" }),
+        JSON.stringify({
+          type: "item.completed",
+          item: { id: "item_message_2", type: "agent_message", text: "The follow-up is complete." },
+        }),
+        JSON.stringify({ type: "turn.completed" }),
+        "",
+      ].join("\n"), "utf-8");
+      await bridge.drain();
+
       const replay = await store.getThread(principal, created.snapshot.thread.id);
       expect(replay.thread.status).toBe("completed");
       expect(replay.events.items.map((event) => event.type)).toEqual(expect.arrayContaining([
@@ -425,6 +472,9 @@ describe("Codex structured event runtime", () => {
         "assistant.text.delta",
         "assistant.text.completed",
         "thread.completed",
+      ]));
+      expect(replay.events.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "assistant.text.delta", delta: "The follow-up is complete." }),
       ]));
       expect(sink).toHaveBeenCalledWith(expect.objectContaining({
         ownerId: principal.userId,

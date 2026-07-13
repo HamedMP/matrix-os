@@ -16,6 +16,7 @@ process.on("unhandledRejection", () => {
 });
 
 const MAX_JSON_LINE_BYTES = 64 * 1024;
+const MAX_PROVIDER_LINE_BYTES = 1024 * 1024;
 const MAX_TRANSCRIPT_BYTES = 16 * 1024 * 1024;
 const MAX_PENDING_PROMPTS = 20;
 const MAX_PROMPT_BYTES = 64 * 1024;
@@ -39,6 +40,15 @@ const RunnerEventSchema = z.object({
     type: z.string().min(1).max(80),
     text: z.string().max(MAX_JSON_LINE_BYTES).optional(),
   }).passthrough().optional(),
+}).passthrough();
+const OversizedCommandEventSchema = z.object({
+  type: z.enum(["item.started", "item.updated", "item.completed"]),
+  item: z.object({
+    id: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/),
+    type: z.literal("command_execution"),
+    exit_code: z.number().int().nullable(),
+    status: z.enum(["in_progress", "completed", "failed", "declined"]),
+  }).passthrough(),
 }).passthrough();
 const PendingPromptSchema = z.string().trim().min(1).max(MAX_PROMPT_BYTES);
 const FramedPromptSchema = z.string()
@@ -123,17 +133,41 @@ function safeTerminalLine(raw) {
   }
 }
 
+function sanitizeOversizedLine(line) {
+  try {
+    const parsed = OversizedCommandEventSchema.safeParse(JSON.parse(line));
+    if (!parsed.success) return undefined;
+    return JSON.stringify({
+      type: parsed.data.type,
+      item: {
+        id: parsed.data.item.id,
+        type: "command_execution",
+        command: "",
+        aggregated_output: "Output omitted.",
+        exit_code: parsed.data.item.exit_code,
+        status: parsed.data.item.status,
+      },
+    });
+  } catch (_error) {
+    return undefined;
+  }
+}
+
 async function persistLine(line) {
-  const bytes = Buffer.byteLength(`${line}\n`, "utf-8");
-  if (bytes > MAX_JSON_LINE_BYTES || transcriptBytes + bytes > MAX_TRANSCRIPT_BYTES) {
+  const persistedLine = Buffer.byteLength(line, "utf-8") > MAX_JSON_LINE_BYTES
+    ? sanitizeOversizedLine(line)
+    : line;
+  if (!persistedLine) return undefined;
+  const bytes = Buffer.byteLength(`${persistedLine}\n`, "utf-8");
+  if (transcriptBytes + bytes > MAX_TRANSCRIPT_BYTES) {
     fatalTransportFailure = true;
     throw new Error("event_transcript_limit");
   }
-  await eventFile.write(`${line}\n`);
+  await eventFile.write(`${persistedLine}\n`);
   transcriptBytes += bytes;
-  safeTerminalLine(line);
+  safeTerminalLine(persistedLine);
   try {
-    const parsed = RunnerEventSchema.safeParse(JSON.parse(line));
+    const parsed = RunnerEventSchema.safeParse(JSON.parse(persistedLine));
     return parsed.success ? parsed.data.type : undefined;
   } catch (error) {
     if (error instanceof SyntaxError) return undefined;
@@ -144,23 +178,39 @@ async function persistLine(line) {
 async function consumeStdout(stream) {
   const decoder = new StringDecoder("utf-8");
   let pending = "";
+  let discardingOversizedLine = false;
   const eventTypes = [];
   for await (const chunk of stream) {
-    pending += decoder.write(chunk);
-    if (Buffer.byteLength(pending, "utf-8") > MAX_JSON_LINE_BYTES * 2) {
-      fatalTransportFailure = true;
-      throw new Error("event_line_limit");
+    let text = decoder.write(chunk);
+    if (discardingOversizedLine) {
+      const newline = text.indexOf("\n");
+      if (newline < 0) continue;
+      text = text.slice(newline + 1);
+      discardingOversizedLine = false;
     }
+    pending += text;
     let newline = pending.indexOf("\n");
     while (newline >= 0) {
       const line = pending.slice(0, newline).replace(/\r$/, "");
       pending = pending.slice(newline + 1);
-      if (line.length > 0) eventTypes.push(await persistLine(line));
+      if (line.length > 0 && Buffer.byteLength(line, "utf-8") <= MAX_PROVIDER_LINE_BYTES) {
+        eventTypes.push(await persistLine(line));
+      }
       newline = pending.indexOf("\n");
+    }
+    if (Buffer.byteLength(pending, "utf-8") > MAX_PROVIDER_LINE_BYTES) {
+      pending = "";
+      discardingOversizedLine = true;
     }
   }
   pending += decoder.end();
-  if (pending.length > 0) eventTypes.push(await persistLine(pending.replace(/\r$/, "")));
+  if (
+    !discardingOversizedLine &&
+    pending.length > 0 &&
+    Buffer.byteLength(pending, "utf-8") <= MAX_PROVIDER_LINE_BYTES
+  ) {
+    eventTypes.push(await persistLine(pending.replace(/\r$/, "")));
+  }
   return eventTypes;
 }
 

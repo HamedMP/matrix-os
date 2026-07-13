@@ -278,7 +278,7 @@ export function createCodexEventBridge(options: {
       entry.offset += consumedBytes;
       entry.lastTouchedAt = nowMs();
       entry.pendingOccurredAt = undefined;
-      if (terminal) watchers.delete(entry.sessionId);
+      if (terminal && entry.stopRequestedAt !== undefined) watchers.delete(entry.sessionId);
     } catch (error: unknown) {
       if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
         if (stoppedDrainExpired()) watchers.delete(entry.sessionId);
