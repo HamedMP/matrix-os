@@ -13,6 +13,7 @@ import { SupportedAgentSchema, type SupportedAgent } from "../agent-launcher.js"
 import type { WorkspaceSessionOrchestrator } from "../workspace-session-orchestrator.js";
 import type { CodingAgentProviderAdapter } from "./thread-store.js";
 import type { CodexEventBridge } from "./codex-event-bridge.js";
+import type { CodexControlClient } from "./codex-control-client.js";
 
 type WorkspaceRuntime = Pick<WorkspaceSessionOrchestrator, "startSession" | "stopSession"> &
   Partial<Pick<WorkspaceSessionOrchestrator, "sendInput">>;
@@ -35,17 +36,20 @@ export interface WorkspaceCodingAgentProviderOptions {
   runtime: WorkspaceRuntime;
   runnable?: boolean;
   codexEvents?: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch" | "markStopped">;
+  codexControl?: CodexControlClient;
 }
 
 export interface WorkspaceCodingAgentProviderSetOptions {
   agents: readonly SupportedAgent[];
   runtime: WorkspaceRuntime;
   codexEvents?: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch" | "markStopped">;
+  codexControl?: CodexControlClient;
 }
 
 export interface WorkspaceCodingAgentProviderSet {
   registryProviders: CodingAgentProviderAdapter[];
   executionProviders: CodingAgentProviderAdapter[];
+  approvalsEnabled: boolean;
 }
 
 function sessionIdForThread(threadId: string): string {
@@ -304,10 +308,28 @@ export function createWorkspaceCodingAgentProvider(
         }),
       ];
     },
-    submitApproval() {
+    async submitApproval({ thread, approvalId, request }) {
+      if (agent !== "codex" || !options.codexControl) {
+        throw new Error("Workspace provider approval unavailable");
+      }
+      await options.codexControl.submitApproval({
+        sessionId: sessionIdForThread(thread.id),
+        approvalId,
+        decision: request.decision,
+        clientRequestId: request.clientRequestId,
+      });
       return [];
     },
-    submitInput() {
+    async submitInput({ thread, inputRequestId, request }) {
+      if (agent !== "codex" || !options.codexControl || !request.structuredAnswers) {
+        throw new Error("Workspace provider input unavailable");
+      }
+      await options.codexControl.submitInput({
+        sessionId: sessionIdForThread(thread.id),
+        inputRequestId,
+        structuredAnswers: request.structuredAnswers,
+        clientRequestId: request.clientRequestId,
+      });
       return [];
     },
   };
@@ -323,9 +345,11 @@ export function createWorkspaceCodingAgentProviderSet(
     runtime: options.runtime,
     runnable: agent === "codex" || agent === "claude",
     codexEvents: agent === "codex" ? options.codexEvents : undefined,
+    codexControl: agent === "codex" ? options.codexControl : undefined,
   }));
   return {
     registryProviders,
     executionProviders: registryProviders,
+    approvalsEnabled: agents.includes("codex") && Boolean(options.codexControl),
   };
 }

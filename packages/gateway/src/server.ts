@@ -119,6 +119,7 @@ import { registerCodingAgentAttentionNotifications } from "./coding-agents/atten
 import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
 import { createCodingAgentProjectMutationService } from "./coding-agents/project-mutations.js";
 import { createCodexEventBridge, type CodexEventBridge } from "./coding-agents/codex-event-bridge.js";
+import { createCodexControlClient } from "./coding-agents/codex-control-client.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -517,6 +518,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   let codingAgentThreadStore: (CodingAgentThreadStore & CodingAgentTurnStore) | undefined;
   let codexEventBridge: CodexEventBridge | undefined;
+  let codingAgentApprovalsEnabled = false;
   const codingAgentSessionStopReconciler = createCodingAgentSessionStopReconciler();
   const workspaceEventStore = createWorkspaceEventStore({ homePath });
   const reviewStore = createReviewStore({ homePath });
@@ -577,7 +579,9 @@ export async function createGateway(config: GatewayConfig) {
       agents: codingAgentWorkspaceAgents,
       runtime: codingAgentWorkspaceRuntime,
       codexEvents: codexEventBridge,
+      codexControl: codexExecutable ? createCodexControlClient({ homePath }) : undefined,
     });
+    codingAgentApprovalsEnabled = providerSet.approvalsEnabled;
     codingAgentProviders.push(...providerSet.executionProviders);
     codingAgentRegistryProviders.push(...providerSet.registryProviders);
   } else if (process.env.MATRIX_CODING_AGENTS_FAKE_PROVIDER === "1") {
@@ -647,7 +651,7 @@ export async function createGateway(config: GatewayConfig) {
       kanbanView: true,
       workspace: codingAgentWorkspaceEnabled,
       sameThreadTurns: codingAgentTurnsEnabled,
-      approvals: false,
+      approvals: codingAgentApprovalsEnabled,
       review: true,
       preview: true,
       files: true,

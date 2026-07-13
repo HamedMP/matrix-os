@@ -513,4 +513,95 @@ describe("coding agent workspace provider", () => {
       await rm(homePath, { recursive: true, force: true });
     }
   });
+
+  it("forwards approval and structured input decisions to the deterministic Codex control session", async () => {
+    const submitApproval = vi.fn(async () => undefined);
+    const submitInput = vi.fn(async () => undefined);
+    const provider = createWorkspaceCodingAgentProvider({
+      providerId: "codex",
+      agent: "codex",
+      runtime: {
+        startSession: vi.fn(),
+        stopSession: vi.fn(),
+      },
+      codexControl: { submitApproval, submitInput },
+    });
+    const thread = AgentThreadSummarySchema.parse({
+      id: "thread_workspace_control_1",
+      providerId: "codex",
+      title: "Coding agent run",
+      status: "running",
+      attention: "approval_required",
+      createdAt: baseNow.toISOString(),
+      updatedAt: baseNow.toISOString(),
+    });
+
+    await expect(provider.submitApproval?.({
+      principal: ownerPrincipal,
+      thread,
+      approvalId: "appr_codex_11111111111111111111111111111111",
+      request: {
+        decision: "approve",
+        clientRequestId: "req_workspace_approval_1",
+        correlationId: "corr_workspace_approval_1",
+      },
+      now: () => baseNow,
+      nextEventId: () => "evt_workspace_approval_1",
+    })).resolves.toEqual([]);
+    await expect(provider.submitInput?.({
+      principal: ownerPrincipal,
+      thread: { ...thread, attention: "input_required" },
+      inputRequestId: "req_codex_22222222222222222222222222222222",
+      request: {
+        answer: "Submitted structured response.",
+        structuredAnswers: {
+          question_codex_333333333333333333333333: ["Minimal"],
+        },
+        clientRequestId: "req_workspace_input_1",
+        correlationId: "corr_workspace_input_1",
+      },
+      now: () => baseNow,
+      nextEventId: () => "evt_workspace_input_1",
+    })).resolves.toEqual([]);
+
+    expect(submitApproval).toHaveBeenCalledWith({
+      sessionId: "sess_workspace_control_1",
+      approvalId: "appr_codex_11111111111111111111111111111111",
+      decision: "approve",
+      clientRequestId: "req_workspace_approval_1",
+    });
+    expect(submitInput).toHaveBeenCalledWith({
+      sessionId: "sess_workspace_control_1",
+      inputRequestId: "req_codex_22222222222222222222222222222222",
+      structuredAnswers: {
+        question_codex_333333333333333333333333: ["Minimal"],
+      },
+      clientRequestId: "req_workspace_input_1",
+    });
+  });
+
+  it("advertises approval support only when the Codex control bridge is present", () => {
+    const runtime = { startSession: vi.fn(), stopSession: vi.fn() };
+    const codexEvents = {
+      healthCheck: vi.fn(async () => ({ ok: true })),
+      watch: vi.fn(),
+      unwatch: vi.fn(),
+      markStopped: vi.fn(),
+    };
+
+    expect(createWorkspaceCodingAgentProviderSet({
+      agents: ["codex"],
+      runtime,
+      codexEvents,
+    }).approvalsEnabled).toBe(false);
+    expect(createWorkspaceCodingAgentProviderSet({
+      agents: ["codex"],
+      runtime,
+      codexEvents,
+      codexControl: {
+        submitApproval: vi.fn(),
+        submitInput: vi.fn(),
+      },
+    }).approvalsEnabled).toBe(true);
+  });
 });

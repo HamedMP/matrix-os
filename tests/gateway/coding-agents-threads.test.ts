@@ -601,6 +601,9 @@ describe("coding agent thread lifecycle", () => {
       submitApproval({ thread, approvalId, request, now: providerNow, nextEventId }) {
         approvalCalls += 1;
         expect(approvalId).toBe("appr_test");
+        if (request.clientRequestId === "req_approval_failure") {
+          throw new Error("provider control unavailable at /private/socket");
+        }
         expect(request).toEqual({
           decision: "approve",
           clientRequestId: "req_approval_1",
@@ -646,6 +649,11 @@ describe("coding agent thread lifecycle", () => {
       correlationId: "corr_test",
     };
 
+    const failed = await app.request(jsonRequest(
+      `/api/coding-agents/threads/${created.thread.id}/approvals/appr_test/decision`,
+      { ...body, clientRequestId: "req_approval_failure" },
+    ));
+    const afterFailure = await threads.getThread(ownerPrincipal, created.thread.id);
     const first = await app.request(jsonRequest(`/api/coding-agents/threads/${created.thread.id}/approvals/appr_test/decision`, body));
     const duplicate = await app.request(jsonRequest(`/api/coding-agents/threads/${created.thread.id}/approvals/appr_test/decision`, body));
     const oversized = await app.request(new Request(`http://localhost/api/coding-agents/threads/${created.thread.id}/approvals/appr_test/decision`, {
@@ -654,10 +662,16 @@ describe("coding agent thread lifecycle", () => {
       body: JSON.stringify(body),
     }));
 
+    expect(failed.status).toBe(503);
+    expect(afterFailure.thread).toMatchObject({ status: "waiting_for_approval", attention: "approval_required" });
+    expect(afterFailure.events.items.map((event) => event.type)).toEqual([
+      "thread.created",
+      "approval.requested",
+    ]);
     expect(first.status).toBe(200);
     expect(duplicate.status).toBe(200);
     expect(oversized.status).toBe(413);
-    expect(approvalCalls).toBe(1);
+    expect(approvalCalls).toBe(2);
     const decided = AgentThreadSnapshotSchema.parse(await first.json());
     const duplicateSnapshot = AgentThreadSnapshotSchema.parse(await duplicate.json());
     expect(decided.thread).toMatchObject({ status: "running", attention: "none" });
