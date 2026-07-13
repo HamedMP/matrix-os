@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 
 export const CODEX_VERIFIED_VERSION = "0.146.0";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
+export * from "./agent-runtime-config.js";
 
 const SAFE_ID_BODY = /^[A-Za-z0-9_-]+$/;
 const SAFE_SLUG = /^[a-z0-9][a-z0-9_-]{0,79}$/;
