@@ -52,4 +52,18 @@ describe("ConnectionBanner", () => {
     );
     expect(queryByText("Retry")).toBeNull();
   });
+
+  it("supports surface-specific recovery labels", () => {
+    const { getByText } = render(
+      <ConnectionBanner
+        state="error"
+        queueCount={0}
+        labels={{
+          error: "Agent workspace reconnecting",
+        }}
+      />
+    );
+
+    expect(getByText("Agent workspace reconnecting")).toBeTruthy();
+  });
 });

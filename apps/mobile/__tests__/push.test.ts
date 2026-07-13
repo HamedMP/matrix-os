@@ -21,6 +21,16 @@ describe("push notification routing", () => {
     expect(getRouteForNotification(data)).toBe("/(tabs)/settings");
   });
 
+  it("routes coding-agent attention notifications to the bounded thread route", () => {
+    const data: NotificationData = { category: "agent", threadId: "thread_mobile_attention" };
+    expect(getRouteForNotification(data)).toBe("/agents/thread_mobile_attention");
+  });
+
+  it("defaults coding-agent notifications with invalid thread ids to the agent workspace", () => {
+    const data: NotificationData = { category: "agent", threadId: "../secret" };
+    expect(getRouteForNotification(data)).toBe("/agents");
+  });
+
   it("defaults to chat for unknown category", () => {
     const data: NotificationData = {};
     expect(getRouteForNotification(data)).toBe("/(tabs)/chat");

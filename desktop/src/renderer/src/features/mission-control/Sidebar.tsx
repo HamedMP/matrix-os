@@ -1,4 +1,5 @@
 import {
+  Bot,
   ChevronRight,
   Home,
   LayoutGrid,
@@ -13,10 +14,11 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BrandLogo } from "../../design/BrandPanel";
 import { IconButton } from "../../design/primitives";
+import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { invoke } from "../../lib/operator";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
-import { useTabs } from "../../stores/tabs";
+import { AGENTS_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
 
@@ -144,6 +146,9 @@ export default function Sidebar() {
         <nav className="flex flex-col gap-0.5">
           <NavRow icon={<Home size={15} />} label="Home" collapsed={collapsed} active={activeTab?.kind === "home"} onClick={() => openTab({ kind: "home", title: "Home", closable: false })} />
           <NavRow icon={<Sparkles size={15} />} label="Chat" collapsed={collapsed} active={activeTab?.kind === "chat"} onClick={() => { useThreads.getState().setActiveThread(null); openTab({ kind: "chat", title: "Hermes", closable: false }); }} />
+          {CODING_AGENTS_DESKTOP_WORKSPACE ? (
+            <NavRow icon={<Bot size={15} />} label="Agents" collapsed={collapsed} active={activeTab?.kind === "agents"} onClick={() => openTab(AGENTS_WORKSPACE_TAB_SPEC)} />
+          ) : null}
           <NavRow icon={<SquareTerminal size={15} />} label="Terminal" collapsed={collapsed} active={activeTab?.kind === "terminals"} onClick={() => openTab({ kind: "terminals", title: "Terminal" })} />
           <NavRow icon={<LayoutGrid size={15} />} label="Apps" collapsed={collapsed} active={activeTab?.kind === "apps" || activeTab?.kind === "app"} onClick={() => openTab({ kind: "apps", title: "Apps" })} />
         </nav>

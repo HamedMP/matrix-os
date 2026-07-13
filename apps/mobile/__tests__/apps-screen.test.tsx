@@ -27,7 +27,7 @@ jest.mock("expo-image", () => {
 
 import React from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import AppsScreen from "../app/(tabs)/apps";
 import { useGateway } from "../app/_layout";
 import { GatewayClient } from "../lib/gateway-client";
@@ -61,11 +61,14 @@ describe("AppsScreen", () => {
 
     render(<AppsScreen />);
 
-    await waitFor(() => expect(screen.getByText("Chat")).toBeTruthy());
-    // "Apps" appears twice now: the screen title and the native Apps card.
-    expect(screen.getAllByText("Apps").length).toBeGreaterThanOrEqual(2);
+    await waitFor(() => expect(screen.getByText("Terminal")).toBeTruthy());
+    // The mobile workspace slice keeps system surfaces visible in the grid,
+    // except the current Apps launcher itself.
+    expect(screen.queryByLabelText("Open Apps")).toBeNull();
     expect(screen.getByText("Tasks")).toBeTruthy();
     expect(screen.getByText("Settings")).toBeTruthy();
+    // Chat is intentionally hidden from the launcher grid.
+    expect(screen.queryByText("Chat")).toBeNull();
   });
 
   it("keeps native Matrix apps visible when the gateway returns no apps", async () => {
@@ -79,8 +82,9 @@ describe("AppsScreen", () => {
     render(<AppsScreen />);
 
     await waitFor(() => expect(getApps).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.getByText("Chat")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Terminal")).toBeTruthy());
     expect(screen.getByText("Tasks")).toBeTruthy();
+    expect(screen.queryByText("Chat")).toBeNull();
   });
 
   it("keeps native Matrix apps visible when the gateway app fetch fails", async () => {
@@ -95,8 +99,9 @@ describe("AppsScreen", () => {
     render(<AppsScreen />);
 
     await waitFor(() => expect(getApps).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.getByText("Chat")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Terminal")).toBeTruthy());
     expect(screen.getByText("Settings")).toBeTruthy();
+    expect(screen.queryByText("Chat")).toBeNull();
 
     warn.mockRestore();
   });
@@ -132,5 +137,131 @@ describe("AppsScreen", () => {
       MOBILE_SHELL_STATE_STORAGE_KEY,
       expect.stringContaining("\"lastActiveAppSlug\":\"notes\""),
     ));
+  });
+
+  it("keeps the native Tasks app available in the continue card", async () => {
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify({
+      mode: "app",
+      lastActiveAppSlug: "tasks",
+      updatedAt: "2026-05-13T00:00:00.000Z",
+    }));
+    useGatewayMock.mockReturnValue(gatewayContext({}));
+
+    render(<AppsScreen />);
+
+    await waitFor(() => expect(screen.getByLabelText("Continue Tasks")).toBeTruthy());
+  });
+
+  it("groups visible apps into main, my apps, and games sections", async () => {
+    const client = new GatewayClient("https://app.matrix-os.test", "token");
+    jest.spyOn(client, "getApps").mockResolvedValue([
+      {
+        name: "Notes",
+        description: "Write and organize notes.",
+        category: "Productivity",
+        file: "notes/index.html",
+        path: "/files/apps/notes/index.html",
+        slug: "notes",
+      },
+      {
+        name: "Snake",
+        description: "Classic snake.",
+        category: "Games",
+        icon: "snake",
+        file: "games/snake/index.html",
+        path: "/files/apps/games/snake/index.html",
+      },
+    ]);
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client,
+      connectionState: "connected",
+    }));
+
+    render(<AppsScreen />);
+
+    await waitFor(() => expect(screen.getByText("Main")).toBeTruthy());
+    expect(screen.getByText("My Apps")).toBeTruthy();
+    expect(screen.getByText("Games")).toBeTruthy();
+    expect(screen.getByText("Notes")).toBeTruthy();
+    expect(screen.getByText("Snake")).toBeTruthy();
+  });
+
+  it("loads gateway icons with the resolved bearer token and web shell extension logic", async () => {
+    const client = new GatewayClient("https://app.matrix-os.test", () => Promise.resolve("fresh-token"));
+    jest.spyOn(client, "getApps").mockResolvedValue([
+      {
+        name: "Game Center",
+        description: "Browse games.",
+        category: "Games",
+        icon: "Game",
+        file: "games/index.html",
+        path: "/files/apps/games/index.html",
+      },
+      {
+        name: "Pomodoro",
+        description: "Focus timer.",
+        category: "Productivity",
+        icon: "pomodoro",
+        file: "pomodoro/index.html",
+        path: "/files/apps/pomodoro/index.html",
+      },
+    ]);
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client,
+      connectionState: "connected",
+    }));
+
+    render(<AppsScreen />);
+
+    await waitFor(() => {
+      const images = screen.getAllByTestId("expo-image");
+      expect(images.some((node) =>
+        node.props.source?.uri === "https://app.matrix-os.test/icons/game.svg" &&
+        node.props.source?.headers?.Authorization === "Bearer fresh-token",
+      )).toBe(true);
+      expect(images.some((node) =>
+        node.props.source?.uri === "https://app.matrix-os.test/icons/pomodoro-timer.png" &&
+        node.props.source?.headers?.Authorization === "Bearer fresh-token",
+      )).toBe(true);
+    });
+  });
+
+  it("waits for an auth token before requesting authenticated gateway icons", async () => {
+    let resolveToken!: (token: string) => void;
+    const tokenPromise = new Promise<string>((resolve) => {
+      resolveToken = resolve;
+    });
+    const client = new GatewayClient("https://app.matrix-os.test", () => tokenPromise);
+    jest.spyOn(client, "getApps").mockResolvedValue([
+      {
+        name: "Snake",
+        description: "Classic snake.",
+        category: "Games",
+        icon: "snake",
+        file: "games/snake/index.html",
+        path: "/files/apps/games/snake/index.html",
+      },
+    ]);
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client,
+      connectionState: "connected",
+    }));
+
+    render(<AppsScreen />);
+
+    await waitFor(() => expect(screen.getByText("Snake")).toBeTruthy());
+    expect(screen.queryAllByTestId("expo-image")).toHaveLength(0);
+
+    await act(async () => {
+      resolveToken("late-token");
+      await tokenPromise;
+    });
+
+    await waitFor(() => {
+      const image = screen.getAllByTestId("expo-image").find((node) =>
+        node.props.source?.uri === "https://app.matrix-os.test/icons/snake.png",
+      );
+      expect(image?.props.source?.headers?.Authorization).toBe("Bearer late-token");
+    });
   });
 });

@@ -111,6 +111,7 @@ describe("agent-session-manager", () => {
       worktreeId,
       pr: 42,
       prompt: "fix tests; rm -rf /",
+      mode: "review",
       sandbox: { enabled: true },
     });
 
@@ -137,6 +138,7 @@ describe("agent-session-manager", () => {
     expect(agentLauncher.buildLaunch).toHaveBeenCalledWith(expect.objectContaining({
       agent: "codex",
       prompt: "fix tests; rm -rf /",
+      mode: "review",
       cwd: join(homePath, "projects", "repo", "worktrees", worktreeId),
     }));
     expect(zellijRuntime.start).toHaveBeenCalledWith(expect.objectContaining({
@@ -148,6 +150,66 @@ describe("agent-session-manager", () => {
     expect(record.transcriptPath).toBe(join(homePath, "system", "session-output", "sess_abc123.jsonl"));
     expect(record.writeMode).toBe("owner");
     expect(record.ownerId).toBe("user_a");
+  });
+
+  it("includes bounded structured attachments in the agent launch prompt", async () => {
+    const { manager, agentLauncher } = createManager();
+
+    await manager.startSession({
+      kind: "agent",
+      agent: "codex",
+      ownerId: "user_a",
+      projectSlug: "repo",
+      worktreeId,
+      prompt: "Please follow up on this review hunk.",
+      attachments: [
+        {
+          id: "review:rev_desktop_1:hunk:hunk_1",
+          kind: "structured_ref",
+          label: "Review hunk 1",
+          path: "packages/gateway/src/coding-agents/routes.ts",
+        },
+      ],
+    });
+
+    expect(agentLauncher.buildLaunch).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringContaining("Please follow up on this review hunk."),
+    }));
+    expect(agentLauncher.buildLaunch).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringContaining("[structured_ref] Review hunk 1: packages/gateway/src/coding-agents/routes.ts"),
+    }));
+    expect(agentLauncher.buildLaunch).not.toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringMatching(/export const|function create|raw diff/i),
+    }));
+  });
+
+  it("keeps structured references when the launch prompt is near the prompt bound", async () => {
+    const { manager, agentLauncher } = createManager();
+    const maxPrompt = "x".repeat(100_000);
+
+    await manager.startSession({
+      kind: "agent",
+      agent: "codex",
+      ownerId: "user_a",
+      projectSlug: "repo",
+      worktreeId,
+      prompt: maxPrompt,
+      attachments: [
+        {
+          id: "review:rev_desktop_1:hunk:hunk_2",
+          kind: "structured_ref",
+          label: "Review hunk 2",
+          path: "packages/gateway/src/agent-session-manager.ts",
+        },
+      ],
+    });
+
+    expect(agentLauncher.buildLaunch).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringContaining("[structured_ref] Review hunk 2: packages/gateway/src/agent-session-manager.ts"),
+    }));
+    const launchPrompt = vi.mocked(agentLauncher.buildLaunch).mock.calls.at(-1)?.[0].prompt;
+    expect(launchPrompt).toBeDefined();
+    expect(launchPrompt?.length).toBeLessThanOrEqual(100_000);
   });
 
   it("rejects competing write sessions before launching a runtime", async () => {
@@ -192,7 +254,7 @@ describe("agent-session-manager", () => {
     expect(started.ok).toBe(true);
 
     await expect(manager.sendInput("sess_abc123", "pnpm test\n")).resolves.toMatchObject({ ok: true });
-    expect(inputWriter).toHaveBeenCalledWith("sess_abc123", "pnpm test\n");
+    expect(inputWriter).toHaveBeenCalledWith("sess_abc123", "pnpm test\n", undefined);
 
     await expect(manager.killSession("sess_abc123")).resolves.toMatchObject({
       ok: true,
@@ -295,6 +357,19 @@ describe("agent-session-manager", () => {
       checked: 1,
       degraded: 1,
       releasedLeases: 1,
+      stoppedSessions: [
+        expect.objectContaining({
+          id: "sess_abc123",
+          kind: "agent",
+          ownerId: "user_a",
+          runtime: expect.objectContaining({
+            status: "degraded",
+            fallbackReason: "zellij_unavailable",
+          }),
+          terminalSessionId: "term_sess_abc123",
+          writeMode: "closed",
+        }),
+      ],
     });
     await expect(manager.getSession("sess_abc123")).resolves.toMatchObject({
       ok: true,

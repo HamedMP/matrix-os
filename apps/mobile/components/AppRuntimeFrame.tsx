@@ -8,13 +8,14 @@ interface AppRuntimeFrameProps {
   url: string;
   title: string;
   headers?: Record<string, string>;
+  canOpenExternalUrl?: (url: string) => boolean;
 }
 
-export default function AppRuntimeFrame({ url, title, headers }: AppRuntimeFrameProps) {
+export default function AppRuntimeFrame({ url, title, headers, canOpenExternalUrl }: AppRuntimeFrameProps) {
   const runtimeOrigin = useMemo(() => {
     try {
       return new URL(url).origin;
-    } catch (_err: unknown) {
+    } catch {
       return "https://app.matrix-os.com";
     }
   }, [url]);
@@ -25,15 +26,16 @@ export default function AppRuntimeFrame({ url, title, headers }: AppRuntimeFrame
       try {
         const target = new URL(request.url);
         if (target.origin === runtimeOrigin) return true;
-      } catch (_err: unknown) {
+      } catch {
         return false;
       }
+      if (canOpenExternalUrl && !canOpenExternalUrl(request.url)) return false;
       void Linking.openURL(request.url).catch((err: unknown) => {
         console.warn("[mobile] failed to open external app link", err instanceof Error ? err.message : String(err));
       });
       return false;
     },
-    [runtimeOrigin],
+    [canOpenExternalUrl, runtimeOrigin],
   );
 
   return (

@@ -236,6 +236,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
 
   useEffect(() => {
     if (!topIsTerminal || terminalInputActiveId !== top?.id) {
+      // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- event-state cleanup: this clears mobile terminal input mode when the active foreground app is no longer the terminal that opened the input. It cannot be derived during render because MOBILE_TERMINAL_INPUT_ACTIVE_EVENT is an external DOM event source.
       setTerminalInputActiveId(null);
     }
   }, [terminalInputActiveId, top?.id, topIsTerminal]);
@@ -320,7 +321,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
     const app = apps.find((candidate) => candidate.path === launchAppPath);
     if (!app) return;
     launchPathConsumedRef.current = launchAppPath;
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-derived-state -- imperative side effect, not derived state: opening an app in response to a one-shot `launchAppPath` request. The launchPathConsumedRef dedupe ensures it fires once per distinct path; `openStack` is genuine foreground-app state that the user mutates afterward, so it cannot be recomputed from `launchAppPath` in render.
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-derived-state, react-doctor/no-adjust-state-on-prop-change -- imperative side effect, not derived state: opening an app in response to a one-shot `launchAppPath` request. The launchPathConsumedRef dedupe ensures it fires once per distinct path; `openStack` is genuine foreground-app state that the user mutates afterward, so it cannot be recomputed from `launchAppPath` in render.
     openApp(app);
   }, [apps, launchAppPath, openApp]);
 

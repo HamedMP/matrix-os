@@ -28,6 +28,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@fontsource/instrument-sans": "^5.2.5",
     "@fontsource/jetbrains-mono": "^5.2.5",
+    "@matrix-os/contracts": "workspace:*",
     "@radix-ui/react-collapsible": "^1.1.12",
     "@radix-ui/react-context-menu": "^2.2.16",
     "@radix-ui/react-dialog": "^1.1.15",

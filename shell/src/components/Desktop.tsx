@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, type CSSProperties, type ReactNode } from "react";
-import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
@@ -17,37 +16,17 @@ import {
   shouldShowDeveloperDashboard,
   type DesktopFirstRunStatus,
 } from "@/lib/desktop-first-run";
-import { AppViewer } from "./AppViewer";
-import { NativeAppViewer } from "./NativeAppViewer";
-import { TerminalApp } from "./terminal/TerminalApp";
-import { WorkspaceApp } from "./workspace/WorkspaceApp";
-import { FileBrowser } from "./file-browser/FileBrowser";
-import { PreviewWindow } from "./preview-window/PreviewWindow";
-import { ActivityMonitorApp } from "./system-activity/ActivityMonitorApp";
 import { MissionControl } from "./MissionControl";
 import { DotGrid } from "./DotGrid";
 import { Settings } from "./Settings";
 import { CanvasRenderer } from "./canvas/CanvasRenderer";
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardContent,
-} from "@/components/ui/card";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
-import { SettingsIcon, PinOffIcon, RefreshCwIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon, LayoutGridIcon } from "lucide-react";
+import { SettingsIcon, MessageSquareIcon, LayoutGridIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
@@ -56,20 +35,18 @@ import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
-import { ChatApp } from "./ChatApp";
 import { ChatPopover } from "./ChatPopover";
 import { SetupChecklist } from "./onboarding/SetupChecklist";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
 import { DeveloperModeDashboard } from "./developer/DeveloperModeDashboard";
 import { versionedIconUrl } from "@/lib/icon-url";
-import { cn, nameToSlug } from "@/lib/utils";
+import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
-import { SHELL_Z_INDEX } from "@/lib/shell-layering";
-import { nativeAppIdFromPath, type NativeAppSummary } from "@/lib/native-apps";
+import type { NativeAppSummary } from "@/lib/native-apps";
 import { enqueueTerminalLaunch, TERMINAL_SETUP_WINDOW_PATH } from "@/lib/terminal-launch";
 import {
   loadShellSnapshot,
@@ -82,10 +59,20 @@ import {
   normalizeBuiltInAppPath,
   normalizeBuiltInLayoutWindow,
 } from "@/lib/builtin-apps";
+import {
+  DESKTOP_GATEWAY_FETCH_TIMEOUT_MS as GATEWAY_FETCH_TIMEOUT_MS,
+  findAppByName,
+  gatewayFetchSignal,
+  registryPathToRelativePath,
+  sameIconAsset,
+  type ModuleMeta,
+  type ShellBootstrap,
+} from "./desktop/desktop-app-routing";
+import { AoedeDockButton, DockIcon } from "./desktop/DesktopDockControls";
+import { DesktopWindow } from "./desktop/DesktopWindow";
 import { Reorder } from "framer-motion";
 
 const GATEWAY_URL = getGatewayUrl();
-const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
 // Stable fallback so `pinnedApps` keeps a constant reference when the store
 // value is absent — an inline `?? []` would allocate a fresh array each render
 // and destabilize every memo/callback that depends on `pinnedApps`. Treated as
@@ -93,24 +80,6 @@ const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
 const EMPTY_PINNED_APPS: string[] = [];
 const MATRIX_SHIMMER =
   "linear-gradient(90deg, #2F392C 0%, #2F392C 24%, #C4A265 50%, #2F392C 76%, #2F392C 100%)";
-
-function iconAssetPath(iconUrl: string | undefined): string | undefined {
-  if (!iconUrl) return undefined;
-  try {
-    return new URL(iconUrl, window.location.origin).pathname;
-  } catch (_err: unknown) {
-    return iconUrl.split("?")[0];
-  }
-}
-
-function sameIconAsset(left: string | undefined, right: string | undefined): boolean {
-  return iconAssetPath(left) === iconAssetPath(right);
-}
-
-function gatewayFetchSignal(signal?: AbortSignal): AbortSignal {
-  const timeoutSignal = AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS);
-  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
-}
 
 const MATRIX_FIRST_RUN_LOGO_STYLE: CSSProperties = {
   WebkitMaskImage: "url('/matrix-logo.svg')",
@@ -177,301 +146,8 @@ async function markOnboardingComplete() {
   }
 }
 
-// Forgiving app-name lookup used by vocal mode's `open_app` tool and the
-// auto-open after a build finishes. Handles exact, substring, reverse
-// substring, and word-level matches so "notes", "the notes", "notes app",
-// and "my notes" all resolve to the same installed app.
-function findAppByName<T extends { name: string }>(apps: T[], query: string): T | null {
-  const q = query.toLowerCase().trim().replace(/[^\w\s]+/g, "").replace(/\s+/g, " ");
-  if (!q) return null;
-
-  const exact = apps.find((a) => a.name.toLowerCase() === q);
-  if (exact) return exact;
-
-  // Query ⊂ app name — prefer shortest match (most specific).
-  const contains = apps.filter((a) => a.name.toLowerCase().includes(q));
-  if (contains.length > 0) {
-    return contains.reduce((best, a) => (a.name.length < best.name.length ? a : best));
-  }
-
-  // App name ⊂ query ("open the notes app" contains "Notes") — prefer longest.
-  const reverse = apps.filter((a) => q.includes(a.name.toLowerCase()));
-  if (reverse.length > 0) {
-    return reverse.reduce((best, a) => (a.name.length > best.name.length ? a : best));
-  }
-
-  // Word-level: at least half the query's meaningful words appear in
-  // the app name. Stopwords (single chars) are filtered out.
-  const words = q.split(/\s+/).filter((w) => w.length > 1);
-  if (words.length > 0) {
-    const scored = apps
-      .reduce<{ app: T; score: number }[]>((acc, a) => {
-        const nameLower = a.name.toLowerCase();
-        const hits = words.filter((w) => nameLower.includes(w)).length;
-        const score = hits / words.length;
-        if (score >= 0.5) acc.push({ app: a, score });
-        return acc;
-      }, [])
-      .sort((a, b) => b.score - a.score || a.app.name.length - b.app.name.length);
-    if (scored.length > 0) return scored[0].app;
-  }
-
-  return null;
-}
-
-interface ModuleRegistryEntry {
-  name: string;
-  type: string;
-  path: string;
-  status: string;
-}
-
-interface ModuleMeta {
-  name: string;
-  entry?: string;
-  entryPoint?: string;
-  icon?: string;
-  version?: string;
-}
-
-interface ShellBootstrapIcon {
-  url: string;
-  etag: string | null;
-  versionedUrl: string;
-}
-
-interface ShellBootstrap {
-  layout?: { windows?: LayoutWindow[] };
-  modules?: ModuleRegistryEntry[];
-  apps?: { name: string; path: string; icon?: string; slug?: string }[];
-  icons?: Record<string, ShellBootstrapIcon>;
-}
-
-function registryPathToRelativePath(path: string): string | null {
-  if (path.startsWith("~/")) {
-    return path.slice(2);
-  }
-  const homePrefix = "/home/matrixos/home/";
-  if (path.startsWith(homePrefix)) {
-    return path.slice(homePrefix.length);
-  }
-  return null;
-}
-
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
-
-function TrafficLights({
-  onClose,
-  onMinimize,
-  onFullscreen,
-}: {
-  onClose: () => void;
-  onMinimize: () => void;
-  onFullscreen?: () => void;
-}) {
-  return (
-    <div className="group/traffic flex items-center gap-1.5 mr-2">
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onClose();
-        }}
-        className="size-3 rounded-full bg-[#ff5f57] flex items-center justify-center hover:brightness-90 transition-colors"
-        aria-label="Close"
-      >
-        <span className="text-[8px] leading-none font-bold text-black/0 group-hover/traffic:text-black/60 transition-colors">
-          x
-        </span>
-      </button>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onMinimize();
-        }}
-        className="size-3 rounded-full bg-[#febc2e] flex items-center justify-center hover:brightness-90 transition-colors"
-        aria-label="Minimize"
-      >
-        <span className="text-[9px] leading-none font-bold text-black/0 group-hover/traffic:text-black/60 transition-colors">
-          -
-        </span>
-      </button>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onFullscreen?.();
-        }}
-        className="size-3 rounded-full bg-[#28c840] flex items-center justify-center hover:brightness-90 transition-colors"
-        aria-label="Fullscreen"
-      />
-    </div>
-  );
-}
-
-function DockIcon({
-  name,
-  active,
-  onClick,
-  iconSize = 40,
-  tooltipSide = "right",
-  iconUrl,
-  onUnpin,
-  onRegenerateIcon,
-  onRename,
-  onQuit,
-  canQuit,
-}: {
-  name: string;
-  active: boolean;
-  onClick: () => void;
-  iconSize?: number;
-  tooltipSide?: "left" | "right" | "top" | "bottom";
-  iconUrl?: string;
-  onUnpin?: () => void;
-  onRegenerateIcon?: () => void;
-  onRename?: (newName: string) => void;
-  onQuit?: () => void;
-  canQuit?: boolean;
-}) {
-  const initial = name.charAt(0).toUpperCase();
-  const { showImage, onError: onImgError } = useIconWithFallback(iconUrl);
-
-  const btn = (
-    <button
-      type="button"
-      onClick={onClick}
-      className="relative flex items-center justify-center rounded-xl shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all bg-card border border-border/60 overflow-hidden"
-      style={{ width: iconSize, height: iconSize }}
-    >
-      {showImage ? (
-        // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host with an onError fallback chain (.png -> .svg) that next/image cannot reproduce
-        <img src={iconUrl} alt={name} className="size-full object-cover" onError={onImgError} />
-      ) : (
-        <span className="text-sm font-semibold text-foreground">
-          {initial}
-        </span>
-      )}
-      {active && (
-        <span className="absolute -right-1 top-1/2 -translate-y-1/2 size-1.5 rounded-full bg-foreground" />
-      )}
-    </button>
-  );
-
-  const hasContextMenu = onUnpin || onRegenerateIcon || onRename || onQuit;
-  if (!hasContextMenu) {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>{btn}</TooltipTrigger>
-        <TooltipContent side={tooltipSide} sideOffset={8}>{name}</TooltipContent>
-      </Tooltip>
-    );
-  }
-
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div>
-          <Tooltip>
-            <TooltipTrigger asChild>{btn}</TooltipTrigger>
-            <TooltipContent side={tooltipSide} sideOffset={8}>{name}</TooltipContent>
-          </Tooltip>
-        </div>
-      </ContextMenuTrigger>
-      <ContextMenuContent className="z-[60]">
-        {onUnpin && (
-          <ContextMenuItem onSelect={onUnpin}>
-            <PinOffIcon className="size-3.5 mr-2" />
-            Unpin from Dock
-          </ContextMenuItem>
-        )}
-        {onRegenerateIcon && (
-          <ContextMenuItem onSelect={onRegenerateIcon}>
-            <RefreshCwIcon className="size-3.5 mr-2" />
-            Regenerate Icon
-          </ContextMenuItem>
-        )}
-        {onRename && (onUnpin || onRegenerateIcon) && (
-          <ContextMenuSeparator />
-        )}
-        {onRename && (
-          <ContextMenuItem
-            onSelect={() => {
-              const newName = window.prompt("Rename app:", name);
-              if (newName && newName.trim() && newName.trim() !== name) {
-                onRename(newName.trim());
-              }
-            }}
-          >
-            <PencilIcon className="size-3.5 mr-2" />
-            Rename
-          </ContextMenuItem>
-        )}
-        {onQuit && (
-          <>
-            {(onUnpin || onRegenerateIcon || onRename) && <ContextMenuSeparator />}
-            <ContextMenuItem
-              disabled={!canQuit}
-              onSelect={() => {
-                if (canQuit) onQuit();
-              }}
-            >
-              <XCircleIcon className="size-3.5 mr-2" />
-              Quit
-            </ContextMenuItem>
-          </>
-        )}
-      </ContextMenuContent>
-    </ContextMenu>
-  );
-}
-
-/**
- * Aoede's dock entrypoint. Uses the `.aoede-dock-button` class (defined
- * in globals.css) for the shimmer ring + fill sweep shared with the
- * "Enter Matrix OS" wordmark. `variant` toggles the tooltip wrapper and
- * default size so desktop and mobile stay in lockstep.
- */
-function AoedeDockButton({
-  size,
-  variant,
-  tooltipSide,
-}: {
-  size: number;
-  variant: "desktop" | "mobile";
-  tooltipSide?: "left" | "right" | "top";
-}) {
-  const active = useVocalStore((s) => s.active);
-  const toggle = useVocalStore((s) => s.toggle);
-
-  const button = (
-    <button
-      type="button"
-      data-testid={variant === "desktop" ? "dock-vocal" : "dock-vocal-mobile"}
-      data-active={active ? "true" : "false"}
-      onClick={toggle}
-      className="aoede-dock-button flex shrink-0 items-center justify-center rounded-full bg-white text-black border border-border/60 shadow-sm transition-transform hover:scale-105 active:scale-95"
-      style={{ width: size, height: size }}
-      aria-label={active ? "Stop Aoede" : "Start Aoede"}
-      aria-pressed={active}
-    >
-      <MicIcon className="size-4" />
-    </button>
-  );
-
-  if (variant === "mobile") return button;
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>{button}</TooltipTrigger>
-      <TooltipContent side={tooltipSide} sideOffset={8}>
-        {active ? "Aoede (on)" : "Aoede"}
-      </TooltipContent>
-    </Tooltip>
-  );
-}
 
 interface DesktopProps {
   launchAppPath?: string | null;
@@ -868,20 +544,14 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       if (isLoadAborted() || isPreVpsBillingSetupRoute()) return;
 
       const savedWindows = (bootstrap.layout?.windows ?? []).map(normalizeBuiltInLayoutWindow);
-      const layoutMap = new Map(savedWindows.map((w) => [w.path, w]));
-      const layoutToLoad: LayoutWindow[] = [];
-      const queuedLayoutPaths = new Set<string>();
+      const layoutMap = new Map(savedWindows.map((window) => [window.path, window]));
+      const nativeLayouts = nativeApps
+        .filter((nativeApp) => nativeApp.enabled && nativeApp.runtime === "linux-native")
+        .map((nativeApp) => layoutMap.get(`native:${nativeApp.id}`))
+        .filter((window): window is LayoutWindow => window !== undefined);
 
-      for (const nativeApp of nativeApps) {
-        if (!nativeApp.enabled || nativeApp.runtime !== "linux-native") continue;
-        const saved = layoutMap.get(`native:${nativeApp.id}`);
-        if (!saved || queuedLayoutPaths.has(saved.path)) continue;
-        queuedLayoutPaths.add(saved.path);
-        layoutToLoad.push(saved);
-      }
-
-      if (layoutToLoad.length > 0) {
-        wmLoadLayout(layoutToLoad);
+      if (nativeLayouts.length > 0) {
+        wmLoadLayout(nativeLayouts);
       }
     };
     const applyBootstrap = async (
@@ -1461,7 +1131,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           />
         ) : null}
       </MenuBar>
-      <div className="relative flex-1 flex flex-col md:flex-row md:pt-7">
+      <div className="relative flex-1 flex flex-col md:flex-row md:pt-8">
         {/* Desktop dock -- hidden in ambient/conversational modes. */}
         {modeConfig.showDock && <div
           className={[
@@ -1955,181 +1625,28 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           {/* Desktop: positioned windows; Mobile: full-screen cards.
               We render minimized windows too (display:none) so iframe state,
               terminal sockets, and React state survive minimize -> restore. */}
-          {modeConfig.showWindows && desktopMode !== "canvas" && windows.map((win) => {
-            const isFullscreen = win.id === fullscreenWindowId;
-            const isMinimizing = minimizingIds.has(win.id);
-            const isHidden = win.minimized && !isMinimizing && !isFullscreen;
-            const terminalOwnsChrome = win.path.startsWith("__terminal__");
-            const nativeAppId = nativeAppIdFromPath(win.path);
-
-            // Compute dock target for suck animation
-            let dockTargetX = 0;
-            let dockTargetY = 0;
-            if (isMinimizing) {
-              const winCenterX = win.x + win.width / 2;
-              const winCenterY = win.y + win.height / 2;
-              if (dock.position === "left") {
-                dockTargetX = -winCenterX;
-                dockTargetY = (window.innerHeight / 2) - winCenterY;
-              } else if (dock.position === "right") {
-                dockTargetX = window.innerWidth - winCenterX;
-                dockTargetY = (window.innerHeight / 2) - winCenterY;
-              } else {
-                dockTargetX = (window.innerWidth / 2) - winCenterX;
-                dockTargetY = window.innerHeight - winCenterY;
-              }
-            }
-
-            return (
-              <Card
-                key={win.id}
-                data-window-id={win.id}
-                className={isFullscreen
-                  ? "fixed inset-0 gap-0 rounded-none p-0 overflow-hidden border-0 bg-background"
-                  : cn(
-                      "app-window absolute gap-0 rounded-none md:rounded-lg p-0 overflow-hidden shadow-2xl",
-                      // The terminal body is dark; the Card's default light border
-                      // reads as a stray white frame (Canvas omits it). Drop it.
-                      terminalOwnsChrome && "border-0",
-                    )
-                }
-                style={isFullscreen ? {
-                  zIndex: SHELL_Z_INDEX.fullscreenWindow,
-                  transition: "all 300ms cubic-bezier(0.22, 1, 0.36, 1)",
-                } : {
-                  "--win-x": `${win.x}px`,
-                  "--win-y": `${win.y}px`,
-                  "--win-w": `${win.width}px`,
-                  "--win-h": `${win.height}px`,
-                  zIndex: win.zIndex,
-                  transformOrigin: isMinimizing
-                    ? dock.position === "left" ? "left center"
-                    : dock.position === "right" ? "right center"
-                    : "center bottom"
-                    : undefined,
-                  transition: isMinimizing
-                    ? "transform 500ms cubic-bezier(0.5, 0, 0.7, 0.4), opacity 400ms cubic-bezier(0.4, 0, 1, 1), filter 500ms ease-out"
-                    : undefined,
-                  transform: isMinimizing
-                    ? `translate(${dockTargetX}px, ${dockTargetY}px) scale(0.03) rotate(${dock.position === "bottom" ? "2deg" : "0deg"})`
-                    : undefined,
-                  opacity: isMinimizing ? 0 : undefined,
-                  filter: isMinimizing ? "blur(2px)" : undefined,
-                  pointerEvents: isMinimizing ? "none" : undefined,
-                  display: isHidden ? "none" : undefined,
-                } as React.CSSProperties}
-                onMouseDown={() => !isFullscreen && wmFocusWindow(win.id)}
-              >
-                <CardHeader
-                  className={cn(
-                    "flex flex-row items-center gap-0 px-3 py-2 md:cursor-grab md:active:cursor-grabbing select-none space-y-0",
-                    // Terminal keeps the main-branch host title bar styling;
-                    // only the Terminal app's own internal toolbar was removed.
-                    terminalOwnsChrome ? "border-b-0" : "border-b border-border",
-                  )}
-                  style={terminalOwnsChrome ? { background: "var(--terminal-drawer-bg)", color: "var(--terminal-drawer-fg)" } : undefined}
-                  onPointerDown={(e) => onDragStart(win.id, e)}
-                  onPointerMove={onDragMove}
-                  onPointerUp={onDragEnd}
-                  // Double-click the title bar to maximize/restore. Ignore the controls.
-                  onDoubleClick={(e) => {
-                    if (e.target instanceof Element && e.target.closest("button,[role='button'],input,a")) return;
-                    wmToggleFullscreen(win.id);
-                  }}
-                >
-                  <TrafficLights
-                    onClose={() => wmCloseWindow(win.id)}
-                    onMinimize={() => animateMinimize(win.id)}
-                    onFullscreen={() => wmToggleFullscreen(win.id)}
-                  />
-                  <CardTitle className="text-xs font-medium truncate flex-1 text-center">
-                    {win.title}
-                  </CardTitle>
-                  {/* Spacer balances the traffic lights so the title stays
-                      centered. (The old AI sparkle button was removed.) */}
-                  <div className="w-[78px]" aria-hidden />
-                </CardHeader>
-
-                <CardContent className="relative flex-1 p-0 min-h-0">
-                  {win.path.startsWith("__terminal__") ? (
-                    <TerminalApp
-                      launchTargetId={win.id}
-                      embeddedChrome
-                      windowControls={{
-                        close: () => wmCloseWindow(win.id),
-                        minimize: () => animateMinimize(win.id),
-                        toggleFullscreen: () => wmToggleFullscreen(win.id),
-                        dragHandleProps: {
-                          onPointerDown: (event) => onDragStart(win.id, event),
-                          onPointerMove: onDragMove,
-                          onPointerUp: onDragEnd,
-                          onPointerCancel: onDragEnd,
-                          onDoubleClick: () => wmToggleFullscreen(win.id),
-                        },
-                      }}
-                    />
-                  ) : win.path === "__workspace__" ? (
-                    <WorkspaceApp />
-                  ) : win.path === "__file-browser__" ? (
-                    <FileBrowser windowId={win.id} />
-                  ) : win.path === "__preview-window__" ? (
-                    <PreviewWindow />
-                  ) : win.path === "__chat__" ? (
-                    <div className="h-full overflow-hidden">
-                      {chat && (
-                        <ChatApp
-                          messages={chat.messages}
-                          sessionId={chat.sessionId}
-                          busy={chat.busy}
-                          connected={chat.connected}
-                          conversations={chat.conversations}
-                          onNewChat={chat.newChat}
-                          onSwitchConversation={chat.switchConversation}
-                          onSubmit={chat.submitMessage}
-                        />
-                      )}
-                    </div>
-                  ) : win.path === "__activity-monitor__" ? (
-                    <ActivityMonitorApp />
-                  ) : nativeAppId ? (
-                    <NativeAppViewer appId={nativeAppId} windowId={win.id} />
-                  ) : (
-                    <AppViewer path={win.path} onOpenApp={openWindow} />
-                  )}
-                  {interacting && (
-                    <div className="absolute inset-0 z-10" />
-                  )}
-                </CardContent>
-
-                {!isFullscreen && (
-                <div
-                  className="hidden md:block absolute bottom-0 right-0 size-4 cursor-se-resize touch-none z-20"
-                  onPointerDown={(e) => onResizeStart(win.id, e)}
-                  onPointerMove={onResizeMove}
-                  onPointerUp={onResizeEnd}
-                >
-                  <svg
-                    viewBox="0 0 16 16"
-                    className="size-4 text-muted-foreground/40"
-                  >
-                    <path
-                      d="M14 2v12H2"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1"
-                    />
-                    <path
-                      d="M14 7v7H7"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1"
-                    />
-                  </svg>
-                </div>
-                )}
-              </Card>
-            );
-          })}
+          {modeConfig.showWindows && desktopMode !== "canvas" && windows.map((win) => (
+            <DesktopWindow
+              key={win.id}
+              win={win}
+              chat={chat}
+              dockPosition={dock.position}
+              fullscreenWindowId={fullscreenWindowId}
+              interacting={interacting}
+              minimizingIds={minimizingIds}
+              onAnimateMinimize={animateMinimize}
+              onCloseWindow={wmCloseWindow}
+              onDragEnd={onDragEnd}
+              onDragMove={onDragMove}
+              onDragStart={onDragStart}
+              onFocusWindow={wmFocusWindow}
+              onOpenWindow={openWindow}
+              onResizeEnd={onResizeEnd}
+              onResizeMove={onResizeMove}
+              onResizeStart={onResizeStart}
+              onToggleFullscreen={wmToggleFullscreen}
+            />
+          ))}
         </div>
       </div>
 

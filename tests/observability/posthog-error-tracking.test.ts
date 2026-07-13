@@ -819,12 +819,12 @@ describe("PostHog error tracking", () => {
   });
 
   it("allows only explicit public PostHog telemetry aliases to provisioned containers", async () => {
-    const platformMain = await readFile("packages/platform/src/main.ts", "utf8");
+    const platformStartupEnv = await readFile("packages/platform/src/platform-startup-env.ts", "utf8");
 
-    expect(platformMain).toContain("TENANT_PUBLIC_TELEMETRY_ENV_KEYS");
-    expect(platformMain).toContain("'POSTHOG_TOKEN'");
-    expect(platformMain).toContain("'POSTHOG_PROJECT_TOKEN'");
-    expect(platformMain).not.toContain("'CLERK_SECRET_KEY'");
+    expect(platformStartupEnv).toContain("TENANT_PUBLIC_TELEMETRY_ENV_KEYS");
+    expect(platformStartupEnv).toContain("'POSTHOG_TOKEN'");
+    expect(platformStartupEnv).toContain("'POSTHOG_PROJECT_TOKEN'");
+    expect(platformStartupEnv).not.toContain("'CLERK_SECRET_KEY'");
   });
 
   it("bakes public PostHog env into full-image compose shell builds", async () => {
@@ -905,11 +905,12 @@ describe("PostHog error tracking", () => {
   });
 
   it("wires shutdown for PostHog clients outside top-level Hono apps", async () => {
-    const [gatewaySocial, gatewayServer, platformSocialApi, platformMain, proxyMain, wwwServer] = await Promise.all([
+    const [gatewaySocial, gatewayServer, platformSocialApi, platformMain, platformStartup, proxyMain, wwwServer] = await Promise.all([
       readFile("packages/gateway/src/social.ts", "utf8"),
       readFile("packages/gateway/src/server.ts", "utf8"),
       readFile("packages/platform/src/social-api.ts", "utf8"),
       readFile("packages/platform/src/main.ts", "utf8"),
+      readFile("packages/platform/src/platform-startup.ts", "utf8"),
       readFile("packages/proxy/src/main.ts", "utf8"),
       readFile("www/src/lib/posthog-server.ts", "utf8"),
     ]);
@@ -917,7 +918,7 @@ describe("PostHog error tracking", () => {
     expect(gatewaySocial).toContain("shutdownPostHog");
     expect(gatewayServer).toContain("await socialRoutes?.shutdownPostHog()");
     expect(platformSocialApi).toContain("shutdownPostHog");
-    expect(platformMain).toContain("await app.shutdownPostHog()");
+    expect(platformStartup).toContain("await app.shutdownPostHog()");
     expect(platformMain).toContain("await Promise.allSettled(posthogShutdowns.map((shutdownPostHog) => shutdownPostHog()))");
     expect(platformMain).not.toContain("for (let i = posthogShutdowns.length - 1");
     expect(proxyMain).toContain("await posthogErrorTracker.shutdown()");

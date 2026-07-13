@@ -1,10 +1,11 @@
 import { useCallback, memo } from "react";
 // react-doctor-disable-next-line react-doctor/rn-prefer-expo-image -- expo-image is not a project dependency; adopting it is a separate dependency decision tracked outside this lint pass
-import { View, Text, ScrollView, Pressable, Image, Linking, StyleSheet } from "react-native";
+import { View, Text, ScrollView, Pressable, Image, Linking } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import Animated, { FadeInLeft, FadeInRight } from "react-native-reanimated";
 import * as Clipboard from "expo-clipboard";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, fonts, spacing, radius } from "@/lib/theme";
+import { colors, fonts } from "@/lib/theme";
 import type { Message } from "@/app/(tabs)/chat";
 
 const roleContainerStyles: Record<Message["role"], object> = {
@@ -240,6 +241,7 @@ function ImageAttachments({ images, gatewayUrl }: { images: { alt: string; path:
 }
 
 function FileAttachments({ files, gatewayUrl }: { files: { name: string; path: string }[]; gatewayUrl: string }) {
+  const { theme } = useUnistyles();
   return (
     <View style={styles.filesContainer}>
       {files.map((file) => (
@@ -248,11 +250,11 @@ function FileAttachments({ files, gatewayUrl }: { files: { name: string; path: s
           onPress={() => Linking.openURL(`${gatewayUrl}${file.path}`)}
           style={({ pressed }) => [styles.fileCard, pressed && styles.fileCardPressed]}
         >
-          <Ionicons name="document-outline" size={16} color={colors.light.primary} />
+          <Ionicons name="document-outline" size={16} color={theme.colors.primary} />
           <Text style={styles.fileName} numberOfLines={1}>
             {file.name}
           </Text>
-          <Ionicons name="download-outline" size={14} color={colors.light.mutedForeground} />
+          <Ionicons name="download-outline" size={14} color={theme.colors.mutedForeground} />
         </Pressable>
       ))}
     </View>
@@ -260,6 +262,7 @@ function FileAttachments({ files, gatewayUrl }: { files: { name: string; path: s
 }
 
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
+  const { theme } = useUnistyles();
   const handleCopy = useCallback(async () => {
     await Clipboard.setStringAsync(code);
   }, [code]);
@@ -279,7 +282,7 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
             pressed && styles.copyButtonPressed,
           ]}
         >
-          <Ionicons name="copy-outline" size={12} color={colors.light.mutedForeground} />
+          <Ionicons name="copy-outline" size={12} color={theme.colors.mutedForeground} />
           <Text style={styles.copyText}>Copy</Text>
         </Pressable>
       </View>
@@ -293,10 +296,9 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
 function CodeContent({ content, role }: { content: string; role: Message["role"] }) {
   // Pair each split segment with its source character offset so keys are stable
   // across renders (the segments concatenate back to the immutable content).
-  let cursor = 0;
-  const segments = content.split(/(```[\s\S]*?```)/g).map((part) => {
-    const start = cursor;
-    cursor += part.length;
+  const parts = content.split(/(```[\s\S]*?```)/g);
+  const segments = parts.map((part, index) => {
+    const start = parts.slice(0, index).reduce((offset, previous) => offset + previous.length, 0);
     return { part, start };
   });
 
@@ -322,31 +324,31 @@ function CodeContent({ content, role }: { content: string; role: Message["role"]
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   bubble: {
     maxWidth: "85%",
     borderRadius: 16,
     borderCurve: "continuous" as const,
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: theme.spacing.lg,
     paddingVertical: 10,
   },
   toolLabel: {
-    fontFamily: fonts.mono,
+    fontFamily: theme.fonts.mono,
     fontSize: 10,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
     textTransform: "uppercase",
     letterSpacing: 1,
     marginBottom: 4,
   },
   text: {
-    fontFamily: fonts.sans,
+    fontFamily: theme.fonts.sans,
     fontSize: 14,
     lineHeight: 20,
   },
   timestamp: {
-    fontFamily: fonts.sans,
+    fontFamily: theme.fonts.sans,
     fontSize: 10,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
     marginTop: 2,
     marginHorizontal: 4,
   },
@@ -355,9 +357,9 @@ const styles = StyleSheet.create({
   },
   codeBlock: {
     backgroundColor: "rgba(28, 25, 23, 0.08)",
-    borderRadius: radius.sm,
+    borderRadius: theme.radius.sm,
     borderCurve: "continuous" as const,
-    padding: spacing.md,
+    padding: theme.spacing.md,
     marginVertical: 4,
   },
   codeHeader: {
@@ -367,9 +369,9 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   codeLang: {
-    fontFamily: fonts.mono,
+    fontFamily: theme.fonts.mono,
     fontSize: 10,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
     textTransform: "uppercase",
   },
   copyButton: {
@@ -385,46 +387,46 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   copyText: {
-    fontFamily: fonts.mono,
+    fontFamily: theme.fonts.mono,
     fontSize: 10,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
   },
   codeText: {
-    fontFamily: fonts.mono,
+    fontFamily: theme.fonts.mono,
     fontSize: 12,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
     lineHeight: 18,
   },
   imageContainer: {
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
+    gap: theme.spacing.sm,
+    marginBottom: theme.spacing.sm,
   },
   inlineImage: {
     width: "100%",
     height: 200,
-    borderRadius: radius.sm,
+    borderRadius: theme.radius.sm,
   },
   filesContainer: {
-    gap: spacing.xs,
-    marginTop: spacing.sm,
+    gap: theme.spacing.xs,
+    marginTop: theme.spacing.sm,
   },
   fileCard: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm,
-    borderRadius: radius.sm,
+    gap: theme.spacing.sm,
+    borderRadius: theme.radius.sm,
     borderCurve: "continuous" as const,
     backgroundColor: "rgba(28, 25, 23, 0.04)",
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
   },
   fileCardPressed: {
     opacity: 0.7,
   },
   fileName: {
     flex: 1,
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 13,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
   },
-});
+}));

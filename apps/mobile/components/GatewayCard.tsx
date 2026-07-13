@@ -1,6 +1,6 @@
-import { View, Text, Pressable, Alert, StyleSheet } from "react-native";
+import { View, Text, Pressable, Alert } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, fonts, spacing, radius } from "@/lib/theme";
 import type { GatewayConnection } from "@/lib/storage";
 
 interface GatewayCardProps {
@@ -10,6 +10,7 @@ interface GatewayCardProps {
 }
 
 export function GatewayCard({ gateway, onSelect, onRemove }: GatewayCardProps) {
+  const { theme } = useUnistyles();
   const handleLongPress = () => {
     Alert.alert("Remove Gateway", `Remove "${gateway.name}"?`, [
       { text: "Cancel", style: "cancel" },
@@ -28,18 +29,18 @@ export function GatewayCard({ gateway, onSelect, onRemove }: GatewayCardProps) {
     >
       <View style={styles.row}>
         <View style={styles.iconContainer}>
-          <Ionicons name="server-outline" size={18} color={colors.light.primary} />
+          <Ionicons name="server-outline" size={18} color={theme.colors.primary} />
         </View>
         <View style={styles.textContainer}>
           <Text style={styles.name}>{gateway.name}</Text>
           <Text style={styles.url}>{gateway.url}</Text>
         </View>
-        <Ionicons name="chevron-forward" size={18} color={colors.light.mutedForeground} />
+        <Ionicons name="chevron-forward" size={18} color={theme.colors.mutedForeground} />
       </View>
       {gateway.token && (
         <View style={styles.badgeRow}>
           <View style={styles.badge}>
-            <Ionicons name="lock-closed" size={10} color={colors.light.primary} />
+            <Ionicons name="lock-closed" size={10} color={theme.colors.primary} />
             <Text style={styles.badgeText}>Authenticated</Text>
           </View>
         </View>
@@ -48,16 +49,16 @@ export function GatewayCard({ gateway, onSelect, onRemove }: GatewayCardProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   card: {
-    marginBottom: spacing.sm,
-    borderRadius: radius.lg,
+    marginBottom: theme.spacing.sm,
+    borderRadius: theme.radius.lg,
     borderCurve: "continuous" as const,
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.md,
     boxShadow: "0 1px 4px rgba(0, 0, 0, 0.04)",
   },
   cardPressed: {
@@ -67,14 +68,14 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.md,
+    gap: theme.spacing.md,
   },
   iconContainer: {
     width: 36,
     height: 36,
-    borderRadius: radius.sm,
+    borderRadius: theme.radius.sm,
     borderCurve: "continuous" as const,
-    backgroundColor: colors.light.secondary,
+    backgroundColor: theme.colors.secondary,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -82,33 +83,33 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   name: {
-    fontFamily: fonts.sansSemiBold,
+    fontFamily: theme.fonts.sansSemiBold,
     fontSize: 15,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
   },
   url: {
-    fontFamily: fonts.mono,
+    fontFamily: theme.fonts.mono,
     fontSize: 12,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
     marginTop: 2,
   },
   badgeRow: {
     flexDirection: "row",
-    marginTop: spacing.sm,
+    marginTop: theme.spacing.sm,
     marginLeft: 48,
   },
   badge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    borderRadius: radius.full,
+    borderRadius: theme.radius.full,
     backgroundColor: "rgba(194, 112, 58, 0.1)",
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: theme.spacing.sm,
     paddingVertical: 3,
   },
   badgeText: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 11,
-    color: colors.light.primary,
+    color: theme.colors.primary,
   },
-});
+}));

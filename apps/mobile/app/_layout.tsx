@@ -1,7 +1,10 @@
+import "@/lib/hermes-polyfills";
+import "@/lib/unistyles";
 import { use, useEffect, useMemo, useState, createContext, useCallback, useRef } from "react";
 import { Stack, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { View, Text, ActivityIndicator, StyleSheet } from "react-native";
+import { View, Text, ActivityIndicator } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import * as SplashScreen from "expo-splash-screen";
 import * as SecureStore from "expo-secure-store";
 import {
@@ -15,13 +18,16 @@ import {
   JetBrainsMono_400Regular,
   JetBrainsMono_700Bold,
 } from "@expo-google-fonts/jetbrains-mono";
+import {
+  BricolageGrotesque_600SemiBold,
+  BricolageGrotesque_700Bold,
+} from "@expo-google-fonts/bricolage-grotesque";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { ClerkProvider, useAuth } from "@clerk/clerk-expo";
 import { GatewayClient, type ConnectionState } from "@/lib/gateway-client";
-import { HOSTED_GATEWAY, type GatewayConnection } from "@/lib/storage";
+import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
 import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
-import { colors, fonts } from "@/lib/theme";
 
 let nativeSplashRegistered = false;
 const nativeSplashRegistration = SplashScreen.preventAutoHideAsync()
@@ -72,6 +78,7 @@ export function useGateway() {
 }
 
 export default function RootLayout() {
+  const { theme } = useUnistyles();
   const [fontsLoaded] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
@@ -79,6 +86,8 @@ export default function RootLayout() {
     Inter_700Bold,
     JetBrainsMono_400Regular,
     JetBrainsMono_700Bold,
+    BricolageGrotesque_600SemiBold,
+    BricolageGrotesque_700Bold,
   });
 
   const [authenticated, setAuthenticated] = useState<boolean | undefined>(undefined);
@@ -117,7 +126,7 @@ export default function RootLayout() {
     return (
       <View style={styles.loadingContainer}>
         <Text style={styles.loadingTitle}>Matrix OS</Text>
-        <ActivityIndicator size="large" color={colors.light.primary} style={styles.loadingSpinner} />
+        <ActivityIndicator size="large" color={theme.colors.primary} style={styles.loadingSpinner} />
       </View>
     );
   }
@@ -127,7 +136,7 @@ export default function RootLayout() {
       <View style={styles.loadingContainer}>
         <Text style={styles.loadingTitle}>Matrix OS</Text>
         <Text style={styles.loadingSubtitle}>Authenticating…</Text>
-        <ActivityIndicator size="large" color={colors.light.primary} style={styles.loadingSpinner} />
+        <ActivityIndicator size="large" color={theme.colors.primary} style={styles.loadingSpinner} />
       </View>
     );
   }
@@ -156,6 +165,7 @@ function MissingClerkConfigScreen() {
 }
 
 function GatewayShell() {
+  const { theme } = useUnistyles();
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const [client, setClient] = useState<GatewayClient | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
@@ -178,6 +188,9 @@ function GatewayShell() {
   }, []);
 
   const setGateway = useCallback((gw: GatewayConnection) => {
+    const nextKey = `${gw.url}:${gw.token ?? ""}`;
+    if (connectionKeyRef.current === nextKey) return;
+    connectionKeyRef.current = nextKey;
     clientRef.current?.disconnect();
     const newClient = new GatewayClient(gw.url, gw.token);
     newClient.onStateChange(setConnectionState);
@@ -192,8 +205,30 @@ function GatewayShell() {
 
     let cancelled = false;
 
-    async function connectHostedGateway() {
+    async function connectSelectedGateway() {
+      const selectedGateway = await getSelectedGatewayConnection();
+      if (cancelled) return;
+
       if (!isSignedIn) {
+        if (!isHostedGatewayUrl(selectedGateway.url) && selectedGateway.token) {
+          const nextKey = `${selectedGateway.url}:${selectedGateway.token}`;
+          if (connectionKeyRef.current === nextKey) return;
+          connectionKeyRef.current = nextKey;
+
+          clientRef.current?.disconnect();
+          const nextClient = new GatewayClient(selectedGateway.url, selectedGateway.token);
+          clientRef.current = nextClient;
+          setClient(nextClient);
+          setGatewayState(selectedGateway);
+          setConnectionState("connecting");
+          nextClient.onStateChange(setConnectionState);
+          const wsToken = await nextClient.getWsToken();
+          if (cancelled || clientRef.current !== nextClient) return;
+          if (wsToken) nextClient.setWebSocketToken(wsToken);
+          nextClient.connect();
+          return;
+        }
+
         if (connectionKeyRef.current === null) return;
         connectionKeyRef.current = null;
         clientRef.current?.disconnect();
@@ -217,19 +252,21 @@ function GatewayShell() {
         return;
       }
 
-      const hostedGateway: GatewayConnection = {
-        ...HOSTED_GATEWAY,
-        token,
+      const authenticatedGateway: GatewayConnection = {
+        ...selectedGateway,
+        token: selectedGateway.token ?? token,
       };
-      const nextKey = `${hostedGateway.url}:${hostedGateway.token ?? ""}`;
+      const nextKey = `${authenticatedGateway.url}:${authenticatedGateway.token ?? ""}`;
       if (connectionKeyRef.current === nextKey) return;
       connectionKeyRef.current = nextKey;
 
       clientRef.current?.disconnect();
-      const nextClient = new GatewayClient(hostedGateway.url, () => getTokenRef.current());
+      const nextClient = selectedGateway.token
+        ? new GatewayClient(authenticatedGateway.url, selectedGateway.token)
+        : new GatewayClient(authenticatedGateway.url, () => getTokenRef.current());
       clientRef.current = nextClient;
       setClient(nextClient);
-      setGatewayState(hostedGateway);
+      setGatewayState(authenticatedGateway);
       setConnectionState("connecting");
 
       nextClient.onStateChange(setConnectionState);
@@ -244,7 +281,7 @@ function GatewayShell() {
       nextClient.connect();
     }
 
-    connectHostedGateway();
+    connectSelectedGateway();
 
     return () => {
       cancelled = true;
@@ -269,25 +306,25 @@ function GatewayShell() {
       <GatewayContext.Provider value={contextValue}>
         <Stack
           screenOptions={{
-            headerStyle: { backgroundColor: colors.light.background },
-            headerTintColor: colors.light.foreground,
-            headerTitleStyle: { fontFamily: fonts.sansSemiBold },
-            contentStyle: { backgroundColor: colors.light.background },
+            headerStyle: { backgroundColor: theme.colors.background },
+            headerTintColor: theme.colors.foreground,
+            headerTitleStyle: { fontFamily: theme.fonts.sansSemiBold },
+            contentStyle: { backgroundColor: theme.colors.background },
           }}
         >
           <Stack.Screen name="index" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="apps" options={{ headerShown: false }} />
-          <Stack.Screen name="terminal" options={{ headerShown: false }} />
           <Stack.Screen name="runtime" options={{ headerShown: false }} />
           <Stack.Screen name="canvas/index" options={{ headerShown: false }} />
+          <Stack.Screen name="agents" options={{ headerShown: false }} />
           <Stack.Screen name="sessions" options={{ headerShown: false, presentation: "modal" }} />
           <Stack.Screen
             name="connect"
             options={{
               title: "Gateway",
               presentation: "modal",
-              headerStyle: { backgroundColor: colors.light.background },
+              headerStyle: { backgroundColor: theme.colors.background },
             }}
           />
           <Stack.Screen
@@ -295,7 +332,7 @@ function GatewayShell() {
             options={{
               title: "Sign In",
               presentation: "modal",
-              headerStyle: { backgroundColor: colors.light.background },
+              headerStyle: { backgroundColor: theme.colors.background },
             }}
           />
         </Stack>
@@ -309,7 +346,10 @@ function GatewayShell() {
 function NotificationRouter() {
   const router = useRouter();
   const routerRef = useRef(router);
-  routerRef.current = router;
+
+  useEffect(() => {
+    routerRef.current = router;
+  }, [router]);
 
   useEffect(() => {
     const sub = addNotificationResponseListener((response) => {
@@ -321,7 +361,7 @@ function NotificationRouter() {
   return null;
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   flex: {
     flex: 1,
   },
@@ -329,35 +369,35 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.light.background,
+    backgroundColor: theme.colors.background,
   },
   loadingTitle: {
-    fontFamily: fonts.sansBold,
-    fontSize: 28,
-    color: colors.light.foreground,
+    fontFamily: theme.fonts.display,
+    fontSize: 30,
+    color: theme.colors.foreground,
     letterSpacing: -0.5,
   },
   loadingSubtitle: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 14,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
     marginTop: 8,
   },
   loadingSpinner: {
     marginTop: 24,
   },
   configTitle: {
-    fontFamily: fonts.sansSemiBold,
+    fontFamily: theme.fonts.sansSemiBold,
     fontSize: 16,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
     marginTop: 16,
   },
   configBody: {
-    fontFamily: fonts.sans,
+    fontFamily: theme.fonts.sans,
     fontSize: 14,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
     marginTop: 8,
     maxWidth: 300,
     textAlign: "center",
   },
-});
+}));

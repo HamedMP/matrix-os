@@ -1,11 +1,12 @@
-import { View, Text, Pressable, StyleSheet, Linking } from "react-native";
+import "@/lib/hermes-polyfills";
+import { View, Text, Pressable, Linking } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useAuth } from "@clerk/clerk-expo";
 import { useEffect, useState } from "react";
-import { colors, fonts, spacing, radius } from "@/lib/theme";
-import { HOSTED_GATEWAY_URL } from "@/lib/storage";
+import { HOSTED_GATEWAY_URL, getSelectedGatewayConnection, isHostedGatewayUrl } from "@/lib/storage";
 import { JourneyGate } from "@/components/JourneyGate";
 import { fetchMobileJourney, isConnectablePhase, type JourneyFetchResult } from "@/lib/journey";
 
@@ -28,8 +29,13 @@ function SignedInJourneyGate() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     void (async () => {
       try {
+        const gateway = await getSelectedGatewayConnection();
+        if (!isHostedGatewayUrl(gateway.url)) {
+          router.replace("/(tabs)/apps" as any);
+          return;
+        }
         const token = await getToken();
-        const next = await fetchMobileJourney(HOSTED_GATEWAY_URL, token);
+        const next = await fetchMobileJourney(gateway.url, token);
         if (!active) return;
         if (next.status === "ok" && isConnectablePhase(next.journey.phase)) {
           router.replace("/(tabs)/apps" as any);
@@ -103,11 +109,45 @@ function SignedInJourneyGate() {
 }
 
 export default function Index() {
+  const { theme } = useUnistyles();
   const { isSignedIn } = useAuth();
   const router = useRouter();
+  const [checkingSelfHosted, setCheckingSelfHosted] = useState(true);
+
+  useEffect(() => {
+    if (isSignedIn) {
+      return;
+    }
+    let cancelled = false;
+    getSelectedGatewayConnection()
+      .then((gateway) => {
+        if (cancelled) return;
+        if (!isHostedGatewayUrl(gateway.url) && gateway.token) {
+          router.replace("/(tabs)/apps" as any);
+          return;
+        }
+        setCheckingSelfHosted(false);
+      })
+      .catch(() => {
+        if (!cancelled) setCheckingSelfHosted(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSignedIn, router]);
 
   if (isSignedIn) {
     return <SignedInJourneyGate />;
+  }
+
+  if (checkingSelfHosted) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.content}>
+          <Text style={styles.wordmark}>MATRIX OS</Text>
+        </View>
+      </View>
+    );
   }
 
   return (
@@ -137,7 +177,7 @@ export default function Index() {
               pressed && styles.buttonPressed,
             ]}
           >
-            <Ionicons name="person-circle-outline" size={20} color={colors.light.primaryForeground} />
+            <Ionicons name="person-circle-outline" size={20} color={theme.colors.primaryForeground} />
             <Text style={styles.primaryButtonText}>Sign In</Text>
           </Pressable>
         </View>
@@ -151,14 +191,14 @@ export default function Index() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: colors.light.background,
+    backgroundColor: theme.colors.background,
   },
   content: {
     flex: 1,
-    paddingHorizontal: spacing.xl,
+    paddingHorizontal: theme.spacing.xl,
     justifyContent: "center",
   },
   heroSection: {
@@ -170,55 +210,56 @@ const styles = StyleSheet.create({
     height: 96,
     borderRadius: 28,
     borderCurve: "continuous" as const,
-    backgroundColor: colors.light.card,
+    backgroundColor: theme.colors.card,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: spacing.xl,
+    marginBottom: theme.spacing.xl,
     boxShadow: "0 12px 28px rgba(50, 61, 46, 0.10)",
     borderWidth: 1,
-    borderColor: colors.light.border,
+    borderColor: theme.colors.border,
   },
   logo: {
     width: 70,
     height: 70,
   },
   wordmark: {
-    fontFamily: fonts.sansSemiBold,
+    fontFamily: theme.fonts.sansSemiBold,
     fontSize: 12,
-    color: colors.light.forest,
+    color: theme.colors.forest,
     letterSpacing: 2.6,
-    marginBottom: spacing.lg,
+    marginBottom: theme.spacing.lg,
   },
   title: {
-    fontFamily: fonts.sansBold,
-    fontSize: 34,
-    color: colors.light.foreground,
-    marginBottom: spacing.sm,
+    fontFamily: theme.fonts.display,
+    fontSize: 36,
+    letterSpacing: -0.8,
+    color: theme.colors.foreground,
+    marginBottom: theme.spacing.sm,
     textAlign: "center",
   },
   subtitle: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 16,
-    color: colors.light.mutedForeground,
-    marginBottom: spacing.lg,
+    color: theme.colors.mutedForeground,
+    marginBottom: theme.spacing.lg,
   },
   description: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 14,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
     textAlign: "center",
     lineHeight: 20,
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: theme.spacing.lg,
   },
   actions: {
     gap: 12,
   },
   primaryButton: {
-    backgroundColor: colors.light.primary,
-    borderRadius: radius.xl,
+    backgroundColor: theme.colors.primary,
+    borderRadius: theme.radius.xl,
     borderCurve: "continuous" as const,
     paddingVertical: 16,
-    paddingHorizontal: spacing.xl,
+    paddingHorizontal: theme.spacing.xl,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
@@ -226,27 +267,27 @@ const styles = StyleSheet.create({
     boxShadow: "0 4px 8px rgba(194, 112, 58, 0.2)",
   },
   primaryButtonText: {
-    fontFamily: fonts.sansSemiBold,
+    fontFamily: theme.fonts.sansSemiBold,
     fontSize: 16,
-    color: colors.light.primaryForeground,
+    color: theme.colors.primaryForeground,
   },
   secondaryButton: {
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
-    borderRadius: radius.xl,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.radius.xl,
     borderCurve: "continuous" as const,
     paddingVertical: 16,
-    paddingHorizontal: spacing.xl,
+    paddingHorizontal: theme.spacing.xl,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: 10,
   },
   secondaryButtonText: {
-    fontFamily: fonts.sansSemiBold,
+    fontFamily: theme.fonts.sansSemiBold,
     fontSize: 16,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
   },
   buttonPressed: {
     opacity: 0.8,
@@ -258,15 +299,15 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   footerText: {
-    fontFamily: fonts.mono,
+    fontFamily: theme.fonts.mono,
     fontSize: 12,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
     letterSpacing: 0.5,
   },
   versionText: {
-    fontFamily: fonts.mono,
+    fontFamily: theme.fonts.mono,
     fontSize: 11,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
     opacity: 0.6,
   },
-});
+}));

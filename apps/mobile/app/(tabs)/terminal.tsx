@@ -2,16 +2,18 @@ import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } 
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  StyleSheet,
+  Animated,
+  Easing,
+  Keyboard,
   Text,
+  useWindowDimensions,
   View,
+  type KeyboardEvent,
 } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { StatusBar } from "expo-status-bar";
 import { useGateway } from "@/app/_layout";
 import { TerminalControlBar } from "@/components/TerminalControlBar";
 import { TerminalSurface, type TerminalSurfaceHandle } from "@/components/TerminalSurface";
@@ -25,26 +27,27 @@ import {
 import {
   formatTerminalCwd,
   initialTerminalState,
-  type MobileTerminalSession,
   terminalReducer,
 } from "@/lib/terminal-state";
-import { colors, fonts } from "@/lib/theme";
-
-const L = colors.light;
-const T = colors.terminal;
-
 export default function TerminalScreen() {
+  const { theme } = useUnistyles();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const { client } = useGateway();
   const [state, dispatch] = useReducer(terminalReducer, initialTerminalState);
   const [lastTerminalSessionId, setLastTerminalSessionId] = useState<string | null>(null);
+  const [terminalHandoffSessionId, setTerminalHandoffSessionId] = useState<string | null>(null);
+  const [terminalResumeLoaded, setTerminalResumeLoaded] = useState(false);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [maximized, setMaximized] = useState(false);
+  const [chromeExpanded, setChromeExpanded] = useState(false);
   const terminalClient = useMemo(() => (client ? new MobileTerminalClient(client) : null), [client]);
   const connectionRef = useRef<MobileTerminalConnection | null>(null);
   const connectAttemptRef = useRef(0);
   const connectingRef = useRef(false);
   const surfaceRef = useRef<TerminalSurfaceHandle | null>(null);
+  const keyboardLift = useRef(new Animated.Value(0)).current;
 
   // Initial grid; the embedded emulator reports its fitted size via onResize.
   const gridRef = useRef({ cols: 80, rows: 24 });
@@ -53,17 +56,25 @@ export default function TerminalScreen() {
     if (!terminalClient) return;
     const sessions = await terminalClient.listSessions();
     dispatch({ type: "sessions.loaded", sessions });
+    setSessionsLoaded(true);
   }, [terminalClient]);
 
   useEffect(() => {
+    setSessionsLoaded(false);
     loadSessions();
   }, [loadSessions]);
 
   useEffect(() => {
     loadMobileShellState()
-      .then((saved) => setLastTerminalSessionId(saved.lastActiveTerminalSessionId))
+      .then((saved) => {
+        setLastTerminalSessionId(saved.lastActiveTerminalSessionId);
+        setTerminalHandoffSessionId(saved.terminalHandoffSessionId ?? null);
+      })
       .catch((err: unknown) => {
         console.warn("[mobile] failed to load terminal resume state", err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        setTerminalResumeLoaded(true);
       });
   }, []);
 
@@ -95,11 +106,13 @@ export default function TerminalScreen() {
         replay: frame.replay,
       });
       setLastTerminalSessionId(frame.sessionId);
+      setTerminalHandoffSessionId(null);
       loadMobileShellState()
         .then((saved) => saveMobileShellState({
           ...saved,
           mode: "terminal",
           lastActiveTerminalSessionId: frame.sessionId,
+          terminalHandoffSessionId: null,
           updatedAt: new Date().toISOString(),
         }))
         .catch((err: unknown) => {
@@ -123,6 +136,19 @@ export default function TerminalScreen() {
       dispatch({ type: "terminal.error", message: frame.message ?? "Terminal unavailable" });
     }
   }, [loadSessions]);
+
+  const clearTerminalHandoff = useCallback(() => {
+    setTerminalHandoffSessionId(null);
+    loadMobileShellState()
+      .then((saved) => saveMobileShellState({
+        ...saved,
+        terminalHandoffSessionId: null,
+        updatedAt: new Date().toISOString(),
+      }))
+      .catch((err: unknown) => {
+        console.warn("[mobile] failed to clear terminal handoff state", err instanceof Error ? err.message : String(err));
+      });
+  }, []);
 
   const connectSession = useCallback(async (sessionId?: string) => {
     if (!terminalClient) {
@@ -196,6 +222,35 @@ export default function TerminalScreen() {
     if (!sent) dispatch({ type: "terminal.error", message: "Terminal unavailable" });
   }, []);
 
+  const animateKeyboardLift = useCallback((event: KeyboardEvent | null, lift: number) => {
+    Animated.timing(keyboardLift, {
+      toValue: lift,
+      duration: event?.duration ?? 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [keyboardLift]);
+
+  useEffect(() => {
+    const liftForEvent = (event: KeyboardEvent) => {
+      const keyboardTop = event.endCoordinates.screenY;
+      const keyboardHeight = Math.max(0, windowHeight - keyboardTop);
+      return Math.max(0, keyboardHeight - insets.bottom);
+    };
+    const show = Keyboard.addListener(
+      process.env.EXPO_OS === "ios" ? "keyboardWillChangeFrame" : "keyboardDidShow",
+      (event) => animateKeyboardLift(event, liftForEvent(event)),
+    );
+    const hide = Keyboard.addListener(
+      process.env.EXPO_OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
+      (event) => animateKeyboardLift(event, 0),
+    );
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, [animateKeyboardLift, insets.bottom, windowHeight]);
+
 
   const destroySession = useCallback(async () => {
     const sessionId = state.activeSessionId;
@@ -212,11 +267,13 @@ export default function TerminalScreen() {
     connectionRef.current?.destroy();
     connectionRef.current = null;
     setLastTerminalSessionId(null);
+    setTerminalHandoffSessionId(null);
     loadMobileShellState()
       .then((saved) => saveMobileShellState({
         ...saved,
         mode: "terminal",
         lastActiveTerminalSessionId: null,
+        terminalHandoffSessionId: null,
         updatedAt: new Date().toISOString(),
       }))
       .catch((err: unknown) => {
@@ -235,11 +292,17 @@ export default function TerminalScreen() {
   }, [destroySession]);
 
   const runningSessions = state.sessions.filter((session) => session.state === "running");
+  const handoffRunningSession = terminalHandoffSessionId
+    ? runningSessions.find((session) => session.sessionId === terminalHandoffSessionId) ?? null
+    : null;
   const lastRunningSession = lastTerminalSessionId
     ? runningSessions.find((session) => session.sessionId === lastTerminalSessionId) ?? null
     : null;
-  // Last-session-first: prefer the remembered session, else fall back to any running one.
-  const autoAttachSession = lastRunningSession ?? runningSessions[0] ?? null;
+  // Explicit handoffs come from a tapped terminal row and must not attach a
+  // different session if the selected one disappeared before this tab opened.
+  const autoAttachSession = terminalHandoffSessionId
+    ? handoffRunningSession
+    : lastRunningSession ?? runningSessions[0] ?? null;
   const cwd = formatTerminalCwd(state.cwd);
 
   // Last-session-first: when the terminal opens idle and there is a known last
@@ -248,153 +311,100 @@ export default function TerminalScreen() {
   const autoConnectedRef = useRef(false);
   useEffect(() => {
     if (autoConnectedRef.current) return;
+    if (!terminalResumeLoaded || !sessionsLoaded) return;
     if (state.status !== "idle") return;
+    if (terminalHandoffSessionId && !handoffRunningSession) {
+      autoConnectedRef.current = true;
+      dispatch({ type: "terminal.error", message: "Terminal unavailable" });
+      clearTerminalHandoff();
+      return;
+    }
     if (!autoAttachSession) return;
     autoConnectedRef.current = true;
     connectSession(autoAttachSession.sessionId);
-  }, [state.status, autoAttachSession, connectSession]);
+  }, [
+    autoAttachSession,
+    clearTerminalHandoff,
+    connectSession,
+    handoffRunningSession,
+    sessionsLoaded,
+    state.status,
+    terminalHandoffSessionId,
+    terminalResumeLoaded,
+  ]);
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      style={styles.screen}
-      keyboardVerticalOffset={0}
-    >
+    <View style={styles.screen}>
+      <StatusBar style="light" />
       <WindowHeader
-        paddingTop={insets.top + 8}
-        title="Terminal"
-        subtitle={cwd}
+        tone="terminal"
+        paddingTop={insets.top + (chromeExpanded ? 8 : 3)}
+        title={chromeExpanded ? "Terminal" : cwd}
+        subtitle={chromeExpanded ? cwd : undefined}
         titleAffordance
-        onTitlePress={() => router.push("/sessions")}
+        onTitlePress={() => setChromeExpanded((value) => !value)}
         onBack={() => router.navigate("/(tabs)/apps")}
-        maximized={maximized}
+        maximized={maximized || !chromeExpanded}
         onToggleMaximized={() => setMaximized((prev) => !prev)}
         actions={
           <>
+            <WindowHeaderAction tone="terminal" icon="albums-outline" label="Sessions" onPress={() => router.push("/sessions")} />
             {state.activeSessionId ? (
-              <WindowHeaderAction icon="stop-circle-outline" label="End session" onPress={confirmEnd} tint={L.destructive} />
+              <WindowHeaderAction tone="terminal" icon="stop-circle-outline" label="End session" onPress={confirmEnd} tint={theme.terminal.brightRed} />
             ) : null}
             {state.status === "connecting" ? (
-              <ActivityIndicator color={L.accentInk} style={styles.headerSpinner} />
+              <ActivityIndicator color={theme.colors.accentInk} style={styles.headerSpinner} />
             ) : (
-              <WindowHeaderAction icon="add" label="New session" onPress={() => connectSession()} />
+              <WindowHeaderAction tone="terminal" icon="add" label="New session" onPress={() => connectSession()} />
             )}
           </>
         }
       />
 
-      {maximized ? null : (
-        <SessionChipRow
-          sessions={runningSessions}
-          activeSessionId={state.activeSessionId}
-          onSelect={connectSession}
-        />
-      )}
-
-      <View style={styles.terminalSurface}>
-        <TerminalSurface
-          ref={surfaceRef}
-          fontScale={state.fontScale}
-          onInput={sendData}
-          onResize={handleResize}
-        />
-        {state.status === "idle" ? (
-          <View style={styles.emptyOverlay} pointerEvents="none">
-            <Text style={styles.emptyTitle}>No terminal session</Text>
-            <Text style={styles.emptySubtitle}>Start a session to run commands on your Matrix VPS.</Text>
-          </View>
-        ) : null}
-      </View>
-
-      {state.error && (
-        <View style={styles.errorBar}>
-          <Text style={styles.errorText}>{state.error}</Text>
+      <Animated.View style={[styles.terminalStack, { transform: [{ translateY: Animated.multiply(keyboardLift, -1) }] }]}>
+        <View style={styles.terminalSurface}>
+          <TerminalSurface
+            ref={surfaceRef}
+            fontScale={state.fontScale}
+            onInput={sendData}
+            onResize={handleResize}
+          />
+          {state.status === "idle" ? (
+            <View style={styles.emptyOverlay} pointerEvents="none">
+              <Text style={styles.emptyTitle}>No terminal session</Text>
+              <Text style={styles.emptySubtitle}>Start a session to run commands on your Matrix VPS.</Text>
+            </View>
+          ) : null}
         </View>
-      )}
 
-      <View style={[styles.controlFooter, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-        <TerminalControlBar
-          onSend={sendData}
-          onFontScale={(delta) => dispatch({ type: "font.scale", delta })}
-          onClear={() => dispatch({ type: "reset.output" })}
-        />
-      </View>
-    </KeyboardAvoidingView>
+        {state.error && (
+          <View style={styles.errorBar}>
+            <Text style={styles.errorText}>{state.error}</Text>
+          </View>
+        )}
+
+        <View style={[styles.controlFooter, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+          <TerminalControlBar
+            onSend={sendData}
+            onScroll={(lines) => surfaceRef.current?.scrollLines(lines)}
+            onScrollToBottom={() => surfaceRef.current?.scrollToBottom()}
+            onDismissKeyboard={() => {
+              surfaceRef.current?.blur();
+              Keyboard.dismiss();
+            }}
+            onFontScale={(delta) => dispatch({ type: "font.scale", delta })}
+            onClear={() => dispatch({ type: "reset.output" })}
+          />
+        </View>
+      </Animated.View>
+    </View>
   );
 }
 
-interface SessionChipProps {
-  session: MobileTerminalSession;
-  active: boolean;
-  onSelect: (sessionId: string) => void;
-}
-
-const SessionChip = React.memo(function SessionChip({ session, active, onSelect }: SessionChipProps) {
-  const handlePress = useCallback(() => onSelect(session.sessionId), [onSelect, session.sessionId]);
-  const status = session.visualStatus;
-  const hollow = status === "idle" || status === "finished";
-  const dotColor = status === "waiting"
-    ? colors.light.statusWaiting
-    : hollow
-      ? colors.light.statusIdle
-      : colors.light.statusRunning;
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Resume ${formatTerminalCwd(session.cwd)}`}
-      onPress={handlePress}
-      style={active ? styles.sessionChipActiveCombined : styles.sessionChip}
-    >
-      <View
-        style={[
-          styles.chipDot,
-          { backgroundColor: hollow ? "transparent" : dotColor, borderColor: dotColor, borderWidth: hollow ? 1.5 : 0 },
-        ]}
-      />
-      <Text style={styles.sessionChipText} numberOfLines={1}>
-        {session.sessionId}
-      </Text>
-    </Pressable>
-  );
-});
-
-interface SessionChipRowProps {
-  sessions: MobileTerminalSession[];
-  activeSessionId: string | null;
-  onSelect: (sessionId: string) => void;
-}
-
-function SessionChipRow({ sessions, activeSessionId, onSelect }: SessionChipRowProps) {
-  const keyExtractor = useCallback((session: MobileTerminalSession) => session.sessionId, []);
-  const renderItem = useCallback(
-    ({ item: session }: { item: MobileTerminalSession }) => (
-      <SessionChip
-        session={session}
-        active={session.sessionId === activeSessionId}
-        onSelect={onSelect}
-      />
-    ),
-    [activeSessionId, onSelect],
-  );
-  if (sessions.length === 0) return null;
-  return (
-    <FlatList
-      horizontal
-      data={sessions}
-      keyExtractor={keyExtractor}
-      showsHorizontalScrollIndicator={false}
-      style={styles.sessionStrip}
-      contentContainerStyle={styles.sessionRow}
-      keyboardShouldPersistTaps="handled"
-      renderItem={renderItem}
-    />
-  );
-}
-
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
-    backgroundColor: colors.light.paper,
+    backgroundColor: theme.terminal.bg,
   },
   headerSpinner: {
     width: 38,
@@ -421,8 +431,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 11,
     borderWidth: 1,
-    borderColor: colors.light.line,
-    backgroundColor: colors.light.field,
+    borderColor: theme.colors.line,
+    backgroundColor: theme.colors.field,
   },
   sessionChipActiveCombined: {
     maxWidth: 190,
@@ -434,8 +444,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 11,
     borderWidth: 1,
-    backgroundColor: colors.light.panel,
-    borderColor: colors.light.borderStrong,
+    backgroundColor: theme.colors.panel,
+    borderColor: theme.colors.borderStrong,
   },
   chipDot: {
     width: 7,
@@ -443,15 +453,19 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   sessionChipText: {
-    fontFamily: fonts.mono,
-    color: colors.light.ink,
+    fontFamily: theme.fonts.mono,
+    color: theme.colors.ink,
     fontSize: 12,
+  },
+  terminalStack: {
+    flex: 1,
+    backgroundColor: theme.terminal.bg,
   },
   // Full-bleed dark console — no floating frame; the light WindowHeader above
   // and the control footer below are the only chrome.
   terminalSurface: {
     flex: 1,
-    backgroundColor: T.bg,
+    backgroundColor: theme.terminal.bg,
     overflow: "hidden",
   },
   emptyOverlay: {
@@ -459,18 +473,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 28,
-    backgroundColor: T.bg,
+    backgroundColor: theme.terminal.bg,
   },
   emptyTitle: {
-    fontFamily: fonts.sansBold,
-    color: T.fg,
+    fontFamily: theme.fonts.sansBold,
+    color: theme.terminal.fg,
     fontSize: 17,
   },
   emptySubtitle: {
     marginTop: 6,
     textAlign: "center",
-    fontFamily: fonts.sans,
-    color: T.fgDim,
+    fontFamily: theme.fonts.sans,
+    color: theme.terminal.fgDim,
     fontSize: 13,
     lineHeight: 18,
   },
@@ -485,11 +499,11 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(239, 68, 68, 0.07)",
   },
   errorText: {
-    fontFamily: fonts.sansMedium,
-    color: colors.light.destructive,
+    fontFamily: theme.fonts.sansMedium,
+    color: theme.colors.destructive,
     fontSize: 12,
   },
   controlFooter: {
-    backgroundColor: colors.light.paper,
+    backgroundColor: theme.terminal.surface,
   },
-});
+}));

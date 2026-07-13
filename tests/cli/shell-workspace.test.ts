@@ -32,6 +32,9 @@ describe("shell workspace CLI commands", () => {
       "ls",
       "new",
       "pane",
+      "paste-clipboard",
+      "paste-file",
+      "paste-screenshot",
       "rm",
       "tab",
     ]);

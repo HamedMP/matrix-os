@@ -8,6 +8,7 @@ export const CLERK_SESSION_COOKIE = '__session';
 export const CLERK_CLIENT_UAT_COOKIE = '__client_uat';
 export const APP_ROUTE_COOKIE = 'matrix_app_route';
 export const SHELL_ROUTE_COOKIE = 'matrix_shell_route';
+export const SHELL_RUNTIME_SLOT_COOKIE = 'matrix_shell_runtime_slot';
 export const CODE_SESSION_EXPIRES_IN_SEC = 12 * 60 * 60;
 export const NATIVE_APP_SESSION_PROXY_HEADER = 'x-matrix-native-app-session';
 export const PLATFORM_SESSION_PROXY_HEADER = 'x-matrix-platform-session';
@@ -115,6 +116,17 @@ export function buildClearShellRouteCookie(): string {
   ].join('; ');
 }
 
+export function buildClearShellRuntimeSlotCookie(): string {
+  return [
+    `${SHELL_RUNTIME_SLOT_COOKIE}=`,
+    'Path=/',
+    'HttpOnly',
+    'Secure',
+    'SameSite=Lax',
+    'Max-Age=0',
+  ].join('; ');
+}
+
 export function buildClearBrowserCookie(name: string, domain?: string): string {
   return [
     `${name}=`,
@@ -154,6 +166,7 @@ export function appendSignOutClearCookies(c: Context): void {
   c.header('Set-Cookie', buildClearAppSessionCookie(), { append: true });
   c.header('Set-Cookie', buildClearNativeAppSessionCookie(), { append: true });
   c.header('Set-Cookie', buildClearShellRouteCookie(), { append: true });
+  c.header('Set-Cookie', buildClearShellRuntimeSlotCookie(), { append: true });
   for (const name of clerkCookieClearNames(cookieHeader)) {
     c.header('Set-Cookie', buildClearBrowserCookie(name), { append: true });
     if (domain) {

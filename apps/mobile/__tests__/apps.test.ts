@@ -132,6 +132,16 @@ describe("mobile app helpers", () => {
     });
   });
 
+  it("does not claim the agents slug when the workspace flag is disabled", () => {
+    const remoteAgents = app({ name: "Agents", slug: "agents", file: "agents/index.html" });
+
+    expect(getNativeAppRoute(remoteAgents)).toBeNull();
+    expect(appRuntimeHref(getRuntimeSlug(remoteAgents))).toEqual({
+      pathname: "/runtime/[...slug]",
+      params: { slug: ["agents"] },
+    });
+  });
+
   it("keeps missing generated apps on runtime routes so the screen can show a safe fallback", () => {
     const missing = app({ name: "Missing App", file: "missing/index.html" });
 
@@ -160,6 +170,25 @@ describe("mobile app helpers", () => {
   it("appends remote apps after native Matrix apps", () => {
     const apps = mergeNativeAndRemoteApps([app({ name: "Workout Tracker", file: "workout/index.html" })]);
     expect(apps.map((entry) => entry.name)).toEqual(["Chat", "Apps", "Terminal", "Canvas", "Tasks", "Settings", "Workout Tracker"]);
+  });
+
+  it("includes the native Agents app only when explicitly opted in", () => {
+    const originalValue = process.env.EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE;
+    process.env.EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE = "1";
+
+    jest.isolateModules(() => {
+      const appsModule = require("../lib/apps") as typeof import("../lib/apps");
+      const apps = appsModule.mergeNativeAndRemoteApps([]);
+
+      expect(apps.map((entry) => entry.name)).toContain("Agents");
+      expect(appsModule.getNativeAppRoute(app({ name: "Agents", slug: "agents", file: "agents/index.html" }))).toBe("/agents");
+    });
+
+    if (originalValue === undefined) {
+      delete process.env.EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE;
+    } else {
+      process.env.EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE = originalValue;
+    }
   });
 
   it("routes Canvas to the native explicit Canvas entry screen", () => {

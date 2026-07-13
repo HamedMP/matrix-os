@@ -57,8 +57,10 @@ describe("mobile terminal state", () => {
     expect(buildTerminalControlSequence("ctrl-e")).toBe("\x05");
     expect(buildTerminalControlSequence("ctrl-k")).toBe("\x0b");
     expect(buildTerminalControlSequence("ctrl-r")).toBe("\x12");
+    expect(buildTerminalControlSequence("ctrl-t")).toBe("\x14");
     expect(buildTerminalControlSequence("ctrl-u")).toBe("\x15");
     expect(buildTerminalControlSequence("ctrl-w")).toBe("\x17");
+    expect(buildTerminalControlSequence("ctrl-y")).toBe("\x19");
     expect(buildTerminalControlSequence("ctrl-z")).toBe("\x1a");
   });
 

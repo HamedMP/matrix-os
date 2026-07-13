@@ -99,7 +99,9 @@ export function createChannelManager(
       const msgId = outboundQueue.enqueue({
         channel: reply.channelId,
         target: reply.chatId,
+        ownerId: reply.ownerId,
         content: reply.text,
+        metadata: reply.metadata,
       });
 
       try {
@@ -123,7 +125,9 @@ export function createChannelManager(
           await sendDirect({
             channelId: msg.channel as ChannelId,
             chatId: msg.target,
+            ownerId: msg.ownerId,
             text: msg.content,
+            metadata: msg.metadata,
           });
           outboundQueue.ack(msg.id);
           replayed++;

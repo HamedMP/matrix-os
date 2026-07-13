@@ -35,6 +35,18 @@ export const ProvisionRequestSchema = z.object({
   developerTools: DeveloperToolsSchema.optional(),
 });
 
+export const PREVIEW_RUNTIME_SLOT_PATTERN = /^pr-[1-9][0-9]{0,9}$/;
+export const PreviewRuntimeSlotSchema = z.string().regex(PREVIEW_RUNTIME_SLOT_PATTERN);
+
+export const PreviewProvisionRequestSchema = z.object({
+  clerkUserId: ClerkUserIdSchema,
+  handle: PreviewRuntimeSlotSchema,
+  runtimeSlot: PreviewRuntimeSlotSchema,
+  developerTools: DeveloperToolsSchema.optional(),
+}).strict().refine((request) => request.handle === request.runtimeSlot, {
+  message: 'Preview handle and runtime slot must match',
+});
+
 export const RegisterRequestSchema = z.object({
   machineId: z.uuid(),
   hetznerServerId: z.number().int().positive(),
@@ -66,6 +78,7 @@ export const DeployRequestSchema = z.object({
 });
 
 export type ProvisionRequest = z.infer<typeof ProvisionRequestSchema>;
+export type PreviewProvisionRequest = z.infer<typeof PreviewProvisionRequestSchema>;
 export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;
 export type RecoverRequest = z.infer<typeof RecoverRequestSchema>;
 export type ResizeMachineRequest = z.infer<typeof ResizeMachineRequestSchema>;

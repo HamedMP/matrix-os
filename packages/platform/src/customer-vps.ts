@@ -1,5 +1,9 @@
 import { randomUUID, randomBytes } from 'node:crypto';
-import type { PlatformDB, UserMachineRecord } from './db.js';
+import type {
+  PlatformDB,
+  UserMachineProvisioningClass,
+  UserMachineRecord,
+} from './db.js';
 import {
   claimUserMachineDelete,
   claimUserMachineRecovery,
@@ -10,6 +14,7 @@ import {
   insertUserMachine,
   insertProviderDeletion,
   listActiveUserMachinesByClerkId,
+  listNonDeletedUserMachinesByClerkId,
   listPendingProviderDeletions,
   listAllUserMachines,
   listRunningUserMachines,
@@ -45,11 +50,13 @@ import {
 } from './customer-vps-cloud-init.js';
 import { PublicIPv4Schema, type CustomerVpsStatus } from './customer-vps-schema.js';
 import type {
+  PreviewProvisionRequest,
   ProvisionRequest,
   RegisterRequest,
   RecoverRequest,
   ResizeMachineRequest,
 } from './customer-vps-schema.js';
+import { assertPreviewProvisioningCapacity, isPreviewMachine } from './customer-vps-preview.js';
 import {
   getRuntimeAccessDecision,
   type BillingEntitlement,
@@ -122,6 +129,7 @@ export interface DeployTarget {
 
 export interface CustomerVpsService {
   provision(input: ProvisionRequest): Promise<ProvisionResponse>;
+  provisionPreview(input: PreviewProvisionRequest): Promise<ProvisionResponse>;
   register(token: string | undefined, input: RegisterRequest): Promise<RegisterResponse>;
   recover(input: RecoverRequest): Promise<RecoverResponse>;
   resize(input: ResizeMachineRequest & { machineId: string }): Promise<ResizeResponse>;
@@ -207,6 +215,26 @@ function activeProvisionResponse(row: UserMachineRecord, etaSeconds: number): Pr
     status: row.status,
     etaSeconds,
   };
+}
+
+async function findExistingProvisioningMachine(
+  db: PlatformDB,
+  request: Pick<ProvisionRequest, 'clerkUserId' | 'handle' | 'runtimeSlot'>,
+  provisioningClass: UserMachineProvisioningClass,
+): Promise<UserMachineRecord | undefined> {
+  const exact = await getActiveUserMachineByClerkId(db, request.clerkUserId, request.runtimeSlot);
+  if (provisioningClass !== 'preview' || request.runtimeSlot === 'preview') {
+    return exact;
+  }
+  if (exact && exact.handle !== request.handle) {
+    throw new CustomerVpsError(409, 'invalid_state', 'Preview slot unavailable');
+  }
+  const legacy = await getActiveUserMachineByClerkId(db, request.clerkUserId, 'preview');
+  const matchingLegacy = legacy?.handle === request.handle ? legacy : undefined;
+  if (exact?.status === 'failed' && matchingLegacy && matchingLegacy.status !== 'failed') {
+    return matchingLegacy;
+  }
+  return exact ?? matchingLegacy;
 }
 
 function statusResponse(row: UserMachineRecord): StatusResponse {
@@ -564,154 +592,212 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     }
   }
 
+  async function provision(
+    input: ProvisionRequest,
+    provisioningClass: UserMachineProvisioningClass,
+  ): Promise<ProvisionResponse> {
+    const request = {
+      ...input,
+      runtimeSlot: input.runtimeSlot ?? 'primary',
+      developerTools: canonicalizeDeveloperTools(input.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
+    };
+    const currentTime = now();
+    const machineId = machineIdFactory();
+    const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
+    const postgresPassword = postgresPasswordFactory();
+    const billingContext = provisioningClass === 'preview'
+      ? null
+      : await resolveBillingProvisionContext(deps, request, currentTime);
+
+    // A non-failed active machine (provisioning/running converge; recovering
+    // is rejected by activeProvisionResponse). A `failed` row is retryable, so
+    // it must NOT short-circuit here — it is retired inside the transaction.
+    const existingBeforeBundleResolve = await findExistingProvisioningMachine(
+      deps.db,
+      request,
+      provisioningClass,
+    );
+    if (
+      existingBeforeBundleResolve
+      && existingBeforeBundleResolve.status !== 'failed'
+      && !(provisioningClass === 'preview' && existingBeforeBundleResolve.runtimeSlot !== request.runtimeSlot)
+      && (provisioningClass === 'customer' || existingBeforeBundleResolve.provisioningClass === 'preview')
+    ) {
+      return activeProvisionResponse(existingBeforeBundleResolve, deps.config.provisionEtaSeconds);
+    }
+
+    const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
+    const hostConfig = buildHostConfig(
+      deps.config,
+      request,
+      machineId,
+      registration.token,
+      postgresPassword,
+      bundleRef,
+    );
+
+    const provisionRow = await runInPlatformTransaction(deps.db, async (trx) => {
+      // Preview capacity and customer entitlement checks share the owner lock
+      // with insertion so concurrent platform instances cannot over-allocate.
+      if (billingContext || provisioningClass === 'preview') {
+        await lockUserMachineProvisioning(trx, request.clerkUserId);
+      }
+      const existing = await findExistingProvisioningMachine(trx, request, provisioningClass);
+      const retireFailedProvisioningMachine = async (failedMachine: UserMachineRecord): Promise<void> => {
+        await retireUserMachine(trx, failedMachine.machineId, currentTime.toISOString());
+        if (failedMachine.hetznerServerId !== null) {
+          await enqueueProviderDeletionTx(trx, {
+            providerServerId: failedMachine.hetznerServerId,
+            reason: 'failed_retry_retire',
+            machineId: failedMachine.machineId,
+            handle: request.handle,
+            detail: 'retiring failed machine before retry',
+          });
+        }
+      };
+      let attempt = 1;
+      if (existing) {
+        if (existing.status !== 'failed') {
+          if (provisioningClass === 'preview' && existing.runtimeSlot !== request.runtimeSlot) {
+            const failedExact = await getActiveUserMachineByClerkId(
+              trx,
+              request.clerkUserId,
+              request.runtimeSlot,
+            );
+            if (failedExact?.status === 'failed' && failedExact.handle === request.handle) {
+              await retireFailedProvisioningMachine(failedExact);
+            }
+          }
+          if (provisioningClass === 'preview' && existing.provisioningClass !== 'preview') {
+            const retainedMachines = await listNonDeletedUserMachinesByClerkId(trx, request.clerkUserId);
+            assertPreviewProvisioningCapacity(retainedMachines, deps.config.previewProvisioningLimit);
+            await updateUserMachine(trx, existing.machineId, { provisioningClass: 'preview' });
+            return { existing: { ...existing, provisioningClass: 'preview' as const } };
+          }
+          return { existing };
+        }
+        // The active slot is held by a failed attempt. Retire it, enqueue its
+        // server for reaping, and provision a fresh one — all in one
+        // transaction so the unique (clerk, slot) slot is satisfied at every
+        // instant, the user is never blocked, and the retired server is never
+        // orphaned (a failed enqueue rolls back the whole retry).
+        attempt = existing.attempt + 1;
+        if (attempt > deps.config.maxProvisionAttempts) {
+          throw new CustomerVpsError(409, 'retry_exhausted', 'Provisioning retry limit reached');
+        }
+        if (provisioningClass === 'preview' && request.runtimeSlot !== 'preview') {
+          const failedLegacy = await getActiveUserMachineByClerkId(
+            trx,
+            request.clerkUserId,
+            'preview',
+          );
+          if (
+            failedLegacy?.status === 'failed'
+            && failedLegacy.handle === request.handle
+            && failedLegacy.machineId !== existing.machineId
+          ) {
+            await retireFailedProvisioningMachine(failedLegacy);
+          }
+        }
+        await retireFailedProvisioningMachine(existing);
+      }
+      if (provisioningClass === 'preview') {
+        const retainedMachines = await listNonDeletedUserMachinesByClerkId(trx, request.clerkUserId);
+        assertPreviewProvisioningCapacity(retainedMachines, deps.config.previewProvisioningLimit);
+      } else if (billingContext) {
+        const activeMachines = await listActiveUserMachinesByClerkId(trx, request.clerkUserId);
+        const customerMachines = activeMachines.filter((machine) => !isPreviewMachine(machine));
+        if (customerMachines.length >= billingContext.entitlement.maxRuntimeSlots) {
+          throw billingUpgradeRequired();
+        }
+      }
+      await insertUserMachine(trx, {
+        machineId,
+        clerkUserId: request.clerkUserId,
+        handle: request.handle,
+        runtimeSlot: request.runtimeSlot,
+        provisioningClass,
+        status: 'provisioning',
+        imageVersion: bundleRef.imageVersion,
+        serverType: billingContext?.serverType ?? deps.config.serverType,
+        developerTools: request.developerTools,
+        registrationTokenHash: registration.hash,
+        registrationTokenExpiresAt: registration.expiresAt,
+        provisionedAt: currentTime.toISOString(),
+        attempt,
+      });
+      return { existing: null };
+    });
+    if (provisionRow.existing) {
+      return activeProvisionResponse(provisionRow.existing, deps.config.provisionEtaSeconds);
+    }
+
+    const userData = renderCloudInitTemplate(
+      deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
+      hostConfig,
+    );
+
+    let serverIdForCompensation: number | null = null;
+    try {
+      const server = await deps.hetzner.createServer({
+        name: buildServerName(request.handle),
+        serverType: billingContext?.serverType ?? deps.config.serverType,
+        userData,
+        labels: {
+          app: 'matrix-os',
+          clerk_user_id: request.clerkUserId,
+          runtime_slot: request.runtimeSlot,
+          machine_id: machineId,
+        },
+      });
+      serverIdForCompensation = server.id;
+      await updateUserMachine(deps.db, machineId, {
+        hetznerServerId: server.id,
+        publicIPv4: server.publicIPv4,
+        publicIPv6: server.publicIPv6,
+      });
+    } catch (err: unknown) {
+      const mapped = genericProviderError(err);
+      if (serverIdForCompensation !== null) {
+        try {
+          await deps.hetzner.deleteServer(serverIdForCompensation);
+        } catch (cleanupErr: unknown) {
+          logCustomerVpsError('provision compensation delete failed', cleanupErr);
+          await queueProviderDeletion({
+            providerServerId: serverIdForCompensation,
+            reason: 'provision_compensation',
+            machineId,
+            handle: request.handle,
+            err: cleanupErr,
+          });
+        }
+      }
+      try {
+        await updateUserMachine(deps.db, machineId, {
+          status: 'failed',
+          failureCode: toFailureCode(err),
+          failureAt: now().toISOString(),
+        });
+      } catch (statusErr: unknown) {
+        logCustomerVpsError('provision failure status update failed', statusErr);
+      }
+      throw mapped;
+    }
+
+    return {
+      machineId,
+      status: 'provisioning',
+      etaSeconds: deps.config.provisionEtaSeconds,
+    };
+  }
+
   return {
     async provision(input) {
-      const request = {
-        ...input,
-        runtimeSlot: input.runtimeSlot ?? 'primary',
-        developerTools: canonicalizeDeveloperTools(input.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
-      };
-      const currentTime = now();
-      const machineId = machineIdFactory();
-      const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
-      const postgresPassword = postgresPasswordFactory();
-      const billingContext = await resolveBillingProvisionContext(deps, request, currentTime);
+      return provision(input, 'customer');
+    },
 
-      // A non-failed active machine (provisioning/running converge; recovering
-      // is rejected by activeProvisionResponse). A `failed` row is retryable, so
-      // it must NOT short-circuit here — it is retired inside the transaction.
-      const existingBeforeBundleResolve = await getActiveUserMachineByClerkId(
-        deps.db,
-        request.clerkUserId,
-        request.runtimeSlot,
-      );
-      if (existingBeforeBundleResolve && existingBeforeBundleResolve.status !== 'failed') {
-        return activeProvisionResponse(existingBeforeBundleResolve, deps.config.provisionEtaSeconds);
-      }
-
-      const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
-      const hostConfig = buildHostConfig(
-        deps.config,
-        request,
-        machineId,
-        registration.token,
-        postgresPassword,
-        bundleRef,
-      );
-
-      const provisionRow = await runInPlatformTransaction(deps.db, async (trx) => {
-        if (billingContext) {
-          await lockUserMachineProvisioning(trx, request.clerkUserId);
-        }
-        const existing = await getActiveUserMachineByClerkId(trx, request.clerkUserId, request.runtimeSlot);
-        let attempt = 1;
-        if (existing) {
-          if (existing.status !== 'failed') {
-            return { existing };
-          }
-          // The active slot is held by a failed attempt. Retire it, enqueue its
-          // server for reaping, and provision a fresh one — all in one
-          // transaction so the unique (clerk, slot) slot is satisfied at every
-          // instant, the user is never blocked, and the retired server is never
-          // orphaned (a failed enqueue rolls back the whole retry).
-          attempt = existing.attempt + 1;
-          if (attempt > deps.config.maxProvisionAttempts) {
-            throw new CustomerVpsError(409, 'retry_exhausted', 'Provisioning retry limit reached');
-          }
-          await retireUserMachine(trx, existing.machineId, currentTime.toISOString());
-          if (existing.hetznerServerId !== null) {
-            await enqueueProviderDeletionTx(trx, {
-              providerServerId: existing.hetznerServerId,
-              reason: 'failed_retry_retire',
-              machineId: existing.machineId,
-              handle: request.handle,
-              detail: 'retiring failed machine before retry',
-            });
-          }
-        }
-        if (billingContext) {
-          const activeMachines = await listActiveUserMachinesByClerkId(trx, request.clerkUserId);
-          if (activeMachines.length >= billingContext.entitlement.maxRuntimeSlots) {
-            throw billingUpgradeRequired();
-          }
-        }
-        await insertUserMachine(trx, {
-          machineId,
-          clerkUserId: request.clerkUserId,
-          handle: request.handle,
-          runtimeSlot: request.runtimeSlot,
-          status: 'provisioning',
-          imageVersion: bundleRef.imageVersion,
-          serverType: billingContext?.serverType ?? deps.config.serverType,
-          developerTools: request.developerTools,
-          registrationTokenHash: registration.hash,
-          registrationTokenExpiresAt: registration.expiresAt,
-          provisionedAt: currentTime.toISOString(),
-          attempt,
-        });
-        return { existing: null };
-      });
-      if (provisionRow.existing) {
-        return activeProvisionResponse(provisionRow.existing, deps.config.provisionEtaSeconds);
-      }
-
-      const userData = renderCloudInitTemplate(
-        deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
-        hostConfig,
-      );
-
-      let serverIdForCompensation: number | null = null;
-      try {
-        const server = await deps.hetzner.createServer({
-          name: buildServerName(request.handle),
-          serverType: billingContext?.serverType ?? deps.config.serverType,
-          userData,
-          labels: {
-            app: 'matrix-os',
-            clerk_user_id: request.clerkUserId,
-            runtime_slot: request.runtimeSlot,
-            machine_id: machineId,
-          },
-        });
-        serverIdForCompensation = server.id;
-        await updateUserMachine(deps.db, machineId, {
-          hetznerServerId: server.id,
-          publicIPv4: server.publicIPv4,
-          publicIPv6: server.publicIPv6,
-        });
-      } catch (err: unknown) {
-        const mapped = genericProviderError(err);
-        if (serverIdForCompensation !== null) {
-          try {
-            await deps.hetzner.deleteServer(serverIdForCompensation);
-          } catch (cleanupErr: unknown) {
-            logCustomerVpsError('provision compensation delete failed', cleanupErr);
-            await queueProviderDeletion({
-              providerServerId: serverIdForCompensation,
-              reason: 'provision_compensation',
-              machineId,
-              handle: request.handle,
-              err: cleanupErr,
-            });
-          }
-        }
-        try {
-          await updateUserMachine(deps.db, machineId, {
-            status: 'failed',
-            failureCode: toFailureCode(err),
-            failureAt: now().toISOString(),
-          });
-        } catch (statusErr: unknown) {
-          logCustomerVpsError('provision failure status update failed', statusErr);
-        }
-        throw mapped;
-      }
-
-      return {
-        machineId,
-        status: 'provisioning',
-        etaSeconds: deps.config.provisionEtaSeconds,
-      };
+    async provisionPreview(input) {
+      return provision(input, 'preview');
     },
 
     async register(token, input) {

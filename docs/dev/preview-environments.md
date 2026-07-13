@@ -96,6 +96,9 @@ and is fronted by **`https://preview.matrix-os.com`**. So a labelled PR can be
 walked end to end in a browser before merge: sign in → plan → Stripe **test**
 checkout (`4242 4242 4242 4242`) → settling → journey. Origins/redirects
 resolve to the preview host (`MATRIX_APP_URL`/`PLATFORM_PUBLIC_URL`).
+Bearer-returning desktop control-plane calls use the separate preview Cloud Run
+service origin published as `PREVIEW_API_ORIGIN`; it must never alias the
+browser-reachable preview host.
 
 Previews are still per-PR tagged, zero-traffic revisions, so point the host at
 the PR you want to walk, then reset:

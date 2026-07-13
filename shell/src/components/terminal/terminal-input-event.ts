@@ -6,4 +6,5 @@ export interface TerminalInputEventDetail {
   paneId: string;
   data?: string;
   action?: "input" | "paste" | "search";
+  submit?: boolean;
 }

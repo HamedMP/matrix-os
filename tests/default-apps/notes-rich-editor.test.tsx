@@ -2,35 +2,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { fakeEditor } from "./mocks/tiptap-react";
 import type { Note } from "../../home/apps/notes/src/notes-model";
-
-const fakeEditor = {
-  isFocused: true,
-  getHTML: vi.fn(() => "<p></p>"),
-  getJSON: vi.fn(() => ({ type: "doc", content: [] })),
-  chain: vi.fn(() => fakeEditor),
-  focus: vi.fn(() => fakeEditor),
-  toggleHeading: vi.fn(() => fakeEditor),
-  toggleBulletList: vi.fn(() => fakeEditor),
-  toggleOrderedList: vi.fn(() => fakeEditor),
-  toggleBlockquote: vi.fn(() => fakeEditor),
-  toggleCodeBlock: vi.fn(() => fakeEditor),
-  run: vi.fn(() => true),
-  isActive: vi.fn(() => false),
-  commands: {
-    focus: vi.fn(),
-    setContent: vi.fn(),
-  },
-};
-
-vi.mock("@tiptap/react", () => ({
-  EditorContent: () => React.createElement("div", { "data-testid": "editor-content" }),
-  useEditor: () => fakeEditor,
-}));
-
-vi.mock("@tiptap/starter-kit", () => ({
-  default: {},
-}));
 
 const { default: RichEditor } = await import("../../home/apps/notes/src/RichEditor");
 

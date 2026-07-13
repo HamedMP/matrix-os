@@ -1,6 +1,7 @@
 import type { Href } from "expo-router";
 import type { MatrixAppEntry, MatrixAppManifestResponse } from "@/lib/gateway-client";
 import { encodeAppSlugPath } from "@/lib/app-slugs";
+import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 
 export type { MatrixAppEntry, MatrixAppManifestResponse };
 export { encodeAppSlugPath };
@@ -11,6 +12,7 @@ export type NativeAppRoute =
   | "/(tabs)/apps"
   | "/(tabs)/settings"
   | "/canvas"
+  | "/agents"
   | "/terminal";
 
 const NATIVE_ROUTE_BY_SLUG: Record<string, NativeAppRoute> = {
@@ -21,6 +23,7 @@ const NATIVE_ROUTE_BY_SLUG: Record<string, NativeAppRoute> = {
   "task-manager": "/(tabs)/mission-control",
   "mission-control": "/(tabs)/mission-control",
   apps: "/(tabs)/apps",
+  ...(CODING_AGENTS_MOBILE_WORKSPACE ? { agents: "/agents" as const } : {}),
   settings: "/(tabs)/settings",
   canvas: "/canvas",
   whiteboard: "/canvas",
@@ -32,6 +35,7 @@ const NATIVE_MATRIX_APPS: MatrixAppEntry[] = [
   {
     name: "Chat",
     description: "Talk to your Matrix OS kernel.",
+    icon: "chat",
     category: "System",
     file: "chat/index.html",
     path: "/files/apps/chat/index.html",
@@ -39,21 +43,38 @@ const NATIVE_MATRIX_APPS: MatrixAppEntry[] = [
   {
     name: "Apps",
     description: "Browse and open apps in your Matrix OS.",
+    icon: "grid",
     category: "System",
+    slug: "apps",
     file: "apps/index.html",
     path: "/files/apps/apps/index.html",
   },
   {
     name: "Terminal",
     description: "Open a Matrix VPS shell session.",
+    icon: "terminal",
     category: "System",
     slug: "terminal",
     file: "terminal/index.html",
     path: "/files/apps/terminal/index.html",
   },
+  ...(CODING_AGENTS_MOBILE_WORKSPACE
+    ? [
+        {
+          name: "Agents",
+          description: "Review coding-agent work on this Matrix computer.",
+          icon: "agents",
+          category: "System",
+          slug: "agents",
+          file: "agents/index.html",
+          path: "/files/apps/agents/index.html",
+        },
+      ]
+    : []),
   {
     name: "Canvas",
     description: "Open your workspace canvas when spatial context helps.",
+    icon: "whiteboard",
     category: "System",
     slug: "canvas",
     file: "canvas/index.html",
@@ -62,13 +83,16 @@ const NATIVE_MATRIX_APPS: MatrixAppEntry[] = [
   {
     name: "Tasks",
     description: "Track tasks, cron jobs, and background work.",
+    icon: "task-manager",
     category: "System",
+    slug: "tasks",
     file: "tasks/index.html",
     path: "/files/apps/tasks/index.html",
   },
   {
     name: "Settings",
     description: "Review your hosted Matrix OS connection and profile.",
+    icon: "settings",
     category: "System",
     file: "settings/index.html",
     path: "/files/apps/settings/index.html",

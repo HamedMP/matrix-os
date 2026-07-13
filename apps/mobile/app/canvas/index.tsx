@@ -1,14 +1,15 @@
 import { useCallback } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
-import { colors, fonts, radius, spacing } from "@/lib/theme";
 
 export default function CanvasEntryScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { theme } = useUnistyles();
 
   const returnHome = useCallback(() => {
     loadMobileShellState()
@@ -37,10 +38,10 @@ export default function CanvasEntryScreen() {
   }, []);
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top + spacing.lg, paddingBottom: Math.max(insets.bottom, spacing.lg) }]}>
+    <View style={[styles.screen, { paddingTop: insets.top + theme.spacing.lg, paddingBottom: Math.max(insets.bottom, theme.spacing.lg) }]}>
       <View style={styles.header}>
         <Pressable accessibilityRole="button" accessibilityLabel="Return to apps" onPress={returnHome} style={styles.iconButton}>
-          <Ionicons name="chevron-back" size={20} color={colors.light.foreground} />
+          <Ionicons name="chevron-back" size={20} color={theme.colors.foreground} />
         </Pressable>
         <View style={styles.headerText}>
           <Text style={styles.title}>Canvas</Text>
@@ -50,7 +51,7 @@ export default function CanvasEntryScreen() {
 
       <View style={styles.card}>
         <View style={styles.glyph}>
-          <Ionicons name="brush" size={36} color={colors.light.primary} />
+          <Ionicons name="brush" size={36} color={theme.colors.primary} />
         </View>
         <Text style={styles.cardTitle}>Canvas opens best in the browser shell</Text>
         <Text style={styles.cardBody}>
@@ -67,47 +68,47 @@ export default function CanvasEntryScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
-    paddingHorizontal: spacing.lg,
-    backgroundColor: colors.light.background,
+    paddingHorizontal: theme.spacing.lg,
+    backgroundColor: theme.colors.background,
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.md,
+    gap: theme.spacing.md,
   },
   iconButton: {
     width: 42,
     height: 42,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: radius.lg,
+    borderRadius: theme.radius.lg,
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
   },
   headerText: {
     flex: 1,
     minWidth: 0,
   },
   title: {
-    fontFamily: fonts.sansBold,
+    fontFamily: theme.fonts.sansBold,
     fontSize: 20,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
   },
   subtitle: {
     marginTop: 2,
-    fontFamily: fonts.sans,
+    fontFamily: theme.fonts.sans,
     fontSize: 13,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
   },
   card: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: theme.spacing.lg,
   },
   glyph: {
     width: 78,
@@ -116,52 +117,52 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
-    marginBottom: spacing.lg,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    marginBottom: theme.spacing.lg,
   },
   cardTitle: {
     textAlign: "center",
-    fontFamily: fonts.sansBold,
+    fontFamily: theme.fonts.sansBold,
     fontSize: 22,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
   },
   cardBody: {
-    marginTop: spacing.md,
+    marginTop: theme.spacing.md,
     textAlign: "center",
-    fontFamily: fonts.sans,
+    fontFamily: theme.fonts.sans,
     fontSize: 15,
     lineHeight: 22,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
   },
   primaryButton: {
-    marginTop: spacing.xl,
+    marginTop: theme.spacing.xl,
     minHeight: 48,
     alignSelf: "stretch",
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: radius.lg,
-    backgroundColor: colors.light.primary,
+    borderRadius: theme.radius.lg,
+    backgroundColor: theme.colors.primary,
   },
   primaryText: {
-    fontFamily: fonts.sansSemiBold,
-    color: colors.light.primaryForeground,
+    fontFamily: theme.fonts.sansSemiBold,
+    color: theme.colors.primaryForeground,
     fontSize: 15,
   },
   secondaryButton: {
-    marginTop: spacing.sm,
+    marginTop: theme.spacing.sm,
     minHeight: 48,
     alignSelf: "stretch",
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: radius.lg,
+    borderRadius: theme.radius.lg,
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
   },
   secondaryText: {
-    fontFamily: fonts.sansSemiBold,
-    color: colors.light.foreground,
+    fontFamily: theme.fonts.sansSemiBold,
+    color: theme.colors.foreground,
     fontSize: 15,
   },
-});
+}));

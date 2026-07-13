@@ -12,12 +12,16 @@ describe("agent CLI install matrix", () => {
   });
 
   it("keeps Terminal install rows on direct npm commands with the Matrix node prefix fallback", () => {
-    const terminalApp = readFileSync(join(root, "shell/src/components/terminal/TerminalApp.tsx"), "utf8");
+    const terminalSidebar = readFileSync(join(root, "shell/src/components/terminal/TerminalSidebar.tsx"), "utf8");
+    const mobileTerminalControls = readFileSync(join(root, "shell/src/components/terminal/MobileTerminalControls.tsx"), "utf8");
+    const terminalAgentOptions = readFileSync(join(root, "shell/src/components/terminal/terminal-agent-options.ts"), "utf8");
 
-    expect(terminalApp).toContain('export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"');
+    expect(terminalSidebar).toContain("terminalAgentVisibleInstallCommand");
+    expect(mobileTerminalControls).toContain("terminalAgentVisibleInstallCommand");
+    expect(terminalAgentOptions).toContain('export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"');
 
     for (const agent of AGENT_INSTALLS) {
-      expect(terminalApp).toContain(`installPackage: "${agent.npmPackage}"`);
+      expect(terminalAgentOptions).toContain(`installPackage: "${agent.npmPackage}"`);
       expect(terminalNpmInstallCommand(agent)).toContain(`--prefix "$MATRIX_NODE_PREFIX" ${agent.npmPackage}`);
       if (agent.ignoreScripts) {
         expect(terminalNpmInstallCommand(agent)).toContain("npm install -g --ignore-scripts --prefix");
@@ -26,8 +30,8 @@ describe("agent CLI install matrix", () => {
       }
     }
 
-    expect(terminalApp).not.toContain("matrix-install-tool-pack");
-    expect(terminalApp).not.toContain("MATRIX_INSTALL_TOOL_PACK");
+    expect(`${terminalSidebar}\n${mobileTerminalControls}\n${terminalAgentOptions}`).not.toContain("matrix-install-tool-pack");
+    expect(`${terminalSidebar}\n${mobileTerminalControls}\n${terminalAgentOptions}`).not.toContain("MATRIX_INSTALL_TOOL_PACK");
   });
 
   it("defines npm-compatible install commands for popular package managers", () => {

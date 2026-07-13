@@ -9,9 +9,11 @@ import ThreadView from "../threads/ThreadView";
 import SettingsView from "../settings/SettingsView";
 import HomeTab from "./HomeTab";
 import ChatTab from "../chat/ChatTab";
+import AgentWorkspace from "../coding-agents/AgentWorkspace";
 import { AppLauncher } from "../embeds";
 import TerminalsTab from "../terminal/TerminalsTab";
 import EmbedHost from "../embeds/EmbedHost";
+import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 
 function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
   switch (tab.kind) {
@@ -32,8 +34,7 @@ function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
     case "terminal":
       return tab.sessionName ? <TerminalView sessionName={tab.sessionName} active={active} /> : null;
     case "agents":
-      // Agent threads now live inside the unified chat (rail on the left).
-      return <ChatTab />;
+      return CODING_AGENTS_DESKTOP_WORKSPACE ? <AgentWorkspace /> : <ChatTab />;
     case "thread":
       return tab.threadId ? <ThreadView threadId={tab.threadId} /> : null;
     case "settings":

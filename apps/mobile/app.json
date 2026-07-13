@@ -7,11 +7,6 @@
     "icon": "./assets/icon.png",
     "scheme": "matrixos",
     "userInterfaceStyle": "automatic",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#FAFAF9"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.matrixos.mobile",
@@ -19,6 +14,9 @@
         "NSCameraUsageDescription": "Scan Matrix OS codes",
         "NSMicrophoneUsageDescription": "Voice input for chat messages",
         "NSFaceIDUsageDescription": "Biometric authentication to secure your Matrix OS data",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        },
         "ITSAppUsesNonExemptEncryption": false
       },
       "appleTeamId": "PX4JL74Y2K"
@@ -61,7 +59,26 @@
           "color": "#9AA48C"
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      "react-native-edge-to-edge",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#FAFAF9"
+        }
+      ],
+      "expo-status-bar",
+      "expo-font",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

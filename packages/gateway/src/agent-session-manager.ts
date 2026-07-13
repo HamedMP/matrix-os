@@ -4,11 +4,15 @@ import { access, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
+  AgentAttachmentSchema,
+  type AgentAttachment,
+} from "@matrix-os/contracts";
+import {
   SupportedAgentSchema,
   type AgentLaunchSandbox,
   type SupportedAgent,
 } from "./agent-launcher.js";
-import { PromptContentSchema } from "./prompt-validation.js";
+import { MAX_PROMPT_CONTENT_LENGTH, PromptContentSchema } from "./prompt-validation.js";
 import { PROJECT_SLUG_REGEX, type ProjectConfig, type WorkspaceError } from "./project-manager.js";
 import { atomicWriteJson, readJsonFile } from "./state-ops.js";
 import type { createAgentLauncher } from "./agent-launcher.js";
@@ -17,6 +21,7 @@ import type { createZellijRuntime } from "./zellij-runtime.js";
 
 export type SessionKind = "shell" | "agent";
 export type RuntimeStatus = "starting" | "running" | "idle" | "waiting" | "exited" | "failed" | "degraded";
+type SessionApprovalPolicy = "untrusted" | "on_request" | "on_failure" | "never";
 
 export interface WorkspaceSession {
   id: string;
@@ -67,13 +72,22 @@ type Failure = {
   holderId?: string;
 };
 
+export type AgentSessionStartupReconciliation = {
+  checked: number;
+  degraded: number;
+  releasedLeases: number;
+  stoppedSessions: WorkspaceSessionView[];
+};
+
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
 const TaskIdSchema = z.string().regex(/^task_[A-Za-z0-9_-]{1,128}$/);
 const SlugSchema = z.string().regex(PROJECT_SLUG_REGEX);
 const WorktreeIdSchema = z.string().regex(/^wt_[a-z0-9]{12,40}$/);
 const AgentSandboxSchema = z.object({
   enabled: z.boolean(),
+  mode: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
   writableRoots: z.array(z.string().trim().min(1).max(4096)).max(20).optional(),
+  denyWriteRoots: z.array(z.string().trim().min(1).max(4096)).max(20).optional(),
   adminOverride: z.boolean().optional(),
 }).strict();
 const StartSessionSchema = z.object({
@@ -86,6 +100,10 @@ const StartSessionSchema = z.object({
   pr: z.number().int().positive().optional(),
   agent: SupportedAgentSchema.optional(),
   prompt: PromptContentSchema.optional(),
+  attachments: z.array(AgentAttachmentSchema).max(8).optional(),
+  mode: z.enum(["default", "plan", "review", "full_access"]).optional(),
+  approvalPolicy: z.enum(["untrusted", "on_request", "on_failure", "never"]).optional(),
+  sandboxMode: z.enum(["read_only", "workspace_write", "full_access"]).optional(),
   runtimePreference: z.enum(["zellij"]).optional(),
   sandbox: AgentSandboxSchema.optional(),
 });
@@ -105,6 +123,38 @@ function nowIso(now?: () => string): string {
 
 function failure(status: number, code: string, message: string, holderId?: string): Failure {
   return { ok: false, status, error: { code, message }, holderId };
+}
+
+function toAgentApprovalPolicy(policy?: SessionApprovalPolicy): "untrusted" | "on-request" | "on-failure" | "never" | undefined {
+  if (policy === "on_request") return "on-request";
+  if (policy === "on_failure") return "on-failure";
+  return policy;
+}
+
+function launchPromptWithReferences(prompt: string | undefined, attachments: AgentAttachment[] | undefined): string | undefined {
+  const references = (attachments ?? [])
+    .filter((attachment) => attachment.kind === "structured_ref")
+    .map((attachment) => {
+      const target = attachment.path ? `: ${attachment.path}` : "";
+      return `- [${attachment.kind}] ${attachment.label}${target}`;
+    });
+  if (references.length === 0) return prompt;
+  const context = ["Context references:", ...references].join("\n");
+  const nextPrompt = prompt && prompt.trim().length > 0 ? `${prompt}\n\n${context}` : context;
+  const parsed = PromptContentSchema.safeParse(nextPrompt);
+  if (parsed.success) return parsed.data;
+
+  const contextOnly = PromptContentSchema.safeParse(context);
+  if (!contextOnly.success) return prompt;
+  if (!prompt || prompt.trim().length === 0) return contextOnly.data;
+
+  const separator = "\n\n";
+  const promptBudget = MAX_PROMPT_CONTENT_LENGTH - context.length - separator.length;
+  if (promptBudget <= 0) return contextOnly.data;
+
+  const truncatedPrompt = prompt.slice(0, promptBudget);
+  const boundedPrompt = PromptContentSchema.safeParse(`${truncatedPrompt}${separator}${context}`);
+  return boundedPrompt.success ? boundedPrompt.data : contextOnly.data;
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -231,7 +281,7 @@ export function createAgentSessionManager(options: {
   worktreeManager: WorktreeManager;
   agentLauncher: AgentLauncher;
   zellijRuntime: ZellijRuntime;
-  inputWriter?: (sessionId: string, input: string) => Promise<void>;
+  inputWriter?: (sessionId: string, input: string, signal?: AbortSignal) => Promise<void>;
   now?: () => string;
   idGenerator?: () => string;
 }) {
@@ -284,8 +334,10 @@ export function createAgentSessionManager(options: {
           ? options.agentLauncher.buildLaunch({
             agent: request.agent!,
             cwd,
-            prompt: request.prompt,
+            prompt: launchPromptWithReferences(request.prompt, request.attachments),
+            mode: request.mode,
             sandbox: request.sandbox,
+            approvalPolicy: toAgentApprovalPolicy(request.approvalPolicy),
           })
           : { command: "bash", args: [], cwd, env: {} };
       } catch (err: unknown) {
@@ -377,7 +429,11 @@ export function createAgentSessionManager(options: {
       return { ok: true, sessions, nextCursor: null };
     },
 
-    async sendInput(sessionId: string, input: string): Promise<{ ok: true; session: WorkspaceSessionView } | Failure> {
+    async sendInput(
+      sessionId: string,
+      input: string,
+      signal?: AbortSignal,
+    ): Promise<{ ok: true; session: WorkspaceSessionView } | Failure> {
       if (!SessionIdSchema.safeParse(sessionId).success || !SessionInputSchema.safeParse(input).success) {
         return failure(400, "invalid_session_input", "Session input is invalid");
       }
@@ -390,7 +446,7 @@ export function createAgentSessionManager(options: {
         return failure(503, "runtime_unavailable", "Session runtime is unavailable");
       }
       try {
-        await options.inputWriter(sessionId, input);
+        await options.inputWriter(sessionId, input, signal);
       } catch (err: unknown) {
         if (err instanceof Error) {
           console.warn("[agent-session-manager] Failed to send session input:", err.message);
@@ -438,17 +494,18 @@ export function createAgentSessionManager(options: {
       return { ok: true, session: decorateSession(updated, options.zellijRuntime) };
     },
 
-    async reconcileStartup(): Promise<{ checked: number; degraded: number; releasedLeases: number }> {
+    async reconcileStartup(): Promise<AgentSessionStartupReconciliation> {
       const sessions = await readAllSessions(homePath);
       let degraded = 0;
       let releasedLeases = 0;
+      const stoppedSessions: WorkspaceSessionView[] = [];
       for (const session of sessions) {
         if (!isActive(session) || session.runtime.type !== "zellij") continue;
         const health = await options.zellijRuntime.health();
         if (health.status !== "degraded") continue;
         degraded += 1;
         if (session.projectSlug && session.worktreeId && await releaseSessionLease(options.worktreeManager, session)) releasedLeases += 1;
-        await writeSession(homePath, {
+        const stoppedSession: WorkspaceSession = {
           ...session,
           runtime: {
             ...session.runtime,
@@ -457,9 +514,11 @@ export function createAgentSessionManager(options: {
           },
           writeMode: "closed",
           lastActivityAt: nowIso(options.now),
-        });
+        };
+        await writeSession(homePath, stoppedSession);
+        stoppedSessions.push(decorateSession(stoppedSession, options.zellijRuntime));
       }
-      return { checked: sessions.length, degraded, releasedLeases };
+      return { checked: sessions.length, degraded, releasedLeases, stoppedSessions };
     },
   };
 }

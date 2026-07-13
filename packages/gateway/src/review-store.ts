@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
+import { ReviewIdSchema } from "@matrix-os/contracts";
 import type { WorkspaceError } from "./project-manager.js";
 import { atomicWriteJson, readJsonFile } from "./state-ops.js";
 import type { ReviewLoopRecord } from "./review-loop.js";
@@ -11,11 +12,10 @@ type Failure = {
   error: WorkspaceError;
 };
 
-const ReviewIdSchema = z.string().regex(/^rev_[A-Za-z0-9_-]{1,128}$/);
 const ListReviewsSchema = z.object({
   projectSlug: z.string().min(1).max(63).optional(),
   limit: z.number().int().min(1).max(100).optional(),
-  cursor: z.string().optional(),
+  cursor: ReviewIdSchema.optional(),
 });
 
 function failure(status: number, code: string, message: string): Failure {
@@ -60,7 +60,7 @@ export function createReviewStore(options: { homePath: string }) {
     },
 
     async listReviews(input: unknown = {}): Promise<
-      { ok: true; reviews: ReviewLoopRecord[]; nextCursor: null } | Failure
+      { ok: true; reviews: ReviewLoopRecord[]; nextCursor: string | null } | Failure
     > {
       const parsed = ListReviewsSchema.safeParse(input);
       if (!parsed.success) {
@@ -85,13 +85,22 @@ export function createReviewStore(options: { homePath: string }) {
         if (review) reviews.push(review);
       }
       const query = parsed.data;
+      const sorted = reviews
+        .filter((review) => !query.projectSlug || review.projectSlug === query.projectSlug)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      const startIndex = query.cursor
+        ? sorted.findIndex((review) => review.id === query.cursor) + 1
+        : 0;
+      if (query.cursor && startIndex === 0) {
+        return failure(400, "invalid_review_cursor", "Review cursor is invalid");
+      }
+      const limit = query.limit ?? 100;
+      const page = sorted.slice(startIndex, startIndex + limit + 1);
+      const visible = page.slice(0, limit);
       return {
         ok: true,
-        reviews: reviews
-          .filter((review) => !query.projectSlug || review.projectSlug === query.projectSlug)
-          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-          .slice(0, query.limit ?? 100),
-        nextCursor: null,
+        reviews: visible,
+        nextCursor: page.length > limit ? visible[visible.length - 1]?.id ?? null : null,
       };
     },
   };

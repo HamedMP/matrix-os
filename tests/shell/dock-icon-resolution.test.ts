@@ -35,9 +35,13 @@ describe("dock icon resolution", () => {
   });
 
   it("preserves versioned desktop icon URLs when app registration refreshes", async () => {
-    const source = await readFile("shell/src/components/Desktop.tsx", "utf8");
+    const [source, helperSource] = await Promise.all([
+      readFile("shell/src/components/Desktop.tsx", "utf8"),
+      readFile("shell/src/components/desktop/desktop-app-routing.ts", "utf8"),
+    ]);
 
-    expect(source).toContain("function sameIconAsset");
+    expect(helperSource).toContain("function iconAssetPath");
+    expect(helperSource).toContain("export function sameIconAsset");
     expect(source).toContain("const nextIconUrl = iconUrl === undefined");
     expect(source).toContain("? existing.iconUrl");
     expect(source).toContain(": sameIconAsset(existing.iconUrl, iconUrl) ? existing.iconUrl : iconUrl");

@@ -44,16 +44,11 @@ export type TerminalControlKey =
   | "arrow-down"
   | "arrow-left"
   | "arrow-right"
-  | "ctrl-a"
-  | "ctrl-c"
-  | "ctrl-d"
-  | "ctrl-e"
-  | "ctrl-k"
-  | "ctrl-l"
-  | "ctrl-r"
-  | "ctrl-u"
-  | "ctrl-w"
-  | "ctrl-z";
+  | `ctrl-${LowercaseLetter}`;
+
+type LowercaseLetter =
+  | "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m"
+  | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z";
 
 export type TerminalAction =
   | { type: "connection.changed"; status: TerminalConnectionStatus }
@@ -246,6 +241,13 @@ export function parseShellSessions(value: unknown): MobileTerminalSession[] {
 }
 
 export function buildTerminalControlSequence(key: TerminalControlKey): string {
+  if (key.startsWith("ctrl-")) {
+    const letter = key.slice(5);
+    if (/^[a-z]$/.test(letter)) {
+      return String.fromCharCode(letter.charCodeAt(0) - 96);
+    }
+  }
+
   switch (key) {
     case "escape":
       return "\x1b";
@@ -261,26 +263,6 @@ export function buildTerminalControlSequence(key: TerminalControlKey): string {
       return "\x1b[C";
     case "arrow-left":
       return "\x1b[D";
-    case "ctrl-a":
-      return "\x01";
-    case "ctrl-c":
-      return "\x03";
-    case "ctrl-d":
-      return "\x04";
-    case "ctrl-e":
-      return "\x05";
-    case "ctrl-k":
-      return "\x0b";
-    case "ctrl-l":
-      return "\x0c";
-    case "ctrl-r":
-      return "\x12";
-    case "ctrl-u":
-      return "\x15";
-    case "ctrl-w":
-      return "\x17";
-    case "ctrl-z":
-      return "\x1a";
     default:
       return "";
   }

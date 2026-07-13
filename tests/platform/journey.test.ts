@@ -60,6 +60,7 @@ function attempt(status: BillingCheckoutAttemptRecord['status'], createdAt: stri
 function machine(status: string, overrides: Partial<UserMachineRecord> = {}): UserMachineRecord {
   return {
     machineId: 'm1', clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary',
+    provisioningClass: 'customer',
     developerTools: ['codex', 'claude-code', 'opencode', 'pi'],
     hetznerServerId: null, publicIPv4: null, publicIPv6: null, status,
     imageVersion: 'stable', serverType: 'cpx32', registrationTokenHash: null,

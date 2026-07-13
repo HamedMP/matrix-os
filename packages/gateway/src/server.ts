@@ -2,24 +2,24 @@ import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import {
   appendFile as appendFileAsync,
   mkdir as mkdirAsync,
-  readFile as readFileAsync,
-  stat as statAsync,
   writeFile as writeFileAsync,
 } from "node:fs/promises";
 import { randomBytes, randomUUID } from "node:crypto";
-import { dirname, extname, join, normalize, resolve, relative } from "node:path";
-import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { dirname, join, normalize, resolve } from "node:path";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
-import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { installPostHogHonoErrorTracking, resolveOwnerTelemetryDistinctId } from "@matrix-os/observability";
-import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext, type SpawnFn } from "./dispatcher.js";
+import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
+import { createAllowedOriginController } from "./allowed-origins.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
-import { SessionRegistry, ClientMessageSchema, UUID_REGEX, type SessionHandle, type PtyServerMessage, type SessionInfo } from "./session-registry.js";
+import { SessionRegistry, ClientMessageSchema, type SessionHandle, type PtyServerMessage } from "./session-registry.js";
+import { logTerminalDebug } from "./terminal-debug.js";
+import { registerTerminalSessionRoutes } from "./terminal-session-routes.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
 import { stampApprovalRequestForReplay } from "./conversation-approval-replay.js";
 import { buildDispatchFailureReplayMessage } from "./conversation-dispatch-failure.js";
@@ -33,24 +33,20 @@ import {
 } from "./conversation-reconnect-aborts.js";
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
-import {
-  isDeniedFileApiPath,
-  resolveExistingFileApiPath,
-  resolveWithinHome,
-  resolveWritableFileApiPath,
-} from "./path-security.js";
-import { listDirectory } from "./files-tree.js";
-import { getMissingFileFallback } from "./file-fallbacks.js";
-import { getMimeType } from "./file-utils.js";
-import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "./file-ops.js";
-import { createFileBlobRoutes } from "./file-blob-routes.js";
-import { fileSearch } from "./file-search.js";
-import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
-import { listProjects } from "./projects.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
+import { createPreviewManager } from "./preview-manager.js";
+import { createProjectManager } from "./project-manager.js";
+import { createTaskManager } from "./task-manager.js";
+import { createReviewStore } from "./review-store.js";
 import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
-import { createSymphonyRunner, SymphonyConfigLoadError } from "./symphony-runner.js";
+import { createSymphonyRunner } from "./symphony-runner.js";
 import { createAgentLauncher } from "./agent-launcher.js";
+import { createAgentSessionManager } from "./agent-session-manager.js";
+import { createAgentSandbox } from "./agent-sandbox.js";
+import { createWorktreeManager } from "./worktree-manager.js";
+import { createWorkspaceSessionOrchestrator } from "./workspace-session-orchestrator.js";
+import { createWorkspaceEventStore } from "./workspace-events.js";
+import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
@@ -103,6 +99,24 @@ import { createToolPackRoutes } from "./onboarding/tool-pack-routes.js";
 import type { CodingSetupStatus } from "./onboarding/coding-setup.js";
 import { createAgentCredentialStatusService } from "./onboarding/agent-credential-status.js";
 import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
+import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-summary.js";
+import { createCodingAgentRoutes } from "./coding-agents/routes.js";
+import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type CodingAgentProviderAdapter, type CodingAgentThreadStore, type CodingAgentTurnStore } from "./coding-agents/thread-store.js";
+import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./coding-agents/thread-stream.js";
+import { createWorkspaceCodingAgentProviderSet } from "./coding-agents/workspace-provider.js";
+import { configuredWorkspaceProviderAgents } from "./coding-agents/workspace-provider-config.js";
+import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
+import { createCodingAgentTurnLifecycle } from "./coding-agents/turn-lifecycle.js";
+import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
+import { createCodingAgentPreviewSummaryStore } from "./coding-agents/preview-summary.js";
+import { createOwnerCodingAgentProjectSummaryStore } from "./coding-agents/project-summary.js";
+import { createOwnerCodingAgentProjectWorkspaceStore } from "./coding-agents/project-workspace.js";
+import { createCodingAgentThreadRelationValidator } from "./coding-agents/thread-relations.js";
+import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
+import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
+import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
+import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
+import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -138,23 +152,6 @@ import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
 import { listApps } from "./apps.js";
-import {
-  createAppDispatcher,
-  appSessionMiddleware,
-  resolveAppBySlug,
-  loadManifest,
-  computeDistributionStatus,
-  sandboxCapabilities,
-  computeRuntimeState,
-  deriveAppSessionKey,
-  signAppSession,
-  buildSetCookie,
-  AckStore,
-  MobileAppSessionTokenStore,
-  SAFE_SLUG,
-  ProcessManager,
-  PortPool,
-} from "./app-runtime/index.js";
 import {
   NativeAppSessionService,
   createDefaultNativeAppRegistry,
@@ -219,6 +216,18 @@ import {
   MainWsClientMessageSchema,
   type MainWsClientMessage,
 } from "./ws-message-schema.js";
+import type { GatewayConfig, ServerMessage } from "./server/types.js";
+import {
+  kernelEventToServerMessage,
+  send,
+  sendClientAck,
+} from "./server/main-ws-messages.js";
+import {
+  resolveInitialSymphonyPort,
+  symphonyUpstreamOriginForPort,
+} from "./server/symphony-origin.js";
+import { registerAppRuntimeRoutes } from "./server/app-runtime-routes.js";
+import { registerFileRoutes } from "./server/file-routes.js";
 import {
   metricsRegistry,
   httpRequestsTotal,
@@ -247,6 +256,21 @@ import {
 } from "./client-error-log.js";
 import { createForwardTunnelHub } from "./forward-ws.js";
 
+export {
+  buildAllowedOrigins,
+  createAllowedOriginController,
+} from "./allowed-origins.js";
+export {
+  registerTerminalSessionRoutes,
+  TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
+  type TerminalSessionRouteRegistry,
+} from "./terminal-session-routes.js";
+export type { GatewayConfig, ServerMessage } from "./server/types.js";
+export {
+  readInitialSymphonyPort,
+  resolveInitialSymphonyPort,
+} from "./server/symphony-origin.js";
+
 const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]+$/;
 
 function isSafeIconStem(value: unknown): value is string {
@@ -272,54 +296,14 @@ const ApiMessageBodySchema = z.object({
   }).optional(),
 });
 
-const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG !== "0";
+const PushRegisterBodySchema = z.object({
+  token: z.string().trim().min(1).max(512),
+  platform: z.string().trim().min(1).max(32),
+}).strict();
 
-function logTerminalDebug(event: string, details: Record<string, unknown> = {}): void {
-  if (!TERMINAL_DEBUG_ENABLED) {
-    return;
-  }
-  console.info("[terminal-debug][gateway]", event, details);
-}
-
-export const TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES = 1024;
-
-export type TerminalSessionRouteRegistry = Pick<SessionRegistry, "list" | "getSession" | "destroy">;
-
-export function registerTerminalSessionRoutes(
-  app: Hono,
-  options: { homePath: string; sessionRegistry: TerminalSessionRouteRegistry },
-): void {
-  const { homePath, sessionRegistry } = options;
-  const terminalSessionDeleteBodyLimit = bodyLimit({
-    maxSize: TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
-  });
-
-  app.get("/api/terminal/pty-sessions", (c) => {
-    const publicSessions = sessionRegistry.list().map((session: SessionInfo) => {
-      const displayCwd = relative(homePath, session.cwd) || "~";
-      return {
-        sessionId: session.sessionId,
-        cwd: displayCwd,
-        state: session.state,
-        exitCode: session.exitCode,
-        createdAt: session.createdAt,
-        lastAttachedAt: session.lastAttachedAt,
-        attachedClients: session.attachedClients,
-      };
-    });
-    return c.json(publicSessions);
-  });
-
-  app.delete("/api/terminal/pty-sessions/:id", terminalSessionDeleteBodyLimit, (c) => {
-    const id = c.req.param("id");
-    logTerminalDebug("rest-destroy-request", { sessionId: id });
-    if (!UUID_REGEX.test(id)) return c.json({ error: "Invalid session ID" }, 400);
-    const session = sessionRegistry.getSession(id);
-    if (!session) return c.json({ ok: true }, 200);
-    sessionRegistry.destroy(id);
-    return c.json({ ok: true });
-  });
-}
+const PushUnregisterBodySchema = z.object({
+  token: z.string().trim().min(1).max(512),
+}).strict();
 
 export async function resetVolatilePtySessionList(persistPath: string): Promise<void> {
   await mkdirAsync(dirname(persistPath), { recursive: true });
@@ -327,217 +311,11 @@ export async function resetVolatilePtySessionList(persistPath: string): Promise<
 }
 
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
-const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
-
-export interface GatewayConfig {
-  homePath: string;
-  port?: number;
-  model?: string;
-  maxTurns?: number;
-  spawnFn?: SpawnFn;
-  syncReport?: { added: string[]; updated: string[]; skipped: string[] };
-}
-
-export type ServerMessage =
-  | { type: "kernel:init"; sessionId: string; requestId?: string; eventId?: string }
-  | { type: "kernel:text"; text: string; requestId?: string; eventId?: string }
-  | { type: "kernel:tool_start"; tool: string; requestId?: string; eventId?: string }
-  | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string; eventId?: string }
-  | { type: "kernel:result"; data: unknown; requestId?: string; eventId?: string }
-  | { type: "kernel:error"; message: string; requestId?: string; eventId?: string }
-  | { type: "kernel:aborted"; requestId?: string; eventId?: string }
-  | { type: "file:change"; path: string; event: string }
-  | { type: "task:created"; task: { id: string; type: string; status: string; input: string } }
-  | { type: "task:updated"; taskId: string; status: string }
-  | { type: "provision:start"; appCount: number }
-  | { type: "provision:complete"; total: number; succeeded: number; failed: number }
-  | { type: "session:switched"; sessionId: string }
-  | {
-      type: "approval:request";
-      id: string;
-      toolName: string;
-      args: unknown;
-      timeout: number;
-      requestId?: string;
-      eventId?: string;
-    }
-  | {
-      type: "client:ack";
-      actionId: string;
-      actionType: string;
-      status: "accepted" | "rejected";
-      retryable?: boolean;
-    }
-  | { type: "os:sync-report"; payload: { added: string[]; updated: string[]; skipped: string[] } }
-  | { type: "data:change"; app: string; key: string }
-  | { type: "integration:connected"; service: string; accountLabel: string }
-  | { type: "integration:disconnected"; service: string; id: string }
-  | { type: "integration:expired"; service: string; id: string; accountLabel: string }
-  | { type: "pong" }
-  | { type: "sync:change"; files: Array<{ path: string; hash: string; size: number; action: string }>; peerId: string; manifestVersion: number }
-  | { type: "sync:conflict"; path: string; localHash: string; remoteHash: string; remotePeerId: string; conflictPath: string }
-  | { type: "sync:peer-join"; peerId: string; hostname: string; platform: string }
-  | { type: "sync:peer-leave"; peerId: string }
-  | { type: "sync:share-invite"; shareId: string; ownerHandle: string; path: string; role: string }
-  | { type: "sync:access-revoked"; shareId: string; ownerHandle: string; path: string };
-
-function kernelEventToServerMessage(event: KernelEvent, requestId?: string): ServerMessage {
-  switch (event.type) {
-    case "init":
-      return { type: "kernel:init", sessionId: event.sessionId, requestId };
-    case "text":
-      return { type: "kernel:text", text: event.text, requestId };
-    case "tool_start":
-      return { type: "kernel:tool_start", tool: event.tool, requestId };
-    case "tool_end":
-      return { type: "kernel:tool_end", input: event.input, requestId };
-    case "result":
-      return { type: "kernel:result", data: event.data, requestId };
-    case "aborted":
-      return { type: "kernel:aborted", requestId };
-  }
-}
-
-function send(ws: WSContext, msg: ServerMessage): boolean {
-  try {
-    ws.send(JSON.stringify(msg));
-    return true;
-  } catch (err: unknown) {
-    console.warn("[gateway] Main WebSocket send failed:", err instanceof Error ? err.name : typeof err);
-    return false;
-  }
-}
-
-function actionIdForClientMessage(message: MainWsClientMessage): string | null {
-  if ("requestId" in message && typeof message.requestId === "string" && message.requestId.length > 0) {
-    return message.requestId;
-  }
-  if (message.type === "approval_response") return message.id;
-  if (message.type === "switch_session") return `switch_session:${message.sessionId}`;
-  return null;
-}
-
-function sendClientAck(
-  ws: WSContext,
-  message: MainWsClientMessage,
-  status: "accepted" | "rejected",
-  retryable = status !== "accepted",
-) {
-  const actionId = actionIdForClientMessage(message);
-  if (!actionId) return;
-  send(ws, {
-    type: "client:ack",
-    actionId,
-    actionType: message.type,
-    status,
-    retryable,
-  });
-}
-
 const CONVERSATION_REPLAY_BATCH_SIZE = 100;
 const CONVERSATION_RECONNECT_GRACE_MS = 30_000;
 const MAX_RECONNECTABLE_ABORT_CONTROLLERS = 100;
 const CLIENT_KERNEL_ERROR_MESSAGE = "Request failed";
 const MAX_MAIN_WS_CLIENTS = 100;
-
-export function buildAllowedOrigins(options: {
-  shellOrigin?: string;
-  proxyOrigin?: string;
-  symphonyPort?: number;
-  symphonyPorts?: number[];
-}): string[] {
-  const symphonyPorts = Array.from(new Set([
-    options.symphonyPort,
-    ...(options.symphonyPorts ?? []),
-  ].filter((port): port is number => typeof port === "number")));
-  return Array.from(new Set(
-    [
-      options.shellOrigin,
-      options.proxyOrigin,
-      "http://localhost:3000",
-      "http://localhost:4001",
-      "http://localhost:4766",
-      "http://127.0.0.1:4766",
-      ...symphonyPorts.flatMap((port) => [
-        `http://localhost:${port}`,
-        `http://127.0.0.1:${port}`,
-      ]),
-    ].filter((origin): origin is string => Boolean(origin)),
-  ));
-}
-
-export function createAllowedOriginController(options: {
-  shellOrigin?: string;
-  proxyOrigin?: string;
-  symphonyPort?: number;
-}) {
-  const baseOptions = {
-    shellOrigin: options.shellOrigin,
-    proxyOrigin: options.proxyOrigin,
-  };
-  let symphonyPorts = options.symphonyPort ? [options.symphonyPort] : [];
-  let allowedOrigins = buildAllowedOrigins({ ...baseOptions, symphonyPorts });
-
-  return {
-    resolve(origin: string | undefined): string | undefined {
-      if (!origin) return undefined;
-      return allowedOrigins.includes(origin) ? origin : undefined;
-    },
-    updateSymphonyPort(port: number, additionalPorts: number[] = []): void {
-      symphonyPorts = Array.from(new Set([port, ...additionalPorts]));
-      allowedOrigins = buildAllowedOrigins({ ...baseOptions, symphonyPorts });
-    },
-  };
-}
-
-type SymphonyRunner = ReturnType<typeof createSymphonyRunner>;
-
-export async function readInitialSymphonyPort(runner: Pick<SymphonyRunner, "getConfig">): Promise<number | undefined> {
-  try {
-    return (await runner.getConfig()).port;
-  } catch (err: unknown) {
-    if (err instanceof SymphonyConfigLoadError) {
-      console.warn("[gateway] Ignoring invalid Symphony config while seeding CORS origins");
-      return undefined;
-    }
-    throw err;
-  }
-}
-
-function parseSymphonyPort(value: string | undefined): number | undefined {
-  if (!value || !/^(?:0|[1-9]\d*)$/.test(value)) return undefined;
-  const port = Number(value);
-  return Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : undefined;
-}
-
-function parseLoopbackOriginPort(value: string | undefined): number | undefined {
-  if (!value) return undefined;
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) {
-      return undefined;
-    }
-    return parseSymphonyPort(url.port);
-  } catch (err: unknown) {
-    if (!(err instanceof TypeError)) {
-      console.warn("[gateway] Ignoring invalid Symphony upstream origin:", err);
-    }
-    return undefined;
-  }
-}
-
-export async function resolveInitialSymphonyPort(
-  runner: Pick<SymphonyRunner, "getConfig">,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<number | undefined> {
-  return parseLoopbackOriginPort(env.SYMPHONY_UPSTREAM_ORIGIN) ??
-    parseSymphonyPort(env.SYMPHONY_PORT) ??
-    await readInitialSymphonyPort(runner);
-}
-
-function symphonyUpstreamOriginForPort(port: number | undefined): string | undefined {
-  return port ? `http://127.0.0.1:${port}` : undefined;
-}
 
 export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
@@ -723,6 +501,135 @@ export async function createGateway(config: GatewayConfig) {
         missing: status?.installed === false,
       };
     },
+  });
+  let codingAgentThreadStore: (CodingAgentThreadStore & CodingAgentTurnStore) | undefined;
+  const codingAgentSessionStopReconciler = createCodingAgentSessionStopReconciler();
+  const workspaceEventStore = createWorkspaceEventStore({ homePath });
+  const reviewStore = createReviewStore({ homePath });
+  const codingAgentReviewSummaryStore = createCodingAgentReviewSummaryStore(reviewStore, {
+    homePath,
+    ownerId: process.env.MATRIX_USER_ID,
+    principalOwnerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(
+      (id): id is string => Boolean(id),
+    ),
+  });
+  const codingAgentOwnerIds = [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(
+    (id): id is string => Boolean(id),
+  );
+  const codingAgentFileStore = createCodingAgentFileStore({
+    homePath,
+    ownerId: process.env.MATRIX_USER_ID,
+    principalOwnerIds: codingAgentOwnerIds,
+  });
+  const codingAgentSourceControlStore = createCodingAgentSourceControlStore({
+    homePath,
+    ownerId: process.env.MATRIX_USER_ID,
+    principalOwnerIds: codingAgentOwnerIds,
+  });
+  const codingAgentNotificationPreferenceStore = createCodingAgentNotificationPreferenceStore({ homePath });
+  const workspaceEventPublisher = createWorkspaceEventPublisher({
+    eventStore: workspaceEventStore,
+    onSessionStopped: (session) => codingAgentSessionStopReconciler.handleSessionStopped(session),
+  });
+  const codingAgentProviders: CodingAgentProviderAdapter[] = [];
+  const codingAgentRegistryProviders: CodingAgentProviderAdapter[] = [];
+  const codingAgentWorkspaceAgents = configuredWorkspaceProviderAgents(process.env);
+  if (codingAgentWorkspaceAgents.length > 0) {
+    const codingAgentWorktreeManager = createWorktreeManager({ homePath });
+    const codingAgentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
+    const codingAgentSessionManager = createAgentSessionManager({
+      homePath,
+      worktreeManager: codingAgentWorktreeManager,
+      agentLauncher: codingAgentLauncher,
+      zellijRuntime: workspaceZellijRuntime,
+      inputWriter: (sessionId, input, signal) =>
+        workspaceZellijRuntime.sendInput(sessionId, input, signal),
+    });
+    const codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
+      worktreeManager: codingAgentWorktreeManager,
+      agentSessionManager: codingAgentSessionManager,
+      agentSandbox: createAgentSandbox({ homePath }),
+      sessionRuntimeBridge: workspaceSessionRuntimeBridge,
+      eventPublisher: workspaceEventPublisher,
+    });
+    const providerSet = createWorkspaceCodingAgentProviderSet({
+      agents: codingAgentWorkspaceAgents,
+      runtime: codingAgentWorkspaceRuntime,
+    });
+    codingAgentProviders.push(...providerSet.executionProviders);
+    codingAgentRegistryProviders.push(...providerSet.registryProviders);
+  } else if (process.env.MATRIX_CODING_AGENTS_FAKE_PROVIDER === "1") {
+    const fakeProvider = createFakeCodingAgentProvider({ providerId: "codex" });
+    codingAgentProviders.push(fakeProvider);
+    codingAgentRegistryProviders.push(fakeProvider);
+  }
+  codingAgentThreadStore = codingAgentProviders.length > 0
+    ? createCodingAgentThreadStore({
+      homePath,
+      providers: codingAgentProviders,
+      relationValidator: createCodingAgentThreadRelationValidator({
+        projectManager: createProjectManager({ homePath }),
+        taskManager: createTaskManager({ homePath }),
+        principalOwnerIds: codingAgentOwnerIds,
+      }),
+      projectionPublisher: (change) =>
+        workspaceEventPublisher.publishCodingAgentThreadProjection(change),
+    })
+    : undefined;
+  const codingAgentProviderRegistry = createCodingAgentProviderRegistry({
+    providers: codingAgentRegistryProviders,
+    agentCredentials: agentCredentialService,
+  });
+  const codingAgentWorkspaceEnabled = Boolean(codingAgentThreadStore);
+  const codingAgentTurnLifecycle = await createCodingAgentTurnLifecycle({
+    store: codingAgentThreadStore,
+    providers: codingAgentProviders,
+    logFailure: logBestEffortFailure,
+  });
+  const codingAgentTurnsEnabled = codingAgentTurnLifecycle.turnsEnabled;
+  if (codingAgentThreadStore) {
+    void codingAgentSessionStopReconciler.attachThreadStore(codingAgentThreadStore).catch((err: unknown) => {
+      console.warn("[coding-agents] Failed to flush pending session stops:", err instanceof Error ? err.message : String(err));
+    });
+  }
+  const codingAgentThreadStream = codingAgentThreadStore
+    ? createCodingAgentThreadStream({ threads: codingAgentThreadStore })
+    : undefined;
+  const codingAgentProjectSummaryStore = createOwnerCodingAgentProjectSummaryStore({
+    homePath,
+    threads: codingAgentThreadStore,
+    principalOwnerIds: codingAgentOwnerIds,
+  });
+  const codingAgentProjectWorkspaceStore = createOwnerCodingAgentProjectWorkspaceStore({
+    homePath,
+    threads: codingAgentThreadStore,
+    principalOwnerIds: codingAgentOwnerIds,
+  });
+  const codingAgentPreviewSummaryStore = createCodingAgentPreviewSummaryStore({
+    homePath,
+    previewManager: createPreviewManager({ homePath }),
+    ownerId: process.env.MATRIX_USER_ID,
+    principalOwnerIds: codingAgentOwnerIds,
+  });
+  const codingAgentRuntimeSummaryService = createCodingAgentRuntimeSummaryService({
+    homePath,
+    terminalRegistry: zellijShellRegistry,
+    providerRegistry: codingAgentProviderRegistry,
+    threads: codingAgentThreadStore,
+    projects: codingAgentProjectSummaryStore,
+    previews: codingAgentPreviewSummaryStore,
+    capabilities: {
+      projectWorkspace: true,
+      workspace: codingAgentWorkspaceEnabled,
+      sameThreadTurns: codingAgentTurnsEnabled,
+      approvals: false,
+      review: true,
+      preview: true,
+      files: true,
+      sourceControl: true,
+    },
+    terminalOwnerId: process.env.MATRIX_USER_ID,
+    filesOwnerId: process.env.MATRIX_USER_ID,
   });
   const integrationCapabilityService = createIntegrationCapabilityService({
     getConnectedCapabilityIds,
@@ -1136,10 +1043,6 @@ export async function createGateway(config: GatewayConfig) {
     if (!(err instanceof Error && /not open|not opened|closed/i.test(err.message))) {
       logBestEffortFailure(context, err);
     }
-  }
-
-  function toStatusCode(status: number): ContentfulStatusCode {
-    return status as ContentfulStatusCode;
   }
 
   async function proxyIntegrationRequest(
@@ -1597,6 +1500,13 @@ export async function createGateway(config: GatewayConfig) {
         });
     },
   });
+  const codingAgentAttentionNotifications = codingAgentThreadStore
+    ? registerCodingAgentAttentionNotifications({
+      threads: codingAgentThreadStore,
+      send: (reply) => channelManager.send(reply),
+      preferences: codingAgentNotificationPreferenceStore,
+    })
+    : undefined;
 
   channelManager.start().then(() => {
     channelManager.replay().catch((err: unknown) => {
@@ -1742,6 +1652,16 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
   app.route("/api/onboarding", createToolPackRoutes({ service: toolPackService }));
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
+  app.route("/api/coding-agents", createCodingAgentRoutes({
+    service: codingAgentRuntimeSummaryService,
+    projectWorkspaces: codingAgentProjectWorkspaceStore,
+    threads: codingAgentThreadStore,
+    turns: codingAgentTurnsEnabled ? codingAgentThreadStore : undefined,
+    reviews: codingAgentReviewSummaryStore,
+    files: codingAgentFileStore,
+    sourceControl: codingAgentSourceControlStore,
+    notificationPreferences: codingAgentNotificationPreferenceStore,
+  }));
   app.route("/api/integrations", createIntegrationCapabilityRoutes({
     service: integrationCapabilityService,
     audit: agentActionAuditService,
@@ -1751,6 +1671,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
   const shellSessionCreateRateLimiter = createRateLimiter(SHELL_SESSION_CREATE_RATE_LIMIT);
   const shellRouteDeps = {
+    homePath,
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,
     workspace: zellijAdapter,
@@ -1758,6 +1679,7 @@ export async function createGateway(config: GatewayConfig) {
     shellBackend: zellijAdapter,
     shellThemeConfig: zellijAdapter,
     commandRunner: createShellCommandRunner({ homePath }),
+    terminalInput: zellijAdapter,
     sessionCreateRateLimiter: shellSessionCreateRateLimiter,
   };
   const systemActivityCandidates = new CleanupCandidateRegistry();
@@ -1831,256 +1753,11 @@ export async function createGateway(config: GatewayConfig) {
     console.log("[platform-db] Integration routes proxied via platform internal API");
   }
 
-  // --- App Runtime (spec 063) ---
-  // Ack-token store: bounded LRU (cap 32, 5min TTL)
-  const ackStore = new AckStore();
-  const mobileSessionTokens = new MobileAppSessionTokenStore({
-    ttlMs: 60_000,
-    maxEntries: 256,
-  });
-
-  // GET /api/apps/:slug/manifest — bearer-authed manifest + runtime state + distribution status
-  app.get("/api/apps/:slug/manifest", async (c) => {
-    const slug = c.req.param("slug");
-    if (!SAFE_SLUG.test(slug)) {
-      return c.json({ error: "invalid slug" }, 400);
-    }
-    const appsDir = join(homePath, "apps");
-    const result = await loadManifest(appsDir, slug);
-    if (!result.ok) {
-      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
-      return c.json({ error: "internal" }, 500);
-    }
-    const resolved = await resolveAppBySlug(appsDir, slug);
-    if (!resolved.ok) return c.json({ error: "internal" }, 500);
-    const appDir = resolved.entry.appDir;
-    const runtimeState = await computeRuntimeState(result.manifest, appDir);
-    const distributionStatus = computeDistributionStatus(
-      result.manifest.listingTrust,
-      sandboxCapabilities(),
-    );
-    return c.json({ manifest: result.manifest, runtimeState, distributionStatus });
-  });
-
-  const appSessionBodyLimit = bodyLimit({ maxSize: 4096 });
-
-  // POST /api/apps/:slug/ack — bearer-authed, issues ack token for gated installs
-  app.post("/api/apps/:slug/ack", appSessionBodyLimit, async (c) => {
-    const slug = c.req.param("slug");
-    if (!SAFE_SLUG.test(slug)) {
-      return c.json({ error: "invalid slug" }, 400);
-    }
-    const appsDir = join(homePath, "apps");
-    const result = await loadManifest(appsDir, slug);
-    if (!result.ok) {
-      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
-      return c.json({ error: "internal" }, 500);
-    }
-    const manifest = result.manifest;
-    if (manifest.scope !== "personal") {
-      return c.json({ error: "scope_mismatch" }, 409);
-    }
-    const distributionStatus = computeDistributionStatus(
-      manifest.listingTrust,
-      sandboxCapabilities(),
-    );
-    if (distributionStatus === "blocked") {
-      return c.json({ error: "install_blocked_by_policy" }, 403);
-    }
-    if (distributionStatus === "installable") {
-      return c.json({ error: "ack_not_applicable" }, 400);
-    }
-    // gated: mint ack token
-    const { ack, expiresAt } = ackStore.mint(slug, "gateway-owner");
-    return c.json({ ack, expiresAt });
-  });
-
-  // POST /api/apps/:slug/session — bearer-authed, issues signed session cookie
-  app.post("/api/apps/:slug/session", appSessionBodyLimit, async (c) => {
-    const slug = c.req.param("slug");
-    if (!SAFE_SLUG.test(slug)) {
-      return c.json({ error: "invalid slug" }, 400);
-    }
-    const appsDir = join(homePath, "apps");
-    const result = await loadManifest(appsDir, slug);
-    if (!result.ok) {
-      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
-      return c.json({ error: "internal" }, 500);
-    }
-    const manifest = result.manifest;
-    if (manifest.scope !== "personal") {
-      return c.json({ error: "scope_mismatch" }, 409);
-    }
-    // Re-compute distributionStatus server-side (ignore any client hint)
-    const distributionStatus = computeDistributionStatus(
-      manifest.listingTrust,
-      sandboxCapabilities(),
-    );
-    if (distributionStatus === "blocked") {
-      return c.json({ error: "install_blocked_by_policy" }, 403);
-    }
-    if (distributionStatus === "gated") {
-      // Require valid ack token
-      let body: { ack?: string } = {};
-      try {
-        body = await c.req.json();
-      } catch (err) {
-        // Hono throws SyntaxError / BodyLimitError when the body is missing
-        // or malformed. Either case reduces to "no ack supplied" below; we
-        // only swallow parse-shape errors and re-throw anything else.
-        if (!(err instanceof SyntaxError) && (err as { name?: string }).name !== "BodyLimitError") {
-          throw err;
-        }
-      }
-      if (!body.ack || !ackStore.peekAck(slug, "gateway-owner", body.ack)) {
-        return c.json({ error: "install_gated" }, 409);
-      }
-    }
-    // Sign session cookie (uses process-scoped master secret computed above;
-    // never reads MATRIX_AUTH_TOKEN directly so empty/short env values can't
-    // produce a predictable HKDF key).
-    const key = deriveAppSessionKey(appSessionMasterSecret, slug);
-    const nowSec = Math.floor(Date.now() / 1000);
-    const maxAge = 600; // 10 minutes
-    const payload = {
-      v: 1 as const,
-      slug,
-      principal: "gateway-owner" as const,
-      scope: "personal" as const,
-      iat: nowSec,
-      exp: nowSec + maxAge,
-    };
-    const token = signAppSession(key, payload);
-    const cookie = buildSetCookie(slug, token, {
-      maxAge,
-      secure: c.req.url.startsWith("https"),
-    });
-    return c.json({ expiresAt: payload.exp * 1000 }, 200, {
-      "Set-Cookie": cookie,
-    });
-  });
-
-  // POST /api/apps/:slug/session-token — mobile-safe one-shot session bootstrap.
-  app.post("/api/apps/:slug/session-token", appSessionBodyLimit, async (c) => {
-    const slug = c.req.param("slug");
-    if (!SAFE_SLUG.test(slug)) {
-      return c.json({ error: "invalid slug" }, 400);
-    }
-    const appsDir = join(homePath, "apps");
-    const result = await loadManifest(appsDir, slug);
-    if (!result.ok) {
-      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
-      return c.json({ error: "internal" }, 500);
-    }
-    const manifest = result.manifest;
-    if (manifest.scope !== "personal") {
-      return c.json({ error: "scope_mismatch" }, 409);
-    }
-    const distributionStatus = computeDistributionStatus(
-      manifest.listingTrust,
-      sandboxCapabilities(),
-    );
-    if (distributionStatus === "blocked") {
-      return c.json({ error: "install_blocked_by_policy" }, 403);
-    }
-    if (distributionStatus === "gated") {
-      let body: { ack?: string } = {};
-      try {
-        body = await c.req.json();
-      } catch (err) {
-        if (!(err instanceof SyntaxError) && (err as { name?: string }).name !== "BodyLimitError") {
-          throw err;
-        }
-      }
-      if (!body.ack || !ackStore.peekAck(slug, "gateway-owner", body.ack)) {
-        return c.json({ error: "install_gated" }, 409);
-      }
-    }
-    const routingHandle = process.env.MATRIX_HANDLE;
-    const { token, expiresAt } = mobileSessionTokens.mint(slug, Date.now(), {
-      routingKey: routingHandle && HANDLE_PATTERN.test(routingHandle) ? routingHandle : undefined,
-    });
-    return c.json({
-      token,
-      expiresAt,
-      launchUrl: `/apps/${slug}/?session=${encodeURIComponent(token)}`,
-    });
-  });
-
-  app.use("/apps/:slug/*", async (c, next) => {
-    const slug = c.req.param("slug");
-    if (!slug || !SAFE_SLUG.test(slug)) {
-      return c.json({ error: "invalid slug" }, 400);
-    }
-    const url = new URL(c.req.url);
-    const token = url.searchParams.get("session");
-    if (!token) {
-      await next();
-      return;
-    }
-    if (!mobileSessionTokens.consume(slug, token)) {
-      return c.html("<!doctype html><title>Session expired</title><p>Session expired.</p>", 401, {
-        "Cache-Control": "no-store",
-        "Content-Type": "text/html; charset=utf-8",
-      });
-    }
-
-    const key = deriveAppSessionKey(appSessionMasterSecret, slug);
-    const nowSec = Math.floor(Date.now() / 1000);
-    const maxAge = 600;
-    const payload = {
-      v: 1 as const,
-      slug,
-      principal: "gateway-owner" as const,
-      scope: "personal" as const,
-      iat: nowSec,
-      exp: nowSec + maxAge,
-    };
-    const cookie = buildSetCookie(slug, signAppSession(key, payload), {
-      maxAge,
-      secure: c.req.url.startsWith("https"),
-    });
-    url.searchParams.delete("session");
-    const nextSearch = url.searchParams.toString();
-    const location = `${url.pathname}${nextSearch ? `?${nextSearch}` : ""}${url.hash}`;
-    return new Response(null, {
-      status: 302,
-      headers: {
-        "Cache-Control": "no-store",
-        "Location": location,
-        "Set-Cookie": cookie,
-      },
-    });
-  });
-
-  // Mount app-session middleware on /apps/:slug/* (verifies signed cookie).
-  // Dev bypass (MATRIX_DEV_APP_AUTH_BYPASS, see above): a null-origin srcdoc app
-  // iframe can't carry the SameSite=Strict cookie over http localhost, so skip
-  // the gate in local dev. Prod always mounts it.
-  if (!APP_AUTH_DEV_BYPASS) {
-    app.use(
-      "/apps/:slug/*",
-      appSessionMiddleware((slug) =>
-        deriveAppSessionKey(appSessionMasterSecret, slug),
-      ),
-    );
-  }
-
-  // Create process manager for node-runtime apps
-  const portPool = new PortPool({ min: 40000, max: 49999, cap: 100 });
-  const processManager = new ProcessManager({
-    homeDir: homePath,
-    portPool,
-    maxProcesses: 10,
-    reaperIntervalMs: 30_000,
-  });
-
-  // Mount app dispatcher on /apps/:slug (static + vite + node branches)
-  const appDispatcher = createAppDispatcher(homePath, {
-    processManager,
+  const processManager = registerAppRuntimeRoutes(app, {
+    homePath,
+    appSessionMasterSecret,
+    devAppAuthBypass: APP_AUTH_DEV_BYPASS,
     publicHost: process.env.PUBLIC_HOST ?? "localhost",
-    // App-runtime failure telemetry: stable error class names only, never
-    // raw error messages or filesystem paths.
     onAppError: ({ errorKind, appSlug }) => {
       void posthogErrorTracker.captureEvent("gateway_app_runtime", {
         distinctId: ownerTelemetryDistinctId,
@@ -2093,7 +1770,6 @@ export async function createGateway(config: GatewayConfig) {
       });
     },
   });
-  app.route("/apps/:slug", appDispatcher);
 
   app.use("*", async (c, next) => {
     const start = performance.now();
@@ -2578,6 +2254,112 @@ export async function createGateway(config: GatewayConfig) {
     }),
   );
 
+  if (codingAgentThreadStream) {
+    app.get(
+      "/ws/coding-agents/thread/:threadId",
+      upgradeWebSocket((c) => {
+        const threadId = c.req.param("threadId") ?? "";
+        const cursor = c.req.query("cursor");
+        let streamHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
+        let socketClosed = false;
+        const pendingFrames: string[] = [];
+        const pendingLimit = 8;
+
+        return {
+          onOpen(_evt, ws) {
+            let principal;
+            try {
+              principal = requireRequestPrincipal(c);
+            } catch (err: unknown) {
+              logBestEffortFailure("Coding agent thread stream principal rejected", err);
+              try {
+                ws.send(JSON.stringify({
+                  type: "thread.stream.error",
+                  error: {
+                    code: "thread_stream_unavailable",
+                    safeMessage: "Thread stream is temporarily unavailable. Try again.",
+                    retryable: true,
+                    recoveryActions: ["retry"],
+                  },
+                }));
+              } catch (sendErr: unknown) {
+                logUnexpectedWsSendFailure("Coding agent thread WebSocket rejected error send failed", sendErr);
+              }
+              ws.close();
+              return;
+            }
+
+            void codingAgentThreadStream.open({
+              ws,
+              principal,
+              threadId,
+              cursor,
+            }).then((session) => {
+              if (socketClosed) {
+                session.onClose();
+                return;
+              }
+              streamHandle = session;
+              for (const frame of pendingFrames.splice(0)) {
+                session.onMessage(frame);
+              }
+            }).catch((err: unknown) => {
+              logBestEffortFailure("Coding agent thread stream attach failed", err);
+              pendingFrames.splice(0);
+              if (socketClosed) return;
+              try {
+                ws.send(JSON.stringify({
+                  type: "thread.stream.error",
+                  error: {
+                    code: "thread_stream_unavailable",
+                    safeMessage: "Thread stream is temporarily unavailable. Try again.",
+                    retryable: true,
+                    recoveryActions: ["retry"],
+                  },
+                }));
+              } catch (sendErr: unknown) {
+                logUnexpectedWsSendFailure("Coding agent thread WebSocket send failed", sendErr);
+              }
+              ws.close();
+            });
+          },
+          onMessage(evt, ws) {
+            const raw = threadStreamFrameDataToString(evt.data);
+            if (raw === null) return;
+            if (streamHandle) {
+              streamHandle.onMessage(raw);
+              return;
+            }
+            if (pendingFrames.length >= pendingLimit) {
+              try {
+                ws.send(JSON.stringify({
+                  type: "thread.stream.error",
+                  error: {
+                    code: "invalid_frame",
+                    safeMessage: "Stream message was invalid. Refresh and try again.",
+                    retryable: true,
+                    recoveryActions: ["retry"],
+                  },
+                }));
+              } catch (sendErr: unknown) {
+                logUnexpectedWsSendFailure("Coding agent thread WebSocket send failed", sendErr);
+              }
+              ws.close();
+              return;
+            }
+            pendingFrames.push(raw);
+          },
+          onClose() {
+            socketClosed = true;
+            pendingFrames.splice(0);
+            streamHandle?.onClose();
+            streamHandle = null;
+          },
+        };
+      }),
+    );
+  }
+
   app.get(
     "/ws/terminal",
     upgradeWebSocket((c) => {
@@ -3002,53 +2784,8 @@ export async function createGateway(config: GatewayConfig) {
     }),
   );
 
-  app.get("/api/files/tree", async (c) => {
-    const pathParam = c.req.query("path") ?? "";
-    const result = await listDirectory(homePath, pathParam);
-    if (!result) {
-      return c.json({ error: "Invalid path" }, 400);
-    }
-    return c.json(result);
-  });
+  registerFileRoutes(app, { homePath });
 
-  app.get("/api/files/list", async (c) => {
-    const pathParam = c.req.query("path") ?? "";
-    const result = await listDirectory(homePath, pathParam);
-    if (!result) {
-      return c.json({ error: "Invalid path" }, 400);
-    }
-    return c.json({ path: pathParam, entries: result });
-  });
-
-  app.get("/api/files/stat", async (c) => {
-    const pathParam = c.req.query("path");
-    if (!pathParam) return c.json({ error: "path required" }, 400);
-    const result = await fileStat(homePath, pathParam);
-    if (!result) return c.json({ error: "Not found" }, 404);
-    return c.json(result);
-  });
-
-  app.get("/api/files/search", async (c) => {
-    const q = c.req.query("q");
-    if (!q) return c.json({ error: "q required" }, 400);
-    if (q.length > 500) return c.json({ error: "q too long" }, 400);
-    const rawLimit = c.req.query("limit");
-    let limit: number | undefined;
-    if (rawLimit) {
-      limit = parseInt(rawLimit, 10);
-      if (isNaN(limit) || limit < 1 || limit > 500) return c.json({ error: "limit must be 1-500" }, 400);
-    }
-    const result = await fileSearch(homePath, {
-      q,
-      path: c.req.query("path"),
-      content: c.req.query("content") === "true",
-      limit,
-    });
-    return c.json(result);
-  });
-  app.route("/api/files", createFileBlobRoutes({ homePath }));
-
-  const fileBodyLimit = bodyLimit({ maxSize: 10 * 1024 * 1024 });
   const apiMessageBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
   const bridgeDataBodyLimit = bodyLimit({ maxSize: 1_000_000 });
@@ -3067,93 +2804,21 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     zellijRuntime: workspaceZellijRuntime,
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
+    eventStore: workspaceEventStore,
+    eventPublisher: workspaceEventPublisher,
+    reviewStore,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   }));
   app.route("/api/symphony", createElixirSymphonyProxyRoutes({
     upstreamOrigin: symphonyUpstreamOriginForPort(initialSymphonyPort),
   }));
-  const workspaceStartupRecovery = await createWorkspaceStartupRecovery({ homePath }).run();
+  const workspaceStartupRecovery = await createWorkspaceStartupRecovery({
+    homePath,
+    eventPublisher: workspaceEventPublisher,
+  }).run();
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");
   }
-
-  async function parseJson<T>(c: Parameters<MiddlewareHandler>[0]): Promise<T | null> {
-    try {
-      return await c.req.json<T>();
-    } catch (err: unknown) {
-      if (err instanceof SyntaxError) {
-        return null;
-      }
-      console.error("[gateway] Unexpected request JSON parse failure:", err);
-      throw err;
-    }
-  }
-
-  app.post("/api/files/mkdir", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ path: string }>(c);
-    if (!body?.path) return c.json({ error: "path required" }, 400);
-    const result = await fileMkdir(homePath, body.path);
-    return c.json(result, result.ok ? 200 : 400);
-  });
-
-  app.post("/api/files/touch", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ path: string; content?: string }>(c);
-    if (!body?.path) return c.json({ error: "path required" }, 400);
-    const result = await fileTouch(homePath, body.path, body.content);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
-  app.post("/api/files/duplicate", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ path: string }>(c);
-    if (!body?.path) return c.json({ error: "path required" }, 400);
-    const result = await fileDuplicate(homePath, body.path);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
-  app.post("/api/files/rename", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ from: string; to: string }>(c);
-    if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
-    const result = await fileRename(homePath, body.from, body.to);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
-  app.post("/api/files/copy", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ from: string; to: string }>(c);
-    if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
-    const result = await fileCopy(homePath, body.from, body.to);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
-  app.post("/api/files/delete", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ path: string }>(c);
-    if (!body?.path) return c.json({ error: "path required" }, 400);
-    const result = await fileDelete(homePath, body.path);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
-  app.get("/api/files/trash", async (c) => {
-    const result = await trashList(homePath);
-    return c.json(result);
-  });
-
-  app.post("/api/files/trash/restore", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ trashPath: string }>(c);
-    if (!body?.trashPath) return c.json({ error: "trashPath required" }, 400);
-    const result = await trashRestore(homePath, body.trashPath);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
-  app.post("/api/files/trash/empty", fileBodyLimit, async (c) => {
-    const result = await trashEmpty(homePath);
-    return c.json(result);
-  });
-
-  app.get("/api/projects", async (c) => {
-    const rootParam = (c.req.query("root") ?? "projects").trim();
-    const result = await listProjects(homePath, rootParam);
-    if (!result.ok) return c.json({ error: result.error }, result.status as ContentfulStatusCode);
-    return c.json({ root: result.root, projects: result.projects });
-  });
 
   app.get("/api/terminal/layout", async (c) => {
     const layoutPath = join(homePath, "system", "terminal-layout.json");
@@ -3223,115 +2888,6 @@ export async function createGateway(config: GatewayConfig) {
     }
 
     return c.json({ events });
-  });
-
-  function resolveServedFilePath(filePath: string): string | null {
-    const lexicalPath = resolveWithinHome(homePath, filePath);
-    if (!lexicalPath || isDeniedFileApiPath(homePath, filePath)) {
-      return null;
-    }
-
-    if (existsSync(lexicalPath)) {
-      return resolveExistingFileApiPath(homePath, filePath);
-    }
-
-    if (!filePath.endsWith("/manifest.json")) {
-      return lexicalPath;
-    }
-
-    const dirPath = dirname(lexicalPath);
-    const fallbackCandidates = [join(dirPath, "module.json"), join(dirPath, "matrix.json")];
-    for (const candidate of fallbackCandidates) {
-      if (existsSync(candidate)) {
-        const relativeCandidate = relative(homePath, candidate);
-        return resolveExistingFileApiPath(homePath, relativeCandidate);
-      }
-    }
-
-    return lexicalPath;
-  }
-
-  app.on("HEAD", "/files/*", (c) => {
-    const filePath = c.req.path.replace("/files/", "");
-    const fullPath = resolveServedFilePath(filePath);
-    if (!fullPath) return c.text("Forbidden", 403);
-    if (!existsSync(fullPath)) {
-      const fallback = getMissingFileFallback(filePath);
-      if (fallback) return c.body(null, 200, { "content-type": fallback.contentType });
-      return c.text("Not found", 404);
-    }
-    if (statSync(fullPath).isDirectory()) return c.text("Is a directory", 400);
-    return c.body(null, 200);
-  });
-
-  app.get("/files/*", (c) => {
-    const filePath = c.req.path.replace("/files/", "");
-    const fullPath = resolveServedFilePath(filePath);
-
-    if (!fullPath) {
-      return c.text("Forbidden", 403);
-    }
-
-    if (!existsSync(fullPath)) {
-      const fallback = getMissingFileFallback(filePath);
-      if (fallback) return c.body(fallback.body, 200, { "content-type": fallback.contentType });
-      return c.text("Not found", 404);
-    }
-
-    if (statSync(fullPath).isDirectory()) {
-      return c.text("Is a directory", 400);
-    }
-
-    const ext = filePath.split(".").pop() ?? "";
-
-    const textMimeTypes: Record<string, string> = {
-      html: "text/html",
-      json: "application/json",
-      js: "application/javascript",
-      css: "text/css",
-      md: "text/markdown",
-      txt: "text/plain",
-    };
-
-    const imageMimeTypes: Record<string, string> = {
-      png: "image/png",
-      jpg: "image/jpeg",
-      jpeg: "image/jpeg",
-      gif: "image/gif",
-      webp: "image/webp",
-      svg: "image/svg+xml",
-    };
-
-    if (imageMimeTypes[ext]) {
-      const stat = statSync(fullPath);
-      const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
-      if (c.req.header("if-none-match") === etag) {
-        return c.body(null, 304);
-      }
-      const buffer = readFileSync(fullPath);
-      return c.body(buffer, 200, {
-        "Content-Type": imageMimeTypes[ext],
-        "Cache-Control": "public, max-age=86400, immutable",
-        "CDN-Cache-Control": "public, max-age=86400",
-        "ETag": etag,
-      });
-    }
-
-    const content = readFileSync(fullPath, "utf-8");
-    return c.body(content, 200, {
-      "Content-Type": textMimeTypes[ext] ?? "text/plain",
-    });
-  });
-
-  app.put("/files/*", fileBodyLimit, async (c) => {
-    const filePath = c.req.path.replace("/files/", "");
-    const fullPath = resolveWritableFileApiPath(homePath, filePath);
-    if (!fullPath) return c.text("Invalid path", 403);
-    const content = await c.req.text();
-    const dir = dirname(fullPath);
-    await mkdirAsync(dir, { recursive: true });
-    await writeFileAsync(fullPath, content, "utf-8");
-    return c.json({ ok: true });
   });
 
   // Structured query API (Postgres-backed)
@@ -4279,20 +3835,66 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.post("/api/push/register", pushRegistrationBodyLimit, async (c) => {
-    const body = await c.req.json<{ token: string; platform: string }>();
-    if (!body.token || !body.platform) {
-      return c.json({ error: "token and platform are required" }, 400);
+    let principal;
+    try {
+      principal = requireRequestPrincipal(c);
+    } catch (err: unknown) {
+      if (isRequestPrincipalError(err)) {
+        const mapped = mapRequestPrincipalError(err, "Push registration failed");
+        if (mapped.log) console.error("[push] Request principal misconfigured:", err.name);
+        return c.json(mapped.body, mapped.status);
+      }
+      throw err;
     }
-    pushAdapter.registerToken(body.token, body.platform);
+
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) {
+        logBestEffortFailure("Failed to parse push registration", err);
+      }
+      return c.json({ error: "Invalid push registration" }, 400);
+    }
+
+    const parsed = PushRegisterBodySchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid push registration" }, 400);
+    }
+
+    pushAdapter.registerToken(parsed.data.token, parsed.data.platform, principal.userId);
     return c.json({ ok: true });
   });
 
   app.delete("/api/push/register", pushRegistrationBodyLimit, async (c) => {
-    const body = await c.req.json<{ token: string }>();
-    if (!body.token) {
-      return c.json({ error: "token is required" }, 400);
+    let principal;
+    try {
+      principal = requireRequestPrincipal(c);
+    } catch (err: unknown) {
+      if (isRequestPrincipalError(err)) {
+        const mapped = mapRequestPrincipalError(err, "Push registration failed");
+        if (mapped.log) console.error("[push] Request principal misconfigured:", err.name);
+        return c.json(mapped.body, mapped.status);
+      }
+      throw err;
     }
-    pushAdapter.removeToken(body.token);
+
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) {
+        logBestEffortFailure("Failed to parse push registration removal", err);
+      }
+      return c.json({ error: "Invalid push registration" }, 400);
+    }
+
+    const parsed = PushUnregisterBodySchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid push registration" }, 400);
+    }
+
+    pushAdapter.removeToken(parsed.data.token, principal.userId);
     return c.json({ ok: true });
   });
 
@@ -4616,6 +4218,10 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
+      await codingAgentTurnLifecycle.shutdown();
+      codingAgentThreadStream?.shutdown();
+      codingAgentAttentionNotifications?.dispose();
+      codingAgentSessionStopReconciler.dispose();
       drainReconnectableAbortEntries(reconnectableAbortControllers);
       if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);
       canvasSubscriptionHub?.close();

@@ -4,6 +4,55 @@ import {
   parseShellSessions,
   type MobileTerminalSession,
 } from "@/lib/terminal-state";
+import { logMobileCodingAgentWarning } from "@/lib/coding-agent-diagnostics";
+import {
+  AgentThreadEventSchema,
+  AgentThreadSnapshotSchema,
+  ApprovalDecisionRequestSchema,
+  ApprovalIdSchema,
+  CodingAgentNotificationPreferencesSchema,
+  CodingAgentNotificationPreferencesUpdateSchema,
+  CursorSchema,
+  FileBrowseRequestSchema,
+  FileBrowseResponseSchema,
+  FileReadRequestSchema,
+  FileReadResponseSchema,
+  FileSearchRequestSchema,
+  FileSearchResponseSchema,
+  FileWriteRequestSchema,
+  FileWriteResponseSchema,
+  RequestIdSchema,
+  ReviewSnapshotSchema,
+  ReviewSummarySchema,
+  RuntimeSummarySchema,
+  SafeClientErrorSchema,
+  SourceControlCreatePullRequestRequestSchema,
+  SourceControlCreatePullRequestResponseSchema,
+  SourceControlPrepareCommitRequestSchema,
+  SourceControlPrepareCommitResponseSchema,
+  ThreadIdSchema,
+  UserInputAnswerRequestSchema,
+  type CreateAgentThreadRequest,
+  type AgentThreadEvent,
+  type CodingAgentNotificationPreferences,
+  type CodingAgentNotificationPreferencesUpdate,
+  type FileBrowseRequest,
+  type FileBrowseResponse,
+  type FileReadRequest,
+  type FileReadResponse,
+  type FileSearchRequest,
+  type FileSearchResponse,
+  type FileWriteRequest,
+  type FileWriteResponse,
+  type ReviewSnapshot,
+  type RuntimeSummary,
+  type SourceControlCreatePullRequestRequest,
+  type SourceControlCreatePullRequestResponse,
+  type SourceControlPrepareCommitRequest,
+  type SourceControlPrepareCommitResponse,
+  boundedListSchema,
+} from "@matrix-os/contracts";
+import { z } from "zod/v4";
 
 function randomShellSuffix(): string {
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
@@ -67,6 +116,86 @@ export interface MatrixAppManifestResponse {
   };
 }
 
+export type CodingAgentRuntimeSummaryResult =
+  | { ok: true; summary: RuntimeSummary }
+  | { ok: false; error: "Runtime summary unavailable" };
+
+const CodingAgentNotificationPreferencesRouteResponseSchema = z.object({
+  preferences: CodingAgentNotificationPreferencesSchema,
+}).strict();
+
+export type CodingAgentNotificationPreferencesResult =
+  | { ok: true; preferences: CodingAgentNotificationPreferences }
+  | { ok: false; error: "Notification settings unavailable" };
+
+export type CodingAgentNotificationPreferencesUpdateResult =
+  | { ok: true; preferences: CodingAgentNotificationPreferences }
+  | { ok: false; error: "Notification settings could not be saved. Try again." };
+
+export type CodingAgentThreadCreateResult =
+  | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
+  | { ok: false; error: "Agent run could not be started. Try again." };
+
+export type CodingAgentThreadSnapshotResult =
+  | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
+  | { ok: false; error: "Thread state unavailable" };
+
+export type CodingAgentApprovalDecisionResult =
+  | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
+  | { ok: false; error: "Approval could not be sent. Try again." };
+
+export type CodingAgentInputAnswerResult =
+  | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
+  | { ok: false; error: "Input could not be sent. Try again." };
+
+const CodingAgentReviewListSchema = boundedListSchema(ReviewSummarySchema, 50);
+
+export type CodingAgentReviewsResult =
+  | { ok: true; reviews: z.infer<typeof CodingAgentReviewListSchema> }
+  | { ok: false; error: "Review state unavailable" };
+
+export type CodingAgentReviewSnapshotResult =
+  | { ok: true; snapshot: ReviewSnapshot }
+  | { ok: false; error: "Review details unavailable" };
+
+export type CodingAgentFileContentResult =
+  | { ok: true; file: FileReadResponse }
+  | { ok: false; error: "File content unavailable" };
+
+export type CodingAgentFileBrowseResult =
+  | { ok: true; browse: FileBrowseResponse }
+  | { ok: false; error: "File list unavailable" };
+
+export type CodingAgentFileSearchResult =
+  | { ok: true; search: FileSearchResponse }
+  | { ok: false; error: "File search unavailable" };
+
+export type CodingAgentFileSaveResult =
+  | { ok: true; file: FileWriteResponse }
+  | { ok: false; error: "File could not be saved. Refresh and try again." };
+
+export type CodingAgentSourceCommitResult =
+  | { ok: true; commit: SourceControlPrepareCommitResponse }
+  | { ok: false; error: "Source commit could not be prepared. Refresh and try again." };
+
+export type CodingAgentSourcePullRequestResult =
+  | { ok: true; pullRequest: SourceControlCreatePullRequestResponse }
+  | { ok: false; error: "Pull request could not be created. Refresh and try again." };
+
+export type CodingAgentThreadStreamStatus = "connecting" | "open" | "closed" | "error";
+
+export interface CodingAgentThreadEventSubscription {
+  detach(): void;
+}
+
+export interface CodingAgentThreadEventSubscriptionOptions {
+  threadId: string;
+  cursor?: string;
+  onEvent: (event: AgentThreadEvent) => void;
+  onStatus?: (status: CodingAgentThreadStreamStatus) => void;
+  onError?: (error: "Thread stream unavailable") => void;
+}
+
 type ClientMessage =
   | { type: "message"; text: string; sessionId?: string }
   | { type: "switch_session"; sessionId: string }
@@ -85,8 +214,63 @@ type ReactNativeWebSocketConstructor = new (
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 export const DEFAULT_GATEWAY_FETCH_TIMEOUT_MS = 10_000;
+const SAFE_REVIEW_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const SECURE_TOKEN_TRANSPORT_ERROR =
-  "Gateway tokens require HTTPS/WSS unless connecting to localhost.";
+  "Matrix OS Cloud requires HTTPS/WSS.";
+const CLEARTEXT_HOST_ERROR =
+  "Self-hosted gateways with saved credentials require HTTPS/WSS unless they are local.";
+
+const ThreadStreamServerFrameSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("thread.stream.attached"),
+    threadId: ThreadIdSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("thread.event"),
+    event: AgentThreadEventSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("thread.replay.end"),
+    nextCursor: CursorSchema.optional(),
+  }).strict(),
+  z.object({
+    type: z.literal("thread.stream.error"),
+    error: SafeClientErrorSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("thread.stream.closing"),
+    reason: z.string().trim().min(1).max(64),
+  }).strict(),
+  z.object({ type: z.literal("pong") }).strict(),
+]);
+
+const WS_OPEN = 1;
+
+function logCodingAgentStatusWarning(scope: string, status: number): void {
+  logMobileCodingAgentWarning(scope, `status ${status}`);
+}
+
+function logCodingAgentParseWarning(scope: string): void {
+  logMobileCodingAgentWarning(scope, "invalid payload");
+}
+
+function logCodingAgentCatchWarning(scope: string, err: unknown): void {
+  const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : err;
+  logMobileCodingAgentWarning(scope, reason);
+}
+
+function logGatewayStatusWarning(scope: string, status: number): void {
+  logMobileCodingAgentWarning(scope, `status ${status}`);
+}
+
+function logGatewayCatchWarning(scope: string, err: unknown): void {
+  const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : err;
+  logMobileCodingAgentWarning(scope, reason);
+}
+
+function logGatewayWarning(scope: string, detail: unknown): void {
+  logMobileCodingAgentWarning(scope, detail);
+}
 
 export class GatewayClient {
   private ws: WebSocket | null = null;
@@ -121,6 +305,20 @@ export class GatewayClient {
 
   get httpUrl(): string {
     return this.baseUrl.replace(/^ws/, "http");
+  }
+
+  /**
+   * Current auth credential for asset GETs the fetch wrapper can't reach,
+   * e.g. <Image> loads of authenticated `/icons/*` URLs. Refreshes via the
+   * token provider so callers get a non-expired token.
+   */
+  async getAuthToken(): Promise<string | undefined> {
+    return this.refreshAuthToken();
+  }
+
+  async getAuthorizationHeader(): Promise<string | undefined> {
+    const token = await this.refreshAuthToken();
+    return formatAuthorizationHeader(token);
   }
 
   get wsUrl(): string {
@@ -178,6 +376,7 @@ export class GatewayClient {
     this.setState("connecting");
 
     const upgradeToken = this.wsToken;
+    const authorization = formatAuthorizationHeader(this.token);
     const wsUrl = upgradeToken
       ? `${this.wsUrl}?token=${encodeURIComponent(upgradeToken)}`
       : this.wsUrl;
@@ -186,8 +385,8 @@ export class GatewayClient {
     this.ws = new WebSocketWithOptions(
       wsUrl,
       [],
-      this.token
-        ? { headers: { Authorization: `Bearer ${this.token}` } }
+      authorization
+        ? { headers: { Authorization: authorization } }
         : undefined,
     );
 
@@ -209,7 +408,7 @@ export class GatewayClient {
 
     this.ws.onclose = (evt) => {
       const closeEvent = evt as CloseEvent;
-      console.warn("[mobile] websocket closed", closeEvent.code, closeEvent.reason || "");
+      logGatewayWarning("websocket closed", `code ${closeEvent.code}${closeEvent.reason ? ` ${closeEvent.reason}` : ""}`);
       this.ws = null;
       this.setState("disconnected");
       this.scheduleReconnect();
@@ -269,7 +468,7 @@ export class GatewayClient {
       this.reconnectTimer = null;
       this.refreshWebSocketTokenForReconnect()
         .catch((err: unknown) => {
-          console.warn("[mobile] websocket token refresh before reconnect failed", err instanceof Error ? err.message : String(err));
+          logGatewayCatchWarning("websocket token refresh before reconnect failed", err);
         })
         .finally(() => this.connect());
     }, delay);
@@ -281,7 +480,7 @@ export class GatewayClient {
       const nextToken = await this.tokenProvider();
       this.token = nextToken ?? undefined;
     } catch (err: unknown) {
-      console.warn("[mobile] Clerk session token refresh failed", err instanceof Error ? err.message : String(err));
+      logGatewayCatchWarning("Clerk session token refresh failed", err);
       this.token = undefined;
     }
     return this.token;
@@ -292,8 +491,9 @@ export class GatewayClient {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
+    const authorization = formatAuthorizationHeader(token);
+    if (authorization) {
+      headers["Authorization"] = authorization;
     }
     return headers;
   }
@@ -311,9 +511,10 @@ export class GatewayClient {
 
   async webViewHeaders(): Promise<Record<string, string> | undefined> {
     const token = await this.refreshAuthToken();
-    if (!token) return undefined;
+    const authorization = formatAuthorizationHeader(token);
+    if (!authorization) return undefined;
     return {
-      Authorization: `Bearer ${token}`,
+      Authorization: authorization,
     };
   }
 
@@ -328,13 +529,98 @@ export class GatewayClient {
     const query = params.toString();
     const wsUrl = query ? `${this.terminalWsUrl}?${query}` : this.terminalWsUrl;
     const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
+    const authorization = formatAuthorizationHeader(this.token);
     return new WebSocketWithOptions(
       wsUrl,
       [],
-      this.token
-        ? { headers: { Authorization: `Bearer ${this.token}` } }
+      authorization
+        ? { headers: { Authorization: authorization } }
         : undefined,
     );
+  }
+
+  async subscribeCodingAgentThreadEvents(
+    options: CodingAgentThreadEventSubscriptionOptions,
+  ): Promise<CodingAgentThreadEventSubscription | null> {
+    const parsedThreadId = ThreadIdSchema.safeParse(options.threadId);
+    const parsedCursor = options.cursor ? CursorSchema.safeParse(options.cursor) : null;
+    if (!parsedThreadId.success || (parsedCursor && !parsedCursor.success)) {
+      options.onError?.("Thread stream unavailable");
+      return null;
+    }
+    const token = await this.getWsToken();
+    if (token) this.setWebSocketToken(token);
+    const params = new URLSearchParams();
+    if (token) params.set("token", token);
+    if (parsedCursor?.success) params.set("cursor", parsedCursor.data);
+    const query = params.toString();
+    const wsUrl = `${this.baseUrl.replace(/^http/, "ws")}/ws/coding-agents/thread/${encodeURIComponent(parsedThreadId.data)}${query ? `?${query}` : ""}`;
+    const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
+    const authorization = formatAuthorizationHeader(this.token);
+    const ws = new WebSocketWithOptions(
+      wsUrl,
+      [],
+      authorization
+        ? { headers: { Authorization: authorization } }
+        : undefined,
+    );
+    let detached = false;
+
+    ws.onopen = () => {
+      options.onStatus?.("open");
+    };
+
+    ws.onmessage = (event) => {
+      if (detached) return;
+      if (typeof event.data !== "string") return;
+      let parsedJson: unknown;
+      try {
+        parsedJson = JSON.parse(event.data);
+      } catch {
+        logMobileCodingAgentWarning("coding-agent thread stream sent invalid JSON", "invalid json");
+        return;
+      }
+      const frame = ThreadStreamServerFrameSchema.safeParse(parsedJson);
+      if (!frame.success) {
+        logCodingAgentParseWarning("coding-agent thread stream sent invalid frame");
+        return;
+      }
+      if (frame.data.type === "thread.event") {
+        options.onEvent(frame.data.event);
+        return;
+      }
+      if (frame.data.type === "thread.stream.error") {
+        options.onError?.("Thread stream unavailable");
+      }
+    };
+
+    ws.onerror = () => {
+      options.onStatus?.("error");
+      options.onError?.("Thread stream unavailable");
+    };
+
+    ws.onclose = () => {
+      options.onStatus?.("closed");
+    };
+
+    options.onStatus?.("connecting");
+    return {
+      detach() {
+        detached = true;
+        if (ws.readyState === WS_OPEN) {
+          try {
+            ws.send(JSON.stringify({ type: "detach" }));
+          } catch (err: unknown) {
+            logCodingAgentCatchWarning("coding-agent thread stream detach failed", err);
+          }
+        }
+        try {
+          ws.close();
+        } catch (err: unknown) {
+          logCodingAgentCatchWarning("coding-agent thread stream close failed", err);
+        }
+      },
+    };
   }
 
   async healthCheck(): Promise<{ ok: boolean; data?: unknown; error?: string }> {
@@ -344,7 +630,7 @@ export class GatewayClient {
       const data = await res.json();
       return { ok: true, data };
     } catch {
-      console.warn("[mobile] gateway health check unavailable");
+      logGatewayWarning("gateway health check unavailable", "unavailable");
       return { ok: false, error: "Gateway unavailable" };
     }
   }
@@ -353,19 +639,19 @@ export class GatewayClient {
     try {
       const res = await this.fetchGateway("/api/auth/ws-token");
       if (!res.ok) {
-        console.warn("[mobile] /api/auth/ws-token unavailable", res.status);
+        logGatewayStatusWarning("/api/auth/ws-token unavailable", res.status);
         return null;
       }
       const data = (await res.json()) as { token?: unknown; expiresAt?: unknown };
       if (data.token == null) return null;
       if (typeof data.token !== "string") {
-        console.warn("[mobile] /api/auth/ws-token returned invalid token");
+        logGatewayWarning("/api/auth/ws-token returned invalid token", "invalid payload");
         return null;
       }
       this.setWebSocketToken(data.token, typeof data.expiresAt === "number" ? data.expiresAt : undefined);
       return data.token;
     } catch {
-      console.warn("[mobile] /api/auth/ws-token network error");
+      logGatewayWarning("/api/auth/ws-token network error", "unavailable");
       return null;
     }
   }
@@ -444,16 +730,16 @@ export class GatewayClient {
     try {
       const res = await this.fetchGateway("/api/apps");
       if (!res.ok) {
-        const body = await res.text().catch((err: unknown) => {
-          console.warn("[mobile] failed to read /api/apps error body", err instanceof Error ? err.message : String(err));
+        await res.text().catch((err: unknown) => {
+          logGatewayCatchWarning("failed to read /api/apps error body", err);
           return "";
         });
-        console.warn("[mobile] /api/apps unavailable", res.status, body.slice(0, 160));
+        logGatewayStatusWarning("/api/apps unavailable", res.status);
         return [];
       }
       return res.json();
     } catch (err: unknown) {
-      console.warn("[mobile] /api/apps unavailable", err instanceof Error ? err.message : String(err));
+      logGatewayCatchWarning("/api/apps unavailable", err);
       return [];
     }
   }
@@ -462,14 +748,462 @@ export class GatewayClient {
     try {
       const res = await this.fetchGateway("/api/terminal/sessions");
       if (!res.ok) {
-        console.warn("[mobile] /api/terminal/sessions unavailable", res.status);
+        await res.text().catch((err: unknown) => {
+          logGatewayCatchWarning("failed to read /api/terminal/sessions error body", err);
+          return "";
+        });
+        logGatewayStatusWarning("/api/terminal/sessions unavailable", res.status);
         return [];
       }
       const body = (await res.json()) as { sessions?: unknown };
       return parseShellSessions(body?.sessions ?? body);
-    } catch {
-      console.warn("[mobile] /api/terminal/sessions unavailable");
+    } catch (err: unknown) {
+      logGatewayCatchWarning("/api/terminal/sessions unavailable", err);
       return [];
+    }
+  }
+
+  async getCodingAgentRuntimeSummary(): Promise<CodingAgentRuntimeSummaryResult> {
+    try {
+      const res = await this.fetchGateway("/api/coding-agents/summary");
+      if (!res.ok) {
+        logCodingAgentStatusWarning("/api/coding-agents/summary unavailable", res.status);
+        return { ok: false, error: "Runtime summary unavailable" };
+      }
+      const body = await res.json();
+      const parsed = RuntimeSummarySchema.safeParse(body);
+      if (!parsed.success) {
+        logCodingAgentParseWarning("/api/coding-agents/summary returned invalid payload");
+        return { ok: false, error: "Runtime summary unavailable" };
+      }
+      return { ok: true, summary: parsed.data };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/summary unavailable", err);
+      return { ok: false, error: "Runtime summary unavailable" };
+    }
+  }
+
+  async getCodingAgentNotificationPreferences(): Promise<CodingAgentNotificationPreferencesResult> {
+    try {
+      const res = await this.fetchGateway("/api/coding-agents/notification-preferences");
+      if (!res.ok) {
+        logCodingAgentStatusWarning("/api/coding-agents/notification-preferences unavailable", res.status);
+        return { ok: false, error: "Notification settings unavailable" };
+      }
+      const body = await res.json();
+      const parsed = CodingAgentNotificationPreferencesRouteResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        logCodingAgentParseWarning("/api/coding-agents/notification-preferences returned invalid payload");
+        return { ok: false, error: "Notification settings unavailable" };
+      }
+      return { ok: true, preferences: parsed.data.preferences };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/notification-preferences unavailable", err);
+      return { ok: false, error: "Notification settings unavailable" };
+    }
+  }
+
+  async updateCodingAgentNotificationPreferences(
+    request: CodingAgentNotificationPreferencesUpdate,
+  ): Promise<CodingAgentNotificationPreferencesUpdateResult> {
+    try {
+      const parsedRequest = CodingAgentNotificationPreferencesUpdateSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "Notification settings could not be saved. Try again." };
+      }
+      const res = await this.fetchGateway("/api/coding-agents/notification-preferences", {
+        method: "PUT",
+        body: JSON.stringify(parsedRequest.data),
+      });
+      if (!res.ok) {
+        logCodingAgentStatusWarning("/api/coding-agents/notification-preferences update unavailable", res.status);
+        return { ok: false, error: "Notification settings could not be saved. Try again." };
+      }
+      const body = await res.json();
+      const parsed = CodingAgentNotificationPreferencesRouteResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        logCodingAgentParseWarning("/api/coding-agents/notification-preferences update returned invalid payload");
+        return { ok: false, error: "Notification settings could not be saved. Try again." };
+      }
+      return { ok: true, preferences: parsed.data.preferences };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/notification-preferences update unavailable", err);
+      return { ok: false, error: "Notification settings could not be saved. Try again." };
+    }
+  }
+
+  async createCodingAgentThread(
+    request: CreateAgentThreadRequest,
+  ): Promise<CodingAgentThreadCreateResult> {
+    try {
+      const res = await this.fetchGateway("/api/coding-agents/threads", {
+        method: "POST",
+        body: JSON.stringify(request),
+      });
+      if (!res.ok) {
+        logCodingAgentStatusWarning("/api/coding-agents/threads unavailable", res.status);
+        return { ok: false, error: "Agent run could not be started. Try again." };
+      }
+      const body = await res.json();
+      const parsed = AgentThreadSnapshotSchema.safeParse(body);
+      if (!parsed.success) {
+        logCodingAgentParseWarning("/api/coding-agents/threads returned invalid payload");
+        return { ok: false, error: "Agent run could not be started. Try again." };
+      }
+      return { ok: true, snapshot: parsed.data };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/threads unavailable", err);
+      return { ok: false, error: "Agent run could not be started. Try again." };
+    }
+  }
+
+  async getCodingAgentThreadSnapshot(
+    options: { threadId: string },
+  ): Promise<CodingAgentThreadSnapshotResult> {
+    try {
+      const parsedThreadId = ThreadIdSchema.safeParse(options.threadId);
+      if (!parsedThreadId.success) {
+        return { ok: false, error: "Thread state unavailable" };
+      }
+      const res = await this.fetchGateway(`/api/coding-agents/threads/${encodeURIComponent(parsedThreadId.data)}`);
+      if (!res.ok) {
+        logCodingAgentStatusWarning("/api/coding-agents/threads/:threadId unavailable", res.status);
+        return { ok: false, error: "Thread state unavailable" };
+      }
+      const body = await res.json();
+      const parsed = AgentThreadSnapshotSchema.safeParse(body);
+      if (!parsed.success) {
+        logCodingAgentParseWarning("/api/coding-agents/threads/:threadId returned invalid payload");
+        return { ok: false, error: "Thread state unavailable" };
+      }
+      return { ok: true, snapshot: parsed.data };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/threads/:threadId unavailable", err);
+      return { ok: false, error: "Thread state unavailable" };
+    }
+  }
+
+  async submitCodingAgentApprovalDecision(options: {
+    threadId: string;
+    approvalId: string;
+    decision: unknown;
+    correlationId: string;
+    clientRequestId: string;
+  }): Promise<CodingAgentApprovalDecisionResult> {
+    try {
+      const parsedThreadId = ThreadIdSchema.safeParse(options.threadId);
+      const parsedApprovalId = ApprovalIdSchema.safeParse(options.approvalId);
+      const parsedBody = ApprovalDecisionRequestSchema.safeParse({
+        decision: options.decision,
+        correlationId: options.correlationId,
+        clientRequestId: options.clientRequestId,
+      });
+      if (!parsedThreadId.success || !parsedApprovalId.success || !parsedBody.success) {
+        return { ok: false, error: "Approval could not be sent. Try again." };
+      }
+      const res = await this.fetchGateway(
+        `/api/coding-agents/threads/${encodeURIComponent(parsedThreadId.data)}/approvals/${encodeURIComponent(parsedApprovalId.data)}/decision`,
+        {
+          method: "POST",
+          body: JSON.stringify(parsedBody.data),
+        },
+      );
+      if (!res.ok) {
+        logCodingAgentStatusWarning("/api/coding-agents/threads/:threadId/approvals/:approvalId/decision unavailable", res.status);
+        return { ok: false, error: "Approval could not be sent. Try again." };
+      }
+      const body = await res.json();
+      const parsed = AgentThreadSnapshotSchema.safeParse(body);
+      if (!parsed.success) {
+        logCodingAgentParseWarning("/api/coding-agents/threads/:threadId/approvals/:approvalId/decision returned invalid payload");
+        return { ok: false, error: "Approval could not be sent. Try again." };
+      }
+      return { ok: true, snapshot: parsed.data };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/threads/:threadId/approvals/:approvalId/decision unavailable", err);
+      return { ok: false, error: "Approval could not be sent. Try again." };
+    }
+  }
+
+  async submitCodingAgentInputAnswer(options: {
+    threadId: string;
+    inputRequestId: string;
+    answer: string;
+    correlationId: string;
+    clientRequestId: string;
+  }): Promise<CodingAgentInputAnswerResult> {
+    try {
+      const parsedThreadId = ThreadIdSchema.safeParse(options.threadId);
+      const parsedInputRequestId = RequestIdSchema.safeParse(options.inputRequestId);
+      const parsedBody = UserInputAnswerRequestSchema.safeParse({
+        answer: options.answer,
+        correlationId: options.correlationId,
+        clientRequestId: options.clientRequestId,
+      });
+      if (!parsedThreadId.success || !parsedInputRequestId.success || !parsedBody.success) {
+        return { ok: false, error: "Input could not be sent. Try again." };
+      }
+      const res = await this.fetchGateway(
+        `/api/coding-agents/threads/${encodeURIComponent(parsedThreadId.data)}/inputs/${encodeURIComponent(parsedInputRequestId.data)}/answer`,
+        {
+          method: "POST",
+          body: JSON.stringify(parsedBody.data),
+        },
+      );
+      if (!res.ok) {
+        logCodingAgentStatusWarning("/api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer unavailable", res.status);
+        return { ok: false, error: "Input could not be sent. Try again." };
+      }
+      const body = await res.json();
+      const parsed = AgentThreadSnapshotSchema.safeParse(body);
+      if (!parsed.success) {
+        logCodingAgentParseWarning("/api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer returned invalid payload");
+        return { ok: false, error: "Input could not be sent. Try again." };
+      }
+      return { ok: true, snapshot: parsed.data };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer unavailable", err);
+      return { ok: false, error: "Input could not be sent. Try again." };
+    }
+  }
+
+  async getCodingAgentReviews(options: { cursor?: string } = {}): Promise<CodingAgentReviewsResult> {
+    try {
+      let path = "/api/coding-agents/reviews";
+      if (options.cursor) {
+        const parsedCursor = CursorSchema.safeParse(options.cursor);
+        if (!parsedCursor.success) {
+          return { ok: false, error: "Review state unavailable" };
+        }
+        path += `?${new URLSearchParams({ cursor: parsedCursor.data }).toString()}`;
+      }
+      const res = await this.fetchGateway(path);
+      if (!res.ok) {
+        logCodingAgentStatusWarning("/api/coding-agents/reviews unavailable", res.status);
+        return { ok: false, error: "Review state unavailable" };
+      }
+      const body = await res.json();
+      const parsed = CodingAgentReviewListSchema.safeParse(body);
+      if (!parsed.success) {
+        logCodingAgentParseWarning("/api/coding-agents/reviews returned invalid payload");
+        return { ok: false, error: "Review state unavailable" };
+      }
+      return { ok: true, reviews: parsed.data };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/reviews unavailable", err);
+      return { ok: false, error: "Review state unavailable" };
+    }
+  }
+
+  async getCodingAgentReviewSnapshot(
+    options: { reviewId: string },
+  ): Promise<CodingAgentReviewSnapshotResult> {
+    try {
+      if (!SAFE_REVIEW_REFERENCE.test(options.reviewId) || options.reviewId.includes("..")) {
+        return { ok: false, error: "Review details unavailable" };
+      }
+      const res = await this.fetchGateway(`/api/coding-agents/reviews/${encodeURIComponent(options.reviewId)}`);
+      if (!res.ok) {
+        logCodingAgentStatusWarning("/api/coding-agents/reviews/:reviewId unavailable", res.status);
+        return { ok: false, error: "Review details unavailable" };
+      }
+      const body = await res.json();
+      const parsed = ReviewSnapshotSchema.safeParse(body);
+      if (!parsed.success) {
+        logCodingAgentParseWarning("/api/coding-agents/reviews/:reviewId returned invalid payload");
+        return { ok: false, error: "Review details unavailable" };
+      }
+      return { ok: true, snapshot: parsed.data };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/reviews/:reviewId unavailable", err);
+      return { ok: false, error: "Review details unavailable" };
+    }
+  }
+
+  async getCodingAgentFileContent(
+    request: FileReadRequest,
+  ): Promise<CodingAgentFileContentResult> {
+    try {
+      const parsedRequest = FileReadRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "File content unavailable" };
+      }
+      const query = new URLSearchParams({
+        projectId: parsedRequest.data.projectId,
+        worktreeId: parsedRequest.data.worktreeId,
+        path: parsedRequest.data.path,
+      });
+      const res = await this.fetchGateway(`/api/coding-agents/files/read?${query.toString()}`);
+      if (!res.ok) {
+        logCodingAgentStatusWarning("/api/coding-agents/files/read unavailable", res.status);
+        return { ok: false, error: "File content unavailable" };
+      }
+      const body = await res.json();
+      const parsed = FileReadResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        logCodingAgentParseWarning("/api/coding-agents/files/read returned invalid payload");
+        return { ok: false, error: "File content unavailable" };
+      }
+      return { ok: true, file: parsed.data };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/files/read unavailable", err);
+      return { ok: false, error: "File content unavailable" };
+    }
+  }
+
+  async browseCodingAgentFiles(
+    request: FileBrowseRequest,
+  ): Promise<CodingAgentFileBrowseResult> {
+    try {
+      const parsedRequest = FileBrowseRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "File list unavailable" };
+      }
+      const query = new URLSearchParams({
+        projectId: parsedRequest.data.projectId,
+        worktreeId: parsedRequest.data.worktreeId,
+      });
+      if (parsedRequest.data.path) {
+        query.set("path", parsedRequest.data.path);
+      }
+      query.set("limit", String(parsedRequest.data.limit));
+      const res = await this.fetchGateway(`/api/coding-agents/files/browse?${query.toString()}`);
+      if (!res.ok) {
+        logCodingAgentStatusWarning("/api/coding-agents/files/browse unavailable", res.status);
+        return { ok: false, error: "File list unavailable" };
+      }
+      const body = await res.json();
+      const parsed = FileBrowseResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        logCodingAgentParseWarning("/api/coding-agents/files/browse returned invalid payload");
+        return { ok: false, error: "File list unavailable" };
+      }
+      return { ok: true, browse: parsed.data };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/files/browse unavailable", err);
+      return { ok: false, error: "File list unavailable" };
+    }
+  }
+
+  async searchCodingAgentFiles(
+    request: FileSearchRequest,
+  ): Promise<CodingAgentFileSearchResult> {
+    try {
+      const parsedRequest = FileSearchRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "File search unavailable" };
+      }
+      const query = new URLSearchParams({
+        projectId: parsedRequest.data.projectId,
+        worktreeId: parsedRequest.data.worktreeId,
+      });
+      if (parsedRequest.data.path) {
+        query.set("path", parsedRequest.data.path);
+      }
+      query.set("query", parsedRequest.data.query);
+      query.set("limit", String(parsedRequest.data.limit));
+      const res = await this.fetchGateway(`/api/coding-agents/files/search?${query.toString()}`);
+      if (!res.ok) {
+        logCodingAgentStatusWarning("/api/coding-agents/files/search unavailable", res.status);
+        return { ok: false, error: "File search unavailable" };
+      }
+      const body = await res.json();
+      const parsed = FileSearchResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        logCodingAgentParseWarning("/api/coding-agents/files/search returned invalid payload");
+        return { ok: false, error: "File search unavailable" };
+      }
+      return { ok: true, search: parsed.data };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/files/search unavailable", err);
+      return { ok: false, error: "File search unavailable" };
+    }
+  }
+
+  async saveCodingAgentFileContent(
+    request: FileWriteRequest,
+  ): Promise<CodingAgentFileSaveResult> {
+    try {
+      const parsedRequest = FileWriteRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "File could not be saved. Refresh and try again." };
+      }
+      const res = await this.fetchGateway("/api/coding-agents/files/write", {
+        method: "POST",
+        body: JSON.stringify(parsedRequest.data),
+      });
+      if (!res.ok) {
+        logCodingAgentStatusWarning("/api/coding-agents/files/write unavailable", res.status);
+        return { ok: false, error: "File could not be saved. Refresh and try again." };
+      }
+      const body = await res.json();
+      const parsed = FileWriteResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        logCodingAgentParseWarning("/api/coding-agents/files/write returned invalid payload");
+        return { ok: false, error: "File could not be saved. Refresh and try again." };
+      }
+      return { ok: true, file: parsed.data };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/files/write unavailable", err);
+      return { ok: false, error: "File could not be saved. Refresh and try again." };
+    }
+  }
+
+  async prepareCodingAgentSourceCommit(
+    request: SourceControlPrepareCommitRequest,
+  ): Promise<CodingAgentSourceCommitResult> {
+    try {
+      const parsedRequest = SourceControlPrepareCommitRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
+      }
+      const res = await this.fetchGateway("/api/coding-agents/source-control/prepare-commit", {
+        method: "POST",
+        body: JSON.stringify(parsedRequest.data),
+      });
+      if (!res.ok) {
+        logCodingAgentStatusWarning("/api/coding-agents/source-control/prepare-commit unavailable", res.status);
+        return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
+      }
+      const body = await res.json();
+      const parsed = SourceControlPrepareCommitResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        logCodingAgentParseWarning("/api/coding-agents/source-control/prepare-commit returned invalid payload");
+        return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
+      }
+      return { ok: true, commit: parsed.data };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/source-control/prepare-commit unavailable", err);
+      return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
+    }
+  }
+
+  async createCodingAgentSourcePullRequest(
+    request: SourceControlCreatePullRequestRequest,
+  ): Promise<CodingAgentSourcePullRequestResult> {
+    try {
+      const parsedRequest = SourceControlCreatePullRequestRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "Pull request could not be created. Refresh and try again." };
+      }
+      const res = await this.fetchGateway("/api/coding-agents/source-control/pull-requests", {
+        method: "POST",
+        body: JSON.stringify(parsedRequest.data),
+      });
+      if (!res.ok) {
+        logCodingAgentStatusWarning("/api/coding-agents/source-control/pull-requests unavailable", res.status);
+        return { ok: false, error: "Pull request could not be created. Refresh and try again." };
+      }
+      const body = await res.json();
+      const parsed = SourceControlCreatePullRequestResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        logCodingAgentParseWarning("/api/coding-agents/source-control/pull-requests returned invalid payload");
+        return { ok: false, error: "Pull request could not be created. Refresh and try again." };
+      }
+      return { ok: true, pullRequest: parsed.data };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/source-control/pull-requests unavailable", err);
+      return { ok: false, error: "Pull request could not be created. Refresh and try again." };
     }
   }
 
@@ -479,18 +1213,22 @@ export class GatewayClient {
     try {
       const res = await this.fetchGateway("/api/terminal/sessions", {
         method: "POST",
-        body: JSON.stringify({ name, cwd: "projects" }),
+        body: JSON.stringify({ name }),
         headers: { "Content-Type": "application/json" },
       });
       if (!res.ok) {
-        console.warn("[mobile] terminal session create failed", res.status);
+        await res.text().catch((err: unknown) => {
+          logGatewayCatchWarning("failed to read terminal session create error body", err);
+          return "";
+        });
+        logGatewayStatusWarning("terminal session create failed", res.status);
         return null;
       }
       const body = (await res.json().catch(() => null)) as { name?: unknown } | null;
       const created = typeof body?.name === "string" ? body.name : name;
       return isSafeShellSessionName(created) ? created : null;
     } catch {
-      console.warn("[mobile] terminal session create unavailable");
+      logGatewayWarning("terminal session create unavailable", "unavailable");
       return null;
     }
   }
@@ -503,10 +1241,10 @@ export class GatewayClient {
         { method: "DELETE" },
       );
       if (res.ok || res.status === 404) return true;
-      console.warn("[mobile] terminal session delete unavailable", res.status);
+      logGatewayStatusWarning("terminal session delete unavailable", res.status);
       return false;
     } catch {
-      console.warn("[mobile] terminal session delete unavailable");
+      logGatewayWarning("terminal session delete unavailable", "unavailable");
       return false;
     }
   }
@@ -517,7 +1255,7 @@ export class GatewayClient {
       if (!res.ok) return null;
       return res.json();
     } catch {
-      console.warn("[mobile] /api/apps/:slug/manifest unavailable", slug);
+      logGatewayWarning("/api/apps/:slug/manifest unavailable", `slug ${slug}`);
       return null;
     }
   }
@@ -529,24 +1267,21 @@ export class GatewayClient {
         body: "{}",
       });
       if (!res.ok) {
-        const body = await res.text().catch((err: unknown) => {
-          console.warn(
-            "[mobile] failed to read /api/apps/:slug/session-token error body",
-            err instanceof Error ? err.message : String(err),
-          );
+        await res.text().catch((err: unknown) => {
+          logGatewayCatchWarning("failed to read /api/apps/:slug/session-token error body", err);
           return "";
         });
-        console.warn("[mobile] /api/apps/:slug/session-token unavailable", slug, res.status, body.slice(0, 160));
+        logGatewayWarning("/api/apps/:slug/session-token unavailable", `slug ${slug} status ${res.status}`);
         return null;
       }
       const data = (await res.json()) as { launchUrl?: unknown; expiresAt?: unknown };
       if (typeof data.launchUrl !== "string" || typeof data.expiresAt !== "number") {
-        console.warn("[mobile] /api/apps/:slug/session-token returned invalid payload", slug);
+        logGatewayWarning("/api/apps/:slug/session-token returned invalid payload", `slug ${slug}`);
         return null;
       }
       return { launchUrl: data.launchUrl, expiresAt: data.expiresAt };
     } catch {
-      console.warn("[mobile] /api/apps/:slug/session-token network error", slug);
+      logGatewayWarning("/api/apps/:slug/session-token network error", `slug ${slug}`);
       return null;
     }
   }
@@ -591,6 +1326,12 @@ function createTimeoutSignal(timeoutMs: number): AbortSignal | undefined {
   return controller.signal;
 }
 
+function formatAuthorizationHeader(token: string | undefined): string | undefined {
+  if (!token) return undefined;
+  if (/^(Basic|Bearer)\s+/i.test(token)) return token;
+  return `Bearer ${token}`;
+}
+
 export function assertSecureTokenTransport(baseUrl: string): void {
   let parsed: URL;
   try {
@@ -603,26 +1344,40 @@ export function assertSecureTokenTransport(baseUrl: string): void {
     return;
   }
 
-  if ((parsed.protocol === "http:" || parsed.protocol === "ws:") && isLoopbackHost(parsed.hostname)) {
+  if (
+    (parsed.protocol === "http:" || parsed.protocol === "ws:")
+    && isCleartextSelfHostedHost(parsed.hostname)
+  ) {
     return;
+  }
+
+  if (parsed.protocol === "http:" || parsed.protocol === "ws:") {
+    throw new Error(isMatrixCloudHost(parsed.hostname) ? SECURE_TOKEN_TRANSPORT_ERROR : CLEARTEXT_HOST_ERROR);
   }
 
   throw new Error(SECURE_TOKEN_TRANSPORT_ERROR);
 }
 
-function isLoopbackHost(hostname: string): boolean {
+function isMatrixCloudHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+  return host === "app.matrix-os.com";
+}
+
+function isCleartextSelfHostedHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
   if (host === "localhost" || host === "::1" || host === "0:0:0:0:0:0:0:1") {
     return true;
   }
 
-  const ipv4Match = /^(\d{1,3})(?:\.(\d{1,3})){3}$/.exec(host);
-  if (!ipv4Match) {
-    return false;
+  const octets = host.split(".").map((part) => Number(part));
+  if (octets.length === 4 && octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)) {
+    const [first = -1, second = -1] = octets;
+    return first === 10 ||
+      first === 127 ||
+      (first === 172 && second >= 16 && second <= 31) ||
+      (first === 169 && second === 254) ||
+      (first === 192 && second === 168);
   }
 
-  const octets = host.split(".").map((part) => Number(part));
-  return octets.length === 4
-    && octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)
-    && octets[0] === 127;
+  return host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:");
 }

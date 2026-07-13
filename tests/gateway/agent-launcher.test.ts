@@ -6,6 +6,12 @@ import {
 } from "../../packages/gateway/src/agent-launcher.js";
 
 describe("agent-launcher", () => {
+  function claudeSettings(args: string[]): Record<string, unknown> {
+    const settingsIndex = args.indexOf("--settings");
+    expect(settingsIndex).toBeGreaterThanOrEqual(0);
+    return JSON.parse(args[settingsIndex + 1]!) as Record<string, unknown>;
+  }
+
   it("detects installed, missing, and auth-needed agents without leaking raw command errors", async () => {
     const runCommand = vi.fn(async (command: string, args: string[]) => {
       if (args[0] === "--version" && command !== "opencode") {
@@ -109,7 +115,9 @@ describe("agent-launcher", () => {
         agent,
         cwd: "/home/matrixos/home/projects/repo",
         prompt: "--dangerously-bypass-sandbox",
-        sandbox: agent === "codex" ? { enabled: true, writableRoots: ["/tmp/sandbox"] } : undefined,
+        sandbox: agent === "codex" || agent === "claude"
+          ? { enabled: true, writableRoots: ["/tmp/sandbox"] }
+          : undefined,
       });
       if (agent === "codex") {
         expect(launch.args).toEqual([
@@ -136,6 +144,7 @@ describe("agent-launcher", () => {
     const launch = buildAgentLaunch({
       agent: "claude",
       cwd: "/home/matrixos/home/projects/repo",
+      sandbox: { enabled: true, writableRoots: ["/home/matrixos/home/projects/repo"] },
     });
     expect(launch.args).not.toContain("--");
 
@@ -143,6 +152,7 @@ describe("agent-launcher", () => {
       agent: "claude",
       cwd: "/home/matrixos/home/projects/repo",
       prompt: "",
+      sandbox: { enabled: true, writableRoots: ["/home/matrixos/home/projects/repo"] },
     });
     expect(launchEmpty.args).not.toContain("--");
   });
@@ -164,6 +174,60 @@ describe("agent-launcher", () => {
     expect(launch.args.at(-1)).toBe("--help");
   });
 
+  it("applies explicit Codex approval and read-only sandbox settings", () => {
+    const launch = buildAgentLaunch({
+      agent: "codex",
+      cwd: "/home/matrixos/home/projects/repo",
+      prompt: "review only",
+      approvalPolicy: "on-request",
+      sandbox: { enabled: true, mode: "read-only", writableRoots: ["/tmp/ignored"] },
+    });
+
+    expect(launch.args).toEqual([
+      "--ask-for-approval",
+      "on-request",
+      "exec",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "read-only",
+      "--",
+      "review only",
+    ]);
+  });
+
+  it("maps Codex review and plan modes into launch controls", () => {
+    const reviewLaunch = buildAgentLaunch({
+      agent: "codex",
+      cwd: "/home/matrixos/home/projects/repo",
+      prompt: "check this PR",
+      mode: "review",
+      sandbox: { enabled: true, mode: "read-only" },
+    });
+
+    expect(reviewLaunch.args).toEqual([
+      "--ask-for-approval",
+      "never",
+      "exec",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "read-only",
+      "review",
+      "--",
+      "check this PR",
+    ]);
+
+    const planLaunch = buildAgentLaunch({
+      agent: "codex",
+      cwd: "/home/matrixos/home/projects/repo",
+      prompt: "add a dashboard",
+      mode: "plan",
+      sandbox: { enabled: true, mode: "workspace-write" },
+    });
+
+    expect(planLaunch.args.at(-1)).toContain("Plan the work first");
+    expect(planLaunch.args.at(-1)).toContain("add a dashboard");
+  });
+
   it("requires Codex sandbox metadata unless explicitly overridden", () => {
     expect(() => buildAgentLaunch({
       agent: "codex",
@@ -177,6 +241,152 @@ describe("agent-launcher", () => {
       prompt: "work",
       sandbox: { enabled: false, adminOverride: true },
     }).args).toEqual(["--ask-for-approval", "never", "exec", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "--", "work"]);
+  });
+
+  it("constructs a strict workspace-scoped Claude launch policy", () => {
+    const cwd = "/home/matrix/home/projects/repo/worktrees/wt_abc123def456";
+    const scratch = "/home/matrix/home/system/agent-scratch/sess_abc123";
+    const launch = buildAgentLaunch({
+      agent: "claude",
+      cwd,
+      prompt: "fix the tests",
+      approvalPolicy: "on-request",
+      sandbox: { enabled: true, mode: "workspace-write", writableRoots: [cwd, scratch] },
+    });
+
+    expect(launch.args).toEqual([
+      "--setting-sources",
+      "",
+      "--settings",
+      expect.any(String),
+      "--permission-mode",
+      "dontAsk",
+      "--strict-mcp-config",
+      "--no-chrome",
+      "--print",
+      "--",
+      "fix the tests",
+    ]);
+    expect(claudeSettings(launch.args)).toEqual({
+      permissions: {
+        allow: [
+          "Edit(//home/matrix/home/projects/repo/worktrees/wt_abc123def456/**)",
+          "Edit(//home/matrix/home/system/agent-scratch/sess_abc123/**)",
+        ],
+      },
+      sandbox: {
+        enabled: true,
+        failIfUnavailable: true,
+        autoAllowBashIfSandboxed: true,
+        allowUnsandboxedCommands: false,
+        filesystem: { allowWrite: [cwd, scratch] },
+      },
+    });
+  });
+
+  it("enforces read-only Claude launches across built-in edits and subprocesses", () => {
+    const cwd = "/home/matrix/home/projects/repo/worktrees/wt_abc123def456";
+    const gitCommonDir = "/home/matrix/home/projects/repo/repo/.git";
+    const launch = buildAgentLaunch({
+      agent: "claude",
+      cwd,
+      prompt: "review only",
+      approvalPolicy: "never",
+      sandbox: {
+        enabled: true,
+        mode: "read-only",
+        writableRoots: [],
+        denyWriteRoots: [cwd, gitCommonDir],
+      },
+    });
+
+    expect(launch.args).toContain("dontAsk");
+    expect(claudeSettings(launch.args)).toEqual({
+      permissions: { deny: ["Edit", "Write", "NotebookEdit"] },
+      sandbox: {
+        enabled: true,
+        failIfUnavailable: true,
+        autoAllowBashIfSandboxed: true,
+        allowUnsandboxedCommands: false,
+        filesystem: { denyWrite: [cwd, gitCommonDir] },
+      },
+    });
+  });
+
+  it("uses bounded no-prompt controls for Claude workspace and full-access launches", () => {
+    const cwd = "/home/matrix/home/projects/repo/worktrees/wt_abc123def456";
+    const scratch = "/home/matrix/home/system/agent-scratch/sess_abc123";
+    const workspaceLaunch = buildAgentLaunch({
+      agent: "claude",
+      cwd,
+      approvalPolicy: "never",
+      sandbox: { enabled: true, mode: "workspace-write", writableRoots: [cwd, scratch] },
+    });
+    expect(workspaceLaunch.args).toContain("dontAsk");
+    expect(workspaceLaunch.args).not.toContain("--print");
+    expect(claudeSettings(workspaceLaunch.args)).toMatchObject({
+      permissions: {
+        allow: [
+          "Edit(//home/matrix/home/projects/repo/worktrees/wt_abc123def456/**)",
+          "Edit(//home/matrix/home/system/agent-scratch/sess_abc123/**)",
+        ],
+      },
+      sandbox: { enabled: true, allowUnsandboxedCommands: false },
+    });
+    expect(claudeSettings(workspaceLaunch.args).permissions?.allow).not.toContain("Edit");
+    expect(claudeSettings(workspaceLaunch.args).permissions?.allow).not.toContain("Bash");
+
+    const fullAccessLaunch = buildAgentLaunch({
+      agent: "claude",
+      cwd,
+      approvalPolicy: "never",
+      sandbox: { enabled: true, mode: "danger-full-access", writableRoots: [] },
+    });
+    expect(fullAccessLaunch.args).toContain("bypassPermissions");
+    expect(claudeSettings(fullAccessLaunch.args)).toEqual({ sandbox: { enabled: false } });
+  });
+
+  it("makes Claude plan and review modes OS-level read-only", () => {
+    const cwd = "/home/matrix/home/projects/repo/worktrees/wt_abc123def456";
+    const gitCommonDir = "/home/matrix/home/projects/repo/repo/.git";
+    for (const mode of ["plan", "review"] as const) {
+      const launch = buildAgentLaunch({
+        agent: "claude",
+        cwd,
+        mode,
+        approvalPolicy: "on-request",
+        sandbox: {
+          enabled: true,
+          mode: mode === "review" ? "danger-full-access" : "workspace-write",
+          writableRoots: [cwd],
+          denyWriteRoots: [cwd, gitCommonDir],
+        },
+      });
+
+      expect(launch.args).toContain("plan");
+      expect(claudeSettings(launch.args)).toMatchObject({
+        permissions: { deny: ["Edit", "Write", "NotebookEdit"] },
+        sandbox: {
+          enabled: true,
+          autoAllowBashIfSandboxed: true,
+          filesystem: { denyWrite: [cwd, gitCommonDir] },
+        },
+      });
+    }
+  });
+
+  it("fails closed for unsupported Claude approval policy and missing preflight", () => {
+    expect(() => buildAgentLaunch({
+      agent: "claude",
+      cwd: "/home/matrix/home/projects/repo",
+      approvalPolicy: "on-failure",
+      sandbox: { enabled: true, mode: "workspace-write", writableRoots: [] },
+    })).toThrow("Claude approval policy is unavailable");
+
+    expect(() => buildAgentLaunch({
+      agent: "claude",
+      cwd: "/home/matrix/home/projects/repo",
+    })).toThrow("Claude sandbox preflight is required");
   });
 
   it("validates supported agent IDs", () => {

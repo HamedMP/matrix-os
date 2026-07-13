@@ -90,7 +90,7 @@ FROM node:24-alpine AS runtime
 # Runtime: coding/debugging baseline and build tools. This image doubles as
 # the user's interactive coding environment, so keep common compilers and build
 # generators available for projects users create or clone inside Matrix.
-# bubblewrap (bwrap) is used for codex's per-command sandbox.
+# bubblewrap (bwrap) and socat enforce coding-agent filesystem/network isolation.
 # strace requires containers to run with CAP_SYS_PTRACE, for example
 # `--cap-add SYS_PTRACE`, before it can attach to traced processes.
 RUN apk add --no-cache \
@@ -119,8 +119,9 @@ RUN apk add --no-cache \
     procps \
     python3 \
     ripgrep \
-    rsync \
-    krb5-libs \
+     rsync \
+     socat \
+     krb5-libs \
     strace \
     su-exec \
     sudo \

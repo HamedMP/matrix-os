@@ -3,11 +3,42 @@
 // preload import this module; every channel is validated on both sides
 // (FR-081). The credential never appears in any schema.
 import { z } from "zod/v4";
+import {
+  ApprovalDecisionRequestSchema,
+  ApprovalIdSchema,
+  AgentThreadEventSchema,
+  AgentThreadSnapshotSchema,
+  CodingAgentNotificationPreferencesSchema,
+  CodingAgentNotificationPreferencesUpdateSchema,
+  CreateAgentThreadRequestSchema,
+  CursorSchema,
+  FileBrowseRequestSchema,
+  FileBrowseResponseSchema,
+  FileReadRequestSchema,
+  FileReadResponseSchema,
+  FileSearchRequestSchema,
+  FileSearchResponseSchema,
+  FileWriteRequestSchema,
+  FileWriteResponseSchema,
+  ReviewSnapshotSchema,
+  ReviewSummarySchema,
+  RuntimeSummarySchema,
+  SafeClientErrorSchema,
+  SourceControlCreatePullRequestRequestSchema,
+  SourceControlCreatePullRequestResponseSchema,
+  SourceControlPrepareCommitRequestSchema,
+  SourceControlPrepareCommitResponseSchema,
+  ThreadIdSchema,
+  RequestIdSchema,
+  UserInputAnswerRequestSchema,
+  boundedListSchema,
+} from "@matrix-os/contracts";
 
 const Empty = z.object({}).strict();
 
 const Ok = z.object({ ok: z.boolean() }).strict();
 const EmbedStateSchema = z.enum(["loading", "ready", "auth-required", "failed"]);
+const ReviewIdSchema = z.string().regex(/^rev_[A-Za-z0-9_-]{1,128}$/);
 
 const ProfileSchema = z
   .object({
@@ -93,6 +124,86 @@ export const INVOKE_CHANNELS = {
   "runtime:select": {
     request: z.object({ slot: z.string().min(1).max(64) }).strict(),
     response: Ok,
+  },
+  "runtime:get-summary": {
+    request: Empty,
+    response: RuntimeSummarySchema,
+  },
+  "runtime:get-notification-preferences": {
+    request: Empty,
+    response: CodingAgentNotificationPreferencesSchema,
+  },
+  "runtime:update-notification-preferences": {
+    request: CodingAgentNotificationPreferencesUpdateSchema,
+    response: CodingAgentNotificationPreferencesSchema,
+  },
+  "runtime:get-reviews": {
+    request: z.object({ cursor: CursorSchema.optional() }).strict(),
+    response: boundedListSchema(ReviewSummarySchema, 50),
+  },
+  "runtime:get-review-snapshot": {
+    request: z.object({ reviewId: ReviewIdSchema }).strict(),
+    response: ReviewSnapshotSchema,
+  },
+  "runtime:browse-files": {
+    request: FileBrowseRequestSchema,
+    response: FileBrowseResponseSchema,
+  },
+  "runtime:search-files": {
+    request: FileSearchRequestSchema,
+    response: FileSearchResponseSchema,
+  },
+  "runtime:get-file-content": {
+    request: FileReadRequestSchema,
+    response: FileReadResponseSchema,
+  },
+  "runtime:save-file-content": {
+    request: FileWriteRequestSchema,
+    response: FileWriteResponseSchema,
+  },
+  "runtime:prepare-source-commit": {
+    request: SourceControlPrepareCommitRequestSchema,
+    response: SourceControlPrepareCommitResponseSchema,
+  },
+  "runtime:create-source-pull-request": {
+    request: SourceControlCreatePullRequestRequestSchema,
+    response: SourceControlCreatePullRequestResponseSchema,
+  },
+  "runtime:get-thread-snapshot": {
+    request: z.object({ threadId: ThreadIdSchema }).strict(),
+    response: AgentThreadSnapshotSchema,
+  },
+  "runtime:subscribe-thread-events": {
+    request: z.object({ threadId: ThreadIdSchema, cursor: CursorSchema.optional() }).strict(),
+    response: Ok,
+  },
+  "runtime:unsubscribe-thread-events": {
+    request: z.object({ threadId: ThreadIdSchema }).strict(),
+    response: Ok,
+  },
+  "runtime:submit-approval-decision": {
+    request: z
+      .object({
+        threadId: ThreadIdSchema,
+        approvalId: ApprovalIdSchema,
+      })
+      .extend(ApprovalDecisionRequestSchema.shape)
+      .strict(),
+    response: AgentThreadSnapshotSchema,
+  },
+  "runtime:submit-input-answer": {
+    request: z
+      .object({
+        threadId: ThreadIdSchema,
+        inputRequestId: RequestIdSchema,
+      })
+      .extend(UserInputAnswerRequestSchema.shape)
+      .strict(),
+    response: AgentThreadSnapshotSchema,
+  },
+  "runtime:create-thread": {
+    request: CreateAgentThreadRequestSchema,
+    response: AgentThreadSnapshotSchema,
   },
   "state:get": {
     request: z.object({ key: z.enum(STATE_KEYS) }).strict(),
@@ -196,13 +307,21 @@ export const EVENT_CHANNELS = {
     })
     .strict(),
   "notification:clicked": z.object({ threadId: z.string().min(1).max(128) }).strict(),
+  "runtime:thread-event": z.object({
+    threadId: ThreadIdSchema,
+    event: AgentThreadEventSchema,
+  }).strict(),
+  "runtime:thread-stream-error": z.object({
+    threadId: ThreadIdSchema,
+    error: SafeClientErrorSchema,
+  }).strict(),
   "update:available": z.object({ version: z.string().max(64) }).strict(),
   "update:ready": z.object({ version: z.string().max(64) }).strict(),
   "window:focus-changed": z.object({ focused: z.boolean() }).strict(),
   "menu:action": z
     .object({ action: z.enum(["new-task", "new-thread", "palette", "quick-open"]) })
     .strict(),
-  "menu:navigate": z.object({ kind: z.enum(["settings", "board"]) }).strict(),
+  "menu:navigate": z.object({ kind: z.enum(["settings", "board", "agents", "terminals"]) }).strict(),
 } as const;
 
 export type InvokeChannel = keyof typeof INVOKE_CHANNELS;

@@ -331,6 +331,7 @@ describe("workspace API routes", () => {
     };
     const agentSandbox = {
       preflight: vi.fn(async () => ({ ok: true, sandbox: { enabled: true, writableRoots: [homePath] }, status: { available: true } })),
+      cleanup: vi.fn(async () => undefined),
       status: vi.fn(async () => ({ available: true, enforced: true, requiresAdminOverride: false, reason: "ok" })),
     };
     const sessionRuntimeBridge = {
@@ -359,7 +360,11 @@ describe("workspace API routes", () => {
     expect(agentSessionManager.startSession).toHaveBeenCalledWith(expect.objectContaining({
       agent: "codex",
       ownerId: "user_workspace",
-      sandbox: { enabled: true, writableRoots: [homePath] },
+      sandbox: expect.objectContaining({
+        enabled: true,
+        mode: "workspace-write",
+        writableRoots: [homePath],
+      }),
     }));
 
     await expect((await app.request("/api/sessions?projectSlug=repo&limit=10")).json()).resolves.toMatchObject({

@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { isSafeShellSessionName } from "@/lib/terminal-state";
 
 export const MOBILE_SHELL_STATE_STORAGE_KEY = "matrix.mobileShellState.v1";
 
@@ -10,6 +11,7 @@ export interface MobileShellState {
   mode: MobileShellMode;
   lastActiveAppSlug: string | null;
   lastActiveTerminalSessionId: string | null;
+  terminalHandoffSessionId?: string | null;
   canvasEnteredAt: string | null;
   updatedAt: string;
 }
@@ -18,8 +20,6 @@ type MobileShellStorage = Pick<typeof AsyncStorage, "getItem" | "setItem">;
 
 const MOBILE_SHELL_MODES = new Set<MobileShellMode>(["launcher", "app", "terminal", "canvas"]);
 const SAFE_APP_SLUG = /^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/;
-const SAFE_TERMINAL_SESSION_ID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function createDefaultMobileShellState(surface: MobileShellSurface = "native-mobile"): MobileShellState {
   return {
@@ -27,6 +27,7 @@ function createDefaultMobileShellState(surface: MobileShellSurface = "native-mob
     mode: "launcher",
     lastActiveAppSlug: null,
     lastActiveTerminalSessionId: null,
+    terminalHandoffSessionId: null,
     canvasEnteredAt: null,
     updatedAt: new Date().toISOString(),
   };
@@ -51,6 +52,7 @@ export function parseMobileShellState(
     mode,
     lastActiveAppSlug: safeAppSlug(record.lastActiveAppSlug),
     lastActiveTerminalSessionId: safeTerminalSessionId(record.lastActiveTerminalSessionId),
+    terminalHandoffSessionId: safeTerminalSessionId(record.terminalHandoffSessionId),
     canvasEnteredAt: safeIsoTimestamp(record.canvasEnteredAt),
     updatedAt: safeIsoTimestamp(record.updatedAt) ?? fallback.updatedAt,
   };
@@ -84,7 +86,7 @@ function safeAppSlug(value: unknown): string | null {
 function safeTerminalSessionId(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const sessionId = value.trim();
-  return SAFE_TERMINAL_SESSION_ID.test(sessionId) ? sessionId : null;
+  return isSafeShellSessionName(sessionId) ? sessionId : null;
 }
 
 function safeIsoTimestamp(value: unknown): string | null {

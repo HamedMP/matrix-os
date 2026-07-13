@@ -7,6 +7,7 @@ export interface SyncJwtClaims extends JWTPayload {
   sub: string;
   handle: string;
   gateway_url: string;
+  runtime_slot?: string;
   aud?: string | string[];
   iat: number;
   exp: number;
@@ -22,6 +23,7 @@ export interface JwtKeyConfig {
 
 export interface ValidateOpts extends JwtKeyConfig {
   expectedHandle?: string;
+  expectedRuntimeSlot?: string;
   /** Seconds of clock skew to tolerate. Default 30s. */
   clockTolerance?: number;
   /** Override current time for testing (epoch seconds). */
@@ -72,6 +74,7 @@ export async function validateSyncJwt(
     typeof payload.handle !== "string" ||
     payload.handle.length === 0 ||
     typeof payload.gateway_url !== "string" ||
+    (payload.runtime_slot !== undefined && typeof payload.runtime_slot !== "string") ||
     typeof payload.iat !== "number" ||
     typeof payload.exp !== "number"
   ) {
@@ -82,6 +85,14 @@ export async function validateSyncJwt(
     throw new Error(
       `Sync JWT handle "${payload.handle}" does not match this gateway's handle "${opts.expectedHandle}"`,
     );
+  }
+
+  if (opts.expectedRuntimeSlot) {
+    const tokenSlot = payload.runtime_slot;
+    const isLegacyPrimaryToken = tokenSlot === undefined && opts.expectedRuntimeSlot === "primary";
+    if (!isLegacyPrimaryToken && tokenSlot !== opts.expectedRuntimeSlot) {
+      throw new Error("Sync JWT runtime slot does not match this gateway");
+    }
   }
 
   return payload as SyncJwtClaims;

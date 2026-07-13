@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Image } from "expo-image";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -17,7 +18,6 @@ import {
   type MatrixAppEntry,
   type MatrixAppManifestResponse,
 } from "@/lib/apps";
-import { colors, fonts, radius, spacing } from "@/lib/theme";
 
 function PrimaryAction({
   icon,
@@ -30,19 +30,20 @@ function PrimaryAction({
   onPress: () => void;
   disabled?: boolean;
 }) {
+  const { theme } = useUnistyles();
   return (
     <Pressable
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => ({
         minHeight: 50,
-        borderRadius: radius.xl,
+        borderRadius: theme.radius.xl,
         borderCurve: "continuous",
-        backgroundColor: disabled ? colors.light.muted : colors.light.primary,
+        backgroundColor: disabled ? theme.colors.muted : theme.colors.primary,
         alignItems: "center",
         justifyContent: "center",
         flexDirection: "row",
-        gap: spacing.sm,
+        gap: theme.spacing.sm,
         opacity: pressed ? 0.82 : 1,
         transform: [{ scale: pressed ? 0.98 : 1 }],
       })}
@@ -50,13 +51,13 @@ function PrimaryAction({
       <Ionicons
         name={icon}
         size={19}
-        color={disabled ? colors.light.mutedForeground : colors.light.primaryForeground}
+        color={disabled ? theme.colors.mutedForeground : theme.colors.primaryForeground}
       />
       <Text
         style={{
-          fontFamily: fonts.sansSemiBold,
+          fontFamily: theme.fonts.sansSemiBold,
           fontSize: 16,
-          color: disabled ? colors.light.mutedForeground : colors.light.primaryForeground,
+          color: disabled ? theme.colors.mutedForeground : theme.colors.primaryForeground,
         }}
       >
         {label}
@@ -66,6 +67,7 @@ function PrimaryAction({
 }
 
 function MetadataRow({ label, value }: { label: string; value?: string | null }) {
+  const { theme } = useUnistyles();
   if (!value) return null;
   return (
     <View
@@ -74,18 +76,18 @@ function MetadataRow({ label, value }: { label: string; value?: string | null })
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
-        gap: spacing.lg,
+        gap: theme.spacing.lg,
         borderBottomWidth: 1,
-        borderBottomColor: colors.light.border,
+        borderBottomColor: theme.colors.border,
       }}
     >
-      <Text style={{ fontFamily: fonts.sansMedium, fontSize: 14, color: colors.light.mutedForeground }}>
+      <Text style={{ fontFamily: theme.fonts.sansMedium, fontSize: 14, color: theme.colors.mutedForeground }}>
         {label}
       </Text>
       <Text
         selectable
         numberOfLines={1}
-        style={{ flex: 1, textAlign: "right", fontFamily: fonts.sansMedium, fontSize: 14, color: colors.light.foreground }}
+        style={{ flex: 1, textAlign: "right", fontFamily: theme.fonts.sansMedium, fontSize: 14, color: theme.colors.foreground }}
       >
         {value}
       </Text>
@@ -95,6 +97,7 @@ function MetadataRow({ label, value }: { label: string; value?: string | null })
 
 export default function AppDetailScreen() {
   const router = useRouter();
+  const { theme } = useUnistyles();
   const params = useLocalSearchParams<{ slug?: string | string[] }>();
   const slug = slugFromParam(params.slug);
   const { client } = useGateway();
@@ -159,23 +162,23 @@ export default function AppDetailScreen() {
       <Stack.Screen options={{ title: displayName }} />
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={{ padding: spacing.lg, paddingBottom: 48, gap: spacing.lg }}
+        contentContainerStyle={{ padding: theme.spacing.lg, paddingBottom: 48, gap: theme.spacing.lg }}
       >
         {loading ? (
           <View style={{ minHeight: 240, alignItems: "center", justifyContent: "center" }}>
-            <ActivityIndicator color={colors.light.primary} />
+            <ActivityIndicator color={theme.colors.primary} />
           </View>
         ) : (
           <>
             <View style={styles.heroCard}>
-              <View style={{ flexDirection: "row", gap: spacing.lg, alignItems: "center" }}>
+              <View style={{ flexDirection: "row", gap: theme.spacing.lg, alignItems: "center" }}>
                 <View
                   style={{
                     width: 76,
                     height: 76,
                     borderRadius: 20,
                     borderCurve: "continuous",
-                    backgroundColor: colors.light.secondary,
+                    backgroundColor: theme.colors.secondary,
                     alignItems: "center",
                     justifyContent: "center",
                   }}
@@ -190,22 +193,22 @@ export default function AppDetailScreen() {
                     <Ionicons
                       name={getAppIconName({ name: displayName, category: app?.category }) as keyof typeof Ionicons.glyphMap}
                       size={38}
-                      color={colors.light.primary}
+                      color={theme.colors.primary}
                     />
                   )}
                 </View>
-                <View style={{ flex: 1, gap: spacing.xs }}>
-                  <Text style={{ fontFamily: fonts.sansBold, fontSize: 24, color: colors.light.foreground }}>
+                <View style={{ flex: 1, gap: theme.spacing.xs }}>
+                  <Text style={{ fontFamily: theme.fonts.sansBold, fontSize: 24, color: theme.colors.foreground }}>
                     {displayName}
                   </Text>
-                  <Text style={{ fontFamily: fonts.sansMedium, fontSize: 14, color: colors.light.mutedForeground }}>
+                  <Text style={{ fontFamily: theme.fonts.sansMedium, fontSize: 14, color: theme.colors.mutedForeground }}>
                     {nativeRoute ? "Native mobile screen" : "Matrix runtime app"}
                   </Text>
                 </View>
               </View>
 
               {description ? (
-                <Text selectable style={{ fontFamily: fonts.sans, fontSize: 15, lineHeight: 22, color: colors.light.foreground }}>
+                <Text selectable style={{ fontFamily: theme.fonts.sans, fontSize: 15, lineHeight: 22, color: theme.colors.foreground }}>
                   {description}
                 </Text>
               ) : null}
@@ -219,12 +222,12 @@ export default function AppDetailScreen() {
 
             <View
               style={{
-                borderRadius: radius.xl,
+                borderRadius: theme.radius.xl,
                 borderCurve: "continuous",
                 borderWidth: 1,
-                borderColor: colors.light.border,
-                backgroundColor: colors.light.card,
-                paddingHorizontal: spacing.lg,
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.card,
+                paddingHorizontal: theme.spacing.lg,
               }}
             >
               <MetadataRow label="Slug" value={slug} />
@@ -241,20 +244,20 @@ export default function AppDetailScreen() {
                 onPress={copyUrl}
                 style={({ pressed }) => ({
                   minHeight: 46,
-                  borderRadius: radius.lg,
+                  borderRadius: theme.radius.lg,
                   borderCurve: "continuous",
                   borderWidth: 1,
-                  borderColor: colors.light.border,
-                  backgroundColor: colors.light.card,
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.card,
                   alignItems: "center",
                   justifyContent: "center",
                   flexDirection: "row",
-                  gap: spacing.sm,
+                  gap: theme.spacing.sm,
                   opacity: pressed ? 0.82 : 1,
                 })}
               >
-                <Ionicons name="copy-outline" size={17} color={colors.light.foreground} />
-                <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 14, color: colors.light.foreground }}>
+                <Ionicons name="copy-outline" size={17} color={theme.colors.foreground} />
+                <Text style={{ fontFamily: theme.fonts.sansSemiBold, fontSize: 14, color: theme.colors.foreground }}>
                   Copy Runtime URL
                 </Text>
               </Pressable>
@@ -266,15 +269,15 @@ export default function AppDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   heroCard: {
-    borderRadius: radius.xl,
+    borderRadius: theme.radius.xl,
     borderCurve: "continuous",
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
-    padding: spacing.xl,
-    gap: spacing.lg,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    padding: theme.spacing.xl,
+    gap: theme.spacing.lg,
     boxShadow: "0 1px 3px rgba(0, 0, 0, 0.06)",
   },
-});
+}));

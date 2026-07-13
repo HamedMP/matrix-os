@@ -253,6 +253,40 @@ describe("zellij adapter", () => {
     expect(pty.resize).toHaveBeenCalledWith(140, 50);
   });
 
+  it("sends one-shot input through the zellij action API", async () => {
+    const child = childProcess();
+    const execFile = vi.fn((_file, _args, _opts, cb) => {
+      cb(null, "", "");
+      return child;
+    });
+    const spawnPty = vi.fn();
+    const adapter = createZellijAdapter({ execFile, spawnPty, timeoutMs: 25 });
+
+    await adapter.sendInput("main", "pwd\r");
+
+    expect(spawnPty).not.toHaveBeenCalled();
+    expect(execFile).toHaveBeenCalledWith(
+      "zellij",
+      ["--session", "main", "action", "write-chars", "--", "pwd\r"],
+      expect.objectContaining({ timeout: 25, signal: expect.any(AbortSignal) }),
+      expect.any(Function),
+    );
+  });
+
+  it("rejects one-shot input when the zellij action fails", async () => {
+    const child = childProcess();
+    const execFile = vi.fn((_file, _args, _opts, cb) => {
+      cb(new Error("boom"), "", "failed in /home/alice/project");
+      return child;
+    });
+    const adapter = createZellijAdapter({ execFile, spawnPty: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.sendInput("main", "pwd\r")).rejects.toMatchObject({
+      code: "zellij_failed",
+      safeMessage: "Shell operation failed",
+    });
+  });
+
   it("creates sessions in the requested cwd using a retained PTY", async () => {
     const pty = ptyProcess();
     const execFile = vi.fn();
@@ -320,6 +354,8 @@ describe("zellij adapter", () => {
       expect(config).toContain('default_layout "matrix"');
       expect(config).toContain(`default_shell ${JSON.stringify(shellPath)}`);
       expect(shell).toContain(`exec bash --noprofile --rcfile '${bashrcPath}' -i`);
+      expect(shell).toContain('if [ "$#" -gt 0 ]; then');
+      expect(shell).toContain('  set +e\n  ( "$@" )\n  set -e');
       expect(shell).toContain(`node '${promptLabelPath}'`);
       expect(shell).not.toContain("/bin/bash");
       expect(shellMode & 0o700).toBe(0o700);
@@ -418,42 +454,48 @@ describe("zellij adapter", () => {
     const pty = ptyProcess();
     let layoutPath: string | undefined;
     let layoutText = "";
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-shell-command-home-"));
     const spawnPty = vi.fn((_command, args) => {
       layoutPath = String(args[3]);
       layoutText = readFileSync(layoutPath, "utf8");
       return pty;
     });
-    const adapter = createZellijAdapter({ execFile: vi.fn(), spawnPty, timeoutMs: 25, startupDelayMs: 1 });
+    try {
+      const adapter = createZellijAdapter({ execFile: vi.fn(), spawnPty, timeoutMs: 25, startupDelayMs: 1, homePath });
 
-    await adapter.createSession({
-      name: "bench",
-      cwd: "/home/alice/work",
-      cmd: "node -e 'process.stdout.write(\"MATRIX_BENCH_READY\\n\")'",
-    });
+      await adapter.createSession({
+        name: "bench",
+        cwd: "/home/alice/work",
+        cmd: "node -e 'process.stdout.write(\"MATRIX_BENCH_READY\\n\")'",
+      });
 
-    expect(spawnPty).toHaveBeenCalledTimes(1);
-    const args = spawnPty.mock.calls[0]?.[1];
-    expect(args).toEqual([
-      "--session",
-      "bench",
-      "--new-session-with-layout",
-      expect.stringMatching(/matrix-zellij-layout-/),
-    ]);
-    expect(layoutText).toContain('cwd="/home/alice/work"');
-    expect(layoutText).toContain('command="node"');
-    expect(layoutText).toContain('args "-e"');
-    expect(layoutText).toContain("MATRIX_BENCH_READY");
-    expect(layoutText).toContain('tab name="main"');
-    expect(layoutText).not.toContain("compact-bar");
-    expect(layoutText).not.toContain("tab-bar");
-    expect(layoutText).not.toContain("status-bar");
-    expect(layoutPath).toEqual(expect.any(String));
-    expect(existsSync(layoutPath!)).toBe(true);
+      expect(spawnPty).toHaveBeenCalledTimes(1);
+      const args = spawnPty.mock.calls[0]?.[1];
+      expect(args).toEqual([
+        "--session",
+        "bench",
+        "--new-session-with-layout",
+        expect.stringMatching(/matrix-zellij-layout-/),
+      ]);
+      expect(layoutText).toContain('cwd="/home/alice/work"');
+      expect(layoutText).toContain(`command="${homePath}/system/zellij/matrix-terminal-shell"`);
+      expect(layoutText).toContain('args "node" "-e"');
+      expect(layoutText).toContain("MATRIX_BENCH_READY");
+      expect(layoutText).not.toContain('command="node"');
+      expect(layoutText).toContain('tab name="main"');
+      expect(layoutText).not.toContain("compact-bar");
+      expect(layoutText).not.toContain("tab-bar");
+      expect(layoutText).not.toContain("status-bar");
+      expect(layoutPath).toEqual(expect.any(String));
+      expect(existsSync(layoutPath!)).toBe(true);
 
-    pty.emitExit(0);
-    await vi.waitFor(() => {
-      expect(existsSync(layoutPath!)).toBe(false);
-    });
+      pty.emitExit(0);
+      await vi.waitFor(() => {
+        expect(existsSync(layoutPath!)).toBe(false);
+      });
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
   });
 
   it("rejects session creation when the retained PTY exits during startup", async () => {
@@ -605,6 +647,7 @@ describe("zellij adapter", () => {
     const script = matrixTerminalShellScript(path, promptLabelPath);
 
     expect(script).toContain(`exec bash --noprofile --rcfile '/tmp/matrix "owner"/it'\\''works/bashrc' -i`);
+    expect(script).toContain('  ( "$@" )');
     expect(script).toContain(`node '/tmp/matrix "owner"/it'\\''works/prompt-label.mjs'`);
     expect(script).not.toContain("/bin/bash");
   });

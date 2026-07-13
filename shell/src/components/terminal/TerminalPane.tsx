@@ -6,7 +6,7 @@ import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { createSocketHealth } from "@/lib/socket-health";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { useTerminalSettings } from "@/stores/terminal-settings";
-import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
+import { buildAuthenticatedWebSocketUrl, getWebSocketAuthToken } from "@/lib/websocket-auth";
 import type { Theme } from "@/hooks/useTheme";
 import { useVisualViewport } from "@/hooks/useVisualViewport";
 import { ImageAddon, type IImageAddonOptions } from "@xterm/addon-image";
@@ -24,6 +24,9 @@ import { buildTerminalFontStack } from "./terminal-fonts";
 import { createCodexTuiCompatTransform, transformTerminalOutputForCompat, type CodexTuiCompatTransform } from "./codex-tui-compat";
 import { sendTerminalResize } from "./terminal-remote-resize";
 import {
+  pasteClipboardIntoTerminal,
+} from "./terminal-rich-paste";
+import {
   isCanonicalShellSessionId,
   isLegacyPtySessionId,
   terminalWebSocketPathForSession,
@@ -31,12 +34,21 @@ import {
 import { createXtermLogger } from "./xterm-logger";
 import type { TerminalCompatMode } from "@/stores/terminal-store";
 
-const BRACKETED_PASTE_OPEN = "\x1b[200~";
-const BRACKETED_PASTE_CLOSE = "\x1b[201~";
-const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_CLOSE.length;
-const MAX_TERMINAL_INPUT = 65_536;
 const MAX_OSC52_BASE64_LENGTH = 1_000_000;
 const OSC52_ALLOWED_TARGETS = new Set(["", "c", "p", "s", "0", "1", "2", "3", "4", "5", "6", "7"]);
+const BRACKETED_PASTE_OPEN = "\u001b[200~";
+const BRACKETED_PASTE_CLOSE = "\u001b[201~";
+const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_CLOSE.length;
+const MAX_TERMINAL_INPUT = 65_536;
+const SUPPORTED_TERMINAL_PASTE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+const TERMINAL_PASTE_UPLOAD_TIMEOUT_MS = 30_000;
+const TERMINAL_PASTE_MIME_BY_EXTENSION = new Map([
+  [".png", "image/png"],
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+  [".gif", "image/gif"],
+  [".webp", "image/webp"],
+]);
 const TERMINAL_SCROLLBACK_LINES = 10_000;
 const TERMINAL_SCROLL_SENSITIVITY = 1;
 const TERMINAL_FAST_SCROLL_SENSITIVITY = 5;
@@ -61,6 +73,64 @@ function shouldDisableWebglRenderer(suppressNativeKeyboard: boolean): boolean {
     || (userAgent.includes("Macintosh") && navigator.maxTouchPoints > 1);
   const isSafari = /Safari\//.test(userAgent) && !/(Chrome|CriOS|FxiOS|EdgiOS)\//.test(userAgent);
   return isAppleMobile && isSafari;
+}
+
+function terminalPasteMimeType(file: File): string | null {
+  const typed = file.type.trim().toLowerCase();
+  if (SUPPORTED_TERMINAL_PASTE_MIME_TYPES.has(typed)) {
+    return typed;
+  }
+  const dot = file.name.lastIndexOf(".");
+  if (dot < 0) {
+    return null;
+  }
+  return TERMINAL_PASTE_MIME_BY_EXTENSION.get(file.name.slice(dot).toLowerCase()) ?? null;
+}
+
+function isSupportedTerminalPasteFile(file: File | null | undefined): file is File {
+  return Boolean(file && terminalPasteMimeType(file));
+}
+
+function filesFromTerminalFilePayload(payload: DataTransfer | ClipboardEvent["clipboardData"] | null): File[] {
+  if (!payload) {
+    return [];
+  }
+  const files: File[] = [];
+  const items = Array.from(payload.items ?? []);
+  for (const item of items) {
+    if (item.kind === "file") {
+      const file = item.getAsFile();
+      if (isSupportedTerminalPasteFile(file)) {
+        files.push(file);
+      }
+    }
+  }
+  if (files.length > 0) {
+    return files;
+  }
+  return Array.from(payload.files ?? []).filter(isSupportedTerminalPasteFile);
+}
+
+function terminalPasteUploadTimeout(): { signal: AbortSignal; cleanup: () => void } {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    return { signal: AbortSignal.timeout(TERMINAL_PASTE_UPLOAD_TIMEOUT_MS), cleanup: () => {} };
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TERMINAL_PASTE_UPLOAD_TIMEOUT_MS);
+  return {
+    signal: controller.signal,
+    cleanup: () => clearTimeout(timeout),
+  };
+}
+
+function splitBracketedPastePayload(parts: string[]): string[] {
+  const maxPayloadLength = MAX_TERMINAL_INPUT - BRACKETED_PASTE_OVERHEAD;
+  const payload = parts.filter((part) => part.length > 0).join(" ");
+  const chunks: string[] = [];
+  for (let index = 0; index < payload.length; index += maxPayloadLength) {
+    chunks.push(payload.slice(index, index + maxPayloadLength));
+  }
+  return chunks;
 }
 
 function scrollTerminalViewportToBottom(term: Terminal | null): void {
@@ -373,6 +443,7 @@ export function TerminalPane({
   const initialStartupCommandRef = useRef(startupCommand);
   const [searchOpen, setSearchOpen] = useState(false);
   const [authUrl, setAuthUrl] = useState<string | null>(null);
+  const [pasteError, setPasteError] = useState<string | null>(null);
   const outputBufferRef = useRef("");
   const commandBlockBufferRef = useRef("");
   const activeCommandBlockRef = useRef(false);
@@ -513,6 +584,10 @@ export function TerminalPane({
     (termRef.current as { focus?: () => void } | null)?.focus?.();
   };
 
+  const showPasteError = (message = "Image paste failed. Try a smaller image or paste a saved file with `mos shell paste-file`.") => {
+    setPasteError(message);
+  };
+
   useEffect(() => {
     isClosingRef.current = !!isClosing;
   }, [isClosing]);
@@ -523,6 +598,119 @@ export function TerminalPane({
       sessionIdRef.current = initialSessionId;
     }
   }, [initialSessionId]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const sendBracketedPaste = (terminalPaths: string[]) => {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        for (const chunk of splitBracketedPastePayload(terminalPaths)) {
+          ws.send(JSON.stringify({
+            type: "input",
+            data: `${BRACKETED_PASTE_OPEN}${chunk}${BRACKETED_PASTE_CLOSE}`,
+          }));
+        }
+      }
+    };
+
+    const uploadAndPasteFiles = async (files: File[]) => {
+      const sessionId = sessionIdRef.current;
+      if (!sessionId) {
+        return;
+      }
+      const terminalPaths: string[] = [];
+      let authToken: string | null = null;
+      try {
+        authToken = await getWebSocketAuthToken();
+      } catch (err: unknown) {
+        console.warn("Terminal paste auth token unavailable:", err instanceof Error ? err.message : err);
+      }
+      for (const file of files) {
+        const mimeType = terminalPasteMimeType(file);
+        if (!mimeType) {
+          continue;
+        }
+        const uploadTimeout = terminalPasteUploadTimeout();
+        try {
+          const headers: Record<string, string> = {
+            "Content-Type": mimeType,
+            "X-Matrix-Filename": file.name,
+          };
+          if (authToken) {
+            headers.Authorization = `Bearer ${authToken}`;
+          }
+          const url = new URL(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionId)}/paste-assets`);
+          url.searchParams.set("cwd", cwd || "projects");
+          const res = await fetch(url.toString(), {
+            method: "POST",
+            credentials: "same-origin",
+            headers,
+            signal: uploadTimeout.signal,
+            body: file,
+          });
+          if (!res.ok) {
+            console.warn(`Terminal paste upload failed: ${res.status}`);
+            continue;
+          }
+          const payload = await res.json() as { terminalPath?: unknown };
+          if (typeof payload.terminalPath === "string") {
+            terminalPaths.push(payload.terminalPath);
+          }
+        } catch (err: unknown) {
+          console.warn("Terminal paste upload failed:", err instanceof Error ? err.message : err);
+        } finally {
+          uploadTimeout.cleanup();
+        }
+      }
+      if (terminalPaths.length > 0) {
+        sendBracketedPaste(terminalPaths);
+      }
+    };
+
+    const captureImagePayload = (event: ClipboardEvent | DragEvent): File[] => {
+      const files = "clipboardData" in event
+        ? filesFromTerminalFilePayload(event.clipboardData)
+        : filesFromTerminalFilePayload(event.dataTransfer);
+      if (files.length === 0) {
+        return [];
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if ("stopImmediatePropagation" in event) {
+        event.stopImmediatePropagation();
+      }
+      return files;
+    };
+
+    const onPaste = (event: ClipboardEvent) => {
+      const files = captureImagePayload(event);
+      if (files.length > 0) {
+        void uploadAndPasteFiles(files);
+      }
+    };
+    const onDrag = (event: DragEvent) => {
+      captureImagePayload(event);
+    };
+    const onDrop = (event: DragEvent) => {
+      const files = captureImagePayload(event);
+      if (files.length > 0) {
+        void uploadAndPasteFiles(files);
+      }
+    };
+
+    container.addEventListener("paste", onPaste, { capture: true });
+    container.addEventListener("dragenter", onDrag, { capture: true });
+    container.addEventListener("dragover", onDrag, { capture: true });
+    container.addEventListener("drop", onDrop, { capture: true });
+    return () => {
+      container.removeEventListener("paste", onPaste, { capture: true });
+      container.removeEventListener("dragenter", onDrag, { capture: true });
+      container.removeEventListener("dragover", onDrag, { capture: true });
+      container.removeEventListener("drop", onDrop, { capture: true });
+    };
+  }, [cwd]);
 
   // Bridge for the mobile accessory key bar. TerminalApp dispatches a custom
   // window event with the target paneId; we forward to this pane's PTY if it
@@ -536,24 +724,14 @@ export function TerminalPane({
         return;
       }
       if (detail.action === "paste") {
-        // navigator.clipboard is undefined on insecure-origin mobile browsers
-        // and WebViews with a denied clipboard policy; reading it without a
-        // guard throws synchronously before .catch() can attach. Degrade quietly.
-        const clipboard = typeof navigator !== "undefined" ? navigator.clipboard : undefined;
-        if (!clipboard?.readText) {
-          console.warn("Clipboard paste unavailable: navigator.clipboard.readText is not supported in this context");
-          return;
-        }
-        clipboard.readText().then((text) => {
-          const ws = wsRef.current;
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            const safe = text.replace(/\x1b\[20[01]~/g, "");
-            const capped = safe.slice(0, MAX_TERMINAL_INPUT - BRACKETED_PASTE_OVERHEAD);
-            const bracketed = `${BRACKETED_PASTE_OPEN}${capped}${BRACKETED_PASTE_CLOSE}`;
-            ws.send(JSON.stringify({ type: "input", data: bracketed }));
-          }
+        pasteClipboardIntoTerminal({
+          clipboard: typeof navigator !== "undefined" ? navigator.clipboard : undefined,
+          gatewayUrl: getGatewayUrl(),
+          ws: wsRef.current,
+          submit: detail.submit === true,
         }).catch((err: unknown) => {
           console.warn("Clipboard paste failed:", err instanceof Error ? err.message : err);
+          showPasteError("Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
         });
         return;
       }
@@ -1329,16 +1507,14 @@ export function TerminalPane({
         }
 
         if (ev.ctrlKey && ev.shiftKey && ev.key === "V") {
-          navigator.clipboard.readText().then((text) => {
-            const ws = wsRef.current;
-            if (ws && ws.readyState === WebSocket.OPEN) {
-              const safe = text.replace(/\x1b\[20[01]~/g, "");
-              const capped = safe.slice(0, MAX_TERMINAL_INPUT - BRACKETED_PASTE_OVERHEAD);
-              const bracketed = `${BRACKETED_PASTE_OPEN}${capped}${BRACKETED_PASTE_CLOSE}`;
-              ws.send(JSON.stringify({ type: "input", data: bracketed }));
-            }
+          pasteClipboardIntoTerminal({
+            clipboard: typeof navigator !== "undefined" ? navigator.clipboard : undefined,
+            gatewayUrl: getGatewayUrl(),
+            ws: wsRef.current,
+            submit: ev.altKey,
           }).catch((err: unknown) => {
             console.warn("Clipboard paste failed:", err instanceof Error ? err.message : err);
+            showPasteError("Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
           });
           return false;
         }
@@ -1536,6 +1712,12 @@ export function TerminalPane({
     };
   }, [viewportHeight, viewportOffsetTop, keyboardOpen, suppressNativeKeyboard]);
 
+  useEffect(() => {
+    if (!pasteError) return;
+    const timer = window.setTimeout(() => setPasteError(null), 5_000);
+    return () => window.clearTimeout(timer);
+  }, [pasteError]);
+
   return (
     // react-doctor-disable-next-line react-doctor/no-static-element-interactions, react-doctor/click-events-have-key-events -- presentational click-to-focus wrapper: clicking anywhere in the pane forwards focus to the embedded xterm terminal, which is itself the keyboard-interactive element (its textarea is in natural tab order). This div is not a control, so a role/tabIndex would be misleading; keyboard users interact with the terminal directly.
     <div
@@ -1552,6 +1734,34 @@ export function TerminalPane({
       onPointerDown={handleFocus}
       onClick={handleFocus}
     >
+      {pasteError && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            ...AUTH_BANNER_BASE_STYLE,
+            top: authUrl ? 76 : 8,
+            background: "rgba(127, 29, 29, 0.95)",
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }}>{pasteError}</div>
+          <button
+            type="button"
+            onClick={() => setPasteError(null)}
+            style={{
+              background: "none",
+              border: "none",
+              color: "rgba(255,255,255,0.78)",
+              cursor: "pointer",
+              fontSize: 16,
+              padding: "0 4px",
+              lineHeight: 1,
+            }}
+          >
+            x
+          </button>
+        </div>
+      )}
       {authUrl && (
         <div
           style={{

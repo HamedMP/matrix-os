@@ -16,6 +16,14 @@
         "simulator": true
       }
     },
+    "development-device": {
+      "extends": "base",
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": {
+        "simulator": false
+      }
+    },
     "preview": {
       "extends": "base",
       "distribution": "internal",
@@ -28,5 +36,20 @@
       "autoIncrement": true
     }
   },
-  "submit": {}
+  "submit": {
+    "production": {
+      "ios": {
+        // Apple ID auth. ascAppId + appleTeamId are intentionally omitted so EAS
+        // auto-resolves them (finds/creates the ASC app by bundleIdentifier and
+        // derives the team from your authenticated session) during submit.
+        // After the first successful submit, paste the real values here to skip
+        // lookups: "ascAppId": "1234567890", "appleTeamId": "ABCDE12345".
+        "appleId": "thehamedmp@gmail.com"
+        // Alternative (fully non-interactive CI): use an App Store Connect API key:
+        //   "ascApiKeyPath": "./asc-api-key.p8",
+        //   "ascApiKeyId": "XXXXXXXXXX",
+        //   "ascApiKeyIssuerId": "00000000-0000-0000-0000-000000000000"
+      }
+    }
+  }
 }

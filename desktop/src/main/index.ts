@@ -4,6 +4,24 @@ import { AuthService } from "./auth/auth-service";
 import { createCredentialStore } from "./auth/credential-store";
 import { installGatewayCors, installHeaderInjection } from "./auth/header-injection";
 import { EmbedService } from "./embeds/embed-service";
+import {
+  createCodingAgentSourcePullRequest,
+  createCodingAgentThread,
+  fetchCodingAgentFileBrowse,
+  fetchCodingAgentFileContent,
+  fetchCodingAgentFileSearch,
+  fetchCodingAgentNotificationPreferences,
+  fetchCodingAgentThreadSnapshot,
+  fetchCodingAgentReviewSnapshot,
+  fetchCodingAgentReviewSummaries,
+  fetchCodingAgentRuntimeSummary,
+  prepareCodingAgentSourceCommit,
+  saveCodingAgentFileContent,
+  submitCodingAgentApprovalDecision,
+  submitCodingAgentInputAnswer,
+  updateCodingAgentNotificationPreferences,
+} from "./coding-agents/runtime-summary-client";
+import { createCodingAgentThreadEventStreamer } from "./coding-agents/thread-event-stream";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
@@ -20,6 +38,7 @@ if (process.env.OPERATOR_USER_DATA_DIR) {
 
 let mainWindow: BrowserWindow | null = null;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
+let closeCodingAgentThreadEvents: (() => void) | null = null;
 
 function isMatrixOsDeepLink(value: string): boolean {
   try {
@@ -149,10 +168,13 @@ if (!gotLock) {
       const credentialStore = createCredentialStore({ dir: userData, safeStorage });
 
       const platformHost = process.env.OPERATOR_GATEWAY_URL ?? DEFAULT_PLATFORM_HOST;
+      const runtimeSelectionOrigin = process.env.MATRIX_API_ORIGIN
+        ?? (platformHost === DEFAULT_PLATFORM_HOST ? "https://api.matrix-os.com" : platformHost);
 
       const auth = new AuthService({
         credentialStore,
         platformHost,
+        runtimeSelectionOrigin,
         loadProfile: () => store.get("profile"),
         saveProfile: (profile) => store.set("profile", profile),
         clearProfile: () => store.delete("profile"),
@@ -200,6 +222,11 @@ if (!gotLock) {
           }).show();
         },
       });
+      const codingAgentThreadEvents = createCodingAgentThreadEventStreamer({
+        auth,
+        emit: sendEvent,
+      });
+      closeCodingAgentThreadEvents = () => codingAgentThreadEvents.closeAll();
 
       registerIpcHandlers(ipcMain, {
         auth,
@@ -223,9 +250,37 @@ if (!gotLock) {
           // Switching runtime invalidates embed cookies/tokens; tear them down so
           // they re-handshake against the new slot (Integration Wiring rule).
           embeds.closeAll();
+          codingAgentThreadEvents.closeAll();
           sendEvent("runtime:changed", { slot });
         },
         getUpdateStatus: () => updater.status(),
+        fetchRuntimeSummary: () => fetchCodingAgentRuntimeSummary(auth),
+        fetchNotificationPreferences: () => fetchCodingAgentNotificationPreferences(auth),
+        updateNotificationPreferences: (request) => updateCodingAgentNotificationPreferences(auth, request),
+        fetchReviewSummaries: (options) => fetchCodingAgentReviewSummaries(auth, options),
+        fetchReviewSnapshot: (options) => fetchCodingAgentReviewSnapshot(auth, options),
+        fetchFileBrowse: (request) => fetchCodingAgentFileBrowse(auth, request),
+        fetchFileSearch: (request) => fetchCodingAgentFileSearch(auth, request),
+        fetchFileContent: (request) => fetchCodingAgentFileContent(auth, request),
+        saveFileContent: (request) => saveCodingAgentFileContent(auth, request),
+        prepareSourceCommit: (request) => prepareCodingAgentSourceCommit(auth, request),
+        createSourcePullRequest: (request) => createCodingAgentSourcePullRequest(auth, request),
+        fetchThreadSnapshot: (options) => fetchCodingAgentThreadSnapshot(auth, options),
+        subscribeThreadEvents: (request) => codingAgentThreadEvents.subscribe(request),
+        unsubscribeThreadEvents: ({ threadId }) => codingAgentThreadEvents.unsubscribe(threadId),
+        submitApprovalDecision: ({ threadId, approvalId, decision, clientRequestId, correlationId }) =>
+          submitCodingAgentApprovalDecision(auth, {
+            threadId,
+            approvalId,
+            request: { decision, clientRequestId, correlationId },
+          }),
+        submitInputAnswer: ({ threadId, inputRequestId, answer, clientRequestId, correlationId }) =>
+          submitCodingAgentInputAnswer(auth, {
+            threadId,
+            inputRequestId,
+            request: { answer, clientRequestId, correlationId },
+          }),
+        createAgentThread: (request) => createCodingAgentThread(auth, request),
       });
 
       let boundsSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -251,6 +306,7 @@ if (!gotLock) {
         mainWindow.on("move", persistBounds);
         mainWindow.on("closed", () => {
           if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
+          codingAgentThreadEvents.closeAll();
           mainWindow = null;
         });
       };
@@ -278,6 +334,8 @@ if (!gotLock) {
       clearInterval(updateCheckTimer);
       updateCheckTimer = null;
     }
+    closeCodingAgentThreadEvents?.();
+    closeCodingAgentThreadEvents = null;
   });
 
   app.on("window-all-closed", () => {
