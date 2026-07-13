@@ -1103,6 +1103,22 @@ describe("platform proxy routing", () => {
     const browserForwardHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers as HeadersInit);
     expect(browserForwardHeaders.get("x-matrix-native-app-session")).toBeNull();
     expect(browserForwardHeaders.get("x-matrix-platform-session")).toBeNull();
+
+    const launch = await app.request("/api/native-apps/xterm/sessions", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: appSession,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+
+    expect(launch.status).toBe(200);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("https://203.0.113.35:443/api/native-apps/xterm/sessions");
+    const nativeAppForwardHeaders = new Headers(fetchMock.mock.calls[1]?.[1]?.headers as HeadersInit);
+    expect(nativeAppForwardHeaders.get("x-matrix-native-app-session")).toBeNull();
+    expect(nativeAppForwardHeaders.get("x-forwarded-prefix")).toBe("/vm/alice-staging");
   });
 
   it("exchanges a native sync JWT for an app session cookie before continuing", async () => {

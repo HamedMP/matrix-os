@@ -149,6 +149,10 @@ function applyAuthPageHeaders(
   );
 }
 
+function isNativeAppRoute(path: string): boolean {
+  return path === '/api/native-apps' || path.startsWith('/api/native-apps/');
+}
+
 export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlewareOpts): MiddlewareHandler {
   const {
     db,
@@ -697,6 +701,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         headers.set('host', `${runningMachine.handle}.matrix-os.com`);
         headers.set('x-forwarded-host', host);
         headers.set('x-forwarded-proto', 'https');
+        if (isNativeAppRoute(path)) {
+          headers.set('x-forwarded-prefix', `/vm/${runningMachine.handle}`);
+        }
         headers.set('accept-encoding', 'identity');
         headers.set('connection', 'close');
       }
