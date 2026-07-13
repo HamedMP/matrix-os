@@ -14,8 +14,8 @@ import {
 import * as Clipboard from "expo-clipboard";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
-import { StatusBar } from "expo-status-bar";
+import { useFocusEffect, useRouter } from "expo-router";
+import { setStatusBarStyle } from "expo-status-bar";
 import { useGateway } from "@/app/_layout";
 import { TerminalControlBar } from "@/components/TerminalControlBar";
 import { TerminalSurface, type TerminalSurfaceHandle } from "@/components/TerminalSurface";
@@ -469,9 +469,18 @@ export default function TerminalScreen() {
     terminalResumeLoaded,
   ]);
 
+  // The terminal is a dark console inside a light app: the status bar goes
+  // light only while this tab is focused (tab screens stay mounted, so a
+  // static <StatusBar> here would leak light style onto every other tab).
+  useFocusEffect(
+    useCallback(() => {
+      setStatusBarStyle("light");
+      return () => setStatusBarStyle("dark");
+    }, []),
+  );
+
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
       <WindowHeader
         tone="terminal"
         paddingTop={insets.top + (chromeExpanded ? 8 : 3)}
