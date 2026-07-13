@@ -466,6 +466,13 @@ components:
       type: object
       additionalProperties: false
       minProperties: 1
+      anyOf:
+        - required: [model]
+        - required: [effort]
+        - required: [runtime]
+        - required: [provider]
+        - required: [messagingModel]
+        - required: [baseUrl]
       dependentRequired:
         runtime: [revision]
         provider: [messagingModel, revision]

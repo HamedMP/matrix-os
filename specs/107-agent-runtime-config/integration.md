@@ -47,7 +47,7 @@ All non-Chat dispatch callers omit message overrides and retain saved-file/defau
 
 ## Conversation Transcript Path
 
-`GET /api/conversations/:id` is registered before the `/:id/search` sibling cannot shadow it under Hono's exact routing, but tests cover both paths. The route validates the id, calls the existing `conversations.get(id)`, maps only the true absent case to 404, and lets operational errors become safe 5xx responses. It never synthesizes a transcript from list metadata.
+Hono's exact route matching prevents `GET /api/conversations/:id` from matching the longer `/:id/search` sibling; registration order is not the safety mechanism. Tests exercise both paths so a future wildcard or mount change cannot silently shadow either route. The transcript route validates the id, calls the existing `conversations.get(id)`, maps only the true absent case to 404, and lets operational errors become safe 5xx responses. It never synthesizes a transcript from list metadata.
 
 ## System Information Path
 
