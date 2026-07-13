@@ -1,7 +1,7 @@
 # Current State: Coding Agent Shells
 
 **Branch stack**: implementation checkpoint merged to `main` through PR #869 (`056b3da668ed6d1753712120316d2d5accfafdcf`)
-**Updated**: 2026-07-10
+**Updated**: 2026-07-12
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
 For the evidence-based checkpoint audit, see [completion-audit.md](./completion-audit.md).
@@ -16,7 +16,7 @@ The landed checkpoint is not the confirmed final information architecture. Curre
 - Coding threads carry optional `projectId`/`taskId`; the read model quarantines stale cross-project task relations, and the shell-create path now requires an owned canonical project plus a same-project canonical task when provided. Legacy unassigned records remain read-compatible and can be adopted exactly once through an explicit idempotent owner-scoped mutation. Persisted public thread changes publish bounded project/task workspace activity events.
 - Existing task UI has one `linkedSessionId`; it cannot be used as the source of truth for coding conversations because one task must support several independent threads.
 - The current desktop `AgentWorkspace` is a sectioned dashboard. It does not provide the required persistent project/task/thread navigator or a segmented Conversation/Kanban mode over one selected project.
-- The current mobile Agents routes provide recent work and thread detail, but not project-first task/thread navigation or a Kanban mode.
+- The pending PR #926 mobile Agents route provides an attention-first cockpit with Needs attention, Working, and bounded Recent groups plus thread detail, but not project-first task/thread navigation or a Kanban mode.
 - Current desktop/mobile follow-up controls still seed a new thread with a structured reference. The gateway now supports same-thread turns and workspace-session resume, but shell clients have not switched to that route yet. Delivering input to a running workspace session settles that turn without marking the thread complete; canonical session-stop reconciliation owns terminal thread status.
 - Existing desktop Kanban task routes/statuses are canonical and reusable, but coding-thread aggregates and multi-thread task navigation are not integrated into that board.
 
@@ -414,9 +414,12 @@ Screen:
 - `apps/mobile/app/agents/index.tsx`
 - `apps/mobile/app/agents/new.tsx`
 - `apps/mobile/app/agents/[threadId].tsx`
-- Read-only phone-first dashboard with a capped Recent Work section, providers, gateway-owned attention threads, active threads, and terminal sessions.
+- Read-only phone-first dashboard with Needs attention, Working, and a contract-bounded Recent section, plus providers and canonical terminal sessions.
 - The dashboard renders the shared mobile connection banner with agent-workspace labels for connecting, offline, and reconnecting states; the banner can retry the existing gateway client connection and does not hide the last hydrated gateway summary.
-- Recent Work is derived only from `RuntimeSummarySchema`: attention threads sort before normal active threads, running attachable terminal sessions appear after thread work, and the quick new-run action uses the existing `/agents/new` route when thread creation is enabled.
+- The cockpit is derived only from the bounded `RuntimeSummarySchema.activeThreads` and `attentionThreads` lists. Approval, input, and failed states sort into Needs attention; queued, starting, and running states sort into Working; every completed attention plus completed, aborted, recoverable stale, and archived status supplied by those bounded lists remains reachable in Recent. Duplicate thread ids are projected once and sorted by gateway timestamps.
+- Working rows use static status UI because the summary screen has pull-to-refresh but no per-row live stream. The screen never implies continuous reconciliation with a perpetual spinner.
+- The Agents scroll view uses native automatic content-inset adjustment and content padding does not add the iOS safe-area values a second time.
+- The quick new-run action uses the existing `/agents/new` route when thread creation is enabled. Project selection and project creation remain follow-up work and must use the canonical project/thread contracts.
 - Running attachable terminal rows in the mobile Terminals section use the existing mobile Terminal tab handoff and persist only the bounded safe terminal session reference in mobile shell state; non-running or unavailable rows stay disabled.
 - Provider Setup warnings are derived only from `RuntimeSummarySchema.providers`, show coarse install/auth/availability states plus safe setup action labels, and do not render foreground terminal setup commands, credentials, or raw provider errors.
 - Notification controls render approval, input, failed-run, and completion attention push switches, load them through the authenticated gateway client, submit full replacement updates, and keep preference state transient in component memory.
@@ -435,7 +438,7 @@ Screen:
 - User-input request events render a transient bounded answer composer in the mobile thread route. Answers use mobile-generated idempotency request ids, go through the authenticated gateway client, and replace local thread details with the gateway-returned bounded snapshot. Failed submissions show a generic recovery-oriented message.
 - Successful mobile approval decisions and user-input answers trigger local success haptics only after the gateway-returned bounded snapshot is accepted; haptic failures are logged and do not block the thread state update.
 - Mobile approval/input action state is isolated in `apps/mobile/lib/agent-thread-actions.ts`; the route owns hydration, streaming, and composition while the hook owns transient pending ids, safe per-action errors, bounded input drafts, idempotency request ids, and accepted-snapshot haptic guards.
-- Thread details and Recent Work terminal rows can open the existing `/terminal` tab after persisting only the safe canonical shell-session reference in `mobile-shell-state`; terminal output and transcripts remain outside AsyncStorage.
+- Thread details and terminal rows can open the existing `/terminal` tab after persisting only the safe canonical shell-session reference in `mobile-shell-state`; terminal output and transcripts remain outside AsyncStorage.
 - Thread details can open the existing mobile composer for a follow-up run with only bounded source thread id/title/provider route params. The composer validates those params with shared contract schemas and sends a `structured_ref` attachment for the source thread through the normal authenticated create-thread gateway client.
 - Review-ready events in the mobile thread timeline can open the Agents review section with only a bounded `reviewId` route param. The Agents screen validates that route param with `ReviewIdSchema`, rehydrates the review snapshot through the authenticated gateway client, and ignores invalid values without persisting review or diff content.
 - Push notification tap routing accepts coding-agent attention payloads with a bounded `threadId`, validates that id with `ThreadIdSchema`, opens `/agents/:threadId` for valid thread ids, and falls back to `/agents` for invalid or missing thread references.

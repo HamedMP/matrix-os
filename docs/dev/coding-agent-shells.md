@@ -15,6 +15,20 @@ This guide documents the Matrix OS coding-agent shell architecture for gateway, 
 
 Browser Workspace remains Canvas-first and does not own coding-agent runtime state. It may render active-project thread and preview summaries from `RuntimeSummarySchema`, and it may open an existing Canvas PR workspace from bounded worktree metadata that already includes a pull request number. Browser Workspace must not create source-control commits or pull requests, store transcripts, store file contents, store diffs, or execute provider setup actions. Those write paths stay in gateway-owned routes and trusted desktop/mobile clients.
 
+## Mobile Agent Cockpit
+
+The mobile Agents landing screen is a thin projection of the bounded gateway runtime summary:
+
+- Needs attention contains approval-required, input-required, and failed threads.
+- Working contains queued, starting, and running threads.
+- Recent keeps every completed, aborted, recoverable stale, or archived thread from the contract-bounded runtime lists reachable through the canonical thread-detail route. A `completed` attention value also belongs here.
+- Duplicate ids across `activeThreads` and `attentionThreads` render once. Gateway timestamps determine ordering; mobile does not infer task status from thread status.
+- Working rows use static status marks. Pull-to-refresh reconciles the summary, so a row must not show a perpetual live spinner unless a future implementation adds an actual bounded stream or polling lifecycle.
+
+Use `contentInsetAdjustmentBehavior="automatic"` on the route scroll view and plain content padding. Do not add `react-native-unistyles` runtime safe-area values to the same top or bottom padding, because iOS already applies those insets.
+
+Cockpit projection state remains in memory. Mobile storage may contain validated bounded selection references or drafts only, never runtime summaries, transcripts, terminal output, files, diffs, credentials, or approval payloads.
+
 ## Gateway Routes
 
 The coding-agent route module is `packages/gateway/src/coding-agents/routes.ts`, mounted under `/api/coding-agents`.
