@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { isAbsolute } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
 
@@ -33,6 +35,7 @@ export interface AgentLaunchInput {
   sandbox?: AgentLaunchSandbox;
   approvalPolicy?: "untrusted" | "on-request" | "on-failure" | "never";
   runtimeHome?: string;
+  providerEventPath?: string;
 }
 
 export interface AgentLaunchSpec {
@@ -50,6 +53,15 @@ type CommandRunner = (
 
 const execFileAsync = promisify(execFile);
 const DETECT_TIMEOUT_MS = 5_000;
+const ProviderEventPathSchema = z.string()
+  .trim()
+  .min(1)
+  .max(4096)
+  .refine(isAbsolute)
+  .regex(/^[^\u0000\r\n]+\.jsonl$/);
+const CODEX_RUNNER_PATH = fileURLToPath(
+  new URL("./coding-agents/codex-runner.mjs", import.meta.url),
+);
 
 const AGENTS: Record<SupportedAgent, { command: string; displayName: string }> = {
   claude: { command: "claude", displayName: "Claude" },
@@ -265,9 +277,8 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
     case "claude":
       return { command, args: claudeLaunchArgs(input), cwd: input.cwd, env };
     case "codex":
-      return {
-        command,
-        args: [
+      {
+        const args = [
           "--ask-for-approval",
           input.approvalPolicy ?? "never",
           "exec",
@@ -275,10 +286,17 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
           ...codexSandboxArgs(input.sandbox),
           ...codexModeArgs(input.mode),
           ...promptArgs(codexPrompt(input.prompt, input.mode)),
-        ],
-        cwd: input.cwd,
-        env,
-      };
+        ];
+        if (!input.providerEventPath) return { command, args, cwd: input.cwd, env };
+        const providerEventPath = ProviderEventPathSchema.parse(input.providerEventPath);
+        const structuredArgs = [...args.slice(0, 4), "--json", ...args.slice(4)];
+        return {
+          command: process.execPath,
+          args: [CODEX_RUNNER_PATH, providerEventPath, command, ...structuredArgs],
+          cwd: input.cwd,
+          env,
+        };
+      }
     case "opencode":
       return { command, args: ["run", ...promptArgs(input.prompt)], cwd: input.cwd, env };
     case "pi":

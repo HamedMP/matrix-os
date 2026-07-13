@@ -11,6 +11,7 @@ import {
 import { SupportedAgentSchema, type SupportedAgent } from "../agent-launcher.js";
 import type { WorkspaceSessionOrchestrator } from "../workspace-session-orchestrator.js";
 import type { CodingAgentProviderAdapter } from "./thread-store.js";
+import type { CodexEventBridge } from "./codex-event-bridge.js";
 
 type WorkspaceRuntime = Pick<WorkspaceSessionOrchestrator, "startSession" | "stopSession"> &
   Partial<Pick<WorkspaceSessionOrchestrator, "sendInput">>;
@@ -32,11 +33,13 @@ export interface WorkspaceCodingAgentProviderOptions {
   agent: SupportedAgent;
   runtime: WorkspaceRuntime;
   runnable?: boolean;
+  codexEvents?: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch">;
 }
 
 export interface WorkspaceCodingAgentProviderSetOptions {
   agents: readonly SupportedAgent[];
   runtime: WorkspaceRuntime;
+  codexEvents: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch">;
 }
 
 export interface WorkspaceCodingAgentProviderSet {
@@ -180,12 +183,15 @@ export function createWorkspaceCodingAgentProvider(
 
   return {
     providerId,
-    getSummary({ now }) {
+    async getSummary({ now, signal }) {
+      const executable = runnable && (
+        agent !== "codex" || !options.codexEvents || (await options.codexEvents.healthCheck(signal)).ok
+      );
       return {
         id: providerId,
         displayName: providerDisplayName(agent),
         kind: providerKind(agent),
-        availability: runnable ? "available" : "unavailable",
+        availability: executable ? "available" : "unavailable",
         installStatus: "installed",
         authStatus: "authenticated",
         supportedModes: ["default", "review"],
@@ -194,8 +200,10 @@ export function createWorkspaceCodingAgentProvider(
         lastCheckedAt: now().toISOString(),
       };
     },
-    healthCheck() {
-      return { ok: runnable };
+    async healthCheck({ signal }) {
+      if (!runnable) return { ok: false };
+      if (agent === "codex" && options.codexEvents) return options.codexEvents.healthCheck(signal);
+      return { ok: true };
     },
     buildSetupAction(): SafeSetupAction[] {
       return providerSetupActions(agent);
@@ -205,24 +213,38 @@ export function createWorkspaceCodingAgentProvider(
         throw new Error("Workspace provider execution unavailable");
       }
       const sessionId = sessionIdForThread(thread.id);
-      const result = await options.runtime.startSession({
-        ownerScope: { type: "user", id: principal.userId },
-        request: {
+      if (agent === "codex" && options.codexEvents) {
+        await options.codexEvents.watch({
+          principal,
+          threadId: thread.id,
           sessionId,
-          kind: "agent",
-          agent,
-          prompt: request.prompt,
-          attachments: request.attachments,
-          projectSlug: request.projectId,
-          taskId: request.taskId,
-          worktreeId: request.worktreeId,
-          mode: request.mode,
-          approvalPolicy: request.approvalPolicy,
-          sandboxMode: request.sandboxMode,
-          runtimePreference: "zellij",
-        },
-      });
+        });
+      }
+      let result;
+      try {
+        result = await options.runtime.startSession({
+          ownerScope: { type: "user", id: principal.userId },
+          request: {
+            sessionId,
+            kind: "agent",
+            agent,
+            prompt: request.prompt,
+            attachments: request.attachments,
+            projectSlug: request.projectId,
+            taskId: request.taskId,
+            worktreeId: request.worktreeId,
+            mode: request.mode,
+            approvalPolicy: request.approvalPolicy,
+            sandboxMode: request.sandboxMode,
+            runtimePreference: "zellij",
+          },
+        });
+      } catch (error: unknown) {
+        options.codexEvents?.unwatch(sessionId);
+        throw error;
+      }
       if (!result.ok) {
+        options.codexEvents?.unwatch(sessionId);
         throw new Error("Workspace provider start failed");
       }
 
@@ -240,14 +262,6 @@ export function createWorkspaceCodingAgentProvider(
           threadId: thread.id,
           occurredAt: now().toISOString(),
           terminalSessionId,
-        }),
-        AgentThreadEventSchema.parse({
-          type: "assistant.text.delta",
-          eventId: nextEventId(),
-          threadId: thread.id,
-          occurredAt: now().toISOString(),
-          messageId: `msg_${thread.id}`,
-          delta: "Agent session started.",
         })],
         resumeState: { conversationId: sessionId },
       };
@@ -274,6 +288,7 @@ export function createWorkspaceCodingAgentProvider(
       if (!result.ok) {
         throw new Error("Workspace provider abort failed");
       }
+      options.codexEvents?.unwatch(sessionIdForThread(thread.id));
       return [
         statusEvent({
           threadId: thread.id,
@@ -307,6 +322,7 @@ export function createWorkspaceCodingAgentProviderSet(
     agent,
     runtime: options.runtime,
     runnable: agent === "codex",
+    codexEvents: agent === "codex" ? options.codexEvents : undefined,
   }));
   return {
     registryProviders,
