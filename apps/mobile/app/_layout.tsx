@@ -320,6 +320,14 @@ function GatewayShell() {
           <Stack.Screen name="agents" options={{ headerShown: false }} />
           <Stack.Screen name="sessions" options={{ headerShown: false, presentation: "modal" }} />
           <Stack.Screen
+            name="computers"
+            options={{
+              title: "Computers",
+              headerBackButtonDisplayMode: "minimal",
+              headerStyle: { backgroundColor: theme.colors.background },
+            }}
+          />
+          <Stack.Screen
             name="connect"
             options={{
               title: "Gateway",

@@ -175,6 +175,38 @@ describe("GatewayClient", () => {
     expect(client.httpUrl).toBe("http://localhost:4000");
   });
 
+  it("keeps path joins valid for a routed computer URL with a runtime query", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse({ ok: true }));
+    const client = new GatewayClient("https://app.matrix-os.com/vm/pr-919?runtime=pr-919");
+
+    expect(client.httpUrl).toBe("https://app.matrix-os.com/vm/pr-919");
+    expect(client.wsUrl).toBe("wss://app.matrix-os.com/vm/pr-919/ws?runtime=pr-919");
+
+    await client.healthCheck();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/vm/pr-919/health?runtime=pr-919",
+      expect.anything(),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("keeps primary computer URLs without a runtime query untouched", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse({ ok: true }));
+    const client = new GatewayClient("https://app.matrix-os.com/vm/neo");
+
+    expect(client.httpUrl).toBe("https://app.matrix-os.com/vm/neo");
+    expect(client.wsUrl).toBe("wss://app.matrix-os.com/vm/neo/ws");
+
+    await client.healthCheck();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/vm/neo/health",
+      expect.anything(),
+    );
+
+    fetchMock.mockRestore();
+  });
+
   it("allows only local self-hosted token transport over HTTP and keeps Matrix OS Cloud HTTPS-only", () => {
     expect(() => new GatewayClient("https://app.matrix-os.com", "token")).not.toThrow();
     expect(() => new GatewayClient("http://localhost:4000", "token")).not.toThrow();
