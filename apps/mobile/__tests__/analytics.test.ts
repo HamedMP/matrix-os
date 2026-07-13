@@ -79,7 +79,7 @@ describe("analytics no-op without key", () => {
 });
 
 describe("analytics wiring with a key", () => {
-  it("initializes on the default EU host with async-storage persistence", () => {
+  it("initializes replay with strict masking on the default EU host", () => {
     const a = loadAnalytics({ key: "phc_test" });
     expect(a.getAnalyticsClient()).not.toBeNull();
     expect(mockCtor).toHaveBeenCalledTimes(1);
@@ -87,6 +87,14 @@ describe("analytics wiring with a key", () => {
     expect(apiKey).toBe("phc_test");
     expect(options.host).toBe("https://eu.i.posthog.com");
     expect(options.customStorage).toBeDefined();
+    expect(options.enableSessionReplay).toBe(true);
+    expect(options.sessionReplayConfig).toMatchObject({
+      maskAllTextInputs: true,
+      maskAllImages: true,
+      maskAllSandboxedViews: true,
+      captureLog: false,
+      captureNetworkTelemetry: false,
+    });
   });
 
   it("honors EXPO_PUBLIC_POSTHOG_HOST override", () => {

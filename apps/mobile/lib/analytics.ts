@@ -56,6 +56,21 @@ export function getAnalyticsClient(): PostHog | null {
     client = new PostHog(API_KEY, {
       host: HOST,
       customStorage: asyncStorage,
+      // Session replay: enabled with strict masking. The native replay module
+      // (@posthog/react-native-plugin) is optional — when it is missing (e.g. an
+      // un-rebuilt dev client) the SDK's native calls are guarded and replay
+      // silently no-ops.
+      enableSessionReplay: true,
+      sessionReplayConfig: {
+        maskAllTextInputs: true,
+        maskAllImages: true,
+        // iOS: mask system picker/sandboxed views too.
+        maskAllSandboxedViews: true,
+        // Never record console logs or network telemetry — terminal, chat, and
+        // file contents must not leak through either channel.
+        captureLog: false,
+        captureNetworkTelemetry: false,
+      },
     });
   } catch (err: unknown) {
     console.warn(
