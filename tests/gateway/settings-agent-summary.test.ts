@@ -152,6 +152,80 @@ describe("GET /api/settings/agent/summary", () => {
     expect(JSON.stringify(body)).not.toContain("sk-x");
   });
 
+  it("redacts password assignments and connection URLs instead of returning 500", async () => {
+    writeFileSync(
+      join(homePath, "system/soul.md"),
+      "# Sentinel\n\nUse password = hunter2 and postgres://owner:secret@db.internal/matrix only.",
+    );
+
+    const res = await app.request("/api/settings/agent/summary");
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.soulPreview).toBe("Use [redacted] and [redacted] only.");
+    expect(JSON.stringify(body)).not.toContain("hunter2");
+    expect(JSON.stringify(body)).not.toContain("postgres://");
+  });
+
+  it("redacts compound password assignments", async () => {
+    writeFileSync(
+      join(homePath, "system/soul.md"),
+      "# Sentinel\n\nUse db_password = hunter2 and admin_password: \"abc123\" only.",
+    );
+
+    const res = await app.request("/api/settings/agent/summary");
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.soulPreview).toBe("Use [redacted] and [redacted] only.");
+    expect(JSON.stringify(body)).not.toContain("hunter2");
+    expect(JSON.stringify(body)).not.toContain("abc123");
+  });
+
+  it("redacts bare password markers instead of returning 500", async () => {
+    writeFileSync(
+      join(homePath, "system/soul.md"),
+      "# Sentinel\n\nAsk for password:",
+    );
+
+    const res = await app.request("/api/settings/agent/summary");
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.soulPreview).toBe("Ask for [redacted]");
+    expect(JSON.stringify(body)).not.toContain("password:");
+  });
+
+  it("redacts SQLite DSNs without double slashes", async () => {
+    writeFileSync(
+      join(homePath, "system/soul.md"),
+      "# Sentinel\n\nUse sqlite:memory or sqlite:/tmp/app.db only.",
+    );
+
+    const res = await app.request("/api/settings/agent/summary");
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.soulPreview).toBe("Use [redacted] or [redacted] only.");
+    expect(JSON.stringify(body)).not.toContain("sqlite:");
+  });
+
+  it("preserves a safe configured model that is not yet in the catalog", async () => {
+    writeFileSync(
+      join(homePath, "system/config.json"),
+      JSON.stringify({ kernel: { model: "claude-future-5", effort: "medium" } }),
+    );
+
+    const res = await app.request("/api/settings/agent/summary");
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).kernel).toEqual({
+      model: "claude-future-5",
+      modelLabel: "claude-future-5",
+      effort: "medium",
+    });
+  });
+
   it("falls back to the first heading and meaningful paragraph without frontmatter", async () => {
     writeFileSync(
       join(homePath, "system/soul.md"),

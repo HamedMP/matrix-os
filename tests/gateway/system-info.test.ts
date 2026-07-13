@@ -121,7 +121,9 @@ describe("T135: System info", () => {
     writeFileSync(bundleVersionPath, "main-ea2f91510b\n");
 
     try {
-      expect(getSystemInfo(homePath).version).toBe("main-ea2f91510b");
+      const info = getSystemInfo(homePath);
+      expect(info.version).toBe("main-ea2f91510b");
+      expect(info.release).toBeUndefined();
     } finally {
       if (previousReleasePath === undefined) delete process.env.MATRIX_RELEASE_FILE;
       else process.env.MATRIX_RELEASE_FILE = previousReleasePath;
@@ -228,6 +230,7 @@ describe("T135: System info", () => {
       const info = getSystemInfo(homePath);
       expect(info.version).toBe("v2026.07.13-3");
       expect(info.channel).toBeUndefined();
+      expect(info.release).toBeUndefined();
     } finally {
       if (previousReleasePath === undefined) delete process.env.MATRIX_RELEASE_FILE;
       else process.env.MATRIX_RELEASE_FILE = previousReleasePath;
@@ -301,6 +304,20 @@ describe("T135: System info", () => {
     const info = getSystemInfo(homePath);
 
     expect(info.model).toBe("claude-sonnet-4-5");
+    expect(info.effort).toBe("max");
+    rmSync(homePath, { recursive: true, force: true });
+  });
+
+  it("prefers the gateway model override used by kernel dispatch", () => {
+    const homePath = tmpHome();
+    writeFileSync(
+      join(homePath, "system", "config.json"),
+      JSON.stringify({ kernel: { model: "claude-sonnet-4-5", effort: "max" } }),
+    );
+
+    const info = getSystemInfo(homePath, { model: "claude-haiku-4-5" });
+
+    expect(info.model).toBe("claude-haiku-4-5");
     expect(info.effort).toBe("max");
     rmSync(homePath, { recursive: true, force: true });
   });

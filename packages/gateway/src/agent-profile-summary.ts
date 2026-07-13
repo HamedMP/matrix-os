@@ -18,6 +18,8 @@ function sanitizeProfileText(value: string, maxChars: number): string {
   return value
     .replace(/\b(?:sk|ghp|glpat|github_pat)[-_][A-Za-z0-9_-]+\b/gi, "[redacted]")
     .replace(/\bBearer\s+[A-Za-z0-9._-]+\b/gi, "[redacted]")
+    .replace(/\b[A-Za-z0-9_-]*password\s*[=:](?:[ \t]*(?:"[^"]*"|'[^']*'|[^\s,;]+))?/gi, "[redacted]")
+    .replace(/\b(?:(?:postgres(?:ql)?|mysql):\/\/|sqlite:)[^\s)>\]]+/gi, "[redacted]")
     .replace(/\/(?:home|tmp|var|opt|etc|root|Users)\/[^\s)>\]]+/g, "[redacted]")
     .replace(/<[^>]*>/g, " ")
     .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
