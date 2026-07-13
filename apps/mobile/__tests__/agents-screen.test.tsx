@@ -740,8 +740,8 @@ describe("AgentsScreen", () => {
     render(<AgentsScreen />);
 
     expect((await screen.findAllByText("Approve deployment")).length).toBeGreaterThan(0);
-    expect(screen.getByText("codex · Approval needed")).toBeTruthy();
-    expect(screen.getByText("codex · Input needed")).toBeTruthy();
+    expect(screen.getByText(/codex · Approval needed/)).toBeTruthy();
+    expect(screen.getByText(/codex · Input needed/)).toBeTruthy();
     expect(screen.getByLabelText("Open thread Approve deployment, Approval needed")).toBeTruthy();
     expect(screen.getByLabelText("Open thread Clarify test target, Input needed")).toBeTruthy();
     expect(screen.getByLabelText("Open thread Repair failing run, Failed")).toBeTruthy();
@@ -770,9 +770,9 @@ describe("AgentsScreen", () => {
     expect(await screen.findByText("Needs attention")).toBeTruthy();
     expect(screen.getAllByText("Approve deployment")).toHaveLength(1);
     expect(screen.getAllByText("Repair failed run")).toHaveLength(1);
-    expect(screen.getByText("codex · Approval needed")).toBeTruthy();
-    expect(screen.getByText("codex · Failed")).toBeTruthy();
-    expect(screen.getByText("No active agent runs.")).toBeTruthy();
+    expect(screen.getByText(/codex · Approval needed/)).toBeTruthy();
+    expect(screen.getByText(/codex · Failed/)).toBeTruthy();
+    expect(screen.queryByText("No projects or agent runs yet.")).toBeNull();
 
     await act(async () => {
       fireEvent.press(screen.getByLabelText("Open thread Repair failed run, Failed"));
@@ -848,8 +848,7 @@ describe("AgentsScreen", () => {
 
     expect(await screen.findByText("What do you want Matrix to build?")).toBeTruthy();
     expect(screen.getByText("Needs attention")).toBeTruthy();
-    expect(screen.getByText("Working")).toBeTruthy();
-    expect(screen.getByText("Recent")).toBeTruthy();
+    expect(screen.getByText("No project")).toBeTruthy();
     expect(screen.getAllByText("Approve deploy plan")).toHaveLength(1);
     expect(screen.getAllByText("Newer running task")).toHaveLength(1);
     expect(screen.getAllByText("Completed mobile run")).toHaveLength(1);
@@ -881,7 +880,7 @@ describe("AgentsScreen", () => {
 
     render(<AgentsScreen />);
 
-    await screen.findByText("Recent");
+    await screen.findByText("No project");
     fireEvent.press(screen.getByLabelText("Open thread Completed mobile run"));
     fireEvent.press(screen.getByLabelText("Open thread Recover stale mobile run"));
 
@@ -960,7 +959,7 @@ describe("AgentsScreen", () => {
 
     render(<AgentsScreen />);
 
-    await screen.findByText("Working");
+    await screen.findByText("No project");
     expect(screen.getByLabelText("Open terminal session matrix-abc1234")).toBeTruthy();
     expect(screen.getByLabelText("Open thread Active task 1")).toBeTruthy();
   });

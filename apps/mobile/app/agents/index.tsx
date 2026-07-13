@@ -773,6 +773,7 @@ export default function AgentsScreen() {
         summary={summary}
         canCreate={canCreate}
         onCreate={() => router.push("/agents/new")}
+        onCreateInProject={(projectId) => router.push({ pathname: "/agents/new", params: { projectId } } as never)}
         onOpenThread={(thread) => router.push(`/agents/${thread.id}` as any)}
       />
 
