@@ -252,6 +252,36 @@ describe("Codex app-server request normalization", () => {
     }
   });
 
+  it("replaces unsafe question copy without dropping the provider request", () => {
+    const result = parseCodexAppServerRequestLine(JSON.stringify({
+      id: "rpc-input-unsafe-question",
+      method: "item/tool/requestUserInput",
+      params: {
+        threadId: "provider-thread",
+        turnId: "provider-turn",
+        itemId: "item_input_unsafe_question",
+        questions: [{
+          id: "native-question-unsafe-text",
+          header: "Confirm path",
+          question: "Should I update /home/matrix/private-project?",
+          options: [{ label: "Yes", description: "Use /home/matrix/private-project." }],
+        }],
+      },
+    }), context());
+
+    expect(result.events).toHaveLength(1);
+    expect(result.pending?.requestId).toMatch(/^req_codex_/);
+    expect(JSON.stringify(result.events)).not.toContain("/home/matrix/private-project");
+    const event = result.events[0];
+    expect(event?.type).toBe("user_input.requested");
+    if (event?.type === "user_input.requested") {
+      expect(event.request.questions?.[0]).toMatchObject({
+        question: "The coding agent needs an answer.",
+        options: [{ label: "Option 1", description: "Choose this option." }],
+      });
+    }
+  });
+
   it("rejects unknown, oversized, and over-cap provider requests", () => {
     expect(parseCodexAppServerRequestLine(JSON.stringify({
       id: 1,

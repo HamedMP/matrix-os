@@ -235,7 +235,7 @@ function inputResult(
   const questions: Array<z.infer<typeof UserInputQuestionSchema>> = [];
   for (const [index, question] of request.params.questions.entries()) {
     const questionId = `question_codex_${digest([identity.requestId, question.id, index], 24)}`;
-    const parsed = UserInputQuestionSchema.safeParse({
+    const candidate = {
       questionId,
       header: safeDisplay(question.header, "Question"),
       question: boundedExternalText(question.question, 600, 2400),
@@ -249,10 +249,27 @@ function inputResult(
         : {}),
       allowOther: question.isOther,
       secret: question.isSecret,
-    });
-    if (!parsed.success) return { events: [] };
+    };
+    const parsed = UserInputQuestionSchema.safeParse(candidate);
+    const safeQuestion = parsed.success
+      ? parsed.data
+      : UserInputQuestionSchema.parse({
+          questionId,
+          header: safeDisplay(question.header, "Question"),
+          question: "The coding agent needs an answer.",
+          ...(question.options
+            ? {
+                options: question.options.map((_option, optionIndex) => ({
+                  label: `Option ${optionIndex + 1}`,
+                  description: "Choose this option.",
+                })),
+              }
+            : {}),
+          allowOther: question.isOther,
+          secret: question.isSecret,
+        });
     questionIds.push({ questionId, nativeQuestionId: question.id });
-    questions.push(parsed.data);
+    questions.push(safeQuestion);
   }
   const firstHeader = questions[0]?.header ?? "Question";
   const autoResolutionMs = request.params.autoResolutionMs;
