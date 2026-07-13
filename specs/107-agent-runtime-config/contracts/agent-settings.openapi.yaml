@@ -1,0 +1,554 @@
+openapi: 3.1.0
+info:
+  title: Matrix OS Agent Settings
+  version: 2.0.0
+  description: Additive owner-computer agent configuration. Existing version-1 fields remain required for compatibility.
+paths:
+  /api/settings/agent:
+    get:
+      summary: Read effective Chat and messaging-agent configuration
+      security:
+        - matrixSession: []
+        - matrixBearer: []
+      responses:
+        "200":
+          description: Safe additive configuration view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentSettingsView"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/SafeUnavailable"
+    put:
+      summary: Patch Chat defaults or messaging runtime selection
+      description: Omitted fields are unchanged. Legacy clients may send only model and effort.
+      security:
+        - matrixSession: []
+        - matrixBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentSettingsUpdate"
+      responses:
+        "200":
+          description: Updated safe additive configuration view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentSettingsView"
+        "400":
+          $ref: "#/components/responses/SafeValidation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/SafeConflict"
+        "503":
+          $ref: "#/components/responses/SafeUnavailable"
+  /api/settings/agent/providers/{providerId}/api-key:
+    post:
+      summary: Validate and store a write-only provider API key
+      security:
+        - matrixSession: []
+        - matrixBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ProviderId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [runtime, apiKey]
+              properties:
+                runtime:
+                  $ref: "#/components/schemas/NullableRuntimeId"
+                apiKey:
+                  type: string
+                  minLength: 8
+                  maxLength: 8192
+      responses:
+        "200":
+          description: Secret-free provider authentication status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderAuthStatus"
+        "400":
+          $ref: "#/components/responses/SafeValidation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/SafeUnavailable"
+  /api/settings/agent/providers/{providerId}/login:
+    post:
+      summary: Begin or refresh a visible subscription-login setup flow
+      security:
+        - matrixSession: []
+        - matrixBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ProviderId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [runtime]
+              properties:
+                runtime:
+                  $ref: "#/components/schemas/NullableRuntimeId"
+      responses:
+        "200":
+          description: Safe setup action; no token or raw command from the runtime
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderLoginAction"
+        "400":
+          $ref: "#/components/responses/SafeValidation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/SafeUnavailable"
+  /api/settings/agent/providers/{providerId}/credential:
+    delete:
+      summary: Remove the selected provider credential when supported
+      security:
+        - matrixSession: []
+        - matrixBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ProviderId"
+        - name: runtime
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/NullableRuntimeId"
+      responses:
+        "200":
+          description: Secret-free provider authentication status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderAuthStatus"
+        "400":
+          $ref: "#/components/responses/SafeValidation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/SafeUnavailable"
+components:
+  securitySchemes:
+    matrixSession:
+      type: apiKey
+      in: cookie
+      name: __session
+    matrixBearer:
+      type: http
+      scheme: bearer
+  parameters:
+    ProviderId:
+      name: providerId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 80
+        pattern: "^[a-z0-9][a-z0-9_-]{0,79}$"
+  schemas:
+    RuntimeId:
+      type: string
+      enum: [hermes, openclaw]
+    NullableRuntimeId:
+      oneOf:
+        - $ref: "#/components/schemas/RuntimeId"
+        - type: "null"
+    Effort:
+      type: string
+      enum: [low, medium, high, max]
+    AuthKind:
+      type: string
+      enum: [platform, api_key, oauth_login, base_url]
+    AuthState:
+      type: string
+      enum: [ready, action_required, unavailable, unknown]
+    AuthAction:
+      type: string
+      enum: [none, enter_api_key, open_login_terminal, configure_base_url, contact_owner]
+    ProviderAuthStatus:
+      type: object
+      additionalProperties: false
+      required: [state, authenticated]
+      properties:
+        state:
+          $ref: "#/components/schemas/AuthState"
+        authenticated:
+          type: boolean
+        action:
+          $ref: "#/components/schemas/AuthAction"
+        lastCheckedAt:
+          type: string
+          format: date-time
+    AgentModel:
+      type: object
+      additionalProperties: false
+      required: [id, displayName, capabilities, efforts, available]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 160
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: string
+          minLength: 1
+          maxLength: 240
+        capabilities:
+          type: array
+          maxItems: 12
+          uniqueItems: true
+          items:
+            type: string
+            enum: [tools, vision, reasoning, audio, long_context]
+        efforts:
+          type: array
+          maxItems: 4
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/Effort"
+        available:
+          type: boolean
+    Provider:
+      type: object
+      additionalProperties: false
+      required: [id, displayName, runtime, scopes, authKind, supportedAuthKinds, models, authStatus]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 80
+          pattern: "^[a-z0-9][a-z0-9_-]{0,79}$"
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 120
+        runtime:
+          $ref: "#/components/schemas/NullableRuntimeId"
+        scopes:
+          type: array
+          minItems: 1
+          maxItems: 2
+          uniqueItems: true
+          items:
+            type: string
+            enum: [chat, messaging]
+        authKind:
+          $ref: "#/components/schemas/AuthKind"
+          description: Effective or recommended current authentication flow; always included in supportedAuthKinds.
+        supportedAuthKinds:
+          type: array
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/AuthKind"
+        models:
+          type: array
+          maxItems: 128
+          items:
+            $ref: "#/components/schemas/AgentModel"
+        authStatus:
+          $ref: "#/components/schemas/ProviderAuthStatus"
+    RuntimeDescriptor:
+      type: object
+      additionalProperties: false
+      required: [id, displayName, installState, health, selectionState, configured, capabilities]
+      properties:
+        id:
+          $ref: "#/components/schemas/RuntimeId"
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 80
+        installState:
+          type: string
+          enum: [installed, missing, installing, failed, unknown]
+        health:
+          type: string
+          enum: [healthy, degraded, stopped, unreachable, unknown]
+        selectionState:
+          type: string
+          enum: [active, available, action_required, unavailable]
+        configured:
+          type: boolean
+        version:
+          type: string
+          minLength: 1
+          maxLength: 64
+        capabilities:
+          type: array
+          maxItems: 16
+          uniqueItems: true
+          items:
+            type: string
+            enum: [provider_catalog, model_selection, authentication, messaging_dashboard, install]
+        setupAction:
+          type: string
+          enum: [install, open_setup_terminal]
+    ChatSelection:
+      type: object
+      additionalProperties: false
+      required: [provider, model, effort, source, authKind]
+      properties:
+        provider:
+          type: string
+          minLength: 1
+          maxLength: 80
+        model:
+          type: string
+          minLength: 1
+          maxLength: 160
+        effort:
+          $ref: "#/components/schemas/Effort"
+        source:
+          type: string
+          enum: [saved, default, message_override]
+        authKind:
+          type: string
+          enum: [platform, api_key, oauth_login]
+    MessagingSelection:
+      type: object
+      additionalProperties: false
+      required: [runtime, provider, model, configured]
+      properties:
+        runtime:
+          $ref: "#/components/schemas/RuntimeId"
+        provider:
+          oneOf:
+            - type: string
+              minLength: 1
+              maxLength: 80
+            - type: "null"
+        model:
+          oneOf:
+            - type: string
+              minLength: 1
+              maxLength: 160
+            - type: "null"
+        configured:
+          type: boolean
+    LegacyModel:
+      type: object
+      additionalProperties: false
+      required: [id, label, tier]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 160
+        label:
+          type: string
+          minLength: 1
+          maxLength: 120
+        tier:
+          type: string
+          minLength: 1
+          maxLength: 120
+    LegacyKernel:
+      type: object
+      additionalProperties: false
+      required: [model, effort]
+      properties:
+        model:
+          oneOf:
+            - type: string
+              maxLength: 160
+            - type: "null"
+        effort:
+          oneOf:
+            - $ref: "#/components/schemas/Effort"
+            - type: "null"
+    AgentSettingsView:
+      type: object
+      additionalProperties: false
+      required:
+        - identity
+        - kernel
+        - availableModels
+        - availableEfforts
+        - defaults
+        - contractVersion
+        - revision
+        - chat
+        - runtime
+        - providers
+        - currentSelection
+      properties:
+        identity:
+          type: object
+          additionalProperties: true
+        kernel:
+          $ref: "#/components/schemas/LegacyKernel"
+        availableModels:
+          type: array
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/LegacyModel"
+        availableEfforts:
+          type: array
+          maxItems: 4
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/Effort"
+        defaults:
+          $ref: "#/components/schemas/LegacyKernel"
+        contractVersion:
+          type: integer
+          const: 2
+        revision:
+          type: integer
+          minimum: 0
+        chat:
+          description: Effective computer-wide Chat default; it MUST be identical to currentSelection.chat and never reflects a per-message override.
+          $ref: "#/components/schemas/ChatSelection"
+        runtime:
+          type: object
+          additionalProperties: false
+          required: [selected, options, transition]
+          properties:
+            selected:
+              $ref: "#/components/schemas/RuntimeId"
+            options:
+              type: array
+              minItems: 2
+              maxItems: 2
+              items:
+                $ref: "#/components/schemas/RuntimeDescriptor"
+            transition:
+              oneOf:
+                - type: object
+                  additionalProperties: false
+                  required: [from, to, state]
+                  properties:
+                    from:
+                      $ref: "#/components/schemas/RuntimeId"
+                    to:
+                      $ref: "#/components/schemas/RuntimeId"
+                    state:
+                      type: string
+                      enum: [validating, pausing, draining, activating, verifying, committing, rolling_back]
+                - type: "null"
+        providers:
+          type: array
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/Provider"
+        currentSelection:
+          type: object
+          additionalProperties: false
+          required: [chat, messaging]
+          properties:
+            chat:
+              description: Alias of the top-level chat field for grouped selection consumers; the two values MUST be identical.
+              $ref: "#/components/schemas/ChatSelection"
+            messaging:
+              $ref: "#/components/schemas/MessagingSelection"
+    AgentSettingsUpdate:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      dependentRequired:
+        runtime: [revision]
+        provider: [messagingModel, revision]
+        messagingModel: [provider, revision]
+        baseUrl: [provider, messagingModel, revision]
+      properties:
+        model:
+          type: string
+          minLength: 1
+          maxLength: 160
+        effort:
+          $ref: "#/components/schemas/Effort"
+        runtime:
+          $ref: "#/components/schemas/RuntimeId"
+        provider:
+          type: string
+          minLength: 1
+          maxLength: 80
+          pattern: "^[a-z0-9][a-z0-9_-]{0,79}$"
+        messagingModel:
+          type: string
+          minLength: 1
+          maxLength: 160
+        baseUrl:
+          type: string
+          format: uri
+          minLength: 8
+          maxLength: 2048
+        revision:
+          type: integer
+          minimum: 0
+    ProviderLoginAction:
+      type: object
+      additionalProperties: false
+      required: [kind, providerId, runtime]
+      properties:
+        kind:
+          type: string
+          const: open_setup_terminal
+        providerId:
+          type: string
+          minLength: 1
+          maxLength: 80
+        runtime:
+          $ref: "#/components/schemas/NullableRuntimeId"
+    SafeError:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum:
+            - unauthorized
+            - agent_config_invalid
+            - agent_config_conflict
+            - runtime_unavailable
+            - runtime_switch_failed
+            - authentication_required
+            - provider_setup_failed
+            - conversation_not_found
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SafeError"
+    SafeValidation:
+      description: Invalid bounded input
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SafeError"
+    SafeConflict:
+      description: Revision or runtime transition conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SafeError"
+    SafeUnavailable:
+      description: Optional runtime or setup service unavailable
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SafeError"
