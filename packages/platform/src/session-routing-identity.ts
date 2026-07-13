@@ -113,15 +113,23 @@ export function buildShellRouteCookie(handle: string): string {
   ].join('; ');
 }
 
-export function buildShellRuntimeSlotCookie(runtimeSlot: string): string {
+function buildRuntimeSlotCookie(runtimeSlot: string, maxAgeSeconds: number): string {
   return [
     `${SHELL_RUNTIME_SLOT_COOKIE}=${encodeURIComponent(runtimeSlot)}`,
     'Path=/',
     'HttpOnly',
     'Secure',
     'SameSite=None',
-    'Max-Age=600',
+    `Max-Age=${maxAgeSeconds}`,
   ].join('; ');
+}
+
+export function buildShellRuntimeSlotCookie(runtimeSlot: string): string {
+  return buildRuntimeSlotCookie(runtimeSlot, 10 * 60);
+}
+
+export function buildNativeAppRuntimeSlotCookie(runtimeSlot: string): string {
+  return buildRuntimeSlotCookie(runtimeSlot, 30 * 60);
 }
 
 export function readShellRuntimeSlotCookie(path: string, cookieHeader: string | undefined): string | null {

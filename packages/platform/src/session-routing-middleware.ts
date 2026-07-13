@@ -76,6 +76,7 @@ import {
 } from './session-routing-proxy.js';
 import {
   buildAppRouteCookie,
+  buildNativeAppRuntimeSlotCookie,
   buildShellRouteCookie,
   buildShellRuntimeSlotCookie,
   hasExplicitVmNativeAppStreamCapability,
@@ -151,6 +152,14 @@ function applyAuthPageHeaders(
 
 function isNativeAppRoute(path: string): boolean {
   return path === '/api/native-apps' || path.startsWith('/api/native-apps/');
+}
+
+function nativeAppStreamUnavailable(
+  c: Context,
+  applyNoStoreHeaders: (context: Context) => void,
+): Response {
+  applyNoStoreHeaders(c);
+  return c.json({ error: 'Native app stream unavailable' }, 404);
 }
 
 export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlewareOpts): MiddlewareHandler {
@@ -492,12 +501,19 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         explicitVmRoute.handle,
         explicitVmRuntimeSlot,
       );
+      const isCredentiallessNativeStreamCapability =
+        explicitVmRouteHasNativeAppStreamCapability && identity.source === 'static-route';
       if (!machine || (identity.userId && machine.clerkUserId !== identity.userId)) {
+        if (isCredentiallessNativeStreamCapability) {
+          return nativeAppStreamUnavailable(c, applyNoStoreHeaders);
+        }
         applyNoStoreHeaders(c);
         return c.text('Matrix OS computer unavailable', 404);
       }
-      const entitlement = await getRuntimeEntitlementDecisionForUser(db, machine.clerkUserId, appEnv);
-      if (
+      const entitlement = isCredentiallessNativeStreamCapability
+        ? null
+        : await getRuntimeEntitlementDecisionForUser(db, machine.clerkUserId, appEnv);
+      if (entitlement &&
         !entitlement.runtimeProxyAllowed &&
         !shouldProxyShellForBillingGate({
           isAppDomain,
@@ -509,6 +525,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         return c.json({ error: 'Paid beta access required' }, 402);
       }
       if (machine.status !== 'running') {
+        if (isCredentiallessNativeStreamCapability) {
+          return nativeAppStreamUnavailable(c, applyNoStoreHeaders);
+        }
         if (isGatewayPath) {
           applyNoStoreHeaders(c);
           return c.json({
@@ -522,6 +541,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
       const targetUrl = buildCustomerVpsProxyUrl(machine, explicitVmRoute.upstreamPath, qs);
       if (!targetUrl) {
+        if (isCredentiallessNativeStreamCapability) {
+          return nativeAppStreamUnavailable(c, applyNoStoreHeaders);
+        }
         return c.json({ error: 'VPS unreachable' }, 502);
       }
       const headers = new Headers();
@@ -569,11 +591,21 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           dispatcher: customerVpsProxyDispatcher,
         } as RequestInit & { dispatcher: Agent });
 
+        if (isCredentiallessNativeStreamCapability && upstream.status >= 400) {
+          await upstream.body?.cancel();
+          return nativeAppStreamUnavailable(c, applyNoStoreHeaders);
+        }
+
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         applySandboxedAppAssetCorsHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.header('origin'));
         applyAppDomainRuntimeAssetCacheHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.url);
         responseHeaders.append('set-cookie', buildShellRouteCookie(machine.handle));
-        responseHeaders.append('set-cookie', buildShellRuntimeSlotCookie(machine.runtimeSlot));
+        responseHeaders.append(
+          'set-cookie',
+          isCredentiallessNativeStreamCapability
+            ? buildNativeAppRuntimeSlotCookie(machine.runtimeSlot)
+            : buildShellRuntimeSlotCookie(machine.runtimeSlot),
+        );
         return await buildAppDomainProxyResponse({
           upstream,
           responseHeaders,
@@ -585,6 +617,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         });
       } catch (err: unknown) {
         logRouteError('app-domain explicit vps proxy', err);
+        if (isCredentiallessNativeStreamCapability) {
+          return nativeAppStreamUnavailable(c, applyNoStoreHeaders);
+        }
         return c.json({ error: 'VPS unreachable' }, 502);
       }
     }
@@ -753,6 +788,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         }
         if (shouldPersistShellRoute) {
           responseHeaders.append('set-cookie', buildShellRouteCookie(runningMachine.handle));
+        }
+        if (isNativeAppRoute(path)) {
+          responseHeaders.append('set-cookie', buildNativeAppRuntimeSlotCookie(runningMachine.runtimeSlot));
+        } else if (shouldPersistShellRoute) {
           responseHeaders.append('set-cookie', buildShellRuntimeSlotCookie(runningMachine.runtimeSlot));
         }
         if (isCodeDomain && platformJwtSecret) {
