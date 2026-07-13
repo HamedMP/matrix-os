@@ -30,9 +30,10 @@ export interface AgentRuntimeSettingsSnapshot {
   messaging: AgentMessagingSelection;
 }
 
-export type AgentRuntimeSource = (
-  signal: AbortSignal,
-) => Promise<AgentRuntimeSettingsSnapshot>;
+export interface AgentRuntimeSource {
+  (signal: AbortSignal): Promise<AgentRuntimeSettingsSnapshot>;
+  invalidate?: () => void;
+}
 
 export async function readRuntimeSnapshot(
   source: AgentRuntimeSource,

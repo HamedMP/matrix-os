@@ -4,7 +4,10 @@ import {
   type AgentProviderDescriptor,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
-import type { AgentRuntimeSettingsSnapshot } from "./service.js";
+import type {
+  AgentRuntimeSettingsSnapshot,
+  AgentRuntimeSource,
+} from "./service.js";
 
 export type HermesJsonReader = (
   path: string,
@@ -241,13 +244,18 @@ export function createHermesRuntimeSource(
     console.warn("[agent-config] Hermes settings probe failed:", errorName);
   });
   let cached: { value: AgentRuntimeSettingsSnapshot; expiresAt: number } | null = null;
-  let inFlight: Promise<AgentRuntimeSettingsSnapshot> | null = null;
+  let generation = 0;
+  let inFlight: {
+    generation: number;
+    promise: Promise<AgentRuntimeSettingsSnapshot>;
+  } | null = null;
 
-  return async (signal: AbortSignal): Promise<AgentRuntimeSettingsSnapshot> => {
+  const source: AgentRuntimeSource = async (signal) => {
     signal.throwIfAborted();
     if (cached !== null && cached.expiresAt > now()) return cached.value;
-    if (inFlight === null) {
-      inFlight = Promise.all([
+    if (inFlight === null || inFlight.generation !== generation) {
+      const requestGeneration = generation;
+      const promise = Promise.all([
         readJson("/api/status", signal),
         readJson("/api/model/options", signal),
       ]).then(([status, modelOptions]) => {
@@ -259,14 +267,22 @@ export function createHermesRuntimeSource(
         logWarning(err instanceof Error ? err.name : "UnknownError");
         return unavailableHermesRuntimeSnapshot();
       }).then((value) => {
-        cached = { value, expiresAt: now() + cacheTtlMs };
+        if (requestGeneration === generation) {
+          cached = { value, expiresAt: now() + cacheTtlMs };
+        }
         return value;
       }).finally(() => {
-        inFlight = null;
+        if (inFlight?.generation === requestGeneration) inFlight = null;
       });
+      inFlight = { generation: requestGeneration, promise };
     }
-    return inFlight;
+    return inFlight.promise;
   };
+  source.invalidate = () => {
+    generation += 1;
+    cached = null;
+  };
+  return source;
 }
 
 function unavailableHermesRuntimeSnapshot(): AgentRuntimeSettingsSnapshot {

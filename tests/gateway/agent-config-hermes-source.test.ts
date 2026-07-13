@@ -146,6 +146,23 @@ describe("Hermes agent settings source", () => {
     expect(readJson).toHaveBeenCalledTimes(4);
   });
 
+  it("invalidates a cached inventory after a successful configuration mutation", async () => {
+    const readJson = vi.fn(async (path: string) => path === "/api/status"
+      ? { gateway_running: true }
+      : { provider: "", model: "", providers: [] });
+    const source = createHermesRuntimeSource(readJson, { cacheTtlMs: 5_000 });
+    const signal = new AbortController().signal;
+
+    await source(signal);
+    await source(signal);
+    expect(readJson).toHaveBeenCalledTimes(2);
+
+    source.invalidate();
+    await source(signal);
+
+    expect(readJson).toHaveBeenCalledTimes(4);
+  });
+
   it("negative-caches an unreachable runtime without logging raw errors", async () => {
     const canary = "sk-secret-upstream-canary";
     const readJson = vi.fn(async () => {
