@@ -246,7 +246,7 @@ describe("coding agent workspace provider", () => {
         runtimePreference: "zellij",
         sessionId: expect.stringMatching(/^sess_[A-Za-z0-9_-]+$/),
         mode: "default",
-        approvalPolicy: "on_request",
+        approvalPolicy: "never",
         sandboxMode: "workspace_write",
       }),
     });
