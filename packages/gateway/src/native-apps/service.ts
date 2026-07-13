@@ -316,7 +316,7 @@ export class NativeAppSessionService {
   inspectSession(ownerId: string, sessionId: string): NativeAppSession | null {
     const record = this.getOwnedRecord(ownerId, sessionId);
     if (!record) return null;
-    record.lastTouched = this.now();
+    this.touchRecord(record);
     return sessionView(record);
   }
 
@@ -333,7 +333,7 @@ export class NativeAppSessionService {
   getStreamTarget(sessionId: string, streamToken: string): { port: number } | null {
     const record = this.sessions.get(sessionId);
     if (!record || !timingSafeStringEquals(streamToken, record.streamToken) || record.status !== "running") return null;
-    record.lastTouched = this.now();
+    this.touchRecord(record);
     return { port: record.port };
   }
 
@@ -484,6 +484,12 @@ export class NativeAppSessionService {
     const record = this.sessions.get(sessionId);
     if (!record || record.ownerId !== ownerId) return null;
     return record;
+  }
+
+  private touchRecord(record: NativeAppSessionRecord): void {
+    const now = this.now();
+    record.lastTouched = now;
+    record.expiresAt = now + this.sessionTtlMs;
   }
 
   private async evictLeastRecentlyTouched(): Promise<void> {

@@ -307,6 +307,23 @@ describe("NativeAppSessionService", () => {
     expect(children[0].kill).toHaveBeenCalledWith("SIGTERM");
   });
 
+  it("extends the session lease while the native stream remains active", async () => {
+    let now = 1_000;
+    const { service } = createService({
+      now: () => now,
+      sessionTtlMs: 10,
+    });
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    const token = service.streamCookieValue(session.id);
+
+    now = 1_005;
+    expect(service.getStreamTarget(session.id, token ?? "")).toEqual({ port: 46000 });
+    now = 1_011;
+    await service.cleanupExpiredSessions();
+
+    expect(service.inspectSession("alice", session.id)?.status).toBe("running");
+  });
+
   it("returns a generic unavailable error when xpra is missing", async () => {
     const { service } = createService({
       commandExists: vi.fn(async () => false),

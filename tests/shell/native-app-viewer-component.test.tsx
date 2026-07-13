@@ -97,4 +97,48 @@ describe("NativeAppViewer", () => {
       );
     });
   });
+
+  it("preserves a native session across an immediate renderer remount", async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl === "/api/native-apps/xcalc/sessions" && init?.method === "POST") {
+        return new Response(JSON.stringify({
+          session: {
+            id: "session_dddddddddddddddddddddddd",
+            appId: "xcalc",
+            status: "running",
+            streamUrl: "/api/native-apps/sessions/session_dddddddddddddddddddddddd/stream/",
+          },
+        }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (requestUrl === "/api/native-apps/sessions/session_dddddddddddddddddddddddd" && init?.method === "DELETE") {
+        return new Response(null, { status: 200 });
+      }
+      return new Response(JSON.stringify({ error: "not found" }), { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    Object.defineProperty(window, "fetch", {
+      configurable: true,
+      value: fetchMock,
+    });
+
+    const canvasRenderer = render(<NativeAppViewer appId="xcalc" windowId="win-preserved" />);
+    await screen.findByTitle("xcalc native app");
+    canvasRenderer.unmount();
+
+    const desktopRenderer = render(<NativeAppViewer appId="xcalc" windowId="win-preserved" />);
+    await screen.findByTitle("xcalc native app");
+    await Promise.resolve();
+
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(0);
+
+    desktopRenderer.unmount();
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
+    });
+  });
 });

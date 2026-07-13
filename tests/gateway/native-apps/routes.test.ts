@@ -165,6 +165,30 @@ describe("native app routes", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("makes the xpra worker probe fall back inside an opaque iframe sandbox", async () => {
+    const { app } = createApp("alice");
+    const launch = await app.request("/api/native-apps/xterm/sessions", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: { "Content-Type": "application/json" },
+    });
+    const body = await launch.json() as { session: { streamUrl: string } };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      '<html><head><script src="js/Client.js"></script></head><body></body></html>',
+      { status: 200, headers: { "Content-Type": "text/html" } },
+    )));
+
+    const stream = await app.request(body.session.streamUrl, {
+      headers: { Accept: "text/html" },
+    });
+    const html = await stream.text();
+
+    expect(stream.status).toBe(200);
+    expect(html).toContain("matrix-xpra-worker-fallback");
+    expect(html.indexOf("matrix-xpra-worker-fallback")).toBeLessThan(html.indexOf('src="js/Client.js"'));
+    expect(html).not.toContain("allow-same-origin");
+  });
+
   it("authenticates opaque iframe assets through the stream capability path", async () => {
     const { app, service } = createApp("alice");
     const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
@@ -271,6 +295,29 @@ describe("native app routes", () => {
       method: "DELETE",
     });
     expect(terminate.status).toBe(404);
+  });
+
+  it("clears the scoped stream cookie when its session terminates", async () => {
+    const { app } = createApp("alice");
+    await app.request("/api/native-apps/xterm/sessions", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const response = await app.request(
+      "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa",
+      { method: "DELETE" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toContain(
+      "matrix_native_session__session_aaaaaaaaaaaaaaaaaaaaaaaa=",
+    );
+    expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+    expect(response.headers.get("set-cookie")).toContain(
+      "Path=/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/",
+    );
   });
 
   it("does not forward Matrix credentials to the xpra stream proxy", async () => {

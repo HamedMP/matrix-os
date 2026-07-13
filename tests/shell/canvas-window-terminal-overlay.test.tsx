@@ -388,12 +388,12 @@ describe("CanvasWindow terminal interactivity", () => {
     expect(container.querySelector("[data-canvas-interaction-overlay]")).toBeTruthy();
   });
 
-  it("does not mount NativeAppViewer when Canvas defers offscreen native app content", () => {
+  it("keeps NativeAppViewer mounted when Canvas defers offscreen native app content", () => {
     const { container } = render(<CanvasWindow win={nativeWindow} deferAppContent />);
 
-    expect(nativeAppViewerRender).not.toHaveBeenCalled();
-    expect(screen.queryByTitle("Native app stream")).toBeNull();
-    expect(screen.getByLabelText("Xterm will load when visible")).toBeTruthy();
+    expect(nativeAppViewerRender).toHaveBeenCalledWith({ appId: "xterm", windowId: "win-native" });
+    expect(screen.getByTitle("Native app stream")).toBeTruthy();
+    expect(screen.queryByLabelText("Xterm will load when visible")).toBeNull();
     expect(container.querySelector("[data-canvas-interaction-overlay]")).toBeTruthy();
   });
 });

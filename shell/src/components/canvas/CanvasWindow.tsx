@@ -648,6 +648,8 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
         </div>
       ) : win.path === "__activity-monitor__" ? (
         <ActivityMonitorApp />
+      ) : nativeAppId ? (
+        <NativeAppViewer appId={nativeAppId} windowId={win.id} />
       ) : deferAppContent ? (
         <div
           className="h-full w-full flex items-center justify-center bg-card"
@@ -662,8 +664,6 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
             </span>
           )}
         </div>
-      ) : nativeAppId ? (
-        <NativeAppViewer appId={nativeAppId} windowId={win.id} />
       ) : (
         <AppViewer path={win.path} />
       )}

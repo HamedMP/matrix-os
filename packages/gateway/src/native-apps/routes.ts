@@ -1,6 +1,6 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { generateCookie, getCookie, setCookie } from "hono/cookie";
+import { deleteCookie, generateCookie, getCookie, setCookie } from "hono/cookie";
 import { z } from "zod/v4";
 import {
   isRequestPrincipalError,
@@ -45,6 +45,30 @@ const LaunchBodySchema = z.object({
   height: z.number().int().min(240).max(2160).optional(),
 }).strict();
 const NATIVE_STREAM_TOKEN_PARAM = "nativeStreamToken";
+const XPRA_WORKER_FALLBACK_MARKER = "matrix-xpra-worker-fallback";
+const XPRA_WORKER_FALLBACK_SCRIPT = `<script id="${XPRA_WORKER_FALLBACK_MARKER}">
+(() => {
+  const NativeWorker = window.Worker;
+  if (!NativeWorker) return;
+  window.Worker = function MatrixXpraWorker(url, options) {
+    try {
+      return new NativeWorker(url, options);
+    } catch (error) {
+      if (!String(url).endsWith("js/lib/wsworker_check.js")) throw error;
+      let messageListener = null;
+      return {
+        addEventListener(type, listener) {
+          if (type === "message") messageListener = listener;
+        },
+        postMessage() {
+          queueMicrotask(() => messageListener?.({ data: { result: false } }));
+        },
+        terminate() {},
+      };
+    }
+  };
+})();
+</script>`;
 
 export interface NativeAppRoutesOptions {
   service: NativeAppSessionService;
@@ -185,6 +209,10 @@ function setNativeStreamCookie(c: Context, service: NativeAppSessionService, ses
   setCookie(c, service.streamCookieName(sessionId), streamToken, nativeStreamCookieOptions(c, sessionId));
 }
 
+function clearNativeStreamCookie(c: Context, service: NativeAppSessionService, sessionId: string): void {
+  deleteCookie(c, service.streamCookieName(sessionId), nativeStreamCookieOptions(c, sessionId));
+}
+
 function sanitizeProxyHeaders(headers: Headers): Headers {
   const out = new Headers(headers);
   for (const header of HOP_BY_HOP) out.delete(header);
@@ -284,6 +312,28 @@ async function readBoundedStreamResponseBody(response: Response): Promise<Uint8A
   return body;
 }
 
+function injectXpraWorkerFallback(
+  body: Uint8Array<ArrayBuffer> | null,
+  upstreamPath: string,
+  contentType: string | null,
+): Uint8Array<ArrayBuffer> | null {
+  if (
+    !body
+    || (upstreamPath !== "/" && upstreamPath !== "/index.html")
+    || !contentType?.toLowerCase().includes("text/html")
+  ) {
+    return body;
+  }
+  const html = new TextDecoder().decode(body);
+  if (html.includes(XPRA_WORKER_FALLBACK_MARKER)) return body;
+  const headMatch = /<head(?:\s[^>]*)?>/i.exec(html);
+  if (!headMatch) return body;
+  const insertAt = headMatch.index + headMatch[0].length;
+  return new TextEncoder().encode(
+    `${html.slice(0, insertAt)}${XPRA_WORKER_FALLBACK_SCRIPT}${html.slice(insertAt)}`,
+  );
+}
+
 async function proxyStreamRequest(c: Context, service: NativeAppSessionService): Promise<Response> {
   const parsed = NativeSessionIdSchema.safeParse(c.req.param("sessionId"));
   if (!parsed.success) return c.json({ error: "Invalid request" }, 400);
@@ -314,7 +364,12 @@ async function proxyStreamRequest(c: Context, service: NativeAppSessionService):
     signal: AbortSignal.timeout(STREAM_FETCH_TIMEOUT_MS),
   });
   const headers = sanitizeProxyHeaders(response.headers);
-  const body = await readBoundedStreamResponseBody(response);
+  const bufferedBody = await readBoundedStreamResponseBody(response);
+  const body = injectXpraWorkerFallback(
+    bufferedBody,
+    requestPath.upstreamPath,
+    response.headers.get("content-type"),
+  );
   const responseToken = requestPath.capabilityToken ?? bootstrapToken;
   if (responseToken) {
     headers.append("Set-Cookie", nativeStreamCookieHeader(c, service, sessionId, responseToken));
@@ -470,6 +525,7 @@ export function createNativeAppRoutes(options: NativeAppRoutesOptions) {
       const sessionId = NativeSessionIdSchema.parse(c.req.param("sessionId"));
       const ownerId = readPrincipal(c);
       const session = await service.terminateSession(ownerId, sessionId);
+      clearNativeStreamCookie(c, service, sessionId);
       return c.json({ session });
     } catch (err) {
       return mapError(c, err);
