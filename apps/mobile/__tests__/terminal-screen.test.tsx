@@ -49,6 +49,7 @@ jest.mock("expo-router", () => ({
 
 jest.mock("expo-status-bar", () => ({
   setStatusBarStyle: jest.fn(),
+  StatusBar: () => null,
 }));
 
 jest.mock("react-native-safe-area-context", () => ({
