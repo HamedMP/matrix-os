@@ -1,0 +1,13 @@
+{
+  "packageName": "@openai/codex",
+  "minimumVersion": "0.144.0",
+  "latestVerifiedVersion": "0.144.3",
+  "experimental": true,
+  "schemaSha256": "85ea836927d6cfdd3c68a9bda17dba48d2573bbc282ab2d5775a5005e40bc9c3",
+  "requiredServerMethods": [
+    "item/commandExecution/requestApproval",
+    "item/fileChange/requestApproval",
+    "item/tool/requestUserInput",
+    "item/permissions/requestApproval"
+  ]
+}

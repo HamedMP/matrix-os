@@ -92,6 +92,14 @@ Provider-specific behavior belongs behind the gateway provider adapter interface
 - Use foreground terminal setup actions when user interaction is required.
 - Avoid provider-specific branches in shell components unless the shared contract explicitly exposes safe metadata.
 
+Provider executable discovery does not imply protocol compatibility. Codex
+support uses checked-in exec JSONL and app-server manifests with one bounded
+installed-version range. The daily `Codex Provider Contracts` workflow resolves
+the latest published package, verifies both protocol digests, and fails on
+version or schema drift. Runtime capabilities must remain disabled for any
+installed version outside the verified range; do not silently fall back to raw
+terminal parsing for approvals or structured input.
+
 The gateway provider registry owns shell-facing provider projections. It validates the bounded configured adapter set at startup, validates and bounds owner-scoped credential responses, combines adapter metadata with that credential state, and keeps credential-known non-system providers visible even before an execution adapter is registered. Credential-only projections preserve coarse install/auth state but remain unavailable for runs until an adapter exists. Credential-source failures fail closed to unavailable/unknown adapter projections without running setup or health reads. Adapter reads receive timeout signals, and only coarse health booleans enter a capped owner/provider TTL cache with LRU eviction. Invalid summaries or setup actions degrade to generic safe state; raw health output and credentials never enter the runtime summary.
 
 Workspace provider projections are configured with the bounded, comma-separated `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` setting. The supported rollout values are `claude` and `codex`; duplicates, unknown values, empty entries, and more than two entries fail startup with a generic configuration error. Customer host bundles enable the executable Codex adapter through the legacy `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1` setting so thread routes are present on a fresh runtime; provider readiness still fails closed until Codex is installed and connected. Claude remains registry-visible but unavailable for thread creation until its launcher passes the required sandbox smoke gate. Registry-only adapters also reject direct execution so later wiring changes fail closed. An explicitly empty provider list disables workspace providers even when the legacy setting is present.

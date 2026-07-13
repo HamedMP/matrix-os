@@ -1405,6 +1405,7 @@ composer turns, and lifecycle actions.
 - [ ] B28-010 Add safe setup/switch/recovery tests and publish provider-control capabilities to the shell handoff.
 - [ ] B28-011 Write a table-driven provider conformance harness covering install/auth health, create, normalized stream, abort, restart, safe errors, capability truthfulness, timeout, and cleanup for every first-release adapter.
 - [x] B28-011a Add a strict, forward-compatible Codex exec JSONL normalizer, durable idempotent provider-event ingestion, exact verified-version/schema metadata, and a scheduled published-version drift check.
+- [x] B28-011b Pin the Codex experimental app-server schema and required approval/input request methods to the same installed-version range as exec JSONL, and make the scheduled latest-version check fail on either protocol drift.
 - [ ] B28-012 Implement and real-process test first-class adapters for Claude Code, Codex, Pi, and OpenCode plus a validated custom ACP-compatible adapter family; keep credentials and native resume identities server-side.
 - [x] B28-012a Wire the Codex workspace runner to the normalized provider-event ingestion contract and prove assistant/tool/file events through deterministic replay, event-sink publication, and a real child-process test. Disposable-runtime smoke remains in B34-001.
 - [ ] B28-013 Implement capability-gated compatibility adapters for Kiro, GitHub Copilot CLI, Qwen Code, Kimi CLI, Kilo Code, and Auggie without generic shell-command escape hatches.
