@@ -38,7 +38,7 @@ export function FileViewer({
   const isImage = isImageFile(entry.name);
   // Shared cancellation flag so both the mount effect and manual retry stop
   // dispatching once this view unmounts.
-  const cancelledRef = useRef(false);
+  const requestIdRef = useRef(0);
 
   // Resolves the preview to its terminal state. Never dispatches "loading"
   // itself, so the mount effect stays cascading-render free; the initial state
@@ -67,17 +67,23 @@ export function FileViewer({
     [client, path, isImage],
   );
 
+  // Per-request token: each load (mount or retry) invalidates every earlier
+  // in-flight resolution, so a retry cannot un-cancel a previous call and let
+  // its stale result dispatch over the fresh one.
   useEffect(() => {
-    cancelledRef.current = false;
-    void resolvePreview(() => cancelledRef.current);
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    void resolvePreview(() => requestIdRef.current !== requestId);
     return () => {
-      cancelledRef.current = true;
+      requestIdRef.current += 1;
     };
   }, [resolvePreview]);
 
   const handleRetry = useCallback(() => {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     dispatch({ status: "loading" });
-    void resolvePreview(() => cancelledRef.current);
+    void resolvePreview(() => requestIdRef.current !== requestId);
   }, [resolvePreview]);
 
   const sizeLabel = formatFileSize(entry.size);
