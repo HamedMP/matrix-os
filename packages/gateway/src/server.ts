@@ -180,6 +180,7 @@ import {
 } from "./plugins/index.js";
 import { createSettingsRoutes } from "./routes/settings.js";
 import { createHermesRoutes, validateHermesDashboardUrl } from "./routes/hermes.js";
+import { createConversationRoutes } from "./routes/conversations.js";
 import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
 import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
 import { createPlatformR2Client } from "./sync/platform-r2-client.js";
@@ -2786,7 +2787,6 @@ export async function createGateway(config: GatewayConfig) {
   const apiMessageBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
   const bridgeDataBodyLimit = bodyLimit({ maxSize: 1_000_000 });
-  const conversationBodyLimit = bodyLimit({ maxSize: 4096 });
   const layoutBodyLimit = bodyLimit({ maxSize: 100_000 });
   const canvasBodyLimit = bodyLimit({ maxSize: 100_000 });
   const taskBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
@@ -3334,37 +3334,7 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  app.get("/api/conversations", (c) => {
-    return c.json(conversations.list());
-  });
-
-  app.post("/api/conversations", conversationBodyLimit, async (c) => {
-    let body: { channel?: string } = {};
-    try {
-      body = await c.req.json<{ channel?: string }>();
-    } catch (err: unknown) {
-      if (!(err instanceof SyntaxError)) {
-        console.error("[gateway] Failed to read conversation create body:", err);
-      }
-    }
-    const id = conversations.create(body.channel);
-    return c.json({ id }, 201);
-  });
-
-  app.delete("/api/conversations/:id", (c) => {
-    const id = c.req.param("id");
-    const deleted = conversations.delete(id);
-    if (!deleted) return c.json({ error: "Not found" }, 404);
-    return c.json({ ok: true });
-  });
-
-  app.get("/api/conversations/:id/search", (c) => {
-    const query = c.req.query("q");
-    if (!query) return c.json({ error: "q parameter required" }, 400);
-    const limit = c.req.query("limit") ? Number(c.req.query("limit")) : undefined;
-    const results = conversations.search(query, { limit });
-    return c.json(results);
-  });
+  app.route("/api/conversations", createConversationRoutes(conversations));
 
   app.get("/api/layout", (c) => {
     const layoutPath = join(homePath, "system/layout.json");

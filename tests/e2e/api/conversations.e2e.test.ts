@@ -1,3 +1,5 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { startTestGateway, type TestGateway } from "../fixtures/gateway.js";
 
@@ -56,6 +58,41 @@ describe("E2E: Conversation Management", () => {
       expect(conv).toHaveProperty("createdAt");
       expect(conv).toHaveProperty("updatedAt");
     }
+  });
+
+  it("GET /api/conversations/:id returns the stored transcript in order", async () => {
+    const conversation = {
+      id: "mobile-session-1",
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_200,
+      messages: [
+        { role: "user", content: "first", timestamp: 1_700_000_000_100 },
+        { role: "assistant", content: "second", timestamp: 1_700_000_000_200 },
+      ],
+    };
+    await writeFile(
+      join(gw.homePath, "system", "conversations", `${conversation.id}.json`),
+      JSON.stringify(conversation),
+    );
+
+    const res = await fetch(`${gw.url}/api/conversations/${conversation.id}`);
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual(conversation);
+  });
+
+  it("GET /api/conversations/:id returns 404 for an unknown transcript", async () => {
+    const res = await fetch(`${gw.url}/api/conversations/missing-session`);
+
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: "conversation_not_found" });
+  });
+
+  it("GET /api/conversations/:id rejects unsafe identifiers", async () => {
+    const res = await fetch(`${gw.url}/api/conversations/unsafe%24id`);
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "Invalid conversation id" });
   });
 
   it("DELETE /api/conversations/:id removes a conversation", async () => {
