@@ -68,6 +68,9 @@ function randomShellSuffix(): string {
 
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
+/** Canonical hosted platform origin; `/vm/<handle>` computer routes share it. */
+const HOSTED_PLATFORM_ORIGIN = "https://app.matrix-os.com";
+
 export type ServerMessage =
   | { type: "kernel:init"; sessionId: string }
   | { type: "kernel:text"; text: string }
@@ -342,15 +345,27 @@ export class GatewayClient {
     return `${url}${url.includes("?") ? "&" : "?"}${this.baseQuery}`;
   }
 
+  /**
+   * Hosted computers route HTTP through `/vm/<handle>` path prefixes, but the
+   * platform terminates WebSocket upgrades (and issues ws tokens) on the
+   * canonical origin, resolving the machine from identity + `runtime` query.
+   * Returns the platform origin for hosted routed bases, null otherwise.
+   */
+  private get hostedPlatformOrigin(): string | null {
+    return this.baseUrl.startsWith(`${HOSTED_PLATFORM_ORIGIN}/vm/`) ? HOSTED_PLATFORM_ORIGIN : null;
+  }
+
+  private get wsBaseUrl(): string {
+    return (this.hostedPlatformOrigin ?? this.baseUrl).replace(/^http/, "ws");
+  }
+
   get wsUrl(): string {
-    const url = this.baseUrl.replace(/^http/, "ws");
-    return this.withBaseQuery(`${url}/ws`);
+    return this.withBaseQuery(`${this.wsBaseUrl}/ws`);
   }
 
   get terminalWsUrl(): string {
-    const url = this.baseUrl.replace(/^http/, "ws");
     // Shell-sessions endpoint: attach by session name passed in the query.
-    return this.withBaseQuery(`${url}/ws/terminal/session`);
+    return this.withBaseQuery(`${this.wsBaseUrl}/ws/terminal/session`);
   }
 
   setWebSocketToken(token: string | null, expiresAt?: number): void {
@@ -520,7 +535,17 @@ export class GatewayClient {
   }
 
   private async fetchGateway(path: string, init: RequestInit = {}): Promise<Response> {
-    return fetch(this.withBaseQuery(`${this.httpUrl}${path}`), {
+    return this.fetchAbsolute(this.withBaseQuery(`${this.httpUrl}${path}`), init);
+  }
+
+  /** Platform-owned routes (e.g. ws-token) live on the canonical origin, not the `/vm/` prefix. */
+  private async fetchPlatform(path: string, init: RequestInit = {}): Promise<Response> {
+    const base = this.hostedPlatformOrigin ?? this.httpUrl;
+    return this.fetchAbsolute(this.withBaseQuery(`${base}${path}`), init);
+  }
+
+  private async fetchAbsolute(url: string, init: RequestInit = {}): Promise<Response> {
+    return fetch(url, {
       ...init,
       headers: {
         ...(await this.authHeaders()),
@@ -576,7 +601,7 @@ export class GatewayClient {
     if (parsedCursor?.success) params.set("cursor", parsedCursor.data);
     const query = params.toString();
     const wsUrl = this.withBaseQuery(
-      `${this.baseUrl.replace(/^http/, "ws")}/ws/coding-agents/thread/${encodeURIComponent(parsedThreadId.data)}${query ? `?${query}` : ""}`,
+      `${this.wsBaseUrl}/ws/coding-agents/thread/${encodeURIComponent(parsedThreadId.data)}${query ? `?${query}` : ""}`,
     );
     const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
     const authorization = formatAuthorizationHeader(this.token);
@@ -660,7 +685,7 @@ export class GatewayClient {
 
   async getWsToken(): Promise<string | null> {
     try {
-      const res = await this.fetchGateway("/api/auth/ws-token");
+      const res = await this.fetchPlatform("/api/auth/ws-token");
       if (!res.ok) {
         logGatewayStatusWarning("/api/auth/ws-token unavailable", res.status);
         return null;

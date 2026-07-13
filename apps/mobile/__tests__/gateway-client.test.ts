@@ -180,7 +180,6 @@ describe("GatewayClient", () => {
     const client = new GatewayClient("https://app.matrix-os.com/vm/pr-919?runtime=pr-919");
 
     expect(client.httpUrl).toBe("https://app.matrix-os.com/vm/pr-919");
-    expect(client.wsUrl).toBe("wss://app.matrix-os.com/vm/pr-919/ws?runtime=pr-919");
 
     await client.healthCheck();
     expect(fetchMock).toHaveBeenCalledWith(
@@ -196,11 +195,37 @@ describe("GatewayClient", () => {
     const client = new GatewayClient("https://app.matrix-os.com/vm/neo");
 
     expect(client.httpUrl).toBe("https://app.matrix-os.com/vm/neo");
-    expect(client.wsUrl).toBe("wss://app.matrix-os.com/vm/neo/ws");
 
     await client.healthCheck();
     expect(fetchMock).toHaveBeenCalledWith(
       "https://app.matrix-os.com/vm/neo/health",
+      expect.anything(),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("routes websockets for hosted computers through the canonical platform origin", () => {
+    const routed = new GatewayClient("https://app.matrix-os.com/vm/pr-919?runtime=pr-919");
+    expect(routed.wsUrl).toBe("wss://app.matrix-os.com/ws?runtime=pr-919");
+    expect(routed.terminalWsUrl).toBe("wss://app.matrix-os.com/ws/terminal/session?runtime=pr-919");
+
+    const primary = new GatewayClient("https://app.matrix-os.com/vm/neo");
+    expect(primary.wsUrl).toBe("wss://app.matrix-os.com/ws");
+
+    const selfHosted = new GatewayClient("https://matrix.example.test");
+    expect(selfHosted.wsUrl).toBe("wss://matrix.example.test/ws");
+  });
+
+  it("fetches the websocket token from the platform origin for hosted computers", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(
+      jsonResponse({ token: "jwt-token", expiresAt: Date.now() + 60_000 }),
+    );
+    const client = new GatewayClient("https://app.matrix-os.com/vm/pr-919?runtime=pr-919");
+
+    await client.getWsToken();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/api/auth/ws-token?runtime=pr-919",
       expect.anything(),
     );
 
