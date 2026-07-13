@@ -16,6 +16,7 @@ describe("shell Next configuration", () => {
     expect(configured.resolve.extensionAlias).toEqual({
       ".mjs": [".mts", ".mjs"],
       ".js": [".ts", ".tsx", ".js"],
+      ".jsx": [".tsx", ".jsx"],
     });
   });
 });
