@@ -42,9 +42,11 @@ import {
 } from "./thread-relations.js";
 import {
   CodingAgentProviderResumeStateSchema,
+  parseCodingAgentProviderEventBatch,
   parseCodingAgentProviderEvents,
   parseCodingAgentProviderRunResult,
   type CodingAgentProviderAdapter,
+  type CodingAgentProviderEventBatch,
   type CodingAgentProviderResumeState,
 } from "./provider-adapter.js";
 import { createCodingAgentTurnDispatcher } from "./turn-dispatcher.js";
@@ -182,6 +184,11 @@ export interface CodingAgentThreadStore {
     validTaskIds: readonly string[],
   ): Promise<CodingAgentProjectThreadProjection>;
   getThread(principal: RequestPrincipal, threadId: string, cursor?: string): Promise<AgentThreadSnapshot>;
+  ingestProviderEvents(
+    principal: RequestPrincipal,
+    threadId: string,
+    batch: CodingAgentProviderEventBatch,
+  ): Promise<AgentThreadSnapshot>;
   abortThread(principal: RequestPrincipal, threadId: string, clientRequestId: string): Promise<AgentThreadSnapshot>;
   submitApproval(
     principal: RequestPrincipal,
@@ -1327,6 +1334,51 @@ export function createCodingAgentThreadStore(
       const thread = state.threads.find((candidate) => candidate.ownerId === principal.userId && candidate.id === threadId);
       if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
       return snapshotFor(thread, state.events, cursor);
+    },
+    async ingestProviderEvents(principal, threadId, batch) {
+      const parsed = parseCodingAgentProviderEventBatch(batch, threadId);
+      const result = await mutate(async (state) => {
+        const thread = state.threads.find((candidate) =>
+          candidate.ownerId === principal.userId && candidate.id === threadId
+        );
+        if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
+        const existingEventIds = new Set(state.events.map((storedEvent) => storedEvent.eventId));
+        const events = parsed.events.filter((providerEvent) => !existingEventIds.has(providerEvent.eventId));
+        let nextThread = thread;
+        for (const providerEvent of events) nextThread = applyEvent(nextThread, providerEvent);
+        if (parsed.providerThreadId) {
+          if (!thread.providerResumeState) {
+            throw new Error("Provider resume state is unavailable");
+          }
+          if (
+            thread.providerResumeState.providerThreadId &&
+            thread.providerResumeState.providerThreadId !== parsed.providerThreadId
+          ) {
+            throw new Error("Provider conversation mismatch");
+          }
+          nextThread = {
+            ...nextThread,
+            providerResumeState: {
+              conversationId: thread.providerResumeState.conversationId,
+              providerThreadId: parsed.providerThreadId,
+            },
+          };
+        }
+        const nextState = {
+          ...state,
+          threads: state.threads.map((candidate) => candidate === thread ? nextThread : candidate),
+          events: [...state.events, ...events],
+        };
+        return {
+          state: nextState,
+          result: {
+            snapshot: snapshotFor(nextThread, nextState.events),
+            eventsToPublish: events,
+          },
+        };
+      });
+      publish(principal.userId, threadId, result.eventsToPublish);
+      return result.snapshot;
     },
     async abortThread(principal, threadId, clientRequestId) {
       const result = await mutate(async (state) => {
