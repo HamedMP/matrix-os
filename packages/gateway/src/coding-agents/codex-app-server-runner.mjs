@@ -21,9 +21,13 @@ const MAX_PROVIDER_LINE_BYTES = 1024 * 1024;
 const MAX_TRANSCRIPT_BYTES = 16 * 1024 * 1024;
 const MAX_PENDING_REQUESTS = 20;
 const MAX_COMPLETED_REQUESTS = 100;
+const MAX_CONTROL_SOCKETS = 20;
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 const RPC_TIMEOUT_MS = 30 * 1000;
+const CONTROL_SOCKET_TIMEOUT_MS = 2_000;
+const PROVIDER_STOP_TIMEOUT_MS = 5_000;
 const SHUTDOWN_REPLAY_GRACE_MS = 250;
+const UNSAFE_DISPLAY_TEXT = /(stack trace|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+)/i;
 const NativeRequestIdSchema = z.union([z.string().min(1).max(128), z.number().int().safe()]);
 const NativeReferenceSchema = z.string().min(1).max(512);
 const ApprovalMethodSchema = z.enum([
@@ -96,6 +100,12 @@ const TurnCompletedSchema = z.object({
   method: z.literal("turn/completed"),
   params: z.object({
     turn: z.object({ status: z.string().max(80).optional() }).passthrough(),
+  }).passthrough(),
+}).passthrough();
+const TurnFailedSchema = z.object({
+  method: z.enum(["turn/failed", "turn/cancelled"]),
+  params: z.object({
+    turn: z.object({ status: z.string().max(80).optional() }).passthrough().optional(),
   }).passthrough(),
 }).passthrough();
 const RpcResponseSchema = z.object({
@@ -171,7 +181,8 @@ const eventFile = await open(
 let transcriptBytes = (await eventFile.stat()).size;
 let stopping = false;
 let activeTurn = false;
-let completedTurn = false;
+let terminalOutcome;
+let stopTimer;
 let nextRpcId = 1;
 const pendingRpc = new Map();
 const pendingApprovals = new Map();
@@ -220,6 +231,11 @@ function boundedExternalText(value, maxChars, maxBytes) {
   return result;
 }
 
+function safeExternalText(value, fallback, maxChars, maxBytes) {
+  const bounded = boundedExternalText(value, maxChars, maxBytes);
+  return bounded.trim() && !UNSAFE_DISPLAY_TEXT.test(bounded) ? bounded : fallback;
+}
+
 async function persist(value) {
   const line = JSON.stringify(value);
   const bytes = Buffer.byteLength(`${line}\n`, "utf8");
@@ -264,17 +280,25 @@ function approvalCopy(method) {
 function decisionMapping(request) {
   const source = request.params.availableDecisions ?? ["accept", "acceptForSession", "decline", "cancel"];
   const nativeDecisionByMatrixDecision = {};
-  const mapped = source.map((decision) => {
+  const choicesByMatrixDecision = new Map();
+  for (const decision of source) {
     const matrixDecision = decision === "accept"
       ? "approve"
       : decision === "acceptForSession" || typeof decision === "object"
         ? "approve_for_session"
         : decision;
-    nativeDecisionByMatrixDecision[matrixDecision] ??= decision;
-    return matrixDecision;
-  });
+    const choices = choicesByMatrixDecision.get(matrixDecision) ?? [];
+    if (!choices.some((choice) => digest([choice]) === digest([decision]))) choices.push(decision);
+    choicesByMatrixDecision.set(matrixDecision, choices);
+  }
+  const allowedDecisions = [];
+  for (const [matrixDecision, choices] of choicesByMatrixDecision) {
+    if (matrixDecision === "approve_for_session" && choices.length !== 1) continue;
+    allowedDecisions.push(matrixDecision);
+    nativeDecisionByMatrixDecision[matrixDecision] = choices[0];
+  }
   return {
-    allowedDecisions: mapped.filter((decision, index) => mapped.indexOf(decision) === index),
+    allowedDecisions,
     nativeDecisionByMatrixDecision,
   };
 }
@@ -291,6 +315,10 @@ async function handleApproval(raw) {
   }
   const identity = approvalIdentity(parsed.data);
   const decisions = decisionMapping(parsed.data);
+  if (decisions.allowedDecisions.length === 0) {
+    sendProvider({ id: parsed.data.id, result: { decision: "cancel" } });
+    return true;
+  }
   if (pendingApprovals.size >= MAX_PENDING_REQUESTS || pendingApprovals.has(identity.approvalId)) {
     sendProvider({ id: parsed.data.id, result: { decision: "cancel" } });
     return true;
@@ -327,11 +355,16 @@ async function handleInput(raw) {
   }
   const questions = parsed.data.params.questions.map((question, index) => ({
     questionId: `question_codex_${digest([identity.requestId, question.id, index]).slice(0, 24)}`,
-    header: question.header,
-    question: boundedExternalText(question.question, 600, 2400),
-    ...(question.options ? { options: question.options.map((option) => ({
-      label: boundedExternalText(option.label, 160, 640),
-      description: boundedExternalText(option.description, 300, 1200),
+    header: safeExternalText(question.header, "Question", 120, 512),
+    question: safeExternalText(
+      question.question,
+      "The coding agent needs an answer.",
+      600,
+      2400,
+    ),
+    ...(question.options ? { options: question.options.map((option, optionIndex) => ({
+      label: safeExternalText(option.label, `Option ${optionIndex + 1}`, 120, 512),
+      description: safeExternalText(option.description, "Choose this option.", 300, 1200),
     })) } : {}),
     allowOther: question.isOther,
     secret: question.isSecret,
@@ -377,9 +410,21 @@ async function handleProviderMessage(raw) {
   }
   const completed = TurnCompletedSchema.safeParse(raw);
   if (completed.success) {
-    activeTurn = false;
-    completedTurn = true;
-    await persist({ type: "turn.completed" });
+    await finishTurn("completed");
+    return;
+  }
+  const failed = TurnFailedSchema.safeParse(raw);
+  if (failed.success) {
+    await finishTurn("failed");
+  }
+}
+
+async function processProviderLine(line) {
+  if (!line || Buffer.byteLength(line, "utf8") > MAX_PROVIDER_LINE_BYTES) return;
+  try {
+    await handleProviderMessage(JSON.parse(line));
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
   }
 }
 
@@ -400,13 +445,7 @@ async function consumeProviderOutput(stream) {
     while (newline >= 0) {
       const line = pending.slice(0, newline).replace(/\r$/, "");
       pending = pending.slice(newline + 1);
-      if (line && Buffer.byteLength(line, "utf8") <= MAX_PROVIDER_LINE_BYTES) {
-        try {
-          await handleProviderMessage(JSON.parse(line));
-        } catch (error) {
-          if (!(error instanceof SyntaxError)) throw error;
-        }
-      }
+      await processProviderLine(line);
       newline = pending.indexOf("\n");
     }
     if (Buffer.byteLength(pending, "utf8") > MAX_PROVIDER_LINE_BYTES) {
@@ -414,6 +453,8 @@ async function consumeProviderOutput(stream) {
       discarding = true;
     }
   }
+  pending += decoder.end();
+  if (!discarding) await processProviderLine(pending.replace(/\r$/, ""));
 }
 
 async function discardProviderErrors(stream) {
@@ -466,9 +507,17 @@ async function applyControl(control) {
   return { ok: true };
 }
 
+const controlSockets = new Set();
 const controlServer = createServer({ allowHalfOpen: true }, (socket) => {
+  if (controlSockets.size >= MAX_CONTROL_SOCKETS) {
+    socket.destroy();
+    return;
+  }
+  controlSockets.add(socket);
   let input = "";
   socket.setEncoding("utf8");
+  socket.setTimeout(CONTROL_SOCKET_TIMEOUT_MS, () => socket.destroy());
+  socket.once("close", () => controlSockets.delete(socket));
   socket.on("error", () => socket.destroy());
   socket.on("data", (chunk) => {
     input += chunk;
@@ -519,9 +568,10 @@ const child = spawn(command, [...commandArgs, "app-server"], {
   env: process.env,
   stdio: ["pipe", "pipe", "pipe"],
 });
-const childExit = new Promise((resolve, reject) => {
-  child.once("error", reject);
+const childExit = new Promise((resolve) => {
+  child.once("error", (error) => resolve({ code: null, signal: null, error }));
   child.once("close", (code, signal) => {
+    if (stopTimer) clearTimeout(stopTimer);
     for (const pending of pendingRpc.values()) {
       clearTimeout(pending.timeout);
       pending.reject(new Error("provider_stopped"));
@@ -530,14 +580,40 @@ const childExit = new Promise((resolve, reject) => {
     resolve({ code, signal });
   });
 });
-const providerOutput = consumeProviderOutput(child.stdout);
-const providerErrors = discardProviderErrors(child.stderr);
 
 function stop() {
   if (stopping) return;
   stopping = true;
   child.kill("SIGTERM");
+  stopTimer = setTimeout(() => child.kill("SIGKILL"), PROVIDER_STOP_TIMEOUT_MS);
+  stopTimer.unref();
 }
+
+async function finishTurn(outcome) {
+  if (terminalOutcome) return;
+  terminalOutcome = outcome;
+  activeTurn = false;
+  try {
+    await persist({ type: outcome === "completed" ? "turn.completed" : "turn.failed" });
+  } finally {
+    stop();
+  }
+}
+
+const providerOutput = consumeProviderOutput(child.stdout).then(
+  () => ({ ok: true }),
+  (error) => {
+    stop();
+    return { ok: false, error };
+  },
+);
+const providerErrors = discardProviderErrors(child.stderr).then(
+  () => ({ ok: true }),
+  (error) => {
+    stop();
+    return { ok: false, error };
+  },
+);
 process.once("SIGTERM", stop);
 process.once("SIGINT", stop);
 
@@ -562,21 +638,32 @@ try {
     threadId,
     input: [{ type: "text", text: config.prompt, text_elements: [] }],
   });
-  const exit = await childExit;
-  await Promise.all([providerOutput, providerErrors]);
+  const first = await Promise.race([
+    childExit.then((exit) => ({ type: "exit", exit })),
+    providerOutput.then((result) => ({ type: "output", result })),
+  ]);
+  if (first.type === "output" && !first.result.ok) throw first.result.error;
+  const exit = first.type === "exit" ? first.exit : await childExit;
+  const [outputResult, errorResult] = await Promise.all([providerOutput, providerErrors]);
+  if (!outputResult.ok) throw outputResult.error;
+  if (!errorResult.ok) throw errorResult.error;
+  if (!terminalOutcome) await finishTurn("failed");
   await new Promise((resolve) => setTimeout(resolve, SHUTDOWN_REPLAY_GRACE_MS));
-  exitCode = exit.code === 0 && completedTurn && !activeTurn ? 0 : 1;
+  exitCode = terminalOutcome === "completed" && !activeTurn && !exit.error ? 0 : 1;
 } catch (_error) {
-  await persist({ type: "turn.failed" }).catch(() => undefined);
+  await finishTurn("failed").catch(() => undefined);
   stop();
   await Promise.allSettled([childExit, providerOutput, providerErrors]);
 } finally {
   clearInterval(cleanupTimer);
+  if (stopTimer) clearTimeout(stopTimer);
   for (const pending of pendingRpc.values()) {
     clearTimeout(pending.timeout);
     pending.reject(new Error("provider_stopped"));
   }
   pendingRpc.clear();
+  for (const socket of controlSockets) socket.destroy();
+  controlSockets.clear();
   await new Promise((resolve) => controlServer.close(resolve));
   await rm(controlPath, { force: true });
   await eventFile.close();

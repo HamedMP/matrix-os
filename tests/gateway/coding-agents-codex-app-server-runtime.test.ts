@@ -155,7 +155,7 @@ describe("Codex app-server control runtime", () => {
       "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-input' }, model: 'codex', modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
       "  else if (message.method === 'turn/start') {",
       "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn-input' } } }));",
-      "    console.log(JSON.stringify({ id: 'rpc-input-secret', method: 'item/tool/requestUserInput', params: { threadId: 'native-thread-input', turnId: 'native-turn-input', itemId: 'native-item-input', questions: [{ id: 'native-approach', header: 'Approach', question: 'Which approach?', options: [{ label: 'Minimal', description: 'Make the smallest change.' }], isOther: true, isSecret: false }, { id: 'native-secret', header: 'Secret', question: 'Enter the temporary value.', options: null, isOther: false, isSecret: true }] } }));",
+      "    console.log(JSON.stringify({ id: 'rpc-input-secret', method: 'item/tool/requestUserInput', params: { threadId: 'native-thread-input', turnId: 'native-turn-input', itemId: 'native-item-input', questions: [{ id: 'native-approach', header: 'Approach', question: 'Which approach for /home/matrix/private-question?', options: [{ label: 'Minimal', description: 'Use /home/matrix/private-question.' }], isOther: true, isSecret: false }, { id: 'native-secret', header: 'Secret', question: 'Enter the temporary value.', options: null, isOther: false, isSecret: true }] } }));",
       "  } else if (message.id === 'rpc-input-secret') {",
       "    await appendFile(responsesPath, JSON.stringify(message) + '\\n');",
       "    console.log(JSON.stringify({ method: 'turn/completed', params: { threadId: 'native-thread-input', turn: { id: 'native-turn-input', status: 'completed', items: [] } } }));",
@@ -183,7 +183,11 @@ describe("Codex app-server control runtime", () => {
         .find((event) => event.type === "matrix.codex.user_input.requested");
       expect(request.requestId).toMatch(/^req_codex_[a-f0-9]{32}$/);
       expect(request.questions).toHaveLength(2);
-      expect(beforeAnswer).not.toMatch(/native-|rpc-input-secret|private\/project/);
+      expect(request.questions[0]).toMatchObject({
+        question: "The coding agent needs an answer.",
+        options: [{ label: "Minimal", description: "Choose this option." }],
+      });
+      expect(beforeAnswer).not.toMatch(/native-|rpc-input-secret|private\/project|private-question/);
 
       const [approach, secret] = request.questions;
       await expect(sendControl(controlPath, {
