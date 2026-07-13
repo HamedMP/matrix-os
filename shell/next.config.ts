@@ -32,9 +32,9 @@ const nextConfig: NextConfig = {
   // fails with "Module not found: Can't resolve './agent-profile.js'".
   webpack: (config) => {
     config.resolve.extensionAlias = {
+      ...config.resolve.extensionAlias,
       ".js": [".ts", ".tsx", ".js"],
       ".jsx": [".tsx", ".jsx"],
-      ...config.resolve.extensionAlias,
     };
     return config;
   },
