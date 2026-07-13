@@ -22,6 +22,12 @@ function codedError(message: string, code: string): Error {
   return Object.assign(new Error(message), { code });
 }
 
+function debugTransferFailure(context: string, err: unknown): void {
+  if (process.env.MATRIX_CLI_DEBUG !== "1") return;
+  const kind = err instanceof Error ? err.name : typeof err;
+  console.error(`[debug] ${context}: ${kind}`);
+}
+
 export function expandLocalPath(path: string): string {
   if (path === "~") return homedir();
   if (path.startsWith("~/")) return resolve(homedir(), path.slice(2));
@@ -86,7 +92,8 @@ export async function completeRemotePaths(
   let parentPath: string;
   try {
     parentPath = normalizeMatrixPath(parentPrefix || ".");
-  } catch {
+  } catch (err) {
+    debugTransferFailure("remote completion path rejected", err);
     return [];
   }
 
@@ -117,7 +124,8 @@ export async function completeRemotePaths(
         }
         return [`${displayHome}${displayParent}${name}${type === "directory" ? "/" : ""}`];
       });
-  } catch {
+  } catch (err) {
+    debugTransferFailure("remote completion request failed", err);
     return [];
   }
 }
@@ -145,7 +153,8 @@ async function safeTransferErrorCode(res: Response): Promise<string | null> {
   try {
     const payload = (await res.json()) as { error?: unknown };
     return typeof payload.error === "string" ? payload.error : null;
-  } catch {
+  } catch (err) {
+    debugTransferFailure("transfer error response was not JSON", err);
     return null;
   }
 }

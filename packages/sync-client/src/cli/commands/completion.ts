@@ -269,8 +269,12 @@ export const completionCommand = defineCommand({
           typeof args.prefix === "string" ? args.prefix : "~/",
         );
         if (paths.length > 0) process.stdout.write(`${paths.join("\n")}\n`);
-      } catch {
+      } catch (err) {
         // Completion must stay silent when auth or the remote instance is unavailable.
+        if (process.env.MATRIX_CLI_DEBUG === "1") {
+          const kind = err instanceof Error ? err.name : typeof err;
+          console.error(`[debug] remote path completion unavailable: ${kind}`);
+        }
       }
       return;
     }
