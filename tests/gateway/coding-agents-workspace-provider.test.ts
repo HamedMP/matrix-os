@@ -442,7 +442,7 @@ describe("coding agent workspace provider", () => {
     expect(resumeState).toEqual({ conversationId: "sess_workspace_1" });
     expect(sendInput).toHaveBeenCalledWith(
       "sess_workspace_1",
-      "Continue with the tests.\r",
+      `matrix-turn-v1:${Buffer.from("Continue with the tests.", "utf-8").toString("base64")}\r`,
       signal,
     );
     expect(resumed).toMatchObject({

@@ -112,12 +112,12 @@ describe("agent-launcher", () => {
       args: [
         "--ask-for-approval",
         "never",
-        "exec",
-        "--skip-git-repo-check",
         "--sandbox",
         "workspace-write",
         "--add-dir",
         "/tmp/matrixos-codex",
+        "exec",
+        "--skip-git-repo-check",
         "--",
         "fix tests; rm -rf /",
       ],
@@ -157,12 +157,12 @@ describe("agent-launcher", () => {
         expect(launch.args).toEqual([
           "--ask-for-approval",
           "never",
-          "exec",
-          "--skip-git-repo-check",
           "--sandbox",
           "workspace-write",
           "--add-dir",
           "/tmp/sandbox",
+          "exec",
+          "--skip-git-repo-check",
           "--",
           "--dangerously-bypass-sandbox",
         ]);
@@ -191,20 +191,21 @@ describe("agent-launcher", () => {
     expect(launchEmpty.args).not.toContain("--");
   });
 
-  it("places Codex exec controls before sandbox flags and the prompt last", () => {
+  it("places Codex security controls before exec and the prompt last", () => {
     const launch = buildAgentLaunch({
       agent: "codex",
       cwd: "/home/matrixos/home/projects/repo",
       prompt: "--help",
       sandbox: { enabled: true, writableRoots: ["/tmp/sandbox"] },
     });
-    expect(launch.args.slice(0, 4)).toEqual(["--ask-for-approval", "never", "exec", "--skip-git-repo-check"]);
     const sandboxIndex = launch.args.indexOf("--sandbox");
     const writableRootIndex = launch.args.indexOf("--add-dir");
+    const execIndex = launch.args.indexOf("exec");
     const dashDashIndex = launch.args.indexOf("--");
-    expect(sandboxIndex).toBeGreaterThan(3);
+    expect(sandboxIndex).toBeGreaterThan(1);
     expect(writableRootIndex).toBeGreaterThan(sandboxIndex);
-    expect(dashDashIndex).toBeGreaterThan(writableRootIndex);
+    expect(execIndex).toBeGreaterThan(writableRootIndex);
+    expect(dashDashIndex).toBeGreaterThan(execIndex);
     expect(launch.args.at(-1)).toBe("--help");
   });
 
@@ -220,10 +221,10 @@ describe("agent-launcher", () => {
     expect(launch.args).toEqual([
       "--ask-for-approval",
       "on-request",
-      "exec",
-      "--skip-git-repo-check",
       "--sandbox",
       "read-only",
+      "exec",
+      "--skip-git-repo-check",
       "--",
       "review only",
     ]);
@@ -241,10 +242,10 @@ describe("agent-launcher", () => {
     expect(reviewLaunch.args).toEqual([
       "--ask-for-approval",
       "never",
-      "exec",
-      "--skip-git-repo-check",
       "--sandbox",
       "read-only",
+      "exec",
+      "--skip-git-repo-check",
       "review",
       "--",
       "check this PR",
@@ -274,7 +275,7 @@ describe("agent-launcher", () => {
       cwd: "/home/matrixos/home/projects/repo",
       prompt: "work",
       sandbox: { enabled: false, adminOverride: true },
-    }).args).toEqual(["--ask-for-approval", "never", "exec", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "--", "work"]);
+    }).args).toEqual(["--ask-for-approval", "never", "--dangerously-bypass-approvals-and-sandbox", "exec", "--skip-git-repo-check", "--", "work"]);
   });
 
   it("constructs a strict workspace-scoped Claude launch policy", () => {
