@@ -832,7 +832,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           }
           try {
             const canContinue = output.write(data);
-            if (!canContinue) {
+            if (canContinue === false) {
               localOutputBackpressured = true;
               output.once?.("drain", onLocalOutputDrain);
               currentWs?.close();
