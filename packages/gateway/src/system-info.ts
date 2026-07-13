@@ -1,4 +1,12 @@
-import { readFileSync, existsSync, statfsSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statfsSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { cpus, freemem, loadavg, totalmem } from "node:os";
 import { loadSkills } from "@matrix-os/kernel";
@@ -6,6 +14,51 @@ import type { HostBundleRelease } from "./system-update.js";
 
 const startTime = Date.now();
 const startedAt = new Date(startTime).toISOString();
+const SYSTEM_INFO_FILE_MAX_BYTES = 64 * 1024;
+const SYSTEM_INFO_CACHE_TTL_MS = 5_000;
+const SYSTEM_INFO_CACHE_MAX_ENTRIES = 8;
+
+interface CachedSystemInfoFile<T> {
+  expiresAt: number;
+  value: T;
+}
+
+const systemInfoFileCache = new Map<string, CachedSystemInfoFile<unknown>>();
+
+function readCachedSystemInfoFile<T>(cacheKey: string, read: () => T): T {
+  const cached = systemInfoFileCache.get(cacheKey) as CachedSystemInfoFile<T> | undefined;
+  if (cached && cached.expiresAt > Date.now()) {
+    systemInfoFileCache.delete(cacheKey);
+    systemInfoFileCache.set(cacheKey, cached);
+    return cached.value;
+  }
+
+  const value = read();
+  systemInfoFileCache.delete(cacheKey);
+  systemInfoFileCache.set(cacheKey, {
+    expiresAt: Date.now() + SYSTEM_INFO_CACHE_TTL_MS,
+    value,
+  });
+  while (systemInfoFileCache.size > SYSTEM_INFO_CACHE_MAX_ENTRIES) {
+    const oldestKey = systemInfoFileCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    systemInfoFileCache.delete(oldestKey);
+  }
+  return value;
+}
+
+function readBoundedTextFile(file: string): string {
+  const fd = openSync(file, "r");
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > SYSTEM_INFO_FILE_MAX_BYTES) return "";
+    const buffer = Buffer.alloc(stat.size);
+    const bytesRead = readSync(fd, buffer, 0, stat.size, 0);
+    return buffer.subarray(0, bytesRead).toString("utf-8");
+  } finally {
+    closeSync(fd);
+  }
+}
 
 function logSystemInfoReadFailure(context: string, err: unknown): void {
   console.warn(
@@ -18,9 +71,35 @@ function isMissingFileError(err: unknown): boolean {
   return typeof err === "object" && err !== null && "code" in err && err.code === "ENOENT";
 }
 
-export function getVersion(): string {
+function parseSafeSystemVersion(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(trimmed) ? trimmed : undefined;
+}
+
+function parseReleaseChannel(value: unknown): string | undefined {
+  return typeof value === "string" && ["stable", "canary", "beta", "dev"].includes(value)
+    ? value
+    : undefined;
+}
+
+export function getVersion(release?: HostBundleRelease): string {
+  const releaseVersion = parseSafeSystemVersion(release?.version);
+  if (releaseVersion) return releaseVersion;
+  const bundleVersionFile = process.env.MATRIX_BUNDLE_VERSION_FILE ?? "/opt/matrix/app/BUNDLE_VERSION";
   try {
-    return readFileSync("/app/VERSION", "utf-8").trim();
+    const bundleVersion = readCachedSystemInfoFile(`bundle:${bundleVersionFile}`, () => (
+      parseSafeSystemVersion(readBoundedTextFile(bundleVersionFile))
+    ));
+    if (bundleVersion) return bundleVersion;
+  } catch (err) {
+    if (!isMissingFileError(err)) {
+      logSystemInfoReadFailure("Failed to read installed bundle version", err);
+    }
+  }
+  try {
+    const legacyVersion = parseSafeSystemVersion(readFileSync("/app/VERSION", "utf-8"));
+    if (legacyVersion) return legacyVersion;
   } catch (err) {
     if (!isMissingFileError(err)) {
       logSystemInfoReadFailure("Failed to read /app/VERSION", err);
@@ -33,7 +112,7 @@ export function getVersion(): string {
         "utf-8",
       ),
     );
-    return pkg.version ?? "0.0.0";
+    return parseSafeSystemVersion(pkg.version) ?? "0.0.0";
   } catch (err) {
     logSystemInfoReadFailure("Failed to read package.json version", err);
   }
@@ -42,6 +121,7 @@ export function getVersion(): string {
 
 export interface SystemInfo {
   version: string;
+  channel?: string;
   image: string;
   runtime: {
     handle: string | null;
@@ -73,18 +153,25 @@ export interface SystemInfo {
   release?: HostBundleRelease;
 }
 
-function readReleaseInfo(homePath: string): HostBundleRelease | undefined {
-  const candidates = [
-    process.env.MATRIX_RELEASE_FILE,
-    "/opt/matrix/release.json",
-    join(homePath, "release.json"),
-  ].filter((value): value is string => Boolean(value));
+function readReleaseInfo(): HostBundleRelease | undefined {
+  const candidates = [process.env.MATRIX_RELEASE_FILE ?? "/opt/matrix/release.json"];
 
   for (const file of candidates) {
     try {
-      if (!existsSync(file)) continue;
-      const parsed = JSON.parse(readFileSync(file, "utf-8")) as HostBundleRelease;
-      if (parsed && typeof parsed === "object") return parsed;
+      const release = readCachedSystemInfoFile<HostBundleRelease | undefined>(`release:${file}`, () => {
+        try {
+          const raw = readBoundedTextFile(file);
+          if (!raw) return undefined;
+          const parsed = JSON.parse(raw) as HostBundleRelease;
+          return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? parsed
+            : undefined;
+        } catch (err) {
+          if (isMissingFileError(err)) return undefined;
+          throw err;
+        }
+      });
+      if (release) return release;
     } catch (err) {
       logSystemInfoReadFailure("Failed to read release metadata", err);
     }
@@ -164,9 +251,12 @@ export function getSystemInfo(homePath: string): SystemInfo {
   const rootDisk = readDiskUsage("/");
   const homeDisk = readDiskUsage(homePath);
   const [load1 = 0, load5 = 0, load15 = 0] = loadavg();
+  const release = readReleaseInfo();
+  const channel = parseReleaseChannel(release?.channel);
 
   return {
-    version: getVersion(),
+    version: getVersion(release),
+    ...(channel ? { channel } : {}),
     image: process.env.MATRIX_IMAGE ?? "unknown",
     runtime: {
       handle: process.env.MATRIX_HANDLE ?? null,
@@ -195,6 +285,6 @@ export function getSystemInfo(homePath: string): SystemInfo {
       homeDiskTotalBytes: homeDisk?.totalBytes ?? null,
       homeDiskFreeBytes: homeDisk?.freeBytes ?? null,
     },
-    release: readReleaseInfo(homePath),
+    release,
   };
 }
