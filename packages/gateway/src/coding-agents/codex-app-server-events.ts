@@ -18,7 +18,22 @@ const ApprovalMethodSchema = z.enum([
   "item/fileChange/requestApproval",
   "item/permissions/requestApproval",
 ]);
-const NativeApprovalDecisionSchema = z.enum(["accept", "acceptForSession", "decline", "cancel"]);
+const NativeApprovalDecisionSchema = z.union([
+  z.enum(["accept", "acceptForSession", "decline", "cancel"]),
+  z.object({
+    acceptWithExecpolicyAmendment: z.object({
+      execpolicy_amendment: z.array(z.string().max(4000)).max(128),
+    }).strict(),
+  }).strict(),
+  z.object({
+    applyNetworkPolicyAmendment: z.object({
+      network_policy_amendment: z.object({
+        action: z.enum(["allow", "deny"]),
+        host: z.string().min(1).max(255),
+      }).strict(),
+    }).strict(),
+  }).strict(),
+]);
 const ExternalDisplayTextSchema = z.string().refine(
   (value) => !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(value),
 );
@@ -66,6 +81,10 @@ export interface CodexAppServerPendingRequest {
   approvalId?: string;
   requestId?: string;
   questionIds?: Array<{ questionId: string; nativeQuestionId: string }>;
+  nativeDecisionByMatrixDecision?: Partial<Record<
+    "approve" | "approve_for_session" | "decline" | "cancel",
+    z.infer<typeof NativeApprovalDecisionSchema>
+  >>;
 }
 
 export interface CodexAppServerRequestContext {
@@ -103,6 +122,16 @@ function safeDisplay(value: string, fallback: string): string {
   return parsed.success ? parsed.data : fallback;
 }
 
+function boundedExternalText(value: string, maxChars: number, maxBytes: number): string {
+  let result = "";
+  for (const character of value) {
+    const candidate = `${result}${character}`;
+    if (candidate.length > maxChars || Buffer.byteLength(candidate, "utf8") > maxBytes) break;
+    result = candidate;
+  }
+  return result;
+}
+
 function allowedDecisions(request: z.infer<typeof ApprovalRequestSchema>) {
   const source = request.params.availableDecisions;
   const native = Array.isArray(source)
@@ -111,13 +140,26 @@ function allowedDecisions(request: z.infer<typeof ApprovalRequestSchema>) {
       return parsed.success ? [parsed.data] : [];
     })
     : ["accept", "acceptForSession", "decline", "cancel"] as const;
+  const nativeDecisionByMatrixDecision: NonNullable<
+    CodexAppServerPendingRequest["nativeDecisionByMatrixDecision"]
+  > = {};
   const mapped = native.map((decision) => {
-    if (decision === "accept") return "approve" as const;
-    if (decision === "acceptForSession") return "approve_for_session" as const;
-    return decision;
+    const matrixDecision = decision === "accept"
+      ? "approve" as const
+      : decision === "acceptForSession" || typeof decision === "object"
+        ? "approve_for_session" as const
+        : decision;
+    nativeDecisionByMatrixDecision[matrixDecision] ??= decision;
+    return matrixDecision;
   });
   const unique = mapped.filter((decision, index) => mapped.indexOf(decision) === index);
-  return unique.length > 0 ? unique : ["decline" as const, "cancel" as const];
+  if (unique.length === 0) {
+    return {
+      allowedDecisions: ["decline" as const, "cancel" as const],
+      nativeDecisionByMatrixDecision: { decline: "decline" as const, cancel: "cancel" as const },
+    };
+  }
+  return { allowedDecisions: unique, nativeDecisionByMatrixDecision };
 }
 
 function approvalCopy(method: ApprovalMethod): {
@@ -156,6 +198,7 @@ function approvalResult(
 ): CodexAppServerRequestParseResult {
   const identity = requestIdentity(request);
   const copy = approvalCopy(request.method);
+  const decisions = allowedDecisions(request);
   const event = AgentThreadEventSchema.parse({
     type: "approval.requested",
     eventId: context.nextEventId(),
@@ -165,7 +208,7 @@ function approvalResult(
       approvalId: identity.approvalId,
       threadId: context.threadId,
       ...copy,
-      allowedDecisions: allowedDecisions(request),
+      allowedDecisions: decisions.allowedDecisions,
       correlationId: identity.correlationId,
     },
   });
@@ -176,6 +219,7 @@ function approvalResult(
       method: request.method,
       correlationId: identity.correlationId,
       approvalId: identity.approvalId,
+      nativeDecisionByMatrixDecision: decisions.nativeDecisionByMatrixDecision,
     },
   };
 }
@@ -199,7 +243,7 @@ function inputResult(
         ? {
             options: question.options.map((option) => ({
               label: safeDisplay(option.label, "Option"),
-              description: option.description,
+              description: boundedExternalText(option.description, 300, 1200),
             })),
           }
         : {}),
