@@ -104,7 +104,7 @@ import { createCodingAgentRoutes } from "./coding-agents/routes.js";
 import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type CodingAgentProviderAdapter, type CodingAgentThreadStore, type CodingAgentTurnStore } from "./coding-agents/thread-store.js";
 import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./coding-agents/thread-stream.js";
 import { createWorkspaceCodingAgentProviderSet } from "./coding-agents/workspace-provider.js";
-import { configuredWorkspaceProviderAgents } from "./coding-agents/workspace-provider-config.js";
+import { resolveWorkspaceProviderRuntime } from "./coding-agents/workspace-provider-config.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
 import { createCodingAgentTurnLifecycle } from "./coding-agents/turn-lifecycle.js";
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
@@ -119,7 +119,6 @@ import { registerCodingAgentAttentionNotifications } from "./coding-agents/atten
 import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
 import { createCodingAgentProjectMutationService } from "./coding-agents/project-mutations.js";
 import { createCodexEventBridge, type CodexEventBridge } from "./coding-agents/codex-event-bridge.js";
-import { codexExecutableFromEnv } from "./coding-agents/codex-executable.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -435,7 +434,14 @@ export async function createGateway(config: GatewayConfig) {
   const internalPlatformToken = process.env.UPGRADE_TOKEN;
   const internalHandle = process.env.MATRIX_HANDLE;
   let platformDb: PlatformDb | null = null;
-  const agentCredentialLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
+  const workspaceProviderRuntime = resolveWorkspaceProviderRuntime(process.env);
+  const codingAgentWorkspaceAgents = workspaceProviderRuntime.agents;
+  const codexExecutable = workspaceProviderRuntime.codexExecutable;
+  const agentCredentialLauncher = createAgentLauncher({
+    cwd: homePath,
+    runtimeHome: homePath,
+    codexExecutable,
+  });
   let agentDetectionInFlight: Promise<Awaited<ReturnType<typeof agentCredentialLauncher.detectAgents>>> | null = null;
   let internalIntegrationBaseUrl: string | null = null;
   const PLATFORM_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -545,21 +551,16 @@ export async function createGateway(config: GatewayConfig) {
   });
   const codingAgentProviders: CodingAgentProviderAdapter[] = [];
   const codingAgentRegistryProviders: CodingAgentProviderAdapter[] = [];
-  const codingAgentWorkspaceAgents = configuredWorkspaceProviderAgents(process.env);
   if (codingAgentWorkspaceAgents.length > 0) {
     const codingAgentProjectManager = createProjectManager({ homePath });
-    const codexExecutable = codexExecutableFromEnv(process.env);
-    codexEventBridge = createCodexEventBridge({ homePath, codexExecutable });
+    codexEventBridge = codexExecutable
+      ? createCodexEventBridge({ homePath, codexExecutable })
+      : undefined;
     const codingAgentWorktreeManager = createWorktreeManager({ homePath });
-    const codingAgentLauncher = createAgentLauncher({
-      cwd: homePath,
-      runtimeHome: homePath,
-      codexExecutable,
-    });
     const codingAgentSessionManager = createAgentSessionManager({
       homePath,
       worktreeManager: codingAgentWorktreeManager,
-      agentLauncher: codingAgentLauncher,
+      agentLauncher: agentCredentialLauncher,
       zellijRuntime: workspaceZellijRuntime,
       inputWriter: (sessionId, input, signal) =>
         workspaceZellijRuntime.sendInput(sessionId, input, signal),
@@ -2843,6 +2844,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/", createWorkspaceRoutes({
     homePath,
     zellijRuntime: workspaceZellijRuntime,
+    agentLauncher: agentCredentialLauncher,
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
     eventStore: workspaceEventStore,
     eventPublisher: workspaceEventPublisher,

@@ -40,7 +40,7 @@ export interface WorkspaceCodingAgentProviderOptions {
 export interface WorkspaceCodingAgentProviderSetOptions {
   agents: readonly SupportedAgent[];
   runtime: WorkspaceRuntime;
-  codexEvents: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch" | "markStopped">;
+  codexEvents?: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch" | "markStopped">;
 }
 
 export interface WorkspaceCodingAgentProviderSet {

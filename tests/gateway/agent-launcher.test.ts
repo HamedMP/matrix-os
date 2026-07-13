@@ -102,7 +102,12 @@ describe("agent-launcher", () => {
 
   it("uses one configured absolute Codex executable for detection and launch", async () => {
     const codexExecutable = "/opt/matrix/runtime/node/bin/codex";
-    const runCommand = vi.fn(async () => ({ stdout: "ok\n", stderr: "" }));
+    const runCommand = vi.fn(async (command: string, args: string[]) => ({
+      stdout: command === codexExecutable && args[0] === "--version"
+        ? `codex-cli ${CODEX_VERIFIED_VERSION}\n`
+        : "ok\n",
+      stderr: "",
+    }));
     const launcher = createAgentLauncher({ runCommand, codexExecutable });
 
     await launcher.detectAgents();
@@ -122,6 +127,27 @@ describe("agent-launcher", () => {
       CODEX_VERIFIED_VERSION,
       codexExecutable,
     ]);
+  });
+
+  it("marks an unverified configured Codex version unavailable before auth probing", async () => {
+    const codexExecutable = "/opt/matrix/runtime/node/bin/codex";
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === codexExecutable && args[0] === "--version") {
+        return { stdout: "codex-cli 0.144.1\n", stderr: "" };
+      }
+      return { stdout: `${command} 1.0.0\n`, stderr: "" };
+    });
+    const launcher = createAgentLauncher({ runCommand, codexExecutable });
+
+    const result = await launcher.detectAgents();
+
+    expect(result.agents.find((agent) => agent.id === "codex")).toMatchObject({
+      installed: false,
+      authState: "unknown",
+      errorCode: "agent_missing",
+      version: "codex-cli 0.144.1",
+    });
+    expect(runCommand).not.toHaveBeenCalledWith(codexExecutable, ["login", "status"], expect.any(Object));
   });
 
   it("constructs non-interactive Codex exec argv without shell interpolation", () => {

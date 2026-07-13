@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { z } from "zod/v4";
 import { CODEX_VERIFIED_VERSION } from "@matrix-os/contracts";
 import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
+import { codexExecContractStatus } from "./coding-agents/codex-version.js";
 
 export const SupportedAgentSchema = z.enum(["claude", "codex", "opencode", "pi"]);
 export type SupportedAgent = z.infer<typeof SupportedAgentSchema>;
@@ -93,6 +94,12 @@ const defaultRunCommand: CommandRunner = async (command, args, options) => {
 function firstLine(value: string): string | undefined {
   const line = value.split("\n").map((part) => part.trim()).find(Boolean);
   return line || undefined;
+}
+
+function isExactVerifiedCodexVersion(version: string | undefined): boolean {
+  if (!version) return false;
+  const status = codexExecContractStatus(version);
+  return status.status === "verified" && status.version === CODEX_VERIFIED_VERSION;
 }
 
 function promptArgs(prompt?: string): string[] {
@@ -376,6 +383,23 @@ export function createAgentLauncher(options: {
             displayName: config.displayName,
             installed: false,
             authState: "unknown",
+            errorCode: "agent_missing",
+          });
+          continue;
+        }
+
+        if (
+          id === "codex"
+          && options.codexExecutable
+          && !isExactVerifiedCodexVersion(version)
+        ) {
+          agents.push({
+            id,
+            command: config.command,
+            displayName: config.displayName,
+            installed: false,
+            authState: "unknown",
+            version,
             errorCode: "agent_missing",
           });
           continue;
