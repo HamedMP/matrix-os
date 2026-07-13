@@ -237,6 +237,42 @@ export type MatrixComputerCapabilityId = z.infer<typeof MatrixComputerCapability
 export type MatrixComputer = z.infer<typeof MatrixComputerSchema>;
 export type MatrixComputerList = z.infer<typeof MatrixComputerListSchema>;
 
+export const KernelConversationIdSchema = z.string()
+  .min(1)
+  .max(256)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/, "Invalid conversation id")
+  .refine((value) => !value.includes(".."), { message: "Invalid conversation id" });
+
+export const KernelConversationHistoryQuerySchema = z.object({
+  cursor: z.coerce.number().int().min(1).max(1_000_000).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(50),
+}).strict();
+
+export const KernelConversationHistoryMessageSchema = z.object({
+  index: z.number().int().min(0).max(1_000_000),
+  role: z.enum(["user", "assistant", "system"]),
+  content: z.string().max(32_000),
+  contentTruncated: z.boolean(),
+  timestamp: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  tool: z.string().min(1).max(128).optional(),
+}).strict();
+
+export const KernelConversationHistoryResponseSchema = z.object({
+  id: KernelConversationIdSchema,
+  createdAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  updatedAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  totalCount: z.number().int().min(0).max(1_000_000),
+  messages: z.array(KernelConversationHistoryMessageSchema).max(50),
+  hasMore: z.boolean(),
+  nextCursor: z.string().regex(/^[1-9][0-9]{0,6}$/).optional(),
+  limit: z.number().int().min(1).max(50),
+}).strict();
+
+export type KernelConversationId = z.infer<typeof KernelConversationIdSchema>;
+export type KernelConversationHistoryQuery = z.infer<typeof KernelConversationHistoryQuerySchema>;
+export type KernelConversationHistoryMessage = z.infer<typeof KernelConversationHistoryMessageSchema>;
+export type KernelConversationHistoryResponse = z.infer<typeof KernelConversationHistoryResponseSchema>;
+
 export const RuntimeSelectionRequestSchema = z.object({
   slot: MatrixComputerRuntimeSlotSchema,
 }).strict();

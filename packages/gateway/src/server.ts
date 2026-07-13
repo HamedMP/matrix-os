@@ -224,6 +224,7 @@ import {
 } from "./server/symphony-origin.js";
 import { registerAppRuntimeRoutes } from "./server/app-runtime-routes.js";
 import { registerFileRoutes } from "./server/file-routes.js";
+import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import {
   metricsRegistry,
   httpRequestsTotal,
@@ -3336,6 +3337,8 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Integration call failed" }, 502);
     }
   });
+
+  registerConversationHistoryRoutes(app, { conversations });
 
   app.get("/api/conversations", (c) => {
     return c.json(conversations.list());
