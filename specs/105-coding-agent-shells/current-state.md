@@ -168,7 +168,7 @@ Security and ownership:
 
 Related workspace routes in `packages/gateway/src/workspace-routes.ts`:
 
-- Sessions: `POST /api/sessions`, `GET /api/sessions`, `GET /api/sessions/:sessionId`, `POST /api/sessions/:sessionId/send`, `POST /api/sessions/:sessionId/observe`, `POST /api/sessions/:sessionId/takeover`, `DELETE /api/sessions/:sessionId`.
+- Sessions: `POST /api/sessions`, `GET /api/sessions`, `GET /api/sessions/:sessionId`, `POST /api/sessions/:sessionId/send`, `POST /api/sessions/:sessionId/observe`, `POST /api/sessions/:sessionId/takeover`, `DELETE /api/sessions/:sessionId`. These authoritative workspace routes are mounted before the legacy `/api` terminal compatibility routes; canonical named terminal sessions remain under `/api/terminal/sessions`.
 - Agent readiness: `GET /api/agents`, `GET /api/agents/sandbox-status`.
 - Workspace events: `GET /api/workspace/events`.
 - Reviews: `POST /api/reviews`, `GET /api/reviews`, `GET /api/reviews/:reviewId`, `POST /api/reviews/:reviewId/next`, `POST /api/reviews/:reviewId/approve`, `POST /api/reviews/:reviewId/stop`.

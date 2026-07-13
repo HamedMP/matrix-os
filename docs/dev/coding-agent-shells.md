@@ -81,6 +81,8 @@ When adding a provider:
 
 Coding-agent threads may point at a canonical terminal session using bounded terminal identifiers. The binding rules are:
 
+- Workspace orchestration owns `/api/sessions`; canonical named terminal sessions use `/api/terminal/sessions`. The assembled gateway mounts the legacy terminal compatibility routes after workspace routes so task-session requests cannot be parsed as legacy terminal creates.
+
 - Thread snapshots can expose attachable terminal references, not raw PTY output.
 - Desktop should open the existing Terminal tab/model for a bound session.
 - Mobile should hand off to the existing Terminal route/client and preserve the existing Terminal tab.

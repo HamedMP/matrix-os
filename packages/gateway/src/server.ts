@@ -1700,7 +1700,6 @@ export async function createGateway(config: GatewayConfig) {
     readHistory: (query) => systemActivityHistory.list(query),
   }));
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
-  app.route("/api", createShellRoutes(shellRouteDeps));
 
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an
@@ -2797,6 +2796,9 @@ export async function createGateway(config: GatewayConfig) {
     reviewStore,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   }));
+  // Workspace sessions own /api/sessions. Keep the legacy shell mount after
+  // that authoritative route so old terminal subroutes remain reachable.
+  app.route("/api", createShellRoutes(shellRouteDeps));
   app.route("/api/symphony", createElixirSymphonyProxyRoutes({
     upstreamOrigin: symphonyUpstreamOriginForPort(initialSymphonyPort),
   }));
