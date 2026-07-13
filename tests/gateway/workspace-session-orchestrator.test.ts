@@ -21,6 +21,16 @@ describe("workspace session orchestrator", () => {
   };
 
   function deps(overrides: Record<string, unknown> = {}) {
+    const projectManager = {
+      getProject: vi.fn(async () => ({
+        ok: true,
+        project: {
+          slug: "repo",
+          localPath: join(homePath, "projects", "repo", "repo"),
+          ownerScope: { type: "user", id: "user_workspace" },
+        },
+      })),
+    };
     const worktreeManager = {
       listWorktrees: vi.fn(async () => ({ ok: true, worktrees: [worktree] })),
     };
@@ -48,6 +58,7 @@ describe("workspace session orchestrator", () => {
     };
     return {
       worktreeManager,
+      projectManager,
       agentSandbox,
       agentSessionManager,
       sessionRuntimeBridge,
@@ -94,6 +105,80 @@ describe("workspace session orchestrator", () => {
     }));
     expect(d.agentSessionManager.startSession.mock.calls[0]?.[0].approvalPolicy).toBeUndefined();
     expect(d.eventPublisher.publishSessionStarted).toHaveBeenCalledWith(session);
+  });
+
+  it("starts an agent in the validated primary project checkout when no worktree is selected", async () => {
+    const d = deps();
+    const orchestrator = createWorkspaceSessionOrchestrator({
+      ...d,
+      idGenerator: () => "sess_fixed",
+    });
+
+    const result = await orchestrator.startSession({
+      ownerScope: { type: "user", id: "user_workspace" },
+      request: {
+        projectSlug: "repo",
+        kind: "agent",
+        agent: "codex",
+        prompt: "inspect the project",
+      },
+    });
+
+    expect(result).toMatchObject({ ok: true, status: 201 });
+    expect(d.projectManager.getProject).toHaveBeenCalledWith("repo");
+    expect(d.worktreeManager.listWorktrees).not.toHaveBeenCalled();
+    expect(d.agentSandbox.preflight).toHaveBeenCalledWith(expect.objectContaining({
+      worktreePath: join(homePath, "projects", "repo", "repo"),
+    }));
+  });
+
+  it("rejects legacy local primary checkouts when the authenticated owner does not match", async () => {
+    const d = deps({
+      projectManager: {
+        getProject: vi.fn(async () => ({
+          ok: true,
+          project: {
+            slug: "repo",
+            localPath: join(homePath, "projects", "repo", "repo"),
+            ownerScope: { type: "user", id: "local" },
+          },
+        })),
+      },
+    });
+    const orchestrator = createWorkspaceSessionOrchestrator({ ...d });
+
+    const result = await orchestrator.startSession({
+      ownerScope: { type: "user", id: "user_workspace" },
+      request: { projectSlug: "repo", kind: "agent", agent: "codex" },
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 404 });
+    expect(d.agentSandbox.preflight).not.toHaveBeenCalled();
+    expect(d.agentSessionManager.startSession).not.toHaveBeenCalled();
+  });
+
+  it("requires the persisted primary project owner type to match", async () => {
+    const d = deps({
+      projectManager: {
+        getProject: vi.fn(async () => ({
+          ok: true,
+          project: {
+            slug: "repo",
+            localPath: join(homePath, "projects", "repo", "repo"),
+            ownerScope: { type: "org", id: "user_workspace" },
+          },
+        })),
+      },
+    });
+    const orchestrator = createWorkspaceSessionOrchestrator({ ...d });
+
+    const result = await orchestrator.startSession({
+      ownerScope: { type: "user", id: "user_workspace" },
+      request: { projectSlug: "repo", kind: "agent", agent: "codex" },
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 404 });
+    expect(d.agentSandbox.preflight).not.toHaveBeenCalled();
   });
 
   it("starts Claude sessions only after provider-specific sandbox preflight", async () => {

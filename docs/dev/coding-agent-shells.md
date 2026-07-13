@@ -15,22 +15,51 @@ This guide documents the Matrix OS coding-agent shell architecture for gateway, 
 
 Browser Workspace remains Canvas-first and does not own coding-agent runtime state. It may render active-project thread and preview summaries from `RuntimeSummarySchema`, and it may open an existing Canvas PR workspace from bounded worktree metadata that already includes a pull request number. Browser Workspace must not create source-control commits or pull requests, store transcripts, store file contents, store diffs, or execute provider setup actions. Those write paths stay in gateway-owned routes and trusted desktop/mobile clients.
 
+## Mobile Agent Cockpit
+
+The mobile Agents landing screen is a thin projection of the bounded gateway runtime summary:
+
+- Needs attention contains approval-required, input-required, and failed threads.
+- Working contains queued, starting, and running threads.
+- Recent keeps every completed, aborted, recoverable stale, or archived thread from the contract-bounded runtime lists reachable through the canonical thread-detail route. A `completed` attention value also belongs here.
+- Duplicate ids across `activeThreads` and `attentionThreads` render once. Gateway timestamps determine ordering; mobile does not infer task status from thread status.
+- Working rows use static status marks. Pull-to-refresh reconciles the summary, so a row must not show a perpetual live spinner unless a future implementation adds an actual bounded stream or polling lifecycle.
+
+Use `contentInsetAdjustmentBehavior="automatic"` on the route scroll view and plain content padding. Do not add `react-native-unistyles` runtime safe-area values to the same top or bottom padding, because iOS already applies those insets.
+
+Cockpit projection state remains in memory. Mobile storage may contain validated bounded selection references or drafts only, never runtime summaries, transcripts, terminal output, files, diffs, credentials, or approval payloads.
+
+The mobile new-run composer must bind every newly created chat to one available
+`RuntimeSummarySchema.projects` item. It may carry a validated optional task id
+from a canonical task route, but switching projects clears that task relation.
+When no available project exists, including summaries with only stale or
+missing rows, the empty state creates a scratch project or imports a GitHub
+repository through canonical `POST /api/coding-agents/projects`, validates the
+returned project id, then refreshes the runtime summary before enabling thread
+submission. The thread request uses that canonical project id and optional task id; it must
+not create a new unassigned thread. Explicit stale project links remain
+unselected and require recovery instead of being silently remapped. Project
+form values and mutation results remain transient and never enter AsyncStorage.
+
 ## Gateway Routes
 
 The coding-agent route module is `packages/gateway/src/coding-agents/routes.ts`, mounted under `/api/coding-agents`.
 
 - `GET /summary` returns `RuntimeSummarySchema` and accepts an optional validated `projectId` query for project-scoped preview summaries.
+- `POST /projects` creates a scratch project or imports a GitHub project idempotently and returns only a bounded project summary.
 - `POST /threads` creates or returns an idempotent thread by `clientRequestId`.
 - `GET /threads`, `GET /threads/:threadId`, and `GET /threads/:threadId/events` return bounded summaries or snapshots.
 - `POST /threads/:threadId/abort` aborts idempotently.
 - `POST /threads/:threadId/approvals/:approvalId/decision` records an idempotent approval decision.
 - `POST /threads/:threadId/inputs/:inputRequestId/answer` records a bounded user-input answer.
 - `GET /reviews` and `GET /reviews/:reviewId` expose bounded review summaries and snapshots.
-- `GET /files/read` exposes bounded owner-worktree text snapshots.
+- `GET /files/read` exposes bounded owner-checkout text snapshots. Omitting `worktreeId` reads the project's primary checkout; providing it scopes the read to that worktree.
 - `GET /notification-preferences` returns coding-agent notification preferences for the authenticated owner.
 - `PUT /notification-preferences` updates coding-agent notification preferences for the authenticated owner with a small body limit and atomic per-owner file persistence.
 
 Every mutating route needs auth, `bodyLimit`, Zod validation, an ownership check, safe error mapping, and focused tests.
+
+An agent thread may omit `worktreeId` to run in the validated owner project's primary checkout. Supplying `worktreeId` keeps the existing isolated worktree behavior. Both paths pass through the same gateway-owned sandbox preflight and terminal binding.
 
 ## Event Model
 
@@ -65,7 +94,7 @@ Provider-specific behavior belongs behind the gateway provider adapter interface
 
 The gateway provider registry owns shell-facing provider projections. It validates the bounded configured adapter set at startup, validates and bounds owner-scoped credential responses, combines adapter metadata with that credential state, and keeps credential-known non-system providers visible even before an execution adapter is registered. Credential-only projections preserve coarse install/auth state but remain unavailable for runs until an adapter exists. Credential-source failures fail closed to unavailable/unknown adapter projections without running setup or health reads. Adapter reads receive timeout signals, and only coarse health booleans enter a capped owner/provider TTL cache with LRU eviction. Invalid summaries or setup actions degrade to generic safe state; raw health output and credentials never enter the runtime summary.
 
-Workspace provider projections are configured with the bounded, comma-separated `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` setting. The supported rollout values are `claude` and `codex`; duplicates, unknown values, empty entries, and more than two entries fail startup with a generic configuration error. Codex enters both the registry and executable provider sets. Claude remains registry-visible but unavailable for thread creation until its launcher enforces the requested sandbox and approval policy; [#893](https://github.com/HamedMP/matrix-os/issues/893) tracks that rollout boundary. Registry-only adapters also reject direct execution so later wiring changes fail closed. The legacy `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1` setting remains a Codex-only compatibility path when the explicit list is unset. An explicitly empty list disables workspace providers even if the legacy flag is set.
+Workspace provider projections are configured with the bounded, comma-separated `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` setting. The supported rollout values are `claude` and `codex`; duplicates, unknown values, empty entries, and more than two entries fail startup with a generic configuration error. Customer host bundles enable the executable Codex adapter through the legacy `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1` setting so thread routes are present on a fresh runtime; provider readiness still fails closed until Codex is installed and connected. Claude remains registry-visible but unavailable for thread creation until its launcher passes the required sandbox smoke gate. Registry-only adapters also reject direct execution so later wiring changes fail closed. An explicitly empty provider list disables workspace providers even when the legacy setting is present.
 
 Claude and Codex workspace adapters expose only fixed server-owned foreground setup actions. Every setup action defaults `MATRIX_NODE_PREFIX` to the canonical `/opt/matrix/runtime/node` prefix and prepends `$MATRIX_NODE_PREFIX/bin` to `PATH` before invoking a provider command. Install actions run the existing npm package install in a visible terminal, connect actions launch the provider's interactive local login flow, and both leave an interactive shell open afterward. Commands are bounded by `SafeSetupActionSchema`; clients must not render command text, persist it, or accept client-supplied replacements.
 
@@ -80,6 +109,8 @@ When adding a provider:
 ## Terminal Binding
 
 Coding-agent threads may point at a canonical terminal session using bounded terminal identifiers. The binding rules are:
+
+- Workspace orchestration owns `/api/sessions`; canonical named terminal sessions use `/api/terminal/sessions`. The assembled gateway mounts the legacy terminal compatibility routes after workspace routes so task-session requests cannot be parsed as legacy terminal creates.
 
 - Thread snapshots can expose attachable terminal references, not raw PTY output.
 - Desktop should open the existing Terminal tab/model for a bound session.

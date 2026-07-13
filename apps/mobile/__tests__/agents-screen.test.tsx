@@ -220,6 +220,22 @@ function recentWorkSummaryFixture() {
           status: "running",
           updatedAt: "2026-07-06T00:10:00.000Z",
         },
+        {
+          ...summary.activeThreads.items[0],
+          id: "thread_completed",
+          title: "Completed mobile run",
+          status: "completed",
+          attention: "completed",
+          updatedAt: "2026-07-06T00:09:00.000Z",
+        },
+        {
+          ...summary.activeThreads.items[0],
+          id: "thread_stale",
+          title: "Recover stale mobile run",
+          status: "stale",
+          attention: "none",
+          updatedAt: "2026-07-06T00:08:00.000Z",
+        },
       ],
     },
     attentionThreads: {
@@ -601,6 +617,7 @@ describe("AgentsScreen", () => {
 
     expect(await screen.findByText("Agent workspace offline")).toBeTruthy();
     expect(screen.getAllByText("Repair mobile route").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("agent-thread-status-thread_mobile")).toBeTruthy();
     expect(screen.queryByText(/token|bearer|secret|\/home\/matrix/i)).toBeNull();
   });
 
@@ -723,16 +740,16 @@ describe("AgentsScreen", () => {
     render(<AgentsScreen />);
 
     expect((await screen.findAllByText("Approve deployment")).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Approval needed").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Input needed").length).toBeGreaterThan(0);
+    expect(screen.getByText("codex · Approval needed")).toBeTruthy();
+    expect(screen.getByText("codex · Input needed")).toBeTruthy();
     expect(screen.getByLabelText("Open thread Approve deployment, Approval needed")).toBeTruthy();
     expect(screen.getByLabelText("Open thread Clarify test target, Input needed")).toBeTruthy();
-    expect(screen.getByLabelText("Open thread Repair failing run")).toBeTruthy();
+    expect(screen.getByLabelText("Open thread Repair failing run, Failed")).toBeTruthy();
     expect(screen.queryByText("Run failed")).toBeNull();
     expect(screen.queryByText(/home\/matrix|token|secret|stack trace/i)).toBeNull();
   });
 
-  it("renders gateway-owned attention threads separately from active threads", async () => {
+  it("merges gateway-owned attention threads into the primary cockpit", async () => {
     const client = {
       getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
         ok: true,
@@ -750,20 +767,20 @@ describe("AgentsScreen", () => {
 
     render(<AgentsScreen />);
 
-    expect(await screen.findByText("Needs Attention")).toBeTruthy();
-    expect(screen.getAllByText("Approve deployment").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Repair failed run").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Approval needed").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Failed").length).toBeGreaterThan(0);
-    expect(screen.getByText("No active threads.")).toBeTruthy();
+    expect(await screen.findByText("Needs attention")).toBeTruthy();
+    expect(screen.getAllByText("Approve deployment")).toHaveLength(1);
+    expect(screen.getAllByText("Repair failed run")).toHaveLength(1);
+    expect(screen.getByText("codex · Approval needed")).toBeTruthy();
+    expect(screen.getByText("codex · Failed")).toBeTruthy();
+    expect(screen.getByText("No active agent runs.")).toBeTruthy();
 
     await act(async () => {
-      fireEvent.press(screen.getByLabelText("Open attention thread Repair failed run, Failed"));
+      fireEvent.press(screen.getByLabelText("Open thread Repair failed run, Failed"));
     });
     expect(mockRouterPush).toHaveBeenCalledWith("/agents/thread_failed");
   });
 
-  it("prioritizes pending approval recent work before active runs and terminals", async () => {
+  it("prioritizes pending approval work before active runs and terminals", async () => {
     const client = {
       getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
         ok: true,
@@ -781,19 +798,19 @@ describe("AgentsScreen", () => {
 
     render(<AgentsScreen />);
 
-    await screen.findByText("Recent Work");
-    expect(screen.getByLabelText("Open recent work Approve deploy plan, Approval needed")).toBeTruthy();
-    expect(screen.getByLabelText("Open recent work Newer running task")).toBeTruthy();
-    expect(screen.getByLabelText("Open recent terminal matrix-newer")).toBeTruthy();
+    await screen.findByText("Needs attention");
+    expect(screen.getByLabelText("Open thread Approve deploy plan, Approval needed")).toBeTruthy();
+    expect(screen.getByLabelText("Open thread Newer running task")).toBeTruthy();
+    expect(screen.getByLabelText("Open terminal session matrix-newer")).toBeTruthy();
 
     const buttonOrder = screen.getAllByRole("button").map((node) => node.props.accessibilityLabel);
-    expect(buttonOrder.indexOf("Open recent work Approve deploy plan, Approval needed"))
-      .toBeLessThan(buttonOrder.indexOf("Open recent work Newer running task"));
-    expect(buttonOrder.indexOf("Open recent work Newer running task"))
-      .toBeLessThan(buttonOrder.indexOf("Open recent terminal matrix-newer"));
+    expect(buttonOrder.indexOf("Open thread Approve deploy plan, Approval needed"))
+      .toBeLessThan(buttonOrder.indexOf("Open thread Newer running task"));
+    expect(buttonOrder.indexOf("Open thread Newer running task"))
+      .toBeLessThan(buttonOrder.indexOf("Open terminal session matrix-newer"));
 
     await act(async () => {
-      fireEvent.press(screen.getByLabelText("Open recent terminal matrix-newer"));
+      fireEvent.press(screen.getByLabelText("Open terminal session matrix-newer"));
     });
     expect(AsyncStorage.setItem).toHaveBeenCalledWith(
       MOBILE_SHELL_STATE_STORAGE_KEY,
@@ -806,12 +823,113 @@ describe("AgentsScreen", () => {
     expect(mockRouterPush).toHaveBeenCalledWith("/terminal");
 
     await act(async () => {
-      fireEvent.press(screen.getByLabelText("Start a new coding-agent run"));
+      fireEvent.press(screen.getByLabelText("Start a new agent run"));
     });
     expect(mockRouterPush).toHaveBeenCalledWith("/agents/new");
   });
 
-  it("keeps a terminal resume row when active threads fill recent work", async () => {
+  it("presents a deduplicated attention-first mobile cockpit", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: recentWorkSummaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    expect(await screen.findByText("What do you want Matrix to build?")).toBeTruthy();
+    expect(screen.getByText("Needs attention")).toBeTruthy();
+    expect(screen.getByText("Working")).toBeTruthy();
+    expect(screen.getByText("Recent")).toBeTruthy();
+    expect(screen.getAllByText("Approve deploy plan")).toHaveLength(1);
+    expect(screen.getAllByText("Newer running task")).toHaveLength(1);
+    expect(screen.getAllByText("Completed mobile run")).toHaveLength(1);
+    expect(screen.getAllByText("Recover stale mobile run")).toHaveLength(1);
+    expect(screen.queryByText("Active Threads")).toBeNull();
+
+    const buttonOrder = screen.getAllByRole("button").map((node) => node.props.accessibilityLabel);
+    expect(buttonOrder.indexOf("Open thread Approve deploy plan, Approval needed"))
+      .toBeLessThan(buttonOrder.indexOf("Open thread Newer running task"));
+
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Start a new agent run"));
+    });
+    expect(mockRouterPush).toHaveBeenCalledWith("/agents/new");
+  });
+
+  it("keeps completed and recoverable stale threads reachable", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: recentWorkSummaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({ ok: true, reviews: reviewsFixture() }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("Recent");
+    fireEvent.press(screen.getByLabelText("Open thread Completed mobile run"));
+    fireEvent.press(screen.getByLabelText("Open thread Recover stale mobile run"));
+
+    expect(mockRouterPush).toHaveBeenCalledWith("/agents/thread_completed");
+    expect(mockRouterPush).toHaveBeenCalledWith("/agents/thread_stale");
+  });
+
+  it("renders long thread titles on multiple lines with a static status", async () => {
+    const longTitle = "Investigate the mobile runtime reconciliation failure after reconnecting to a remote computer";
+    const summary = summaryFixture();
+    summary.activeThreads.items[0] = { ...summary.activeThreads.items[0], title: longTitle };
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({ ok: true, summary }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({ ok: true, reviews: reviewsFixture() }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    const title = await screen.findByText(longTitle);
+    expect(title.props.numberOfLines).toBe(2);
+    expect(screen.getByTestId("agent-thread-status-thread_mobile")).toBeTruthy();
+  });
+
+  it("lets iOS own automatic safe-area adjustment without manual inset padding", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({ ok: true, summary: summaryFixture() }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({ ok: true, reviews: reviewsFixture() }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    const scroll = await screen.findByLabelText("Refresh agent workspace");
+    expect(scroll.props.contentInsetAdjustmentBehavior).toBe("automatic");
+    expect(scroll.props.contentContainerStyle).toEqual(expect.objectContaining({
+      paddingTop: 24,
+      paddingBottom: 32,
+    }));
+  });
+
+  it("keeps a terminal resume row when many agent runs are working", async () => {
     const summary = summaryFixture();
     const client = {
       getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
@@ -842,9 +960,9 @@ describe("AgentsScreen", () => {
 
     render(<AgentsScreen />);
 
-    await screen.findByText("Recent Work");
-    expect(screen.getByLabelText("Open recent terminal matrix-abc1234")).toBeTruthy();
-    expect(screen.queryByLabelText("Open recent work Active task 1")).toBeNull();
+    await screen.findByText("Working");
+    expect(screen.getByLabelText("Open terminal session matrix-abc1234")).toBeTruthy();
+    expect(screen.getByLabelText("Open thread Active task 1")).toBeTruthy();
   });
 
   it("opens terminal summary rows through the existing mobile Terminal tab", async () => {

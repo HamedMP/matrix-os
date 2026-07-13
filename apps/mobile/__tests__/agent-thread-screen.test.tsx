@@ -49,6 +49,8 @@ function threadSnapshotFixture() {
       title: "Repair mobile route",
       status: "running",
       attention: "none",
+      projectId: "matrix-os",
+      taskId: "task_mobile",
       terminalSessionId: "matrix-abc1234",
       createdAt: "2026-07-06T00:00:00.000Z",
       updatedAt: "2026-07-06T00:01:00.000Z",
@@ -663,6 +665,8 @@ describe("AgentThreadRoute", () => {
         sourceThreadId: "thread_mobile",
         sourceThreadTitle: "Repair mobile route",
         sourceProviderId: "codex",
+        projectId: "matrix-os",
+        taskId: "task_mobile",
       },
     });
   });

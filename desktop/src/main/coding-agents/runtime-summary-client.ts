@@ -398,7 +398,9 @@ export async function fetchCodingAgentFileBrowse(
 
   const url = buildRuntimeUrl(auth, "/api/coding-agents/files/browse");
   url.searchParams.set("projectId", parsedRequest.data.projectId);
-  url.searchParams.set("worktreeId", parsedRequest.data.worktreeId);
+  if (parsedRequest.data.worktreeId) {
+    url.searchParams.set("worktreeId", parsedRequest.data.worktreeId);
+  }
   if (parsedRequest.data.path) {
     url.searchParams.set("path", parsedRequest.data.path);
   }
@@ -440,7 +442,9 @@ export async function fetchCodingAgentFileSearch(
 
   const url = buildRuntimeUrl(auth, "/api/coding-agents/files/search");
   url.searchParams.set("projectId", parsedRequest.data.projectId);
-  url.searchParams.set("worktreeId", parsedRequest.data.worktreeId);
+  if (parsedRequest.data.worktreeId) {
+    url.searchParams.set("worktreeId", parsedRequest.data.worktreeId);
+  }
   if (parsedRequest.data.path) {
     url.searchParams.set("path", parsedRequest.data.path);
   }
@@ -483,7 +487,9 @@ export async function fetchCodingAgentFileContent(
 
   const url = buildRuntimeUrl(auth, "/api/coding-agents/files/read");
   url.searchParams.set("projectId", parsedRequest.data.projectId);
-  url.searchParams.set("worktreeId", parsedRequest.data.worktreeId);
+  if (parsedRequest.data.worktreeId) {
+    url.searchParams.set("worktreeId", parsedRequest.data.worktreeId);
+  }
   url.searchParams.set("path", parsedRequest.data.path);
   const res = await fetchFn(url.toString(), {
     method: "GET",
