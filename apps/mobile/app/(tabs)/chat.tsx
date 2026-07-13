@@ -57,11 +57,15 @@ function TypingIndicator() {
 
   const style = useAnimatedStyle(() => ({ opacity: opacity.value }));
 
+  // Keep the Unistyles style on a plain View: mixing Unistyles and animated
+  // styles on one Animated.View trips Reanimated's CSS prop filtering.
   return (
-    <Animated.View style={[typingStyles.container, style]}>
-      <View style={typingStyles.dot} />
-      <View style={typingStyles.dot} />
-      <View style={typingStyles.dot} />
+    <Animated.View style={style}>
+      <View style={typingStyles.container}>
+        <View style={typingStyles.dot} />
+        <View style={typingStyles.dot} />
+        <View style={typingStyles.dot} />
+      </View>
     </Animated.View>
   );
 }

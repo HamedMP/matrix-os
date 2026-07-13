@@ -6,7 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useAuth } from "@clerk/clerk-expo";
 import { useEffect, useState } from "react";
-import { HOSTED_GATEWAY_URL, getSelectedGatewayConnection, isHostedGatewayUrl } from "@/lib/storage";
+import { HOSTED_GATEWAY_URL, getMobileJourneyGatewayUrl, getSelectedGatewayConnection, isHostedGatewayUrl } from "@/lib/storage";
 import { JourneyGate } from "@/components/JourneyGate";
 import { fetchMobileJourney, isConnectablePhase, type JourneyFetchResult } from "@/lib/journey";
 
@@ -35,7 +35,7 @@ function SignedInJourneyGate() {
           return;
         }
         const token = await getToken();
-        const next = await fetchMobileJourney(gateway.url, token);
+        const next = await fetchMobileJourney(getMobileJourneyGatewayUrl(gateway.url), token);
         if (!active) return;
         if (next.status === "ok" && isConnectablePhase(next.journey.phase)) {
           router.replace("/(tabs)/apps" as any);

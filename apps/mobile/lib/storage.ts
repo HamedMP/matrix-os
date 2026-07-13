@@ -1,4 +1,10 @@
 import * as SecureStore from "expo-secure-store";
+import {
+  MatrixComputerHandleSchema,
+  MatrixComputerRuntimeSlotSchema,
+  MatrixComputerSchema,
+  type MatrixComputer,
+} from "@matrix-os/contracts";
 
 const SETTINGS_KEY = "matrix_os_settings";
 const GATEWAY_CONNECTION_KEY = "matrix_os_gateway_connection";
@@ -9,6 +15,8 @@ const CUSTOM_GATEWAY_ID = "matrix-os-custom";
 export interface GatewayConnection {
   id: string;
   url: string;
+  /** Safe server-projected routing reference; never an authentication credential. */
+  runtimeSlot?: string;
   /** Full Authorization header value for non-Clerk gateways, e.g. "Basic ...". */
   token?: string;
   name: string;
@@ -32,10 +40,65 @@ export const HOSTED_GATEWAY: GatewayConnection = {
   url: HOSTED_GATEWAY_URL,
   name: "Matrix OS Cloud",
   addedAt: 0,
+  runtimeSlot: "primary",
 };
 
 export function isHostedGatewayUrl(url: string): boolean {
-  return normalizeGatewayUrl(url) === HOSTED_GATEWAY_URL;
+  return parseHostedGatewayUrl(url) !== null;
+}
+
+interface HostedGatewayRoute {
+  url: string;
+  handle: string | null;
+  runtimeSlot: string;
+}
+
+function parseHostedGatewayUrl(input: string): HostedGatewayRoute | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(input.trim());
+  } catch {
+    return null;
+  }
+  if (parsed.origin !== HOSTED_GATEWAY_URL || parsed.hash) return null;
+  if ((parsed.pathname === "/" || parsed.pathname === "") && !parsed.search) {
+    return { url: HOSTED_GATEWAY_URL, handle: null, runtimeSlot: "primary" };
+  }
+
+  const match = parsed.pathname.match(/^\/vm\/([^/]+)$/);
+  const handle = MatrixComputerHandleSchema.safeParse(match?.[1]);
+  if (!handle.success) return null;
+
+  const queryKeys = [...parsed.searchParams.keys()];
+  if (queryKeys.length === 0) {
+    return {
+      url: `${HOSTED_GATEWAY_URL}/vm/${handle.data}`,
+      handle: handle.data,
+      runtimeSlot: "primary",
+    };
+  }
+  if (queryKeys.length !== 1 || queryKeys[0] !== "runtime") return null;
+  const runtimeValues = parsed.searchParams.getAll("runtime");
+  const runtimeSlot = MatrixComputerRuntimeSlotSchema.safeParse(runtimeValues[0]);
+  if (runtimeValues.length !== 1 || !runtimeSlot.success || runtimeSlot.data === "primary") return null;
+  return {
+    url: `${HOSTED_GATEWAY_URL}/vm/${handle.data}?runtime=${runtimeSlot.data}`,
+    handle: handle.data,
+    runtimeSlot: runtimeSlot.data,
+  };
+}
+
+/** Platform-owned journey state is not scoped to a selected `/vm/:handle`. */
+export function getMobileJourneyGatewayUrl(selectedGatewayUrl: string): string {
+  return isHostedGatewayUrl(selectedGatewayUrl) ? HOSTED_GATEWAY_URL : selectedGatewayUrl;
+}
+
+/** Hosted app-session tokens route the request to their computer from the canonical app path. */
+export function resolveMobileAppSessionLaunchUrl(selectedGatewayUrl: string, launchUrl: string): string {
+  if (launchUrl.startsWith("http")) return launchUrl;
+  const base = (isHostedGatewayUrl(selectedGatewayUrl) ? HOSTED_GATEWAY_URL : selectedGatewayUrl)
+    .replace(/\/+$/, "");
+  return `${base}${launchUrl.startsWith("/") ? "" : "/"}${launchUrl}`;
 }
 
 export function normalizeGatewayUrl(input: string): string {
@@ -72,8 +135,20 @@ export async function getSelectedGatewayConnection(): Promise<GatewayConnection>
   try {
     const parsed = JSON.parse(raw) as Partial<GatewayConnection>;
     if (typeof parsed.url !== "string") return HOSTED_GATEWAY;
+    const hosted = parseHostedGatewayUrl(parsed.url);
+    if (hosted?.handle === null) return HOSTED_GATEWAY;
+    if (hosted) {
+      const persistedSlot = MatrixComputerRuntimeSlotSchema.safeParse(parsed.runtimeSlot);
+      if (persistedSlot.success && persistedSlot.data !== hosted.runtimeSlot) return HOSTED_GATEWAY;
+      return {
+        id: `${HOSTED_GATEWAY_ID}:${hosted.runtimeSlot}:${hosted.handle}`,
+        url: hosted.url,
+        runtimeSlot: hosted.runtimeSlot,
+        name: typeof parsed.name === "string" && parsed.name.trim() ? parsed.name : "Matrix OS Computer",
+        addedAt: typeof parsed.addedAt === "number" ? parsed.addedAt : Date.now(),
+      };
+    }
     const url = normalizeGatewayUrl(parsed.url);
-    if (url === HOSTED_GATEWAY_URL) return HOSTED_GATEWAY;
     return {
       id: typeof parsed.id === "string" ? parsed.id : CUSTOM_GATEWAY_ID,
       url,
@@ -87,15 +162,44 @@ export async function getSelectedGatewayConnection(): Promise<GatewayConnection>
 }
 
 export async function saveSelectedGatewayUrl(input: string): Promise<GatewayConnection> {
-  const url = normalizeGatewayUrl(input);
-  if (url === HOSTED_GATEWAY_URL) {
+  const hosted = parseHostedGatewayUrl(input);
+  if (hosted?.handle === null) {
     await SecureStore.deleteItemAsync(GATEWAY_CONNECTION_KEY);
     return HOSTED_GATEWAY;
   }
+  if (hosted) {
+    const gateway: GatewayConnection = {
+      id: `${HOSTED_GATEWAY_ID}:${hosted.runtimeSlot}:${hosted.handle}`,
+      url: hosted.url,
+      runtimeSlot: hosted.runtimeSlot,
+      name: "Matrix OS Computer",
+      addedAt: Date.now(),
+    };
+    await SecureStore.setItemAsync(GATEWAY_CONNECTION_KEY, JSON.stringify(gateway));
+    return gateway;
+  }
+  const url = normalizeGatewayUrl(input);
   const gateway: GatewayConnection = {
     id: CUSTOM_GATEWAY_ID,
     url,
     name: "Self-hosted Matrix OS",
+    addedAt: Date.now(),
+  };
+  await SecureStore.setItemAsync(GATEWAY_CONNECTION_KEY, JSON.stringify(gateway));
+  return gateway;
+}
+
+export async function saveSelectedHostedComputer(input: MatrixComputer): Promise<GatewayConnection> {
+  const computer = MatrixComputerSchema.parse(input);
+  const hosted = parseHostedGatewayUrl(`${HOSTED_GATEWAY_URL}${computer.gatewayPath}`);
+  if (!hosted || hosted.handle !== computer.handle || hosted.runtimeSlot !== computer.runtimeSlot) {
+    throw new Error("Invalid Matrix computer route.");
+  }
+  const gateway: GatewayConnection = {
+    id: `${HOSTED_GATEWAY_ID}:${computer.runtimeSlot}:${computer.handle}`,
+    url: hosted.url,
+    runtimeSlot: computer.runtimeSlot,
+    name: computer.label,
     addedAt: Date.now(),
   };
   await SecureStore.setItemAsync(GATEWAY_CONNECTION_KEY, JSON.stringify(gateway));
@@ -117,7 +221,10 @@ export async function saveSelectedGatewayBasicAuth(input: string, username: stri
     name: "Self-hosted Matrix OS",
     addedAt: Date.now(),
   };
-  await SecureStore.setItemAsync(GATEWAY_CONNECTION_KEY, JSON.stringify(gateway));
+  // Keep the credential in memory for this session only; the persisted record
+  // must never contain an Authorization value.
+  const persistedGateway: GatewayConnection = { ...gateway, token: undefined };
+  await SecureStore.setItemAsync(GATEWAY_CONNECTION_KEY, JSON.stringify(persistedGateway));
   return gateway;
 }
 

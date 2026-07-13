@@ -1,14 +1,16 @@
+import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { AgentThreadSummary, RuntimeSummary } from "@matrix-os/contracts";
-import { buildAgentCockpit } from "@/lib/agent-cockpit";
+import { buildAgentCockpit, formatRelativeAge, type AgentCockpitProjectGroup } from "@/lib/agent-cockpit";
 
 type AgentCockpitProps = {
-  summary: Pick<RuntimeSummary, "activeThreads" | "attentionThreads">;
+  summary: Pick<RuntimeSummary, "activeThreads" | "attentionThreads" | "projects">;
   canCreate: boolean;
   onCreate: () => void;
+  onCreateInProject?: (projectId: string) => void;
   onOpenThread: (thread: AgentThreadSummary) => void;
 };
 
@@ -54,22 +56,29 @@ function SectionHeading({ title, count }: { title: string; count: number }) {
   );
 }
 
+function isWorking(thread: AgentThreadSummary): boolean {
+  return thread.status === "queued" || thread.status === "starting" || thread.status === "running";
+}
+
 function ThreadRow({
   thread,
   attention,
-  recent,
+  nowMs,
   onPress,
   last,
 }: {
   thread: AgentThreadSummary;
   attention: boolean;
-  recent?: boolean;
+  nowMs: number;
   onPress: () => void;
   last: boolean;
 }) {
   const { theme } = useUnistyles();
   const attentionState = attention ? attentionCopy(thread) : null;
+  const working = !attentionState && isWorking(thread);
   const label = attentionState?.label ?? statusLabel(thread.status);
+  const age = formatRelativeAge(thread.updatedAt, nowMs);
+  const meta = age ? `${thread.providerId} · ${label} · ${age}` : `${thread.providerId} · ${label}`;
 
   return (
     <Pressable
@@ -96,16 +105,16 @@ function ThreadRow({
       </View>
       <View style={styles.threadText}>
         <Text numberOfLines={2} style={styles.threadTitle}>{thread.title}</Text>
-        <Text numberOfLines={1} style={styles.threadMeta}>{`${thread.providerId} · ${label}`}</Text>
+        <Text numberOfLines={1} style={styles.threadMeta}>{meta}</Text>
       </View>
       {attentionState ? (
         <View style={styles.attentionDot} />
       ) : (
         <View testID={`agent-thread-status-${thread.id}`} style={styles.staticStatus}>
           <Ionicons
-            name={recent ? "time-outline" : "ellipse"}
-            size={recent ? 17 : 9}
-            color={recent ? theme.colors.mutedForeground : theme.colors.moss}
+            name={working ? "ellipse" : "time-outline"}
+            size={working ? 9 : 17}
+            color={working ? theme.colors.moss : theme.colors.mutedForeground}
           />
         </View>
       )}
@@ -113,9 +122,94 @@ function ThreadRow({
   );
 }
 
-export function AgentCockpit({ summary, canCreate, onCreate, onOpenThread }: AgentCockpitProps) {
+function ProjectGroupSection({
+  group,
+  canCreate,
+  nowMs,
+  onCreateInProject,
+  onOpenThread,
+}: {
+  group: AgentCockpitProjectGroup;
+  canCreate: boolean;
+  nowMs: number;
+  onCreateInProject?: (projectId: string) => void;
+  onOpenThread: (thread: AgentThreadSummary) => void;
+}) {
+  const { theme } = useUnistyles();
+  const canCreateHere = canCreate && group.projectId !== null && typeof onCreateInProject === "function";
+
+  return (
+    <View style={styles.section} testID={`agent-project-group-${group.projectId ?? "none"}`}>
+      <View style={styles.sectionHeading}>
+        <View style={styles.projectHeadingText}>
+          <Text numberOfLines={1} style={styles.sectionTitle}>{group.label}</Text>
+          {group.workingCount > 0 ? (
+            <Text style={styles.projectWorkingBadge}>{`${group.workingCount} working`}</Text>
+          ) : null}
+          {group.attentionCount > 0 ? (
+            <View style={styles.projectAttentionBadge}>
+              <View style={styles.attentionDot} />
+              <Text style={styles.projectAttentionCount}>{group.attentionCount}</Text>
+            </View>
+          ) : null}
+        </View>
+        {canCreateHere ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Start a chat in ${group.label}`}
+            onPress={() => {
+              triggerSelectionHaptic();
+              onCreateInProject?.(group.projectId as string);
+            }}
+            style={({ pressed }) => [styles.projectNewButton, pressed ? styles.pressed : null]}
+          >
+            <Ionicons name="add" size={16} color={theme.colors.forest} />
+          </Pressable>
+        ) : (
+          <Text style={styles.sectionCount}>{group.threads.length}</Text>
+        )}
+      </View>
+      {group.threads.length > 0 ? (
+        <View style={styles.threadGroup}>
+          {group.threads.map((thread, index) => (
+            <ThreadRow
+              key={thread.id}
+              thread={thread}
+              attention={false}
+              nowMs={nowMs}
+              last={index === group.threads.length - 1}
+              onPress={() => onOpenThread(thread)}
+            />
+          ))}
+        </View>
+      ) : (
+        <View style={styles.emptyState}>
+          <Ionicons name="folder-open-outline" size={20} color={theme.colors.moss} />
+          <Text style={styles.emptyTitle}>No chats yet.</Text>
+          <Text style={styles.emptyBody}>
+            {canCreateHere ? "Start a chat to work in this project." : "Runs in this project will appear here."}
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+// Relative ages tick once a minute; reading the clock in an effect keeps
+// render pure for the React Compiler.
+function useNowMs(intervalMs = 60_000): number {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), intervalMs);
+    return () => clearInterval(timer);
+  }, [intervalMs]);
+  return nowMs;
+}
+
+export function AgentCockpit({ summary, canCreate, onCreate, onCreateInProject, onOpenThread }: AgentCockpitProps) {
   const { theme } = useUnistyles();
   const model = buildAgentCockpit(summary);
+  const nowMs = useNowMs();
 
   return (
     <View style={styles.cockpit}>
@@ -151,6 +245,7 @@ export function AgentCockpit({ summary, canCreate, onCreate, onOpenThread }: Age
                 key={thread.id}
                 thread={thread}
                 attention
+                nowMs={nowMs}
                 last={index === model.needsAttention.length - 1}
                 onPress={() => onOpenThread(thread)}
               />
@@ -159,43 +254,23 @@ export function AgentCockpit({ summary, canCreate, onCreate, onOpenThread }: Age
         </View>
       ) : null}
 
-      <View style={styles.section}>
-        <SectionHeading title="Working" count={model.working.length} />
-        {model.working.length > 0 ? (
-          <View style={styles.threadGroup}>
-            {model.working.map((thread, index) => (
-              <ThreadRow
-                key={thread.id}
-                thread={thread}
-                attention={false}
-                last={index === model.working.length - 1}
-                onPress={() => onOpenThread(thread)}
-              />
-            ))}
-          </View>
-        ) : (
+      {model.projects.length > 0 ? (
+        model.projects.map((group) => (
+          <ProjectGroupSection
+            key={group.projectId ?? "__no_project__"}
+            group={group}
+            canCreate={canCreate}
+            nowMs={nowMs}
+            onCreateInProject={onCreateInProject}
+            onOpenThread={onOpenThread}
+          />
+        ))
+      ) : model.needsAttention.length === 0 ? (
+        <View style={styles.section}>
           <View style={styles.emptyState}>
             <Ionicons name="checkmark-circle-outline" size={20} color={theme.colors.moss} />
-            <Text style={styles.emptyTitle}>No active agent runs.</Text>
+            <Text style={styles.emptyTitle}>No projects or agent runs yet.</Text>
             <Text style={styles.emptyBody}>Start a run when you are ready.</Text>
-          </View>
-        )}
-      </View>
-
-      {model.recent.length > 0 ? (
-        <View style={styles.section}>
-          <SectionHeading title="Recent" count={model.recent.length} />
-          <View style={styles.threadGroup}>
-            {model.recent.map((thread, index) => (
-              <ThreadRow
-                key={thread.id}
-                thread={thread}
-                attention={false}
-                recent
-                last={index === model.recent.length - 1}
-                onPress={() => onOpenThread(thread)}
-              />
-            ))}
           </View>
         </View>
       ) : null}
@@ -278,6 +353,44 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.mutedForeground,
     backgroundColor: theme.colors.field,
     fontVariant: ["tabular-nums"] as const,
+  },
+  projectHeadingText: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing.sm,
+  },
+  projectWorkingBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+    overflow: "hidden",
+    fontFamily: theme.fonts.mono,
+    fontSize: 10,
+    color: theme.colors.forest,
+    backgroundColor: theme.colors.field,
+  },
+  projectAttentionBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  projectAttentionCount: {
+    fontFamily: theme.fonts.mono,
+    fontSize: 11,
+    color: theme.colors.glow,
+    fontVariant: ["tabular-nums"] as const,
+  },
+  projectNewButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
   },
   threadGroup: {
     borderRadius: 18,

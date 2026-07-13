@@ -737,6 +737,8 @@ export const ProjectSummarySchema = z.object({
   updatedAt: IsoTimestampSchema.optional(),
 }).strict();
 
+export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
+
 const CodingAgentProjectSlugSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/);
 export const CodingAgentProjectCreateRequestSchema = z.discriminatedUnion("mode", [
   z.object({

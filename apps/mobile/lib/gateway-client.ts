@@ -283,6 +283,8 @@ function logGatewayWarning(scope: string, detail: unknown): void {
 export class GatewayClient {
   private ws: WebSocket | null = null;
   private baseUrl: string;
+  /** Routing query (without `?`) carried by the base URL, e.g. `runtime=<slot>`. */
+  private baseQuery: string;
   private token: string | undefined;
   private tokenProvider: TokenProvider | undefined;
   private wsToken: string | undefined;
@@ -295,7 +297,12 @@ export class GatewayClient {
   private shouldReconnect = false;
 
   constructor(baseUrl: string, token?: TokenSource, wsToken?: string) {
-    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    // A routed computer URL may carry a routing query (e.g. `/vm/<handle>?runtime=<slot>`).
+    // Split it off so path joins stay valid, and re-apply it to every request URL.
+    const trimmed = baseUrl.replace(/\/+$/, "");
+    const queryIndex = trimmed.indexOf("?");
+    this.baseUrl = queryIndex === -1 ? trimmed : trimmed.slice(0, queryIndex).replace(/\/+$/, "");
+    this.baseQuery = queryIndex === -1 ? "" : trimmed.slice(queryIndex + 1);
     if (token || wsToken) {
       assertSecureTokenTransport(this.baseUrl);
     }
@@ -329,15 +336,21 @@ export class GatewayClient {
     return formatAuthorizationHeader(token);
   }
 
+  /** Re-applies the base routing query (e.g. `runtime=<slot>`) to a joined URL. */
+  private withBaseQuery(url: string): string {
+    if (!this.baseQuery) return url;
+    return `${url}${url.includes("?") ? "&" : "?"}${this.baseQuery}`;
+  }
+
   get wsUrl(): string {
     const url = this.baseUrl.replace(/^http/, "ws");
-    return `${url}/ws`;
+    return this.withBaseQuery(`${url}/ws`);
   }
 
   get terminalWsUrl(): string {
     const url = this.baseUrl.replace(/^http/, "ws");
     // Shell-sessions endpoint: attach by session name passed in the query.
-    return `${url}/ws/terminal/session`;
+    return this.withBaseQuery(`${url}/ws/terminal/session`);
   }
 
   setWebSocketToken(token: string | null, expiresAt?: number): void {
@@ -386,7 +399,7 @@ export class GatewayClient {
     const upgradeToken = this.wsToken;
     const authorization = formatAuthorizationHeader(this.token);
     const wsUrl = upgradeToken
-      ? `${this.wsUrl}?token=${encodeURIComponent(upgradeToken)}`
+      ? appendQuery(this.wsUrl, `token=${encodeURIComponent(upgradeToken)}`)
       : this.wsUrl;
 
     const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
@@ -507,7 +520,7 @@ export class GatewayClient {
   }
 
   private async fetchGateway(path: string, init: RequestInit = {}): Promise<Response> {
-    return fetch(`${this.httpUrl}${path}`, {
+    return fetch(this.withBaseQuery(`${this.httpUrl}${path}`), {
       ...init,
       headers: {
         ...(await this.authHeaders()),
@@ -535,7 +548,7 @@ export class GatewayClient {
     if (typeof fromSeq === "number" && Number.isFinite(fromSeq)) params.set("fromSeq", String(fromSeq));
     if (token) params.set("token", token);
     const query = params.toString();
-    const wsUrl = query ? `${this.terminalWsUrl}?${query}` : this.terminalWsUrl;
+    const wsUrl = query ? appendQuery(this.terminalWsUrl, query) : this.terminalWsUrl;
     const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
     const authorization = formatAuthorizationHeader(this.token);
     return new WebSocketWithOptions(
@@ -562,7 +575,9 @@ export class GatewayClient {
     if (token) params.set("token", token);
     if (parsedCursor?.success) params.set("cursor", parsedCursor.data);
     const query = params.toString();
-    const wsUrl = `${this.baseUrl.replace(/^http/, "ws")}/ws/coding-agents/thread/${encodeURIComponent(parsedThreadId.data)}${query ? `?${query}` : ""}`;
+    const wsUrl = this.withBaseQuery(
+      `${this.baseUrl.replace(/^http/, "ws")}/ws/coding-agents/thread/${encodeURIComponent(parsedThreadId.data)}${query ? `?${query}` : ""}`,
+    );
     const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
     const authorization = formatAuthorizationHeader(this.token);
     const ws = new WebSocketWithOptions(
@@ -726,7 +741,11 @@ export class GatewayClient {
     params.set("limit", String(limit));
     const res = await this.fetchGateway(`/api/messages?${params}`);
     if (!res.ok) return [];
-    return res.json();
+    // `/api/messages` is owned by the messaging bridge on newer gateways and
+    // no longer returns a chat-history array; treat any non-array body as
+    // "no older history" instead of crashing history pagination.
+    const body: unknown = await res.json();
+    return Array.isArray(body) ? body : [];
   }
 
   async getConversations(): Promise<unknown[]> {
@@ -1346,7 +1365,11 @@ export class GatewayClient {
   }
 }
 
-function createTimeoutSignal(timeoutMs: number): AbortSignal | undefined {
+function appendQuery(url: string, query: string): string {
+  return `${url}${url.includes("?") ? "&" : "?"}${query}`;
+}
+
+export function createTimeoutSignal(timeoutMs: number): AbortSignal | undefined {
   const timeout = (AbortSignal as { timeout?: (milliseconds: number) => AbortSignal }).timeout;
   if (typeof timeout === "function") {
     return timeout(timeoutMs);
