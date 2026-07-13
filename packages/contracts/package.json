@@ -6,6 +6,9 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "imports": {
+    "#agent-profile": "./src/agent-profile.ts"
+  },
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {

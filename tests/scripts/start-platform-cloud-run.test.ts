@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -60,6 +61,18 @@ describe('start-platform-cloud-run.sh', () => {
     expect(dockerfile).toContain('COPY packages/contracts/package.json packages/contracts/package.json');
     expect(dockerfile).toContain('/app/packages/contracts/package.json ./packages/contracts/package.json');
     expect(dockerfile).toContain('/app/packages/contracts/src ./packages/contracts/src');
+  });
+
+  it('loads the source-exported contracts entrypoint in the platform Node runtime', () => {
+    const root = process.cwd();
+
+    const output = execFileSync(process.execPath, [
+      '--input-type=module',
+      '--eval',
+      "import('@matrix-os/contracts').then(({ AgentProfileSummarySchema }) => process.stdout.write(AgentProfileSummarySchema ? 'ok' : 'missing'))",
+    ], { cwd: root, encoding: 'utf8' });
+
+    expect(output).toBe('ok');
   });
 
   it('exits nonzero when the auth shell never becomes ready', () => {

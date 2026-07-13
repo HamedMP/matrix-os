@@ -87,7 +87,7 @@ export const SafeAssistantPreviewSourceTextSchema = boundedText(16_000, 64 * 102
 export const SafeAssistantPreviewTextSchema = boundedText(243, 1024)
   .refine((value) => !UNSAFE_ASSISTANT_PREVIEW_TEXT.test(value), { message: "Text is not safe for assistant preview display" });
 export const BoundedTextSchema = (maxChars = 4000, maxBytes = 16 * 1024) => boundedText(maxChars, maxBytes);
-export { AgentProfileSummarySchema, type AgentProfileSummary } from "./agent-profile.js";
+export { AgentProfileSummarySchema, type AgentProfileSummary } from "#agent-profile";
 
 export const MatrixComputerHandleSchema = z.string()
   .min(2)
