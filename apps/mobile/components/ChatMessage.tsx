@@ -1,12 +1,13 @@
-import { useCallback, memo } from "react";
-// react-doctor-disable-next-line react-doctor/rn-prefer-expo-image -- expo-image is not a project dependency; adopting it is a separate dependency decision tracked outside this lint pass
-import { View, Text, ScrollView, Pressable, Image, Linking } from "react-native";
+import { useCallback, useEffect, useState, memo } from "react";
+import { View, Text, ScrollView, Pressable, Linking } from "react-native";
+import { Image } from "expo-image";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import Animated, { FadeInLeft, FadeInRight } from "react-native-reanimated";
 import * as Clipboard from "expo-clipboard";
 import { Ionicons } from "@expo/vector-icons";
 import { fonts } from "@/lib/theme";
 import type { Message } from "@/app/(tabs)/chat";
+import type { GatewayClient } from "@/lib/gateway-client";
 
 // Role styling lives in the Unistyles sheet below so bubbles follow the active
 // color scheme instead of pinning the light palette.
@@ -163,7 +164,7 @@ function inlineMarkdownToNodes(
   return elements;
 }
 
-export const ChatMessage = memo(function ChatMessage({ message, gatewayUrl }: { message: Message; gatewayUrl?: string }) {
+export const ChatMessage = memo(function ChatMessage({ message, gatewayUrl, client }: { message: Message; gatewayUrl?: string; client?: GatewayClient | null }) {
   const { theme } = useUnistyles();
   const isCode = message.content.includes("```");
   const imageMatches = extractImageLinks(message.content);
@@ -179,8 +180,8 @@ export const ChatMessage = memo(function ChatMessage({ message, gatewayUrl }: { 
         {message.tool && (
           <Text style={styles.toolLabel}>{message.tool}</Text>
         )}
-        {imageMatches.length > 0 && gatewayUrl && (
-          <ImageAttachments images={imageMatches} gatewayUrl={gatewayUrl} />
+        {imageMatches.length > 0 && client && (
+          <ImageAttachments images={imageMatches} client={client} />
         )}
         {isCode ? (
           <CodeContent content={message.content} role={message.role} />
@@ -201,7 +202,8 @@ export const ChatMessage = memo(function ChatMessage({ message, gatewayUrl }: { 
 }, (prev, next) =>
   prev.message.id === next.message.id &&
   prev.message.content === next.message.content &&
-  prev.gatewayUrl === next.gatewayUrl,
+  prev.gatewayUrl === next.gatewayUrl &&
+  prev.client === next.client,
 );
 
 function extractImageLinks(content: string): { alt: string; path: string }[] {
@@ -226,16 +228,48 @@ function extractFileLinks(content: string): { name: string; path: string }[] {
   return results;
 }
 
-function ImageAttachments({ images, gatewayUrl }: { images: { alt: string; path: string }[]; gatewayUrl: string }) {
+/** Strips the leading `/files/` so the remainder is an owner-home relative path. */
+function filesUrlToRelPath(path: string): string {
+  return path.replace(/^\/files\//, "");
+}
+
+// Owner `/files/*` images require the gateway Authorization header and the
+// base routing query (`/vm/<handle>?runtime=`), so build the URL through
+// `client.homeFileUrl` and attach the auth header once it resolves. Rendering
+// waits for the header so the <Image> mounts a single time with the credential,
+// mirroring the authenticated file preview path.
+function ImageAttachments({ images, client }: { images: { alt: string; path: string }[]; client: GatewayClient }) {
+  const [auth, setAuth] = useState<{ ready: boolean; header?: string }>({ ready: false });
+
+  useEffect(() => {
+    let cancelled = false;
+    client.getAuthorizationHeader()
+      .then((header) => {
+        if (!cancelled) setAuth({ ready: true, header });
+      })
+      .catch((err: unknown) => {
+        console.warn("[mobile] chat image auth header unavailable", err instanceof Error ? err.name : "unknown");
+        if (!cancelled) setAuth({ ready: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
+
+  if (!auth.ready) return null;
+
   return (
     <View style={styles.imageContainer}>
       {images.map((img) => (
         <Image
           key={img.path}
-          source={{ uri: `${gatewayUrl}${img.path}` }}
-          style={styles.inlineImage}
-          resizeMode="contain"
           accessibilityLabel={img.alt || "Image"}
+          source={{
+            uri: client.homeFileUrl(filesUrlToRelPath(img.path)),
+            headers: auth.header ? { Authorization: auth.header } : undefined,
+          }}
+          style={styles.inlineImage}
+          contentFit="contain"
         />
       ))}
     </View>

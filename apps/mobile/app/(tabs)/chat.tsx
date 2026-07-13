@@ -316,9 +316,9 @@ export default function ChatScreen() {
 
   const renderItem = useCallback(
     ({ item }: ListRenderItemInfo<Message>) => (
-      <ChatMessage message={item} gatewayUrl={gatewayHttpUrl} />
+      <ChatMessage message={item} gatewayUrl={gatewayHttpUrl} client={client} />
     ),
-    [gatewayHttpUrl],
+    [gatewayHttpUrl, client],
   );
 
   const keyExtractor = useCallback((item: Message) => item.id, []);
