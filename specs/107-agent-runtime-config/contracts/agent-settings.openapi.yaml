@@ -321,7 +321,7 @@ components:
           $ref: "#/components/schemas/Effort"
         source:
           type: string
-          enum: [saved, default, message_override]
+          enum: [saved, default]
         authKind:
           type: string
           enum: [platform, api_key, oauth_login]
@@ -499,6 +499,7 @@ components:
         baseUrl:
           type: string
           format: uri
+          pattern: "^https://"
           minLength: 8
           maxLength: 2048
         revision:
