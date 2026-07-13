@@ -272,7 +272,7 @@ exit 99
     expect(codeServerBlock).not.toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
     expect(cloudInit).toContain('TimeoutStartSec=1800');
     expect(cloudInit).toContain(
-      'systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
+      'systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-developer-tools.service matrix-db-backup.timer nginx',
     );
     expect(cloudInit).toContain(
       'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service',
@@ -284,6 +284,7 @@ exit 99
     expect(cloudInit).toContain('systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-hermes.service || echo "matrix-host: optional Hermes install will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-hermes-dashboard.service || echo "matrix-host: optional Hermes dashboard will retry via systemd" >&2');
+    expect(cloudInit).toContain('systemctl enable matrix-linux-tools.service || echo "matrix-host: optional Linux tools enablement will retry via systemd" >&2');
     expect(cloudInit.indexOf('systemctl start matrix-restore.service matrix-gateway.service')).toBeLessThan(
       cloudInit.indexOf('systemctl start --no-block matrix-hermes.service'),
     );
@@ -532,6 +533,8 @@ exit 99
     expect(existsSync(join(root, 'distro/customer-vps/systemd/matrix-linux-tools.service'))).toBe(true);
     expect(syncAgent).toContain('matrix-linux-tools.service');
     expect(syncAgent).toContain('systemctl start --no-block matrix-linux-tools.service');
+    expect(syncAgent).toContain('if sudo systemctl enable matrix-linux-tools.service \\');
+    expect(syncAgent).not.toMatch(/^\s*sudo systemctl enable matrix-linux-tools\.service\s*$/m);
     expect(syncAgent).toContain('Linux tools service enabled');
     expect(syncAgent).toContain('LINUX_TOOLS_BOOTSTRAP_MARKER');
     expect(syncAgent).toContain(
@@ -717,7 +720,7 @@ exit 99
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-developer-tools.service matrix-db-backup.timer');
   });
 
   it('includes a bounded matrixctl recovery wrapper', () => {

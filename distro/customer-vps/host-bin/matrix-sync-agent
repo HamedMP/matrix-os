@@ -320,9 +320,12 @@ apply_update() {
       log "Symphony service enabled"
     fi
     if [ -f "$extract_dir/systemd/matrix-linux-tools.service" ]; then
-      sudo systemctl enable matrix-linux-tools.service
-      sudo systemctl start --no-block matrix-linux-tools.service || true
-      log "Linux tools service enabled"
+      if sudo systemctl enable matrix-linux-tools.service \
+        && sudo systemctl start --no-block matrix-linux-tools.service; then
+        log "Linux tools service enabled"
+      else
+        log "WARN: failed to enable Linux tools service; systemd will retry independently"
+      fi
     fi
     if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then
       sudo systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service
