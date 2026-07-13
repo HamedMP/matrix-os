@@ -470,6 +470,8 @@ exit 99
     expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common');
     expect(cloudInit).toContain('add-apt-repository -y universe');
     expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip');
+    expect(cloudInit).toContain('if ! DEBIAN_FRONTEND=noninteractive apt-get install -y ${native_app_packages}; then');
+    expect(cloudInit).toContain('echo "matrix-host: optional Linux tools package bootstrap failed; matrix-linux-tools.service will retry" >&2');
     expect(cloudInit).toContain("cat >/etc/apparmor.d/bwrap <<'EOF'");
     expect(cloudInit).toContain('profile bwrap /usr/bin/bwrap flags=(unconfined) {');
     expect(cloudInit).toContain('      userns,');

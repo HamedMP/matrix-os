@@ -488,7 +488,9 @@ runcmd:
     if apt-cache show xpra-html5 >/dev/null 2>&1; then
       native_app_packages="${native_app_packages} xpra-html5"
     fi
-    DEBIAN_FRONTEND=noninteractive apt-get install -y ${native_app_packages}
+    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y ${native_app_packages}; then
+      echo "matrix-host: optional Linux tools package bootstrap failed; matrix-linux-tools.service will retry" >&2
+    fi
     install -d -o root -g root -m 0755 /etc/apparmor.d
     cat >/etc/apparmor.d/bwrap <<'EOF'
     abi <abi/4.0>,
