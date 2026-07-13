@@ -74,8 +74,9 @@ export function useRuntimeSummary(refreshCompanion?: () => void | Promise<void>)
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await loadSummary();
-      await refreshCompanion?.();
+      // Match the mount path: the summary and its companion are independent
+      // reads, so refresh them concurrently.
+      await Promise.all([loadSummary(), refreshCompanion?.()]);
     } finally {
       setRefreshing(false);
     }

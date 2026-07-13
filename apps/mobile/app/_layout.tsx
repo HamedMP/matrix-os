@@ -204,9 +204,16 @@ function GatewayShell() {
     setGatewayState(gw);
     setConnectionState("connecting");
     void (async () => {
-      const wsToken = await newClient.getWsToken();
-      if (clientRef.current !== newClient) return;
-      if (wsToken) newClient.setWebSocketToken(wsToken);
+      // A failed token fetch must not strand the switch at "connecting":
+      // fall back to connecting with header auth, mirroring the mount path.
+      try {
+        const wsToken = await newClient.getWsToken();
+        if (clientRef.current !== newClient) return;
+        if (wsToken) newClient.setWebSocketToken(wsToken);
+      } catch (err: unknown) {
+        console.warn("[mobile] ws-token unavailable during switch", err instanceof Error ? err.name : typeof err);
+        if (clientRef.current !== newClient) return;
+      }
       newClient.connect();
     })();
   }, []);
