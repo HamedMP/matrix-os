@@ -838,6 +838,74 @@ describe("coding agent thread lifecycle", () => {
     );
   });
 
+  it("accepts safe thread completion events after a user input answer", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-input-completion-"));
+    const provider: CodingAgentProviderAdapter = {
+      providerId: "codex",
+      startThread({ thread, now: providerNow, nextEventId }) {
+        return [AgentThreadEventSchema.parse({
+          type: "user_input.requested",
+          eventId: nextEventId(),
+          threadId: thread.id,
+          occurredAt: providerNow().toISOString(),
+          request: {
+            requestId: "req_input_completion",
+            threadId: thread.id,
+            title: "Need input",
+            safeDescription: "Choose how to continue.",
+            required: true,
+            correlationId: "corr_input_completion",
+          },
+        })];
+      },
+      submitInput({ thread, inputRequestId, request, now: providerNow, nextEventId }) {
+        return [
+          AgentThreadEventSchema.parse({
+            type: "user_input.answered",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            requestId: inputRequestId,
+            correlationId: request.correlationId,
+          }),
+          AgentThreadEventSchema.parse({
+            type: "thread.completed",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            outcome: "completed",
+          }),
+        ];
+      },
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      relationValidator: { validateCreate: async () => undefined },
+      providers: [provider],
+    });
+    const created = await threads.createThread(ownerPrincipal, createBody);
+
+    const answered = await threads.submitInput(
+      ownerPrincipal,
+      created.snapshot.thread.id,
+      "req_input_completion",
+      {
+        answer: "Continue.",
+        clientRequestId: "req_input_completion_answer",
+        correlationId: "corr_input_completion",
+      },
+    );
+
+    expect(answered.thread).toMatchObject({ status: "completed", attention: "none" });
+    expect(answered.events.items.map((event) => event.type)).toEqual([
+      "thread.created",
+      "user_input.requested",
+      "user_input.answered",
+      "thread.completed",
+    ]);
+  });
+
   it("records a safe failed thread when a provider start fails", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
     const threads = createCodingAgentThreadStore({

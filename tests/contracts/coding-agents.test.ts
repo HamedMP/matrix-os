@@ -423,6 +423,20 @@ describe("coding agent contracts", () => {
     });
     expect(Buffer.byteLength(JSON.stringify(maximumStructuredAnswer), "utf8")).toBeLessThanOrEqual(40 * 1024);
 
+    const escapedStructuredAnswer = {
+      answer: "\\".repeat(8000),
+      structuredAnswers: Object.fromEntries(
+        Array.from({ length: 8 }, (_, questionIndex) => [
+          `question_${questionIndex}`,
+          Array.from({ length: 4 }, () => "\\".repeat(400)),
+        ]),
+      ),
+      clientRequestId: "req_answer_escaped",
+      correlationId: "corr_input_structured",
+    };
+    expect(Buffer.byteLength(JSON.stringify(escapedStructuredAnswer), "utf8")).toBeGreaterThan(40 * 1024);
+    expect(() => UserInputAnswerRequestSchema.parse(escapedStructuredAnswer)).toThrow();
+
     expect(() => UserInputRequestSchema.parse({
       ...structuredRequest,
       questions: [structuredRequest.questions![0], structuredRequest.questions![0]],

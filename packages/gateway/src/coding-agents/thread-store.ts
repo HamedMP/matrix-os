@@ -727,7 +727,11 @@ function validateInputAnswer(
 
 function parseInputProviderEvents(events: AgentThreadEvent[], threadId: string): AgentThreadEvent[] {
   const parsed = parseProviderEvents(events, threadId);
-  if (parsed.some((event) => event.type !== "user_input.answered" && event.type !== "thread.status")) {
+  if (parsed.some((event) =>
+    event.type !== "user_input.answered" &&
+    event.type !== "thread.status" &&
+    event.type !== "thread.completed"
+  )) {
     throw new Error("Provider input response contained content events");
   }
   return parsed;
