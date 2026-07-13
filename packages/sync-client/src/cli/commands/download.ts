@@ -19,8 +19,16 @@ export const downloadCommand = defineCommand({
     description: "Download one file from your Matrix computer",
   },
   args: {
-    remote: { type: "positional", required: true },
-    local: { type: "positional", required: true },
+    remote: {
+      type: "positional",
+      required: true,
+      description: "Source file in your Matrix home",
+    },
+    local: {
+      type: "positional",
+      required: true,
+      description: "Local destination path on this computer",
+    },
     force: { type: "boolean", required: false, default: false },
     secret: { type: "boolean", required: false, default: false },
     profile: { type: "string", required: false },

@@ -967,6 +967,47 @@ describe("createShellClient attachSession", () => {
     await expect(attach).resolves.toEqual({ detached: false });
   });
 
+  it("backs off the remote attach until a backgrounded local terminal drains", async () => {
+    const output = Object.assign(new EventEmitter(), {
+      columns: 80,
+      rows: 24,
+      write: vi.fn(() => false),
+    }) as unknown as NodeJS.WriteStream;
+    const client = createShellClient({
+      gatewayUrl: "https://matrix.example",
+      token: "token-123",
+      timeoutMs: 100,
+    });
+
+    const attach = client.attachSession("main", {
+      input: new PassThrough() as NodeJS.ReadStream,
+      output,
+      errorOutput: new PassThrough() as NodeJS.WriteStream,
+      WebSocketImpl: FakeWebSocket as never,
+      heartbeatIntervalMs: 0,
+      reconnectBaseDelayMs: 1,
+      reconnectMaxDelayMs: 1,
+    });
+
+    const firstSocket = FakeWebSocket.last;
+    firstSocket?.emit("message", JSON.stringify({ type: "attached" }));
+    firstSocket?.emit("message", JSON.stringify({ type: "output", seq: 41, data: "download progress" }));
+
+    expect(firstSocket?.closed).toBe(true);
+    firstSocket?.emit("close");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(FakeWebSocket.instances).toHaveLength(1);
+
+    output.write = vi.fn(() => true) as never;
+    output.emit("drain");
+    await waitForFakeSocketCount(2);
+    expect(FakeWebSocket.last?.url).toContain("fromSeq=42");
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "exit" }));
+    await expect(attach).resolves.toEqual({ detached: false });
+  });
+
   it("forwards SIGINT after attach so terminals that still emit signals can interrupt remote programs", async () => {
     const input = new PassThrough() as PassThrough & {
       isTTY: true;
