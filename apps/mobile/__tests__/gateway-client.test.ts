@@ -236,6 +236,42 @@ describe("GatewayClient", () => {
     fetchMock.mockRestore();
   });
 
+  it("truncates oversized conversation lists to the first 50 entries", async () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({
+      id: `conv-${i}`,
+      preview: `Conversation ${i}`,
+      messageCount: i,
+      createdAt: i,
+      updatedAt: i,
+    }));
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(many));
+    const client = new GatewayClient("http://localhost:4000");
+
+    const result = await client.getConversations();
+    expect(result).toHaveLength(50);
+    expect(result[0]).toEqual(expect.objectContaining({ id: "conv-0" }));
+    expect(result[49]).toEqual(expect.objectContaining({ id: "conv-49" }));
+
+    fetchMock.mockRestore();
+  });
+
+  it("drops malformed conversation entries but keeps the valid ones", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse([
+      { id: "conv-1", preview: "ok", messageCount: 1, createdAt: 1, updatedAt: 2 },
+      { id: "", preview: "empty id", messageCount: 1, createdAt: 1, updatedAt: 2 },
+      { preview: "missing id", messageCount: 1, createdAt: 1, updatedAt: 2 },
+      { id: "conv-2", preview: "ok too", messageCount: 2, createdAt: 3, updatedAt: 4 },
+    ]));
+    const client = new GatewayClient("http://localhost:4000");
+
+    await expect(client.getConversations()).resolves.toEqual([
+      expect.objectContaining({ id: "conv-1" }),
+      expect.objectContaining({ id: "conv-2" }),
+    ]);
+
+    fetchMock.mockRestore();
+  });
+
   it("creates a conversation and returns its id", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({ id: "conv-new" }));
     const client = new GatewayClient("http://localhost:4000");

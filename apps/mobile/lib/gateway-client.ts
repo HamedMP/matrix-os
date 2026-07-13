@@ -79,7 +79,11 @@ const ConversationMetaSchema = z.object({
   updatedAt: z.number(),
 }).loose();
 
-const ConversationListSchema = z.array(ConversationMetaSchema).max(50);
+// Accept any array shape here; oversized or partially-malformed lists are
+// truncated and validated per-entry in getConversations rather than rejected
+// wholesale, so a single bad entry (or >50 entries) does not blank the list.
+const CONVERSATION_LIST_LIMIT = 50;
+const ConversationListSchema = z.array(z.unknown()).catch([]);
 const ConversationCreateResponseSchema = z.object({ id: z.string().min(1).max(128) }).loose();
 
 export type ConversationMeta = z.infer<typeof ConversationMetaSchema>;
@@ -793,12 +797,13 @@ export class GatewayClient {
         logGatewayStatusWarning("/api/conversations unavailable", res.status);
         return [];
       }
-      const parsed = ConversationListSchema.safeParse(await res.json());
-      if (!parsed.success) {
-        logGatewayWarning("/api/conversations returned invalid payload", "invalid payload");
-        return [];
+      const raw = ConversationListSchema.parse(await res.json());
+      const conversations: ConversationMeta[] = [];
+      for (const item of raw.slice(0, CONVERSATION_LIST_LIMIT)) {
+        const parsed = ConversationMetaSchema.safeParse(item);
+        if (parsed.success) conversations.push(parsed.data);
       }
-      return parsed.data;
+      return conversations;
     } catch (err: unknown) {
       logGatewayCatchWarning("/api/conversations unavailable", err);
       return [];
