@@ -20,7 +20,8 @@ import {
   KERNEL_DEFAULTS,
   KERNEL_EFFORTS,
   KERNEL_MODELS,
-  KERNEL_MODEL_IDS,
+  KernelEffortSchema,
+  KernelModelSchema,
   normalizeKernelEffort,
   normalizeKernelModel,
 } from "../kernel-settings.js";
@@ -37,8 +38,8 @@ const SETTINGS_BODY_LIMIT = 256 * 1024;
 
 const KernelPatchSchema = z
   .object({
-    model: z.enum(KERNEL_MODEL_IDS).optional(),
-    effort: z.enum(KERNEL_EFFORTS).optional(),
+    model: KernelModelSchema.optional(),
+    effort: KernelEffortSchema.optional(),
   })
   .strict();
 

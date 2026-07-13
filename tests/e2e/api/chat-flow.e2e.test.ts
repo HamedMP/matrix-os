@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import type { KernelConfig, KernelEvent } from "@matrix-os/kernel";
 import { startTestGateway, type TestGateway } from "../fixtures/gateway.js";
 import { connectWs } from "../fixtures/ws-client.js";
 
@@ -188,6 +189,50 @@ describe("E2E: Chat message roundtrip", () => {
       expect(msg.sessionId).toBe("second-conn");
     } finally {
       ws2.close();
+    }
+  });
+});
+
+describe("E2E: Per-message kernel selection", () => {
+  let gw: TestGateway;
+  const observedConfigs: KernelConfig[] = [];
+
+  beforeAll(async () => {
+    gw = await startTestGateway({
+      spawnFn: async function* (_message, config) {
+        observedConfigs.push(config);
+        yield { type: "init", sessionId: "override-session" } as KernelEvent;
+        yield {
+          type: "result",
+          data: { sessionId: "override-session", cost: 0, turns: 1 },
+        } as KernelEvent;
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await gw?.close();
+  });
+
+  it("threads an allowlisted WebSocket model and effort through to KernelConfig", async () => {
+    const ws = await connectWs(gw.url.replace("http", "ws") + "/ws");
+    try {
+      ws.send({
+        type: "message",
+        text: "use a fast model",
+        requestId: "override-request",
+        model: "claude-haiku-4-5",
+        effort: "low",
+      });
+
+      await ws.waitFor("kernel:result", 5_000);
+      expect(observedConfigs).toHaveLength(1);
+      expect(observedConfigs[0]).toMatchObject({
+        model: "claude-haiku-4-5",
+        effort: "low",
+      });
+    } finally {
+      ws.close();
     }
   });
 });

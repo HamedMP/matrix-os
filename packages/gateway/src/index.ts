@@ -2,7 +2,15 @@ export { createGateway } from "./server.js";
 export type { GatewayConfig, ServerMessage } from "./server.js";
 export { createProvisioner } from "./provisioner.js";
 export { createDispatcher } from "./dispatcher.js";
-export type { Dispatcher, DispatchOptions, DispatchContext, SpawnFn, BatchEntry, BatchResult } from "./dispatcher.js";
+export type {
+  Dispatcher,
+  DispatchOptions,
+  DispatchContext,
+  KernelDispatchOverrides,
+  SpawnFn,
+  BatchEntry,
+  BatchResult,
+} from "./dispatcher.js";
 export { createWatcher } from "./watcher.js";
 export type { Watcher, FileChangeEvent, FileEvent } from "./watcher.js";
 export { createPtyHandler } from "./pty.js";
