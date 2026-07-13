@@ -8,7 +8,7 @@ import {
   requireRequestPrincipal,
 } from "../request-principal.js";
 import { SAFE_NATIVE_APP_ID, SAFE_NATIVE_SESSION_ID, SAFE_NATIVE_STREAM_TOKEN } from "./registry.js";
-import { NativeAppError, type NativeAppSessionService } from "./service.js";
+import { NativeAppError, type NativeAppSession, type NativeAppSessionService } from "./service.js";
 
 const NATIVE_APP_BODY_LIMIT = 2048;
 const STREAM_FETCH_TIMEOUT_MS = 30_000;
@@ -192,12 +192,21 @@ function shouldUseSecureStreamCookie(c: Context): boolean {
   return c.req.url.startsWith("https://");
 }
 
-function streamCookiePath(c: Context, sessionId: string): string {
+function nativeStreamRoutePrefix(c: Context): string {
   const forwardedPrefix = c.req.header("x-forwarded-prefix");
-  const routePrefix = forwardedPrefix && SAFE_EXPLICIT_VM_PREFIX.test(forwardedPrefix)
-    ? forwardedPrefix
-    : "";
-  return `${routePrefix}/api/native-apps/sessions/${sessionId}/stream/`;
+  if (forwardedPrefix && SAFE_EXPLICIT_VM_PREFIX.test(forwardedPrefix)) return forwardedPrefix;
+  const configuredPrefix = process.env.MATRIX_HANDLE ? `/vm/${process.env.MATRIX_HANDLE}` : "";
+  return SAFE_EXPLICIT_VM_PREFIX.test(configuredPrefix) ? configuredPrefix : "";
+}
+
+function streamCookiePath(c: Context, sessionId: string): string {
+  return `${nativeStreamRoutePrefix(c)}/api/native-apps/sessions/${sessionId}/stream/`;
+}
+
+function routeNativeSession(c: Context, session: NativeAppSession): NativeAppSession {
+  const prefix = nativeStreamRoutePrefix(c);
+  if (!prefix || !session.streamUrl.startsWith("/api/native-apps/")) return session;
+  return { ...session, streamUrl: `${prefix}${session.streamUrl}` };
 }
 
 function nativeStreamCookieOptions(c: Context, sessionId: string) {
@@ -531,7 +540,7 @@ export function createNativeAppRoutes(options: NativeAppRoutesOptions) {
       const streamToken = service.streamCookieValue(session.id);
       if (!streamToken) return c.json({ error: "Native app request failed" }, 500);
       setNativeStreamCookie(c, service, session.id, streamToken);
-      return c.json({ session }, 201);
+      return c.json({ session: routeNativeSession(c, session) }, 201);
     } catch (err) {
       return mapError(c, err);
     }
@@ -543,7 +552,7 @@ export function createNativeAppRoutes(options: NativeAppRoutesOptions) {
       const ownerId = readPrincipal(c);
       const session = service.inspectSession(ownerId, sessionId);
       if (!session) return c.json({ error: "Native app session not found" }, 404);
-      return c.json({ session });
+      return c.json({ session: routeNativeSession(c, session) });
     } catch (err) {
       return mapError(c, err);
     }
@@ -555,7 +564,7 @@ export function createNativeAppRoutes(options: NativeAppRoutesOptions) {
       const ownerId = readPrincipal(c);
       const session = await service.terminateSession(ownerId, sessionId);
       clearNativeStreamCookie(c, service, sessionId);
-      return c.json({ session });
+      return c.json({ session: routeNativeSession(c, session) });
     } catch (err) {
       return mapError(c, err);
     }

@@ -50,7 +50,7 @@ function safeViewerMessage(value: unknown): string {
 }
 
 function nativeApiPath(path: string): string {
-  return withExplicitVmRuntime(`${explicitVmPrefix()}/api/native-apps${path}`);
+  return withSelectedRuntime(`${explicitVmPrefix()}/api/native-apps${path}`);
 }
 
 function explicitVmPrefix(): string {
@@ -64,11 +64,11 @@ function nativeStreamUrl(streamUrl: string): string {
   const explicitStreamUrl = prefix && streamUrl.startsWith("/api/native-apps/")
     ? `${prefix}${streamUrl}`
     : streamUrl;
-  return withExplicitVmRuntime(explicitStreamUrl);
+  return withSelectedRuntime(explicitStreamUrl);
 }
 
-function withExplicitVmRuntime(path: string): string {
-  if (typeof window === "undefined" || !explicitVmPrefix()) return path;
+function withSelectedRuntime(path: string): string {
+  if (typeof window === "undefined") return path;
   const runtime = new URLSearchParams(window.location.search).get("runtime");
   if (!runtime || runtime.length > 32 || !SAFE_RUNTIME_SLOT.test(runtime)) return path;
   const url = new URL(path, window.location.origin);

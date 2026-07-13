@@ -156,6 +156,32 @@ describe("native app routes", () => {
     expect(response.headers.get("set-cookie")).toContain("HttpOnly");
   });
 
+  it("returns a handle-qualified stream capability when launched from the hosted root shell", async () => {
+    const previousHandle = process.env.MATRIX_HANDLE;
+    process.env.MATRIX_HANDLE = "alice";
+    try {
+      const { app } = createApp("alice");
+
+      const response = await app.request("/api/native-apps/xterm/sessions", {
+        method: "POST",
+        body: JSON.stringify({}),
+        headers: { "Content-Type": "application/json" },
+      });
+      const body = await response.json() as { session: { streamUrl: string } };
+
+      expect(response.status).toBe(201);
+      expect(body.session.streamUrl).toBe(
+        "/vm/alice/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/stream_bbbbbbbbbbbbbbbbbbbbbbbb/",
+      );
+      expect(response.headers.get("set-cookie")).toContain(
+        "Path=/vm/alice/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/",
+      );
+    } finally {
+      if (previousHandle === undefined) delete process.env.MATRIX_HANDLE;
+      else process.env.MATRIX_HANDLE = previousHandle;
+    }
+  });
+
   it("scopes stream cookies to the forwarded explicit VM route", async () => {
     const { app } = createApp("alice");
 

@@ -139,6 +139,47 @@ describe("NativeAppViewer", () => {
     });
   });
 
+  it("preserves a root-shell runtime selector on a handle-qualified stream capability", async () => {
+    window.history.replaceState({}, "", "/?runtime=review");
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl === "/api/native-apps/xterm/sessions?runtime=review" && init?.method === "POST") {
+        return new Response(JSON.stringify({
+          session: {
+            id: "session_hhhhhhhhhhhhhhhhhhhhhhhh",
+            appId: "xterm",
+            status: "running",
+            streamUrl: "/vm/alice/api/native-apps/sessions/session_hhhhhhhhhhhhhhhhhhhhhhhh/stream/stream_iiiiiiiiiiiiiiiiiiiiiiii/",
+          },
+        }), { status: 201, headers: { "Content-Type": "application/json" } });
+      }
+      if (
+        requestUrl === "/api/native-apps/sessions/session_hhhhhhhhhhhhhhhhhhhhhhhh?runtime=review"
+        && init?.method === "DELETE"
+      ) {
+        return new Response(null, { status: 200 });
+      }
+      return new Response(JSON.stringify({ error: "not found" }), { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    Object.defineProperty(window, "fetch", { configurable: true, value: fetchMock });
+
+    const viewer = render(<NativeAppViewer appId="xterm" windowId="win-root-review-runtime" />);
+    const frame = await screen.findByTitle("xterm native app");
+
+    expect(frame.getAttribute("src")).toBe(
+      "/vm/alice/api/native-apps/sessions/session_hhhhhhhhhhhhhhhhhhhhhhhh/stream/stream_iiiiiiiiiiiiiiiiiiiiiiii/?runtime=review",
+    );
+
+    viewer.unmount();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/native-apps/sessions/session_hhhhhhhhhhhhhhhhhhhhhhhh?runtime=review",
+        expect.objectContaining({ method: "DELETE" }),
+      );
+    });
+  });
+
   it("preserves a native session across an immediate renderer remount", async () => {
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const requestUrl = String(url);
