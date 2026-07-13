@@ -78,6 +78,8 @@ import {
   buildAppRouteCookie,
   buildShellRouteCookie,
   buildShellRuntimeSlotCookie,
+  hasExplicitVmNativeAppStreamCapability,
+  isNativeAppStreamPath,
   readAppDomainRouteCookie,
   readExplicitVmRoute,
   readMobileAppRouteCookie,
@@ -338,6 +340,19 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         platformSecret,
       }),
     );
+    const explicitVmRouteHasNativeAppStreamCapability = Boolean(
+      explicitVmRoute && hasExplicitVmNativeAppStreamCapability(c.req.method, explicitVmRoute),
+    );
+    const explicitVmRouteHasCredentiallessCapability =
+      explicitVmRouteHasValidAppAssetToken || explicitVmRouteHasNativeAppStreamCapability;
+    if (
+      explicitVmRoute
+      && isNativeAppStreamPath(explicitVmRoute.upstreamPath)
+      && !explicitVmRouteHasNativeAppStreamCapability
+    ) {
+      applyNoStoreHeaders(c);
+      return c.text('Unauthorized', 401);
+    }
     const runtimeSelection = readRuntimeSlotSelection(c.req.url);
     const cookieRuntimeSlot = isAppDomain
       ? readShellRuntimeSlotCookie(path, cookieHeader)
@@ -385,7 +400,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     if (
       !identity &&
       explicitVmRoute &&
-      explicitVmRouteHasValidAppAssetToken
+      explicitVmRouteHasCredentiallessCapability
     ) {
       identity = {
         handle: explicitVmRoute.handle,
@@ -409,6 +424,15 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       identity.handle === requestedRouteHandle &&
       isAppDomain &&
       isAppDomainStaticAssetPath(path),
+    );
+    const shouldPersistShellRoute = Boolean(
+      isAppDomain &&
+      identity &&
+      identity.source !== 'static-route' &&
+      (
+        requestedRouteHandle ||
+        (!isGatewayPath && !isAppDomainStaticAssetPath(path))
+      ),
     );
 
     // No session/JWT -- serve Clerk auth directly from the platform.
@@ -452,7 +476,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       return c.text('Invalid Matrix OS computer', 400);
     }
     if (isAppDomain && explicitVmRoute) {
-      if ((!identity.userId || identity.source === 'mobile-session' || identity.source === 'static-route') && !explicitVmRouteHasValidAppAssetToken) {
+      if ((!identity.userId || identity.source === 'mobile-session' || identity.source === 'static-route') && !explicitVmRouteHasCredentiallessCapability) {
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
       }
@@ -513,7 +537,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       headers.set('x-forwarded-proto', 'https');
       headers.set('accept-encoding', 'identity');
       headers.set('connection', 'close');
-      if (platformSecret) {
+      // Capability-only requests must not inherit the platform's internal
+      // runtime credential. The gateway authorizes this exact stream path by
+      // validating its opaque token against the live native-app session.
+      if (platformSecret && !explicitVmRouteHasNativeAppStreamCapability) {
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(machine.handle, platformSecret)}`);
         if (identity.userId) {
           headers.set('x-platform-user-id', identity.userId);
@@ -713,7 +740,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           const routeCookie = buildAppRouteCookie(runningMachine.handle, path);
           if (routeCookie) responseHeaders.append('set-cookie', routeCookie);
         }
-        if (isAppDomain && identity.source !== 'static-route') {
+        if (shouldPersistShellRoute) {
           responseHeaders.append('set-cookie', buildShellRouteCookie(runningMachine.handle));
           responseHeaders.append('set-cookie', buildShellRuntimeSlotCookie(runningMachine.runtimeSlot));
         }
@@ -895,7 +922,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           const routeCookie = buildAppRouteCookie(record.handle, path);
           if (routeCookie) responseHeaders.append('set-cookie', routeCookie);
         }
-        if (isAppDomain && identity.source !== 'static-route') {
+        if (shouldPersistShellRoute) {
           responseHeaders.append('set-cookie', buildShellRouteCookie(record.handle));
           responseHeaders.append('set-cookie', buildShellRuntimeSlotCookie('primary'));
         }

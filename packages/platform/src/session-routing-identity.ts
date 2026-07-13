@@ -30,6 +30,9 @@ export interface ExplicitVmRoute {
   upstreamPath: string;
 }
 
+const NATIVE_APP_STREAM_PATH = /^\/api\/native-apps\/sessions\/session_[A-Za-z0-9_-]{24,96}\/stream(?:\/|$)/;
+const NATIVE_APP_STREAM_CAPABILITY_PATH = /^\/api\/native-apps\/sessions\/session_[A-Za-z0-9_-]{24,96}\/stream\/stream_[A-Za-z0-9_-]{24,96}(?:\/|$)/;
+
 export interface AppDomainIdentity {
   handle: string;
   userId: string;
@@ -138,6 +141,42 @@ export function readExplicitVmRoute(path: string): ExplicitVmRoute | null {
     handle: match[1],
     upstreamPath: rest ? `/${rest}` : '/',
   };
+}
+
+export function readExplicitVmWebSocketRoute(path: string): ExplicitVmRoute | null {
+  try {
+    const url = new URL(path, 'https://app.matrix-os.com');
+    return readExplicitVmRoute(url.pathname);
+  } catch (err: unknown) {
+    if (err instanceof TypeError) return null;
+    throw err;
+  }
+}
+
+export function buildExplicitVmWebSocketUpstreamPath(path: string): string {
+  try {
+    const url = new URL(path, 'https://app.matrix-os.com');
+    const route = readExplicitVmRoute(url.pathname);
+    if (!route) return path;
+    return `${route.upstreamPath}${url.search}`;
+  } catch (err: unknown) {
+    if (err instanceof TypeError) return path;
+    throw err;
+  }
+}
+
+export function isNativeAppStreamPath(path: string): boolean {
+  return NATIVE_APP_STREAM_PATH.test(path);
+}
+
+export function hasExplicitVmNativeAppStreamCapability(
+  method: string,
+  route: ExplicitVmRoute,
+): boolean {
+  // The route only selects the gateway capability endpoint. The gateway still
+  // timing-safely validates the full random stream token against a live session.
+  return (method === 'GET' || method === 'HEAD')
+    && NATIVE_APP_STREAM_CAPABILITY_PATH.test(route.upstreamPath);
 }
 
 function readGatewayRouteCookie(path: string, cookieHeader: string | undefined): string | null {
