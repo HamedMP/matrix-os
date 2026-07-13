@@ -1,6 +1,11 @@
 import { z } from "zod/v4";
 import {
   AgentThreadEventSchema,
+  ApprovalIdSchema,
+  CorrelationIdSchema,
+  RequestIdSchema,
+  SafeDisplayStringSchema,
+  UserInputQuestionSchema,
   type AgentThreadEvent,
 } from "@matrix-os/contracts";
 
@@ -88,6 +93,32 @@ const CodexExecEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("item.completed"), item: CodexItemSchema }).passthrough(),
   z.object({ type: z.literal("error") }).passthrough(),
 ]);
+const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("matrix.codex.approval.requested"),
+    approvalId: ApprovalIdSchema,
+    correlationId: CorrelationIdSchema,
+    title: SafeDisplayStringSchema,
+    safeDescription: SafeDisplayStringSchema,
+    actionKind: z.enum(["command", "file_change", "provider"]),
+    risk: z.enum(["medium", "high"]),
+    allowedDecisions: z.array(z.enum(["approve", "approve_for_session", "decline", "cancel"]))
+      .min(1).max(4),
+  }).strict(),
+  z.object({
+    type: z.literal("matrix.codex.user_input.requested"),
+    requestId: RequestIdSchema,
+    correlationId: CorrelationIdSchema,
+    title: SafeDisplayStringSchema,
+    safeDescription: SafeDisplayStringSchema,
+    questions: z.array(UserInputQuestionSchema).min(1).max(8),
+    autoResolutionMs: z.number().int().min(60_000).max(240_000).optional(),
+  }).strict(),
+  z.object({
+    type: z.literal("matrix.codex.assistant.delta"),
+    delta: CodexTextSchema,
+  }).strict(),
+]);
 
 export interface CodexEventContext {
   threadId: string;
@@ -125,6 +156,52 @@ function assistantEvents(
     }));
   }
   events.push(event(context, { type: "assistant.text.completed", messageId: item.id }));
+  return events;
+}
+
+function appServerRecordEvents(
+  context: CodexEventContext,
+  record: z.infer<typeof MatrixCodexRecordSchema>,
+): AgentThreadEvent[] {
+  if (record.type === "matrix.codex.approval.requested") {
+    return [event(context, {
+      type: "approval.requested",
+      approval: {
+        approvalId: record.approvalId,
+        threadId: context.threadId,
+        title: record.title,
+        safeDescription: record.safeDescription,
+        actionKind: record.actionKind,
+        risk: record.risk,
+        allowedDecisions: record.allowedDecisions,
+        correlationId: record.correlationId,
+      },
+    })];
+  }
+  if (record.type === "matrix.codex.user_input.requested") {
+    return [event(context, {
+      type: "user_input.requested",
+      request: {
+        requestId: record.requestId,
+        threadId: context.threadId,
+        title: record.title,
+        safeDescription: record.safeDescription,
+        required: true,
+        questions: record.questions,
+        ...(record.autoResolutionMs ? { autoResolutionMs: record.autoResolutionMs } : {}),
+        correlationId: record.correlationId,
+      },
+    })];
+  }
+  const codePoints = Array.from(record.delta);
+  const events: AgentThreadEvent[] = [];
+  for (let offset = 0; offset < codePoints.length; offset += MAX_ASSISTANT_DELTA_CHARS) {
+    events.push(event(context, {
+      type: "assistant.text.delta",
+      messageId: "codex_app_server",
+      delta: codePoints.slice(offset, offset + MAX_ASSISTANT_DELTA_CHARS).join(""),
+    }));
+  }
   return events;
 }
 
@@ -250,6 +327,10 @@ export function parseCodexExecJsonLine(
       console.warn("[coding-agents] Codex event JSON parsing failed");
     }
     return { events: [] };
+  }
+  const appServerRecord = MatrixCodexRecordSchema.safeParse(raw);
+  if (appServerRecord.success) {
+    return { events: appServerRecordEvents(context, appServerRecord.data) };
   }
   const parsed = CodexExecEventSchema.safeParse(raw);
   if (!parsed.success) return { events: [] };

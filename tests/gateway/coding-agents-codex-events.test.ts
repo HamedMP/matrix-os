@@ -173,4 +173,56 @@ describe("Codex structured event normalization", () => {
       item: { id: "../bad", type: "agent_message", text: "unsafe id" },
     }), context)).toEqual({ events: [] });
   });
+
+  it("normalizes app-server control records into canonical thread events", () => {
+    const approval = parseCodexExecJsonLine(JSON.stringify({
+      type: "matrix.codex.approval.requested",
+      approvalId: "appr_codex_11111111111111111111111111111111",
+      correlationId: "corr_codex_22222222222222222222222222222222",
+      title: "Run command",
+      safeDescription: "The coding agent wants to run a command.",
+      actionKind: "command",
+      risk: "medium",
+      allowedDecisions: ["approve", "decline", "cancel"],
+    }), context);
+    expect(approval.events[0]).toMatchObject({
+      type: "approval.requested",
+      approval: {
+        approvalId: "appr_codex_11111111111111111111111111111111",
+        allowedDecisions: ["approve", "decline", "cancel"],
+      },
+    });
+
+    const input = parseCodexExecJsonLine(JSON.stringify({
+      type: "matrix.codex.user_input.requested",
+      requestId: "req_codex_33333333333333333333333333333333",
+      correlationId: "corr_codex_44444444444444444444444444444444",
+      title: "Approach",
+      safeDescription: "The coding agent needs more information.",
+      questions: [{
+        questionId: "question_codex_555555555555555555555555",
+        header: "Approach",
+        question: "Which approach should be used?",
+        options: [{ label: "Minimal", description: "Make the smallest change." }],
+        allowOther: true,
+        secret: false,
+      }],
+    }), context);
+    expect(input.events[0]).toMatchObject({
+      type: "user_input.requested",
+      request: {
+        requestId: "req_codex_33333333333333333333333333333333",
+        questions: [expect.objectContaining({ header: "Approach" })],
+      },
+    });
+
+    const delta = parseCodexExecJsonLine(JSON.stringify({
+      type: "matrix.codex.assistant.delta",
+      delta: "Working on it.",
+    }), context);
+    expect(delta.events[0]).toMatchObject({
+      type: "assistant.text.delta",
+      delta: "Working on it.",
+    });
+  });
 });
