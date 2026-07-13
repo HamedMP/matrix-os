@@ -17,6 +17,10 @@ ExecStart=/opt/matrix/bin/matrix-gateway
 TimeoutStartSec=720
 Restart=on-failure
 RestartSec=5
+# Contain gateway memory so a leak throttles and restarts this unit instead
+# of driving the whole host into OOM (spec 107 Phase 1 guardrail).
+MemoryHigh=1G
+MemoryMax=1536M
 
 [Install]
 WantedBy=multi-user.target

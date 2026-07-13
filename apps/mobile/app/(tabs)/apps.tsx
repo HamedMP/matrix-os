@@ -12,9 +12,10 @@ import {
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Image } from "expo-image";
-import { Link } from "expo-router";
+import { Link, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import { useUser } from "@clerk/clerk-expo";
 import { useGateway } from "../_layout";
 import {
   appRuntimeHref,
@@ -478,7 +479,9 @@ function appsReducer(state: AppsState, action: AppsAction): AppsState {
 export default function AppsScreen() {
   const { width } = useWindowDimensions();
   const { theme } = useUnistyles();
-  const { client, connectionState } = useGateway();
+  const router = useRouter();
+  const { user } = useUser();
+  const { client, connectionState, gateway } = useGateway();
   const [state, dispatch] = useReducer(appsReducer, initialAppsState);
   const { apps, refreshing, loading, query, lastActiveAppSlug } = state;
   const connected = connectionState === "connected";
@@ -622,13 +625,41 @@ export default function AppsScreen() {
     <View style={styles.screen}>
       <View style={styles.header}>
         <View style={styles.headerTitleGroup}>
-          <Text style={styles.headerTitle}>Apps</Text>
-          <Text style={styles.headerSubtitle}>
-            {orderedApps.length} installed{connected ? "" : " · connecting…"}
-          </Text>
+          <View style={styles.brandRow}>
+            <Image
+              testID="apps-brand-logo"
+              source={require("../../assets/icon.png")}
+              style={styles.brandLogo}
+              contentFit="contain"
+              accessibilityLabel="Matrix OS"
+            />
+            <Text style={styles.headerTitle}>Matrix OS</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Switch computer, currently ${gateway?.name ?? "not connected"}`}
+            onPress={() => router.push("/computers" as never)}
+            style={({ pressed }) => [styles.computerChip, pressed ? { opacity: 0.75 } : null]}
+          >
+            <View style={[styles.computerDot, connected ? styles.computerDotOn : styles.computerDotOff]} />
+            <Text numberOfLines={1} style={styles.computerChipText}>
+              {gateway?.name ?? "Not connected"}
+              {connected ? "" : " · connecting…"}
+            </Text>
+            <Ionicons name="chevron-expand-outline" size={12} color={theme.colors.inkMuted} />
+          </Pressable>
         </View>
-        <Pressable accessibilityRole="button" accessibilityLabel="Account" style={styles.avatar}>
-          <Ionicons name="person" size={16} color="#DCE6D2" />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Account settings"
+          onPress={() => router.push("/(tabs)/settings" as never)}
+          style={({ pressed }) => [styles.avatar, pressed ? { opacity: 0.8 } : null]}
+        >
+          {user?.imageUrl ? (
+            <Image source={{ uri: user.imageUrl }} style={styles.avatarImage} contentFit="cover" />
+          ) : (
+            <Ionicons name="person" size={16} color="#DCE6D2" />
+          )}
         </Pressable>
       </View>
 
@@ -691,15 +722,46 @@ const styles = StyleSheet.create((theme, rt) => ({
     paddingTop: rt.insets.top + 10,
     paddingBottom: 14,
   },
-  headerTitleGroup: { flex: 1, minWidth: 0, gap: 3 },
+  headerTitleGroup: { flex: 1, minWidth: 0, gap: 6 },
+  brandRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  brandLogo: {
+    width: 32,
+    height: 32,
+    borderRadius: 9,
+  },
   headerTitle: {
     fontFamily: theme.fonts.display,
-    fontSize: 34,
-    letterSpacing: -0.8,
-    lineHeight: 38,
+    fontSize: 28,
+    letterSpacing: -0.6,
+    lineHeight: 34,
     color: theme.colors.ink,
   },
-  headerSubtitle: { fontFamily: theme.fonts.mono, fontSize: 12, color: theme.colors.inkMuted },
+  computerChip: {
+    alignSelf: "flex-start",
+    maxWidth: "100%",
+    minHeight: 26,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    borderRadius: theme.radius.full,
+    borderWidth: 1,
+    borderColor: theme.glass.border,
+    backgroundColor: theme.colors.field,
+  },
+  computerChipText: {
+    flexShrink: 1,
+    fontFamily: theme.fonts.mono,
+    fontSize: 11,
+    color: theme.colors.inkMuted,
+  },
+  computerDot: { width: 7, height: 7, borderRadius: 4 },
+  computerDotOn: { backgroundColor: theme.colors.statusRunning },
+  computerDotOff: { backgroundColor: theme.colors.statusWaiting },
   avatar: {
     width: 38,
     height: 38,
@@ -710,6 +772,12 @@ const styles = StyleSheet.create((theme, rt) => ({
     alignItems: "center",
     justifyContent: "center",
     boxShadow: theme.shadows.sm,
+    overflow: "hidden",
+  },
+  avatarImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: theme.radius.full,
   },
   searchWrap: { paddingHorizontal: 20, paddingBottom: 4 },
   searchBar: {

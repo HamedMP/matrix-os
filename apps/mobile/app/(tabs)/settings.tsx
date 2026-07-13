@@ -22,6 +22,7 @@ import {
   type AppSettings,
 } from "@/lib/storage";
 import { isBiometricAvailable, getSupportedBiometricTypes, getBiometricLabel } from "@/lib/auth";
+import { clearAllScrollback } from "@/lib/terminal-scrollback";
 
 function SettingsSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -192,6 +193,7 @@ export default function SettingsScreen() {
         text: "Sign out",
         style: "destructive",
         onPress: () => {
+          clearAllScrollback();
           void signOut()
             .then(() => router.replace("/sign-in" as any))
             .catch((err: unknown) => {
@@ -202,6 +204,10 @@ export default function SettingsScreen() {
       },
     ]);
   }, [router, signOut]);
+
+  const handleSwitchComputer = useCallback(() => {
+    router.push("/computers" as never);
+  }, [router]);
 
   if (!settings) return null;
 
@@ -219,6 +225,7 @@ export default function SettingsScreen() {
       gatewayUrl={gateway?.url ?? null}
       onRefresh={handleRefresh}
       updateSetting={updateSetting}
+      onSwitchComputer={handleSwitchComputer}
       onSignOut={handleSignOut}
     />
   );
@@ -237,10 +244,11 @@ interface SettingsContentProps {
   gatewayUrl: string | null;
   onRefresh: () => void;
   updateSetting: (key: keyof AppSettings, value: boolean | string) => void;
+  onSwitchComputer: () => void;
   onSignOut: () => void;
 }
 
-function SettingsContent({
+export function SettingsContent({
   settings,
   channels,
   systemInfo,
@@ -253,6 +261,7 @@ function SettingsContent({
   gatewayUrl,
   onRefresh,
   updateSetting,
+  onSwitchComputer,
   onSignOut,
 }: SettingsContentProps) {
   const { theme: uniTheme } = useUnistyles();
@@ -275,6 +284,11 @@ function SettingsContent({
           label={gatewayName ?? "Not connected"}
           icon="server-outline"
           value={gatewayUrl ?? connectionState}
+        />
+        <SettingsRow
+          label="Switch computer"
+          icon="swap-horizontal-outline"
+          onPress={onSwitchComputer}
         />
       </SettingsSection>
 

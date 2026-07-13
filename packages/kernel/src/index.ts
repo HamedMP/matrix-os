@@ -1,7 +1,16 @@
 export { spawnKernel } from "./kernel.js";
 export type { KernelEvent, KernelResult } from "./kernel.js";
-export { kernelOptions } from "./options.js";
-export type { KernelConfig } from "./options.js";
+export { parseFrontmatter } from "./agents.js";
+export {
+  DEFAULT_KERNEL_EFFORT,
+  DEFAULT_KERNEL_MODEL,
+  kernelOptions,
+  loadKernelConfigFile,
+  loadKernelConfigFileAsync,
+  resolveKernelConfigFile,
+  resolveKernelConfigFileAsync,
+} from "./options.js";
+export type { KernelConfig, KernelEffort } from "./options.js";
 export { createDB } from "./db.js";
 export type { MatrixDB } from "./db.js";
 export { ensureHome, generateTemplateManifest, smartSyncTemplate } from "./boot.js";

@@ -175,6 +175,134 @@ describe("GatewayClient", () => {
     expect(client.httpUrl).toBe("http://localhost:4000");
   });
 
+  it("keeps path joins valid for a routed computer URL with a runtime query", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse({ ok: true }));
+    const client = new GatewayClient("https://app.matrix-os.com/vm/pr-919?runtime=pr-919");
+
+    expect(client.httpUrl).toBe("https://app.matrix-os.com/vm/pr-919");
+
+    await client.healthCheck();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/vm/pr-919/health?runtime=pr-919",
+      expect.anything(),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("keeps primary computer URLs without a runtime query untouched", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse({ ok: true }));
+    const client = new GatewayClient("https://app.matrix-os.com/vm/neo");
+
+    expect(client.httpUrl).toBe("https://app.matrix-os.com/vm/neo");
+
+    await client.healthCheck();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/vm/neo/health",
+      expect.anything(),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("routes websockets for hosted computers through the canonical platform origin", () => {
+    const routed = new GatewayClient("https://app.matrix-os.com/vm/pr-919?runtime=pr-919");
+    expect(routed.wsUrl).toBe("wss://app.matrix-os.com/ws?runtime=pr-919");
+    expect(routed.terminalWsUrl).toBe("wss://app.matrix-os.com/ws/terminal/session?runtime=pr-919");
+
+    const primary = new GatewayClient("https://app.matrix-os.com/vm/neo");
+    expect(primary.wsUrl).toBe("wss://app.matrix-os.com/ws");
+
+    const selfHosted = new GatewayClient("https://matrix.example.test");
+    expect(selfHosted.wsUrl).toBe("wss://matrix.example.test/ws");
+  });
+
+  it("parses conversation lists and tolerates invalid payloads", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse([
+      { id: "conv-1", preview: "Fix the tests", messageCount: 4, createdAt: 1, updatedAt: 2 },
+    ]));
+    const client = new GatewayClient("http://localhost:4000");
+
+    await expect(client.getConversations()).resolves.toEqual([
+      expect.objectContaining({ id: "conv-1", preview: "Fix the tests", messageCount: 4 }),
+    ]);
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: { code: "misconfigured" } }));
+    await expect(client.getConversations()).resolves.toEqual([]);
+
+    fetchMock.mockRejectedValueOnce(new Error("ECONNREFUSED /var/secret"));
+    await expect(client.getConversations()).resolves.toEqual([]);
+
+    fetchMock.mockRestore();
+  });
+
+  it("truncates oversized conversation lists to the first 50 entries", async () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({
+      id: `conv-${i}`,
+      preview: `Conversation ${i}`,
+      messageCount: i,
+      createdAt: i,
+      updatedAt: i,
+    }));
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(many));
+    const client = new GatewayClient("http://localhost:4000");
+
+    const result = await client.getConversations();
+    expect(result).toHaveLength(50);
+    expect(result[0]).toEqual(expect.objectContaining({ id: "conv-0" }));
+    expect(result[49]).toEqual(expect.objectContaining({ id: "conv-49" }));
+
+    fetchMock.mockRestore();
+  });
+
+  it("drops malformed conversation entries but keeps the valid ones", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse([
+      { id: "conv-1", preview: "ok", messageCount: 1, createdAt: 1, updatedAt: 2 },
+      { id: "", preview: "empty id", messageCount: 1, createdAt: 1, updatedAt: 2 },
+      { preview: "missing id", messageCount: 1, createdAt: 1, updatedAt: 2 },
+      { id: "conv-2", preview: "ok too", messageCount: 2, createdAt: 3, updatedAt: 4 },
+    ]));
+    const client = new GatewayClient("http://localhost:4000");
+
+    await expect(client.getConversations()).resolves.toEqual([
+      expect.objectContaining({ id: "conv-1" }),
+      expect.objectContaining({ id: "conv-2" }),
+    ]);
+
+    fetchMock.mockRestore();
+  });
+
+  it("creates a conversation and returns its id", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({ id: "conv-new" }));
+    const client = new GatewayClient("http://localhost:4000");
+
+    await expect(client.createConversation()).resolves.toBe("conv-new");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/conversations",
+      expect.objectContaining({ method: "POST" }),
+    );
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ nope: true }));
+    await expect(client.createConversation()).resolves.toBeNull();
+
+    fetchMock.mockRestore();
+  });
+
+  it("fetches the websocket token from the platform origin for hosted computers", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(
+      jsonResponse({ token: "jwt-token", expiresAt: Date.now() + 60_000 }),
+    );
+    const client = new GatewayClient("https://app.matrix-os.com/vm/pr-919?runtime=pr-919");
+
+    await client.getWsToken();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/api/auth/ws-token?runtime=pr-919",
+      expect.anything(),
+    );
+
+    fetchMock.mockRestore();
+  });
+
   it("allows only local self-hosted token transport over HTTP and keeps Matrix OS Cloud HTTPS-only", () => {
     expect(() => new GatewayClient("https://app.matrix-os.com", "token")).not.toThrow();
     expect(() => new GatewayClient("http://localhost:4000", "token")).not.toThrow();

@@ -7,6 +7,14 @@ const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const nextConfig: NextConfig = {
   reactCompiler: true,
   transpilePackages: ["@matrix-os/observability"],
+  // Workspace packages keep NodeNext .js specifiers in their TypeScript sources.
+  webpack(config) {
+    config.resolve.extensionAlias = {
+      ...config.resolve.extensionAlias,
+      ".js": [".ts", ".tsx", ".js"],
+    };
+    return config;
+  },
   // Allow HMR websockets when the dev shell is reached through a tunnel
   // (staging/dev.matrix-os.com) rather than localhost. Next 16 blocks dev
   // resources on cross-origin hostnames by default.

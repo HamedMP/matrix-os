@@ -68,6 +68,26 @@ function randomShellSuffix(): string {
 
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
+/** Canonical hosted platform origin; `/vm/<handle>` computer routes share it. */
+const HOSTED_PLATFORM_ORIGIN = "https://app.matrix-os.com";
+
+const ConversationMetaSchema = z.object({
+  id: z.string().min(1).max(128),
+  preview: z.string().max(2_000),
+  messageCount: z.number().int().min(0),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+}).loose();
+
+// Accept any array shape here; oversized or partially-malformed lists are
+// truncated and validated per-entry in getConversations rather than rejected
+// wholesale, so a single bad entry (or >50 entries) does not blank the list.
+const CONVERSATION_LIST_LIMIT = 50;
+const ConversationListSchema = z.array(z.unknown()).catch([]);
+const ConversationCreateResponseSchema = z.object({ id: z.string().min(1).max(128) }).loose();
+
+export type ConversationMeta = z.infer<typeof ConversationMetaSchema>;
+
 export type ServerMessage =
   | { type: "kernel:init"; sessionId: string }
   | { type: "kernel:text"; text: string }
@@ -283,6 +303,8 @@ function logGatewayWarning(scope: string, detail: unknown): void {
 export class GatewayClient {
   private ws: WebSocket | null = null;
   private baseUrl: string;
+  /** Routing query (without `?`) carried by the base URL, e.g. `runtime=<slot>`. */
+  private baseQuery: string;
   private token: string | undefined;
   private tokenProvider: TokenProvider | undefined;
   private wsToken: string | undefined;
@@ -295,7 +317,12 @@ export class GatewayClient {
   private shouldReconnect = false;
 
   constructor(baseUrl: string, token?: TokenSource, wsToken?: string) {
-    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    // A routed computer URL may carry a routing query (e.g. `/vm/<handle>?runtime=<slot>`).
+    // Split it off so path joins stay valid, and re-apply it to every request URL.
+    const trimmed = baseUrl.replace(/\/+$/, "");
+    const queryIndex = trimmed.indexOf("?");
+    this.baseUrl = queryIndex === -1 ? trimmed : trimmed.slice(0, queryIndex).replace(/\/+$/, "");
+    this.baseQuery = queryIndex === -1 ? "" : trimmed.slice(queryIndex + 1);
     if (token || wsToken) {
       assertSecureTokenTransport(this.baseUrl);
     }
@@ -329,15 +356,33 @@ export class GatewayClient {
     return formatAuthorizationHeader(token);
   }
 
+  /** Re-applies the base routing query (e.g. `runtime=<slot>`) to a joined URL. */
+  private withBaseQuery(url: string): string {
+    if (!this.baseQuery) return url;
+    return `${url}${url.includes("?") ? "&" : "?"}${this.baseQuery}`;
+  }
+
+  /**
+   * Hosted computers route HTTP through `/vm/<handle>` path prefixes, but the
+   * platform terminates WebSocket upgrades (and issues ws tokens) on the
+   * canonical origin, resolving the machine from identity + `runtime` query.
+   * Returns the platform origin for hosted routed bases, null otherwise.
+   */
+  private get hostedPlatformOrigin(): string | null {
+    return this.baseUrl.startsWith(`${HOSTED_PLATFORM_ORIGIN}/vm/`) ? HOSTED_PLATFORM_ORIGIN : null;
+  }
+
+  private get wsBaseUrl(): string {
+    return (this.hostedPlatformOrigin ?? this.baseUrl).replace(/^http/, "ws");
+  }
+
   get wsUrl(): string {
-    const url = this.baseUrl.replace(/^http/, "ws");
-    return `${url}/ws`;
+    return this.withBaseQuery(`${this.wsBaseUrl}/ws`);
   }
 
   get terminalWsUrl(): string {
-    const url = this.baseUrl.replace(/^http/, "ws");
     // Shell-sessions endpoint: attach by session name passed in the query.
-    return `${url}/ws/terminal/session`;
+    return this.withBaseQuery(`${this.wsBaseUrl}/ws/terminal/session`);
   }
 
   setWebSocketToken(token: string | null, expiresAt?: number): void {
@@ -386,7 +431,7 @@ export class GatewayClient {
     const upgradeToken = this.wsToken;
     const authorization = formatAuthorizationHeader(this.token);
     const wsUrl = upgradeToken
-      ? `${this.wsUrl}?token=${encodeURIComponent(upgradeToken)}`
+      ? appendQuery(this.wsUrl, `token=${encodeURIComponent(upgradeToken)}`)
       : this.wsUrl;
 
     const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
@@ -507,7 +552,17 @@ export class GatewayClient {
   }
 
   private async fetchGateway(path: string, init: RequestInit = {}): Promise<Response> {
-    return fetch(`${this.httpUrl}${path}`, {
+    return this.fetchAbsolute(this.withBaseQuery(`${this.httpUrl}${path}`), init);
+  }
+
+  /** Platform-owned routes (e.g. ws-token) live on the canonical origin, not the `/vm/` prefix. */
+  private async fetchPlatform(path: string, init: RequestInit = {}): Promise<Response> {
+    const base = this.hostedPlatformOrigin ?? this.httpUrl;
+    return this.fetchAbsolute(this.withBaseQuery(`${base}${path}`), init);
+  }
+
+  private async fetchAbsolute(url: string, init: RequestInit = {}): Promise<Response> {
+    return fetch(url, {
       ...init,
       headers: {
         ...(await this.authHeaders()),
@@ -535,7 +590,7 @@ export class GatewayClient {
     if (typeof fromSeq === "number" && Number.isFinite(fromSeq)) params.set("fromSeq", String(fromSeq));
     if (token) params.set("token", token);
     const query = params.toString();
-    const wsUrl = query ? `${this.terminalWsUrl}?${query}` : this.terminalWsUrl;
+    const wsUrl = query ? appendQuery(this.terminalWsUrl, query) : this.terminalWsUrl;
     const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
     const authorization = formatAuthorizationHeader(this.token);
     return new WebSocketWithOptions(
@@ -562,7 +617,9 @@ export class GatewayClient {
     if (token) params.set("token", token);
     if (parsedCursor?.success) params.set("cursor", parsedCursor.data);
     const query = params.toString();
-    const wsUrl = `${this.baseUrl.replace(/^http/, "ws")}/ws/coding-agents/thread/${encodeURIComponent(parsedThreadId.data)}${query ? `?${query}` : ""}`;
+    const wsUrl = this.withBaseQuery(
+      `${this.wsBaseUrl}/ws/coding-agents/thread/${encodeURIComponent(parsedThreadId.data)}${query ? `?${query}` : ""}`,
+    );
     const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
     const authorization = formatAuthorizationHeader(this.token);
     const ws = new WebSocketWithOptions(
@@ -645,7 +702,7 @@ export class GatewayClient {
 
   async getWsToken(): Promise<string | null> {
     try {
-      const res = await this.fetchGateway("/api/auth/ws-token");
+      const res = await this.fetchPlatform("/api/auth/ws-token");
       if (!res.ok) {
         logGatewayStatusWarning("/api/auth/ws-token unavailable", res.status);
         return null;
@@ -726,12 +783,54 @@ export class GatewayClient {
     params.set("limit", String(limit));
     const res = await this.fetchGateway(`/api/messages?${params}`);
     if (!res.ok) return [];
-    return res.json();
+    // `/api/messages` is owned by the messaging bridge on newer gateways and
+    // no longer returns a chat-history array; treat any non-array body as
+    // "no older history" instead of crashing history pagination.
+    const body: unknown = await res.json();
+    return Array.isArray(body) ? body : [];
   }
 
-  async getConversations(): Promise<unknown[]> {
-    const res = await this.fetchGateway("/api/conversations");
-    return res.json();
+  async getConversations(): Promise<ConversationMeta[]> {
+    try {
+      const res = await this.fetchGateway("/api/conversations");
+      if (!res.ok) {
+        logGatewayStatusWarning("/api/conversations unavailable", res.status);
+        return [];
+      }
+      const raw = ConversationListSchema.parse(await res.json());
+      const conversations: ConversationMeta[] = [];
+      for (const item of raw.slice(0, CONVERSATION_LIST_LIMIT)) {
+        const parsed = ConversationMetaSchema.safeParse(item);
+        if (parsed.success) conversations.push(parsed.data);
+      }
+      return conversations;
+    } catch (err: unknown) {
+      logGatewayCatchWarning("/api/conversations unavailable", err);
+      return [];
+    }
+  }
+
+  async createConversation(): Promise<string | null> {
+    try {
+      const res = await this.fetchGateway("/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      if (!res.ok) {
+        logGatewayStatusWarning("/api/conversations create unavailable", res.status);
+        return null;
+      }
+      const parsed = ConversationCreateResponseSchema.safeParse(await res.json());
+      if (!parsed.success) {
+        logGatewayWarning("/api/conversations create returned invalid payload", "invalid payload");
+        return null;
+      }
+      return parsed.data.id;
+    } catch (err: unknown) {
+      logGatewayCatchWarning("/api/conversations create unavailable", err);
+      return null;
+    }
   }
 
   async getApps(): Promise<MatrixAppEntry[]> {
@@ -1268,6 +1367,39 @@ export class GatewayClient {
     }
   }
 
+  /**
+   * Create a shell session that runs a provider setup command and return its
+   * zellij name for terminal handoff, or null on failure. The command is sent to
+   * the gateway inside the bounded foreground session and is never stored in
+   * shell state or rendered in the UI (CLAUDE.md: provider setup stays
+   * terminal-backed and command-hidden).
+   */
+  async createProviderSetupSession(command: string): Promise<string | null> {
+    if (typeof command !== "string" || command.length === 0) return null;
+    const name = `matrix-setup-${randomShellSuffix()}`;
+    try {
+      const res = await this.fetchGateway("/api/terminal/sessions", {
+        method: "POST",
+        body: JSON.stringify({ name, cwd: "projects", cmd: command }),
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        await res.text().catch((err: unknown) => {
+          logGatewayCatchWarning("failed to read provider setup session create error body", err);
+          return "";
+        });
+        logGatewayStatusWarning("provider setup session create failed", res.status);
+        return null;
+      }
+      const body = (await res.json().catch(() => null)) as { name?: unknown } | null;
+      const created = typeof body?.name === "string" ? body.name : name;
+      return isSafeShellSessionName(created) ? created : null;
+    } catch {
+      logGatewayWarning("provider setup session create unavailable", "unavailable");
+      return null;
+    }
+  }
+
   async deleteTerminalSession(name: string): Promise<boolean> {
     if (!isSafeShellSessionName(name)) return false;
     try {
@@ -1344,9 +1476,49 @@ export class GatewayClient {
       body: JSON.stringify({ token, platform }),
     });
   }
+
+  /**
+   * Authenticated GET against an owner file-browser API path (`/api/files/*`,
+   * `/api/projects`). The caller builds the full path + query; auth headers, the
+   * base routing query, and the default timeout are applied here. Parsing lives
+   * in `lib/matrix-files.ts` so this only exposes a bounded read surface.
+   */
+  async fetchOwnerFilesApi(path: string): Promise<Response> {
+    return this.fetchGateway(path);
+  }
+
+  /**
+   * Authenticated GET of a raw owner home file (`/files/<rel-path>`). Path
+   * segments are URL-encoded while directory separators are preserved.
+   */
+  async fetchOwnerHomeFile(relPath: string, init: RequestInit = {}): Promise<Response> {
+    return this.fetchGateway(`/files/${encodeHomeFilePath(relPath)}`, init);
+  }
+
+  /**
+   * Absolute, base-query-aware URL for a raw owner home file. Used for
+   * authenticated `<Image>` loads that carry the Authorization header via
+   * `getAuthorizationHeader()` and cannot go through the fetch wrapper.
+   */
+  homeFileUrl(relPath: string): string {
+    return this.withBaseQuery(`${this.httpUrl}/files/${encodeHomeFilePath(relPath)}`);
+  }
 }
 
-function createTimeoutSignal(timeoutMs: number): AbortSignal | undefined {
+/** Encodes each path segment while preserving `/` separators. */
+export function encodeHomeFilePath(relPath: string): string {
+  return relPath
+    .split("/")
+    .filter((segment) => segment.length > 0)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+function appendQuery(url: string, query: string): string {
+  return `${url}${url.includes("?") ? "&" : "?"}${query}`;
+}
+
+export function createTimeoutSignal(timeoutMs: number): AbortSignal | undefined {
   const timeout = (AbortSignal as { timeout?: (milliseconds: number) => AbortSignal }).timeout;
   if (typeof timeout === "function") {
     return timeout(timeoutMs);

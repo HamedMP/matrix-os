@@ -87,6 +87,7 @@ export const SafeAssistantPreviewSourceTextSchema = boundedText(16_000, 64 * 102
 export const SafeAssistantPreviewTextSchema = boundedText(243, 1024)
   .refine((value) => !UNSAFE_ASSISTANT_PREVIEW_TEXT.test(value), { message: "Text is not safe for assistant preview display" });
 export const BoundedTextSchema = (maxChars = 4000, maxBytes = 16 * 1024) => boundedText(maxChars, maxBytes);
+export { AgentProfileSummarySchema, type AgentProfileSummary } from "./agent-profile.js";
 
 export const MatrixComputerHandleSchema = z.string()
   .min(2)
@@ -735,6 +736,8 @@ export const ProjectSummarySchema = z.object({
   attentionCount: BoundedAggregateCountSchema,
   updatedAt: IsoTimestampSchema.optional(),
 }).strict();
+
+export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
 
 const CodingAgentProjectSlugSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/);
 export const CodingAgentProjectCreateRequestSchema = z.discriminatedUnion("mode", [

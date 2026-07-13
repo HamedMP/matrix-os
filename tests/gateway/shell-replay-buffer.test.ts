@@ -65,6 +65,105 @@ describe("shell replay buffer", () => {
     expect(replay.replayFrom(0)).toContainEqual({ type: "output", seq: 0, data: image });
   });
 
+  it("writeLive assigns the seq synchronously and returns persistable records", async () => {
+    const appended: Array<{ type: string; seq: number }> = [];
+    const store = {
+      latestSeq: async () => null,
+      append: async (_name: string, records: Array<{ type: string; seq: number }>) => {
+        appended.push(...records);
+      },
+    } as unknown as ScrollbackStore;
+    const replay = new ShellReplayBuffer({
+      maxBytes: 4096,
+      scrollbackStore: store,
+      sessionName: "main",
+    });
+    await replay.ensureSeeded();
+
+    const result = replay.writeLive("hello \x1b]133;A\x07world");
+    expect(result.seq).toBe(0);
+    expect(result.records[0]).toMatchObject({ type: "output", seq: 0 });
+    expect(result.records.some((r) => r.type === "block-mark")).toBe(true);
+    expect(replay.lastSeq).toBe(0);
+  });
+
+  it("writeLive persists a durable seq reservation ahead of assignment", async () => {
+    const appended: Array<{ type: string; seq: number }> = [];
+    const store = {
+      latestSeq: async () => null,
+      append: async (_name: string, records: Array<{ type: string; seq: number }>) => {
+        appended.push(...records);
+      },
+    } as unknown as ScrollbackStore;
+    const replay = new ShellReplayBuffer({
+      maxBytes: 4096,
+      scrollbackStore: store,
+      sessionName: "main",
+      reserveWindow: 100,
+    });
+    await replay.ensureSeeded();
+
+    replay.writeLive("one");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const reservation = appended.find((r) => r.type === "seq-reserve");
+    expect(reservation).toBeDefined();
+    expect(reservation!.seq).toBeGreaterThanOrEqual(100);
+  });
+
+  it("retries a failed seq reservation on a timer even when output stops", async () => {
+    vi.useFakeTimers();
+    try {
+      const reserves: number[] = [];
+      let failFirst = true;
+      const store = {
+        latestSeq: async () => null,
+        append: async (_name: string, records: Array<{ type: string; seq: number }>) => {
+          const reserve = records.find((r) => r.type === "seq-reserve");
+          if (reserve) {
+            if (failFirst) {
+              failFirst = false;
+              throw new Error("disk full");
+            }
+            reserves.push(reserve.seq);
+          }
+        },
+      } as unknown as ScrollbackStore;
+      const replay = new ShellReplayBuffer({
+        maxBytes: 4096,
+        scrollbackStore: store,
+        sessionName: "main",
+        reserveWindow: 100,
+      });
+      await replay.ensureSeeded();
+
+      replay.writeLive("one");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reserves).toEqual([]); // first attempt failed
+
+      await vi.advanceTimersByTimeAsync(1_100); // retry timer, no new output
+      expect(reserves.length).toBe(1);
+      expect(reserves[0]).toBeGreaterThanOrEqual(100);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("seeds numbering above a persisted reservation so delivered seqs are never reused", async () => {
+    const store = {
+      // scrollback holds outputs up to seq 5 plus a reservation through 10000
+      latestSeq: async () => 10_000,
+      append: async () => undefined,
+    } as unknown as ScrollbackStore;
+    const replay = new ShellReplayBuffer({
+      maxBytes: 4096,
+      scrollbackStore: store,
+      sessionName: "main",
+    });
+    await replay.ensureSeeded();
+
+    expect(replay.writeLive("after-restart").seq).toBe(10_001);
+  });
+
   it("serializes persistent writes for a session", async () => {
     const events: string[] = [];
     let releaseFirstAppend: (() => void) | null = null;

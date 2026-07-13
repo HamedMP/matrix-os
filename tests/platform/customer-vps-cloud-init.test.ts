@@ -161,6 +161,31 @@ exit 99
     expect(rendered).toContain('r2=matrixos-sync/user_123/');
   });
 
+  it('provisions swap before heavy setup so new machines never run swapless', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    // 8GiB fleet default with a disk-headroom guard; matrix-ensure-swap
+    // reconciles the same policy on existing machines via the sync agent.
+    expect(cloudInit).toContain('SWAP_GB=8');
+    expect(cloudInit).toContain('swapon /swapfile');
+    expect(cloudInit).toContain('/swapfile none swap sw 0 0');
+    expect(cloudInit).toContain('vm.swappiness=10');
+    const swapIndex = cloudInit.indexOf('SWAP_GB=8');
+    const aptIndex = cloudInit.indexOf('apt_get_update()');
+    expect(swapIndex).toBeGreaterThan(0);
+    expect(swapIndex).toBeLessThan(aptIndex);
+  });
+
+  it('ships matrix-ensure-swap in the host bundle and runs it from the sync agent', () => {
+    const root = process.cwd();
+    const ensureSwap = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-ensure-swap'), 'utf8');
+    expect(ensureSwap).toContain('MATRIX_SWAP_SIZE_GB:-8');
+    const buildScript = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
+    expect(buildScript).toContain('$STAGE_DIR/bin/matrix-ensure-swap');
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    expect(syncAgent).toContain('matrix-ensure-swap');
+  });
+
   it('renders a non-empty host bundle URL into customer cloud-init', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');

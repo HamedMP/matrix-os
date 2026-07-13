@@ -1,40 +1,41 @@
-import { useCallback, memo } from "react";
-// react-doctor-disable-next-line react-doctor/rn-prefer-expo-image -- expo-image is not a project dependency; adopting it is a separate dependency decision tracked outside this lint pass
-import { View, Text, ScrollView, Pressable, Image, Linking } from "react-native";
+import { useCallback, useEffect, useState, memo } from "react";
+import { View, Text, ScrollView, Pressable, Linking } from "react-native";
+import { Image } from "expo-image";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import Animated, { FadeInLeft, FadeInRight } from "react-native-reanimated";
 import * as Clipboard from "expo-clipboard";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, fonts } from "@/lib/theme";
+import { fonts } from "@/lib/theme";
 import type { Message } from "@/app/(tabs)/chat";
+import type { GatewayClient } from "@/lib/gateway-client";
 
-const roleContainerStyles: Record<Message["role"], object> = {
-  user: {
-    backgroundColor: colors.light.primary,
-    alignSelf: "flex-end" as const,
-  },
-  assistant: {
-    backgroundColor: colors.light.card,
-    borderWidth: 1,
-    borderColor: colors.light.border,
-    alignSelf: "flex-start" as const,
-  },
-  system: {
-    backgroundColor: "rgba(239, 68, 68, 0.1)",
-    alignSelf: "center" as const,
-  },
-  tool: {
-    backgroundColor: colors.light.secondary,
-    alignSelf: "flex-start" as const,
-  },
-};
+// Role styling lives in the Unistyles sheet below so bubbles follow the active
+// color scheme instead of pinning the light palette.
+function roleBubbleStyle(role: Message["role"]) {
+  switch (role) {
+    case "user":
+      return styles.bubbleUser;
+    case "assistant":
+      return styles.bubbleAssistant;
+    case "system":
+      return styles.bubbleSystem;
+    case "tool":
+      return styles.bubbleTool;
+  }
+}
 
-const roleTextStyles: Record<Message["role"], object> = {
-  user: { color: colors.light.primaryForeground },
-  assistant: { color: colors.light.cardForeground },
-  system: { color: colors.light.destructive, fontSize: 12 },
-  tool: { color: colors.light.mutedForeground, fontSize: 12, fontFamily: fonts.mono },
-};
+function roleTextStyle(role: Message["role"]) {
+  switch (role) {
+    case "user":
+      return styles.textUser;
+    case "assistant":
+      return styles.textAssistant;
+    case "system":
+      return styles.textSystem;
+    case "tool":
+      return styles.textTool;
+  }
+}
 
 const timestampAlignStyles: Record<Message["role"], object> = {
   user: { alignSelf: "flex-end" as const },
@@ -48,7 +49,7 @@ const ENTERING_OTHER = FadeInLeft.duration(200);
 
 const IMAGE_EXTENSIONS = /\.(png|jpg|jpeg|gif|webp|svg)$/i;
 
-function markdownToNodes(text: string, baseStyle: object): React.ReactNode[] {
+function markdownToNodes(text: string, baseStyle: object, linkColor: string): React.ReactNode[] {
   const elements: React.ReactNode[] = [];
   const lines = text.split("\n");
 
@@ -67,13 +68,13 @@ function markdownToNodes(text: string, baseStyle: object): React.ReactNode[] {
       elements.push(
         <Text key={`bullet-${li}`} style={baseStyle}>
           <Text>{"  ".repeat(indent) + "  \u2022  "}</Text>
-          {inlineMarkdownToNodes(bulletContent, baseStyle, `b-${li}`)}
+          {inlineMarkdownToNodes(bulletContent, baseStyle, `b-${li}`, linkColor)}
         </Text>,
       );
       continue;
     }
 
-    elements.push(...inlineMarkdownToNodes(line, baseStyle, `l-${li}`));
+    elements.push(...inlineMarkdownToNodes(line, baseStyle, `l-${li}`, linkColor));
   }
 
   return elements;
@@ -83,6 +84,7 @@ function inlineMarkdownToNodes(
   text: string,
   baseStyle: object,
   keyPrefix: string,
+  linkColor: string,
 ): React.ReactNode[] {
   const elements: React.ReactNode[] = [];
   // Match: **bold**, *italic*, `inline code`, [text](url)
@@ -139,7 +141,7 @@ function inlineMarkdownToNodes(
       elements.push(
         <Text
           key={`${keyPrefix}-tok${match.index}`}
-          style={[baseStyle, { color: colors.light.primary, textDecorationLine: "underline" }]}
+          style={[baseStyle, { color: linkColor, textDecorationLine: "underline" }]}
           onPress={() => Linking.openURL(url)}
         >
           {match[5]}
@@ -162,7 +164,8 @@ function inlineMarkdownToNodes(
   return elements;
 }
 
-export const ChatMessage = memo(function ChatMessage({ message, gatewayUrl }: { message: Message; gatewayUrl?: string }) {
+export const ChatMessage = memo(function ChatMessage({ message, gatewayUrl, client }: { message: Message; gatewayUrl?: string; client?: GatewayClient | null }) {
+  const { theme } = useUnistyles();
   const isCode = message.content.includes("```");
   const imageMatches = extractImageLinks(message.content);
   const fileMatches = extractFileLinks(message.content);
@@ -173,18 +176,18 @@ export const ChatMessage = memo(function ChatMessage({ message, gatewayUrl }: { 
 
   return (
     <Animated.View entering={entering}>
-      <View style={[styles.bubble, roleContainerStyles[message.role]]}>
+      <View style={[styles.bubble, roleBubbleStyle(message.role)]}>
         {message.tool && (
           <Text style={styles.toolLabel}>{message.tool}</Text>
         )}
-        {imageMatches.length > 0 && gatewayUrl && (
-          <ImageAttachments images={imageMatches} gatewayUrl={gatewayUrl} />
+        {imageMatches.length > 0 && client && (
+          <ImageAttachments images={imageMatches} client={client} />
         )}
         {isCode ? (
           <CodeContent content={message.content} role={message.role} />
         ) : (
-          <Text style={[styles.text, roleTextStyles[message.role]]}>
-            {markdownToNodes(message.content, { ...styles.text, ...roleTextStyles[message.role] })}
+          <Text selectable style={[styles.text, roleTextStyle(message.role)]}>
+            {markdownToNodes(message.content, { ...styles.text, ...roleTextStyle(message.role) }, theme.colors.primary)}
           </Text>
         )}
         {fileMatches.length > 0 && gatewayUrl && (
@@ -199,7 +202,8 @@ export const ChatMessage = memo(function ChatMessage({ message, gatewayUrl }: { 
 }, (prev, next) =>
   prev.message.id === next.message.id &&
   prev.message.content === next.message.content &&
-  prev.gatewayUrl === next.gatewayUrl,
+  prev.gatewayUrl === next.gatewayUrl &&
+  prev.client === next.client,
 );
 
 function extractImageLinks(content: string): { alt: string; path: string }[] {
@@ -224,16 +228,48 @@ function extractFileLinks(content: string): { name: string; path: string }[] {
   return results;
 }
 
-function ImageAttachments({ images, gatewayUrl }: { images: { alt: string; path: string }[]; gatewayUrl: string }) {
+/** Strips the leading `/files/` so the remainder is an owner-home relative path. */
+function filesUrlToRelPath(path: string): string {
+  return path.replace(/^\/files\//, "");
+}
+
+// Owner `/files/*` images require the gateway Authorization header and the
+// base routing query (`/vm/<handle>?runtime=`), so build the URL through
+// `client.homeFileUrl` and attach the auth header once it resolves. Rendering
+// waits for the header so the <Image> mounts a single time with the credential,
+// mirroring the authenticated file preview path.
+function ImageAttachments({ images, client }: { images: { alt: string; path: string }[]; client: GatewayClient }) {
+  const [auth, setAuth] = useState<{ ready: boolean; header?: string }>({ ready: false });
+
+  useEffect(() => {
+    let cancelled = false;
+    client.getAuthorizationHeader()
+      .then((header) => {
+        if (!cancelled) setAuth({ ready: true, header });
+      })
+      .catch((err: unknown) => {
+        console.warn("[mobile] chat image auth header unavailable", err instanceof Error ? err.name : "unknown");
+        if (!cancelled) setAuth({ ready: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
+
+  if (!auth.ready) return null;
+
   return (
     <View style={styles.imageContainer}>
       {images.map((img) => (
         <Image
           key={img.path}
-          source={{ uri: `${gatewayUrl}${img.path}` }}
-          style={styles.inlineImage}
-          resizeMode="contain"
           accessibilityLabel={img.alt || "Image"}
+          source={{
+            uri: client.homeFileUrl(filesUrlToRelPath(img.path)),
+            headers: auth.header ? { Authorization: auth.header } : undefined,
+          }}
+          style={styles.inlineImage}
+          contentFit="contain"
         />
       ))}
     </View>
@@ -294,6 +330,7 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
 }
 
 function CodeContent({ content, role }: { content: string; role: Message["role"] }) {
+  const { theme } = useUnistyles();
   // Pair each split segment with its source character offset so keys are stable
   // across renders (the segments concatenate back to the immutable content).
   const parts = content.split(/(```[\s\S]*?```)/g);
@@ -313,8 +350,8 @@ function CodeContent({ content, role }: { content: string; role: Message["role"]
         }
         if (part.trim()) {
           return (
-            <Text key={`seg-${start}`} style={[styles.text, roleTextStyles[role]]}>
-              {markdownToNodes(part, { ...styles.text, ...roleTextStyles[role] })}
+            <Text key={`seg-${start}`} style={[styles.text, roleTextStyle(role)]}>
+              {markdownToNodes(part, { ...styles.text, ...roleTextStyle(role) }, theme.colors.primary)}
             </Text>
           );
         }
@@ -327,11 +364,42 @@ function CodeContent({ content, role }: { content: string; role: Message["role"]
 const styles = StyleSheet.create((theme) => ({
   bubble: {
     maxWidth: "85%",
-    borderRadius: 16,
+    borderRadius: 20,
     borderCurve: "continuous" as const,
     paddingHorizontal: theme.spacing.lg,
     paddingVertical: 10,
   },
+  // User messages are rich forest bubbles with a "tail" corner; assistant
+  // prose sits directly on the canvas (Cursor-style) so replies read as the
+  // computer talking, not a card stack.
+  bubbleUser: {
+    backgroundColor: theme.colors.forest,
+    alignSelf: "flex-end" as const,
+    borderBottomRightRadius: 7,
+    boxShadow: "0 2px 10px rgba(50, 61, 46, 0.16)",
+  },
+  bubbleAssistant: {
+    maxWidth: "100%",
+    alignSelf: "stretch" as const,
+    paddingHorizontal: theme.spacing.xs,
+    paddingVertical: 2,
+  },
+  bubbleSystem: {
+    backgroundColor: "rgba(239, 68, 68, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(239, 68, 68, 0.14)",
+    alignSelf: "center" as const,
+  },
+  bubbleTool: {
+    backgroundColor: theme.colors.secondary,
+    alignSelf: "flex-start" as const,
+    borderBottomLeftRadius: 7,
+    paddingVertical: 7,
+  },
+  textUser: { color: theme.colors.background, fontSize: 15.5, lineHeight: 22 },
+  textAssistant: { color: theme.colors.foreground, fontSize: 15.5, lineHeight: 23 },
+  textSystem: { color: theme.colors.destructive, fontSize: 12 },
+  textTool: { color: theme.colors.mutedForeground, fontSize: 12, fontFamily: theme.fonts.mono },
   toolLabel: {
     fontFamily: theme.fonts.mono,
     fontSize: 10,
@@ -342,15 +410,16 @@ const styles = StyleSheet.create((theme) => ({
   },
   text: {
     fontFamily: theme.fonts.sans,
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 15.5,
+    lineHeight: 22,
   },
   timestamp: {
     fontFamily: theme.fonts.sans,
     fontSize: 10,
-    color: theme.colors.mutedForeground,
-    marginTop: 2,
-    marginHorizontal: 4,
+    color: theme.colors.inkDim,
+    marginTop: 3,
+    marginHorizontal: 6,
+    opacity: 0.8,
   },
   codeContainer: {
     gap: 6,
