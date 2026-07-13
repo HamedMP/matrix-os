@@ -227,6 +227,38 @@ describe("Codex app-server request normalization", () => {
     }
   });
 
+  it("replaces blank or omitted option descriptions without dropping the provider request", () => {
+    const result = parseCodexAppServerRequestLine(JSON.stringify({
+      id: "rpc-input-blank-description",
+      method: "item/tool/requestUserInput",
+      params: {
+        threadId: "provider-thread",
+        turnId: "provider-turn",
+        itemId: "item_input_blank_description",
+        questions: [{
+          id: "native-question-blank-description",
+          header: "Decision",
+          question: "How should the coding agent continue?",
+          options: [
+            { label: "Accept", description: "" },
+            { label: "Cancel" },
+          ],
+        }],
+      },
+    }), context());
+
+    expect(result.events).toHaveLength(1);
+    expect(result.pending?.requestId).toMatch(/^req_codex_/);
+    const event = result.events[0];
+    expect(event?.type).toBe("user_input.requested");
+    if (event?.type === "user_input.requested") {
+      expect(event.request.questions?.[0]?.options).toEqual([
+        { label: "Accept", description: "Choose this option." },
+        { label: "Cancel", description: "Choose this option." },
+      ]);
+    }
+  });
+
   it("bounds long question text without dropping the provider request", () => {
     const result = parseCodexAppServerRequestLine(JSON.stringify({
       id: "rpc-input-long-question",
