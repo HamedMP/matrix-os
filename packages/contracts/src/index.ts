@@ -655,7 +655,7 @@ const StructuredUserInputAnswersSchema = z.record(
 export const USER_INPUT_ANSWER_BODY_LIMIT_BYTES = 40 * 1024;
 
 export const UserInputAnswerRequestSchema = z.object({
-  answer: boundedText(8000, 8 * 1024),
+  answer: boundedText(32_000, 32 * 1024),
   structuredAnswers: StructuredUserInputAnswersSchema.optional(),
   clientRequestId: RequestIdSchema,
   correlationId: CorrelationIdSchema,

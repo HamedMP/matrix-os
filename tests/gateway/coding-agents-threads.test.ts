@@ -859,6 +859,37 @@ describe("coding agent thread lifecycle", () => {
         })];
       },
       submitInput({ thread, inputRequestId, request, now: providerNow, nextEventId }) {
+        if (request.answer === "Fail.") {
+          return [
+            AgentThreadEventSchema.parse({
+              type: "user_input.answered",
+              eventId: nextEventId(),
+              threadId: thread.id,
+              occurredAt: providerNow().toISOString(),
+              requestId: inputRequestId,
+              correlationId: request.correlationId,
+            }),
+            AgentThreadEventSchema.parse({
+              type: "thread.error",
+              eventId: nextEventId(),
+              threadId: thread.id,
+              occurredAt: providerNow().toISOString(),
+              error: {
+                code: "provider_run_failed",
+                safeMessage: "Private custom response",
+                retryable: true,
+                recoveryActions: ["retry"],
+              },
+            }),
+            AgentThreadEventSchema.parse({
+              type: "thread.completed",
+              eventId: nextEventId(),
+              threadId: thread.id,
+              occurredAt: providerNow().toISOString(),
+              outcome: "failed",
+            }),
+          ];
+        }
         return [
           AgentThreadEventSchema.parse({
             type: "user_input.answered",
@@ -904,6 +935,38 @@ describe("coding agent thread lifecycle", () => {
       "user_input.answered",
       "thread.completed",
     ]);
+
+    const failedThread = await threads.createThread(ownerPrincipal, {
+      ...createBody,
+      clientRequestId: "req_create_input_failure",
+    });
+    const failed = await threads.submitInput(
+      ownerPrincipal,
+      failedThread.snapshot.thread.id,
+      "req_input_completion",
+      {
+        answer: "Fail.",
+        clientRequestId: "req_input_failure_answer",
+        correlationId: "corr_input_completion",
+      },
+    );
+
+    expect(failed.thread).toMatchObject({ status: "failed", attention: "failed" });
+    expect(failed.events.items.map((event) => event.type)).toEqual([
+      "thread.created",
+      "user_input.requested",
+      "user_input.answered",
+      "thread.error",
+      "thread.completed",
+    ]);
+    expect(JSON.stringify(failed)).not.toContain("Private custom response");
+    expect(failed.events.items[3]).toMatchObject({
+      type: "thread.error",
+      error: {
+        code: "provider_run_failed",
+        safeMessage: "Agent run could not continue. Try again.",
+      },
+    });
   });
 
   it("records a safe failed thread when a provider start fails", async () => {
