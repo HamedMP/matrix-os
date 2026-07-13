@@ -90,7 +90,7 @@ As a user reconnecting a device, I want scrollback replay to be correct and stor
 
 1. **Given** multiple attached clients, **When** output is produced, **Then** exactly one elected recorder stream is persisted and `seq` numbering is monotonic from that stream only.
 2. **Given** the recorder client disconnects, **When** other clients remain attached, **Then** a new recorder is elected and persistence continues with monotonic `seq` (a bounded gap is acceptable and reported via the existing replay-evicted event).
-3. **Given** a client reconnects after output occurred with no clients attached (zellij server kept running), **When** it attaches, **Then** the zellij full repaint restores the visible screen even though unwitnessed output was not persisted; the documented persistence guarantee is "output produced while at least one client (recorder) was attached".
+3. **Given** a client reconnects after output occurred with no clients attached (zellij server kept running), **When** it attaches, **Then** the zellij full repaint restores the visible screen even though unwitnessed output was not persisted; the documented persistence guarantee is "output rendered on the recorder's focused tab while a recorder was attached" (see FR-004 for the per-tab scope).
 
 ---
 
@@ -98,7 +98,7 @@ As a user reconnecting a device, I want scrollback replay to be correct and stor
 
 As an operator of a small VPS, I want terminal infrastructure to have caps and cleanup everywhere: slow sockets must not buffer unboundedly, dead sessions must be reaped, and attach counts must be bounded.
 
-**Independent Test**: Simulate a stalled WebSocket consumer and verify PTY flow-control pauses and the socket buffer stays under its cap; create sessions past the cap and verify creation is rejected; age exited sessions past the TTL and verify they are deleted from zellij and the registry.
+**Independent Test**: Simulate a stalled WebSocket consumer and verify PTY flow-control pauses and the socket buffer stays under its cap; burst-create sessions and verify the shared creation rate limiter rejects the burst without introducing a count cap; age exited sessions past the TTL and verify they are deleted from zellij and the registry.
 
 **Acceptance Scenarios**:
 
@@ -123,10 +123,10 @@ As an operator of a small VPS, I want terminal infrastructure to have caps and c
 
 **Output pipeline**
 
-- **FR-001**: The gateway MUST deliver PTY output to the client WebSocket without awaiting persistence ("send-first"). Sequence numbers MUST be assigned synchronously in memory so the sent frame carries its final `seq`.
+- **FR-001**: The gateway MUST deliver PTY output to the client WebSocket without awaiting persistence ("send-first"). Sequence numbers MUST be assigned synchronously in memory so the sent frame carries its final `seq`, and MUST be covered by a durable seq reservation: before assigning seqs beyond the current reservation, the gateway persists a high-water reservation covering the next window (default 10,000 seqs), so a crash can never cause a restarted gateway to reissue a `seq` a client already received. On restart, numbering resumes above the persisted reservation and the unpersisted window is reported as a replay-evicted range to `fromSeq` reconnects.
 - **FR-002**: Scrollback persistence MUST be asynchronous and coalesced: appends are batched by flush interval (default 250 ms) and byte threshold (default 64 KiB), whichever comes first, with a bounded pending queue (default 4 MiB per session).
 - **FR-003**: When the pending persistence queue exceeds its cap, the gateway MUST drop oldest pending data from persistence only, record the evicted seq range, and log a rate-limited warning. Live delivery is never dropped by persistence pressure.
-- **FR-004**: Exactly one recorder stream per session MUST feed the replay buffer and scrollback store. Non-recorder client streams are live-delivered only.
+- **FR-004**: Exactly one recorder stream per session MUST feed the replay buffer and scrollback store. Non-recorder client streams are live-delivered only. Persistence therefore captures the recorder's viewpoint (its focused tab): output rendered only on another client's focused tab is live-delivered but not persisted. In-tab history for tabs the recorder is not viewing relies on zellij's own server-side scrollback (available on attach/scroll as today); per-tab persisted scrollback/replay is explicitly out of scope for this spec (see Deferred Scope) and the documented replay guarantee is scoped accordingly.
 - **FR-005**: Recorder election MUST be deterministic (oldest live attach), re-run on recorder loss, and MUST keep `seq` monotonic across elections.
 
 **Sizing**
@@ -157,7 +157,7 @@ As an operator of a small VPS, I want terminal infrastructure to have caps and c
 
 - **FR-017**: WS output delivery MUST implement flow control: when a socket's buffered amount exceeds the high-water mark (default 1 MiB), that client's attach PTY is paused; resumed below the low-water mark (default 256 KiB).
 - **FR-018**: Exited sessions MUST be reaped by a periodic sweep (default: exited > 7 days), deleting the zellij session, pruning the registry entry, and removing scrollback files. The sweep MUST be symlink-safe and its timer cleared on shutdown.
-- **FR-019**: Live attaches per session MUST be capped (default 8) with stale-attach eviction before rejection; total sessions cap remains as defined by spec 056 (20 concurrent).
+- **FR-019**: Live attaches per session MUST be capped (default 8) with stale-attach eviction before rejection. Workspace/session creation stays rate-limited through the existing shared creation rate limiter (`SHELL_SESSION_CREATE_RATE_LIMIT`) plus TTL reaping (FR-018); no hard maximum session count is introduced (shell guidance: creation is rate-limited, not count-capped).
 - **FR-020**: Recorder attach PTYs and replay buffers MUST be reaped after all clients detach plus an idle TTL (default 10 minutes); the existing `ReplayBufferCache` `maxBuffers` cap remains.
 
 ### Non-Functional Requirements
@@ -189,13 +189,13 @@ As an operator of a small VPS, I want terminal infrastructure to have caps and c
 - **Slow/dead client**: flow control pauses only that client's PTY; existing stale-attach eviction (FR-019) removes it; other clients unaffected (per-subscriber isolation).
 - **Gateway shutdown**: drain notifies clients, flushes the coalescing buffer, disposes timers, then kills attach PTYs; zellij servers keep running (sessions survive restarts as today).
 - **Concurrent size changes**: canonical size recomputation is debounced and serialized per session; last committed value wins; PTY resizes are idempotent.
-- **Crash between seq assignment and persistence**: bounded loss window equals the coalescing flush interval; documented and covered by replay-evicted reporting.
+- **Crash between seq assignment and persistence**: bounded loss window equals the coalescing flush interval; the durable seq reservation (FR-001) guarantees restarted numbering never reuses a delivered seq, and the lost window is reported to reconnects as replay-evicted.
 
 ## Resource Management
 
 - Per-session pending persistence queue: 4 MiB cap, drop-oldest (FR-003).
 - Per-socket buffered output: 1 MiB high-water flow control (FR-017).
-- Attach cap 8/session with stale eviction; session cap 20; replay buffer cache caps unchanged (FR-019/020).
+- Attach cap 8/session with stale eviction; session creation rate-limited (no count cap); replay buffer cache caps unchanged (FR-019/020).
 - Exited-session TTL sweep 7 days, symlink-safe, periodic, timer cleared on shutdown (FR-018).
 - Scrollback files: existing compaction retained; deleted with their session by the sweep.
 
@@ -222,6 +222,7 @@ As an operator of a small VPS, I want terminal infrastructure to have caps and c
 ## Deferred Scope
 
 - True per-client reflow of one PTY (upstream zellij limitation; revisit if zellij ships independent per-client rendering).
+- Per-tab persisted scrollback/replay: the recorder persists its focused-tab viewpoint (FR-004); history for other tabs comes from zellij's own server-side scrollback. Persisting every tab's stream would require one recorder attach per tab and is deferred until per-device tab focus (Spike S1) proves out.
 - Workspace-level layout persistence beyond zellij's own (`~/system/layouts/*.kdl` flows unchanged).
 - Desktop (Electron/macOS) and native mobile workspace UI: both consume the same gateway contract, but their migration lands as follow-up work coordinated against those surfaces' in-flight PRs (web and CLI migrate in Phase 3 per FR-021..024).
 - Force-migrating live legacy sessions with running foreground processes (impossible to move between zellij sessions; they migrate when idle or exit).
