@@ -71,6 +71,23 @@ export type ConnectionState = "disconnected" | "connecting" | "connected" | "err
 /** Canonical hosted platform origin; `/vm/<handle>` computer routes share it. */
 const HOSTED_PLATFORM_ORIGIN = "https://app.matrix-os.com";
 
+const ConversationMetaSchema = z.object({
+  id: z.string().min(1).max(128),
+  preview: z.string().max(2_000),
+  messageCount: z.number().int().min(0),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+}).loose();
+
+// Accept any array shape here; oversized or partially-malformed lists are
+// truncated and validated per-entry in getConversations rather than rejected
+// wholesale, so a single bad entry (or >50 entries) does not blank the list.
+const CONVERSATION_LIST_LIMIT = 50;
+const ConversationListSchema = z.array(z.unknown()).catch([]);
+const ConversationCreateResponseSchema = z.object({ id: z.string().min(1).max(128) }).loose();
+
+export type ConversationMeta = z.infer<typeof ConversationMetaSchema>;
+
 export type ServerMessage =
   | { type: "kernel:init"; sessionId: string }
   | { type: "kernel:text"; text: string }
@@ -773,9 +790,47 @@ export class GatewayClient {
     return Array.isArray(body) ? body : [];
   }
 
-  async getConversations(): Promise<unknown[]> {
-    const res = await this.fetchGateway("/api/conversations");
-    return res.json();
+  async getConversations(): Promise<ConversationMeta[]> {
+    try {
+      const res = await this.fetchGateway("/api/conversations");
+      if (!res.ok) {
+        logGatewayStatusWarning("/api/conversations unavailable", res.status);
+        return [];
+      }
+      const raw = ConversationListSchema.parse(await res.json());
+      const conversations: ConversationMeta[] = [];
+      for (const item of raw.slice(0, CONVERSATION_LIST_LIMIT)) {
+        const parsed = ConversationMetaSchema.safeParse(item);
+        if (parsed.success) conversations.push(parsed.data);
+      }
+      return conversations;
+    } catch (err: unknown) {
+      logGatewayCatchWarning("/api/conversations unavailable", err);
+      return [];
+    }
+  }
+
+  async createConversation(): Promise<string | null> {
+    try {
+      const res = await this.fetchGateway("/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      if (!res.ok) {
+        logGatewayStatusWarning("/api/conversations create unavailable", res.status);
+        return null;
+      }
+      const parsed = ConversationCreateResponseSchema.safeParse(await res.json());
+      if (!parsed.success) {
+        logGatewayWarning("/api/conversations create returned invalid payload", "invalid payload");
+        return null;
+      }
+      return parsed.data.id;
+    } catch (err: unknown) {
+      logGatewayCatchWarning("/api/conversations create unavailable", err);
+      return null;
+    }
   }
 
   async getApps(): Promise<MatrixAppEntry[]> {

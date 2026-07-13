@@ -13,6 +13,11 @@ jest.mock("../app/_layout", () => ({
 
 jest.mock("expo-router", () => ({
   Link: ({ children }: { children: React.ReactNode }) => children,
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
+jest.mock("@clerk/clerk-expo", () => ({
+  useUser: () => ({ user: null }),
 }));
 
 jest.mock("expo-image", () => {

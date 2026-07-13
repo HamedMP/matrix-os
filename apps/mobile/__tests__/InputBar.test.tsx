@@ -15,23 +15,23 @@ describe("InputBar", () => {
 
   it("renders input field", () => {
     render(<InputBar {...defaultProps} />);
-    expect(screen.getByPlaceholderText("Ask Matrix OS...")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Message your Matrix…")).toBeTruthy();
   });
 
-  it("shows 'Thinking...' placeholder when busy", () => {
+  it("shows 'Matrix is thinking…' placeholder when busy", () => {
     render(<InputBar {...defaultProps} busy={true} />);
-    expect(screen.getByPlaceholderText("Thinking...")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Matrix is thinking…")).toBeTruthy();
   });
 
-  it("shows 'Connecting...' placeholder when not connected", () => {
+  it("shows 'Connecting…' placeholder when not connected", () => {
     render(<InputBar {...defaultProps} connected={false} />);
-    expect(screen.getByPlaceholderText("Connecting...")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Connecting…")).toBeTruthy();
   });
 
   it("calls onSend with trimmed text when send pressed", () => {
     const onSend = jest.fn();
     render(<InputBar {...defaultProps} onSend={onSend} />);
-    const input = screen.getByPlaceholderText("Ask Matrix OS...");
+    const input = screen.getByPlaceholderText("Message your Matrix…");
     fireEvent.changeText(input, "  hello world  ");
     fireEvent.press(screen.getByTestId("icon-arrow-up"));
     expect(onSend).toHaveBeenCalledWith("hello world");
@@ -47,7 +47,7 @@ describe("InputBar", () => {
   it("does not call onSend when disconnected", () => {
     const onSend = jest.fn();
     render(<InputBar {...defaultProps} onSend={onSend} connected={false} />);
-    const input = screen.getByPlaceholderText("Connecting...");
+    const input = screen.getByPlaceholderText("Connecting…");
     fireEvent.changeText(input, "hello");
     fireEvent.press(screen.getByTestId("icon-arrow-up"));
     expect(onSend).not.toHaveBeenCalled();
@@ -55,7 +55,7 @@ describe("InputBar", () => {
 
   it("clears input after sending", () => {
     render(<InputBar {...defaultProps} />);
-    const input = screen.getByPlaceholderText("Ask Matrix OS...");
+    const input = screen.getByPlaceholderText("Message your Matrix…");
     fireEvent.changeText(input, "hello");
     fireEvent.press(screen.getByTestId("icon-arrow-up"));
     expect(input.props.value).toBe("");
@@ -64,7 +64,7 @@ describe("InputBar", () => {
   it("triggers haptic on send", () => {
     const Haptics = require("expo-haptics");
     render(<InputBar {...defaultProps} />);
-    const input = screen.getByPlaceholderText("Ask Matrix OS...");
+    const input = screen.getByPlaceholderText("Message your Matrix…");
     fireEvent.changeText(input, "hello");
     fireEvent.press(screen.getByTestId("icon-arrow-up"));
     expect(Haptics.impactAsync).toHaveBeenCalledWith("light");

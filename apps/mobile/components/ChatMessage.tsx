@@ -186,7 +186,7 @@ export const ChatMessage = memo(function ChatMessage({ message, gatewayUrl, clie
         {isCode ? (
           <CodeContent content={message.content} role={message.role} />
         ) : (
-          <Text style={[styles.text, roleTextStyle(message.role)]}>
+          <Text selectable style={[styles.text, roleTextStyle(message.role)]}>
             {markdownToNodes(message.content, { ...styles.text, ...roleTextStyle(message.role) }, theme.colors.primary)}
           </Text>
         )}
@@ -364,31 +364,40 @@ function CodeContent({ content, role }: { content: string; role: Message["role"]
 const styles = StyleSheet.create((theme) => ({
   bubble: {
     maxWidth: "85%",
-    borderRadius: 16,
+    borderRadius: 20,
     borderCurve: "continuous" as const,
     paddingHorizontal: theme.spacing.lg,
     paddingVertical: 10,
   },
+  // User messages are rich forest bubbles with a "tail" corner; assistant
+  // prose sits directly on the canvas (Cursor-style) so replies read as the
+  // computer talking, not a card stack.
   bubbleUser: {
-    backgroundColor: theme.colors.primary,
+    backgroundColor: theme.colors.forest,
     alignSelf: "flex-end" as const,
+    borderBottomRightRadius: 7,
+    boxShadow: "0 2px 10px rgba(50, 61, 46, 0.16)",
   },
   bubbleAssistant: {
-    backgroundColor: theme.colors.card,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    alignSelf: "flex-start" as const,
+    maxWidth: "100%",
+    alignSelf: "stretch" as const,
+    paddingHorizontal: theme.spacing.xs,
+    paddingVertical: 2,
   },
   bubbleSystem: {
-    backgroundColor: "rgba(239, 68, 68, 0.1)",
+    backgroundColor: "rgba(239, 68, 68, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(239, 68, 68, 0.14)",
     alignSelf: "center" as const,
   },
   bubbleTool: {
     backgroundColor: theme.colors.secondary,
     alignSelf: "flex-start" as const,
+    borderBottomLeftRadius: 7,
+    paddingVertical: 7,
   },
-  textUser: { color: theme.colors.primaryForeground },
-  textAssistant: { color: theme.colors.cardForeground },
+  textUser: { color: theme.colors.background, fontSize: 15.5, lineHeight: 22 },
+  textAssistant: { color: theme.colors.foreground, fontSize: 15.5, lineHeight: 23 },
   textSystem: { color: theme.colors.destructive, fontSize: 12 },
   textTool: { color: theme.colors.mutedForeground, fontSize: 12, fontFamily: theme.fonts.mono },
   toolLabel: {
@@ -401,15 +410,16 @@ const styles = StyleSheet.create((theme) => ({
   },
   text: {
     fontFamily: theme.fonts.sans,
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 15.5,
+    lineHeight: 22,
   },
   timestamp: {
     fontFamily: theme.fonts.sans,
     fontSize: 10,
-    color: theme.colors.mutedForeground,
-    marginTop: 2,
-    marginHorizontal: 4,
+    color: theme.colors.inkDim,
+    marginTop: 3,
+    marginHorizontal: 6,
+    opacity: 0.8,
   },
   codeContainer: {
     gap: 6,

@@ -77,13 +77,22 @@ export default defineConfig({
     // CI runners are sometimes slow under load; tests that rely on async
     // waitFor polling can exceed the 5s vitest default.
     testTimeout: 20_000,
-    hookTimeout: 20_000,
+    // DB-provisioning hooks (createTestPlatformDb and friends) are the
+    // slowest step and the dominant full-suite flake under disk/IO pressure:
+    // rotating "Hook timed out in 20000ms" failures across platform suites on
+    // loaded agent machines while every victim passes in isolation. Hooks are
+    // setup, not assertions — a generous ceiling only delays the report for
+    // genuinely broken hooks (timeouts must cover observed runtime with margin).
+    hookTimeout: 60_000,
     // PGlite-backed suites are memory- and CPU-heavy during database startup.
     // Keep file-level parallelism bounded so full-suite runs do not starve
     // KyselyPGlite.create() hooks under shared CI or agent-machine load.
     maxWorkers: 2,
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
-    exclude: ["tests/**/*.integration.ts", "node_modules", "dist", ".next"],
+    // tests/e2e is owned by vitest.e2e.config.ts (bun run test:e2e); the
+    // desktop suites there launch Electron, which fails on headless unit
+    // runners when the unit glob accidentally collects them.
+    exclude: ["tests/**/*.integration.ts", "tests/e2e/**", "node_modules", "dist", ".next"],
     coverage: {
       provider: "v8",
       include: [

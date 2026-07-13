@@ -40,6 +40,9 @@ const ShellSessionSchema = z.object({
   lastSeq: z.number().int().nonnegative().optional(),
   placement: ShellPlacementSchema.default("active"),
   lastSeenSeq: z.number().int().nonnegative().nullable().default(null),
+  // "session" for sessions created after reaper support shipped; absent for
+  // pre-upgrade sessions, which are exempt from TTL reaping (spec 107 FR-018).
+  kind: z.string().optional(),
   visualStatus: ShellVisualStatusSchema.optional(),
   visualStatusUpdatedAt: z.string().optional(),
 });
@@ -200,6 +203,7 @@ export class ShellRegistry {
         attachedClients: 0,
         placement: "active",
         lastSeenSeq: null,
+        kind: "session",
       };
       file.sessions[name] = session;
       if (file.order) {
