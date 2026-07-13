@@ -83,6 +83,20 @@ function parseReleaseChannel(value: unknown): string | undefined {
     : undefined;
 }
 
+function parseInstalledRelease(value: unknown): HostBundleRelease | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const parsed = value as HostBundleRelease;
+  const version = parseSafeSystemVersion(parsed.version);
+  if (!version) return undefined;
+  const channel = parseReleaseChannel(parsed.channel);
+  const { version: _rawVersion, channel: _rawChannel, ...metadata } = parsed;
+  return {
+    ...metadata,
+    version,
+    ...(channel ? { channel } : {}),
+  };
+}
+
 export function getVersion(release?: HostBundleRelease): string {
   const releaseVersion = parseSafeSystemVersion(release?.version);
   if (releaseVersion) return releaseVersion;
@@ -164,10 +178,7 @@ function readReleaseInfo(): HostBundleRelease | undefined {
         try {
           const raw = readBoundedTextFile(file);
           if (!raw) return undefined;
-          const parsed = JSON.parse(raw) as HostBundleRelease;
-          return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-            ? parsed
-            : undefined;
+          return parseInstalledRelease(JSON.parse(raw));
         } catch (err) {
           if (isMissingFileError(err)) return undefined;
           throw err;
@@ -194,7 +205,10 @@ function readDiskUsage(path: string): { totalBytes: number; freeBytes: number } 
   }
 }
 
-export function getSystemInfo(homePath: string): SystemInfo {
+export function getSystemInfo(
+  homePath: string,
+  kernelOverrides: { model?: string } = {},
+): SystemInfo {
   const kernel = resolveKernelConfigFile(homePath);
   let modules = 0;
   const modulesPath = join(homePath, "system", "modules.json");
@@ -260,7 +274,7 @@ export function getSystemInfo(homePath: string): SystemInfo {
   return {
     version: getVersion(release),
     ...(channel ? { channel } : {}),
-    model: kernel.model,
+    model: kernelOverrides.model ?? kernel.model,
     effort: kernel.effort,
     image: process.env.MATRIX_IMAGE ?? "unknown",
     runtime: {
