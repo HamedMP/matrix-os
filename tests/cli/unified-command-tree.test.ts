@@ -184,6 +184,24 @@ describe("unified CLI command tree", () => {
     }
   });
 
+  it("does not count the active fish token as a completed transfer argument", async () => {
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (line?: unknown) => {
+      logs.push(String(line));
+    };
+    try {
+      await completionCommand.run?.({ args: { shell: "fish" } } as never);
+    } finally {
+      console.log = originalLog;
+    }
+
+    const script = logs.join("\n");
+    expect(script).toContain("set -l current_token (commandline -ct)");
+    expect(script).toContain("if test -n \"$current_token\"; and test (count $tokens) -gt 2");
+    expect(script).toContain("set -e tokens[-1]");
+  });
+
   it("prevents fish shell command completions from mixing with session completions", async () => {
     const logs: string[] = [];
     const originalLog = console.log;

@@ -202,6 +202,10 @@ function fishCompletion(): string {
   return `# Matrix CLI completion for fish
 function __matrix_transfer_position
   set -l tokens (commandline -opc)
+  set -l current_token (commandline -ct)
+  if test -n "$current_token"; and test (count $tokens) -gt 2
+    set -e tokens[-1]
+  end
   set -l skip 0
   set -l position 0
   for word in $tokens[3..-1]
