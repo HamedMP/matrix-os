@@ -20,6 +20,12 @@ import { TerminalSurface, type TerminalSurfaceHandle } from "@/components/Termin
 import { WindowHeader, WindowHeaderAction } from "@/components/WindowHeader";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
 import {
+  appendScrollback,
+  clearScrollback,
+  getScrollback,
+  resetScrollback,
+} from "@/lib/terminal-scrollback";
+import {
   MobileTerminalClient,
   type MobileTerminalConnection,
   type TerminalServerFrame,
@@ -47,6 +53,9 @@ export default function TerminalScreen() {
   const connectAttemptRef = useRef(0);
   const connectingRef = useRef(false);
   const surfaceRef = useRef<TerminalSurfaceHandle | null>(null);
+  // The session whose live output is currently streaming, so output frames land
+  // in the right scrollback cache bucket (state.activeSessionId lags in closures).
+  const attachedSessionIdRef = useRef<string | null>(null);
   const keyboardLift = useRef(new Animated.Value(0)).current;
 
   // Initial grid; the embedded emulator reports its fitted size via onResize.
@@ -99,6 +108,10 @@ export default function TerminalScreen() {
     if (frame.type === "attached") {
       surfaceRef.current?.clear();
       if (frame.replay) surfaceRef.current?.write(frame.replay);
+      // The gateway replay is authoritative and just repainted the cleared
+      // surface, so any cached preview is now superseded — reset the cache to it.
+      attachedSessionIdRef.current = frame.sessionId;
+      resetScrollback(frame.sessionId, frame.replay ?? "");
       dispatch({
         type: "terminal.attached",
         sessionId: frame.sessionId,
@@ -123,10 +136,13 @@ export default function TerminalScreen() {
     }
     if (frame.type === "output") {
       surfaceRef.current?.write(frame.data);
+      if (attachedSessionIdRef.current) appendScrollback(attachedSessionIdRef.current, frame.data);
       dispatch({ type: "terminal.output", data: frame.data });
       return;
     }
     if (frame.type === "exit") {
+      if (attachedSessionIdRef.current) clearScrollback(attachedSessionIdRef.current);
+      attachedSessionIdRef.current = null;
       dispatch({ type: "terminal.ended", exitCode: frame.exitCode });
       setLastTerminalSessionId(null);
       loadSessions();
@@ -179,6 +195,12 @@ export default function TerminalScreen() {
         }
       }
       if (connectAttemptRef.current !== attemptId) return;
+      // Paint the cached scrollback immediately so a reattach shows the previous
+      // buffer during the token+WS round-trip instead of a blank surface. The
+      // `attached` frame then clears and repaints from the authoritative replay.
+      surfaceRef.current?.clear();
+      const cachedScrollback = getScrollback(targetName);
+      if (cachedScrollback) surfaceRef.current?.write(cachedScrollback);
       nextConnection = await terminalClient.connect({
         sessionId: targetName,
         cols: gridRef.current.cols,
@@ -261,7 +283,9 @@ export default function TerminalScreen() {
         loadSessions();
         return;
       }
+      clearScrollback(sessionId);
     }
+    attachedSessionIdRef.current = null;
     connectAttemptRef.current += 1;
     connectingRef.current = false;
     connectionRef.current?.destroy();
