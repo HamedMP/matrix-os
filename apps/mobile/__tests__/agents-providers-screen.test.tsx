@@ -30,8 +30,10 @@ jest.mock("expo-router", () => ({
 
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import ProvidersScreen from "../app/agents/providers";
 import { useGateway } from "@/app/_layout";
+import { MOBILE_SHELL_STATE_STORAGE_KEY } from "../lib/mobile-shell-state";
 import type { GatewayClient } from "../lib/gateway-client";
 
 const useGatewayMock = useGateway as jest.MockedFunction<typeof useGateway>;
@@ -134,6 +136,8 @@ describe("ProvidersScreen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     for (const key of Object.keys(mockSearchParams)) delete mockSearchParams[key];
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+    jest.mocked(AsyncStorage.setItem).mockResolvedValue();
   });
 
   it("renders provider summaries from the runtime summary", async () => {
@@ -216,6 +220,95 @@ describe("ProvidersScreen", () => {
     expect(screen.getByLabelText("Provider setup needed for Codex, auth required")).toBeTruthy();
     expect(screen.getByLabelText("Provider setup needed for Claude Code, setup required")).toBeTruthy();
     expect(screen.queryByText(/codex login|api-key|ghp_should_not_render_secret/i)).toBeNull();
+  });
+
+  it("runs a foreground_terminal setup action in a bounded terminal session and hands off by name", async () => {
+    const createProviderSetupSession = jest.fn().mockResolvedValue("matrix-setup-abc123");
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: providerSetupSummaryFixture(),
+      }),
+      createProviderSetupSession,
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<ProvidersScreen />);
+
+    fireEvent.press(await screen.findByLabelText("Sign in from Terminal for Codex"));
+
+    await waitFor(() => {
+      expect(createProviderSetupSession).toHaveBeenCalledWith("codex login --api-key ghp_should_not_render_secret");
+    });
+    await waitFor(() => {
+      expect(mockRouterPush).toHaveBeenCalledWith("/terminal");
+    });
+
+    // The session name is handed off through shell state; the command is not.
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith(
+      MOBILE_SHELL_STATE_STORAGE_KEY,
+      expect.stringContaining("\"terminalHandoffSessionId\":\"matrix-setup-abc123\""),
+    );
+    const persistedPayloads = jest.mocked(AsyncStorage.setItem).mock.calls.map((call) => String(call[1]));
+    for (const payload of persistedPayloads) {
+      expect(payload).not.toContain("codex login");
+      expect(payload).not.toContain("ghp_should_not_render_secret");
+    }
+    expect(screen.queryByText(/codex login|api-key|ghp_should_not_render_secret/i)).toBeNull();
+  });
+
+  it("routes open_settings setup actions to the in-app Settings tab", async () => {
+    const createProviderSetupSession = jest.fn();
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: providerSetupSummaryFixture(),
+      }),
+      createProviderSetupSession,
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<ProvidersScreen />);
+
+    fireEvent.press(await screen.findByLabelText("Open agent settings for Claude Code"));
+
+    await waitFor(() => {
+      expect(mockRouterPush).toHaveBeenCalledWith("/(tabs)/settings");
+    });
+    expect(createProviderSetupSession).not.toHaveBeenCalled();
+    expect(mockRouterPush).not.toHaveBeenCalledWith("/terminal");
+  });
+
+  it("surfaces a generic error when a terminal setup session cannot start", async () => {
+    const createProviderSetupSession = jest.fn().mockResolvedValue(null);
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: providerSetupSummaryFixture(),
+      }),
+      createProviderSetupSession,
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<ProvidersScreen />);
+
+    fireEvent.press(await screen.findByLabelText("Sign in from Terminal for Codex"));
+
+    expect(await screen.findByText("Setup could not start. Try again.")).toBeTruthy();
+    expect(mockRouterPush).not.toHaveBeenCalledWith("/terminal");
+    expect(AsyncStorage.setItem).not.toHaveBeenCalledWith(
+      MOBILE_SHELL_STATE_STORAGE_KEY,
+      expect.stringContaining("matrix-setup"),
+    );
   });
 
   it("does not show setup warnings for ready or non-actionable provider states", async () => {

@@ -68,6 +68,9 @@ function randomShellSuffix(): string {
 
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
+/** Canonical hosted platform origin; `/vm/<handle>` computer routes share it. */
+const HOSTED_PLATFORM_ORIGIN = "https://app.matrix-os.com";
+
 export type ServerMessage =
   | { type: "kernel:init"; sessionId: string }
   | { type: "kernel:text"; text: string }
@@ -342,15 +345,27 @@ export class GatewayClient {
     return `${url}${url.includes("?") ? "&" : "?"}${this.baseQuery}`;
   }
 
+  /**
+   * Hosted computers route HTTP through `/vm/<handle>` path prefixes, but the
+   * platform terminates WebSocket upgrades (and issues ws tokens) on the
+   * canonical origin, resolving the machine from identity + `runtime` query.
+   * Returns the platform origin for hosted routed bases, null otherwise.
+   */
+  private get hostedPlatformOrigin(): string | null {
+    return this.baseUrl.startsWith(`${HOSTED_PLATFORM_ORIGIN}/vm/`) ? HOSTED_PLATFORM_ORIGIN : null;
+  }
+
+  private get wsBaseUrl(): string {
+    return (this.hostedPlatformOrigin ?? this.baseUrl).replace(/^http/, "ws");
+  }
+
   get wsUrl(): string {
-    const url = this.baseUrl.replace(/^http/, "ws");
-    return this.withBaseQuery(`${url}/ws`);
+    return this.withBaseQuery(`${this.wsBaseUrl}/ws`);
   }
 
   get terminalWsUrl(): string {
-    const url = this.baseUrl.replace(/^http/, "ws");
     // Shell-sessions endpoint: attach by session name passed in the query.
-    return this.withBaseQuery(`${url}/ws/terminal/session`);
+    return this.withBaseQuery(`${this.wsBaseUrl}/ws/terminal/session`);
   }
 
   setWebSocketToken(token: string | null, expiresAt?: number): void {
@@ -520,7 +535,17 @@ export class GatewayClient {
   }
 
   private async fetchGateway(path: string, init: RequestInit = {}): Promise<Response> {
-    return fetch(this.withBaseQuery(`${this.httpUrl}${path}`), {
+    return this.fetchAbsolute(this.withBaseQuery(`${this.httpUrl}${path}`), init);
+  }
+
+  /** Platform-owned routes (e.g. ws-token) live on the canonical origin, not the `/vm/` prefix. */
+  private async fetchPlatform(path: string, init: RequestInit = {}): Promise<Response> {
+    const base = this.hostedPlatformOrigin ?? this.httpUrl;
+    return this.fetchAbsolute(this.withBaseQuery(`${base}${path}`), init);
+  }
+
+  private async fetchAbsolute(url: string, init: RequestInit = {}): Promise<Response> {
+    return fetch(url, {
       ...init,
       headers: {
         ...(await this.authHeaders()),
@@ -576,7 +601,7 @@ export class GatewayClient {
     if (parsedCursor?.success) params.set("cursor", parsedCursor.data);
     const query = params.toString();
     const wsUrl = this.withBaseQuery(
-      `${this.baseUrl.replace(/^http/, "ws")}/ws/coding-agents/thread/${encodeURIComponent(parsedThreadId.data)}${query ? `?${query}` : ""}`,
+      `${this.wsBaseUrl}/ws/coding-agents/thread/${encodeURIComponent(parsedThreadId.data)}${query ? `?${query}` : ""}`,
     );
     const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
     const authorization = formatAuthorizationHeader(this.token);
@@ -660,7 +685,7 @@ export class GatewayClient {
 
   async getWsToken(): Promise<string | null> {
     try {
-      const res = await this.fetchGateway("/api/auth/ws-token");
+      const res = await this.fetchPlatform("/api/auth/ws-token");
       if (!res.ok) {
         logGatewayStatusWarning("/api/auth/ws-token unavailable", res.status);
         return null;
@@ -1287,6 +1312,39 @@ export class GatewayClient {
     }
   }
 
+  /**
+   * Create a shell session that runs a provider setup command and return its
+   * zellij name for terminal handoff, or null on failure. The command is sent to
+   * the gateway inside the bounded foreground session and is never stored in
+   * shell state or rendered in the UI (CLAUDE.md: provider setup stays
+   * terminal-backed and command-hidden).
+   */
+  async createProviderSetupSession(command: string): Promise<string | null> {
+    if (typeof command !== "string" || command.length === 0) return null;
+    const name = `matrix-setup-${randomShellSuffix()}`;
+    try {
+      const res = await this.fetchGateway("/api/terminal/sessions", {
+        method: "POST",
+        body: JSON.stringify({ name, cwd: "projects", cmd: command }),
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        await res.text().catch((err: unknown) => {
+          logGatewayCatchWarning("failed to read provider setup session create error body", err);
+          return "";
+        });
+        logGatewayStatusWarning("provider setup session create failed", res.status);
+        return null;
+      }
+      const body = (await res.json().catch(() => null)) as { name?: unknown } | null;
+      const created = typeof body?.name === "string" ? body.name : name;
+      return isSafeShellSessionName(created) ? created : null;
+    } catch {
+      logGatewayWarning("provider setup session create unavailable", "unavailable");
+      return null;
+    }
+  }
+
   async deleteTerminalSession(name: string): Promise<boolean> {
     if (!isSafeShellSessionName(name)) return false;
     try {
@@ -1363,6 +1421,42 @@ export class GatewayClient {
       body: JSON.stringify({ token, platform }),
     });
   }
+
+  /**
+   * Authenticated GET against an owner file-browser API path (`/api/files/*`,
+   * `/api/projects`). The caller builds the full path + query; auth headers, the
+   * base routing query, and the default timeout are applied here. Parsing lives
+   * in `lib/matrix-files.ts` so this only exposes a bounded read surface.
+   */
+  async fetchOwnerFilesApi(path: string): Promise<Response> {
+    return this.fetchGateway(path);
+  }
+
+  /**
+   * Authenticated GET of a raw owner home file (`/files/<rel-path>`). Path
+   * segments are URL-encoded while directory separators are preserved.
+   */
+  async fetchOwnerHomeFile(relPath: string, init: RequestInit = {}): Promise<Response> {
+    return this.fetchGateway(`/files/${encodeHomeFilePath(relPath)}`, init);
+  }
+
+  /**
+   * Absolute, base-query-aware URL for a raw owner home file. Used for
+   * authenticated `<Image>` loads that carry the Authorization header via
+   * `getAuthorizationHeader()` and cannot go through the fetch wrapper.
+   */
+  homeFileUrl(relPath: string): string {
+    return this.withBaseQuery(`${this.httpUrl}/files/${encodeHomeFilePath(relPath)}`);
+  }
+}
+
+/** Encodes each path segment while preserving `/` separators. */
+export function encodeHomeFilePath(relPath: string): string {
+  return relPath
+    .split("/")
+    .filter((segment) => segment.length > 0)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
 }
 
 function appendQuery(url: string, query: string): string {

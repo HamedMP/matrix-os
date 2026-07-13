@@ -164,12 +164,18 @@ describe("mobile app helpers", () => {
 
   it("keeps native Matrix apps visible when the VPS app list is empty", () => {
     const apps = mergeNativeAndRemoteApps([]);
-    expect(apps.map((entry) => entry.name)).toEqual(["Chat", "Apps", "Terminal", "Canvas", "Tasks", "Settings"]);
+    expect(apps.map((entry) => entry.name)).toEqual(["Chat", "Apps", "Terminal", "Files", "Canvas", "Tasks", "Settings"]);
   });
 
   it("appends remote apps after native Matrix apps", () => {
     const apps = mergeNativeAndRemoteApps([app({ name: "Workout Tracker", file: "workout/index.html" })]);
-    expect(apps.map((entry) => entry.name)).toEqual(["Chat", "Apps", "Terminal", "Canvas", "Tasks", "Settings", "Workout Tracker"]);
+    expect(apps.map((entry) => entry.name)).toEqual(["Chat", "Apps", "Terminal", "Files", "Canvas", "Tasks", "Settings", "Workout Tracker"]);
+  });
+
+  it("routes the native Files tile to the Files browser without a feature flag", () => {
+    const apps = mergeNativeAndRemoteApps([]);
+    expect(apps.map((entry) => entry.name)).toContain("Files");
+    expect(getNativeAppRoute(app({ name: "Files", slug: "files", file: "files/index.html" }))).toBe("/files");
   });
 
   it("includes the native Agents app only when explicitly opted in", () => {

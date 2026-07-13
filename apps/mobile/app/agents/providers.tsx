@@ -1,12 +1,22 @@
 import { useCallback, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Switch, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
+import * as Haptics from "expo-haptics";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, RuntimeSummary } from "@matrix-os/contracts";
+import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, RuntimeSummary, SafeSetupAction } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
+import type { GatewayClient } from "@/lib/gateway-client";
 import { EmptyText, Section } from "@/components/agents/agent-workspace-shared";
 import { useRuntimeSummary } from "@/lib/use-runtime-summary";
+import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
+
+function triggerSelectionHaptic(): void {
+  if (process.env.EXPO_OS !== "ios" || typeof Haptics.selectionAsync !== "function") return;
+  void Haptics.selectionAsync().catch((error: unknown) => {
+    console.warn("[mobile] selection haptic unavailable", error instanceof Error ? error.name : "unknown");
+  });
+}
 
 type NotificationPreferencesState =
   | { status: "idle"; preferences: null; error: null }
@@ -56,6 +66,7 @@ function setupRequiredProviders(summary: RuntimeSummary): SummaryProvider[] {
 export default function ProvidersScreen() {
   const { theme } = useUnistyles();
   const { client } = useGateway();
+  const router = useRouter();
   const [notificationPreferencesState, setNotificationPreferencesState] = useState<NotificationPreferencesState>(INITIAL_NOTIFICATION_PREFERENCES_STATE);
   const notificationPreferencesGeneration = useRef(0);
   const notificationPreferencesRef = useRef<CodingAgentNotificationPreferences | null>(null);
@@ -225,7 +236,7 @@ export default function ProvidersScreen() {
         </View>
       </View>
 
-      <ProviderSetupSection summary={summary} />
+      <ProviderSetupSection summary={summary} client={client} router={router} />
 
       <Section title="Providers" count={summary.providers.length}>
         {summary.providers.length === 0 ? <EmptyText>No providers are ready.</EmptyText> : null}
@@ -282,9 +293,63 @@ export default function ProvidersScreen() {
   );
 }
 
-function ProviderSetupSection({ summary }: { summary: RuntimeSummary }) {
+type SetupActionStatus = "idle" | "running" | "error";
+
+function setupActionKey(providerId: string, index: number, action: SafeSetupAction): string {
+  return `${providerId}:${index}:${action.id}:${action.kind}`;
+}
+
+function ProviderSetupSection({
+  summary,
+  client,
+  router,
+}: {
+  summary: RuntimeSummary;
+  client: GatewayClient | null;
+  router: ReturnType<typeof useRouter>;
+}) {
   const { theme } = useUnistyles();
   const providers = setupRequiredProviders(summary);
+  const [actionStatuses, setActionStatuses] = useState<Record<string, SetupActionStatus>>({});
+
+  // Runs a provider setup action through the sanctioned surfaces: settings
+  // actions route to the in-app Settings tab; terminal actions create a bounded
+  // foreground shell session that runs the setup command server-side, then hand
+  // off to the terminal tab by session name. The command is never stored in
+  // shell state or rendered in the UI.
+  const runSetupAction = useCallback(async (action: SafeSetupAction, key: string) => {
+    triggerSelectionHaptic();
+    if (action.kind === "open_settings") {
+      router.push("/(tabs)/settings");
+      return;
+    }
+    if (!client || typeof client.createProviderSetupSession !== "function") {
+      setActionStatuses((prev) => ({ ...prev, [key]: "error" }));
+      return;
+    }
+    setActionStatuses((prev) => ({ ...prev, [key]: "running" }));
+    const sessionName = await client.createProviderSetupSession(action.command);
+    if (!sessionName) {
+      setActionStatuses((prev) => ({ ...prev, [key]: "error" }));
+      return;
+    }
+    try {
+      const saved = await loadMobileShellState();
+      await saveMobileShellState({
+        ...saved,
+        mode: "terminal",
+        lastActiveTerminalSessionId: sessionName,
+        terminalHandoffSessionId: sessionName,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch {
+      setActionStatuses((prev) => ({ ...prev, [key]: "error" }));
+      return;
+    }
+    setActionStatuses((prev) => ({ ...prev, [key]: "idle" }));
+    router.push("/terminal");
+  }, [client, router]);
+
   if (providers.length === 0) return null;
 
   return (
@@ -306,11 +371,40 @@ function ProviderSetupSection({ summary }: { summary: RuntimeSummary }) {
             </Text>
             {provider.setupActions.length > 0 ? (
               <View style={styles.providerSetupActions}>
-                {provider.setupActions.map((action, index) => (
-                  <Text key={`${provider.id}:${index}:${action.id}:${action.kind}`} style={styles.attentionBadge}>
-                    {action.label}
-                  </Text>
-                ))}
+                {provider.setupActions.map((action, index) => {
+                  const key = setupActionKey(provider.id, index, action);
+                  const status = actionStatuses[key] ?? "idle";
+                  const running = status === "running";
+                  return (
+                    <View key={key} style={styles.setupActionItem}>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`${action.label} for ${provider.displayName}`}
+                        accessibilityState={running ? { disabled: true, busy: true } : undefined}
+                        disabled={running}
+                        onPress={() => void runSetupAction(action, key)}
+                        style={({ pressed }) => [
+                          styles.setupActionButton,
+                          pressed ? styles.setupActionButtonPressed : null,
+                        ]}
+                      >
+                        {running ? (
+                          <ActivityIndicator size="small" color={theme.colors.moss} />
+                        ) : (
+                          <Ionicons
+                            name={action.kind === "open_settings" ? "settings-outline" : "terminal-outline"}
+                            size={13}
+                            color={theme.colors.moss}
+                          />
+                        )}
+                        <Text style={styles.setupActionLabel}>{action.label}</Text>
+                      </Pressable>
+                      {status === "error" ? (
+                        <Text style={styles.setupActionError}>Setup could not start. Try again.</Text>
+                      ) : null}
+                    </View>
+                  );
+                })}
               </View>
             ) : null}
           </View>
@@ -436,23 +530,40 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.moss,
     textTransform: "capitalize",
   },
-  attentionBadge: {
-    alignSelf: "flex-start",
+  providerSetupActions: {
     marginTop: theme.spacing.xs,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing.xs,
+  },
+  setupActionItem: {
+    alignSelf: "flex-start",
+    gap: 4,
+  },
+  setupActionButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    minHeight: 32,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.background,
     paddingHorizontal: theme.spacing.sm,
-    paddingVertical: 3,
+    paddingVertical: 4,
+  },
+  setupActionButtonPressed: {
+    opacity: 0.7,
+  },
+  setupActionLabel: {
     fontFamily: theme.fonts.sansSemiBold,
     fontSize: 11,
     color: theme.colors.moss,
   },
-  providerSetupActions: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: theme.spacing.xs,
+  setupActionError: {
+    fontFamily: theme.fonts.sans,
+    fontSize: 11,
+    color: theme.colors.destructive,
   },
   notificationPanel: {
     borderRadius: 14,

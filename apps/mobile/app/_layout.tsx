@@ -346,6 +346,14 @@ function GatewayShell() {
             }}
           />
           <Stack.Screen
+            name="files"
+            options={{
+              title: "Files",
+              headerBackButtonDisplayMode: "minimal",
+              headerStyle: { backgroundColor: theme.colors.background },
+            }}
+          />
+          <Stack.Screen
             name="connect"
             options={{
               title: "Gateway",

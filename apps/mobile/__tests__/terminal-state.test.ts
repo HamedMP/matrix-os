@@ -1,5 +1,6 @@
 import {
   buildTerminalControlSequence,
+  computeCursorKeyboardLift,
   formatTerminalCwd,
   initialTerminalState,
   MAX_TERMINAL_INPUT_CHARS,
@@ -159,5 +160,30 @@ describe("mobile terminal state", () => {
     expect(formatTerminalCwd("/home/matrix/home/projects")).toBe("~/projects");
     expect(formatTerminalCwd("/home/deploy/matrix-os")).toBe("~/matrix-os");
     expect(formatTerminalCwd("/")).toBe("~");
+  });
+});
+
+describe("computeCursorKeyboardLift", () => {
+  const base = { keyboardTopY: 500, maxLift: 300 };
+
+  it("does not lift when the cursor is far above the keyboard", () => {
+    expect(computeCursorKeyboardLift({ ...base, cursorBottomY: 60 })).toBe(0);
+  });
+
+  it("lifts just enough to keep the cursor above the keyboard", () => {
+    expect(computeCursorKeyboardLift({ ...base, cursorBottomY: 520 })).toBe(36);
+  });
+
+  it("caps at the full keyboard lift", () => {
+    expect(computeCursorKeyboardLift({ ...base, cursorBottomY: 2000 })).toBe(300);
+  });
+
+  it("falls back to the full lift when the cursor is unknown", () => {
+    expect(computeCursorKeyboardLift({ ...base, cursorBottomY: null })).toBe(300);
+    expect(computeCursorKeyboardLift({ ...base, cursorBottomY: Number.NaN })).toBe(300);
+  });
+
+  it("returns zero when the keyboard is hidden", () => {
+    expect(computeCursorKeyboardLift({ cursorBottomY: 400, keyboardTopY: 900, maxLift: 0 })).toBe(0);
   });
 });
