@@ -217,6 +217,41 @@ describe("GatewayClient", () => {
     expect(selfHosted.wsUrl).toBe("wss://matrix.example.test/ws");
   });
 
+  it("parses conversation lists and tolerates invalid payloads", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse([
+      { id: "conv-1", preview: "Fix the tests", messageCount: 4, createdAt: 1, updatedAt: 2 },
+    ]));
+    const client = new GatewayClient("http://localhost:4000");
+
+    await expect(client.getConversations()).resolves.toEqual([
+      expect.objectContaining({ id: "conv-1", preview: "Fix the tests", messageCount: 4 }),
+    ]);
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: { code: "misconfigured" } }));
+    await expect(client.getConversations()).resolves.toEqual([]);
+
+    fetchMock.mockRejectedValueOnce(new Error("ECONNREFUSED /var/secret"));
+    await expect(client.getConversations()).resolves.toEqual([]);
+
+    fetchMock.mockRestore();
+  });
+
+  it("creates a conversation and returns its id", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({ id: "conv-new" }));
+    const client = new GatewayClient("http://localhost:4000");
+
+    await expect(client.createConversation()).resolves.toBe("conv-new");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/conversations",
+      expect.objectContaining({ method: "POST" }),
+    );
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ nope: true }));
+    await expect(client.createConversation()).resolves.toBeNull();
+
+    fetchMock.mockRestore();
+  });
+
   it("fetches the websocket token from the platform origin for hosted computers", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(
       jsonResponse({ token: "jwt-token", expiresAt: Date.now() + 60_000 }),

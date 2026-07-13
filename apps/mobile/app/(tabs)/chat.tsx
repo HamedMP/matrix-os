@@ -21,9 +21,10 @@ import Animated, {
 } from "react-native-reanimated";
 import { useGateway } from "../_layout";
 import { ChatMessage } from "@/components/ChatMessage";
+import { ChatConversationsSheet } from "@/components/ChatConversationsSheet";
 import { InputBar } from "@/components/InputBar";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
-import type { ServerMessage } from "@/lib/gateway-client";
+import type { ConversationMeta, ServerMessage } from "@/lib/gateway-client";
 import {
   getCachedMessages,
   setCachedMessages,
@@ -104,6 +105,10 @@ export default function ChatScreen() {
   const [busy, setBusy] = useState(false);
   const sessionIdRef = useRef<string | undefined>(undefined);
   const [queueCount, setQueueCount] = useState(0);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [conversationsVisible, setConversationsVisible] = useState(false);
+  const [conversationsLoading, setConversationsLoading] = useState(false);
+  const [conversations, setConversations] = useState<ConversationMeta[]>([]);
   const flatListRef = useRef<FlatList<Message>>(null);
   const prevConnectionState = useRef(connectionState);
   const isFocusedRef = useRef(true);
@@ -191,7 +196,12 @@ export default function ChatScreen() {
       switch (msg.type) {
         case "kernel:init":
           sessionIdRef.current = msg.sessionId;
+          setActiveSessionId(msg.sessionId);
           setBusy(true);
+          break;
+        case "session:switched":
+          sessionIdRef.current = msg.sessionId;
+          setActiveSessionId(msg.sessionId);
           break;
         case "kernel:text": {
           // Decide synchronously (the updater below runs deferred, so a flag set
@@ -291,6 +301,51 @@ export default function ChatScreen() {
     [client],
   );
 
+  const resetTranscript = useCallback(() => {
+    headIsStreamingAssistantRef.current = false;
+    setBusy(false);
+    setMessages([]);
+    void setCachedMessages([]);
+  }, []);
+
+  const conversationsOpenedAtRef = useRef(0);
+  const openConversations = useCallback(() => {
+    conversationsOpenedAtRef.current = Date.now();
+    setConversationsVisible(true);
+    if (!client) return;
+    setConversationsLoading(true);
+    void client.getConversations().then((items) => {
+      setConversations(items);
+      setConversationsLoading(false);
+    });
+  }, [client]);
+
+  const selectConversation = useCallback((id: string) => {
+    setConversationsVisible(false);
+    if (!client || id === sessionIdRef.current) return;
+    resetTranscript();
+    sessionIdRef.current = id;
+    setActiveSessionId(id);
+    client.switchSession(id);
+  }, [client, resetTranscript]);
+
+  const startNewConversation = useCallback(async () => {
+    setConversationsVisible(false);
+    if (!client) return;
+    const id = await client.createConversation();
+    if (!id) {
+      setMessages((prev) => [
+        { id: nextId(), role: "system", content: "New conversation could not be started. Try again.", timestamp: Date.now() },
+        ...prev,
+      ]);
+      return;
+    }
+    resetTranscript();
+    sessionIdRef.current = id;
+    setActiveSessionId(id);
+    client.switchSession(id);
+  }, [client, resetTranscript]);
+
   const [loadingOlder, setLoadingOlder] = useState(false);
   const hasMoreRef = useRef(true);
 
@@ -336,6 +391,26 @@ export default function ChatScreen() {
         queueCount={queueCount}
         onRetry={() => client?.connect()}
       />
+      <View style={styles.conversationBar}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Show conversations"
+          onPress={openConversations}
+          style={({ pressed }) => [styles.conversationButton, pressed && { opacity: 0.7 }]}
+        >
+          <Ionicons name="time-outline" size={16} color={theme.colors.mutedForeground} />
+          <Text style={styles.conversationButtonText}>Conversations</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Start a new conversation"
+          onPress={() => void startNewConversation()}
+          style={({ pressed }) => [styles.conversationButton, pressed && { opacity: 0.7 }]}
+        >
+          <Ionicons name="add" size={16} color={theme.colors.mutedForeground} />
+          <Text style={styles.conversationButtonText}>New</Text>
+        </Pressable>
+      </View>
       <FlatList
         ref={flatListRef}
         data={messages}
@@ -402,6 +477,16 @@ export default function ChatScreen() {
         busy={busy}
         connected={isConnected}
       />
+      <ChatConversationsSheet
+        visible={conversationsVisible}
+        loading={conversationsLoading}
+        conversations={conversations}
+        activeSessionId={activeSessionId}
+        nowMs={conversationsOpenedAtRef.current}
+        onSelect={selectConversation}
+        onNew={() => void startNewConversation()}
+        onClose={() => setConversationsVisible(false)}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -410,6 +495,29 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
+  },
+  conversationBar: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing.sm,
+    paddingHorizontal: theme.spacing.lg,
+    paddingTop: theme.spacing.sm,
+  },
+  conversationButton: {
+    minHeight: 32,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: theme.spacing.md,
+    borderRadius: theme.radius.full,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+  },
+  conversationButtonText: {
+    fontFamily: theme.fonts.sansMedium,
+    fontSize: 12,
+    color: theme.colors.mutedForeground,
   },
   listContent: {
     paddingHorizontal: theme.spacing.lg,

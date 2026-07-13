@@ -71,6 +71,19 @@ export type ConnectionState = "disconnected" | "connecting" | "connected" | "err
 /** Canonical hosted platform origin; `/vm/<handle>` computer routes share it. */
 const HOSTED_PLATFORM_ORIGIN = "https://app.matrix-os.com";
 
+const ConversationMetaSchema = z.object({
+  id: z.string().min(1).max(128),
+  preview: z.string().max(2_000),
+  messageCount: z.number().int().min(0),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+}).loose();
+
+const ConversationListSchema = z.array(ConversationMetaSchema).max(50);
+const ConversationCreateResponseSchema = z.object({ id: z.string().min(1).max(128) }).loose();
+
+export type ConversationMeta = z.infer<typeof ConversationMetaSchema>;
+
 export type ServerMessage =
   | { type: "kernel:init"; sessionId: string }
   | { type: "kernel:text"; text: string }
@@ -773,9 +786,46 @@ export class GatewayClient {
     return Array.isArray(body) ? body : [];
   }
 
-  async getConversations(): Promise<unknown[]> {
-    const res = await this.fetchGateway("/api/conversations");
-    return res.json();
+  async getConversations(): Promise<ConversationMeta[]> {
+    try {
+      const res = await this.fetchGateway("/api/conversations");
+      if (!res.ok) {
+        logGatewayStatusWarning("/api/conversations unavailable", res.status);
+        return [];
+      }
+      const parsed = ConversationListSchema.safeParse(await res.json());
+      if (!parsed.success) {
+        logGatewayWarning("/api/conversations returned invalid payload", "invalid payload");
+        return [];
+      }
+      return parsed.data;
+    } catch (err: unknown) {
+      logGatewayCatchWarning("/api/conversations unavailable", err);
+      return [];
+    }
+  }
+
+  async createConversation(): Promise<string | null> {
+    try {
+      const res = await this.fetchGateway("/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      if (!res.ok) {
+        logGatewayStatusWarning("/api/conversations create unavailable", res.status);
+        return null;
+      }
+      const parsed = ConversationCreateResponseSchema.safeParse(await res.json());
+      if (!parsed.success) {
+        logGatewayWarning("/api/conversations create returned invalid payload", "invalid payload");
+        return null;
+      }
+      return parsed.data.id;
+    } catch (err: unknown) {
+      logGatewayCatchWarning("/api/conversations create unavailable", err);
+      return null;
+    }
   }
 
   async getApps(): Promise<MatrixAppEntry[]> {
