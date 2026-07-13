@@ -12,8 +12,21 @@ class FakePty {
   writes: string[] = [];
   resizes: Array<{ cols: number; rows: number }> = [];
   killed = false;
+  pauseCount = 0;
+  resumeCount = 0;
+  paused = false;
   private dataListeners = new Set<(data: string) => void>();
   private exitListeners = new Set<(event: { exitCode: number; signal?: number }) => void>();
+
+  pause(): void {
+    this.paused = true;
+    this.pauseCount += 1;
+  }
+
+  resume(): void {
+    this.paused = false;
+    this.resumeCount += 1;
+  }
 
   write(data: string): void {
     this.writes.push(data);
@@ -87,6 +100,7 @@ describe("zellij terminal WebSocket", () => {
         pathForSession: vi.fn(() => ""),
       },
       maxReplayBytes: 4096,
+      persistFlushIntervalMs: 0,
     });
     const raw = "OpenAI Codex (v0.142.5)\n\x1b[7mprompt\x1b[27m";
     const readable = "OpenAI Codex (v0.142.5)\n\x1b[38;2;214;216;221;48;2;48;54;61mprompt\x1b[39;49m";
@@ -129,6 +143,7 @@ describe("zellij terminal WebSocket", () => {
         pathForSession: vi.fn(() => ""),
       },
       maxReplayBytes: 4096,
+      persistFlushIntervalMs: 0,
     });
     const raw = "OpenAI Codex (v0.142.5)\n\x1b[39m\x1b[48;2;240;240;239mprompt\x1b[39;49m";
     const readable = "OpenAI Codex (v0.142.5)\n\x1b[39m\x1b[38;2;214;216;221;48;2;48;54;61mprompt\x1b[38;2;214;216;221;49m";
@@ -176,6 +191,7 @@ describe("zellij terminal WebSocket", () => {
         pathForSession: vi.fn(() => ""),
       },
       maxReplayBytes: 4096,
+      persistFlushIntervalMs: 0,
     });
 
     await handler.open({ ws, session: "main", fromSeq: 40 });
@@ -433,6 +449,7 @@ describe("zellij terminal WebSocket", () => {
         pathForSession: vi.fn(() => ""),
       },
       maxReplayBytes: 4096,
+      persistFlushIntervalMs: 0,
     });
 
     const session = await handler.open({
@@ -489,6 +506,234 @@ describe("zellij terminal WebSocket", () => {
       { type: "error", code: "session_not_found", message: "Session not found" },
     ]);
     expect(ws.closed).toBe(true);
+  });
+
+  it("delivers live output before persistence completes (send-first)", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    let appendStarted = 0;
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => null),
+        readSince: vi.fn(async () => []),
+        append: vi.fn(async () => {
+          appendStarted += 1;
+          await new Promise(() => undefined); // never resolves: dead disk
+        }),
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+      persistFlushIntervalMs: 0,
+    });
+
+    await handler.open({ ws, session: "main", fromSeq: 0 });
+    pty.emitData("instant echo");
+    // no timer advance needed: the frame must already be on the socket
+    expect(ws.sent).toContainEqual({ type: "output", seq: 0, data: "instant echo" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(appendStarted).toBeGreaterThanOrEqual(1);
+  });
+
+  it("persists exactly one recorder stream when multiple clients attach", async () => {
+    const recorderPty = new FakePty();
+    const observerPty = new FakePty();
+    const append = vi.fn(async () => undefined);
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: {
+        attachSession: vi.fn()
+          .mockReturnValueOnce(recorderPty)
+          .mockReturnValueOnce(observerPty),
+      },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => null),
+        readSince: vi.fn(async () => []),
+        append,
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+      persistFlushIntervalMs: 0,
+    });
+
+    const recorderWs = socket();
+    const observerWs = socket();
+    await handler.open({ ws: recorderWs, session: "main", fromSeq: 0 });
+    await handler.open({ ws: observerWs, session: "main", fromSeq: 0 });
+
+    recorderPty.emitData("from-recorder");
+    observerPty.emitData("from-observer");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    // both clients see their own live stream
+    expect(recorderWs.sent).toContainEqual({ type: "output", seq: 0, data: "from-recorder" });
+    expect(observerWs.sent.some((m) => (m as { data?: string }).data === "from-observer")).toBe(true);
+    // but only the recorder stream is persisted
+    const persisted = append.mock.calls
+      .flatMap((call) => call[1] as Array<{ type: string; data?: string }>)
+      .filter((r) => r.type === "output")
+      .map((r) => r.data);
+    expect(persisted).toContain("from-recorder");
+    expect(persisted).not.toContain("from-observer");
+  });
+
+  it("re-elects the oldest remaining client as recorder when the recorder detaches", async () => {
+    const firstPty = new FakePty();
+    const secondPty = new FakePty();
+    const append = vi.fn(async () => undefined);
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: {
+        attachSession: vi.fn()
+          .mockReturnValueOnce(firstPty)
+          .mockReturnValueOnce(secondPty),
+      },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => null),
+        readSince: vi.fn(async () => []),
+        append,
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+      persistFlushIntervalMs: 0,
+    });
+
+    const firstConn = await handler.open({ ws: socket(), session: "main", fromSeq: 0 });
+    const secondWs = socket();
+    await handler.open({ ws: secondWs, session: "main", fromSeq: 0 });
+
+    firstConn.onClose();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    secondPty.emitData("post-handoff");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const persisted = append.mock.calls
+      .flatMap((call) => call[1] as Array<{ type: string; data?: string }>)
+      .filter((r) => r.type === "output")
+      .map((r) => r.data);
+    expect(persisted).toContain("post-handoff");
+    expect(secondWs.sent).toContainEqual({ type: "output", seq: 0, data: "post-handoff" });
+  });
+
+  it("pauses a slow non-recorder client's pty and resumes it after drain", async () => {
+    const recorderPty = new FakePty();
+    const slowPty = new FakePty();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: {
+        attachSession: vi.fn()
+          .mockReturnValueOnce(recorderPty)
+          .mockReturnValueOnce(slowPty),
+      },
+      maxReplayBytes: 4096,
+      flowControl: { highWaterMark: 10, lowWaterMark: 5, drainIntervalMs: 5 },
+    });
+
+    await handler.open({ ws: socket(), session: "main", fromSeq: 0 });
+    const slowWs = Object.assign(socket(), { bufferedAmount: 1_000 });
+    await handler.open({ ws: slowWs, session: "main", fromSeq: 0 });
+
+    slowPty.emitData("burst");
+    expect(slowPty.pauseCount).toBe(1);
+    expect(slowPty.paused).toBe(true);
+
+    slowWs.bufferedAmount = 0;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(slowPty.resumeCount).toBe(1);
+    expect(slowPty.paused).toBe(false);
+    handler.dispose();
+  });
+
+  it("never pauses a sole recorder; delivery to its slow socket is skipped instead", async () => {
+    const pty = new FakePty();
+    const append = vi.fn(async () => undefined);
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => null),
+        readSince: vi.fn(async () => []),
+        append,
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+      persistFlushIntervalMs: 0,
+      flowControl: { highWaterMark: 10, lowWaterMark: 5, drainIntervalMs: 5 },
+    });
+
+    const slowWs = Object.assign(socket(), { bufferedAmount: 1_000 });
+    await handler.open({ ws: slowWs, session: "main", fromSeq: 0 });
+    const sentBefore = slowWs.sent.length;
+
+    pty.emitData("still persists");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(pty.pauseCount).toBe(0);
+    expect(slowWs.sent.length).toBe(sentBefore); // frame skipped for the slow socket
+    const persisted = append.mock.calls
+      .flatMap((call) => call[1] as Array<{ type: string; data?: string }>)
+      .filter((r) => r.type === "output")
+      .map((r) => r.data);
+    expect(persisted).toContain("still persists");
+    handler.dispose();
+  });
+
+  it("caps attaches per session and evicts the stalest client first", async () => {
+    const ptys = [new FakePty(), new FakePty(), new FakePty()];
+    let next = 0;
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => ptys[next++]!) },
+      maxReplayBytes: 4096,
+      maxAttachedClients: 2,
+      staleAttachTtlMs: 10,
+    });
+
+    const firstWs = socket();
+    await handler.open({ ws: firstWs, session: "main", fromSeq: 0 });
+    const second = await handler.open({ ws: socket(), session: "main", fromSeq: 0 });
+    // keep the second connection fresh, let the first go stale
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    second.onMessage(JSON.stringify({ type: "ping" }));
+
+    const thirdWs = socket();
+    await handler.open({ ws: thirdWs, session: "main", fromSeq: 0 });
+
+    expect(firstWs.closed).toBe(true); // stalest evicted
+    expect(thirdWs.sent).toContainEqual(
+      expect.objectContaining({ type: "attached", session: "main" }),
+    );
+    handler.dispose();
+  });
+
+  it("rejects attaches over the cap when every client is fresh", async () => {
+    const ptys = [new FakePty(), new FakePty()];
+    let next = 0;
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => ptys[next++] ?? new FakePty()) },
+      maxReplayBytes: 4096,
+      maxAttachedClients: 2,
+      staleAttachTtlMs: 60_000,
+    });
+
+    await handler.open({ ws: socket(), session: "main", fromSeq: 0 });
+    await handler.open({ ws: socket(), session: "main", fromSeq: 0 });
+    const thirdWs = socket();
+    await handler.open({ ws: thirdWs, session: "main", fromSeq: 0 });
+
+    expect(thirdWs.sent).toContainEqual({
+      type: "error",
+      code: "attach_limit",
+      message: "Too many clients attached",
+    });
+    expect(thirdWs.closed).toBe(true);
+    handler.dispose();
   });
 
   it("accepts terminal query token and bearer auth through constant-time auth middleware", async () => {

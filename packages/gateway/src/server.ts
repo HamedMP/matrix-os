@@ -239,6 +239,7 @@ import {
   ShellPreferencesStore,
   createPendingTerminalInputQueue,
   createShellCommandRunner,
+  createShellSessionReaper,
   createShellWsHandler,
   createZellijAdapter,
   ShellRegistry as ZellijShellRegistry,
@@ -368,6 +369,8 @@ export async function createGateway(config: GatewayConfig) {
     adapter: zellijAdapter,
     scrollbackStore: shellScrollbackStore,
   });
+  const shellSessionReaper = createShellSessionReaper({ registry: zellijShellRegistry });
+  shellSessionReaper.start();
   const forwardTunnelHub = createForwardTunnelHub();
   // One distinct id for every gateway telemetry event so all events on a
   // dev gateway without owner env vars land under the same person.
@@ -4110,6 +4113,10 @@ export async function createGateway(config: GatewayConfig) {
     sandbox: {
       status: typeof process.getuid === "function" && process.getuid() === 0 ? "degraded" : "ok",
     },
+    memory: {
+      rssBytes: process.memoryUsage.rss(),
+      pendingPersistBytes: zellijShellWs.pendingPersistBytes(),
+    },
     browserIde: {
       status: process.env.MATRIX_CODE_SERVER_PORT ? "configured" : "disabled",
     },
@@ -4226,6 +4233,8 @@ export async function createGateway(config: GatewayConfig) {
       await channelManager.stop();
       await processManager.shutdownAll();
       await forwardTunnelHub.close();
+      shellSessionReaper.stop();
+      zellijShellWs.dispose();
       await sessionRegistry.shutdown();
       await watcher.close();
       await homeMirror?.stop();

@@ -13,6 +13,12 @@ export interface ShellReplayBufferOptions {
   maxBytes?: number;
   scrollbackStore?: ScrollbackStore;
   sessionName?: string;
+  reserveWindow?: number;
+}
+
+export interface LiveWriteResult {
+  seq: number | null;
+  records: ScrollbackRecord[];
 }
 
 export class ShellReplayBuffer {
@@ -23,11 +29,67 @@ export class ShellReplayBuffer {
   private seqOffset = 0;
   private seedPromise: Promise<void> | null = null;
   private persistentQueue: Promise<void> = Promise.resolve();
+  private readonly reserveWindow: number;
+  private reservedThrough = -1;
+  private reservationInFlight = false;
 
   constructor(options: ShellReplayBufferOptions = {}) {
     this.buffer = new RingBuffer(options.maxBytes);
     this.scrollbackStore = options.scrollbackStore;
     this.sessionName = options.sessionName;
+    this.reserveWindow = options.reserveWindow ?? 10_000;
+  }
+
+  /** Must complete before the first writeLive so seeding stays off the hot path. */
+  async ensureSeeded(): Promise<void> {
+    await this.seedOffsetFromScrollback();
+    if (this.reservedThrough < this.seqOffset - 1) {
+      this.reservedThrough = this.seqOffset - 1;
+    }
+  }
+
+  /**
+   * Send-first write: assigns the sequence number synchronously so the caller
+   * can deliver the frame immediately, and returns the records the caller
+   * queues for asynchronous persistence. A durable seq reservation is
+   * refreshed ahead of assignment so a crashed gateway never reissues a seq a
+   * client already received (see spec 107 FR-001).
+   */
+  writeLive(data: string): LiveWriteResult {
+    const written = this.write(data);
+    if (written.seq === null) {
+      return { seq: null, records: [] };
+    }
+    const seq = written.seq;
+    const parsed = this.osc133.write(data);
+    const records: ScrollbackRecord[] = [
+      { type: "output", seq, data: parsed.data },
+      ...parsed.marks.map((mark): ScrollbackRecord => ({ type: "block-mark", seq, mark })),
+    ];
+    this.maybeReserve(seq);
+    return { seq, records };
+  }
+
+  private maybeReserve(seq: number): void {
+    if (!this.scrollbackStore || !this.sessionName || this.reservationInFlight) {
+      return;
+    }
+    if (seq + this.reserveWindow / 2 < this.reservedThrough) {
+      return;
+    }
+    const target = seq + this.reserveWindow;
+    this.reservationInFlight = true;
+    this.scrollbackStore
+      .append(this.sessionName, [{ type: "seq-reserve", seq: target }])
+      .then(() => {
+        this.reservedThrough = Math.max(this.reservedThrough, target);
+      })
+      .catch((err: unknown) => {
+        console.warn("[shell] seq reservation write failed:", err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        this.reservationInFlight = false;
+      });
   }
 
   write(data: string): { seq: number | null; stored: boolean } {

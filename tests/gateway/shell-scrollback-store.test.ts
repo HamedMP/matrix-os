@@ -32,6 +32,20 @@ describe("scrollback store", () => {
     ]);
   });
 
+  it("stores seq reservations that raise latestSeq but never replay", async () => {
+    const root = await tempRoot();
+    const store = new ScrollbackStore({ homePath: root, maxBytesPerSession: 4096 });
+
+    await store.append("main", [{ type: "output", seq: 3, data: "visible" }]);
+    await store.append("main", [{ type: "seq-reserve", seq: 10_000 }]);
+
+    await expect(store.latestSeq("main")).resolves.toBe(10_000);
+    const replayed = await store.readSince("main", 0);
+    expect(replayed).toEqual([{ type: "output", seq: 3, data: "visible" }]);
+    const activity = await store.latestActivity("main");
+    expect(activity.latestSeq).toBe(3);
+  });
+
   it("returns latest activity metadata for Paper status derivation", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-15T12:00:00.000Z"));

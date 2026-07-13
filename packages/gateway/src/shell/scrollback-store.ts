@@ -5,7 +5,11 @@ import { z } from "zod/v4";
 import { validateSessionName } from "./names.js";
 import type { ReplayEvent } from "./replay-buffer.js";
 
-export type ScrollbackRecord = Extract<ReplayEvent, { type: "output" | "block-mark" }>;
+export type ReplayableScrollbackRecord = Extract<ReplayEvent, { type: "output" | "block-mark" }>;
+// seq-reserve records make sequence numbering crash-durable: they raise
+// latestSeq so a restarted gateway resumes numbering above anything a client
+// may have seen, but they are never replayed as output.
+export type ScrollbackRecord = ReplayableScrollbackRecord | { type: "seq-reserve"; seq: number };
 type StoredScrollbackRecord = ScrollbackRecord & { at?: string };
 
 export interface ScrollbackActivity {
@@ -36,6 +40,10 @@ const ScrollbackRecordSchema = z.discriminatedUnion("type", [
     type: z.literal("block-mark"),
     seq: z.number().int().nonnegative(),
     mark: Osc133MarkSchema,
+  }),
+  z.object({
+    type: z.literal("seq-reserve"),
+    seq: z.number().int().nonnegative(),
   }),
 ]);
 
@@ -76,12 +84,13 @@ export class ScrollbackStore {
     });
   }
 
-  async readSince(name: string, fromSeq: number): Promise<ScrollbackRecord[]> {
+  async readSince(name: string, fromSeq: number): Promise<ReplayableScrollbackRecord[]> {
     const safeName = validateSessionName(name);
     try {
       const raw = await readFile(this.pathForValidatedSession(safeName), "utf-8");
       const parsed = parseScrollbackLines(raw.split("\n"), safeName);
       return parsed.records
+        .filter((record): record is ReplayableScrollbackRecord => record.type !== "seq-reserve")
         .filter((record) => record.seq >= fromSeq)
         .sort((a, b) => a.seq - b.seq);
     } catch (err: unknown) {
@@ -150,7 +159,7 @@ export class ScrollbackStore {
             }
             continue;
           }
-          if (activity.latestSeq === null) {
+          if (activity.latestSeq === null && record.type !== "seq-reserve") {
             activity.latestSeq = record.seq;
           }
           if (record.type === "output" && activity.latestOutputAt === null) {
