@@ -346,6 +346,7 @@ describe("coding agent workspace provider", () => {
   });
 
   it("aborts the deterministic workspace session for a thread", async () => {
+    const markStopped = vi.fn();
     const runtime = {
       startSession: vi.fn(async () => ({ ok: true, status: 201, session: workspaceSession() })),
       stopSession: vi.fn(async () => ({ ok: true, session: workspaceSession({ runtime: { type: "zellij", status: "exited" } }) })),
@@ -354,6 +355,12 @@ describe("coding agent workspace provider", () => {
       providerId: "codex",
       agent: "codex",
       runtime,
+      codexEvents: {
+        healthCheck: vi.fn(async () => ({ ok: true })),
+        watch: vi.fn(async () => ({ path: "/tmp/provider-events.jsonl" })),
+        unwatch: vi.fn(),
+        markStopped,
+      },
     });
     const thread = AgentThreadSummarySchema.parse({
       id: "thread_workspace_1",
@@ -375,6 +382,8 @@ describe("coding agent workspace provider", () => {
     });
 
     expect(runtime.stopSession).toHaveBeenCalledWith("sess_workspace_1");
+    expect(markStopped).toHaveBeenCalledWith("sess_workspace_1");
+    expect(runtime.stopSession.mock.invocationCallOrder[0]).toBeLessThan(markStopped.mock.invocationCallOrder[0]!);
     expect((events ?? []).map((event: AgentThreadEvent) => AgentThreadEventSchema.parse(event).type)).toEqual([
       "thread.status",
       "thread.completed",
