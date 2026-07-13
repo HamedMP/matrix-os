@@ -741,7 +741,11 @@ export class GatewayClient {
     params.set("limit", String(limit));
     const res = await this.fetchGateway(`/api/messages?${params}`);
     if (!res.ok) return [];
-    return res.json();
+    // `/api/messages` is owned by the messaging bridge on newer gateways and
+    // no longer returns a chat-history array; treat any non-array body as
+    // "no older history" instead of crashing history pagination.
+    const body: unknown = await res.json();
+    return Array.isArray(body) ? body : [];
   }
 
   async getConversations(): Promise<unknown[]> {
