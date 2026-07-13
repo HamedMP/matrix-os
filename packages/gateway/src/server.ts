@@ -3714,13 +3714,13 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.get("/api/system/info", (c) => {
-    const info = getSystemInfo(homePath);
+    const info = getSystemInfo(homePath, { model: config.model });
     const today = new Date().toISOString().slice(0, 10);
     return c.json({ ...info, todayCost: interactionLogger.totalCost(today) });
   });
 
   app.get("/api/system/update", async (c) => {
-    const info = getSystemInfo(homePath);
+    const info = getSystemInfo(homePath, { model: config.model });
     const channel = resolveSystemUpdateChannel(c.req.query("channel"), {
       envChannel: process.env.MATRIX_UPDATE_CHANNEL,
       installedChannel: info.release?.channel,
@@ -3741,7 +3741,7 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.get("/api/system/releases", async (c) => {
-    const info = getSystemInfo(homePath);
+    const info = getSystemInfo(homePath, { model: config.model });
     const channel = resolveSystemUpdateChannel(c.req.query("channel"), {
       envChannel: process.env.MATRIX_UPDATE_CHANNEL,
       installedChannel: info.release?.channel,
@@ -3776,7 +3776,7 @@ export async function createGateway(config: GatewayConfig) {
         console.warn("[system-update] Failed to parse update request:", err);
       }
     }
-    const info = getSystemInfo(homePath);
+    const info = getSystemInfo(homePath, { model: config.model });
     const parsedTarget = resolveInternalUpgradeStartTarget(body, {
       envChannel: process.env.MATRIX_UPDATE_CHANNEL,
       installedChannel: info.release?.channel,

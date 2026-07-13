@@ -17,6 +17,12 @@ export const KERNEL_DEFAULTS = {
   effort: DEFAULT_KERNEL_EFFORT,
 } as const;
 
+export interface KernelModelOption {
+  id: string;
+  label: string;
+  tier: string;
+}
+
 export function normalizeKernelModel(value: unknown): string | null {
   return typeof value === "string" && KERNEL_MODEL_IDS.includes(value) ? value : null;
 }
@@ -27,6 +33,10 @@ export function normalizeKernelEffort(value: unknown): KernelEffort | null {
     : null;
 }
 
-export function resolveKernelModelOption(model: string): (typeof KERNEL_MODELS)[number] {
-  return KERNEL_MODELS.find((option) => option.id === model) ?? KERNEL_MODELS[0];
+export function resolveKernelModelOption(model: string): KernelModelOption {
+  return KERNEL_MODELS.find((option) => option.id === model) ?? {
+    id: model,
+    label: model,
+    tier: "Custom",
+  };
 }
