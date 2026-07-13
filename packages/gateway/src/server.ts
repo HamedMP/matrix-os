@@ -3912,7 +3912,7 @@ export async function createGateway(config: GatewayConfig) {
   } catch (err) {
     console.error(
       "[hermes-proxy] startup validation failed:",
-      err instanceof Error ? err.name : "UnknownError",
+      err instanceof Error ? err.message : "UnknownError",
     );
     throw err;
   }
