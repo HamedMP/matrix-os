@@ -35,7 +35,7 @@ export const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     color: "#465243",
     logoSrc: "/agent-logos/codex.png",
     shortcut: "⌘⇧X",
-    launchCommand: "codex",
+    launchCommand: 'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"; exec "$MATRIX_NODE_PREFIX/bin/codex"',
     installPackage: CODEX_VERIFIED_NPM_PACKAGE,
   },
   {

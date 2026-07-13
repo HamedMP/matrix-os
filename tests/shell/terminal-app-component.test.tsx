@@ -3695,7 +3695,9 @@ describe("TerminalApp", () => {
 
     await chooseNewSessionMenuItemAfterStatus(/^Codex$/);
 
-    const codexPayload = expectTerminalCreatePayloadForCommand("codex");
+    const codexPayload = expectTerminalCreatePayloadForCommand(
+      'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"; exec "$MATRIX_NODE_PREFIX/bin/codex"',
+    );
     await vi.waitFor(() => {
       expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
         paneTree: {
