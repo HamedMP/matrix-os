@@ -1287,6 +1287,39 @@ export class GatewayClient {
     }
   }
 
+  /**
+   * Create a shell session that runs a provider setup command and return its
+   * zellij name for terminal handoff, or null on failure. The command is sent to
+   * the gateway inside the bounded foreground session and is never stored in
+   * shell state or rendered in the UI (CLAUDE.md: provider setup stays
+   * terminal-backed and command-hidden).
+   */
+  async createProviderSetupSession(command: string): Promise<string | null> {
+    if (typeof command !== "string" || command.length === 0) return null;
+    const name = `matrix-setup-${randomShellSuffix()}`;
+    try {
+      const res = await this.fetchGateway("/api/terminal/sessions", {
+        method: "POST",
+        body: JSON.stringify({ name, cwd: "projects", cmd: command }),
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        await res.text().catch((err: unknown) => {
+          logGatewayCatchWarning("failed to read provider setup session create error body", err);
+          return "";
+        });
+        logGatewayStatusWarning("provider setup session create failed", res.status);
+        return null;
+      }
+      const body = (await res.json().catch(() => null)) as { name?: unknown } | null;
+      const created = typeof body?.name === "string" ? body.name : name;
+      return isSafeShellSessionName(created) ? created : null;
+    } catch {
+      logGatewayWarning("provider setup session create unavailable", "unavailable");
+      return null;
+    }
+  }
+
   async deleteTerminalSession(name: string): Promise<boolean> {
     if (!isSafeShellSessionName(name)) return false;
     try {
