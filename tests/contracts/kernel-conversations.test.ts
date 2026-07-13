@@ -16,6 +16,8 @@ describe("kernel conversation contracts", () => {
   it("coerces and bounds history pagination", () => {
     expect(KernelConversationHistoryQuerySchema.parse({ limit: "25", cursor: "40" }))
       .toEqual({ limit: 25, cursor: 40 });
+    expect(KernelConversationHistoryQuerySchema.parse({ cursor: "1000001" }))
+      .toEqual({ limit: 50, cursor: 1_000_001 });
     expect(KernelConversationHistoryQuerySchema.parse({})).toEqual({ limit: 50 });
     expect(KernelConversationHistoryQuerySchema.safeParse({ limit: "51" }).success).toBe(false);
     expect(KernelConversationHistoryQuerySchema.safeParse({ cursor: "0" }).success).toBe(false);
@@ -41,6 +43,13 @@ describe("kernel conversation contracts", () => {
     };
 
     expect(KernelConversationHistoryResponseSchema.parse(valid)).toEqual(valid);
+    expect(KernelConversationHistoryResponseSchema.parse({
+      ...valid,
+      totalCount: 1_000_001,
+      messages: [{ ...valid.messages[0], index: 1_000_001 }],
+      hasMore: true,
+      nextCursor: "1000001",
+    })).toMatchObject({ totalCount: 1_000_001, nextCursor: "1000001" });
     expect(KernelConversationHistoryResponseSchema.safeParse({
       ...valid,
       messages: [{ ...valid.messages[0], toolInput: { token: "secret" } }],

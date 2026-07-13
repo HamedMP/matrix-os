@@ -244,12 +244,12 @@ export const KernelConversationIdSchema = z.string()
   .refine((value) => !value.includes(".."), { message: "Invalid conversation id" });
 
 export const KernelConversationHistoryQuerySchema = z.object({
-  cursor: z.coerce.number().int().min(1).max(1_000_000).optional(),
+  cursor: z.coerce.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   limit: z.coerce.number().int().min(1).max(50).default(50),
 }).strict();
 
 export const KernelConversationHistoryMessageSchema = z.object({
-  index: z.number().int().min(0).max(1_000_000),
+  index: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   role: z.enum(["user", "assistant", "system"]),
   content: z.string().max(32_000),
   contentTruncated: z.boolean(),
@@ -261,10 +261,15 @@ export const KernelConversationHistoryResponseSchema = z.object({
   id: KernelConversationIdSchema,
   createdAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   updatedAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  totalCount: z.number().int().min(0).max(1_000_000),
+  totalCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   messages: z.array(KernelConversationHistoryMessageSchema).max(50),
   hasMore: z.boolean(),
-  nextCursor: z.string().regex(/^[1-9][0-9]{0,6}$/).optional(),
+  nextCursor: z.string()
+    .min(1)
+    .max(16)
+    .regex(/^[1-9][0-9]*$/)
+    .refine((value) => Number.isSafeInteger(Number(value)), { message: "Invalid history cursor" })
+    .optional(),
   limit: z.number().int().min(1).max(50),
 }).strict();
 
