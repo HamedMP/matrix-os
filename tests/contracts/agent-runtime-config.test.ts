@@ -131,6 +131,19 @@ describe("agent runtime configuration contracts", () => {
     }).success).toBe(false);
   });
 
+  it("rejects concrete actions when authentication is not action-required", () => {
+    expect(AgentProviderAuthStatusSchema.safeParse({
+      state: "ready",
+      authenticated: true,
+      action: "enter_api_key",
+    }).success).toBe(false);
+    expect(AgentProviderAuthStatusSchema.safeParse({
+      state: "missing",
+      authenticated: false,
+      action: "login",
+    }).success).toBe(false);
+  });
+
   it("publishes the Chat-specific auth kinds without messaging-only base URLs", () => {
     expect(AgentChatAuthKindSchema.options).toEqual([
       "platform",
