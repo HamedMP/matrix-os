@@ -736,6 +736,34 @@ describe("zellij terminal WebSocket", () => {
     handler.dispose();
   });
 
+  it("rejects new sessions at runtime capacity when every tracked session has live clients", async () => {
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [
+          { name: "one", status: "active" },
+          { name: "two", status: "active" },
+          { name: "three", status: "active" },
+        ]),
+      },
+      adapter: { attachSession: vi.fn(() => new FakePty()) },
+      maxReplayBytes: 4096,
+      maxBuffers: 2,
+    });
+
+    await handler.open({ ws: socket(), session: "one", fromSeq: 0 });
+    await handler.open({ ws: socket(), session: "two", fromSeq: 0 });
+    const thirdWs = socket();
+    await handler.open({ ws: thirdWs, session: "three", fromSeq: 0 });
+
+    expect(thirdWs.sent).toContainEqual({
+      type: "error",
+      code: "session_capacity",
+      message: "Too many active sessions",
+    });
+    expect(thirdWs.closed).toBe(true);
+    handler.dispose();
+  });
+
   it("accepts terminal query token and bearer auth through constant-time auth middleware", async () => {
     const next = vi.fn();
     const makeContext = (url: string, authorization?: string) => ({

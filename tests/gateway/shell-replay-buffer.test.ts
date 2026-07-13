@@ -110,6 +110,44 @@ describe("shell replay buffer", () => {
     expect(reservation!.seq).toBeGreaterThanOrEqual(100);
   });
 
+  it("retries a failed seq reservation on a timer even when output stops", async () => {
+    vi.useFakeTimers();
+    try {
+      const reserves: number[] = [];
+      let failFirst = true;
+      const store = {
+        latestSeq: async () => null,
+        append: async (_name: string, records: Array<{ type: string; seq: number }>) => {
+          const reserve = records.find((r) => r.type === "seq-reserve");
+          if (reserve) {
+            if (failFirst) {
+              failFirst = false;
+              throw new Error("disk full");
+            }
+            reserves.push(reserve.seq);
+          }
+        },
+      } as unknown as ScrollbackStore;
+      const replay = new ShellReplayBuffer({
+        maxBytes: 4096,
+        scrollbackStore: store,
+        sessionName: "main",
+        reserveWindow: 100,
+      });
+      await replay.ensureSeeded();
+
+      replay.writeLive("one");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reserves).toEqual([]); // first attempt failed
+
+      await vi.advanceTimersByTimeAsync(1_100); // retry timer, no new output
+      expect(reserves.length).toBe(1);
+      expect(reserves[0]).toBeGreaterThanOrEqual(100);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("seeds numbering above a persisted reservation so delivered seqs are never reused", async () => {
     const store = {
       // scrollback holds outputs up to seq 5 plus a reservation through 10000

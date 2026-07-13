@@ -142,7 +142,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
   const runtimes = new Map<string, SessionRuntime>();
   let drainTimer: NodeJS.Timeout | null = null;
 
-  function runtimeFor(name: string): SessionRuntime {
+  function runtimeFor(name: string): SessionRuntime | null {
     const existing = runtimes.get(name);
     if (existing) {
       runtimes.delete(name);
@@ -150,12 +150,21 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       return existing;
     }
     if (runtimes.size >= maxBuffers) {
+      let evicted = false;
       for (const [candidateName, candidate] of runtimes) {
         if (candidate.conns.size === 0) {
           runtimes.delete(candidateName);
-          void candidate.queue?.dispose();
+          void candidate.queue?.dispose().catch((err: unknown) => {
+            console.warn("[shell] evicted runtime flush failed:", err instanceof Error ? err.message : String(err));
+          });
+          evicted = true;
           break;
         }
+      }
+      if (!evicted) {
+        // Hard cap: every tracked session still has live clients, so nothing
+        // is safely evictable. Reject instead of growing without bound.
+        return null;
       }
     }
     const buffer = new ShellReplayBuffer({
@@ -258,6 +267,12 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       }
     }
     if (stalest) {
+      // Free the slot synchronously so a concurrent open cannot observe the
+      // evicted conn still occupying capacity while its close settles.
+      runtime.conns.delete(stalest);
+      if (runtime.recorder === stalest) {
+        electRecorder(runtime, stalest);
+      }
       stalest.close();
       return true;
     }
@@ -281,6 +296,11 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     }
 
     const runtime = runtimeFor(safeName);
+    if (!runtime) {
+      sendJson(ws, { type: "error", code: "session_capacity", message: "Too many active sessions" });
+      ws.close?.();
+      return { onMessage: () => undefined, onClose: () => undefined };
+    }
     if (!evictStaleOrReject(runtime, ws)) {
       return { onMessage: () => undefined, onClose: () => undefined };
     }

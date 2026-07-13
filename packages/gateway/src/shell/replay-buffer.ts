@@ -83,12 +83,21 @@ export class ShellReplayBuffer {
       .append(this.sessionName, [{ type: "seq-reserve", seq: target }])
       .then(() => {
         this.reservedThrough = Math.max(this.reservedThrough, target);
+        this.reservationInFlight = false;
       })
       .catch((err: unknown) => {
-        console.warn("[shell] seq reservation write failed:", err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        this.reservationInFlight = false;
+        console.warn("[shell] seq reservation write failed; retrying:", err instanceof Error ? err.message : String(err));
+        // Retry on a timer rather than waiting for the next write: if output
+        // stops flowing after an overrun, the crash-safety window must still
+        // re-establish itself once the store recovers.
+        const retry = setTimeout(() => {
+          this.reservationInFlight = false;
+          const latest = this.lastSeq;
+          if (latest !== null) {
+            this.maybeReserve(latest);
+          }
+        }, 1_000);
+        retry.unref?.();
       });
   }
 
