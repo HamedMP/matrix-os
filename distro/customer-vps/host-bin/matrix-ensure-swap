@@ -82,7 +82,7 @@ if ! mkswap "$swapfile" >/dev/null 2>&1 || ! swapon "$swapfile" 2>/dev/null; the
   rm -f "$swapfile"
   exit 0
 fi
-if ! grep -q "^$swapfile " /etc/fstab 2>/dev/null; then
+if ! awk -v path="$swapfile" '$1 == path { found = 1 } END { exit found ? 0 : 1 }' /etc/fstab 2>/dev/null; then
   printf '%s none swap sw 0 0\n' "$swapfile" >> /etc/fstab
 fi
 log "swap active: $(awk '/SwapTotal/ {print int($2/1024/1024) "GiB"}' /proc/meminfo)"
