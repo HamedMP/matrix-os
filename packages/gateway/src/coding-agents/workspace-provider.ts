@@ -33,13 +33,13 @@ export interface WorkspaceCodingAgentProviderOptions {
   agent: SupportedAgent;
   runtime: WorkspaceRuntime;
   runnable?: boolean;
-  codexEvents?: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch">;
+  codexEvents?: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch" | "markStopped">;
 }
 
 export interface WorkspaceCodingAgentProviderSetOptions {
   agents: readonly SupportedAgent[];
   runtime: WorkspaceRuntime;
-  codexEvents: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch">;
+  codexEvents: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch" | "markStopped">;
 }
 
 export interface WorkspaceCodingAgentProviderSet {
@@ -288,7 +288,7 @@ export function createWorkspaceCodingAgentProvider(
       if (!result.ok) {
         throw new Error("Workspace provider abort failed");
       }
-      options.codexEvents?.unwatch(sessionIdForThread(thread.id));
+      options.codexEvents?.markStopped(sessionIdForThread(thread.id));
       return [
         statusEvent({
           threadId: thread.id,

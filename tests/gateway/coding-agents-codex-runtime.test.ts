@@ -248,6 +248,49 @@ describe("Codex structured event runtime", () => {
     }
   });
 
+  it("durably drains final provider records before removing an aborted session watcher", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-runtime-abort-"));
+    const batches: CodingAgentProviderEventBatch[] = [];
+    const bridge = createCodexEventBridge({
+      homePath,
+      pollIntervalMs: 60_000,
+      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.144.1\n", stderr: "" })),
+    });
+    bridge.attachThreadStore({
+      async ingestProviderEvents(_principal, _threadId, batch) {
+        batches.push(batch);
+      },
+    });
+    try {
+      const sessionId = "sess_abort_final_1";
+      await bridge.watch({ principal, threadId: "thread_abort_final_1", sessionId });
+      await writeFile(codexProviderEventPath(homePath, sessionId), [
+        JSON.stringify({ type: "thread.started", thread_id: "019f-abort-final" }),
+        JSON.stringify({ type: "turn.failed", error: { message: "provider secret" } }),
+        "",
+      ].join("\n"), "utf-8");
+
+      bridge.markStopped(sessionId);
+      expect(bridge.watcherCount()).toBe(1);
+      await bridge.drain();
+
+      expect(bridge.watcherCount()).toBe(0);
+      expect(batches).toEqual(expect.arrayContaining([
+        expect.objectContaining({ providerThreadId: "019f-abort-final" }),
+        expect.objectContaining({
+          events: expect.arrayContaining([
+            expect.objectContaining({ type: "thread.error" }),
+            expect.objectContaining({ type: "thread.completed", outcome: "failed" }),
+          ]),
+        }),
+      ]));
+      expect(JSON.stringify(batches)).not.toContain("provider secret");
+    } finally {
+      await bridge.shutdown();
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("streams a real provider transcript through durable replay and event publication", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-runtime-integration-"));
     const bridge = createCodexEventBridge({

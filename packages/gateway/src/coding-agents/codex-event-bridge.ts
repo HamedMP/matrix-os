@@ -27,6 +27,7 @@ const MAX_DRAIN_BYTES = 1024 * 1024;
 const DEFAULT_POLL_INTERVAL_MS = 250;
 const VERSION_TIMEOUT_MS = 5_000;
 const VERSION_CACHE_TTL_MS = 30_000;
+const STOP_DRAIN_GRACE_MS = 5_000;
 const ORPHAN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_ORPHAN_FILES = 200;
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
@@ -51,6 +52,7 @@ type WatchEntry = {
   offset: number;
   lastTouchedAt: number;
   pendingOccurredAt?: string;
+  stopRequestedAt?: number;
 };
 
 const execFileAsync = promisify(execFile);
@@ -196,10 +198,11 @@ export function createCodexEventBridge(options: {
     }
   }
 
-  async function ingest(entry: WatchEntry, bytes: Buffer, consumedBytes: number): Promise<void> {
+  async function ingest(entry: WatchEntry, bytes: Buffer, consumedBytes: number): Promise<boolean> {
     if (!store) throw new Error("Codex event store is unavailable");
     const events: AgentThreadEvent[] = [];
     let providerThreadId: string | undefined;
+    let terminal = false;
     let lineStart = 0;
     let absoluteOffset = entry.offset;
     const occurredAt = entry.pendingOccurredAt ?? now().toISOString();
@@ -222,6 +225,7 @@ export function createCodexEventBridge(options: {
         providerThreadId = parsed.providerThreadId;
       }
       if (parsed.outcome) {
+        terminal = true;
         events.push(...completionEvents({
           threadId: entry.threadId,
           outcome: parsed.outcome,
@@ -242,9 +246,12 @@ export function createCodexEventBridge(options: {
         ...(index === 0 && providerThreadId ? { providerThreadId } : {}),
       });
     }
+    return terminal;
   }
 
   async function drainEntry(entry: WatchEntry): Promise<void> {
+    const stoppedDrainExpired = () =>
+      entry.stopRequestedAt !== undefined && nowMs() - entry.stopRequestedAt >= STOP_DRAIN_GRACE_MS;
     let handle;
     try {
       const info = await lstat(entry.path);
@@ -252,21 +259,31 @@ export function createCodexEventBridge(options: {
         watchers.delete(entry.sessionId);
         return;
       }
-      if (info.size <= entry.offset) return;
+      if (info.size <= entry.offset) {
+        if (stoppedDrainExpired()) watchers.delete(entry.sessionId);
+        return;
+      }
       const length = Math.min(info.size - entry.offset, MAX_DRAIN_BYTES);
       const bytes = Buffer.alloc(length);
       handle = await open(entry.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
       const read = await handle.read(bytes, 0, length, entry.offset);
       const data = bytes.subarray(0, read.bytesRead);
       const lastNewline = data.lastIndexOf(0x0a);
-      if (lastNewline < 0) return;
+      if (lastNewline < 0) {
+        if (stoppedDrainExpired()) watchers.delete(entry.sessionId);
+        return;
+      }
       const consumedBytes = lastNewline + 1;
-      await ingest(entry, data, consumedBytes);
+      const terminal = await ingest(entry, data, consumedBytes);
       entry.offset += consumedBytes;
       entry.lastTouchedAt = nowMs();
       entry.pendingOccurredAt = undefined;
+      if (terminal) watchers.delete(entry.sessionId);
     } catch (error: unknown) {
-      if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") return;
+      if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
+        if (stoppedDrainExpired()) watchers.delete(entry.sessionId);
+        return;
+      }
       console.warn("[coding-agents] Codex event ingestion will retry");
     } finally {
       await handle?.close();
@@ -323,6 +340,14 @@ export function createCodexEventBridge(options: {
     },
     unwatch(sessionId: string): void {
       if (SessionIdSchema.safeParse(sessionId).success) watchers.delete(sessionId);
+    },
+    markStopped(sessionId: string): void {
+      if (!SessionIdSchema.safeParse(sessionId).success) return;
+      const entry = watchers.get(sessionId);
+      if (!entry) return;
+      entry.stopRequestedAt = nowMs();
+      entry.lastTouchedAt = nowMs();
+      queue = queue.then(drainAll, drainAll);
     },
     watcherCount(): number {
       return watchers.size;
