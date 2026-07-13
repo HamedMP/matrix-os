@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   completeRemotePaths,
@@ -93,6 +93,27 @@ describe("cli/file-transfer-client", () => {
       "https://gateway.example/api/files/blob?path=dev%2Fmatrix-os&filename=codex-security-findings.csv",
     );
     expect(result.path).toBe("dev/matrix-os/codex-security-findings.csv");
+  });
+
+  it("treats an unquoted shell-expanded home path as a Matrix-home destination", async () => {
+    const local = join(tempDir, "codex-security-findings.csv");
+    await writeFile(local, "finding\n");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, path: "dev/matrix-os/codex-security-findings.csv", size: 8 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await uploadLocalFile(
+      { gatewayUrl: "https://gateway.example", token: "token" },
+      local,
+      join(homedir(), "dev", "matrix-os"),
+    );
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://gateway.example/api/files/blob?path=dev%2Fmatrix-os&filename=codex-security-findings.csv",
+    );
   });
 
   it("rejects missing local files and local directories before upload", async () => {

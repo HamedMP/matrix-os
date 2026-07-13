@@ -35,11 +35,17 @@ export function expandLocalPath(path: string): string {
 }
 
 export function normalizeMatrixPath(remotePath: string): string {
-  const homeRelative = remotePath === "~"
+  const localHome = homedir();
+  const shellExpandedHomeRelative = remotePath === localHome
     ? "."
-    : remotePath.startsWith("~/")
-      ? remotePath.slice(2) || "."
+    : remotePath.startsWith(`${localHome}/`)
+      ? remotePath.slice(localHome.length + 1)
       : remotePath;
+  const homeRelative = shellExpandedHomeRelative === "~"
+    ? "."
+    : shellExpandedHomeRelative.startsWith("~/")
+      ? shellExpandedHomeRelative.slice(2) || "."
+      : shellExpandedHomeRelative;
   if (!homeRelative || homeRelative.startsWith("/")) {
     throw codedError(
       "Matrix paths must stay within your Matrix home. Use a path such as `~/dev/file.txt`.",
