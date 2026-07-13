@@ -130,7 +130,9 @@ describe("TerminalScreen", () => {
       await Promise.resolve();
     });
 
-    await waitFor(() => expect(screen.getAllByText("~/projects").length).toBeGreaterThan(0));
+    // The session name is the visible window title; the path shows in the
+    // expanded chrome subtitle.
+    await waitFor(() => expect(screen.getAllByText(SESSION_ID).length).toBeGreaterThan(0));
     // Output is written into the embedded xterm.js emulator (WebView), not a Text node.
     await waitFor(() =>
       expect(webViewInjections.some((js: string) => js.includes("deploy@matrix:~/projects$ "))).toBe(true),

@@ -475,7 +475,7 @@ export default function TerminalScreen() {
       <WindowHeader
         tone="terminal"
         paddingTop={insets.top + (chromeExpanded ? 8 : 3)}
-        title={chromeExpanded ? "Terminal" : cwd}
+        title={state.activeSessionId ?? "Terminal"}
         subtitle={chromeExpanded ? cwd : undefined}
         titleAffordance
         onTitlePress={() => setChromeExpanded((value) => !value)}
