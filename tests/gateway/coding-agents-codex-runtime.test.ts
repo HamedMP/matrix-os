@@ -230,6 +230,41 @@ describe("Codex structured event runtime", () => {
     }
   });
 
+  it("does not cache an aborted Codex version probe", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-bridge-"));
+    const runVersionCommand = vi.fn(async (
+      _command: string,
+      _args: string[],
+      options: { signal: AbortSignal },
+    ) => {
+      if (options.signal.aborted) {
+        throw Object.assign(new Error("aborted"), { name: "AbortError" });
+      }
+      return { stdout: "codex-cli 0.144.1\n", stderr: "" };
+    });
+    const bridge = createCodexEventBridge({
+      homePath,
+      pollIntervalMs: 60_000,
+      runVersionCommand,
+    });
+    const controller = new AbortController();
+    controller.abort();
+    try {
+      await expect(bridge.healthCheck(controller.signal)).resolves.toEqual({ ok: false });
+      await expect(bridge.watch({
+        principal,
+        threadId: "thread_version_retry_1",
+        sessionId: "sess_version_retry_1",
+      })).resolves.toEqual({
+        path: codexProviderEventPath(homePath, "sess_version_retry_1"),
+      });
+      expect(runVersionCommand).toHaveBeenCalledTimes(2);
+    } finally {
+      await bridge.shutdown();
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("retries failed ingestion with stable event ids then advances the transcript cursor", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-bridge-"));
     const eventPath = codexProviderEventPath(homePath, "sess_bridge_1");

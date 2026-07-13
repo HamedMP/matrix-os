@@ -133,12 +133,12 @@ export function createCodexEventBridge(options: {
 
   async function versionIsVerified(parentSignal?: AbortSignal): Promise<boolean> {
     if (versionCache && versionCache.expiresAt > nowMs()) return versionCache.ok;
+    const timeoutSignal = AbortSignal.timeout(VERSION_TIMEOUT_MS);
+    const signal = parentSignal
+      ? AbortSignal.any([parentSignal, timeoutSignal])
+      : timeoutSignal;
     let ok = false;
     try {
-      const timeoutSignal = AbortSignal.timeout(VERSION_TIMEOUT_MS);
-      const signal = parentSignal
-        ? AbortSignal.any([parentSignal, timeoutSignal])
-        : timeoutSignal;
       const result = await runVersionCommand("codex", ["--version"], {
         cwd: homePath,
         timeout: VERSION_TIMEOUT_MS,
@@ -146,6 +146,12 @@ export function createCodexEventBridge(options: {
       });
       ok = codexExecContractStatus(result.stdout || result.stderr).status === "verified";
     } catch (error: unknown) {
+      if (
+        signal.aborted ||
+        (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))
+      ) {
+        return false;
+      }
       console.warn("[coding-agents] Codex version check failed");
     }
     versionCache = { ok, expiresAt: nowMs() + VERSION_CACHE_TTL_MS };
