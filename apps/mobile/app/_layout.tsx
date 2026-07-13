@@ -192,12 +192,23 @@ function GatewayShell() {
     if (connectionKeyRef.current === nextKey) return;
     connectionKeyRef.current = nextKey;
     clientRef.current?.disconnect();
-    const newClient = new GatewayClient(gw.url, gw.token);
+    // Hosted computers carry no stored credential: authenticate with the live
+    // Clerk token provider and a fresh WS upgrade token, mirroring the mount
+    // path. Self-hosted gateways keep their session credential.
+    const newClient = gw.token
+      ? new GatewayClient(gw.url, gw.token)
+      : new GatewayClient(gw.url, () => getTokenRef.current());
     newClient.onStateChange(setConnectionState);
-    newClient.connect();
     clientRef.current = newClient;
     setClient(newClient);
     setGatewayState(gw);
+    setConnectionState("connecting");
+    void (async () => {
+      const wsToken = await newClient.getWsToken();
+      if (clientRef.current !== newClient) return;
+      if (wsToken) newClient.setWebSocketToken(wsToken);
+      newClient.connect();
+    })();
   }, []);
 
   useEffect(() => {
