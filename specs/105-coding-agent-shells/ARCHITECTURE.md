@@ -512,6 +512,17 @@ Rules:
 - Decision endpoint must be idempotent by `approvalId` and `correlationId`.
 - If two clients decide concurrently, one wins and all clients receive resolved event.
 
+### Structured User Input
+
+Provider input requests may include up to eight uniquely identified questions.
+Each question has bounded safe display text, optional bounded choices, an
+explicit free-form flag, and an explicit secret-entry flag. Answers may include
+a bounded question-id map in addition to the legacy single text answer so older
+shells remain wire-compatible while newer shells preserve provider question
+identity. The gateway must validate that submitted question ids belong to the
+pending request before forwarding a response, must never persist answer text in
+thread events, and must prefer structured answers whenever they are present.
+
 ### Terminal Frame
 
 Prefer extending the existing terminal contract instead of replacing it.

@@ -691,6 +691,19 @@ describe("coding agent thread lifecycle", () => {
               title: "Need input",
               safeDescription: "Provide the missing detail.",
               required: true,
+              questions: [
+                {
+                  questionId: "implementation",
+                  header: "Approach",
+                  question: "Which implementation should be used?",
+                  options: [
+                    { label: "Minimal", description: "Change only the required code." },
+                    { label: "Complete", description: "Include the related migration." },
+                  ],
+                  allowOther: true,
+                  secret: false,
+                },
+              ],
               correlationId: "corr_input",
             },
           }),
@@ -700,6 +713,7 @@ describe("coding agent thread lifecycle", () => {
         inputCalls += 1;
         expect(inputRequestId).toBe("req_input_prompt");
         expect(request.answer).toBe("Use the safe implementation path.");
+        expect(request.structuredAnswers).toEqual({ implementation: ["Private custom response"] });
         return [
           AgentThreadEventSchema.parse({
             type: "user_input.answered",
@@ -736,6 +750,7 @@ describe("coding agent thread lifecycle", () => {
     );
     const body = {
       answer: "Use the safe implementation path.",
+      structuredAnswers: { implementation: ["Private custom response"] },
       clientRequestId: "req_input_1",
       correlationId: "corr_input",
     };
@@ -764,6 +779,8 @@ describe("coding agent thread lifecycle", () => {
       "user_input.answered",
       "thread.status",
     ]);
+    expect(JSON.stringify(answered)).not.toContain("Private custom response");
+    expect(JSON.stringify(answered)).not.toContain("Use the safe implementation path.");
     expect(duplicateSnapshot.events.items.map((event) => event.eventId)).toEqual(
       answered.events.items.map((event) => event.eventId),
     );
