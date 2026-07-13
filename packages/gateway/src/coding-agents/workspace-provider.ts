@@ -238,7 +238,9 @@ export function createWorkspaceCodingAgentProvider(
             taskId: request.taskId,
             worktreeId: request.worktreeId,
             mode: request.mode,
-            approvalPolicy: agent === "codex" ? "never" : request.approvalPolicy,
+            approvalPolicy: agent === "codex" && !options.codexControl
+              ? "never"
+              : request.approvalPolicy,
             sandboxMode: request.sandboxMode,
             runtimePreference: "zellij",
           },

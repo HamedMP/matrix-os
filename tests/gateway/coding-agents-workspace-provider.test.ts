@@ -517,11 +517,12 @@ describe("coding agent workspace provider", () => {
   it("forwards approval and structured input decisions to the deterministic Codex control session", async () => {
     const submitApproval = vi.fn(async () => undefined);
     const submitInput = vi.fn(async () => undefined);
+    const startSession = vi.fn(async () => ({ ok: true, status: 201, session: workspaceSession() }));
     const provider = createWorkspaceCodingAgentProvider({
       providerId: "codex",
       agent: "codex",
       runtime: {
-        startSession: vi.fn(),
+        startSession,
         stopSession: vi.fn(),
       },
       codexControl: { submitApproval, submitInput },
@@ -535,6 +536,21 @@ describe("coding agent workspace provider", () => {
       createdAt: baseNow.toISOString(),
       updatedAt: baseNow.toISOString(),
     });
+
+    await expect(provider.startThread({
+      principal: ownerPrincipal,
+      thread,
+      request: createBody,
+      now: () => baseNow,
+      nextEventId: vi.fn()
+        .mockReturnValueOnce("evt_workspace_control_status")
+        .mockReturnValueOnce("evt_workspace_control_terminal"),
+    })).resolves.toMatchObject({
+      resumeState: { conversationId: "sess_workspace_control_1" },
+    });
+    expect(startSession).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({ approvalPolicy: "on_request" }),
+    }));
 
     await expect(provider.submitApproval?.({
       principal: ownerPrincipal,
