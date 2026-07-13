@@ -97,7 +97,12 @@
 - Resident memory: approximately 344 MiB with the constrained plugin set; approximately 600 MiB with the default plugin set.
 - Explicit `plugins.allow` reduces loaded surface, but essential model-provider and memory plugins may still auto-enable.
 
-**Admission baseline**: Preserve spec 077's messaging floor of 2 vCPU, 4 GiB RAM, 40 GiB disk. Require at least 768 MiB available memory and 1 GiB free disk before installation/activation. Re-check exact production usage on preview before stable promotion.
+**Admission baseline**: Preserve spec 077's nominal 2 vCPU, 4 GB RAM, 40 GiB
+disk floor while accepting the below-nominal memory Linux exposes on supported
+cloud plans: `MemTotal` must be at least 3,670,016 KiB (3.5 GiB), not 4 GiB.
+Require at least 768 MiB available memory and 1 GiB free disk before
+installation/activation. Re-check exact production usage on preview before
+stable promotion.
 
 ## Decision: Additive Agent Settings Contract
 

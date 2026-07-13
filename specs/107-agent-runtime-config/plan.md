@@ -152,14 +152,17 @@ tests/
 ## Stack and PR Boundaries
 
 1. `docs(agent): specify unified runtime configuration` — spec package only.
-2. `feat(gateway): expose stored conversation transcript` — safe path schema, GET route, tests.
-3. `feat(kernel): support per-message model and effort` — frame schema, allowlist, dispatcher threading, tests.
-4. `fix(gateway): report active kernel model` — system-info effective model, tests.
-5. `feat(contracts): define agent runtime configuration` — shared additive schemas and fixtures.
-6. `feat(gateway): unify agent configuration` — provider catalog, additive settings response/update, auth status, tests.
-7. `feat(runtime): add OpenClaw messaging adapter` — installer/unit/control/RPC adapter and rollback tests.
-8. `feat(shell): add Agent runtime settings` — Canvas-first UI, Agent-only unhide, component tests, production build.
-9. `feat(desktop): extend Agent runtime settings` — provider/runtime UI, older-gateway fallback, trusted-action wiring.
+2. `feat(gateway): support per-message kernel selection` — frame schema, allowlist, dispatcher threading, tests.
+3. `feat(contracts): define agent runtime configuration` — shared additive schemas and fixtures.
+4. `feat(gateway): unify agent settings inventory` — provider catalog, additive settings response/update, auth status, tests.
+5. `feat(gateway): orchestrate messaging runtime configuration` — transition controller, locking, rollback, and tests.
+6. `feat(runtime): provision OpenClaw gateway` — pinned installer, units, host control, and admission tests.
+7. `feat(gateway): add bounded OpenClaw RPC` — bounded RPC and lifecycle tests.
+8. `feat(gateway): normalize OpenClaw runtime config` — adapter normalization and rollback tests.
+9. `feat(gateway): compose OpenClaw runtime services` — host-control composition and shutdown tests.
+10. `feat(shell): add Agent runtime settings` — Canvas-first UI, visible terminal install/setup actions, and production build.
+11. `feat(desktop): add agent runtime settings` — provider/runtime UI, older-gateway fallback, trusted-action wiring.
+12. `test(runtime): verify the unified runtime preview` — exact-head preview deployment and live install/switch evidence.
 
 Every PR stays below 3,000 additions and 50 files. If a boundary grows beyond that limit it is split before submission, never waived.
 

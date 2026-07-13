@@ -42,7 +42,10 @@ Before OpenClaw installation or activation:
 
 - At least 1 GiB filesystem free space.
 - At least 768 MiB available memory.
-- Messaging feature floor remains 2 vCPU, 4 GiB RAM, 40 GiB disk per spec 077.
+- The supported nominal 4 GB plan is admitted when Linux reports at least
+  3,670,016 KiB (3.5 GiB) in `MemTotal`; cloud guests report less than the
+  provider's advertised capacity, so a 4 GiB binary threshold rejects valid
+  machines. The remaining floor is 2 vCPU and 40 GiB disk per spec 077.
 - Package/runtime version must match the host-bundle-pinned supported version.
 - Plugin allowlist is explicit and the official Matrix plugin version matches the core package when installed.
 

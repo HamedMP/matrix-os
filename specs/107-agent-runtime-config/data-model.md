@@ -93,7 +93,7 @@ Unique in one response: composite `(runtime ?? "kernel", id)`.
 | `provider` | string | Currently `anthropic`; future-safe identifier. |
 | `model` | string | Effective allowlisted model. |
 | `effort` | enum | Effective effort. |
-| `source` | enum | `saved`, `default`, `message_override`. |
+| `source` | enum | `saved`, `default`. Per-message overrides are validated WS inputs and are not persisted or emitted as the saved Chat selection. |
 | `authKind` | enum | Effective credential source: `platform`, `api_key`, `oauth_login`. |
 
 ### MessagingSelection
