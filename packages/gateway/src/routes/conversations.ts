@@ -28,14 +28,14 @@ export function createConversationRoutes(conversations: ConversationStore): Hono
   app.get("/", (c) => c.json(conversations.list()));
 
   app.post("/", routeBodyLimit, async (c) => {
-    let raw: unknown;
+    let raw: unknown = {};
     try {
       raw = await c.req.json();
     } catch (error: unknown) {
       if (!(error instanceof SyntaxError)) {
         console.error("[conversations] Failed to read create request body", error);
+        return c.json({ error: "Invalid request" }, 400);
       }
-      return c.json({ error: "Invalid request" }, 400);
     }
 
     const parsed = CreateConversationSchema.safeParse(raw);
@@ -78,7 +78,10 @@ export function createConversationRoutes(conversations: ConversationStore): Hono
     });
     if (!parsed.success) return c.json({ error: "Invalid search query" }, 400);
 
-    return c.json(conversations.search(parsed.data.q, { limit: parsed.data.limit }));
+    return c.json(conversations.search(parsed.data.q, {
+      limit: parsed.data.limit,
+      sessionId: id,
+    }));
   });
 
   return app;

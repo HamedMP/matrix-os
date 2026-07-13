@@ -60,6 +60,24 @@ describe("E2E: Conversation Management", () => {
     }
   });
 
+  it("POST /api/conversations preserves bodyless create compatibility", async () => {
+    const res = await fetch(`${gw.url}/api/conversations`, { method: "POST" });
+
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toMatchObject({ id: expect.any(String) });
+  });
+
+  it("POST /api/conversations preserves non-JSON create compatibility", async () => {
+    const res = await fetch(`${gw.url}/api/conversations`, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: "legacy-client-body",
+    });
+
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toMatchObject({ id: expect.any(String) });
+  });
+
   it("GET /api/conversations/:id returns the stored transcript in order", async () => {
     const conversation = {
       id: "mobile-session-1",
@@ -93,6 +111,37 @@ describe("E2E: Conversation Management", () => {
 
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toEqual({ error: "Invalid conversation id" });
+  });
+
+  it("GET /api/conversations/:id/search stays within the selected transcript", async () => {
+    const selected = {
+      id: "selected-search-session",
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_100,
+      messages: [
+        { role: "user", content: "shared route search phrase", timestamp: 1_700_000_000_100 },
+      ],
+    };
+    const other = {
+      ...selected,
+      id: "other-search-session",
+      messages: [
+        { role: "user", content: "shared route search phrase", timestamp: 1_700_000_000_200 },
+      ],
+    };
+    await Promise.all([selected, other].map((conversation) => writeFile(
+      join(gw.homePath, "system", "conversations", `${conversation.id}.json`),
+      JSON.stringify(conversation),
+    )));
+
+    const res = await fetch(
+      `${gw.url}/api/conversations/${selected.id}/search?q=shared%20route%20search%20phrase`,
+    );
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual([
+      expect.objectContaining({ sessionId: selected.id }),
+    ]);
   });
 
   it("DELETE /api/conversations/:id removes a conversation", async () => {
