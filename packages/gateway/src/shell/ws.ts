@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
 import { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ } from "@finnaai/matrix/shell-protocol";
 import { ShellReplayBuffer } from "./replay-buffer.js";
+import { PendingPersistQueue } from "./output-pipeline.js";
 import type { ScrollbackStore } from "./scrollback-store.js";
 import { validateSessionName } from "./names.js";
 import type { ShellAttachProcess } from "./zellij.js";
@@ -43,6 +44,9 @@ export const SHELL_ATTACH_RECENT_REPLAY_EVENTS = 50;
 export interface ShellWsSocket {
   send(data: string): void;
   close?: () => void;
+  /** Backpressure signal; Hono WSContext exposes it on the raw socket. */
+  bufferedAmount?: number;
+  raw?: { bufferedAmount?: number };
 }
 
 interface ShellWsRegistry {
@@ -53,12 +57,23 @@ interface ShellWsAdapter {
   attachSession(name: string, options?: { signal?: AbortSignal }): ShellAttachProcess;
 }
 
+export interface ShellWsFlowControlOptions {
+  highWaterMark?: number;
+  lowWaterMark?: number;
+  drainIntervalMs?: number;
+}
+
 export interface ShellWsHandlerOptions {
   registry: ShellWsRegistry;
   adapter: ShellWsAdapter;
   scrollbackStore?: ScrollbackStore;
   maxReplayBytes?: number;
   maxBuffers?: number;
+  persistFlushIntervalMs?: number;
+  maxPendingPersistBytes?: number;
+  maxAttachedClients?: number;
+  staleAttachTtlMs?: number;
+  flowControl?: ShellWsFlowControlOptions;
 }
 
 export interface ShellWsOpenOptions {
@@ -88,51 +103,183 @@ export function shellWsMessageDataToString(data: unknown): string | null {
   return null;
 }
 
-class ReplayBufferCache {
-  private readonly buffers = new Map<string, ShellReplayBuffer>();
-  private readonly maxBuffers: number;
-
-  constructor(
-    private readonly options: {
-      scrollbackStore?: ScrollbackStore;
-      maxReplayBytes?: number;
-      maxBuffers?: number;
-    },
-  ) {
-    this.maxBuffers = options.maxBuffers ?? 20;
+function socketBufferedAmount(ws: ShellWsSocket): number {
+  if (typeof ws.bufferedAmount === "number") {
+    return ws.bufferedAmount;
   }
-
-  get(name: string): ShellReplayBuffer {
-    const existing = this.buffers.get(name);
-    if (existing) {
-      this.buffers.delete(name);
-      this.buffers.set(name, existing);
-      return existing;
-    }
-
-    if (this.buffers.size >= this.maxBuffers) {
-      const oldest = this.buffers.keys().next().value as string | undefined;
-      if (oldest) {
-        this.buffers.delete(oldest);
-      }
-    }
-
-    const next = new ShellReplayBuffer({
-      maxBytes: this.options.maxReplayBytes,
-      scrollbackStore: this.options.scrollbackStore,
-      sessionName: name,
-    });
-    this.buffers.set(name, next);
-    return next;
+  const raw = ws.raw;
+  if (raw && typeof raw.bufferedAmount === "number") {
+    return raw.bufferedAmount;
   }
+  return 0;
+}
+
+interface ConnState {
+  ws: ShellWsSocket;
+  child: ShellAttachProcess;
+  openedAt: number;
+  lastActivityAt: number;
+  paused: boolean;
+  closed: boolean;
+  close: () => void;
+}
+
+interface SessionRuntime {
+  buffer: ShellReplayBuffer;
+  queue: PendingPersistQueue | null;
+  conns: Set<ConnState>;
+  recorder: ConnState | null;
 }
 
 export function createShellWsHandler(options: ShellWsHandlerOptions) {
-  const buffers = new ReplayBufferCache({
-    scrollbackStore: options.scrollbackStore,
-    maxReplayBytes: options.maxReplayBytes,
-    maxBuffers: options.maxBuffers,
-  });
+  const maxBuffers = options.maxBuffers ?? 20;
+  const maxAttachedClients = options.maxAttachedClients ?? 8;
+  const staleAttachTtlMs = options.staleAttachTtlMs ?? 60_000;
+  const highWaterMark = options.flowControl?.highWaterMark ?? 1024 * 1024;
+  const lowWaterMark = options.flowControl?.lowWaterMark ?? 256 * 1024;
+  const drainIntervalMs = options.flowControl?.drainIntervalMs ?? 500;
+
+  const runtimes = new Map<string, SessionRuntime>();
+  let drainTimer: NodeJS.Timeout | null = null;
+
+  function runtimeFor(name: string): SessionRuntime | null {
+    const existing = runtimes.get(name);
+    if (existing) {
+      runtimes.delete(name);
+      runtimes.set(name, existing);
+      return existing;
+    }
+    if (runtimes.size >= maxBuffers) {
+      let evicted = false;
+      for (const [candidateName, candidate] of runtimes) {
+        if (candidate.conns.size === 0) {
+          runtimes.delete(candidateName);
+          void candidate.queue?.dispose().catch((err: unknown) => {
+            console.warn("[shell] evicted runtime flush failed:", err instanceof Error ? err.message : String(err));
+          });
+          evicted = true;
+          break;
+        }
+      }
+      if (!evicted) {
+        // Hard cap: every tracked session still has live clients, so nothing
+        // is safely evictable. Reject instead of growing without bound.
+        return null;
+      }
+    }
+    const buffer = new ShellReplayBuffer({
+      maxBytes: options.maxReplayBytes,
+      scrollbackStore: options.scrollbackStore,
+      sessionName: name,
+    });
+    const queue = options.scrollbackStore
+      ? new PendingPersistQueue({
+          store: options.scrollbackStore,
+          sessionName: name,
+          flushIntervalMs: options.persistFlushIntervalMs,
+          maxPendingBytes: options.maxPendingPersistBytes,
+        })
+      : null;
+    const runtime: SessionRuntime = { buffer, queue, conns: new Set(), recorder: null };
+    runtimes.set(name, runtime);
+    return runtime;
+  }
+
+  function electRecorder(runtime: SessionRuntime, exclude?: ConnState): void {
+    let oldest: ConnState | null = null;
+    for (const conn of runtime.conns) {
+      if (conn === exclude || conn.closed) {
+        continue;
+      }
+      if (!oldest || conn.openedAt < oldest.openedAt) {
+        oldest = conn;
+      }
+    }
+    runtime.recorder = oldest;
+  }
+
+  function ensureDrainTimer(): void {
+    if (drainTimer) {
+      return;
+    }
+    drainTimer = setInterval(() => {
+      let anyPaused = false;
+      for (const runtime of runtimes.values()) {
+        for (const conn of runtime.conns) {
+          if (!conn.paused) {
+            continue;
+          }
+          if (socketBufferedAmount(conn.ws) <= lowWaterMark) {
+            conn.paused = false;
+            conn.child.resume?.();
+          } else {
+            anyPaused = true;
+          }
+        }
+      }
+      if (!anyPaused && drainTimer) {
+        clearInterval(drainTimer);
+        drainTimer = null;
+      }
+    }, drainIntervalMs);
+    drainTimer.unref?.();
+  }
+
+  /**
+   * Deliver a frame with backpressure. Returns false when the frame was
+   * skipped because the socket is over the high-water mark and the connection
+   * cannot be paused (a sole recorder must keep producing for persistence).
+   */
+  function deliver(runtime: SessionRuntime, conn: ConnState, msg: unknown): boolean {
+    if (socketBufferedAmount(conn.ws) > highWaterMark) {
+      if (runtime.recorder === conn && runtime.conns.size > 1) {
+        electRecorder(runtime, conn);
+      }
+      if (runtime.recorder !== conn) {
+        if (!conn.paused) {
+          conn.paused = true;
+          conn.child.pause?.();
+          ensureDrainTimer();
+        }
+        return false;
+      }
+      // Sole recorder: never pause the stream that feeds persistence; skip
+      // delivery to the saturated socket instead. The client recovers via
+      // seq-based replay on drain/reconnect.
+      return false;
+    }
+    sendJson(conn.ws, msg);
+    return true;
+  }
+
+  function evictStaleOrReject(runtime: SessionRuntime, ws: ShellWsSocket): boolean {
+    if (runtime.conns.size < maxAttachedClients) {
+      return true;
+    }
+    const now = Date.now();
+    let stalest: ConnState | null = null;
+    for (const conn of runtime.conns) {
+      if (now - conn.lastActivityAt < staleAttachTtlMs) {
+        continue;
+      }
+      if (!stalest || conn.lastActivityAt < stalest.lastActivityAt) {
+        stalest = conn;
+      }
+    }
+    if (stalest) {
+      // Free the slot synchronously so a concurrent open cannot observe the
+      // evicted conn still occupying capacity while its close settles.
+      runtime.conns.delete(stalest);
+      if (runtime.recorder === stalest) {
+        electRecorder(runtime, stalest);
+      }
+      stalest.close();
+      return true;
+    }
+    sendJson(ws, { type: "error", code: "attach_limit", message: "Too many clients attached" });
+    ws.close?.();
+    return false;
+  }
 
   async function open({ ws, session, fromSeq = 0 }: ShellWsOpenOptions): Promise<ShellWsSession> {
     const safeName = validateSessionName(session);
@@ -148,8 +295,19 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       return { onMessage: () => undefined, onClose: () => undefined };
     }
 
+    const runtime = runtimeFor(safeName);
+    if (!runtime) {
+      sendJson(ws, { type: "error", code: "session_capacity", message: "Too many active sessions" });
+      ws.close?.();
+      return { onMessage: () => undefined, onClose: () => undefined };
+    }
+    if (!evictStaleOrReject(runtime, ws)) {
+      return { onMessage: () => undefined, onClose: () => undefined };
+    }
+
     const abortController = new AbortController();
-    const replayBuffer = buffers.get(safeName);
+    const replayBuffer = runtime.buffer;
+    await replayBuffer.ensureSeeded();
     let child: ShellAttachProcess;
     try {
       child = options.adapter.attachSession(safeName, {
@@ -165,7 +323,6 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       ws.close?.();
       return { onMessage: () => undefined, onClose: () => undefined };
     }
-    let closed = false;
     let dataDisposable: { dispose(): void } | null = null;
     let exitDisposable: { dispose(): void } | null = null;
     const cleanupProcessListeners = () => {
@@ -174,6 +331,31 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       dataDisposable = null;
       exitDisposable = null;
     };
+
+    // Re-check capacity: awaits since the first check (seeding, registry
+    // list) allow concurrent opens to race the same last slot.
+    if (runtime.conns.size >= maxAttachedClients && !evictStaleOrReject(runtime, ws)) {
+      child.kill();
+      return { onMessage: () => undefined, onClose: () => undefined };
+    }
+
+    const conn: ConnState = {
+      ws,
+      child,
+      openedAt: Date.now(),
+      lastActivityAt: Date.now(),
+      paused: false,
+      closed: false,
+      close: () => {
+        void closeSession().finally(() => {
+          ws.close?.();
+        });
+      },
+    };
+    runtime.conns.add(conn);
+    if (!runtime.recorder) {
+      runtime.recorder = conn;
+    }
 
     const effectiveFromSeq = fromSeq === SHELL_ATTACH_LIVE_TAIL_FROM_SEQ
       ? Math.max(0, (await replayBuffer.latestSeq() ?? 0) - SHELL_ATTACH_RECENT_REPLAY_EVENTS + 1)
@@ -204,42 +386,69 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       sendJson(ws, event);
     }
 
-    const persistOutput = async (data: string) => {
+    // Send-first live output: the frame is delivered immediately with a
+    // synchronously assigned seq; only the elected recorder's stream feeds the
+    // replay buffer and the coalesced persistence queue (spec 107 FR-001/004).
+    const emitOutput = (data: string) => {
       if (data.length === 0) {
         return;
       }
-      await replayBuffer.writePersistent(data)
-        .then((result) => {
-          if (result.seq !== null) {
-            sendJson(ws, { type: "output", seq: result.seq, data });
-          }
-        })
-        .catch((err: unknown) => {
-          console.warn("[shell] failed to persist terminal output:", err instanceof Error ? err.message : String(err));
-        });
-    };
-    const onData = (data: string) => {
-      void persistOutput(outputCompat.write(data));
-    };
-    const onExit = (event: { exitCode: number }) => {
-      if (closed) {
+      if (runtime.recorder === conn) {
+        const result = replayBuffer.writeLive(data);
+        deliver(runtime, conn, { type: "output", seq: result.seq, data });
+        if (result.records.length > 0) {
+          runtime.queue?.enqueue(result.records);
+        }
         return;
       }
-      closed = true;
+      deliver(runtime, conn, { type: "output", seq: replayBuffer.lastSeq, data });
+    };
+    const onData = (data: string) => {
+      emitOutput(outputCompat.write(data));
+    };
+    const detachConn = () => {
+      runtime.conns.delete(conn);
+      if (runtime.recorder === conn) {
+        electRecorder(runtime, conn);
+      }
+      if (runtime.conns.size === 0 && runtime.queue) {
+        // Nobody attached: persist promptly instead of waiting for the timer.
+        void runtime.queue.dispose().catch((err: unknown) => {
+          console.warn("[shell] final scrollback flush failed:", err instanceof Error ? err.message : String(err));
+        });
+        runtime.queue = options.scrollbackStore
+          ? new PendingPersistQueue({
+              store: options.scrollbackStore,
+              sessionName: safeName,
+              flushIntervalMs: options.persistFlushIntervalMs,
+              maxPendingBytes: options.maxPendingPersistBytes,
+            })
+          : null;
+      }
+    };
+
+    const onExit = (event: { exitCode: number }) => {
+      if (conn.closed) {
+        return;
+      }
+      conn.closed = true;
       cleanupProcessListeners();
-      void persistOutput(outputCompat.flush()).finally(() => {
-        sendJson(ws, { type: "exit", code: event.exitCode });
-      });
+      // Flush while this conn still holds its recorder role so trailing
+      // output is persisted, then hand the role off.
+      emitOutput(outputCompat.flush());
+      sendJson(ws, { type: "exit", code: event.exitCode });
+      detachConn();
     };
     dataDisposable = child.onData(onData);
     exitDisposable = child.onExit(onExit);
 
     const closeSession = async () => {
-      if (closed) {
+      if (conn.closed) {
         return;
       }
-      closed = true;
-      await persistOutput(outputCompat.flush());
+      conn.closed = true;
+      emitOutput(outputCompat.flush());
+      detachConn();
       abortController.abort();
       cleanupProcessListeners();
       child.kill();
@@ -247,6 +456,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
 
     return {
       onMessage(raw: string) {
+        conn.lastActivityAt = Date.now();
         let parsed: unknown;
         try {
           parsed = JSON.parse(raw);
@@ -287,7 +497,33 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     };
   }
 
-  return { open };
+  function pendingPersistBytes(): number {
+    let total = 0;
+    for (const runtime of runtimes.values()) {
+      total += runtime.queue?.pendingBytes ?? 0;
+    }
+    return total;
+  }
+
+  async function dispose(): Promise<void> {
+    if (drainTimer) {
+      clearInterval(drainTimer);
+      drainTimer = null;
+    }
+    const drains: Array<Promise<void>> = [];
+    for (const runtime of runtimes.values()) {
+      if (runtime.queue) {
+        drains.push(
+          runtime.queue.dispose().catch((err: unknown) => {
+            console.warn("[shell] shutdown scrollback flush failed:", err instanceof Error ? err.message : String(err));
+          }),
+        );
+      }
+    }
+    await Promise.all(drains);
+  }
+
+  return { open, dispose, pendingPersistBytes };
 }
 
 function sendJson(ws: ShellWsSocket, msg: unknown): void {

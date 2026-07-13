@@ -93,6 +93,8 @@ write_files:
       ExecStart=/opt/matrix/bin/matrix-gateway
       Restart=on-failure
       RestartSec=5
+      MemoryHigh=1G
+      MemoryMax=1536M
 
       [Install]
       WantedBy=multi-user.target
