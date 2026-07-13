@@ -268,13 +268,13 @@ export class NativeAppSessionService {
     if (this.getuid() === 0) {
       throw new NativeAppError("misconfigured", 500, "Native apps are not available on this runtime", "root launch refused");
     }
-    await this.enforceSessionCapacity(input.ownerId);
     if (!await this.cachedCommandExists("xpra")) {
       throw new NativeAppError("native_unavailable", 503, "Native apps are not available on this runtime", "xpra missing");
     }
     if (!await this.cachedCommandExists(executable)) {
       throw new NativeAppError("native_unavailable", 503, "Native apps are not available on this runtime", "native app binary missing");
     }
+    await this.enforceSessionCapacity(input.ownerId);
     this.assertSessionCapacity(input.ownerId);
 
     const id = this.randomId("session");

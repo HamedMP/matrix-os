@@ -290,6 +290,25 @@ describe("NativeAppSessionService", () => {
       .rejects.toMatchObject({ code: "session_limit" });
   });
 
+  it("does not evict a healthy session when native tools are unavailable", async () => {
+    let commandsAvailable = true;
+    const { service } = createService({
+      commandExists: vi.fn(async () => commandsAvailable),
+      commandExistsCacheTtlMs: 0,
+      maxSessionsTotal: 1,
+    });
+    const existing = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    commandsAvailable = false;
+
+    await expect(service.launchSession({ ownerId: "bob", appId: "xcalc" }))
+      .rejects.toMatchObject({ code: "native_unavailable" });
+
+    expect(service.inspectSession("alice", existing.id)).toMatchObject({
+      id: existing.id,
+      status: "running",
+    });
+  });
+
   it("rechecks owner capacity after asynchronous xpra availability checks", async () => {
     const resolvers: Array<(available: boolean) => void> = [];
     const commandExists = vi.fn(async () => new Promise<boolean>((resolve) => {
