@@ -343,6 +343,24 @@ describe("T135: System info", () => {
     rmSync(homePath, { recursive: true, force: true });
   });
 
+  it("labels malformed system config failures for both model and channel readers", () => {
+    const homePath = tmpHome();
+    writeFileSync(join(homePath, "system", "config.json"), "{invalid");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      getSystemInfo(homePath);
+
+      expect(warn).toHaveBeenCalledWith(
+        "[system-info] Failed to read system config:",
+        expect.any(String),
+      );
+    } finally {
+      warn.mockRestore();
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("counts skills", () => {
     const homePath = tmpHome();
     mkdirSync(join(homePath, ".agents", "skills", "summarize"), { recursive: true });

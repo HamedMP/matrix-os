@@ -232,7 +232,7 @@ export function getSystemInfo(
         }
       }
     } catch (err) {
-      logSystemInfoReadFailure("Failed to read channel config", err);
+      logSystemInfoReadFailure("Failed to read system config", err);
     }
   }
 
