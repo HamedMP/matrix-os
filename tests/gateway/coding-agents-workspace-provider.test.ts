@@ -281,7 +281,6 @@ describe("coding agent workspace provider", () => {
       "user.message",
       "thread.status",
       "terminal.bound",
-      "assistant.text.delta",
     ]);
   });
 

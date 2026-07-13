@@ -118,6 +118,7 @@ import { createCodingAgentSourceControlStore } from "./coding-agents/source-cont
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
 import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
 import { createCodingAgentProjectMutationService } from "./coding-agents/project-mutations.js";
+import { createCodexEventBridge, type CodexEventBridge } from "./coding-agents/codex-event-bridge.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -508,6 +509,7 @@ export async function createGateway(config: GatewayConfig) {
     },
   });
   let codingAgentThreadStore: (CodingAgentThreadStore & CodingAgentTurnStore) | undefined;
+  let codexEventBridge: CodexEventBridge | undefined;
   const codingAgentSessionStopReconciler = createCodingAgentSessionStopReconciler();
   const workspaceEventStore = createWorkspaceEventStore({ homePath });
   const reviewStore = createReviewStore({ homePath });
@@ -545,6 +547,7 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentWorkspaceAgents = configuredWorkspaceProviderAgents(process.env);
   if (codingAgentWorkspaceAgents.length > 0) {
     const codingAgentProjectManager = createProjectManager({ homePath });
+    codexEventBridge = createCodexEventBridge({ homePath });
     const codingAgentWorktreeManager = createWorktreeManager({ homePath });
     const codingAgentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
     const codingAgentSessionManager = createAgentSessionManager({
@@ -566,6 +569,7 @@ export async function createGateway(config: GatewayConfig) {
     const providerSet = createWorkspaceCodingAgentProviderSet({
       agents: codingAgentWorkspaceAgents,
       runtime: codingAgentWorkspaceRuntime,
+      codexEvents: codexEventBridge,
     });
     codingAgentProviders.push(...providerSet.executionProviders);
     codingAgentRegistryProviders.push(...providerSet.registryProviders);
@@ -587,6 +591,7 @@ export async function createGateway(config: GatewayConfig) {
         workspaceEventPublisher.publishCodingAgentThreadProjection(change),
     })
     : undefined;
+  if (codingAgentThreadStore) codexEventBridge?.attachThreadStore(codingAgentThreadStore);
   const codingAgentProviderRegistry = createCodingAgentProviderRegistry({
     providers: codingAgentRegistryProviders,
     agentCredentials: agentCredentialService,
@@ -4257,6 +4262,7 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       await codingAgentTurnLifecycle.shutdown();
+      await codexEventBridge?.shutdown();
       codingAgentThreadStream?.shutdown();
       codingAgentAttentionNotifications?.dispose();
       codingAgentSessionStopReconciler.dispose();

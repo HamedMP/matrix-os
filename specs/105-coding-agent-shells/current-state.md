@@ -278,6 +278,8 @@ Workspace provider behavior:
 - Passes through prompt, project, task, worktree, mode, approval policy, sandbox mode, and zellij runtime preference.
 - Passes bounded `structured_ref` attachments into the runtime launch prompt as safe reference metadata so review follow-up runs can inspect the selected file/hunk without client-side diff contents.
 - Binds coding-agent threads to canonical `terminalSessionId` from the workspace session.
+- Runs Codex through a Matrix-owned, shell-free subprocess wrapper that forces JSONL output, preserves the attachable Zellij terminal, queues bounded same-thread prompts, resumes the exact server-side provider thread id, suppresses raw provider stderr, and applies a ten-minute turn timeout.
+- Watches a dedicated bounded owner-local provider-event transcript through a capped registry with deterministic replay ids, symlink-safe reads, stale-file cleanup, shutdown drain, and durable-before-publish thread-store ingestion. Unverified installed Codex versions fail closed before the session starts.
 - Aborts through the deterministic workspace session id.
 - Keeps provider startup failures safe in the returned thread snapshot.
 
