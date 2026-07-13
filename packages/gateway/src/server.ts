@@ -4234,7 +4234,7 @@ export async function createGateway(config: GatewayConfig) {
       await processManager.shutdownAll();
       await forwardTunnelHub.close();
       shellSessionReaper.stop();
-      zellijShellWs.dispose();
+      await zellijShellWs.dispose();
       await sessionRegistry.shutdown();
       await watcher.close();
       await homeMirror?.stop();

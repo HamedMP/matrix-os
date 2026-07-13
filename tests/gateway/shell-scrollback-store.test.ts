@@ -44,6 +44,11 @@ describe("scrollback store", () => {
     expect(replayed).toEqual([{ type: "output", seq: 3, data: "visible" }]);
     const activity = await store.latestActivity("main");
     expect(activity.latestSeq).toBe(3);
+
+    // Coalesced output flushes AFTER the reservation by file position; the
+    // max seq must still win or a restarted gateway would reuse delivered seqs.
+    await store.append("main", [{ type: "output", seq: 4, data: "flushed late" }]);
+    await expect(store.latestSeq("main")).resolves.toBe(10_000);
   });
 
   it("returns latest activity metadata for Paper status derivation", async () => {

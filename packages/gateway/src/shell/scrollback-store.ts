@@ -110,7 +110,18 @@ export class ScrollbackStore {
     try {
       const raw = await readFile(this.pathForValidatedSession(safeName), "utf-8");
       const parsed = parseScrollbackLines(raw.split("\n"), safeName);
-      return parsed.records.at(-1)?.seq ?? null;
+      // Max across all records, not last-by-file-position: seq-reserve records
+      // are appended immediately while output records flush later via the
+      // coalescing queue, so file order does not track seq order. Seeding from
+      // anything but the max would let a restarted gateway reuse delivered
+      // seqs — the exact failure the reservation exists to prevent.
+      let latest: number | null = null;
+      for (const record of parsed.records) {
+        if (latest === null || record.seq > latest) {
+          latest = record.seq;
+        }
+      }
+      return latest;
     } catch (err: unknown) {
       if (
         err instanceof Error &&

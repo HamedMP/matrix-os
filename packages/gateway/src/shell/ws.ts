@@ -332,6 +332,13 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       exitDisposable = null;
     };
 
+    // Re-check capacity: awaits since the first check (seeding, registry
+    // list) allow concurrent opens to race the same last slot.
+    if (runtime.conns.size >= maxAttachedClients && !evictStaleOrReject(runtime, ws)) {
+      child.kill();
+      return { onMessage: () => undefined, onClose: () => undefined };
+    }
+
     const conn: ConnState = {
       ws,
       child,
@@ -498,14 +505,22 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     return total;
   }
 
-  function dispose(): void {
+  async function dispose(): Promise<void> {
     if (drainTimer) {
       clearInterval(drainTimer);
       drainTimer = null;
     }
+    const drains: Array<Promise<void>> = [];
     for (const runtime of runtimes.values()) {
-      void runtime.queue?.dispose();
+      if (runtime.queue) {
+        drains.push(
+          runtime.queue.dispose().catch((err: unknown) => {
+            console.warn("[shell] shutdown scrollback flush failed:", err instanceof Error ? err.message : String(err));
+          }),
+        );
+      }
     }
+    await Promise.all(drains);
   }
 
   return { open, dispose, pendingPersistBytes };
