@@ -6,6 +6,7 @@ import {
   createDefaultNativeAppRegistry,
   type NativeAppChildProcess,
 } from "../../../packages/gateway/src/native-apps/index.js";
+import { probeNativeCommand } from "../../../packages/gateway/src/native-apps/service.js";
 
 function createChild(pid = 4321): NativeAppChildProcess & EventEmitter {
   const child = new EventEmitter() as NativeAppChildProcess & EventEmitter;
@@ -52,6 +53,21 @@ function createService(options: Partial<ConstructorParameters<typeof NativeAppSe
 }
 
 describe("NativeAppSessionService", () => {
+  it("discovers commands without assuming a shared version flag", async () => {
+    const child = createChild();
+    const spawn = vi.fn(() => child);
+    const available = probeNativeCommand("xterm", spawn);
+
+    child.emit("exit", 0, null);
+
+    await expect(available).resolves.toBe(true);
+    expect(spawn).toHaveBeenCalledWith(
+      "/bin/sh",
+      ["-c", 'command -v -- "$1" >/dev/null 2>&1', "matrix-native-command-probe", "xterm"],
+      expect.objectContaining({ stdio: "ignore", detached: false }),
+    );
+  });
+
   it("returns only curated enabled linux-native apps", () => {
     const { service } = createService();
 
@@ -251,6 +267,19 @@ describe("NativeAppSessionService", () => {
     children[0].emit("exit", 1, null);
 
     expect(killProcess).toHaveBeenCalledWith(-(children[0].pid ?? 0), "SIGKILL");
+  });
+
+  it("removes failed child records before later capacity checks", async () => {
+    const { service, children } = createService({ maxSessionsTotal: 1 });
+    const first = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+
+    children[0].emit("error", new Error("display disconnected"));
+
+    expect(service.inspectSession("alice", first.id)).toBeNull();
+    await expect(service.launchSession({ ownerId: "bob", appId: "xcalc" })).resolves.toMatchObject({
+      appId: "xcalc",
+      status: "running",
+    });
   });
 
   it("enforces max sessions per owner", async () => {

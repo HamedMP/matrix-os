@@ -86,6 +86,7 @@ import {
   readMobileAppSessionRoutingHandle,
   readShellRouteCookie,
   readShellRuntimeSlotCookie,
+  resolveExplicitVmRuntimeSlot,
   resolveAppDomainIdentity,
   shouldMarkNativeAppSession,
 } from './session-routing-identity.js';
@@ -355,11 +356,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     }
     const runtimeSelection = readRuntimeSlotSelection(c.req.url);
     const cookieRuntimeSlot = isAppDomain
-      ? readShellRuntimeSlotCookie(path, cookieHeader)
+      ? readShellRuntimeSlotCookie(explicitVmRoute?.upstreamPath ?? path, cookieHeader)
       : null;
-    const requestRuntimeSlot = runtimeSelection.source === 'query'
-      ? runtimeSelection.slot
-      : cookieRuntimeSlot ?? runtimeSelection.slot;
+    const explicitVmRuntimeSlot = explicitVmRoute
+      ? resolveExplicitVmRuntimeSlot(c.req.url, explicitVmRoute.upstreamPath, cookieHeader)
+      : undefined;
+    const requestRuntimeSlot = explicitVmRuntimeSlot
+      ?? (runtimeSelection.source === 'query' ? runtimeSelection.slot : cookieRuntimeSlot ?? runtimeSelection.slot);
     let singleMachineRuntimeSlot: string | null = null;
 
     const isGatewayPath = isAppDomain && isAppDomainGatewayPath(path);
@@ -483,7 +486,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       const machine = await getActiveUserMachineByHandle(
         db,
         explicitVmRoute.handle,
-        runtimeSelection.source === 'query' ? requestRuntimeSlot : undefined,
+        explicitVmRuntimeSlot,
       );
       if (!machine || (identity.userId && machine.clerkUserId !== identity.userId)) {
         applyNoStoreHeaders(c);

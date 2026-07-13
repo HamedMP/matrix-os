@@ -362,7 +362,7 @@ async function proxyStreamRequest(c: Context, service: NativeAppSessionService):
   if (!token) return c.json({ error: "Unauthorized" }, 401);
   const target = service.getStreamTarget(sessionId, token);
   if (!target) return c.json({ error: "Unauthorized" }, 401);
-  if (streamRequestHasBody(c)) return c.json({ error: "Native app stream request body is too large" }, 413);
+  if (streamRequestHasBody(c)) return c.json({ error: "Invalid request" }, 400);
 
   const upstream = new URL(`http://127.0.0.1:${target.port}${requestPath.upstreamPath}`);
   upstream.search = streamSearchWithoutBootstrapToken(c);

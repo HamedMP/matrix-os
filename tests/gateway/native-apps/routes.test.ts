@@ -499,7 +499,8 @@ describe("native app routes", () => {
       body: "x".repeat(4096),
     });
 
-    expect(stream.status).toBe(413);
+    expect(stream.status).toBe(400);
+    await expect(stream.json()).resolves.toEqual({ error: "Invalid request" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

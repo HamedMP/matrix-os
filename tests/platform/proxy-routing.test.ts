@@ -3045,6 +3045,76 @@ describe("platform proxy routing", () => {
     expect(headers.get("x-forwarded-prefix")).toBe("/vm/alice-staging");
   });
 
+  it("keeps explicit VM native app traffic on the selected runtime slot", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff142",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123486,
+      publicIPv4: "203.0.113.40",
+      imageVersion: "primary-version",
+      provisionedAt: "2026-05-25T11:23:51.076Z",
+    });
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff143",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "review",
+      status: "running",
+      hetznerServerId: 123487,
+      publicIPv4: "203.0.113.41",
+      imageVersion: "review-version",
+      provisionedAt: "2026-05-25T11:24:51.076Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("review", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const launch = await app.request(
+      "/vm/alice/api/native-apps/xterm/sessions?runtime=review",
+      {
+        method: "POST",
+        headers: {
+          host: "app.matrix-os.com",
+          authorization: "Bearer clerk-session",
+          "content-type": "application/json",
+        },
+        body: "{}",
+      },
+    );
+    expect(launch.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://203.0.113.41:443/api/native-apps/xterm/sessions",
+    );
+
+    fetchMock.mockClear();
+    const asset = await app.request(
+      "/vm/alice/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/stream_bbbbbbbbbbbbbbbbbbbbbbbb/js/Utilities.js",
+      {
+        headers: {
+          host: "app.matrix-os.com",
+          origin: "null",
+          cookie: "matrix_shell_runtime_slot=review",
+        },
+      },
+    );
+    expect(asset.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://203.0.113.41:443/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/stream_bbbbbbbbbbbbbbbbbbbbbbbb/js/Utilities.js",
+    );
+  });
+
   it("rejects explicit VM native app stream assets without a capability token", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("unexpected", { status: 200 }),

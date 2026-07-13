@@ -23,6 +23,7 @@ type ViewerState =
 const REQUEST_TIMEOUT_MS = 10_000;
 const TERMINATION_ATTEMPTS = 3;
 const MAX_NATIVE_SESSION_LEASES = 64;
+const SAFE_RUNTIME_SLOT = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
 interface NativeSessionLease {
   appId: string;
@@ -49,7 +50,7 @@ function safeViewerMessage(value: unknown): string {
 }
 
 function nativeApiPath(path: string): string {
-  return `${explicitVmPrefix()}/api/native-apps${path}`;
+  return withExplicitVmRuntime(`${explicitVmPrefix()}/api/native-apps${path}`);
 }
 
 function explicitVmPrefix(): string {
@@ -60,8 +61,19 @@ function explicitVmPrefix(): string {
 
 function nativeStreamUrl(streamUrl: string): string {
   const prefix = explicitVmPrefix();
-  if (!prefix || !streamUrl.startsWith("/api/native-apps/")) return streamUrl;
-  return `${prefix}${streamUrl}`;
+  const explicitStreamUrl = prefix && streamUrl.startsWith("/api/native-apps/")
+    ? `${prefix}${streamUrl}`
+    : streamUrl;
+  return withExplicitVmRuntime(explicitStreamUrl);
+}
+
+function withExplicitVmRuntime(path: string): string {
+  if (typeof window === "undefined" || !explicitVmPrefix()) return path;
+  const runtime = new URLSearchParams(window.location.search).get("runtime");
+  if (!runtime || runtime.length > 32 || !SAFE_RUNTIME_SLOT.test(runtime)) return path;
+  const url = new URL(path, window.location.origin);
+  url.searchParams.set("runtime", runtime);
+  return `${url.pathname}${url.search}${url.hash}`;
 }
 
 async function launchNativeSession(appId: string): Promise<NativeAppSession> {

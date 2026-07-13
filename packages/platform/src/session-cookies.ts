@@ -122,7 +122,7 @@ export function buildClearShellRuntimeSlotCookie(): string {
     'Path=/',
     'HttpOnly',
     'Secure',
-    'SameSite=Lax',
+    'SameSite=None',
     'Max-Age=0',
   ].join('; ');
 }

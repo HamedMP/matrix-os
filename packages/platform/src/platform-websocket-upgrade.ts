@@ -31,6 +31,7 @@ import {
   hasExplicitVmNativeAppStreamCapability,
   isNativeAppStreamPath,
   readExplicitVmWebSocketRoute,
+  resolveExplicitVmRuntimeSlot,
   resolveAppDomainIdentity,
   type AppDomainIdentity,
 } from './session-routing-identity.js';
@@ -146,7 +147,10 @@ export function registerPlatformWebSocketUpgradeHandler(
       return;
     }
 
-    const requestRuntimeSlot = readRuntimeSlot(webSocketProxyPath);
+    const explicitVmRuntimeSlot = explicitVmRoute
+      ? resolveExplicitVmRuntimeSlot(path, explicitVmRoute.upstreamPath, req.headers.cookie)
+      : undefined;
+    const requestRuntimeSlot = explicitVmRuntimeSlot ?? readRuntimeSlot(webSocketProxyPath);
     const wsToken = getWebSocketUpgradeToken(webSocketProxyPath);
     let identity: AppDomainIdentity | null;
     try {
@@ -205,7 +209,11 @@ export function registerPlatformWebSocketUpgradeHandler(
     let requestedActiveMachine: UserMachineRecord | undefined;
     let runningMachine: UserMachineRecord | undefined;
     if (explicitVmRoute) {
-      const explicitMachine = await getRunningUserMachineByHandle(db, explicitVmRoute.handle);
+      const explicitMachine = await getRunningUserMachineByHandle(
+        db,
+        explicitVmRoute.handle,
+        explicitVmRuntimeSlot,
+      );
       if (!explicitMachine || (identity.userId && explicitMachine.clerkUserId !== identity.userId)) {
         socket.destroy();
         return;

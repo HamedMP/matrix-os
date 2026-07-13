@@ -124,9 +124,17 @@ function sessionView(record: NativeAppSessionRecord): NativeAppSession {
   };
 }
 
-async function defaultCommandExists(command: string): Promise<boolean> {
+export function probeNativeCommand(
+  command: string,
+  spawnProcess: typeof nodeSpawn = nodeSpawn,
+): Promise<boolean> {
   return new Promise((resolve) => {
-    const child = nodeSpawn(command, ["--version"], {
+    const child = spawnProcess("/bin/sh", [
+      "-c",
+      'command -v -- "$1" >/dev/null 2>&1',
+      "matrix-native-command-probe",
+      command,
+    ], {
       stdio: "ignore",
       detached: false,
     });
@@ -151,6 +159,10 @@ async function defaultCommandExists(command: string): Promise<boolean> {
     child.once("error", () => finish(false));
     child.once("exit", (code) => finish(code === 0));
   });
+}
+
+async function defaultCommandExists(command: string): Promise<boolean> {
+  return probeNativeCommand(command);
 }
 
 async function defaultReadinessProbe(port: number): Promise<boolean> {
@@ -433,6 +445,7 @@ export class NativeAppSessionService {
       record.status = "failed";
       this.signalProcessGroup(record, "SIGKILL");
       this.releaseRecord(record);
+      this.sessions.delete(record.id);
     });
     child.on("exit", (code, signal) => {
       const stderr = stderrTail.trim();
