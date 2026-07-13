@@ -1410,6 +1410,7 @@ composer turns, and lifecycle actions.
 - [x] B28-011d Normalize verified Codex app-server command, file, permission, and structured-input requests into safe Matrix events while keeping native request, thread, turn, item, command, path, host, and permission payloads server-private.
 - [ ] B28-012 Implement and real-process test first-class adapters for Claude Code, Codex, Pi, and OpenCode plus a validated custom ACP-compatible adapter family; keep credentials and native resume identities server-side.
 - [x] B28-012a Wire the Codex workspace runner to the normalized provider-event ingestion contract and prove assistant/tool/file events through deterministic replay, event-sink publication, and a real child-process test. Disposable-runtime smoke remains in B34-001.
+- [x] B28-012b Route coding-thread Codex launches through the bounded app-server control runner, respond fail-closed to malformed provider requests, and retain the exec JSONL runner as a directly tested compatibility path.
 - [ ] B28-013 Implement capability-gated compatibility adapters for Kiro, GitHub Copilot CLI, Qwen Code, Kimi CLI, Kilo Code, and Auggie without generic shell-command escape hatches.
 - [ ] B28-014 Prove each provider/runtime combination advertises only verified resume, discovery/import, fork, rollback, steering, approval, image, model/mode, and handoff capabilities; reject Gemini CLI as unsupported for this release.
 
