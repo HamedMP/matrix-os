@@ -22,6 +22,8 @@ export interface TerminalSurfaceHandle {
   blur: () => void;
   scrollLines: (lines: number) => void;
   scrollToBottom: () => void;
+  /** Ask the emulator to report the cursor position (see onCursor). */
+  reportCursor: () => void;
 }
 
 interface TerminalSurfaceProps {
@@ -30,6 +32,8 @@ interface TerminalSurfaceProps {
   onInput: (data: string) => void;
   /** Reports the fitted grid size whenever the surface lays out or resizes. */
   onResize: (cols: number, rows: number) => void;
+  /** Cursor bottom edge in surface-local pixels; throttled by the emulator. */
+  onCursor?: (bottomPx: number) => void;
 }
 
 const T = colors.terminal;
@@ -94,7 +98,9 @@ function buildHtml(fontScale: number): string {
     overflow-y: scroll !important;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
-    touch-action: pan-y;
+    /* The touch→wheel bridge below owns pan gestures so alternate-screen TUIs
+       (zellij scrollback, coding agents) receive scroll too. */
+    touch-action: none;
   }
   .xterm-viewport::-webkit-scrollbar { width: 0; height: 0; }
 </style>
@@ -141,7 +147,8 @@ function buildHtml(fontScale: number): string {
         },
         scrollToBottom: function () {
           try { term.scrollToBottom(); } catch (e) {}
-        }
+        },
+        reportCursor: function () { reportCursor(); }
       };
 
       function doFit() {
@@ -150,6 +157,49 @@ function buildHtml(fontScale: number): string {
       doFit();
       window.addEventListener("resize", doFit);
       term.onData(function (data) { post({ type: "input", data: data }); });
+
+      // Cursor bottom edge in page pixels so the RN side can lift the view
+      // only as much as needed to keep typing visible above the keyboard.
+      function reportCursor() {
+        try {
+          var screen = term.element && term.element.querySelector(".xterm-screen");
+          if (!screen || !term.rows) return;
+          var rect = screen.getBoundingClientRect();
+          var cell = rect.height / term.rows;
+          var bottom = rect.top + (term.buffer.active.cursorY + 1) * cell;
+          post({ type: "cursor", bottom: Math.round(bottom) });
+        } catch (e) {}
+      }
+      var cursorTimer = null;
+      term.onCursorMove(function () {
+        if (cursorTimer) return;
+        cursorTimer = setTimeout(function () { cursorTimer = null; reportCursor(); }, 160);
+      });
+
+      // Touch → wheel bridge: xterm scrolls its own viewport in the normal
+      // buffer and forwards wheel as mouse-scroll reports in the alternate
+      // buffer (zellij scrollback, coding-agent TUIs), so synthesizing wheel
+      // events gives touch scrolling in both modes.
+      var touchY = null;
+      var termEl = document.getElementById("term");
+      termEl.addEventListener("touchstart", function (e) {
+        touchY = e.touches.length === 1 ? e.touches[0].clientY : null;
+      }, { passive: true });
+      termEl.addEventListener("touchmove", function (e) {
+        if (touchY === null || e.touches.length !== 1) return;
+        var y = e.touches[0].clientY;
+        var delta = touchY - y;
+        if (Math.abs(delta) < 1) return;
+        touchY = y;
+        var target = term.element && (term.element.querySelector(".xterm-screen") || term.element);
+        if (!target) return;
+        try {
+          target.dispatchEvent(new WheelEvent("wheel", { deltaY: delta, deltaMode: 0, bubbles: true, cancelable: true }));
+        } catch (err) {}
+        e.preventDefault();
+      }, { passive: false });
+      termEl.addEventListener("touchend", function () { touchY = null; }, { passive: true });
+      termEl.addEventListener("touchcancel", function () { touchY = null; }, { passive: true });
 
       post({ type: "ready", cols: term.cols, rows: term.rows });
     }
@@ -161,7 +211,7 @@ function buildHtml(fontScale: number): string {
 }
 
 export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(
-  function TerminalSurface({ fontScale, onInput, onResize }, ref) {
+  function TerminalSurface({ fontScale, onInput, onResize, onCursor }, ref) {
     const webRef = useRef<WebView | null>(null);
     const readyRef = useRef(false);
     const pendingRef = useRef<string[]>([]);
@@ -200,13 +250,14 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
         blur: () => inject("window.__matrixTerminal && window.__matrixTerminal.blur()"),
         scrollLines,
         scrollToBottom: () => inject("window.__matrixTerminal && window.__matrixTerminal.scrollToBottom()"),
+        reportCursor: () => inject("window.__matrixTerminal && window.__matrixTerminal.reportCursor()"),
       }),
       [flush, inject, scrollLines],
     );
 
     const handleMessage = useCallback(
       (event: WebViewMessageEvent) => {
-        let msg: { type?: string; data?: string; cols?: number; rows?: number };
+        let msg: { type?: string; data?: string; cols?: number; rows?: number; bottom?: number };
         try {
           msg = JSON.parse(event.nativeEvent.data) as typeof msg;
         } catch {
@@ -226,9 +277,13 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
         }
         if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
           onResize(msg.cols, msg.rows);
+          return;
+        }
+        if (msg.type === "cursor" && typeof msg.bottom === "number" && Number.isFinite(msg.bottom)) {
+          onCursor?.(msg.bottom);
         }
       },
-      [flush, onInput, onResize],
+      [flush, onInput, onResize, onCursor],
     );
 
     return (

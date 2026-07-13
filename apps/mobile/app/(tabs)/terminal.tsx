@@ -34,6 +34,7 @@ import {
   type TerminalServerFrame,
 } from "@/lib/terminal-client";
 import {
+  computeCursorKeyboardLift,
   formatTerminalCwd,
   initialTerminalState,
   stripTerminalControlSequences,
@@ -73,6 +74,13 @@ export default function TerminalScreen() {
   // in the right scrollback cache bucket (state.activeSessionId lags in closures).
   const attachedSessionIdRef = useRef<string | null>(null);
   const keyboardLift = useRef(new Animated.Value(0)).current;
+  // Cursor-aware keyboard lift: the emulator reports the cursor's bottom edge
+  // (surface-local px); combined with the surface's window offset we lift only
+  // enough to keep typing visible — a fresh prompt at the top needs no lift.
+  const cursorBottomRef = useRef<number | null>(null);
+  const surfaceWindowTopRef = useRef(0);
+  const surfaceWrapRef = useRef<View | null>(null);
+  const keyboardFrameRef = useRef<{ keyboardTopY: number; maxLift: number } | null>(null);
 
   // Detected-URL banner state. Refs hold the rolling scan window + recent list;
   // only the surfaced URL drives a render.
@@ -326,25 +334,55 @@ export default function TerminalScreen() {
     }).start();
   }, [keyboardLift]);
 
+  const applyCursorLift = useCallback((event: KeyboardEvent | null) => {
+    const frame = keyboardFrameRef.current;
+    if (!frame) return;
+    const cursorBottom = cursorBottomRef.current;
+    const lift = computeCursorKeyboardLift({
+      cursorBottomY: cursorBottom === null ? null : surfaceWindowTopRef.current + cursorBottom,
+      keyboardTopY: frame.keyboardTopY,
+      maxLift: frame.maxLift,
+    });
+    animateKeyboardLift(event, lift);
+  }, [animateKeyboardLift]);
+
+  const handleCursor = useCallback((bottomPx: number) => {
+    cursorBottomRef.current = bottomPx;
+    // Re-fit the lift while typing so a prompt that grows past the keyboard
+    // edge (or a TUI that repositions its input) stays visible.
+    if (keyboardFrameRef.current) applyCursorLift(null);
+  }, [applyCursorLift]);
+
   useEffect(() => {
-    const liftForEvent = (event: KeyboardEvent) => {
+    const frameForEvent = (event: KeyboardEvent) => {
       const keyboardTop = event.endCoordinates.screenY;
       const keyboardHeight = Math.max(0, windowHeight - keyboardTop);
-      return Math.max(0, keyboardHeight - insets.bottom);
+      return { keyboardTopY: keyboardTop, maxLift: Math.max(0, keyboardHeight - insets.bottom) };
     };
     const show = Keyboard.addListener(
       process.env.EXPO_OS === "ios" ? "keyboardWillChangeFrame" : "keyboardDidShow",
-      (event) => animateKeyboardLift(event, liftForEvent(event)),
+      (event) => {
+        keyboardFrameRef.current = frameForEvent(event);
+        // Measure while unlifted; the keyboard event fires before the animation.
+        surfaceWrapRef.current?.measureInWindow((x, y) => {
+          surfaceWindowTopRef.current = y;
+        });
+        surfaceRef.current?.reportCursor();
+        applyCursorLift(event);
+      },
     );
     const hide = Keyboard.addListener(
       process.env.EXPO_OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
-      (event) => animateKeyboardLift(event, 0),
+      (event) => {
+        keyboardFrameRef.current = null;
+        animateKeyboardLift(event, 0);
+      },
     );
     return () => {
       show.remove();
       hide.remove();
     };
-  }, [animateKeyboardLift, insets.bottom, windowHeight]);
+  }, [animateKeyboardLift, applyCursorLift, insets.bottom, windowHeight]);
 
 
   const destroySession = useCallback(async () => {
@@ -460,12 +498,13 @@ export default function TerminalScreen() {
       />
 
       <Animated.View style={[styles.terminalStack, { transform: [{ translateY: Animated.multiply(keyboardLift, -1) }] }]}>
-        <View style={styles.terminalSurface}>
+        <View ref={surfaceWrapRef} style={styles.terminalSurface}>
           <TerminalSurface
             ref={surfaceRef}
             fontScale={state.fontScale}
             onInput={sendData}
             onResize={handleResize}
+            onCursor={handleCursor}
           />
           {state.status === "idle" ? (
             <View style={styles.emptyOverlay} pointerEvents="none">

@@ -198,8 +198,12 @@ describe("TerminalScreen", () => {
       );
     });
     expect(responderOverlays).toHaveLength(0);
-    expect((latestWebViewSource as { html?: string } | null)?.html).toContain("touch-action: pan-y");
-    expect((latestWebViewSource as { html?: string } | null)?.html).not.toContain("touch-action: none");
+    // The emulator owns pan gestures via the in-document touch→wheel bridge so
+    // alternate-screen TUIs receive scroll too; no RN responder overlay exists.
+    const html = (latestWebViewSource as { html?: string } | null)?.html ?? "";
+    expect(html).toContain("touch-action: none");
+    expect(html).toContain("touchmove");
+    expect(html).toContain("WheelEvent");
   });
 
   it("offers a real continue action for the persisted terminal session", async () => {
