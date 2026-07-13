@@ -1198,7 +1198,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const runningMachines = await listRunningUserMachines(deps.db, 500);
       const machines = target?.handle
         ? runningMachines.filter((machine) => machine.handle === target.handle)
-        : runningMachines.filter((machine) => machine.runtimeSlot !== 'preview');
+        : runningMachines;
       const results: DeployResult['results'] = [];
       let triggered = 0;
       let failed = 0;
