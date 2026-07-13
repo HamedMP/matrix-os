@@ -281,6 +281,16 @@ describe("IPC contract", () => {
         Array.from({ length: 9 }, (_, index) => [`question_${index}`, ["answer"]]),
       ),
     }).success).toBe(false);
+    expect(requestSchema.safeParse({
+      ...request,
+      answer: "a".repeat(32_000),
+      structuredAnswers: Object.fromEntries(
+        Array.from({ length: 8 }, (_, index) => [
+          `question_${index}`,
+          Array.from({ length: 4 }, () => "b".repeat(400)),
+        ]),
+      ),
+    }).success).toBe(false);
     expect(requestSchema.safeParse({ ...request, providerToken: "secret" }).success).toBe(false);
     expect(requestSchema.safeParse({ ...request, inputRequestId: "../secret" }).success).toBe(false);
     expect(responseSchema.safeParse({
