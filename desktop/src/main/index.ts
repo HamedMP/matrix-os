@@ -277,12 +277,12 @@ if (!gotLock) {
             approvalId,
             request: { decision, clientRequestId, correlationId },
           }),
-        submitInputAnswer: ({ threadId, inputRequestId, answer, clientRequestId, correlationId }) =>
+        submitInputAnswer: ({ threadId, inputRequestId, answer, structuredAnswers, clientRequestId, correlationId }) =>
           submitCodingAgentInputAnswer(auth, {
             threadId,
             inputRequestId,
-            request: { answer, clientRequestId, correlationId },
-        }),
+            request: { answer, ...(structuredAnswers ? { structuredAnswers } : {}), clientRequestId, correlationId },
+          }),
         createAgentThread: (request) => createCodingAgentThread(auth, request),
         createAgentTurn: (request) => createCodingAgentTurn(auth, request),
       });

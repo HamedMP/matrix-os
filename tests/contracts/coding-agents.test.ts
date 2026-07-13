@@ -410,6 +410,19 @@ describe("coding agent contracts", () => {
     });
     expect(structuredAnswer.structuredAnswers?.implementation).toEqual(["Minimal"]);
 
+    const maximumStructuredAnswer = UserInputAnswerRequestSchema.parse({
+      answer: "a".repeat(8000),
+      structuredAnswers: Object.fromEntries(
+        Array.from({ length: 8 }, (_, questionIndex) => [
+          `question_${questionIndex}`,
+          Array.from({ length: 4 }, () => "a".repeat(400)),
+        ]),
+      ),
+      clientRequestId: "req_answer_maximum",
+      correlationId: "corr_input_structured",
+    });
+    expect(Buffer.byteLength(JSON.stringify(maximumStructuredAnswer), "utf8")).toBeLessThanOrEqual(40 * 1024);
+
     expect(() => UserInputRequestSchema.parse({
       ...structuredRequest,
       questions: [structuredRequest.questions![0], structuredRequest.questions![0]],
@@ -420,6 +433,12 @@ describe("coding agent contracts", () => {
         Array.from({ length: 9 }, (_, index) => [`question_${index}`, ["answer"]]),
       ),
       clientRequestId: "req_answer_too_many",
+      correlationId: "corr_input_structured",
+    })).toThrow();
+    expect(() => UserInputAnswerRequestSchema.parse({
+      answer: "Submitted structured response.",
+      structuredAnswers: { implementation: ["a".repeat(401)] },
+      clientRequestId: "req_answer_too_large",
       correlationId: "corr_input_structured",
     })).toThrow();
 
