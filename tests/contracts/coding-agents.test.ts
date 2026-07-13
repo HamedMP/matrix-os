@@ -398,6 +398,16 @@ describe("coding agent contracts", () => {
       ],
     });
     expect(structuredRequest.questions).toHaveLength(2);
+    expect(() => UserInputRequestSchema.parse({
+      ...structuredRequest,
+      questions: [{
+        ...structuredRequest.questions[0],
+        options: [
+          { label: "Minimal", description: "Change only the required code." },
+          { label: "Minimal", description: "Use a different native choice." },
+        ],
+      }],
+    })).toThrow();
 
     const structuredAnswer = UserInputAnswerRequestSchema.parse({
       answer: "Submitted structured response.",
