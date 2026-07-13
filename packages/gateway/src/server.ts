@@ -2099,7 +2099,10 @@ export async function createGateway(config: GatewayConfig) {
                   finalizeWithSummary(activeSessionId);
                   conversationRuns.complete(activeSessionId);
                 }
-              }, undefined, abortController)
+              }, undefined, abortController, {
+                model: parsed.model,
+                effort: parsed.effort,
+              })
               .catch((err: Error) => {
                 console.error("[gateway] Conversation dispatch failed:", err);
                 captureGatewayProductEvent("agent_task_dispatch_failed", {
