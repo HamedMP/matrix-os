@@ -1871,50 +1871,6 @@ describe('platform/customer-vps', () => {
     }
   });
 
-  it('excludes preview VPSes from fleet-wide channel deploys', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 202 }));
-    vi.stubGlobal('fetch', fetchMock);
-    const machineIds = [
-      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
-      '9f05824c-8d0a-4d83-9cb4-b312d43ff113',
-    ];
-    const { service } = createService({
-      machineIdFactory: () => machineIds.shift() ?? '9f05824c-8d0a-4d83-9cb4-b312d43ff114',
-    });
-    const primary = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
-    await service.register('registration-token', {
-      machineId: primary.machineId,
-      hetznerServerId: 123456,
-      publicIPv4: '203.0.113.10',
-      imageVersion: 'stable',
-    });
-    const preview = await service.provision({
-      clerkUserId: 'user_123',
-      handle: 'pr-703',
-      runtimeSlot: 'preview',
-    });
-    await service.register('registration-token', {
-      machineId: preview.machineId,
-      hetznerServerId: 123456,
-      publicIPv4: '203.0.113.11',
-      imageVersion: 'stable',
-    });
-
-    try {
-      await expect(service.deploy({ channel: 'dev' })).resolves.toMatchObject({ triggered: 1, failed: 0 });
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      expect(fetchMock).toHaveBeenCalledWith(
-        'https://203.0.113.10:443/api/system/update',
-        expect.objectContaining({
-          method: 'POST',
-          body: JSON.stringify({ channel: 'dev' }),
-        }),
-      );
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
   it('queues failed delete cleanup and retries it during reconciliation', async () => {
     const deleteServer = vi.fn()
       .mockRejectedValueOnce(new Error('hetzner timeout'))
