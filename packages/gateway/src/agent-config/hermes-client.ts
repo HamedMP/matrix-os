@@ -9,8 +9,8 @@ type FetchLike = (
 ) => Promise<Response>;
 
 export class HermesUnavailableError extends Error {
-  constructor(cause?: unknown) {
-    super("Hermes upstream is unavailable");
+  constructor(cause?: unknown, diagnostic?: string) {
+    super(diagnostic ?? "Hermes upstream is unavailable");
     this.name = "HermesUnavailableError";
     if (cause !== undefined) this.cause = cause;
   }
@@ -43,7 +43,13 @@ export function validateHermesDashboardUrl(rawUrl: string): void {
   try {
     parsed = new URL(rawUrl);
   } catch (err) {
-    throw new HermesUnavailableError(err);
+    throw new HermesUnavailableError(err, "Hermes dashboard URL is invalid");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new HermesUnavailableError(
+      undefined,
+      `Hermes dashboard URL rejected protocol: ${parsed.protocol}`,
+    );
   }
   const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
   if (hostname === "::1" || hostname === "localhost") return;
@@ -51,7 +57,10 @@ export function validateHermesDashboardUrl(rawUrl: string): void {
     && hostname.startsWith("127.")) {
     return;
   }
-  throw new HermesUnavailableError();
+  throw new HermesUnavailableError(
+    undefined,
+    `Hermes dashboard URL rejected non-loopback host: ${hostname}`,
+  );
 }
 
 function validatePath(path: string): void {
