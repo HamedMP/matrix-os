@@ -357,9 +357,12 @@ export function createCodexEventBridge(options: {
       await queue;
     },
     async shutdown(): Promise<void> {
-      closed = true;
+      if (closed) return;
       clearInterval(timer);
       await queue;
+      queue = queue.then(drainAll, drainAll);
+      await queue;
+      closed = true;
       watchers.clear();
       store = undefined;
       versionCache = undefined;

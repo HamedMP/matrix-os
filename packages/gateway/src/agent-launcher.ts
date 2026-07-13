@@ -281,15 +281,16 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
         const args = [
           "--ask-for-approval",
           input.approvalPolicy ?? "never",
+          ...codexSandboxArgs(input.sandbox),
           "exec",
           "--skip-git-repo-check",
-          ...codexSandboxArgs(input.sandbox),
           ...codexModeArgs(input.mode),
           ...promptArgs(codexPrompt(input.prompt, input.mode)),
         ];
         if (!input.providerEventPath) return { command, args, cwd: input.cwd, env };
         const providerEventPath = ProviderEventPathSchema.parse(input.providerEventPath);
-        const structuredArgs = [...args.slice(0, 4), "--json", ...args.slice(4)];
+        const execIndex = args.indexOf("exec");
+        const structuredArgs = [...args.slice(0, execIndex + 1), "--json", ...args.slice(execIndex + 1)];
         return {
           command: process.execPath,
           args: [CODEX_RUNNER_PATH, providerEventPath, command, ...structuredArgs],

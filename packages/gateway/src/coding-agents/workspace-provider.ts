@@ -137,11 +137,10 @@ function workspaceTurnInput(
   const body = references.length > 0
     ? `${message}\n\nContext references:\n${references.join("\n")}`
     : message;
-  const input = `${body}\r`;
-  if (Buffer.byteLength(input, "utf-8") > 64 * 1024) {
+  if (Buffer.byteLength(body, "utf-8") > 64 * 1024) {
     throw new Error("Workspace provider input is too large");
   }
-  return input;
+  return `matrix-turn-v1:${Buffer.from(body, "utf-8").toString("base64")}\r`;
 }
 
 function statusEvent(input: {

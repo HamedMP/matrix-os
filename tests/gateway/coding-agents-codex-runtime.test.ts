@@ -60,6 +60,8 @@ describe("Codex structured event runtime", () => {
       "codex",
     ]);
     expect(launch.args).toContain("--json");
+    expect(launch.args.indexOf("--sandbox")).toBeLessThan(launch.args.indexOf("exec"));
+    expect(launch.args.indexOf("--add-dir")).toBeLessThan(launch.args.indexOf("exec"));
     expect(launch.args).not.toContain("sh");
     expect(launch.args).not.toContain("-c");
   });
@@ -130,6 +132,8 @@ describe("Codex structured event runtime", () => {
 
     try {
       const runnerPath = join(process.cwd(), "packages/gateway/src/coding-agents/codex-runner.mjs");
+      const followUp = "Continue the fix.\n\nContext references:\n- route: src/route.ts";
+      const framedFollowUp = `matrix-turn-v1:${Buffer.from(followUp, "utf-8").toString("base64")}\r`;
       const result = await runProcess(process.execPath, [
         runnerPath,
         eventPath,
@@ -137,11 +141,15 @@ describe("Codex structured event runtime", () => {
         fakeCodexPath,
         "--ask-for-approval",
         "never",
+        "--sandbox",
+        "workspace-write",
+        "--add-dir",
+        "/tmp/matrix-write-root",
         "exec",
         "--json",
         "--",
         "Start.",
-      ], homePath, "Continue.\r");
+      ], homePath, framedFollowUp);
 
       expect(result.code).toBe(0);
       expect(result.stdout).toContain("Continued.");
@@ -150,13 +158,17 @@ describe("Codex structured event runtime", () => {
       expect(calls[1]).toEqual([
         "--ask-for-approval",
         "never",
+        "--sandbox",
+        "workspace-write",
+        "--add-dir",
+        "/tmp/matrix-write-root",
         "exec",
         "resume",
         "--json",
         "--skip-git-repo-check",
         "019f-resume-thread",
         "--",
-        "Continue.",
+        followUp,
       ]);
     } finally {
       await rm(homePath, { recursive: true, force: true });
@@ -285,6 +297,48 @@ describe("Codex structured event runtime", () => {
         }),
       ]));
       expect(JSON.stringify(batches)).not.toContain("provider secret");
+    } finally {
+      await bridge.shutdown();
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("drains provider records written immediately before bridge shutdown", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-runtime-shutdown-"));
+    const batches: CodingAgentProviderEventBatch[] = [];
+    const bridge = createCodexEventBridge({
+      homePath,
+      pollIntervalMs: 60_000,
+      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.144.1\n", stderr: "" })),
+    });
+    bridge.attachThreadStore({
+      async ingestProviderEvents(_principal, _threadId, batch) {
+        batches.push(batch);
+      },
+    });
+    try {
+      const sessionId = "sess_shutdown_final_1";
+      await bridge.watch({ principal, threadId: "thread_shutdown_final_1", sessionId });
+      await writeFile(codexProviderEventPath(homePath, sessionId), [
+        JSON.stringify({ type: "thread.started", thread_id: "019f-shutdown-final" }),
+        JSON.stringify({
+          type: "item.completed",
+          item: { id: "item_shutdown", type: "agent_message", text: "Final response." },
+        }),
+        JSON.stringify({ type: "turn.completed" }),
+        "",
+      ].join("\n"), "utf-8");
+
+      await bridge.shutdown();
+
+      expect(batches).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          events: expect.arrayContaining([
+            expect.objectContaining({ type: "assistant.text.delta", delta: "Final response." }),
+            expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
+          ]),
+        }),
+      ]));
     } finally {
       await bridge.shutdown();
       await rm(homePath, { recursive: true, force: true });

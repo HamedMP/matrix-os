@@ -19,7 +19,9 @@ const MAX_JSON_LINE_BYTES = 64 * 1024;
 const MAX_TRANSCRIPT_BYTES = 16 * 1024 * 1024;
 const MAX_PENDING_PROMPTS = 20;
 const MAX_PROMPT_BYTES = 64 * 1024;
+const MAX_FRAMED_PROMPT_BYTES = Math.ceil(MAX_PROMPT_BYTES * 4 / 3) + 4;
 const TURN_TIMEOUT_MS = 10 * 60 * 1000;
+const TURN_FRAME_PREFIX = "matrix-turn-v1:";
 const PROVIDER_THREAD_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/;
 const RunnerInputSchema = z.object({
   eventPath: z.string().min(1).max(4096).refine(isAbsolute).regex(/^[^\u0000\r\n]+\.jsonl$/),
@@ -39,6 +41,10 @@ const RunnerEventSchema = z.object({
   }).passthrough().optional(),
 }).passthrough();
 const PendingPromptSchema = z.string().trim().min(1).max(MAX_PROMPT_BYTES);
+const FramedPromptSchema = z.string()
+  .min(4)
+  .max(MAX_FRAMED_PROMPT_BYTES)
+  .regex(/^[A-Za-z0-9+/]+={0,2}$/);
 
 const parsedInput = RunnerInputSchema.safeParse({
   eventPath: process.argv[2],
@@ -202,7 +208,20 @@ async function runCodex(args) {
 }
 
 function enqueuePrompt(line) {
-  const parsed = PendingPromptSchema.safeParse(line);
+  let candidate = line;
+  if (line.startsWith(TURN_FRAME_PREFIX)) {
+    const encoded = FramedPromptSchema.safeParse(line.slice(TURN_FRAME_PREFIX.length));
+    if (!encoded.success) return;
+    try {
+      const bytes = Buffer.from(encoded.data, "base64");
+      const canonical = bytes.toString("base64");
+      if (canonical !== encoded.data) return;
+      candidate = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch (_error) {
+      return;
+    }
+  }
+  const parsed = PendingPromptSchema.safeParse(candidate);
   if (!parsed.success || Buffer.byteLength(parsed.data, "utf-8") > MAX_PROMPT_BYTES) return;
   const prompt = parsed.data;
   if (pendingPrompts.length >= MAX_PENDING_PROMPTS) {
