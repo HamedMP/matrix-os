@@ -15,7 +15,7 @@ type ViewerState =
   | { status: "loading" }
   | { status: "text"; content: string }
   | { status: "image"; authHeader?: string }
-  | { status: "unpreviewable"; reason: "too-large" | "binary"; size?: number }
+  | { status: "unpreviewable"; reason: "too-large" | "binary" | "unknown-size"; size?: number }
   | { status: "error" };
 
 function viewerReducer(_state: ViewerState, action: ViewerState): ViewerState {
@@ -126,7 +126,11 @@ export function FileViewer({
         <View style={styles.centered}>
           <Ionicons name="document-outline" size={26} color={theme.colors.mutedForeground} />
           <Text style={styles.centerTitle}>
-            {state.reason === "too-large" ? "File is too large to preview" : "Preview not available"}
+            {state.reason === "too-large"
+              ? "File is too large to preview"
+              : state.reason === "unknown-size"
+                ? "Preview unavailable for this file"
+                : "Preview not available"}
           </Text>
           {sizeLabel || state.size ? (
             <Text style={styles.centerBody}>{sizeLabel || formatFileSize(state.size)}</Text>
