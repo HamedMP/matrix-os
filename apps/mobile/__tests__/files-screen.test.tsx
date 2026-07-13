@@ -219,6 +219,36 @@ describe("FilesScreen", () => {
     expect(screen.getByText("note.md")).toBeTruthy();
   });
 
+  it("drops a search that resolves in the gap before the refined query effect runs", async () => {
+    const slowTodo = deferred<SearchFilesResult>();
+    jest.mocked(searchFiles).mockImplementation(async (_client, _path, q) => {
+      if (q === "todo") return slowTodo.promise;
+      // The refined "note" search stays pending so only the guard can hide "todo".
+      return new Promise<SearchFilesResult>(() => {});
+    });
+
+    render(<FilesScreen />);
+    await screen.findByText("README.md");
+
+    const input = screen.getByPlaceholderText("Search this folder");
+    fireEvent.changeText(input, "todo");
+    await waitFor(() => expect(jest.mocked(searchFiles)).toHaveBeenCalledWith(client, "", "todo"));
+
+    // Refine the query and resolve the stale "todo" search in the same tick,
+    // before the debounced "note" effect runs. If the guard only advances inside
+    // the effect, the stale results land in the gap and overwrite the view.
+    await act(async () => {
+      input.props.onChangeText("note");
+      slowTodo.resolve({
+        ok: true,
+        truncated: false,
+        results: [{ path: "notes/todo.md", name: "todo.md", type: "file", matches: [{ text: "todo.md", type: "name" }] }],
+      });
+    });
+
+    expect(screen.queryByText("todo.md")).toBeNull();
+  });
+
   it("opens a file into the text preview", async () => {
     jest.mocked(readTextFile).mockResolvedValue({ ok: true, content: "# Hello Matrix", truncated: false });
 

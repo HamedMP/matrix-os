@@ -117,13 +117,14 @@ export default function FilesScreen() {
   const searching = query.trim() !== "";
 
   // Generation guards drop resolutions from a folder/query the user has already
-  // navigated away from, so a slow response cannot overwrite the newer view.
+  // navigated away from. They are advanced synchronously in the event handlers
+  // that change path/query (below), so an in-flight response cannot dispatch in
+  // the gap between the state change and the next load/search effect run.
   const listingGeneration = useRef(0);
   const searchGeneration = useRef(0);
 
   const loadListing = useCallback(async () => {
-    const generation = listingGeneration.current + 1;
-    listingGeneration.current = generation;
+    const generation = listingGeneration.current;
     if (!client) {
       dispatch({ type: "failed" });
       return;
@@ -155,12 +156,12 @@ export default function FilesScreen() {
     };
   }, [client, path]);
 
-  // Debounced search within the current directory. Bump the generation on every
-  // run (including when search is cleared) so an in-flight search cannot dispatch
-  // results for a stale folder/query after the user moves on.
+  // Debounced search within the current directory. The generation is advanced at
+  // event time (query change / clear / navigate), so this effect reads the
+  // already-current generation and a stale search cannot dispatch results for a
+  // folder/query the user has moved on from.
   useEffect(() => {
-    const generation = searchGeneration.current + 1;
-    searchGeneration.current = generation;
+    const generation = searchGeneration.current;
     if (!client || !searching) return;
     const timer = setTimeout(() => {
       dispatch({ type: "searchStart" });
@@ -179,36 +180,61 @@ export default function FilesScreen() {
 
   const sortedEntries = useMemo(() => sortEntries(state.entries), [state.entries]);
 
+  // Advance both generation guards synchronously before changing the folder, so
+  // any in-flight listing/search for the previous folder is invalidated at event
+  // time rather than when the reload/search effect eventually runs.
+  const navigateTo = useCallback((next: string) => {
+    listingGeneration.current += 1;
+    searchGeneration.current += 1;
+    dispatch({ type: "navigate", path: next });
+  }, []);
+
+  // Advance the search guard synchronously before changing/clearing the query, so
+  // a slow response for the previous query cannot overwrite the refined view.
+  const changeQuery = useCallback((next: string) => {
+    searchGeneration.current += 1;
+    dispatch({ type: "queryChanged", query: next });
+  }, []);
+
   const handleEntryPress = useCallback(
     (entry: MatrixFileEntry) => {
       const fullPath = joinPath(path, entry.name);
       if (entry.type === "directory") {
-        dispatch({ type: "navigate", path: fullPath });
+        navigateTo(fullPath);
       } else {
         setViewer({ entry, path: fullPath });
       }
     },
-    [path],
+    [path, navigateTo],
   );
 
-  const handleSearchPress = useCallback((result: MatrixFileSearchResult) => {
-    if (result.type === "directory") {
-      dispatch({ type: "navigate", path: result.path });
-    } else {
-      setViewer({
-        entry: { name: result.name, type: "file", gitStatus: null },
-        path: result.path,
-      });
-    }
-  }, []);
+  const handleSearchPress = useCallback(
+    (result: MatrixFileSearchResult) => {
+      if (result.type === "directory") {
+        navigateTo(result.path);
+      } else {
+        setViewer({
+          entry: { name: result.name, type: "file", gitStatus: null },
+          path: result.path,
+        });
+      }
+    },
+    [navigateTo],
+  );
 
-  const handleNavigate = useCallback((next: string) => {
-    dispatch({ type: "navigate", path: next });
-  }, []);
+  const handleNavigate = useCallback(
+    (next: string) => {
+      navigateTo(next);
+    },
+    [navigateTo],
+  );
 
-  const handleProjectOpen = useCallback((project: MatrixProject) => {
-    dispatch({ type: "navigate", path: project.path });
-  }, []);
+  const handleProjectOpen = useCallback(
+    (project: MatrixProject) => {
+      navigateTo(project.path);
+    },
+    [navigateTo],
+  );
 
   const handleRefresh = useCallback(async () => {
     dispatch({ type: "refreshStart" });
@@ -254,7 +280,7 @@ export default function FilesScreen() {
           <Ionicons name="search" size={17} color={theme.colors.mutedForeground} />
           <TextInput
             value={query}
-            onChangeText={(text) => dispatch({ type: "queryChanged", query: text })}
+            onChangeText={changeQuery}
             placeholder="Search this folder"
             placeholderTextColor={theme.colors.mutedForeground}
             autoCapitalize="none"
@@ -265,7 +291,7 @@ export default function FilesScreen() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Clear search"
-              onPress={() => dispatch({ type: "queryChanged", query: "" })}
+              onPress={() => changeQuery("")}
             >
               <Ionicons name="close-circle" size={18} color={theme.colors.mutedForeground} />
             </Pressable>
