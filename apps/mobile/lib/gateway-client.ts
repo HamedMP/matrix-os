@@ -1346,7 +1346,7 @@ export class GatewayClient {
   }
 }
 
-function createTimeoutSignal(timeoutMs: number): AbortSignal | undefined {
+export function createTimeoutSignal(timeoutMs: number): AbortSignal | undefined {
   const timeout = (AbortSignal as { timeout?: (milliseconds: number) => AbortSignal }).timeout;
   if (typeof timeout === "function") {
     return timeout(timeoutMs);

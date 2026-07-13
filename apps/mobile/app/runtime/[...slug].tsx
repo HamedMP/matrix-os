@@ -8,6 +8,7 @@ import AppRuntimeFrame from "@/components/AppRuntimeFrame";
 import { WindowHeader, WindowHeaderAction } from "@/components/WindowHeader";
 import { useGateway } from "../_layout";
 import { getAppSlug, getRuntimeSlug, slugFromParam, type MatrixAppEntry } from "@/lib/apps";
+import { resolveMobileAppSessionLaunchUrl } from "@/lib/storage";
 
 const SESSION_REFRESH_SKEW_MS = 60_000;
 const SESSION_REFRESH_MIN_INTERVAL_MS = 30_000;
@@ -84,10 +85,7 @@ export default function RuntimeScreen() {
       if (nextApp) {
         const session = await client.createAppSessionToken(getRuntimeSlug(nextApp));
         if (session) {
-          const base = client.httpUrl.replace(/\/+$/, "");
-          const resolvedUrl = session.launchUrl.startsWith("http")
-            ? session.launchUrl
-            : `${base}${session.launchUrl.startsWith("/") ? "" : "/"}${session.launchUrl}`;
+          const resolvedUrl = resolveMobileAppSessionLaunchUrl(client.httpUrl, session.launchUrl);
           dispatch({ type: "sessionReady", launchUrl: resolvedUrl, sessionExpiresAt: session.expiresAt });
         }
       }

@@ -203,6 +203,10 @@ export default function SettingsScreen() {
     ]);
   }, [router, signOut]);
 
+  const handleSwitchComputer = useCallback(() => {
+    router.push("/computers" as never);
+  }, [router]);
+
   if (!settings) return null;
 
   return (
@@ -219,6 +223,7 @@ export default function SettingsScreen() {
       gatewayUrl={gateway?.url ?? null}
       onRefresh={handleRefresh}
       updateSetting={updateSetting}
+      onSwitchComputer={handleSwitchComputer}
       onSignOut={handleSignOut}
     />
   );
@@ -237,10 +242,11 @@ interface SettingsContentProps {
   gatewayUrl: string | null;
   onRefresh: () => void;
   updateSetting: (key: keyof AppSettings, value: boolean | string) => void;
+  onSwitchComputer: () => void;
   onSignOut: () => void;
 }
 
-function SettingsContent({
+export function SettingsContent({
   settings,
   channels,
   systemInfo,
@@ -253,6 +259,7 @@ function SettingsContent({
   gatewayUrl,
   onRefresh,
   updateSetting,
+  onSwitchComputer,
   onSignOut,
 }: SettingsContentProps) {
   const { theme: uniTheme } = useUnistyles();
@@ -275,6 +282,11 @@ function SettingsContent({
           label={gatewayName ?? "Not connected"}
           icon="server-outline"
           value={gatewayUrl ?? connectionState}
+        />
+        <SettingsRow
+          label="Switch computer"
+          icon="swap-horizontal-outline"
+          onPress={onSwitchComputer}
         />
       </SettingsSection>
 
