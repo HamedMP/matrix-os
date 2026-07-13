@@ -240,23 +240,45 @@ function filesUrlToRelPath(path: string): string {
 // failed or produced an empty credential, and a non-empty string when ready.
 // The <Image> mounts only in the ready state, so it never renders without the
 // credential and 401s on an authed gateway, mirroring the file preview path.
+const IMAGE_AUTH_RETRY_DELAY_MS = 1_500;
+const IMAGE_AUTH_MAX_ATTEMPTS = 3;
+
 function ImageAttachments({ images, client }: { images: { alt: string; path: string }[]; client: GatewayClient }) {
   const [header, setHeader] = useState<string | null | undefined>(undefined);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    // A transient token failure must not permanently hide the images for this
+    // message: retry a bounded number of times before settling on hidden.
+    const scheduleRetry = () => {
+      if (cancelled || attempt >= IMAGE_AUTH_MAX_ATTEMPTS - 1) {
+        if (!cancelled) setHeader(null);
+        return;
+      }
+      retryTimer = setTimeout(() => {
+        if (!cancelled) setAttempt((current) => current + 1);
+      }, IMAGE_AUTH_RETRY_DELAY_MS);
+    };
     client.getAuthorizationHeader()
       .then((resolved) => {
-        if (!cancelled) setHeader(resolved ? resolved : null);
+        if (cancelled) return;
+        if (resolved) {
+          setHeader(resolved);
+          return;
+        }
+        scheduleRetry();
       })
       .catch((err: unknown) => {
         console.warn("[mobile] chat image auth header unavailable", err instanceof Error ? err.name : "unknown");
-        if (!cancelled) setHeader(null);
+        scheduleRetry();
       });
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [client]);
+  }, [client, attempt]);
 
   // Render nothing until a non-empty Authorization header is available.
   if (!header) return null;
