@@ -4,10 +4,13 @@ import {
   View,
   Text,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Pressable,
   type ListRenderItemInfo,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { bottomTabBarHeight } from "@/lib/tab-bar";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useAuth } from "@clerk/clerk-expo";
@@ -308,6 +311,25 @@ export default function ChatScreen() {
     void setCachedMessages([]);
   }, []);
 
+  // The floating tab bar overlays the screen bottom; keep the input above it
+  // when the keyboard is closed (the bar hides itself on keyboard open).
+  const insets = useSafeAreaInsets();
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  useEffect(() => {
+    const show = Keyboard.addListener(
+      process.env.EXPO_OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
+      () => setKeyboardVisible(true),
+    );
+    const hide = Keyboard.addListener(
+      process.env.EXPO_OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
+      () => setKeyboardVisible(false),
+    );
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
   const conversationsOpenedAtRef = useRef(0);
   const openConversations = useCallback(() => {
     conversationsOpenedAtRef.current = Date.now();
@@ -472,11 +494,13 @@ export default function ChatScreen() {
           </View>
         }
       />
-      <InputBar
-        onSend={handleSend}
-        busy={busy}
-        connected={isConnected}
-      />
+      <View style={{ paddingBottom: keyboardVisible ? 0 : bottomTabBarHeight(insets.bottom) }}>
+        <InputBar
+          onSend={handleSend}
+          busy={busy}
+          connected={isConnected}
+        />
+      </View>
       <ChatConversationsSheet
         visible={conversationsVisible}
         loading={conversationsLoading}
