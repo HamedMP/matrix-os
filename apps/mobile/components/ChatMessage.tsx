@@ -235,28 +235,31 @@ function filesUrlToRelPath(path: string): string {
 
 // Owner `/files/*` images require the gateway Authorization header and the
 // base routing query (`/vm/<handle>?runtime=`), so build the URL through
-// `client.homeFileUrl` and attach the auth header once it resolves. Rendering
-// waits for the header so the <Image> mounts a single time with the credential,
-// mirroring the authenticated file preview path.
+// `client.homeFileUrl` and attach the auth header once it resolves. The header
+// is tracked as three states: `undefined` while pending, `null` when resolution
+// failed or produced an empty credential, and a non-empty string when ready.
+// The <Image> mounts only in the ready state, so it never renders without the
+// credential and 401s on an authed gateway, mirroring the file preview path.
 function ImageAttachments({ images, client }: { images: { alt: string; path: string }[]; client: GatewayClient }) {
-  const [auth, setAuth] = useState<{ ready: boolean; header?: string }>({ ready: false });
+  const [header, setHeader] = useState<string | null | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
     client.getAuthorizationHeader()
-      .then((header) => {
-        if (!cancelled) setAuth({ ready: true, header });
+      .then((resolved) => {
+        if (!cancelled) setHeader(resolved ? resolved : null);
       })
       .catch((err: unknown) => {
         console.warn("[mobile] chat image auth header unavailable", err instanceof Error ? err.name : "unknown");
-        if (!cancelled) setAuth({ ready: true });
+        if (!cancelled) setHeader(null);
       });
     return () => {
       cancelled = true;
     };
   }, [client]);
 
-  if (!auth.ready) return null;
+  // Render nothing until a non-empty Authorization header is available.
+  if (!header) return null;
 
   return (
     <View style={styles.imageContainer}>
@@ -266,7 +269,7 @@ function ImageAttachments({ images, client }: { images: { alt: string; path: str
           accessibilityLabel={img.alt || "Image"}
           source={{
             uri: client.homeFileUrl(filesUrlToRelPath(img.path)),
-            headers: auth.header ? { Authorization: auth.header } : undefined,
+            headers: { Authorization: header },
           }}
           style={styles.inlineImage}
           contentFit="contain"

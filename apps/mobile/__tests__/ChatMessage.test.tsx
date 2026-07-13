@@ -9,7 +9,7 @@ jest.mock("expo-image", () => {
 });
 
 import React from "react";
-import { render, screen } from "@testing-library/react-native";
+import { act, render, screen, waitFor } from "@testing-library/react-native";
 import { ChatMessage } from "../components/ChatMessage";
 import type { Message } from "../app/(tabs)/chat";
 import type { GatewayClient } from "../lib/gateway-client";
@@ -97,6 +97,46 @@ describe("ChatMessage", () => {
     expect(client.homeFileUrl).toHaveBeenCalledWith("system/shot.png");
     expect(image.props.source.uri).toBe("http://gw.test/files/system/shot.png");
     expect(image.props.source.headers).toEqual({ Authorization: "Bearer test-token" });
+  });
+
+  it("does not render inline images when the auth header fails to resolve", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const client = imageClient({
+      getAuthorizationHeader: jest.fn().mockRejectedValue(new Error("no session")),
+    });
+    const content = "Look: ![screenshot](/files/system/shot.png)";
+    render(
+      <ChatMessage
+        message={msg({ role: "assistant", content })}
+        client={client as unknown as GatewayClient}
+      />,
+    );
+
+    await waitFor(() => expect(client.getAuthorizationHeader).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryAllByLabelText("screenshot")).toHaveLength(0);
+    warn.mockRestore();
+  });
+
+  it("does not render inline images when the auth header is empty", async () => {
+    const client = imageClient({
+      getAuthorizationHeader: jest.fn().mockResolvedValue(undefined),
+    });
+    const content = "Look: ![screenshot](/files/system/shot.png)";
+    render(
+      <ChatMessage
+        message={msg({ role: "assistant", content })}
+        client={client as unknown as GatewayClient}
+      />,
+    );
+
+    await waitFor(() => expect(client.getAuthorizationHeader).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryAllByLabelText("screenshot")).toHaveLength(0);
   });
 
   it("does not render inline images without a gateway client", () => {
