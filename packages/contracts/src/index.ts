@@ -652,12 +652,17 @@ const StructuredUserInputAnswersSchema = z.record(
   message: "Structured answers must contain between one and eight questions",
 });
 
+export const USER_INPUT_ANSWER_BODY_LIMIT_BYTES = 40 * 1024;
+
 export const UserInputAnswerRequestSchema = z.object({
   answer: boundedText(8000, 8 * 1024),
   structuredAnswers: StructuredUserInputAnswersSchema.optional(),
   clientRequestId: RequestIdSchema,
   correlationId: CorrelationIdSchema,
-}).strict();
+}).strict().refine(
+  (value) => byteLength(JSON.stringify(value)) <= USER_INPUT_ANSWER_BODY_LIMIT_BYTES,
+  { message: "Input answer exceeds request byte limit" },
+);
 
 export type UserInputAnswerRequest = z.infer<typeof UserInputAnswerRequestSchema>;
 
