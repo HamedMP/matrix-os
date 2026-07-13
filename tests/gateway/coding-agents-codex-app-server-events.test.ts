@@ -119,7 +119,7 @@ describe("Codex app-server request normalization", () => {
     expect(result.pending?.nativeRequestId).toBe("rpc-file-1");
   });
 
-  it("normalizes permission approvals without exposing requested permission payloads", () => {
+  it("keeps permission-profile requests non-actionable until grant semantics are supported", () => {
     const result = parseCodexAppServerRequestLine(JSON.stringify({
       id: "rpc-permissions-1",
       method: "item/permissions/requestApproval",
@@ -134,15 +134,7 @@ describe("Codex app-server request normalization", () => {
       },
     }), context());
 
-    expect(result.events[0]).toMatchObject({
-      type: "approval.requested",
-      approval: {
-        title: "Change permissions",
-        safeDescription: "The coding agent wants additional permissions.",
-        risk: "high",
-        actionKind: "provider",
-      },
-    });
+    expect(result).toEqual({ events: [] });
     expect(JSON.stringify(result.events)).not.toContain("private-project");
     expect(JSON.stringify(result.events)).not.toContain("private.internal");
   });
@@ -232,6 +224,31 @@ describe("Codex app-server request normalization", () => {
     expect(event?.type).toBe("user_input.requested");
     if (event?.type === "user_input.requested") {
       expect(event.request.questions?.[0]?.options?.[0]?.description.length).toBe(300);
+    }
+  });
+
+  it("bounds long question text without dropping the provider request", () => {
+    const result = parseCodexAppServerRequestLine(JSON.stringify({
+      id: "rpc-input-long-question",
+      method: "item/tool/requestUserInput",
+      params: {
+        threadId: "provider-thread",
+        turnId: "provider-turn",
+        itemId: "item_input_long_question",
+        questions: [{
+          id: "native-question-long-text",
+          header: "Approach",
+          question: "a".repeat(601),
+        }],
+      },
+    }), context());
+
+    expect(result.events).toHaveLength(1);
+    expect(result.pending?.requestId).toMatch(/^req_codex_/);
+    const event = result.events[0];
+    expect(event?.type).toBe("user_input.requested");
+    if (event?.type === "user_input.requested") {
+      expect(event.request.questions?.[0]?.question).toBe("a".repeat(600));
     }
   });
 

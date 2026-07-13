@@ -238,7 +238,7 @@ function inputResult(
     const parsed = UserInputQuestionSchema.safeParse({
       questionId,
       header: safeDisplay(question.header, "Question"),
-      question: question.question,
+      question: boundedExternalText(question.question, 600, 2400),
       ...(question.options
         ? {
             options: question.options.map((option) => ({
@@ -302,6 +302,7 @@ export function parseCodexAppServerRequestLine(
   }
   const parsed = AppServerRequestSchema.safeParse(raw);
   if (!parsed.success) return { events: [] };
+  if (parsed.data.method === "item/permissions/requestApproval") return { events: [] };
   return parsed.data.method === "item/tool/requestUserInput"
     ? inputResult(parsed.data, context)
     : approvalResult(parsed.data, context);
