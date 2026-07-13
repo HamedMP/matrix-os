@@ -1,3 +1,5 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
 export const AGENT_WORKSPACE_STATE_STORAGE_KEY = "matrix.agentWorkspaceState.v1";
 
 export interface AgentWorkspaceState {
@@ -5,6 +7,8 @@ export interface AgentWorkspaceState {
   selectedTerminalSessionId: string | null;
   updatedAt: string | null;
 }
+
+type AgentWorkspaceStorage = Pick<typeof AsyncStorage, "getItem" | "setItem">;
 
 const SAFE_THREAD_ID = /^thread_[A-Za-z0-9_-]{1,128}$/;
 const SAFE_TERMINAL_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
@@ -25,11 +29,15 @@ export function reconcileAgentWorkspaceState(
   state: AgentWorkspaceState,
   summary: {
     activeThreads?: { items?: Array<{ id?: unknown }> };
+    attentionThreads?: { items?: Array<{ id?: unknown }> };
     terminalSessions?: { items?: Array<{ id?: unknown }> };
   },
 ): AgentWorkspaceState {
   const threadIds = new Set(
-    (summary.activeThreads?.items ?? [])
+    [
+      ...(summary.activeThreads?.items ?? []),
+      ...(summary.attentionThreads?.items ?? []),
+    ]
       .map((thread) => thread.id)
       .filter((id): id is string => typeof id === "string"),
   );
@@ -46,6 +54,27 @@ export function reconcileAgentWorkspaceState(
         ? state.selectedTerminalSessionId
         : null,
   };
+}
+
+export async function loadAgentWorkspaceState(
+  storage: AgentWorkspaceStorage = AsyncStorage,
+): Promise<AgentWorkspaceState> {
+  try {
+    const raw = await storage.getItem(AGENT_WORKSPACE_STATE_STORAGE_KEY);
+    if (!raw) return createEmptyAgentWorkspaceState();
+    return parseAgentWorkspaceState(JSON.parse(raw));
+  } catch (err) {
+    console.warn("[mobile] failed to load agent workspace state", err);
+    return createEmptyAgentWorkspaceState();
+  }
+}
+
+export async function saveAgentWorkspaceState(
+  state: AgentWorkspaceState,
+  storage: AgentWorkspaceStorage = AsyncStorage,
+): Promise<void> {
+  const safeState = parseAgentWorkspaceState(state);
+  await storage.setItem(AGENT_WORKSPACE_STATE_STORAGE_KEY, JSON.stringify(safeState));
 }
 
 function createEmptyAgentWorkspaceState(): AgentWorkspaceState {

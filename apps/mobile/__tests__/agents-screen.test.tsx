@@ -27,6 +27,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Linking } from "react-native";
 import AgentsScreen from "../app/agents";
 import { useGateway } from "@/app/_layout";
+import { AGENT_WORKSPACE_STATE_STORAGE_KEY } from "../lib/agent-workspace-state";
 import { MOBILE_SHELL_STATE_STORAGE_KEY } from "../lib/mobile-shell-state";
 import type { GatewayClient } from "../lib/gateway-client";
 
@@ -704,6 +705,144 @@ describe("AgentsScreen", () => {
     expect(mockRouterPush).toHaveBeenCalledWith("/agents/thread_mobile");
   });
 
+  it("persists only the bounded selected thread reference before opening thread details", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findAllByText("Repair mobile route");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open thread Repair mobile route"));
+    });
+
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith(
+      AGENT_WORKSPACE_STATE_STORAGE_KEY,
+      expect.stringContaining("\"selectedThreadId\":\"thread_mobile\""),
+    );
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith(
+      AGENT_WORKSPACE_STATE_STORAGE_KEY,
+      expect.not.stringMatching(/transcript|terminalOutput|fileContents|approvalPayload|secret|\/home\/matrix/i),
+    );
+    expect(mockRouterPush).toHaveBeenCalledWith("/agents/thread_mobile");
+  });
+
+  it("keeps user thread selections when background workspace reconcile finishes later", async () => {
+    const reconcileLoad = deferred<string | null>();
+    let agentWorkspaceReads = 0;
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async (key: string) => {
+      if (key !== AGENT_WORKSPACE_STATE_STORAGE_KEY) return null;
+      agentWorkspaceReads += 1;
+      if (agentWorkspaceReads === 1) {
+        return reconcileLoad.promise;
+      }
+      return JSON.stringify({
+        selectedThreadId: null,
+        selectedTerminalSessionId: null,
+        updatedAt: "2026-07-06T00:00:00.000Z",
+      });
+    });
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findAllByText("Repair mobile route");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open thread Repair mobile route"));
+    });
+
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith(
+      AGENT_WORKSPACE_STATE_STORAGE_KEY,
+      expect.stringContaining("\"selectedThreadId\":\"thread_mobile\""),
+    );
+
+    await act(async () => {
+      reconcileLoad.resolve(JSON.stringify({
+        selectedThreadId: "thread_missing",
+        selectedTerminalSessionId: null,
+        updatedAt: "2026-07-06T00:00:00.000Z",
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const agentWorkspaceWrites = jest.mocked(AsyncStorage.setItem).mock.calls
+      .filter(([key]) => key === AGENT_WORKSPACE_STATE_STORAGE_KEY);
+    const lastAgentWorkspaceWrite = agentWorkspaceWrites[agentWorkspaceWrites.length - 1]?.[1];
+    expect(lastAgentWorkspaceWrite).toEqual(
+      expect.stringContaining("\"selectedThreadId\":\"thread_mobile\""),
+    );
+    expect(mockRouterPush).toHaveBeenCalledWith("/agents/thread_mobile");
+  });
+
+  it("reconciles stale persisted agent workspace refs from the runtime summary", async () => {
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async (key: string) => {
+      if (key === AGENT_WORKSPACE_STATE_STORAGE_KEY) {
+        return JSON.stringify({
+          selectedThreadId: "thread_missing",
+          selectedTerminalSessionId: "matrix-missing",
+          updatedAt: "2026-07-06T00:00:00.000Z",
+          transcript: "do not keep",
+        });
+      }
+      return null;
+    });
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("Codex");
+
+    await waitFor(() => {
+      expect(AsyncStorage.setItem).toHaveBeenCalledWith(
+        AGENT_WORKSPACE_STATE_STORAGE_KEY,
+        JSON.stringify({
+          selectedThreadId: null,
+          selectedTerminalSessionId: null,
+          updatedAt: "2026-07-06T00:00:00.000Z",
+        }),
+      );
+    });
+  });
+
   it("renders reachable in-app attention badges for active coding-agent threads", async () => {
     const client = {
       getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
@@ -796,6 +935,10 @@ describe("AgentsScreen", () => {
       fireEvent.press(screen.getByLabelText("Open recent terminal matrix-newer"));
     });
     expect(AsyncStorage.setItem).toHaveBeenCalledWith(
+      AGENT_WORKSPACE_STATE_STORAGE_KEY,
+      expect.stringContaining("\"selectedTerminalSessionId\":\"matrix-newer\""),
+    );
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith(
       MOBILE_SHELL_STATE_STORAGE_KEY,
       expect.stringContaining("\"lastActiveTerminalSessionId\":\"matrix-newer\""),
     );
@@ -879,6 +1022,42 @@ describe("AgentsScreen", () => {
       expect.stringContaining("\"terminalHandoffSessionId\":\"matrix-abc1234\""),
     );
     expect(mockRouterPush).toHaveBeenCalledWith("/terminal");
+  });
+
+  it("does not persist terminal workspace refs when terminal handoff save fails", async () => {
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (key: string) => {
+      if (key === MOBILE_SHELL_STATE_STORAGE_KEY) {
+        throw new Error("storage unavailable");
+      }
+    });
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("Terminals");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open terminal session matrix-abc1234"));
+    });
+
+    expect(AsyncStorage.setItem).not.toHaveBeenCalledWith(
+      AGENT_WORKSPACE_STATE_STORAGE_KEY,
+      expect.stringContaining("\"selectedTerminalSessionId\":\"matrix-abc1234\""),
+    );
+    expect(mockRouterPush).not.toHaveBeenCalledWith("/terminal");
+    expect(await screen.findByText("Terminal session unavailable. Try again.")).toBeTruthy();
   });
 
   it("keeps non-running attachable terminal summary rows disabled", async () => {
