@@ -55,12 +55,11 @@ describe("Codex structured event runtime", () => {
 
     expect(launch.command).toBe(process.execPath);
     expect(launch.args[0]).toMatch(/coding-agents\/codex-app-server-runner\.mjs$/);
-    expect(launch.args.slice(1, 4)).toEqual([
+    expect(launch.args.slice(1, 3)).toEqual([
       "/home/matrix/home/system/coding-agents/provider-events/sess_test.jsonl",
       "codex",
-      "app-server",
     ]);
-    const config = JSON.parse(Buffer.from(launch.args[4]!, "base64").toString("utf8"));
+    const config = JSON.parse(Buffer.from(launch.args[3]!, "base64").toString("utf8"));
     expect(config).toEqual({
       prompt: "Fix the failing route.",
       approvalPolicy: "never",
@@ -69,6 +68,7 @@ describe("Codex structured event runtime", () => {
     });
     expect(launch.args).not.toContain("sh");
     expect(launch.args).not.toContain("-c");
+    expect(launch.args).not.toContain("app-server");
   });
 
   it("runs a real child process, persists raw complete JSONL, and prints only safe terminal output", async () => {

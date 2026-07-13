@@ -317,7 +317,7 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
         ).toString("base64");
         return {
           command: process.execPath,
-          args: [CODEX_APP_SERVER_RUNNER_PATH, providerEventPath, command, "app-server", appServerConfig],
+          args: [CODEX_APP_SERVER_RUNNER_PATH, providerEventPath, command, appServerConfig],
           cwd: input.cwd,
           env,
         };
