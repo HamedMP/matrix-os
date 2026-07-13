@@ -647,13 +647,13 @@ export const UserInputRequestSchema = z.object({
 
 const StructuredUserInputAnswersSchema = z.record(
   referenceId(128),
-  z.array(boundedText(2000, 8 * 1024)).min(1).max(8),
+  z.array(boundedText(400, 700)).min(1).max(4),
 ).refine((answers) => Object.keys(answers).length > 0 && Object.keys(answers).length <= 8, {
   message: "Structured answers must contain between one and eight questions",
 });
 
 export const UserInputAnswerRequestSchema = z.object({
-  answer: boundedText(8000, 32 * 1024),
+  answer: boundedText(8000, 8 * 1024),
   structuredAnswers: StructuredUserInputAnswersSchema.optional(),
   clientRequestId: RequestIdSchema,
   correlationId: CorrelationIdSchema,

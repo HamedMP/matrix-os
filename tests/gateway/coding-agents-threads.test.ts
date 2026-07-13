@@ -700,8 +700,15 @@ describe("coding agent thread lifecycle", () => {
                     { label: "Minimal", description: "Change only the required code." },
                     { label: "Complete", description: "Include the related migration." },
                   ],
-                  allowOther: true,
+                  allowOther: false,
                   secret: false,
+                },
+                {
+                  questionId: "credential",
+                  header: "Credential",
+                  question: "Enter the temporary value.",
+                  allowOther: true,
+                  secret: true,
                 },
               ],
               correlationId: "corr_input",
@@ -713,7 +720,20 @@ describe("coding agent thread lifecycle", () => {
         inputCalls += 1;
         expect(inputRequestId).toBe("req_input_prompt");
         expect(request.answer).toBe("Use the safe implementation path.");
-        expect(request.structuredAnswers).toEqual({ implementation: ["Private custom response"] });
+        expect(request.structuredAnswers).toEqual({
+          implementation: ["Minimal"],
+          credential: [expect.stringMatching(/secret-value$/)],
+        });
+        if (request.clientRequestId === "req_input_echo") {
+          return [AgentThreadEventSchema.parse({
+            type: "assistant.text.delta",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            messageId: "message_secret_echo",
+            delta: request.structuredAnswers?.credential?.[0] ?? "",
+          })];
+        }
         return [
           AgentThreadEventSchema.parse({
             type: "user_input.answered",
@@ -750,11 +770,39 @@ describe("coding agent thread lifecycle", () => {
     );
     const body = {
       answer: "Use the safe implementation path.",
-      structuredAnswers: { implementation: ["Private custom response"] },
+      structuredAnswers: {
+        implementation: ["Minimal"],
+        credential: ["final-secret-value"],
+      },
       clientRequestId: "req_input_1",
       correlationId: "corr_input",
     };
 
+    const unknownQuestion = await app.request(jsonRequest(
+      `/api/coding-agents/threads/${created.thread.id}/inputs/req_input_prompt/answer`,
+      {
+        ...body,
+        structuredAnswers: { ...body.structuredAnswers, unknown: ["Minimal"] },
+        clientRequestId: "req_input_unknown",
+      },
+    ));
+    const invalidOption = await app.request(jsonRequest(
+      `/api/coding-agents/threads/${created.thread.id}/inputs/req_input_prompt/answer`,
+      {
+        ...body,
+        structuredAnswers: { ...body.structuredAnswers, implementation: ["Unsupported"] },
+        clientRequestId: "req_input_option",
+      },
+    ));
+    const secretEcho = await app.request(jsonRequest(
+      `/api/coding-agents/threads/${created.thread.id}/inputs/req_input_prompt/answer`,
+      {
+        ...body,
+        structuredAnswers: { ...body.structuredAnswers, credential: ["temporary-secret-value"] },
+        clientRequestId: "req_input_echo",
+      },
+    ));
+    const afterSecretEcho = await threads.getThread(ownerPrincipal, created.thread.id);
     const first = await app.request(jsonRequest(`/api/coding-agents/threads/${created.thread.id}/inputs/req_input_prompt/answer`, body));
     const duplicate = await app.request(jsonRequest(`/api/coding-agents/threads/${created.thread.id}/inputs/req_input_prompt/answer`, body));
     const malformed = await app.request(jsonRequest(`/api/coding-agents/threads/${created.thread.id}/inputs/../answer`, body));
@@ -764,11 +812,15 @@ describe("coding agent thread lifecycle", () => {
       body: JSON.stringify(body),
     }));
 
+    expect(unknownQuestion.status).toBe(400);
+    expect(invalidOption.status).toBe(400);
+    expect(secretEcho.status).toBe(503);
+    expect(JSON.stringify(afterSecretEcho)).not.toContain("temporary-secret-value");
     expect(first.status).toBe(200);
     expect(duplicate.status).toBe(200);
     expect(malformed.status).toBe(404);
     expect(oversized.status).toBe(413);
-    expect(inputCalls).toBe(1);
+    expect(inputCalls).toBe(2);
     const answered = AgentThreadSnapshotSchema.parse(await first.json());
     const duplicateSnapshot = AgentThreadSnapshotSchema.parse(await duplicate.json());
     expect(answered.thread).toMatchObject({ status: "running", attention: "none" });
