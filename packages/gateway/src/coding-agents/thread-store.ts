@@ -561,6 +561,15 @@ function consumePendingTerminalStop(
   };
 }
 
+function safeProviderRunError() {
+  return SafeClientErrorSchema.parse({
+    code: "provider_run_failed",
+    safeMessage: "Agent run could not continue. Try again.",
+    retryable: true,
+    recoveryActions: ["retry"],
+  });
+}
+
 function safeProviderRunFailureEvents(threadId: string, now: () => Date, eventId: () => string): AgentThreadEvent[] {
   return [
     AgentThreadEventSchema.parse({
@@ -568,12 +577,7 @@ function safeProviderRunFailureEvents(threadId: string, now: () => Date, eventId
       eventId: eventId(),
       threadId,
       occurredAt: now().toISOString(),
-      error: SafeClientErrorSchema.parse({
-        code: "provider_run_failed",
-        safeMessage: "Agent run could not continue. Try again.",
-        retryable: true,
-        recoveryActions: ["retry"],
-      }),
+      error: safeProviderRunError(),
     }),
     AgentThreadEventSchema.parse({
       type: "thread.completed",
@@ -730,11 +734,14 @@ function parseInputProviderEvents(events: AgentThreadEvent[], threadId: string):
   if (parsed.some((event) =>
     event.type !== "user_input.answered" &&
     event.type !== "thread.status" &&
+    event.type !== "thread.error" &&
     event.type !== "thread.completed"
   )) {
     throw new Error("Provider input response contained content events");
   }
-  return parsed;
+  return parsed.map((event) => event.type === "thread.error"
+    ? AgentThreadEventSchema.parse({ ...event, error: safeProviderRunError() })
+    : event);
 }
 
 function parseProviderEvents(events: AgentThreadEvent[], threadId: string): AgentThreadEvent[] {

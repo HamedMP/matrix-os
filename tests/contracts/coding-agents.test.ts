@@ -423,6 +423,14 @@ describe("coding agent contracts", () => {
     });
     expect(Buffer.byteLength(JSON.stringify(maximumStructuredAnswer), "utf8")).toBeLessThanOrEqual(40 * 1024);
 
+    const maximumLegacyAnswer = UserInputAnswerRequestSchema.parse({
+      answer: "a".repeat(32_000),
+      clientRequestId: "req_answer_legacy_maximum",
+      correlationId: "corr_input_structured",
+    });
+    expect(maximumLegacyAnswer.answer).toHaveLength(32_000);
+    expect(Buffer.byteLength(JSON.stringify(maximumLegacyAnswer), "utf8")).toBeLessThanOrEqual(40 * 1024);
+
     const escapedStructuredAnswer = {
       answer: "\\".repeat(8000),
       structuredAnswers: Object.fromEntries(
