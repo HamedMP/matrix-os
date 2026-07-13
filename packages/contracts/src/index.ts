@@ -606,11 +606,28 @@ export const UserInputOptionSchema = z.object({
   description: boundedDisplayText(300, 1200),
 }).strict();
 
+const UserInputOptionListSchema = z.array(UserInputOptionSchema)
+  .min(1)
+  .max(10)
+  .superRefine((options, context) => {
+    const seenLabels = new Set<string>();
+    options.forEach((option, index) => {
+      if (seenLabels.has(option.label)) {
+        context.addIssue({
+          code: "custom",
+          message: "Option labels must be unique",
+          path: [index, "label"],
+        });
+      }
+      seenLabels.add(option.label);
+    });
+  });
+
 export const UserInputQuestionSchema = z.object({
   questionId: referenceId(128),
   header: SafeDisplayStringSchema,
   question: boundedDisplayText(600, 2400),
-  options: z.array(UserInputOptionSchema).min(1).max(10).optional(),
+  options: UserInputOptionListSchema.optional(),
   allowOther: z.boolean().default(false),
   secret: z.boolean().default(false),
 }).strict();
