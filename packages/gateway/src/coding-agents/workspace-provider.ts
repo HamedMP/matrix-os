@@ -1,5 +1,6 @@
 import {
   AgentThreadEventSchema,
+  CODEX_VERIFIED_NPM_PACKAGE,
   ProviderIdSchema,
   SafeSetupActionSchema,
   TerminalSessionIdSchema,
@@ -23,7 +24,7 @@ const SETUP_AGENTS: Record<SetupAgent, { installPackage: string; connectCommand:
     connectCommand: "claude",
   },
   codex: {
-    installPackage: "@openai/codex@latest",
+    installPackage: CODEX_VERIFIED_NPM_PACKAGE,
     connectCommand: "codex login",
   },
 };

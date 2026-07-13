@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { AgentThreadEventSchema } from "../../packages/contracts/src/index.js";
+import {
+  AgentThreadEventSchema,
+  CODEX_VERIFIED_VERSION,
+} from "../../packages/contracts/src/index.js";
 import { parseCodexExecJsonLine } from "../../packages/gateway/src/coding-agents/codex-events.js";
 import {
   CODEX_EXEC_CONTRACT,
@@ -16,13 +19,13 @@ const context = {
 };
 
 describe("Codex structured event normalization", () => {
-  it("gates runtime parsing against the exact verified CLI patch range", () => {
+  it("gates runtime parsing against exact verified CLI versions", () => {
     expect(CODEX_EXEC_CONTRACT).toMatchObject({
       minimumVersion: "0.144.0",
       latestVerifiedVersion: "0.144.6",
     });
     expect(codexExecContractStatus("codex-cli 0.144.1")).toEqual({
-      status: "verified",
+      status: "unverified_older",
       version: "0.144.1",
     });
     expect(codexExecContractStatus("0.144.3")).toEqual({

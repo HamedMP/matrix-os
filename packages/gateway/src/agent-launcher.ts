@@ -3,6 +3,8 @@ import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
+import { CODEX_VERIFIED_VERSION } from "@matrix-os/contracts";
+import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
 
 export const SupportedAgentSchema = z.enum(["claude", "codex", "opencode", "pi"]);
 export type SupportedAgent = z.infer<typeof SupportedAgentSchema>;
@@ -36,6 +38,7 @@ export interface AgentLaunchInput {
   approvalPolicy?: "untrusted" | "on-request" | "on-failure" | "never";
   runtimeHome?: string;
   providerEventPath?: string;
+  codexExecutable?: string;
 }
 
 export interface AgentLaunchSpec {
@@ -293,7 +296,9 @@ function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppS
 
 export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
   const parsed = SupportedAgentSchema.parse(input.agent);
-  const command = AGENTS[parsed].command;
+  const command = parsed === "codex" && input.codexExecutable
+    ? CodexExecutableSchema.parse(input.codexExecutable)
+    : AGENTS[parsed].command;
   const env = agentRuntimeEnv(input.runtimeHome);
   switch (parsed) {
     case "claude":
@@ -317,7 +322,13 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
         ).toString("base64");
         return {
           command: process.execPath,
-          args: [CODEX_APP_SERVER_RUNNER_PATH, providerEventPath, command, appServerConfig],
+          args: [
+            CODEX_APP_SERVER_RUNNER_PATH,
+            providerEventPath,
+            CODEX_VERIFIED_VERSION,
+            command,
+            appServerConfig,
+          ],
           cwd: input.cwd,
           env,
         };
@@ -333,6 +344,7 @@ export function createAgentLauncher(options: {
   runCommand?: CommandRunner;
   cwd?: string;
   runtimeHome?: string;
+  codexExecutable?: string;
 } = {}) {
   const runCommand = options.runCommand ?? defaultRunCommand;
   const cwd = options.cwd ?? process.cwd();
@@ -343,9 +355,12 @@ export function createAgentLauncher(options: {
       const agents: AgentStatus[] = [];
       for (const id of SupportedAgentSchema.options) {
         const config = AGENTS[id];
+        const command = id === "codex" && options.codexExecutable
+          ? CodexExecutableSchema.parse(options.codexExecutable)
+          : config.command;
         let version: string | undefined;
         try {
-          const result = await runCommand(config.command, ["--version"], {
+          const result = await runCommand(command, ["--version"], {
             cwd,
             timeout: DETECT_TIMEOUT_MS,
             env: detectEnv,
@@ -367,7 +382,7 @@ export function createAgentLauncher(options: {
         }
 
         try {
-          await runCommand(config.command, authStatusArgs(id), {
+          await runCommand(command, authStatusArgs(id), {
             cwd,
             timeout: DETECT_TIMEOUT_MS,
             env: detectEnv,
@@ -400,7 +415,11 @@ export function createAgentLauncher(options: {
     },
 
     buildLaunch(input: AgentLaunchInput): AgentLaunchSpec {
-      return buildAgentLaunch({ ...input, runtimeHome: input.runtimeHome ?? options.runtimeHome });
+      return buildAgentLaunch({
+        ...input,
+        runtimeHome: input.runtimeHome ?? options.runtimeHome,
+        codexExecutable: input.codexExecutable ?? options.codexExecutable,
+      });
     },
   };
 }

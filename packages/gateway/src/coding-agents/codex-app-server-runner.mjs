@@ -6,6 +6,7 @@ import { createServer } from "node:net";
 import { dirname, isAbsolute } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
+import { assertCodexProviderVersion } from "./codex-provider-version-check.mjs";
 
 process.on("uncaughtException", () => {
   process.stderr.write("Codex app-server runner stopped unexpectedly.\n");
@@ -146,10 +147,17 @@ function fail(message) {
 }
 
 const eventPath = process.argv[2];
-const command = process.argv[3];
+const expectedVersion = process.argv[3];
+const command = process.argv[4];
 const encodedConfig = process.argv.at(-1);
-const commandArgs = process.argv.slice(4, -1);
-if (!eventPath || !isAbsolute(eventPath) || !/^[^\u0000\r\n]+\.jsonl$/.test(eventPath) || !command) {
+const commandArgs = process.argv.slice(5, -1);
+if (
+  !eventPath ||
+  !isAbsolute(eventPath) ||
+  !/^[^\u0000\r\n]+\.jsonl$/.test(eventPath) ||
+  !/^\d+\.\d+\.\d+$/.test(expectedVersion ?? "") ||
+  !command
+) {
   fail("Codex app-server runner configuration is invalid.");
 }
 let config;
@@ -159,6 +167,12 @@ try {
   config = RunnerConfigSchema.parse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
 } catch (_error) {
   fail("Codex app-server runner configuration is invalid.");
+}
+
+try {
+  await assertCodexProviderVersion({ command, expectedVersion, cwd: process.cwd() });
+} catch (_error) {
+  fail("Codex provider version is not verified.");
 }
 
 const controlPath = eventPath.replace(/\.jsonl$/, ".sock");

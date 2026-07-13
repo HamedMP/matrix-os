@@ -94,9 +94,11 @@ Each agent maps to an npm package:
 | Agent | Package |
 |---|---|
 | Claude Code | `@anthropic-ai/claude-code@latest` |
-| Codex | `@openai/codex@latest` |
+| Codex | `@openai/codex@0.144.3` (Matrix-verified) |
 | OpenCode | `opencode-ai@latest` |
 | Pi | `@earendil-works/pi-coding-agent@latest` |
+
+Matrix pins Codex to the newest version whose structured event and approval protocols have passed compatibility checks. A scheduled check detects new Codex releases; Matrix advances the pinned version only after both protocols pass together.
 
 The default node prefix is `/opt/matrix/runtime/node`. Set `MATRIX_NODE_PREFIX` in your environment to use a different location.
 

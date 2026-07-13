@@ -14,6 +14,8 @@ import {
 import type { RequestPrincipal } from "../request-principal.js";
 import { parseCodexExecJsonLine } from "./codex-events.js";
 import { codexExecContractStatus } from "./codex-version.js";
+import { codexAppServerContractStatus } from "./codex-app-server-version.js";
+import { CodexExecutableSchema, codexExecutableFromEnv } from "./codex-executable.js";
 import type { CodingAgentProviderEventBatch } from "./provider-adapter.js";
 
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
@@ -114,6 +116,7 @@ function completionEvents(input: {
 export function createCodexEventBridge(options: {
   homePath: string;
   runVersionCommand?: VersionCommand;
+  codexExecutable?: string;
   pollIntervalMs?: number;
   now?: () => Date;
   nowMs?: () => number;
@@ -121,6 +124,9 @@ export function createCodexEventBridge(options: {
   const homePath = resolve(options.homePath);
   const eventDir = join(homePath, "system", "coding-agents", "provider-events");
   const runVersionCommand = options.runVersionCommand ?? defaultVersionCommand;
+  const codexExecutable = CodexExecutableSchema.parse(
+    options.codexExecutable ?? codexExecutableFromEnv(process.env),
+  );
   const pollIntervalMs = Math.max(50, options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
   const now = options.now ?? (() => new Date());
   const nowMs = options.nowMs ?? Date.now;
@@ -139,12 +145,17 @@ export function createCodexEventBridge(options: {
       : timeoutSignal;
     let ok = false;
     try {
-      const result = await runVersionCommand("codex", ["--version"], {
+      const result = await runVersionCommand(codexExecutable, ["--version"], {
         cwd: homePath,
         timeout: VERSION_TIMEOUT_MS,
         signal,
       });
-      ok = codexExecContractStatus(result.stdout || result.stderr).status === "verified";
+      const versionOutput = result.stdout || result.stderr;
+      const execStatus = codexExecContractStatus(versionOutput);
+      const appServerStatus = codexAppServerContractStatus(versionOutput);
+      ok = execStatus.status === "verified" &&
+        appServerStatus.status === "verified" &&
+        execStatus.version === appServerStatus.version;
     } catch (error: unknown) {
       if (
         signal.aborted ||

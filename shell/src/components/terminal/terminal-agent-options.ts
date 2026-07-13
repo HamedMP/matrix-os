@@ -1,3 +1,5 @@
+import { CODEX_VERIFIED_NPM_PACKAGE } from "@matrix-os/contracts";
+
 export type TerminalAgentId = "claude" | "codex" | "opencode" | "pi";
 
 export interface TerminalAgentOption {
@@ -34,7 +36,7 @@ export const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     logoSrc: "/agent-logos/codex.png",
     shortcut: "⌘⇧X",
     launchCommand: "codex",
-    installPackage: "@openai/codex@latest",
+    installPackage: CODEX_VERIFIED_NPM_PACKAGE,
   },
   {
     id: "opencode",

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
 import {
   buildAgentLaunch,
   createAgentLauncher,
@@ -97,6 +98,30 @@ describe("agent-launcher", () => {
         PATH: "/home/matrix/home/.local/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin",
       }),
     }));
+  });
+
+  it("uses one configured absolute Codex executable for detection and launch", async () => {
+    const codexExecutable = "/opt/matrix/runtime/node/bin/codex";
+    const runCommand = vi.fn(async () => ({ stdout: "ok\n", stderr: "" }));
+    const launcher = createAgentLauncher({ runCommand, codexExecutable });
+
+    await launcher.detectAgents();
+    const launch = launcher.buildLaunch({
+      agent: "codex",
+      cwd: "/home/matrix/home/projects/repo",
+      prompt: "fix tests",
+      sandbox: { enabled: true, mode: "workspace-write" },
+      providerEventPath: "/home/matrix/home/system/coding-agents/provider-events/sess_bound.jsonl",
+    });
+
+    expect(runCommand).toHaveBeenCalledWith(codexExecutable, ["--version"], expect.any(Object));
+    expect(runCommand).toHaveBeenCalledWith(codexExecutable, ["login", "status"], expect.any(Object));
+    expect(launch.command).toBe(process.execPath);
+    expect(launch.args.slice(1, 4)).toEqual([
+      "/home/matrix/home/system/coding-agents/provider-events/sess_bound.jsonl",
+      CODEX_VERIFIED_VERSION,
+      codexExecutable,
+    ]);
   });
 
   it("constructs non-interactive Codex exec argv without shell interpolation", () => {

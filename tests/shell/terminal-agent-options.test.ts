@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CODEX_VERIFIED_NPM_PACKAGE } from "../../packages/contracts/src/index.js";
 import {
   TERMINAL_AGENT_OPTIONS,
   parseTerminalAgentStatuses,
@@ -27,7 +28,7 @@ describe("terminal agent options", () => {
     expect(codex).toBeDefined();
 
     expect(terminalAgentInstallCommand(codex!)).toBe(
-      'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"; export PATH="$MATRIX_NODE_PREFIX/bin:$PATH"; npm install -g --prefix "$MATRIX_NODE_PREFIX" @openai/codex@latest',
+      `export MATRIX_NODE_PREFIX="\${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"; export PATH="$MATRIX_NODE_PREFIX/bin:$PATH"; npm install -g --prefix "$MATRIX_NODE_PREFIX" ${CODEX_VERIFIED_NPM_PACKAGE}`,
     );
   });
 

@@ -119,6 +119,7 @@ import { registerCodingAgentAttentionNotifications } from "./coding-agents/atten
 import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
 import { createCodingAgentProjectMutationService } from "./coding-agents/project-mutations.js";
 import { createCodexEventBridge, type CodexEventBridge } from "./coding-agents/codex-event-bridge.js";
+import { codexExecutableFromEnv } from "./coding-agents/codex-executable.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -547,9 +548,14 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentWorkspaceAgents = configuredWorkspaceProviderAgents(process.env);
   if (codingAgentWorkspaceAgents.length > 0) {
     const codingAgentProjectManager = createProjectManager({ homePath });
-    codexEventBridge = createCodexEventBridge({ homePath });
+    const codexExecutable = codexExecutableFromEnv(process.env);
+    codexEventBridge = createCodexEventBridge({ homePath, codexExecutable });
     const codingAgentWorktreeManager = createWorktreeManager({ homePath });
-    const codingAgentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
+    const codingAgentLauncher = createAgentLauncher({
+      cwd: homePath,
+      runtimeHome: homePath,
+      codexExecutable,
+    });
     const codingAgentSessionManager = createAgentSessionManager({
       homePath,
       worktreeManager: codingAgentWorktreeManager,

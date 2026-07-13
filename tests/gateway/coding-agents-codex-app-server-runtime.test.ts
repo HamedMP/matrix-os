@@ -86,7 +86,14 @@ describe("Codex app-server control runtime", () => {
       sandbox: "workspace-write",
       writableRoots: [homePath],
     }), "utf8").toString("base64");
-    const child = spawn(process.execPath, [runnerPath, eventPath, process.execPath, fakeCodexPath, config], {
+    const child = spawn(process.execPath, [
+      runnerPath,
+      eventPath,
+      process.version.slice(1),
+      process.execPath,
+      fakeCodexPath,
+      config,
+    ], {
       cwd: homePath,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -172,7 +179,14 @@ describe("Codex app-server control runtime", () => {
       sandbox: "workspace-write",
       writableRoots: [homePath],
     }), "utf8").toString("base64");
-    const child = spawn(process.execPath, [runnerPath, eventPath, process.execPath, fakeCodexPath, config], {
+    const child = spawn(process.execPath, [
+      runnerPath,
+      eventPath,
+      process.version.slice(1),
+      process.execPath,
+      fakeCodexPath,
+      config,
+    ], {
       cwd: homePath,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -253,7 +267,14 @@ describe("Codex app-server control runtime", () => {
       sandbox: "workspace-write",
       writableRoots: [homePath],
     }), "utf8").toString("base64");
-    const child = spawn(process.execPath, [runnerPath, eventPath, process.execPath, fakeCodexPath, config], {
+    const child = spawn(process.execPath, [
+      runnerPath,
+      eventPath,
+      process.version.slice(1),
+      process.execPath,
+      fakeCodexPath,
+      config,
+    ], {
       cwd: homePath,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -299,7 +320,14 @@ describe("Codex app-server control runtime", () => {
       sandbox: "workspace-write",
       writableRoots: [homePath],
     }), "utf8").toString("base64");
-    const child = spawn(process.execPath, [runnerPath, eventPath, process.execPath, fakeCodexPath, config], {
+    const child = spawn(process.execPath, [
+      runnerPath,
+      eventPath,
+      process.version.slice(1),
+      process.execPath,
+      fakeCodexPath,
+      config,
+    ], {
       cwd: homePath,
       stdio: ["ignore", "pipe", "pipe"],
     });

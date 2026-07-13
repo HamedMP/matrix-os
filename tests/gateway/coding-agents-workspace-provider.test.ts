@@ -6,6 +6,7 @@ import {
   AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
   AgentThreadSummarySchema,
+  CODEX_VERIFIED_NPM_PACKAGE,
   SafeSetupActionSchema,
   type AgentThreadEvent,
 } from "../../packages/contracts/src/index.js";
@@ -53,7 +54,7 @@ function workspaceSession(overrides: Record<string, unknown> = {}) {
 describe("coding agent workspace provider", () => {
   it.each([
     ["claude", "@anthropic-ai/claude-code@latest", "claude"],
-    ["codex", "@openai/codex@latest", "codex login"],
+    ["codex", CODEX_VERIFIED_NPM_PACKAGE, "codex login"],
   ] as const)("returns bounded foreground install and connect actions for %s", async (
     agent,
     installPackage,
