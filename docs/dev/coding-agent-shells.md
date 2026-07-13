@@ -139,6 +139,14 @@ Approval and input requests are gateway-owned lifecycle events.
 - Gateway applies the first valid decision idempotently, appends the resolution event, and broadcasts it.
 - Other shells update from the returned snapshot or stream event.
 
+Structured provider input may carry up to eight bounded questions with stable
+question ids, optional choices, and free-form or secret-entry metadata. New
+clients submit the bounded `structuredAnswers` map and also include the existing
+legacy `answer` fallback for wire compatibility. Provider adapters must prefer
+the structured map, verify every question id against the pending request, and
+must not append answer values to thread events, logs, notifications, or shell
+persistence.
+
 Client UI must disable duplicate submission while a decision is in flight and recover by rehydrating the thread snapshot on failure. User-facing errors should be generic and recovery-oriented.
 
 Mobile thread detail should rehydrate its current bounded thread snapshot when the app returns to the foreground so pending approval and input state reconciles with decisions made from other shells. This refresh must use the authenticated gateway client and must not persist approval payloads, input text, transcripts, or terminal output.

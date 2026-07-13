@@ -601,6 +601,37 @@ export const ApprovalDecisionRequestSchema = z.object({
 
 export type ApprovalDecisionRequest = z.infer<typeof ApprovalDecisionRequestSchema>;
 
+export const UserInputOptionSchema = z.object({
+  label: SafeDisplayStringSchema,
+  description: boundedDisplayText(300, 1200),
+}).strict();
+
+export const UserInputQuestionSchema = z.object({
+  questionId: referenceId(128),
+  header: SafeDisplayStringSchema,
+  question: boundedDisplayText(600, 2400),
+  options: z.array(UserInputOptionSchema).min(1).max(10).optional(),
+  allowOther: z.boolean().default(false),
+  secret: z.boolean().default(false),
+}).strict();
+
+const UserInputQuestionListSchema = z.array(UserInputQuestionSchema)
+  .min(1)
+  .max(8)
+  .superRefine((questions, context) => {
+    const seen = new Set<string>();
+    questions.forEach((question, index) => {
+      if (seen.has(question.questionId)) {
+        context.addIssue({
+          code: "custom",
+          message: "Question ids must be unique",
+          path: [index, "questionId"],
+        });
+      }
+      seen.add(question.questionId);
+    });
+  });
+
 export const UserInputRequestSchema = z.object({
   requestId: RequestIdSchema,
   threadId: ThreadIdSchema,
@@ -608,12 +639,22 @@ export const UserInputRequestSchema = z.object({
   safeDescription: boundedDisplayText(600, 2400),
   placeholder: SafeDisplayStringSchema.optional(),
   required: z.boolean().default(true),
+  questions: UserInputQuestionListSchema.optional(),
+  autoResolutionMs: z.number().int().min(60_000).max(240_000).optional(),
   expiresAt: IsoTimestampSchema.optional(),
   correlationId: CorrelationIdSchema,
 }).strict();
 
+const StructuredUserInputAnswersSchema = z.record(
+  referenceId(128),
+  z.array(boundedText(2000, 8 * 1024)).min(1).max(8),
+).refine((answers) => Object.keys(answers).length > 0 && Object.keys(answers).length <= 8, {
+  message: "Structured answers must contain between one and eight questions",
+});
+
 export const UserInputAnswerRequestSchema = z.object({
   answer: boundedText(8000, 32 * 1024),
+  structuredAnswers: StructuredUserInputAnswersSchema.optional(),
   clientRequestId: RequestIdSchema,
   correlationId: CorrelationIdSchema,
 }).strict();

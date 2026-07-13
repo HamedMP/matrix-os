@@ -267,6 +267,20 @@ describe("IPC contract", () => {
     };
 
     expect(requestSchema.safeParse(request).success).toBe(true);
+    expect(requestSchema.safeParse({
+      ...request,
+      answer: "Submitted structured response.",
+      structuredAnswers: {
+        implementation: ["Minimal"],
+        confirmation: ["Yes"],
+      },
+    }).success).toBe(true);
+    expect(requestSchema.safeParse({
+      ...request,
+      structuredAnswers: Object.fromEntries(
+        Array.from({ length: 9 }, (_, index) => [`question_${index}`, ["answer"]]),
+      ),
+    }).success).toBe(false);
     expect(requestSchema.safeParse({ ...request, providerToken: "secret" }).success).toBe(false);
     expect(requestSchema.safeParse({ ...request, inputRequestId: "../secret" }).success).toBe(false);
     expect(responseSchema.safeParse({
