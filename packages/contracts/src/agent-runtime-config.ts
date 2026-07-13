@@ -48,6 +48,15 @@ export const AgentProviderAuthStatusSchema = z.object({
       message: "Action-required auth status must include a concrete action",
     });
   }
+  if (status.state !== "action_required"
+    && status.action !== undefined
+    && status.action !== "none") {
+    ctx.addIssue({
+      code: "custom",
+      path: ["action"],
+      message: "Concrete auth actions require action-required state",
+    });
+  }
 });
 
 export const AgentModelCapabilitySchema = z.enum([
