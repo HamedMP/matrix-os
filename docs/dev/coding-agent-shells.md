@@ -20,6 +20,7 @@ Browser Workspace remains Canvas-first and does not own coding-agent runtime sta
 The coding-agent route module is `packages/gateway/src/coding-agents/routes.ts`, mounted under `/api/coding-agents`.
 
 - `GET /summary` returns `RuntimeSummarySchema` and accepts an optional validated `projectId` query for project-scoped preview summaries.
+- `POST /projects` creates a scratch project or imports a GitHub project idempotently and returns only a bounded project summary.
 - `POST /threads` creates or returns an idempotent thread by `clientRequestId`.
 - `GET /threads`, `GET /threads/:threadId`, and `GET /threads/:threadId/events` return bounded summaries or snapshots.
 - `POST /threads/:threadId/abort` aborts idempotently.
@@ -31,6 +32,8 @@ The coding-agent route module is `packages/gateway/src/coding-agents/routes.ts`,
 - `PUT /notification-preferences` updates coding-agent notification preferences for the authenticated owner with a small body limit and atomic per-owner file persistence.
 
 Every mutating route needs auth, `bodyLimit`, Zod validation, an ownership check, safe error mapping, and focused tests.
+
+An agent thread may omit `worktreeId` to run in the validated owner project's primary checkout. Supplying `worktreeId` keeps the existing isolated worktree behavior. Both paths pass through the same gateway-owned sandbox preflight and terminal binding.
 
 ## Event Model
 
@@ -65,7 +68,7 @@ Provider-specific behavior belongs behind the gateway provider adapter interface
 
 The gateway provider registry owns shell-facing provider projections. It validates the bounded configured adapter set at startup, validates and bounds owner-scoped credential responses, combines adapter metadata with that credential state, and keeps credential-known non-system providers visible even before an execution adapter is registered. Credential-only projections preserve coarse install/auth state but remain unavailable for runs until an adapter exists. Credential-source failures fail closed to unavailable/unknown adapter projections without running setup or health reads. Adapter reads receive timeout signals, and only coarse health booleans enter a capped owner/provider TTL cache with LRU eviction. Invalid summaries or setup actions degrade to generic safe state; raw health output and credentials never enter the runtime summary.
 
-Workspace provider projections are configured with the bounded, comma-separated `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` setting. The supported rollout values are `claude` and `codex`; duplicates, unknown values, empty entries, and more than two entries fail startup with a generic configuration error. Codex enters both the registry and executable provider sets. Claude remains registry-visible but unavailable for thread creation until its launcher enforces the requested sandbox and approval policy; [#893](https://github.com/HamedMP/matrix-os/issues/893) tracks that rollout boundary. Registry-only adapters also reject direct execution so later wiring changes fail closed. The legacy `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1` setting remains a Codex-only compatibility path when the explicit list is unset. An explicitly empty list disables workspace providers even if the legacy flag is set.
+Workspace provider projections are configured with the bounded, comma-separated `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` setting. The supported rollout values are `claude` and `codex`; duplicates, unknown values, empty entries, and more than two entries fail startup with a generic configuration error. Customer host bundles enable the executable Codex adapter through the legacy `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1` setting so thread routes are present on a fresh runtime; provider readiness still fails closed until Codex is installed and connected. Claude remains registry-visible but unavailable for thread creation until its launcher passes the required sandbox smoke gate. Registry-only adapters also reject direct execution so later wiring changes fail closed. An explicitly empty provider list disables workspace providers even when the legacy setting is present.
 
 Claude and Codex workspace adapters expose only fixed server-owned foreground setup actions. Every setup action defaults `MATRIX_NODE_PREFIX` to the canonical `/opt/matrix/runtime/node` prefix and prepends `$MATRIX_NODE_PREFIX/bin` to `PATH` before invoking a provider command. Install actions run the existing npm package install in a visible terminal, connect actions launch the provider's interactive local login flow, and both leave an interactive shell open afterward. Commands are bounded by `SafeSetupActionSchema`; clients must not render command text, persist it, or accept client-supplied replacements.
 

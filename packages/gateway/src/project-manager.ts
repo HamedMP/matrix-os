@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, mkdir, readdir, rename, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -19,6 +19,8 @@ export interface ProjectConfig {
   addedAt: string;
   updatedAt: string;
   ownerScope: OwnerScope;
+  createRequestId?: string;
+  createRequestFingerprint?: string;
   github?: {
     owner: string;
     repo: string;
@@ -73,8 +75,31 @@ const CLONE_TIMEOUT_MS = 5 * 60_000;
 
 const GitHubUrlSchema = z.string().trim().min(1).max(512);
 const SlugSchema = z.string().trim().regex(PROJECT_SLUG_REGEX);
+const CreateRequestIdSchema = z.string().min(5).max(132).regex(/^req_[A-Za-z0-9_-]+$/);
 
 const execFileAsync = promisify(execFile);
+
+function createRequestFingerprint(input: {
+  mode: CreateProjectMode;
+  slug: string;
+  name?: string;
+  repositoryUrl?: string;
+  ownerScope: OwnerScope;
+}): string {
+  return createHash("sha256").update(JSON.stringify(input)).digest("hex");
+}
+
+function isIdempotentProjectRetry(input: {
+  existing: ProjectConfig | null;
+  clientRequestId?: string;
+  fingerprint: string;
+}): ProjectConfig | null {
+  return (
+    input.existing && input.clientRequestId &&
+    input.existing.createRequestId === input.clientRequestId &&
+    input.existing.createRequestFingerprint === input.fingerprint
+  ) ? input.existing : null;
+}
 
 const defaultRunCommand: CommandRunner = async (command, args, options) => {
   const { stdout, stderr } = await execFileAsync(command, args, {
@@ -192,7 +217,11 @@ export function createProjectManager(options: {
       name?: string;
       mode?: CreateProjectMode;
       ownerScope?: OwnerScope;
+      clientRequestId?: string;
     }): Promise<Result<{ project: ProjectConfig }> | Failure> {
+      if (input.clientRequestId && !CreateRequestIdSchema.safeParse(input.clientRequestId).success) {
+        return genericError(400, "invalid_request", "Project request is invalid");
+      }
       const mode = input.mode ?? (input.url ? "github" : "scratch");
       if (mode === "scratch") {
         const name = input.name?.trim() || input.slug?.trim() || "";
@@ -203,9 +232,20 @@ export function createProjectManager(options: {
         if (!SlugSchema.safeParse(slug).success) {
           return genericError(400, "invalid_slug", "Project slug is invalid");
         }
+        const ownerScope = input.ownerScope ?? { type: "user" as const, id: "local" };
+        const fingerprint = createRequestFingerprint({ mode, slug, name, ownerScope });
         return withProjectLock(slug, async () => {
           const targetProjectPath = projectPath(homePath, slug);
           if (await pathExists(targetProjectPath)) {
+            const existing = await readProjectConfig(homePath, slug);
+            const idempotentProject = isIdempotentProjectRetry({
+              existing,
+              clientRequestId: input.clientRequestId,
+              fingerprint,
+            });
+            if (idempotentProject) {
+              return { ok: true, status: 200, project: idempotentProject };
+            }
             return genericError(409, "slug_conflict", "Project slug already exists");
           }
           const repoPath = join(targetProjectPath, "repo");
@@ -218,7 +258,9 @@ export function createProjectManager(options: {
             localPath: repoPath,
             addedAt: timestamp,
             updatedAt: timestamp,
-            ownerScope: input.ownerScope ?? { type: "user", id: "local" },
+            ownerScope,
+            createRequestId: input.clientRequestId,
+            createRequestFingerprint: input.clientRequestId ? fingerprint : undefined,
           };
           await atomicWriteJson(join(targetProjectPath, "config.json"), project);
           return { ok: true, status: 201, project };
@@ -236,9 +278,25 @@ export function createProjectManager(options: {
       if (!SlugSchema.safeParse(slug).success) {
         return genericError(400, "invalid_slug", "Project slug is invalid");
       }
+      const ownerScope = input.ownerScope ?? { type: "user" as const, id: "local" };
+      const fingerprint = createRequestFingerprint({
+        mode,
+        slug,
+        repositoryUrl: github.htmlUrl,
+        ownerScope,
+      });
       return withProjectLock(slug, async () => {
         const targetProjectPath = projectPath(homePath, slug);
         if (await pathExists(targetProjectPath)) {
+          const existing = await readProjectConfig(homePath, slug);
+          const idempotentProject = isIdempotentProjectRetry({
+            existing,
+            clientRequestId: input.clientRequestId,
+            fingerprint,
+          });
+          if (idempotentProject) {
+            return { ok: true, status: 200, project: idempotentProject };
+          }
           return genericError(409, "slug_conflict", "Project slug already exists");
         }
 
@@ -286,7 +344,9 @@ export function createProjectManager(options: {
           localPath: repoPath,
           addedAt: timestamp,
           updatedAt: timestamp,
-          ownerScope: input.ownerScope ?? { type: "user", id: "local" },
+          ownerScope,
+          createRequestId: input.clientRequestId,
+          createRequestFingerprint: input.clientRequestId ? fingerprint : undefined,
           github: {
             owner: github.owner,
             repo: github.repo,
