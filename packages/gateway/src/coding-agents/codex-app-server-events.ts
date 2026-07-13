@@ -51,7 +51,7 @@ const ApprovalRequestSchema = z.object({
 }).passthrough();
 const InputOptionSchema = z.object({
   label: ExternalDisplayTextSchema.min(1).max(160),
-  description: ExternalDisplayTextSchema.min(1).max(1200),
+  description: ExternalDisplayTextSchema.max(1200).optional().default(""),
 }).passthrough();
 const NativeQuestionSchema = z.object({
   id: z.string().min(1).max(128),
@@ -130,6 +130,11 @@ function boundedExternalText(value: string, maxChars: number, maxBytes: number):
     result = candidate;
   }
   return result;
+}
+
+function optionDescription(value: string): string {
+  const bounded = boundedExternalText(value, 300, 1200);
+  return bounded.trim() ? bounded : "Choose this option.";
 }
 
 function allowedDecisions(request: z.infer<typeof ApprovalRequestSchema>) {
@@ -243,7 +248,7 @@ function inputResult(
         ? {
             options: question.options.map((option) => ({
               label: safeDisplay(option.label, "Option"),
-              description: boundedExternalText(option.description, 300, 1200),
+              description: optionDescription(option.description),
             })),
           }
         : {}),
