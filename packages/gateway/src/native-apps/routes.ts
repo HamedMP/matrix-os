@@ -47,6 +47,7 @@ const LaunchBodySchema = z.object({
   height: z.number().int().min(240).max(2160).optional(),
 }).strict();
 const NATIVE_STREAM_TOKEN_PARAM = "nativeStreamToken";
+const NATIVE_APP_SESSION_PROXY_HEADER = "x-matrix-native-app-session";
 const XPRA_WORKER_FALLBACK_MARKER = "matrix-xpra-worker-fallback";
 const XPRA_WORKER_FALLBACK_SCRIPT = `<script id="${XPRA_WORKER_FALLBACK_MARKER}">
 (() => {
@@ -195,6 +196,7 @@ function shouldUseSecureStreamCookie(c: Context): boolean {
 function nativeStreamRoutePrefix(c: Context): string {
   const forwardedPrefix = c.req.header("x-forwarded-prefix");
   if (forwardedPrefix && SAFE_EXPLICIT_VM_PREFIX.test(forwardedPrefix)) return forwardedPrefix;
+  if (c.req.header(NATIVE_APP_SESSION_PROXY_HEADER)?.trim() !== "1") return "";
   const configuredPrefix = process.env.MATRIX_HANDLE ? `/vm/${process.env.MATRIX_HANDLE}` : "";
   return SAFE_EXPLICIT_VM_PREFIX.test(configuredPrefix) ? configuredPrefix : "";
 }

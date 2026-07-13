@@ -165,7 +165,10 @@ describe("native app routes", () => {
       const response = await app.request("/api/native-apps/xterm/sessions", {
         method: "POST",
         body: JSON.stringify({}),
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Matrix-Native-App-Session": "1",
+        },
       });
       const body = await response.json() as { session: { streamUrl: string } };
 
@@ -175,6 +178,32 @@ describe("native app routes", () => {
       );
       expect(response.headers.get("set-cookie")).toContain(
         "Path=/vm/alice/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/",
+      );
+    } finally {
+      if (previousHandle === undefined) delete process.env.MATRIX_HANDLE;
+      else process.env.MATRIX_HANDLE = previousHandle;
+    }
+  });
+
+  it("keeps stream capabilities on the local route when only MATRIX_HANDLE is configured", async () => {
+    const previousHandle = process.env.MATRIX_HANDLE;
+    process.env.MATRIX_HANDLE = "dev";
+    try {
+      const { app } = createApp("dev");
+
+      const response = await app.request("/api/native-apps/xterm/sessions", {
+        method: "POST",
+        body: JSON.stringify({}),
+        headers: { "Content-Type": "application/json" },
+      });
+      const body = await response.json() as { session: { streamUrl: string } };
+
+      expect(response.status).toBe(201);
+      expect(body.session.streamUrl).toBe(
+        "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/stream_bbbbbbbbbbbbbbbbbbbbbbbb/",
+      );
+      expect(response.headers.get("set-cookie")).toContain(
+        "Path=/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/",
       );
     } finally {
       if (previousHandle === undefined) delete process.env.MATRIX_HANDLE;
