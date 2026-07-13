@@ -5,11 +5,13 @@ import {
   Animated,
   Easing,
   Keyboard,
+  Linking,
   Text,
   useWindowDimensions,
   View,
   type KeyboardEvent,
 } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -17,6 +19,7 @@ import { StatusBar } from "expo-status-bar";
 import { useGateway } from "@/app/_layout";
 import { TerminalControlBar } from "@/components/TerminalControlBar";
 import { TerminalSurface, type TerminalSurfaceHandle } from "@/components/TerminalSurface";
+import { TerminalUrlBanner } from "@/components/TerminalUrlBanner";
 import { WindowHeader, WindowHeaderAction } from "@/components/WindowHeader";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
 import {
@@ -33,8 +36,21 @@ import {
 import {
   formatTerminalCwd,
   initialTerminalState,
+  stripTerminalControlSequences,
   terminalReducer,
 } from "@/lib/terminal-state";
+import {
+  extractHttpUrls,
+  isOpenableUrl,
+  pickBannerUrl,
+  pushRecentUrls,
+} from "@/lib/terminal-urls";
+
+// URL detection: scan a rolling tail of stripped output so a link split across
+// output frames is still matched, keep a small recent list, and cap dismissals.
+const URL_WINDOW_CHARS = 8192;
+const RECENT_URL_CAP = 10;
+const DISMISSED_URL_CAP = 20;
 export default function TerminalScreen() {
   const { theme } = useUnistyles();
   const router = useRouter();
@@ -57,6 +73,58 @@ export default function TerminalScreen() {
   // in the right scrollback cache bucket (state.activeSessionId lags in closures).
   const attachedSessionIdRef = useRef<string | null>(null);
   const keyboardLift = useRef(new Animated.Value(0)).current;
+
+  // Detected-URL banner state. Refs hold the rolling scan window + recent list;
+  // only the surfaced URL drives a render.
+  const [bannerUrl, setBannerUrl] = useState<string | null>(null);
+  const urlWindowRef = useRef("");
+  const recentUrlsRef = useRef<string[]>([]);
+  const dismissedUrlsRef = useRef<Set<string>>(new Set());
+
+  const resetUrlDetection = useCallback(() => {
+    urlWindowRef.current = "";
+    recentUrlsRef.current = [];
+    dismissedUrlsRef.current = new Set();
+    setBannerUrl(null);
+  }, []);
+
+  const scanForUrls = useCallback((text: string) => {
+    if (!text) return;
+    urlWindowRef.current = (urlWindowRef.current + stripTerminalControlSequences(text)).slice(
+      -URL_WINDOW_CHARS,
+    );
+    const found = extractHttpUrls(urlWindowRef.current);
+    if (found.length === 0) return;
+    recentUrlsRef.current = pushRecentUrls(recentUrlsRef.current, found, RECENT_URL_CAP);
+    const next = pickBannerUrl(recentUrlsRef.current, dismissedUrlsRef.current);
+    setBannerUrl((prev) => (prev === next ? prev : next));
+  }, []);
+
+  const openBannerUrl = useCallback(() => {
+    if (!bannerUrl || !isOpenableUrl(bannerUrl)) return;
+    Linking.openURL(bannerUrl).catch((err: unknown) => {
+      console.warn("[mobile] failed to open terminal url", err instanceof Error ? err.message : String(err));
+    });
+  }, [bannerUrl]);
+
+  const copyBannerUrl = useCallback(() => {
+    if (!bannerUrl) return;
+    Clipboard.setStringAsync(bannerUrl).catch((err: unknown) => {
+      console.warn("[mobile] failed to copy terminal url", err instanceof Error ? err.message : String(err));
+    });
+  }, [bannerUrl]);
+
+  const dismissBannerUrl = useCallback(() => {
+    if (!bannerUrl) return;
+    const dismissed = dismissedUrlsRef.current;
+    dismissed.add(bannerUrl);
+    while (dismissed.size > DISMISSED_URL_CAP) {
+      const oldest = dismissed.values().next().value;
+      if (oldest === undefined) break;
+      dismissed.delete(oldest);
+    }
+    setBannerUrl(pickBannerUrl(recentUrlsRef.current, dismissed));
+  }, [bannerUrl]);
 
   // Initial grid; the embedded emulator reports its fitted size via onResize.
   const gridRef = useRef({ cols: 80, rows: 24 });
@@ -112,6 +180,7 @@ export default function TerminalScreen() {
       // surface, so any cached preview is now superseded — reset the cache to it.
       attachedSessionIdRef.current = frame.sessionId;
       resetScrollback(frame.sessionId, frame.replay ?? "");
+      if (frame.replay) scanForUrls(frame.replay);
       dispatch({
         type: "terminal.attached",
         sessionId: frame.sessionId,
@@ -137,6 +206,7 @@ export default function TerminalScreen() {
     if (frame.type === "output") {
       surfaceRef.current?.write(frame.data);
       if (attachedSessionIdRef.current) appendScrollback(attachedSessionIdRef.current, frame.data);
+      scanForUrls(frame.data);
       dispatch({ type: "terminal.output", data: frame.data });
       return;
     }
@@ -151,7 +221,7 @@ export default function TerminalScreen() {
     if (frame.type === "error") {
       dispatch({ type: "terminal.error", message: frame.message ?? "Terminal unavailable" });
     }
-  }, [loadSessions]);
+  }, [loadSessions, scanForUrls]);
 
   const clearTerminalHandoff = useCallback(() => {
     setTerminalHandoffSessionId(null);
@@ -195,6 +265,9 @@ export default function TerminalScreen() {
         }
       }
       if (connectAttemptRef.current !== attemptId) return;
+      // New session view: drop the previous session's detected-URL banner; the
+      // attach replay below re-scans this session's history.
+      resetUrlDetection();
       // Paint the cached scrollback immediately so a reattach shows the previous
       // buffer during the token+WS round-trip instead of a blank surface. The
       // `attached` frame then clears and repaints from the authoritative replay.
@@ -236,7 +309,7 @@ export default function TerminalScreen() {
         connectingRef.current = false;
       }
     }
-  }, [handleFrame, terminalClient]);
+  }, [handleFrame, resetUrlDetection, terminalClient]);
 
   const sendData = useCallback((data: string) => {
     if (!data) return;
@@ -286,6 +359,7 @@ export default function TerminalScreen() {
       clearScrollback(sessionId);
     }
     attachedSessionIdRef.current = null;
+    resetUrlDetection();
     connectAttemptRef.current += 1;
     connectingRef.current = false;
     connectionRef.current?.destroy();
@@ -306,7 +380,7 @@ export default function TerminalScreen() {
     dispatch({ type: "reset.output" });
     dispatch({ type: "connection.changed", status: "idle" });
     loadSessions();
-  }, [loadSessions, state.activeSessionId, terminalClient]);
+  }, [loadSessions, resetUrlDetection, state.activeSessionId, terminalClient]);
 
   const confirmEnd = useCallback(() => {
     Alert.alert("End session?", "This stops the session and its processes. This can't be undone.", [
@@ -406,6 +480,16 @@ export default function TerminalScreen() {
             <Text style={styles.errorText}>{state.error}</Text>
           </View>
         )}
+
+        {bannerUrl ? (
+          <TerminalUrlBanner
+            url={bannerUrl}
+            openable={isOpenableUrl(bannerUrl)}
+            onOpen={openBannerUrl}
+            onCopy={copyBannerUrl}
+            onDismiss={dismissBannerUrl}
+          />
+        ) : null}
 
         <View style={[styles.controlFooter, { paddingBottom: Math.max(insets.bottom, 8) }]}>
           <TerminalControlBar
