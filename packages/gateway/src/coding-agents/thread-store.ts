@@ -1342,7 +1342,11 @@ export function createCodingAgentThreadStore(
           candidate.ownerId === principal.userId && candidate.id === threadId
         );
         if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
-        const existingEventIds = new Set(state.events.map((storedEvent) => storedEvent.eventId));
+        const existingEventIds = new Set(
+          state.events
+            .filter((storedEvent) => storedEvent.threadId === threadId)
+            .map((storedEvent) => storedEvent.eventId),
+        );
         const events = parsed.events.filter((providerEvent) => !existingEventIds.has(providerEvent.eventId));
         let nextThread = thread;
         for (const providerEvent of events) nextThread = applyEvent(nextThread, providerEvent);

@@ -135,6 +135,44 @@ describe("coding-agent provider event ingestion", () => {
     }
   });
 
+  it("scopes replay deduplication to one thread", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-provider-ingestion-"));
+    const store = createCodingAgentThreadStore({ homePath, providers: [provider()], now: () => now });
+    try {
+      const first = await store.createThread(principal, {
+        providerId: "codex",
+        prompt: "Inspect the first thread.",
+        mode: "default",
+        approvalPolicy: "on_request",
+        sandboxMode: "workspace_write",
+        clientRequestId: "req_provider_ingestion_scope_1",
+      });
+      const second = await store.createThread(principal, {
+        providerId: "codex",
+        prompt: "Inspect the second thread.",
+        mode: "default",
+        approvalPolicy: "on_request",
+        sandboxMode: "workspace_write",
+        clientRequestId: "req_provider_ingestion_scope_2",
+      });
+
+      await store.ingestProviderEvents(principal, first.snapshot.thread.id, {
+        events: [event(first.snapshot.thread.id)],
+      });
+      await store.ingestProviderEvents(principal, second.snapshot.thread.id, {
+        events: [event(second.snapshot.thread.id)],
+      });
+
+      expect((await store.getThread(principal, first.snapshot.thread.id)).events.items)
+        .toContainEqual(event(first.snapshot.thread.id));
+      expect((await store.getThread(principal, second.snapshot.thread.id)).events.items)
+        .toContainEqual(event(second.snapshot.thread.id));
+    } finally {
+      await store.shutdownTurns();
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("rejects cross-owner, cross-thread, and reserved provider events", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-provider-ingestion-"));
     const store = createCodingAgentThreadStore({ homePath, providers: [provider()], now: () => now });
