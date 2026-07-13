@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, posix, resolve } from "node:path";
 import { homedir } from "node:os";
 
 export interface FileTransferClient {
@@ -28,9 +28,37 @@ export function expandLocalPath(path: string): string {
   return resolve(path);
 }
 
-function blobUrl(client: FileTransferClient, remotePath: string, options: UploadOptions = {}): string {
+export function normalizeMatrixPath(remotePath: string): string {
+  const homeRelative = remotePath === "~"
+    ? "."
+    : remotePath.startsWith("~/")
+      ? remotePath.slice(2) || "."
+      : remotePath;
+  if (!homeRelative || homeRelative.startsWith("/")) {
+    throw codedError(
+      "Matrix paths must stay within your Matrix home. Use a path such as `~/dev/file.txt`.",
+      "invalid_remote_path",
+    );
+  }
+  const normalized = posix.normalize(homeRelative);
+  if (normalized === ".." || normalized.startsWith("../")) {
+    throw codedError(
+      "Matrix paths must stay within your Matrix home. Use a path such as `~/dev/file.txt`.",
+      "invalid_remote_path",
+    );
+  }
+  return normalized;
+}
+
+function blobUrl(
+  client: FileTransferClient,
+  remotePath: string,
+  options: UploadOptions = {},
+  localFilename?: string,
+): string {
   const url = new URL("/api/files/blob", client.gatewayUrl);
-  url.searchParams.set("path", remotePath);
+  url.searchParams.set("path", normalizeMatrixPath(remotePath));
+  if (localFilename) url.searchParams.set("filename", localFilename);
   if (options.force) url.searchParams.set("force", "true");
   if (options.secret) url.searchParams.set("secret", "true");
   return url.toString();
@@ -40,13 +68,98 @@ function authHeaders(client: FileTransferClient): Record<string, string> {
   return { authorization: `Bearer ${client.token}` };
 }
 
-function errorForResponse(res: Response, fallback: string): Error {
+export async function completeRemotePaths(
+  client: FileTransferClient,
+  remotePrefix: string,
+): Promise<string[]> {
+  const homeStyle = remotePrefix === "~" || remotePrefix.startsWith("~/");
+  const relativePrefix = remotePrefix === "~"
+    ? ""
+    : homeStyle
+      ? remotePrefix.slice(2)
+      : remotePrefix;
+  if (relativePrefix.startsWith("/")) return [];
+
+  const separator = relativePrefix.lastIndexOf("/");
+  const parentPrefix = separator >= 0 ? relativePrefix.slice(0, separator) : "";
+  const namePrefix = separator >= 0 ? relativePrefix.slice(separator + 1) : relativePrefix;
+  let parentPath: string;
+  try {
+    parentPath = normalizeMatrixPath(parentPrefix || ".");
+  } catch {
+    return [];
+  }
+
+  const url = new URL("/api/files/list", client.gatewayUrl);
+  url.searchParams.set("path", parentPath);
+  try {
+    const res = await fetch(url, {
+      headers: authHeaders(client),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return [];
+    const payload = (await res.json()) as { entries?: unknown };
+    if (!Array.isArray(payload.entries)) return [];
+    const displayParent = parentPrefix ? `${parentPrefix}/` : "";
+    const displayHome = homeStyle ? "~/" : "";
+    return payload.entries
+      .slice(0, 500)
+      .flatMap((entry): string[] => {
+        if (!entry || typeof entry !== "object") return [];
+        const { name, type } = entry as { name?: unknown; type?: unknown };
+        if (
+          typeof name !== "string" ||
+          !name.startsWith(namePrefix) ||
+          /[\r\n]/.test(name) ||
+          (type !== "file" && type !== "directory")
+        ) {
+          return [];
+        }
+        return [`${displayHome}${displayParent}${name}${type === "directory" ? "/" : ""}`];
+      });
+  } catch {
+    return [];
+  }
+}
+
+const SAFE_TRANSFER_ERRORS: Record<string, { code: string; message: string }> = {
+  invalid_path: {
+    code: "invalid_remote_path",
+    message: "Matrix paths must stay within your Matrix home. Use a path such as `~/dev/file.txt`.",
+  },
+  not_file: {
+    code: "remote_path_not_file",
+    message: "Matrix source must be a regular file.",
+  },
+  file_exists: {
+    code: "remote_file_exists",
+    message: "Remote file already exists. Re-run with --force to overwrite.",
+  },
+  payload_too_large: {
+    code: "payload_too_large",
+    message: "File is too large for single-file transfer.",
+  },
+};
+
+async function safeTransferErrorCode(res: Response): Promise<string | null> {
+  try {
+    const payload = (await res.json()) as { error?: unknown };
+    return typeof payload.error === "string" ? payload.error : null;
+  } catch {
+    return null;
+  }
+}
+
+async function errorForResponse(res: Response, fallback: string): Promise<Error> {
   if (res.status === 401 || res.status === 403) {
     return codedError("Auth token rejected or expired. Run `matrix login` again.", "auth_rejected");
   }
-  if (res.status === 404) {
-    return codedError("Remote file not found.", "remote_file_not_found");
+  const serverCode = await safeTransferErrorCode(res);
+  if (serverCode && SAFE_TRANSFER_ERRORS[serverCode]) {
+    const safe = SAFE_TRANSFER_ERRORS[serverCode];
+    return codedError(safe.message, safe.code);
   }
+  if (res.status === 404) return codedError("Remote file not found.", "remote_file_not_found");
   if (res.status === 409) {
     return codedError("Remote file already exists. Re-run with --force to overwrite.", "remote_file_exists");
   }
@@ -81,14 +194,14 @@ export async function uploadLocalFile(
   }
 
   const bytes = await readFile(resolvedLocal);
-  const res = await fetch(blobUrl(client, remotePath, options), {
+  const res = await fetch(blobUrl(client, remotePath, options, basename(resolvedLocal)), {
     method: "PUT",
     headers: authHeaders(client),
     body: new Blob([bytes]),
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
-    throw errorForResponse(res, "Upload failed.");
+    throw await errorForResponse(res, "Upload failed.");
   }
   return (await res.json()) as { ok: true; path: string; size: number };
 }
@@ -123,7 +236,7 @@ export async function downloadRemoteFile(
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
-    throw errorForResponse(res, "Download failed.");
+    throw await errorForResponse(res, "Download failed.");
   }
 
   const bytes = Buffer.from(await res.arrayBuffer());

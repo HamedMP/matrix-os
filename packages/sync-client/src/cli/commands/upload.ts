@@ -19,8 +19,16 @@ export const uploadCommand = defineCommand({
     description: "Upload one local file to your Matrix computer",
   },
   args: {
-    local: { type: "positional", required: true },
-    remote: { type: "positional", required: true },
+    local: {
+      type: "positional",
+      required: true,
+      description: "Local file path on this computer",
+    },
+    remote: {
+      type: "positional",
+      required: true,
+      description: "Destination file or existing folder in your Matrix home",
+    },
     force: { type: "boolean", required: false, default: false },
     secret: { type: "boolean", required: false, default: false },
     profile: { type: "string", required: false },

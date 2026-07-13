@@ -164,6 +164,26 @@ describe("unified CLI command tree", () => {
     expect(script).toContain('"connect" || "$shell_command" == "attach" || "$shell_command" == "rm"');
   });
 
+  it("prints authenticated Matrix path completion for upload and download", async () => {
+    for (const shell of ["bash", "zsh", "fish"]) {
+      const logs: string[] = [];
+      const originalLog = console.log;
+      console.log = (line?: unknown) => {
+        logs.push(String(line));
+      };
+      try {
+        await completionCommand.run?.({ args: { shell } } as never);
+      } finally {
+        console.log = originalLog;
+      }
+
+      const script = logs.join("\n");
+      expect(script).toContain("matrix completion paths");
+      expect(script).toContain("upload");
+      expect(script).toContain("download");
+    }
+  });
+
   it("prevents fish shell command completions from mixing with session completions", async () => {
     const logs: string[] = [];
     const originalLog = console.log;

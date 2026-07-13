@@ -765,6 +765,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         let heartbeatPending = false;
         let missedHeartbeats = 0;
         let reconnectNoticeVisible = false;
+        let localOutputBackpressured = false;
         const detachForClosedLocalPipe = () => {
           if (settled) {
             return;
@@ -818,6 +819,30 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         const onLocalStreamError = (err: unknown) => {
           handleLocalStreamError(err);
         };
+        const onLocalOutputDrain = () => {
+          if (settled || !localOutputBackpressured) {
+            return;
+          }
+          localOutputBackpressured = false;
+          scheduleReconnect();
+        };
+        const writeRemoteOutput = (data: string): boolean => {
+          if (settled || localOutputBackpressured) {
+            return false;
+          }
+          try {
+            const canContinue = output.write(data);
+            if (!canContinue) {
+              localOutputBackpressured = true;
+              output.once?.("drain", onLocalOutputDrain);
+              currentWs?.close();
+            }
+            return true;
+          } catch (err: unknown) {
+            handleLocalStreamError(err);
+            return false;
+          }
+        };
         const cleanup = () => {
           clearTimeout(attachTimeout);
           clearTimeout(reconnectTimer);
@@ -829,6 +854,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           process.off("SIGTERM", onSignal);
           process.off("exit", onProcessExit);
           output.off?.("error", onLocalStreamError);
+          output.off?.("drain", onLocalOutputDrain);
           errorOutput.off?.("error", onLocalStreamError);
           pendingInput = "";
           inputFilter.reset();
@@ -1255,12 +1281,11 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             }
             schedulePostAttachResizeFrames();
           } else if (msg.type === "output" && typeof msg.data === "string") {
-            if (Number.isSafeInteger(msg.seq) && (msg.seq as number) >= 0) {
-              lastSeq = msg.seq as number;
-            }
             noteRemoteActivity();
             inputFilter.noteRemoteOutput();
-            writeOutput(msg.data);
+            if (writeRemoteOutput(msg.data) && Number.isSafeInteger(msg.seq) && (msg.seq as number) >= 0) {
+              lastSeq = msg.seq as number;
+            }
           } else if (msg.type === "pong") {
             noteRemoteActivity();
           } else if (msg.type === "error") {
@@ -1281,6 +1306,9 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           cleanupSocket();
           if (!shouldReconnect) {
             settle(() => reject(Object.assign(new Error("Request failed"), { code: "attach_failed" })));
+            return;
+          }
+          if (localOutputBackpressured) {
             return;
           }
           scheduleReconnect();

@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  completeRemotePaths,
   downloadRemoteFile,
   uploadLocalFile,
 } from "../../src/cli/file-transfer-client.js";
@@ -38,7 +39,7 @@ describe("cli/file-transfer-client", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0]!;
-    expect(String(url)).toBe("https://gateway.example/api/files/blob?path=.codex%2Fauth.json&force=true&secret=true");
+    expect(String(url)).toBe("https://gateway.example/api/files/blob?path=.codex%2Fauth.json&filename=auth.json&force=true&secret=true");
     expect(init?.method).toBe("PUT");
     expect((init?.headers as Record<string, string>).authorization).toBe("Bearer token");
     expect(Buffer.from(await (init?.body as Blob).arrayBuffer()).toString("utf8")).toBe('{"token":"secret"}');
@@ -65,6 +66,33 @@ describe("cli/file-transfer-client", () => {
 
     const [, init] = fetchMock.mock.calls[0]!;
     expect(Buffer.from(await (init?.body as Blob).arrayBuffer()).toString("utf8")).toBe('{"token":"from-symlink"}');
+  });
+
+  it("sends the local filename when uploading to a Matrix-home folder", async () => {
+    const local = join(tempDir, "codex-security-findings.csv");
+    await writeFile(local, "finding\n");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        ok: true,
+        path: "dev/matrix-os/codex-security-findings.csv",
+        size: 8,
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const result = await uploadLocalFile(
+      { gatewayUrl: "https://gateway.example", token: "token" },
+      local,
+      "~/dev/matrix-os",
+    );
+
+    const [url] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe(
+      "https://gateway.example/api/files/blob?path=dev%2Fmatrix-os&filename=codex-security-findings.csv",
+    );
+    expect(result.path).toBe("dev/matrix-os/codex-security-findings.csv");
   });
 
   it("rejects missing local files and local directories before upload", async () => {
@@ -142,5 +170,66 @@ describe("cli/file-transfer-client", () => {
       ),
     ).rejects.toMatchObject({ code: "remote_file_not_found" });
     await expect(stat(join(tempDir, "new-parent"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("reports invalid Matrix destinations clearly on upload", async () => {
+    const local = join(tempDir, "report.csv");
+    await writeFile(local, "finding\n");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "invalid_path" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await expect(
+      uploadLocalFile(
+        { gatewayUrl: "https://gateway.example", token: "token" },
+        local,
+        "../outside/report.csv",
+      ),
+    ).rejects.toMatchObject({
+      code: "invalid_remote_path",
+      message: expect.stringMatching(/Matrix home/i),
+    });
+  });
+
+  it("keeps status-based transfer errors for older gateways", async () => {
+    const local = join(tempDir, "report.csv");
+    await writeFile(local, "finding\n");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("conflict", { status: 409 }),
+    );
+
+    await expect(uploadLocalFile(
+      { gatewayUrl: "https://gateway.example", token: "token" },
+      local,
+      "~/report.csv",
+    )).rejects.toMatchObject({ code: "remote_file_exists" });
+  });
+
+  it("completes Matrix directories while preserving the typed home prefix", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        path: ".",
+        entries: [
+          { name: "dev", type: "directory" },
+          { name: "documents", type: "directory" },
+          { name: "README.md", type: "file" },
+        ],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await expect(completeRemotePaths(
+      { gatewayUrl: "https://gateway.example", token: "token" },
+      "~/de",
+    )).resolves.toEqual(["~/dev/"]);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://gateway.example/api/files/list?path=.",
+    );
   });
 });

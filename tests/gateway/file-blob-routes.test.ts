@@ -38,6 +38,24 @@ describe("file blob routes", () => {
     expect(get.headers.get("content-type")).toContain("text/markdown");
   });
 
+  it("keeps the local filename when the Matrix destination is a directory", async () => {
+    await mkdir(join(homePath, "dev/matrix-os"), { recursive: true });
+
+    const put = await app.request(
+      "/blob?path=dev%2Fmatrix-os&filename=codex-security-findings.csv",
+      { method: "PUT", body: "finding\n" },
+    );
+
+    expect(put.status).toBe(200);
+    await expect(put.json()).resolves.toEqual({
+      ok: true,
+      path: "dev/matrix-os/codex-security-findings.csv",
+      size: 8,
+    });
+    expect(await readFile(join(homePath, "dev/matrix-os/codex-security-findings.csv"), "utf8"))
+      .toBe("finding\n");
+  });
+
   it("writes secret uploads with owner-only file permissions", async () => {
     const res = await app.request("/blob?path=.codex/auth.json&secret=true", {
       method: "PUT",
@@ -79,6 +97,14 @@ describe("file blob routes", () => {
     });
     expect(traversal.status).toBe(400);
     expect(await traversal.json()).toEqual({ error: "invalid_path" });
+
+    const filenameTraversal = await app.request(
+      "/blob?path=safe&filename=..%2Foutside.txt",
+      { method: "PUT", body: "x" },
+    );
+    expect(filenameTraversal.status).toBe(400);
+    expect(await filenameTraversal.json()).toEqual({ error: "invalid_path" });
+    await expect(readFile(join(homePath, "outside.txt"))).rejects.toMatchObject({ code: "ENOENT" });
 
     const symlinkParent = await app.request("/blob?path=safe/link/secret.txt", {
       method: "PUT",

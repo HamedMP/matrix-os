@@ -181,13 +181,27 @@ matrix sync resume
 
 Use `matrix upload` and `matrix download` for one-off file transfers without starting or touching the sync daemon.
 
-```bash
-matrix upload ./README.md projects/demo/README.md
-matrix upload --force ./config.json system/config.json
-matrix upload --secret ./api-key.txt system/secrets/api-key.txt
+```text
+matrix upload <local-file> <matrix-destination>
+matrix download <matrix-file> <local-destination>
+```
 
-matrix download projects/demo/README.md ./README.remote.md
-matrix download --force projects/demo/README.md ./README.remote.md
+Only the Matrix-side argument uses Matrix-home paths. `~/` means the home directory on your Matrix computer, not the home directory on your local computer.
+
+When an upload destination is an existing Matrix folder, the local filename is preserved. Specify a complete Matrix file path when you want to rename it.
+
+```bash
+# Keep the local filename: ~/dev/matrix-os/report.csv
+matrix upload ./report.csv ~/dev/matrix-os
+
+# Rename while uploading: ~/dev/matrix-os/security-findings.csv
+matrix upload ./report.csv ~/dev/matrix-os/security-findings.csv
+
+matrix upload --force ./config.json ~/system/config.json
+matrix upload --secret ./api-key.txt ~/system/secrets/api-key.txt
+
+matrix download ~/dev/matrix-os/report.csv ./report.csv
+matrix download --force ~/dev/matrix-os/report.csv ./report.csv
 ```
 
 **Flags (both commands)**
@@ -196,6 +210,8 @@ matrix download --force projects/demo/README.md ./README.remote.md
 |------|-------------|
 | `--force` | Overwrite the destination if it already exists |
 | `--secret` | Mark the file as secret on upload (affects storage handling) |
+
+Installed shell completions suggest Matrix files and folders for the upload destination and download source. Regenerate your completion script after upgrading the CLI.
 
 ## Port forwarding
 
