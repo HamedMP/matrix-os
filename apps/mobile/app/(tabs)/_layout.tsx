@@ -5,7 +5,8 @@ import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
 import { useGateway } from "../_layout";
 
-// Chat is hidden from the tab bar, so land on Apps by default.
+// Apps is the launcher home; Chat sits beside it as the always-available
+// Hermes assistant surface.
 export const unstable_settings = {
   initialRouteName: "apps",
 };
@@ -64,14 +65,19 @@ export default function TabsLayout() {
         headerRight: () => <ConnectionDot connected={isConnected} />,
       }}
     >
-      {/* Chat is intentionally hidden from the tab bar; route kept for deep links. */}
-      <Tabs.Screen name="chat" options={{ href: null }} />
       <Tabs.Screen
         name="apps"
         options={{
           title: "Apps",
           headerShown: false,
           tabBarIcon: ({ focused }) => <TabIcon name="apps" focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="chat"
+        options={{
+          title: "Chat",
+          tabBarIcon: ({ focused }) => <TabIcon name="chat" focused={focused} />,
         }}
       />
       <Tabs.Screen
