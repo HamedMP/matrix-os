@@ -29,6 +29,11 @@ import {
   readRuntimeSnapshot,
   type AgentRuntimeSource,
 } from "../agent-config/service.js";
+import {
+  isAgentConfigError,
+  type AgentConfigErrorKind,
+} from "../agent-config/errors.js";
+import type { AgentRuntimeController } from "../agent-config/runtime-controller.js";
 
 const DESKTOP_DEFAULTS = {
   background: { type: "wallpaper", name: "moraine-lake.jpg" },
@@ -175,13 +180,61 @@ export function createSettingsRoutes(opts: {
   homePath: string;
   channelManager: ChannelManager;
   agentRuntimeSource?: AgentRuntimeSource;
+  agentRuntimeController?: AgentRuntimeController;
 }) {
-  const { homePath, channelManager, agentRuntimeSource } = opts;
+  const {
+    homePath,
+    channelManager,
+    agentRuntimeSource,
+    agentRuntimeController,
+  } = opts;
   const app = new Hono();
   const configPath = join(homePath, "system/config.json");
 
   async function readConfig(): Promise<Record<string, unknown>> {
     return readJson(configPath, {}, "config");
+  }
+
+  async function readAgentSettingsView() {
+    const cfg = await readConfig();
+    const handlePath = join(homePath, "system/handle.json");
+    const handle = await readJson<Record<string, unknown>>(
+      handlePath,
+      {},
+      "handle",
+    );
+    let runtimeSnapshot;
+    if (agentRuntimeSource) {
+      try {
+        runtimeSnapshot = await readRuntimeSnapshot(agentRuntimeSource);
+      } catch (err) {
+        console.warn(
+          "[settings] Failed to read agent runtime settings:",
+          err instanceof Error ? err.name : "UnknownError",
+        );
+      }
+    }
+    return buildAgentSettingsView({
+      identity: handle,
+      config: cfg,
+      claudeLoginAvailable: await hasClaudeLogin(homePath),
+      platformCredentialAvailable: typeof process.env.ANTHROPIC_API_KEY === "string"
+        && process.env.ANTHROPIC_API_KEY.length > 0,
+      runtimeSnapshot,
+    });
+  }
+
+  function mapAgentConfigError(kind: AgentConfigErrorKind) {
+    if (kind === "agent_config_invalid" || kind === "not_configured") {
+      return { status: 400 as const, error: "agent_config_invalid" as const };
+    }
+    if (kind === "agent_config_conflict") {
+      return { status: 409 as const, error: "agent_config_conflict" as const };
+    }
+    if (kind === "runtime_unavailable" || kind === "invalid_response") {
+      return { status: 503 as const, error: "runtime_unavailable" as const };
+    }
+    return { status: 503 as const, error: "runtime_switch_failed" as const };
   }
 
   app.get("/channels", async (c) => {
@@ -236,28 +289,7 @@ export function createSettingsRoutes(opts: {
   });
 
   app.get("/agent", async (c) => {
-    const cfg = await readConfig();
-    const handlePath = join(homePath, "system/handle.json");
-    const handle = await readJson<Record<string, unknown>>(handlePath, {}, "handle");
-    let runtimeSnapshot;
-    if (agentRuntimeSource) {
-      try {
-        runtimeSnapshot = await readRuntimeSnapshot(agentRuntimeSource);
-      } catch (err) {
-        console.warn(
-          "[settings] Failed to read agent runtime settings:",
-          err instanceof Error ? err.name : "UnknownError",
-        );
-      }
-    }
-    return c.json(buildAgentSettingsView({
-      identity: handle,
-      config: cfg,
-      claudeLoginAvailable: await hasClaudeLogin(homePath),
-      platformCredentialAvailable: typeof process.env.ANTHROPIC_API_KEY === "string"
-        && process.env.ANTHROPIC_API_KEY.length > 0,
-      runtimeSnapshot,
-    }));
+    return c.json(await readAgentSettingsView());
   });
 
   app.get("/agent/summary", async (c) => {
@@ -291,7 +323,22 @@ export function createSettingsRoutes(opts: {
       || parsed.data.messagingModel !== undefined
       || parsed.data.baseUrl !== undefined;
     if (hasExtendedMutation) {
-      return c.json({ error: "runtime_unavailable" }, 503);
+      if (!agentRuntimeController) {
+        return c.json({ error: "runtime_unavailable" }, 503);
+      }
+      try {
+        await agentRuntimeController.update(parsed.data);
+        return c.json(await readAgentSettingsView());
+      } catch (err) {
+        const mapped = mapAgentConfigError(
+          isAgentConfigError(err) ? err.kind : "runtime_switch_failed",
+        );
+        console.warn(
+          "[settings] Agent runtime update failed:",
+          err instanceof Error ? err.name : "UnknownError",
+        );
+        return c.json({ error: mapped.error }, mapped.status);
+      }
     }
     const kernelPatch = KernelPatchSchema.safeParse({
       model: parsed.data.model,
@@ -299,6 +346,27 @@ export function createSettingsRoutes(opts: {
     });
     if (!kernelPatch.success) {
       return c.json({ error: "agent_config_invalid" }, 400);
+    }
+    if (agentRuntimeController) {
+      try {
+        const kernel = await agentRuntimeController.updateKernel(kernelPatch.data);
+        return c.json({
+          ok: true,
+          kernel: {
+            model: normalizeKernelModel(kernel.model),
+            effort: normalizeKernelEffort(kernel.effort),
+          },
+        });
+      } catch (err) {
+        const mapped = mapAgentConfigError(
+          isAgentConfigError(err) ? err.kind : "runtime_switch_failed",
+        );
+        console.warn(
+          "[settings] Agent kernel update failed:",
+          err instanceof Error ? err.name : "UnknownError",
+        );
+        return c.json({ error: mapped.error }, mapped.status);
+      }
     }
     const cfg = await readConfig();
     const kernel = { ...((cfg.kernel ?? {}) as Record<string, unknown>) };
