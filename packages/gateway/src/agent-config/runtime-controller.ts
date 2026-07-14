@@ -79,7 +79,7 @@ export function createAgentRuntimeController(
   const lockPath = join(runtimeDir, "transition.lock");
   const transitionPath = join(runtimeDir, "transition.json");
   const timeoutMs = options.timeoutMs ?? 10_000;
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 100 || timeoutMs > 30_000) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 100 || timeoutMs > 90_000) {
     throw new RangeError("Invalid runtime transition timeout");
   }
   const now = options.now ?? (() => new Date());
@@ -242,7 +242,7 @@ export function createAgentRuntimeController(
         deliveryPaused = false;
         return { revision: nextRevision, runtime: targetRuntime, selection };
       } catch (error) {
-        const rollbackSignal = AbortSignal.timeout(2_000);
+        const rollbackSignal = AbortSignal.timeout(Math.min(timeoutMs, 70_000));
         if (targetConfigured
           && previousTargetSelection?.configured
           && previousTargetSelection.provider !== null

@@ -177,6 +177,39 @@ describe("agent runtime controller", () => {
     expect(config.agent).toEqual({ messagingRuntime: "hermes", revision: 0 });
   });
 
+  it("gives the previous runtime a bounded host-scale rollback window", async () => {
+    const homePath = await createHome({
+      agent: { messagingRuntime: "hermes", revision: 0 },
+    });
+    let restored = false;
+    const hermes = fakeAdapter("hermes", {
+      activate: vi.fn(async (signal) => {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 2_100);
+          signal.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(signal.reason);
+          }, { once: true });
+        });
+        restored = true;
+      }),
+    });
+    const openclaw = fakeAdapter("openclaw", {
+      activate: vi.fn(async () => {
+        throw new Error("activation failed");
+      }),
+    });
+    const controller = createAgentRuntimeController({
+      homePath,
+      adapters: { hermes, openclaw },
+      timeoutMs: 3_000,
+    });
+
+    await expect(controller.update({ runtime: "openclaw", revision: 0 }))
+      .rejects.toMatchObject({ kind: "runtime_switch_failed" });
+    expect(restored).toBe(true);
+  });
+
   it("persists only a healthy switch and preserves unrelated config", async () => {
     const homePath = await createHome({
       unrelated: { preserved: true },
