@@ -600,6 +600,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('dist/host-bundle/incremental-manifest.json');
     expect(workflow).toContain('dist/host-bundle/objects/**');
     expect(workflow).toContain('./scripts/publish-release.sh "$VERSION" --channel none');
+    expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL}/vps/preview/provision"');
+    expect(workflow).toContain('\\"runtimeSlot\\":\\"${HANDLE}\\"');
+    expect(workflow).not.toContain('-X POST "${PLATFORM_PUBLIC_URL}/vps/provision"');
     expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL}/vps/deploy"');
   });
 

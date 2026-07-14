@@ -213,10 +213,10 @@ jobs:
           echo "Fleet status for ${HANDLE}: ${status}"
           if [ "$status" = "absent" ]; then
             code="$(curl -sS --max-time 60 -o /tmp/provision.json -w '%{http_code}' \
-              -X POST "${PLATFORM_PUBLIC_URL}/vps/provision" \
+              -X POST "${PLATFORM_PUBLIC_URL}/vps/preview/provision" \
               -H "authorization: Bearer ${PLATFORM_SECRET}" \
               -H "content-type: application/json" \
-              -d "{\"clerkUserId\":\"${PREVIEW_CLERK_USER_ID}\",\"handle\":\"${HANDLE}\",\"runtimeSlot\":\"preview\"}")"
+              -d "{\"clerkUserId\":\"${PREVIEW_CLERK_USER_ID}\",\"handle\":\"${HANDLE}\",\"runtimeSlot\":\"${HANDLE}\"}")"
             if [ "$code" != "202" ] && [ "$code" != "200" ]; then
               echo "Provision failed with HTTP ${code} (body in workflow log)" >&2
               cat /tmp/provision.json >&2
