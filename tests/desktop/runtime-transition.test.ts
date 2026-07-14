@@ -105,6 +105,49 @@ describe("desktop runtime transition", () => {
     expect(useShellSessions.getState().creating).toBe(false);
   });
 
+  it("discards an in-flight workspace session create that settles after the computer changes", async () => {
+    let resolveCreate!: (value: unknown) => void;
+    const api = {
+      post: vi.fn(() => new Promise((resolve) => {
+        resolveCreate = resolve;
+      })),
+      get: vi.fn(async () => ({ sessions: [], nextCursor: null })),
+      delete: vi.fn(async () => ({})),
+    } as never;
+    useSessions.setState({ sessions: [], aliasMap: {}, creating: false });
+
+    const pending = useSessions.getState().create(api, { kind: "shell" });
+    reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
+    resolveCreate({ session: { id: "session_stale", runtime: { zellijSession: "stale-zellij" } } });
+    const created = await pending;
+
+    expect(created).toBeNull();
+    expect(useSessions.getState().sessions).toEqual([]);
+    expect(useSessions.getState().aliasMap).toEqual({});
+  });
+
+  it("discards an in-flight session restart that settles after the computer changes", async () => {
+    let resolveRestart: ((value: unknown) => void) | undefined;
+    const api = {
+      post: vi.fn(() => new Promise((resolve) => {
+        resolveRestart = resolve;
+      })),
+      get: vi.fn(async () => ({ sessions: [], nextCursor: null })),
+      delete: vi.fn(async () => ({})),
+    } as never;
+
+    const pending = useSessions.getState().restart(api, "old");
+    reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
+    // Let the restart flow advance past the delete; with the generation guard
+    // it bails before ever issuing the create POST.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveRestart?.({ name: "old" });
+    const restarted = await pending;
+
+    expect(restarted).toBeNull();
+    expect(useSessions.getState().sessions).toEqual([]);
+  });
+
   it("rejects a project response that settles after the computer changes", async () => {
     let resolveProjects!: (value: { projects: unknown[] }) => void;
     const api = {

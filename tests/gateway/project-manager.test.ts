@@ -214,6 +214,29 @@ describe("project-manager", () => {
     })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
   });
 
+  it("rejects other managed project roots as folder projects", async () => {
+    await mkdir(join(homePath, "projects", "other"), { recursive: true });
+    await writeFile(join(homePath, "projects", "other", "config.json"), "{}");
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    await expect(manager.createProject({
+      mode: "folder",
+      name: "Other copy",
+      slug: "other-copy",
+      path: "projects/other",
+    })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
+
+    // A repo checkout nested inside a managed project stays connectable: it
+    // contains no registry metadata.
+    await mkdir(join(homePath, "projects", "other", "repo"), { recursive: true });
+    await expect(manager.createProject({
+      mode: "folder",
+      name: "Other repo",
+      slug: "other-repo",
+      path: "projects/other/repo",
+    })).resolves.toMatchObject({ ok: true, status: 201 });
+  });
+
   it("requires existing folder project paths to be directories", async () => {
     await writeFile(join(homePath, "notes.txt"), "owner notes");
     const manager = createProjectManager({ homePath, runCommand: vi.fn() });

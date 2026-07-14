@@ -282,6 +282,15 @@ export function createProjectManager(options: {
           ) {
             return genericError(400, "invalid_project_path", "Project folder is invalid");
           }
+          // Any managed project root (projects/<slug>) holds registry metadata
+          // (config.json, worktrees) that must never sit inside an
+          // agent-writable workspace; deeper paths such as projects/<slug>/repo
+          // contain no metadata and stay connectable.
+          const relFromRegistry = relative(join(candidate.base, "projects"), candidate.path);
+          const insideRegistry = relFromRegistry !== "" && !relFromRegistry.startsWith("..");
+          if (insideRegistry && relFromRegistry.split(sep).length === 1) {
+            return genericError(400, "invalid_project_path", "Project folder is invalid");
+          }
         }
         const metadataPath = projectPath(homePath, slug);
         return withProjectLock(slug, async () => {
