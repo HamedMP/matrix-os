@@ -244,6 +244,44 @@ describe("Canvas Agent runtime settings", () => {
     ));
   });
 
+  it("never saves an unavailable Chat model", async () => {
+    const initial = makeView();
+    initial.providers[0].models = [
+      {
+        id: "claude-opus-4-6",
+        displayName: "Claude Opus 4.6",
+        capabilities: ["tools", "vision", "reasoning"],
+        efforts: ["low", "medium", "high", "max"],
+        available: false,
+      },
+      {
+        id: "claude-sonnet-4-6",
+        displayName: "Claude Sonnet 4.6",
+        capabilities: ["tools", "vision", "reasoning"],
+        efforts: ["low", "medium", "high"],
+        available: true,
+      },
+    ];
+    AgentSettingsViewSchema.parse(initial);
+    const fetcher = vi.fn(async () => response(initial));
+    vi.stubGlobal("fetch", fetcher);
+    render(<AgentRuntimePanel />);
+
+    expect(await screen.findByRole("combobox", { name: "Chat model" })).toHaveValue("claude-sonnet-4-6");
+    fireEvent.click(screen.getByRole("button", { name: "Save Chat model" }));
+
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining("/api/settings/agent"),
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          effort: "high",
+        }),
+      }),
+    ));
+  });
+
   it("shows a useful legacy fallback and retryable safe error state", async () => {
     let calls = 0;
     vi.stubGlobal("fetch", vi.fn(async () => {

@@ -143,7 +143,12 @@ function ChatCard({
   onSaveKey: (key: string) => Promise<void>;
 }) {
   const provider = view.providers.find((entry) => entry.runtime === null && entry.scopes.includes("chat"));
-  const [model, setModel] = useState(view.chat.model);
+  const chatModels = availableModels(provider);
+  const [model, setModel] = useState(() => (
+    chatModels.some((entry) => entry.id === view.chat.model)
+      ? view.chat.model
+      : chatModels[0]?.id ?? ""
+  ));
   const [effort, setEffort] = useState<AgentEffort>(view.chat.effort);
   const [showKey, setShowKey] = useState(false);
   const [apiKey, setApiKey] = useState("");
@@ -174,7 +179,7 @@ function ChatCard({
               value={model}
               onChange={(event) => setModel(event.target.value)}
             >
-              {availableModels(provider).map((entry) => (
+              {chatModels.map((entry) => (
                 <option key={entry.id} value={entry.id}>{entry.displayName}</option>
               ))}
             </select>
@@ -198,7 +203,7 @@ function ChatCard({
             <StatusBadge state={provider?.authStatus.state ?? "unknown"} />
             <span>{provider?.displayName ?? "Provider unavailable"}</span>
           </div>
-          <Button size="sm" disabled={busy} onClick={() => onSave(model, effort)}>Save Chat model</Button>
+          <Button size="sm" disabled={busy || !model} onClick={() => onSave(model, effort)}>Save Chat model</Button>
         </div>
         {provider && (
           <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
