@@ -6,7 +6,7 @@ description: Connect Telegram and WhatsApp to Matrix OS with private, room-level
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Card, Cards } from 'fumadocs-ui/components/card';
 
-Messages brings Telegram and WhatsApp into Matrix OS through a private Matrix backbone running on your Matrix computer. Conversations appear in the Messages app, and [Hermes](/docs/hermes) starts with no access to any room until you grant it.
+Messages brings Telegram and WhatsApp into Matrix OS through a private Matrix backbone running on your Matrix computer. Conversations appear in the Messages app, and the [selected messaging runtime](/docs/hermes) starts with no access to any room until you grant it.
 
 ## Supported networks
 
@@ -19,26 +19,26 @@ Text messages sync bidirectionally. Edits, deletes, reactions, receipts, typing 
 
 ## Privacy model
 
-Messages is default-deny. Connecting an account does not let Hermes read or reply to any conversation. Each room has its own access controls:
+Messages is default-deny. Connecting an account does not let the selected messaging runtime read or reply to any conversation. Each room has its own access controls:
 
-- **Read** — Hermes receives new messages in the room. If mention-only is also enabled, Hermes only receives messages that explicitly address Matrix OS.
-- **Reply** — Hermes can send a message into the room, subject to a final permission check at send time.
+- **Read** — the selected runtime receives new messages in the room. If mention-only is also enabled, it only receives messages that explicitly address Matrix OS.
+- **Reply** — the selected runtime can send a message into the room, subject to a final permission check at send time.
 - **Automation** — automation rules can run for this room. Without this flag, matching rules are skipped even if read is enabled.
 
 Revoking any permission cancels queued work and prevents new delivery. Draft replies still waiting for approval remain visible in Messages until you approve or cancel them.
 
-## Hermes and Messages
+## Agent runtimes and Messages
 
-Hermes can do several things with messages from permitted rooms:
+The selected messaging runtime can do several things with messages from permitted rooms:
 
 - Summarize or classify incoming messages (read permission)
 - Generate draft replies (read + reply permission)
 - Run automation rules that create tasks or draft replies (automation permission)
 
-See [Hermes](/docs/hermes) for model setup and how Hermes is enabled.
+See [Agent runtime](/docs/hermes) for provider, model, authentication, and runtime selection.
 
-<Callout type="warn" title="Hermes needs a model configured">
-  Hermes uses its configured model to generate summaries, drafts, and automation responses. Until you pick a model and add its provider credential, Hermes cannot act on any room — even if room-level permissions are enabled. See [Hermes](/docs/hermes) for setup.
+<Callout type="warn" title="The selected runtime needs a model configured">
+  The Messaging runtime uses its configured model to generate summaries, drafts, and automation responses. Until you select a model and complete its provider authentication, it cannot act on any room — even if room-level permissions are enabled. See [Agent runtime](/docs/hermes) for setup.
 </Callout>
 
 ## Automations

@@ -7,9 +7,9 @@ Matrix launch onboarding is designed to get a founder or developer to a useful w
 
 The first-run flow teaches what Matrix can do, asks which goal matters first, and then guides the user through only the setup needed for that goal. Coding users are guided through GitHub, project selection, Symphony, terminal context, and optional Claude or Codex. Assistant users are guided through approved calendar, email, and integration capabilities.
 
-Hermes remains the Matrix system agent in every setup state. Claude and Codex can add specialized capabilities, but they do not replace Hermes for Matrix-owned app-building, assistant, integration, and operating workflows.
+The Chat kernel remains available in every setup state. Optional coding agents and Messaging runtimes add specialized capabilities without replacing the kernel or reprovisioning the workspace.
 
-Launch readiness also includes an admin/control surface for models, agents, integrations, settings, automations, activity, and remediation. The surface uses operational patterns inspired by Finna Cloud while keeping the Matrix visual system from the website redesign.
+Launch readiness also includes an admin/control surface for models, agents, integrations, settings, automations, activity, and remediation. The surface follows the Matrix visual system and keeps operational state easy to scan.
 
 ## What The User Gets
 
@@ -17,13 +17,14 @@ Matrix onboarding is goal-based. A user can start by coding, building apps, usin
 
 For coding, Matrix can guide the user through GitHub connection, project selection, task source selection, Symphony coding runs, terminal context, and handoff summaries. For assistant work, Matrix can guide calendar, email, messaging, and work-update capabilities through explicit approval. For company-brain work, Matrix can capture and reuse product decisions, customer notes, project records, and support context with source display.
 
-Hermes is always available as the Matrix system agent. Users can bring Claude or Codex later, but those credentials upgrade capability rather than replacing Hermes or reprovisioning the workspace.
+The Chat kernel remains the Matrix system agent. Users can bring Claude or Codex later and choose Hermes or OpenClaw for permitted messaging, but those choices do not replace Chat or reprovision the workspace.
 
 ## Admin And Control Surface
 
 The Matrix admin/control surface gives users and operators one place to inspect:
 
-- model and provider status for Hermes, Claude, Codex, and future providers
+- Chat model, effort, provider, and authentication status
+- Messaging runtime install, health, provider, model, and authentication status
 - integration capability approvals and revoked/missing states
 - setup wizard recovery after reload or interruption
 - settings save/reload state
@@ -40,7 +41,7 @@ Operators use the launch readiness report before enabling paid access:
 GET /api/operator/launch-readiness
 ```
 
-The report must remain blocked unless every release-critical gate passes. It covers beta release promotion, fresh workspace rehearsal, existing workspace rehearsal, shell routing, onboarding education, visual QA, approved integrations, Hermes continuity, agent execution, coding handoff, company brain, support/growth drafts, admin/control surface, and entitlement behavior.
+The report must remain blocked unless every release-critical gate passes. It covers beta release promotion, fresh workspace rehearsal, existing workspace rehearsal, shell routing, onboarding education, visual QA, approved integrations, Chat continuity, agent execution, coding handoff, company brain, support/growth drafts, admin/control surface, and entitlement behavior.
 
 Payment enforcement is now backed by Clerk Billing for the early adopter launch plan. The shell requires an active `early_adopter` subscription before mounting the Matrix desktop, and the settings surface exposes Clerk's billing table so users can start or manage access.
 
