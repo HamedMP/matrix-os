@@ -1,4 +1,9 @@
-export type TerminalLaunchAction = "claude-login" | "codex-login" | "github-ssh-login";
+export type TerminalLaunchAction =
+  | "claude-login"
+  | "codex-login"
+  | "github-ssh-login"
+  | "hermes-model"
+  | "openclaw-model-auth";
 
 export interface TerminalLaunchConfig {
   action: TerminalLaunchAction;
@@ -24,6 +29,16 @@ const TERMINAL_ACTIONS: Record<TerminalLaunchAction, TerminalLaunchConfig> = {
     label: "GitHub browser login",
     command: "printf 'Matrix authenticates GitHub separately from SSH keys.\\nUse browser login here. Do not upload local private keys; secure repository SSH uses a Matrix-managed key inside the runtime.\\n\\n' && gh auth login --hostname github.com --web",
   },
+  "hermes-model": {
+    action: "hermes-model",
+    label: "Hermes provider setup",
+    command: "hermes model",
+  },
+  "openclaw-model-auth": {
+    action: "openclaw-model-auth",
+    label: "OpenClaw provider setup",
+    command: "openclaw models auth add",
+  },
 };
 
 const TERMINAL_LAUNCH_QUEUE_KEY = "matrix:terminal-launch-queue";
@@ -41,7 +56,7 @@ export function createTerminalLaunchPath(action: TerminalLaunchAction): string {
 
 export function parseTerminalLaunchPath(path: string): TerminalLaunchConfig | null {
   if (!path.startsWith("__terminal__:setup-")) return null;
-  const match = path.match(/^__terminal__:setup-(claude-login|codex-login|github-ssh-login)(?:-[A-Za-z0-9]+)?$/);
+  const match = path.match(/^__terminal__:setup-(claude-login|codex-login|github-ssh-login|hermes-model|openclaw-model-auth)(?:-[A-Za-z0-9]+)?$/);
   if (!match) return null;
   return TERMINAL_ACTIONS[match[1] as TerminalLaunchAction];
 }

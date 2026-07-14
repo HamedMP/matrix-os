@@ -41,6 +41,7 @@ import {
 import { DesignCaptionButtons } from "./window/DesignCaptionButtons";
 import { DefaultInstallsStep } from "./onboarding/DefaultInstallsStep";
 import type { DeveloperToolId } from "./onboarding/developer-tools";
+import type { TerminalLaunchAction } from "@/lib/terminal-launch";
 
 
 const sections = [
@@ -64,7 +65,6 @@ type SettingsSection = { id: SectionId; label: string; icon: typeof PaletteIcon 
 // The section components and render branches below are intentionally kept so a
 // section can be re-enabled by removing its id here. See AGENTS.md "Deferred work".
 const HIDDEN_SECTION_IDS = new Set<StandardSectionId>([
-  "agent",
   "channels",
   "skills",
   "security",
@@ -142,6 +142,7 @@ interface SettingsProps {
     error: string | null;
     collectAcquisitionSource?: boolean;
   };
+  onOpenAgentTerminal?: (action: TerminalLaunchAction) => void;
 }
 
 export function Settings({
@@ -180,6 +181,7 @@ function SettingsFrame({
   billingCheckoutReturnPath,
   billingCheckoutRuntimeSlot,
   onboardingDefaultInstalls,
+  onOpenAgentTerminal,
   billingActive,
   showBillingSection,
 }: SettingsFrameProps) {
@@ -381,7 +383,7 @@ function SettingsFrame({
 
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
               {activeSection === "appearance" && <AppearanceSection />}
-              {activeSection === "agent" && <AgentSection />}
+              {activeSection === "agent" && <AgentSection onOpenTerminal={onOpenAgentTerminal} />}
               {activeSection === "channels" && <ChannelsSection />}
               {activeSection === "integrations" && <IntegrationsSection />}
               {activeSection === "skills" && <SkillsSection />}

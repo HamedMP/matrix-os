@@ -75,6 +75,18 @@ describe("Settings panel", () => {
     expect(accountRegion.className).toContain("sm:mt-auto");
   });
 
+  it("unhides only the Agent section from the deferred settings set", async () => {
+    const { Settings } = await import("../../shell/src/components/Settings.js");
+
+    render(<Settings open onOpenChange={() => {}} />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Agent" }).isConnected).toBe(true));
+    expect(screen.queryByRole("button", { name: "Channels" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Skills" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Agent" }));
+    expect(screen.getByText("Agent settings").isConnected).toBe(true);
+  });
+
   it("keeps account controls available while billing is locked for provisioning", async () => {
     billingState.active = false;
     const { Settings } = await import("../../shell/src/components/Settings.js");

@@ -32,6 +32,14 @@ describe("terminal launch paths", () => {
     expect(githubLogin?.command).toContain("gh auth login --hostname github.com --web");
     expect(githubLogin?.command).toContain("Matrix-managed key");
     expect(githubLogin?.command).not.toContain("--git-protocol ssh");
+    expect(parseTerminalLaunchPath(createTerminalLaunchPath("hermes-model"))).toMatchObject({
+      action: "hermes-model",
+      command: "hermes model",
+    });
+    expect(parseTerminalLaunchPath(createTerminalLaunchPath("openclaw-model-auth"))).toMatchObject({
+      action: "openclaw-model-auth",
+      command: "openclaw models auth add",
+    });
   });
 
   it("ignores ordinary terminal paths", () => {
