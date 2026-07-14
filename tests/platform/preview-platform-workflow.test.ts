@@ -40,4 +40,22 @@ describe("preview platform workflow", () => {
     expect(deriveOrigin).toBeGreaterThan(bootstrap);
     expect(finalDeploy).toBeGreaterThan(deriveOrigin);
   });
+
+  it("bakes the preview Clerk key and app origin into the Next auth shell", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain(
+      'next_public_clerk_publishable_key="$(gcloud secrets versions access latest --secret next-public-clerk-publishable-key',
+    );
+    expect(workflow).toContain(
+      "next-public-clerk-publishable-key is required to build the preview auth shell.",
+    );
+    expect(workflow).toContain(
+      '_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$next_public_clerk_publishable_key',
+    );
+    expect(workflow).toContain('_NEXT_PUBLIC_MATRIX_APP_URL=$preview_public_url');
+  });
 });

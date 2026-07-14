@@ -104,10 +104,16 @@ jobs:
           set -euo pipefail
           head_sha="${{ github.event.pull_request.head.sha || github.sha }}"
           image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:pr-${PR_NUMBER}-${head_sha::12}"
+          preview_public_url="${PREVIEW_PUBLIC_URL:-https://preview.matrix-os.com}"
+          next_public_clerk_publishable_key="$(gcloud secrets versions access latest --secret next-public-clerk-publishable-key --project "$GCP_PROJECT_ID" 2>/dev/null || true)"
+          if [ -z "$next_public_clerk_publishable_key" ]; then
+            echo "next-public-clerk-publishable-key is required to build the preview auth shell." >&2
+            exit 1
+          fi
           gcloud builds submit . \
             --project "$GCP_PROJECT_ID" \
             --config cloudbuild.platform.yaml \
-            --substitutions "_IMAGE=$image" \
+            --substitutions "_IMAGE=$image,_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$next_public_clerk_publishable_key,_NEXT_PUBLIC_MATRIX_APP_URL=$preview_public_url" \
             --quiet
           echo "IMAGE=$image" >> "$GITHUB_ENV"
 
