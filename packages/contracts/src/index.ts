@@ -1,8 +1,8 @@
 import { z } from "zod/v4";
-import { IsoTimestampSchema, SAFE_SLUG } from "./primitives.js";
+import { IsoTimestampSchema, SAFE_SLUG } from "./primitives.ts";
 
-export * from "./agent-runtime-config.js";
-export { IsoTimestampSchema } from "./primitives.js";
+export * from "./agent-runtime-config.ts";
+export { IsoTimestampSchema } from "./primitives.ts";
 
 const SAFE_ID_BODY = /^[A-Za-z0-9_-]+$/;
 const SAFE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
@@ -88,11 +88,11 @@ export const SafeAssistantPreviewSourceTextSchema = boundedText(16_000, 64 * 102
 export const SafeAssistantPreviewTextSchema = boundedText(243, 1024)
   .refine((value) => !UNSAFE_ASSISTANT_PREVIEW_TEXT.test(value), { message: "Text is not safe for assistant preview display" });
 export const BoundedTextSchema = (maxChars = 4000, maxBytes = 16 * 1024) => boundedText(maxChars, maxBytes);
-// Everything in this package lives inline in index.ts by design: the file is
-// consumed as raw TS source by plain Node (type stripping) on customer VPSes,
-// where nodenext-style "./module.js" relative specifiers do NOT resolve to
-// .ts files. A relative re-export here took down gateway startup fleet-wide
-// (rolled back by the sync agent) -- do not add relative imports/re-exports.
+// This package is consumed as raw TS source by plain Node (type stripping) on
+// customer VPSes. Relative imports/re-exports must use the exact ".ts" file
+// extension: nodenext-style "./module.js" specifiers do not resolve to source
+// files and previously caused a fleet-wide gateway startup rollback. Keep the
+// plain-Node deployment smoke test green whenever this package is extracted.
 const UNSAFE_AGENT_PROFILE_TEXT =
   /(postgres(?:ql)?:\/\/|mysql:\/\/|sqlite:|\/home\/|\/tmp\/|\/var\/|\/opt\/|\/etc\/|\/root\/|\/Users\/|[A-Za-z]:[\\/]|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+|password\s*[=:]|eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}|ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{12,}|xox[baprs]-[A-Za-z0-9-]{10,}|sk_(?:live|test)_[A-Za-z0-9]{12,}|AKIA[0-9A-Z]{16})/i;
 

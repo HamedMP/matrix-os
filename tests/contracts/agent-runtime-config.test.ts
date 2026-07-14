@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import {
   AgentChatAuthKindSchema,
@@ -107,6 +108,14 @@ function makeView(overrides: Partial<AgentSettingsView> = {}): AgentSettingsView
 }
 
 describe("agent runtime configuration contracts", () => {
+  it("loads from raw TypeScript under the customer Node runtime", () => {
+    expect(() => execFileSync(
+      process.execPath,
+      ["--input-type=module", "--eval", "await import('./packages/contracts/src/index.ts')"],
+      { cwd: process.cwd(), encoding: "utf8" },
+    )).not.toThrow();
+  });
+
   it.each(["hermes", "openclaw"])("accepts the %s messaging runtime", (runtime) => {
     expect(AgentRuntimeIdSchema.parse(runtime)).toBe(runtime);
   });
