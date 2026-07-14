@@ -65,6 +65,15 @@ describe("desktop release workflows", () => {
     expect(config).toContain('externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts"] })');
   });
 
+  it("bundles runtime schema dependencies into the Electron main process", () => {
+    const config = readFileSync(join(root, "desktop/electron.vite.config.ts"), "utf8");
+    const bundledContracts = config.match(
+      /externalizeDepsPlugin\(\{ exclude: \["zod", "@matrix-os\/contracts"\] \}\)/g,
+    );
+
+    expect(bundledContracts).toHaveLength(2);
+  });
+
   it("records the full canary app version in the release manifest", () => {
     const workflow = readFileSync(join(root, ".github/workflows/desktop-release-canary.yml"), "utf8");
 
