@@ -10,7 +10,10 @@ const codingAgentsDesktopWorkspace =
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // Workspace contracts export TypeScript source for package consumers.
+    // Bundle the schemas and Zod so the built Electron main process never
+    // depends on source-only `.js` specifiers at runtime.
+    plugins: [externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts"] })],
     define: {
       __MATRIX_DESKTOP_UPDATE_CHANNEL__: JSON.stringify(desktopUpdateChannel),
       __CODING_AGENTS_DESKTOP_WORKSPACE__: JSON.stringify(codingAgentsDesktopWorkspace),

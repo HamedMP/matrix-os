@@ -1,3 +1,5 @@
+import { AgentSettingsViewSchema, type AgentSettingsView } from "@matrix-os/contracts";
+
 // Defensive normalizer for GET /api/settings/agent. The model/effort catalog
 // (availableModels/availableEfforts/defaults) was added to the gateway after
 // the desktop UI shipped, so an older deployed gateway answers with only
@@ -16,6 +18,8 @@ export interface AgentConfigView {
   availableModels: ModelOption[];
   availableEfforts: string[];
   defaults: { model: string | null; effort: string | null };
+  extended: AgentSettingsView | null;
+  runtimeUpdateRequired: boolean;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -38,6 +42,10 @@ export function normalizeAgentConfig(raw: unknown): AgentConfigView {
   const root = asRecord(raw);
   const kernel = asRecord(root.kernel);
   const defaults = asRecord(root.defaults);
+  const extended = AgentSettingsViewSchema.safeParse(raw);
+  if (!extended.success && root.contractVersion !== undefined) {
+    throw new Error("Agent settings response is invalid");
+  }
   return {
     kernel: { model: asStringOrNull(kernel.model), effort: asStringOrNull(kernel.effort) },
     availableModels: Array.isArray(root.availableModels)
@@ -47,6 +55,8 @@ export function normalizeAgentConfig(raw: unknown): AgentConfigView {
       ? root.availableEfforts.filter((e): e is string => typeof e === "string")
       : [],
     defaults: { model: asStringOrNull(defaults.model), effort: asStringOrNull(defaults.effort) },
+    extended: extended.success ? extended.data : null,
+    runtimeUpdateRequired: !extended.success,
   };
 }
 

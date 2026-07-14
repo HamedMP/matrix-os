@@ -17,6 +17,8 @@ describe("normalizeAgentConfig", () => {
     expect(cfg.availableEfforts).toEqual([]);
     expect(cfg.defaults).toEqual({ model: null, effort: null });
     expect(cfg.kernel).toEqual({ model: "claude-opus-4-6", effort: "high" });
+    expect(cfg.extended).toBeNull();
+    expect(cfg.runtimeUpdateRequired).toBe(true);
   });
 
   it("preserves a full catalog and drops malformed model entries", () => {
@@ -33,6 +35,122 @@ describe("normalizeAgentConfig", () => {
     expect(cfg.availableModels).toEqual([{ id: "a", label: "A", tier: "Fast" }]);
     expect(cfg.availableEfforts).toEqual(["low", "high"]);
     expect(cfg.defaults).toEqual({ model: "a", effort: "low" });
+  });
+
+  it("rejects a malformed current contract instead of labeling it as an older gateway", () => {
+    expect(() => normalizeAgentConfig({
+      contractVersion: 2,
+      identity: {},
+      kernel: { model: "sonnet", effort: "medium" },
+      availableModels: [{ id: "sonnet", label: "Sonnet", tier: "Balanced" }],
+      availableEfforts: ["medium"],
+      defaults: { model: "sonnet", effort: "medium" },
+    })).toThrow("Agent settings response is invalid");
+  });
+
+  it("preserves the validated additive runtime and provider contract", () => {
+    const cfg = normalizeAgentConfig({
+      identity: {},
+      kernel: { model: null, effort: null },
+      availableModels: [{ id: "sonnet", label: "Sonnet", tier: "Balanced" }],
+      availableEfforts: ["medium"],
+      defaults: { model: "sonnet", effort: "medium" },
+      contractVersion: 2,
+      revision: 7,
+      chat: {
+        provider: "anthropic",
+        model: "sonnet",
+        effort: "medium",
+        source: "default",
+        authKind: "platform",
+      },
+      runtime: {
+        selected: "hermes",
+        transition: null,
+        options: [
+          {
+            id: "hermes",
+            displayName: "Hermes",
+            installState: "installed",
+            health: "healthy",
+            selectionState: "active",
+            configured: true,
+            capabilities: ["provider_catalog", "model_selection", "authentication"],
+          },
+          {
+            id: "openclaw",
+            displayName: "OpenClaw",
+            installState: "missing",
+            health: "stopped",
+            selectionState: "action_required",
+            configured: false,
+            capabilities: ["install"],
+            setupAction: "install",
+          },
+        ],
+      },
+      providers: [
+        {
+          id: "anthropic",
+          displayName: "Anthropic",
+          runtime: null,
+          scopes: ["chat"],
+          authKind: "platform",
+          supportedAuthKinds: ["platform", "api_key", "oauth_login"],
+          models: [{
+            id: "sonnet",
+            displayName: "Sonnet",
+            capabilities: ["tools", "reasoning"],
+            efforts: ["medium"],
+            available: true,
+          }],
+          authStatus: { state: "ready", authenticated: true, action: "none" },
+        },
+        {
+          id: "openrouter",
+          displayName: "OpenRouter",
+          runtime: "hermes",
+          scopes: ["messaging"],
+          authKind: "api_key",
+          supportedAuthKinds: ["api_key"],
+          models: [{
+            id: "openrouter/auto",
+            displayName: "Auto",
+            capabilities: ["tools"],
+            efforts: [],
+            available: true,
+          }],
+          authStatus: {
+            state: "action_required",
+            authenticated: false,
+            action: "enter_api_key",
+          },
+        },
+      ],
+      currentSelection: {
+        chat: {
+          provider: "anthropic",
+          model: "sonnet",
+          effort: "medium",
+          source: "default",
+          authKind: "platform",
+        },
+        messaging: {
+          runtime: "hermes",
+          provider: "openrouter",
+          model: "openrouter/auto",
+          configured: true,
+        },
+      },
+    });
+
+    expect(cfg.runtimeUpdateRequired).toBe(false);
+    expect(cfg.extended?.revision).toBe(7);
+    expect(cfg.extended?.runtime.selected).toBe("hermes");
+    expect(cfg.extended?.providers.map((provider) => provider.displayName)).toEqual([
+      "Anthropic",
+      "OpenRouter",
+    ]);
   });
 
   it("never throws on garbage input", () => {
@@ -52,6 +170,8 @@ describe("selectedModelEffort", () => {
     availableModels: [],
     availableEfforts: [],
     defaults: { model: null, effort: null },
+    extended: null,
+    runtimeUpdateRequired: true,
   };
 
   it("prefers the saved kernel value over defaults", () => {

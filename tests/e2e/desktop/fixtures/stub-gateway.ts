@@ -178,7 +178,17 @@ export function codingAgentSummary(): RuntimeSummary {
       },
     ],
     projects: {
-      items: [{ id: "matrix-os", label: "Matrix OS", status: "available", updatedAt: NOW }],
+      items: [
+        {
+          id: "matrix-os",
+          label: "Matrix OS",
+          status: "available",
+          taskCount: 2,
+          threadCount: 1,
+          attentionCount: 0,
+          updatedAt: NOW,
+        },
+      ],
       hasMore: false,
       limit: 50,
     },
