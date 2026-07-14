@@ -188,6 +188,48 @@ describe("NativeAppViewer", () => {
     });
   });
 
+  it("terminates a session through its launch-time VM after shell navigation", async () => {
+    window.history.replaceState({}, "", "/vm/alice?runtime=review");
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl === "/vm/alice/api/native-apps/xterm/sessions?runtime=review" && init?.method === "POST") {
+        return new Response(JSON.stringify({
+          session: {
+            id: "session_nnnnnnnnnnnnnnnnnnnnnnnn",
+            appId: "xterm",
+            status: "running",
+            streamUrl: "/api/native-apps/sessions/session_nnnnnnnnnnnnnnnnnnnnnnnn/stream/stream_oooooooooooooooooooooooo/",
+          },
+        }), { status: 201, headers: { "Content-Type": "application/json" } });
+      }
+      if (
+        requestUrl === "/vm/alice/api/native-apps/sessions/session_nnnnnnnnnnnnnnnnnnnnnnnn?runtime=review"
+        && init?.method === "DELETE"
+      ) {
+        return new Response(null, { status: 200 });
+      }
+      return new Response(JSON.stringify({ error: "not found" }), { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    Object.defineProperty(window, "fetch", { configurable: true, value: fetchMock });
+
+    const viewer = render(<NativeAppViewer appId="xterm" windowId="win-navigation-cleanup" />);
+    await screen.findByTitle("xterm native app");
+    window.history.replaceState({}, "", "/vm/bob?runtime=staging");
+    viewer.unmount();
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/vm/alice/api/native-apps/sessions/session_nnnnnnnnnnnnnnnnnnnnnnnn?runtime=review",
+        expect.objectContaining({ method: "DELETE" }),
+      );
+    });
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/vm/bob/api/native-apps/sessions/session_nnnnnnnnnnnnnnnnnnnnnnnn?runtime=staging",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
   it("preserves a root-shell runtime selector on a handle-qualified stream capability", async () => {
     window.history.replaceState({}, "", "/?runtime=review");
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {

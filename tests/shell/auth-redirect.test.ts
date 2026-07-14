@@ -17,6 +17,13 @@ describe("resolveShellAuthRedirect", () => {
     )).toBe("/vm/pr-703?runtime=preview");
   });
 
+  it("drops a runtime slot with a trailing dash", () => {
+    expect(resolveShellAuthRedirect(
+      "/vm/pr-703?runtime=review-",
+      "https://app.matrix-os.com",
+    )).toBe("/vm/pr-703");
+  });
+
   it.each([
     "https://evil.example/vm/pr-703?runtime=preview",
     "//evil.example/vm/pr-703?runtime=preview",

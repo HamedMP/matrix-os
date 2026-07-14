@@ -1,5 +1,6 @@
+import { parseRuntimeSlot } from "./runtime-slot";
+
 const DEFAULT_APP_ORIGIN = "https://app.matrix-os.com";
-const SAFE_RUNTIME_SLOT = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 function normalizeDeviceReturn(value: string | null, appOrigin: string): string | null {
   if (
@@ -36,8 +37,8 @@ export function resolveShellAuthRedirect(
   const normalizedPath = target.pathname.replace(/^\/{2,}/, "/");
   const path = /^\/sign-(?:in|up)(?:\/.*)?$/.test(normalizedPath) ? "/" : normalizedPath;
   const params = new URLSearchParams();
-  const runtime = target.searchParams.get("runtime");
-  if (runtime && SAFE_RUNTIME_SLOT.test(runtime)) params.set("runtime", runtime);
+  const runtime = parseRuntimeSlot(target.searchParams.get("runtime"));
+  if (runtime) params.set("runtime", runtime);
   const deviceReturn = normalizeDeviceReturn(target.searchParams.get("device_return"), appOrigin);
   if (deviceReturn) params.set("device_return", deviceReturn);
   const query = params.toString();

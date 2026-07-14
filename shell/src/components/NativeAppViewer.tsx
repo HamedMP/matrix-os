@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNativeLinuxAppsEnabled } from "@/hooks/useNativeLinuxAppsEnabled";
+import { parseRuntimeSlot } from "@/lib/runtime-slot";
 
 interface NativeAppViewerProps {
   appId: string;
@@ -31,7 +32,6 @@ type ViewerState =
 const REQUEST_TIMEOUT_MS = 10_000;
 const TERMINATION_ATTEMPTS = 3;
 const MAX_NATIVE_SESSION_LEASES = 64;
-const SAFE_RUNTIME_SLOT = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 const XPRA_EMBED_OPTIONS = {
   clipboard: "false",
   file_transfer: "false",
@@ -46,9 +46,15 @@ const XPRA_EMBED_OPTIONS = {
 
 interface NativeSessionLease {
   appId: string;
+  context: NativeApiContext;
   consumers: number;
   lastTouched: number;
   session: Promise<NativeAppSession>;
+}
+
+interface NativeApiContext {
+  runtimeSlot: string | null;
+  vmPrefix: string;
 }
 
 interface NativeSessionLeaseHandle {
@@ -69,8 +75,16 @@ function safeViewerMessage(value: unknown): string {
   return error;
 }
 
-function nativeApiPath(path: string): string {
-  return withSelectedRuntime(`${explicitVmPrefix()}/api/native-apps${path}`);
+function currentNativeApiContext(): NativeApiContext {
+  if (typeof window === "undefined") return { runtimeSlot: null, vmPrefix: "" };
+  return {
+    runtimeSlot: parseRuntimeSlot(new URLSearchParams(window.location.search).get("runtime")),
+    vmPrefix: explicitVmPrefix(),
+  };
+}
+
+function nativeApiPath(path: string, context = currentNativeApiContext()): string {
+  return withRuntimeSlot(`${context.vmPrefix}/api/native-apps${path}`, context.runtimeSlot);
 }
 
 function explicitVmPrefix(): string {
@@ -79,29 +93,30 @@ function explicitVmPrefix(): string {
   return match?.[1] ? `/vm/${match[1]}` : "";
 }
 
-function nativeStreamUrl(streamUrl: string): string {
-  const prefix = explicitVmPrefix();
-  const explicitStreamUrl = prefix && streamUrl.startsWith("/api/native-apps/")
-    ? `${prefix}${streamUrl}`
+function nativeStreamUrl(streamUrl: string, context: NativeApiContext): string {
+  const explicitStreamUrl = context.vmPrefix && streamUrl.startsWith("/api/native-apps/")
+    ? `${context.vmPrefix}${streamUrl}`
     : streamUrl;
   const url = new URL(explicitStreamUrl, window.location.origin);
   for (const [name, value] of Object.entries(XPRA_EMBED_OPTIONS)) {
     url.searchParams.set(name, value);
   }
-  return withSelectedRuntime(`${url.pathname}${url.search}${url.hash}`);
+  return withRuntimeSlot(`${url.pathname}${url.search}${url.hash}`, context.runtimeSlot);
 }
 
-function withSelectedRuntime(path: string): string {
-  if (typeof window === "undefined") return path;
-  const runtime = new URLSearchParams(window.location.search).get("runtime");
-  if (!runtime || runtime.length > 32 || !SAFE_RUNTIME_SLOT.test(runtime)) return path;
+function withRuntimeSlot(path: string, runtimeSlot: string | null): string {
+  if (typeof window === "undefined" || !runtimeSlot) return path;
   const url = new URL(path, window.location.origin);
-  url.searchParams.set("runtime", runtime);
+  url.searchParams.set("runtime", runtimeSlot);
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
-async function launchNativeSession(appId: string, viewport: NativeAppViewport): Promise<NativeAppSession> {
-  const response = await fetch(nativeApiPath(`/${appId}/sessions`), {
+async function launchNativeSession(
+  appId: string,
+  viewport: NativeAppViewport,
+  context: NativeApiContext,
+): Promise<NativeAppSession> {
+  const response = await fetch(nativeApiPath(`/${appId}/sessions`, context), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(viewport),
@@ -117,15 +132,15 @@ async function launchNativeSession(appId: string, viewport: NativeAppViewport): 
   const session = (body as { session: NativeAppSession }).session;
   return {
     ...session,
-    streamUrl: nativeStreamUrl(session.streamUrl),
+    streamUrl: nativeStreamUrl(session.streamUrl, context),
   };
 }
 
-async function terminateNativeSession(sessionId: string): Promise<void> {
+async function terminateNativeSession(sessionId: string, context: NativeApiContext): Promise<void> {
   let lastFailure = "request failed";
   for (let attempt = 0; attempt < TERMINATION_ATTEMPTS; attempt++) {
     try {
-      const response = await fetch(nativeApiPath(`/sessions/${sessionId}`), {
+      const response = await fetch(nativeApiPath(`/sessions/${sessionId}`, context), {
         method: "DELETE",
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
@@ -138,8 +153,8 @@ async function terminateNativeSession(sessionId: string): Promise<void> {
   console.warn("[native-app-viewer] terminate failed after retries:", lastFailure);
 }
 
-function terminateNativeSessionOnPageHide(sessionId: string): void {
-  void fetch(nativeApiPath(`/sessions/${sessionId}`), {
+function terminateNativeSessionOnPageHide(sessionId: string, context: NativeApiContext): void {
+  void fetch(nativeApiPath(`/sessions/${sessionId}`, context), {
     method: "DELETE",
     keepalive: true,
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -154,7 +169,7 @@ function drainNativeSessionLeasesOnPageHide(event: PageTransitionEvent): void {
   nativeSessionLeases.clear();
   for (const lease of leases) {
     void lease.session.then(
-      (session) => terminateNativeSessionOnPageHide(session.id),
+      (session) => terminateNativeSessionOnPageHide(session.id, lease.context),
       () => undefined,
     );
   }
@@ -171,7 +186,7 @@ function terminateLease(windowId: string, lease: NativeSessionLease): void {
     nativeSessionLeases.delete(windowId);
   }
   void lease.session.then(
-    (session) => terminateNativeSession(session.id),
+    (session) => terminateNativeSession(session.id, lease.context),
     () => undefined,
   );
 }
@@ -193,8 +208,13 @@ function acquireNativeSessionLease(
   viewport: NativeAppViewport,
 ): NativeSessionLeaseHandle {
   ensurePageHideListener();
+  const context = currentNativeApiContext();
   const existing = nativeSessionLeases.get(windowId);
-  if (existing?.appId === appId) {
+  if (
+    existing?.appId === appId
+    && existing.context.vmPrefix === context.vmPrefix
+    && existing.context.runtimeSlot === context.runtimeSlot
+  ) {
     existing.consumers += 1;
     existing.lastTouched = Date.now();
     return {
@@ -213,9 +233,10 @@ function acquireNativeSessionLease(
 
   const lease: NativeSessionLease = {
     appId,
+    context,
     consumers: 1,
     lastTouched: Date.now(),
-    session: launchNativeSession(appId, viewport),
+    session: launchNativeSession(appId, viewport, context),
   };
   nativeSessionLeases.set(windowId, lease);
   return {
