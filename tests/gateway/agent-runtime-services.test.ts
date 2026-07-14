@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createAgentRuntimeServices,
   createHermesAgentRuntimeServices,
+  createLazyOpenClawRpc,
 } from "../../packages/gateway/src/agent-config/runtime-services.js";
 
 const cleanupPaths: string[] = [];
@@ -17,6 +18,30 @@ afterEach(async () => {
 });
 
 describe("Hermes agent runtime services", () => {
+  it("does not release a newly created OpenClaw client to callers after shutdown starts", async () => {
+    let resolveToken: ((token: string) => void) | undefined;
+    const token = new Promise<string>((resolve) => {
+      resolveToken = resolve;
+    });
+    const client = {
+      call: vi.fn(async () => ({ ok: true })),
+      close: vi.fn(async () => {}),
+    };
+    const rpc = createLazyOpenClawRpc("/owner/home", {
+      readToken: async () => token,
+      createClient: () => client,
+    });
+
+    const call = rpc.call("health", {}, new AbortController().signal);
+    const close = rpc.close();
+    resolveToken?.("a".repeat(64));
+
+    await expect(call).rejects.toMatchObject({ kind: "runtime_unavailable" });
+    await close;
+    expect(client.call).not.toHaveBeenCalled();
+    expect(client.close).toHaveBeenCalledOnce();
+  });
+
   it("wires the unified runtime services into gateway startup and shutdown", async () => {
     const server = await readFile("packages/gateway/src/server.ts", "utf8");
 

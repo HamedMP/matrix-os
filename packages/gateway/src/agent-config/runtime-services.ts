@@ -48,17 +48,27 @@ export interface HermesAgentRuntimeServices {
 
 export interface AgentRuntimeServices extends HermesAgentRuntimeServices {}
 
-function createLazyOpenClawRpc(homePath: string): OpenClawRpcClient {
+interface LazyOpenClawRpcOptions {
+  readToken?: (homePath: string) => Promise<string>;
+  createClient?: typeof createOpenClawRpcClient;
+}
+
+export function createLazyOpenClawRpc(
+  homePath: string,
+  options: LazyOpenClawRpcOptions = {},
+): OpenClawRpcClient {
   let client: OpenClawRpcClient | null = null;
   let pending: Promise<OpenClawRpcClient> | null = null;
   let closed = false;
+  const readToken = options.readToken ?? readOpenClawGatewayToken;
+  const createClient = options.createClient ?? createOpenClawRpcClient;
 
   async function getClient(): Promise<OpenClawRpcClient> {
     if (closed) throw new AgentConfigError("runtime_unavailable");
     if (client !== null) return client;
     if (pending === null) {
-      pending = readOpenClawGatewayToken(homePath).then((token) => {
-        const created = createOpenClawRpcClient({
+      pending = readToken(homePath).then((token) => {
+        const created = createClient({
           url: "ws://127.0.0.1:18789",
           token,
         });
@@ -68,7 +78,12 @@ function createLazyOpenClawRpc(homePath: string): OpenClawRpcClient {
         pending = null;
       });
     }
-    return pending;
+    const active = await pending;
+    // close() marks the wrapper closed before awaiting an in-flight creation.
+    // Recheck after that shared promise settles so no caller can start an RPC
+    // on the client that the shutdown path is about to close.
+    if (closed) throw new AgentConfigError("runtime_unavailable");
+    return active;
   }
 
   return {
