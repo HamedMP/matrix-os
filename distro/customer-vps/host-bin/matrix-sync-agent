@@ -321,8 +321,8 @@ apply_update() {
     fi
     if [ -f "$extract_dir/systemd/matrix-linux-tools.service" ]; then
       if sudo systemctl enable matrix-linux-tools.service \
-        && sudo systemctl start --no-block matrix-linux-tools.service; then
-        log "Linux tools service enabled"
+        && sudo systemctl restart --no-block matrix-linux-tools.service; then
+        log "Linux tools service enabled and restarted"
       else
         log "WARN: failed to enable Linux tools service; systemd will retry independently"
       fi

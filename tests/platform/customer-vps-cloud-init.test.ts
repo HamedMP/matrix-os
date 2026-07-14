@@ -568,6 +568,7 @@ exit 99
     expect(existsSync(join(root, 'distro/customer-vps/systemd/matrix-linux-tools.service'))).toBe(true);
     expect(syncAgent).toContain('matrix-linux-tools.service');
     expect(syncAgent).toContain('systemctl start --no-block matrix-linux-tools.service');
+    expect(syncAgent).toContain('systemctl restart --no-block matrix-linux-tools.service');
     expect(syncAgent).toContain('if sudo systemctl enable matrix-linux-tools.service \\');
     expect(syncAgent).not.toMatch(/^\s*sudo systemctl enable matrix-linux-tools\.service\s*$/m);
     expect(syncAgent).toContain('Linux tools service enabled');
