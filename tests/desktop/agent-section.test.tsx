@@ -7,6 +7,98 @@ import AgentSection from "../../desktop/src/renderer/src/features/settings/secti
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
+function currentAgentSettings() {
+  return {
+    identity: {},
+    kernel: { model: "sonnet", effort: "medium" },
+    availableModels: [{ id: "sonnet", label: "Sonnet", tier: "Balanced" }],
+    availableEfforts: ["medium"],
+    defaults: { model: "sonnet", effort: "medium" },
+    contractVersion: 2,
+    revision: 7,
+    chat: {
+      provider: "anthropic",
+      model: "sonnet",
+      effort: "medium",
+      source: "saved",
+      authKind: "platform",
+    },
+    runtime: {
+      selected: "hermes",
+      transition: null,
+      options: [
+        {
+          id: "hermes",
+          displayName: "Hermes",
+          installState: "installed",
+          health: "healthy",
+          selectionState: "active",
+          configured: true,
+          capabilities: ["provider_catalog", "model_selection", "authentication"],
+        },
+        {
+          id: "openclaw",
+          displayName: "OpenClaw",
+          installState: "installed",
+          health: "stopped",
+          selectionState: "available",
+          configured: false,
+          capabilities: ["provider_catalog", "model_selection", "authentication"],
+        },
+      ],
+    },
+    providers: [
+      {
+        id: "anthropic",
+        displayName: "Anthropic",
+        runtime: null,
+        scopes: ["chat"],
+        authKind: "platform",
+        supportedAuthKinds: ["platform", "api_key", "oauth_login"],
+        models: [{
+          id: "sonnet",
+          displayName: "Sonnet",
+          capabilities: ["tools", "reasoning"],
+          efforts: ["medium"],
+          available: true,
+        }],
+        authStatus: { state: "ready", authenticated: true, action: "none" },
+      },
+      {
+        id: "openrouter",
+        displayName: "OpenRouter",
+        runtime: "hermes",
+        scopes: ["messaging"],
+        authKind: "api_key",
+        supportedAuthKinds: ["api_key"],
+        models: [{
+          id: "openrouter/auto",
+          displayName: "Auto",
+          capabilities: ["tools"],
+          efforts: [],
+          available: true,
+        }],
+        authStatus: { state: "action_required", authenticated: false, action: "enter_api_key" },
+      },
+    ],
+    currentSelection: {
+      chat: {
+        provider: "anthropic",
+        model: "sonnet",
+        effort: "medium",
+        source: "saved",
+        authKind: "platform",
+      },
+      messaging: {
+        runtime: "hermes",
+        provider: "openrouter",
+        model: "openrouter/auto",
+        configured: true,
+      },
+    },
+  };
+}
+
 describe("AgentSection", () => {
   let api: {
     get: ReturnType<typeof vi.fn>;
@@ -135,11 +227,12 @@ describe("AgentSection", () => {
           {
             id: "openclaw",
             displayName: "OpenClaw",
-            installState: "installed",
+            installState: "missing",
             health: "stopped",
-            selectionState: "available",
+            selectionState: "unavailable",
             configured: false,
-            capabilities: ["provider_catalog", "model_selection", "authentication"],
+            capabilities: ["install"],
+            setupAction: "install",
           },
         ],
       },
@@ -212,26 +305,103 @@ describe("AgentSection", () => {
     expect(screen.getByText("Anthropic")).toBeTruthy();
     expect(screen.getByText("OpenRouter")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Use OpenClaw" }));
+    fireEvent.click(screen.getByRole("button", { name: "Install OpenClaw" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/api/terminal/sessions",
+      expect.objectContaining({
+        cmd: "/opt/matrix/bin/matrix-agent-runtime-control install openclaw",
+        cwd: "projects",
+      }),
+    ));
+
+    current.runtime.options[1] = {
+      id: "openclaw",
+      displayName: "OpenClaw",
+      installState: "installed",
+      health: "stopped",
+      selectionState: "available",
+      configured: false,
+      capabilities: ["provider_catalog", "model_selection", "authentication"],
+    };
+    act(() => useConnection.setState({ api: null }));
+    act(() => useConnection.setState({ api: api as never }));
+    fireEvent.click(await screen.findByRole("button", { name: "Use OpenClaw" }));
     await waitFor(() => expect(api.put).toHaveBeenCalledWith(
       "/api/settings/agent",
       { runtime: "openclaw", revision: 7 },
-    ));
-
-    fireEvent.click(screen.getByRole("button", { name: "Use my API key" }));
-    const keyInput = screen.getByLabelText("Anthropic API key") as HTMLInputElement;
-    fireEvent.change(keyInput, { target: { value: "sk-ant-desktop-test" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save API key" }));
-    expect(keyInput.value).toBe("");
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
-      "/api/settings/api-key",
-      { apiKey: "sk-ant-desktop-test" },
     ));
 
     fireEvent.click(screen.getByRole("button", { name: "Configure Hermes provider" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
       "/api/terminal/sessions",
       expect.objectContaining({ cmd: "hermes model", cwd: "projects" }),
+    ));
+
+    const invalidApi = {
+      ...api,
+      get: vi.fn((path: string) => path === "/api/settings/agent"
+        ? Promise.resolve({ contractVersion: 2 })
+        : Promise.resolve({})),
+    };
+    act(() => useConnection.setState({ api: invalidApi as never }));
+
+    await waitFor(() => expect(screen.queryByText("Messaging runtime")).toBeNull());
+    expect(screen.queryByRole("button", { name: "Use OpenClaw" })).toBeNull();
+    expect(screen.getAllByText("Something went wrong. Please try again.").length).toBeGreaterThan(0);
+
+    act(() => useConnection.setState({ api: api as never }));
+    expect(await screen.findByText("Messaging runtime")).toBeTruthy();
+    api.get.mockImplementation((path: string) => path === "/api/settings/agent"
+      ? Promise.resolve({ contractVersion: 2 })
+      : Promise.resolve({}));
+
+    fireEvent.click(screen.getByRole("button", { name: "Use my API key" }));
+    const keyInput = screen.getByLabelText("Anthropic API key") as HTMLInputElement;
+    fireEvent.change(keyInput, { target: { value: "sk-ant-desktop-test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save API key" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/api/settings/api-key",
+      { apiKey: "sk-ant-desktop-test" },
+    ));
+    await waitFor(() => expect(screen.queryByText("Messaging runtime")).toBeNull());
+    expect(screen.queryByRole("button", { name: "Use OpenClaw" })).toBeNull();
+  });
+
+  it("submits the visible fallback when the saved messaging model is unavailable", async () => {
+    const current = currentAgentSettings();
+    const messagingProvider = current.providers.find((provider) => provider.id === "openrouter");
+    if (!messagingProvider) throw new Error("missing messaging provider fixture");
+    messagingProvider.models = [
+      {
+        id: "retired-model",
+        displayName: "Retired",
+        capabilities: ["tools"],
+        efforts: [],
+        available: false,
+      },
+      {
+        id: "ready-model",
+        displayName: "Ready",
+        capabilities: ["tools"],
+        efforts: [],
+        available: true,
+      },
+    ];
+    current.currentSelection.messaging.model = "retired-model";
+    api.get.mockImplementation((path: string) => path === "/api/settings/agent"
+      ? Promise.resolve(current)
+      : Promise.resolve({}));
+    api.put.mockResolvedValue(current);
+
+    render(<AgentSection />);
+
+    const model = await screen.findByRole("combobox", { name: "Messaging model" }) as HTMLSelectElement;
+    expect(model.value).toBe("ready-model");
+    fireEvent.click(screen.getByRole("button", { name: "Save messaging model" }));
+
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith(
+      "/api/settings/agent",
+      { provider: "openrouter", messagingModel: "ready-model", revision: 7 },
     ));
   });
 
@@ -258,7 +428,7 @@ describe("AgentSection", () => {
     expect(screen.getAllByText("Something went wrong. Please try again.").length).toBeGreaterThan(0);
   });
 
-  it("replaces a stale legacy fallback when a current-contract mutation is malformed", async () => {
+  it("clears stale current-contract controls when a mutation response is malformed", async () => {
     const current = {
       identity: {},
       kernel: { model: null, effort: null },
@@ -358,24 +528,113 @@ describe("AgentSection", () => {
     render(<AgentSection />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Use OpenClaw" }));
-    const legacyApi = {
-      ...api,
-      get: vi.fn((path: string) => path === "/api/settings/agent"
-        ? Promise.resolve({
-          kernel: { model: null, effort: null },
-          availableModels: [{ id: "sonnet", label: "Sonnet", tier: "Balanced" }],
-          availableEfforts: ["medium"],
-          defaults: { model: "sonnet", effort: "medium" },
-        })
-        : Promise.resolve({})),
-    };
-    act(() => useConnection.setState({ api: legacyApi as never }));
-    expect(await screen.findByText("Runtime update needed")).toBeTruthy();
-
     await act(async () => resolveMutation({ contractVersion: 2 }));
 
-    await waitFor(() => expect(screen.queryByText("Runtime update needed")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("Messaging runtime")).toBeNull());
+    expect(screen.queryByRole("button", { name: "Use OpenClaw" })).toBeNull();
     expect(screen.getAllByText("Something went wrong. Please try again.").length).toBeGreaterThan(0);
+  });
+
+  it("keeps current runtime controls after a rejected mutation", async () => {
+    const current = currentAgentSettings();
+    api.get.mockImplementation((path: string) => path === "/api/settings/agent"
+      ? Promise.resolve(current)
+      : Promise.resolve({}));
+    api.put.mockRejectedValue(new Error("conflict"));
+    render(<AgentSection />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Use OpenClaw" }));
+
+    await screen.findByText("Something went wrong. Please try again.");
+    expect(screen.getByText("Messaging runtime")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Use OpenClaw" })).toBeTruthy();
+  });
+
+  it("keeps a typed API key after a rejected validation request", async () => {
+    const current = currentAgentSettings();
+    api.get.mockImplementation((path: string) => path === "/api/settings/agent"
+      ? Promise.resolve(current)
+      : Promise.resolve({}));
+    api.post.mockImplementation((path: string) => path === "/api/settings/api-key"
+      ? Promise.reject(new Error("invalid key"))
+      : Promise.resolve({ name: "setup" }));
+    render(<AgentSection />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Use my API key" }));
+    const keyInput = screen.getByLabelText("Anthropic API key") as HTMLInputElement;
+    fireEvent.change(keyInput, { target: { value: "sk-ant-retry-value" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save API key" }));
+
+    await screen.findByText("Something went wrong. Please try again.");
+    expect(keyInput.value).toBe("sk-ant-retry-value");
+    expect(screen.getByText("Messaging runtime")).toBeTruthy();
+  });
+
+  it("reloads settings when the selected runtime slot changes even if the API client is reused", async () => {
+    const primary = currentAgentSettings();
+    const secondary = structuredClone(primary);
+    secondary.runtime.selected = "openclaw";
+    secondary.runtime.options[0].selectionState = "available";
+    secondary.runtime.options[1].selectionState = "active";
+    secondary.runtime.options[1].health = "healthy";
+    secondary.currentSelection.messaging = {
+      runtime: "openclaw",
+      provider: null,
+      model: null,
+      configured: false,
+    };
+    let active = primary;
+    api.get.mockImplementation((path: string) => path === "/api/settings/agent"
+      ? Promise.resolve(active)
+      : Promise.resolve({}));
+    render(<AgentSection />);
+    expect(await screen.findByText("Hermes is active")).toBeTruthy();
+
+    active = secondary;
+    act(() => useConnection.setState({ runtimeSlot: "secondary" }));
+
+    expect(await screen.findByText("OpenClaw is active")).toBeTruthy();
+  });
+
+  it("discards a delayed mutation response from the previously selected computer", async () => {
+    const primary = currentAgentSettings();
+    const secondary = structuredClone(primary);
+    secondary.runtime.selected = "openclaw";
+    secondary.runtime.options[0].selectionState = "available";
+    secondary.runtime.options[1].selectionState = "active";
+    secondary.runtime.options[1].health = "healthy";
+    secondary.currentSelection.messaging = {
+      runtime: "openclaw",
+      provider: null,
+      model: null,
+      configured: false,
+    };
+    let resolveOldMutation!: (value: unknown) => void;
+    api.get.mockImplementation((path: string) => path === "/api/settings/agent"
+      ? Promise.resolve(primary)
+      : Promise.resolve({}));
+    api.put.mockReturnValue(new Promise((resolve) => {
+      resolveOldMutation = resolve;
+    }));
+    render(<AgentSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Use OpenClaw" }));
+
+    const nextApi = {
+      ...api,
+      get: vi.fn((path: string) => path === "/api/settings/agent"
+        ? Promise.resolve(secondary)
+        : Promise.resolve({})),
+    };
+    act(() => useConnection.setState({
+      runtimeSlot: "secondary",
+      authGeneration: 1,
+      api: nextApi as never,
+    }));
+    expect(await screen.findByText("OpenClaw is active")).toBeTruthy();
+
+    await act(async () => resolveOldMutation(primary));
+    expect(screen.getByText("OpenClaw is active")).toBeTruthy();
+    expect(screen.queryByText("Hermes is active")).toBeNull();
   });
 
   it("does not crash when provider status omits agents", async () => {

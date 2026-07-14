@@ -37,6 +37,21 @@ const RUNTIME_SETUP: Record<AgentRuntimeId, ProviderSetupCommand> = {
   },
 };
 
+const RUNTIME_INSTALL: Record<AgentRuntimeId, ProviderSetupCommand> = {
+  hermes: {
+    key: "hermes:install",
+    label: "Install Hermes",
+    command: "/opt/matrix/bin/matrix-agent-runtime-control install hermes",
+    sessionName: "matrix-install-hermes",
+  },
+  openclaw: {
+    key: "openclaw:install",
+    label: "Install OpenClaw",
+    command: "/opt/matrix/bin/matrix-agent-runtime-control install openclaw",
+    sessionName: "matrix-install-openclaw",
+  },
+};
+
 const CLAUDE_SETUP: ProviderSetupCommand = {
   key: "claude:login",
   label: "Claude login",
@@ -75,10 +90,12 @@ function AuthStatus({ provider }: { provider: AgentProviderDescriptor }) {
 function RuntimeOptions({
   view,
   busy,
+  onOpenSetup,
   onSwitch,
 }: {
   view: AgentSettingsView;
   busy: boolean;
+  onOpenSetup: (setup: ProviderSetupCommand) => Promise<void>;
   onSwitch: (runtime: AgentRuntimeId) => void;
 }) {
   return (
@@ -87,6 +104,8 @@ function RuntimeOptions({
         const selected = runtime.id === view.runtime.selected;
         const usable = runtime.installState === "installed"
           && runtime.selectionState !== "unavailable";
+        const canInstall = runtime.installState !== "installed"
+          && runtime.setupAction === "install";
         return (
           <article
             key={runtime.id}
@@ -115,6 +134,15 @@ function RuntimeOptions({
                 <span className="text-xs font-medium" style={{ color: "var(--success)" }}>
                   {runtime.displayName} is active
                 </span>
+              ) : canInstall ? (
+                <Button
+                  variant="subtle"
+                  disabled={busy}
+                  aria-label={`Install ${runtime.displayName}`}
+                  onClick={() => void onOpenSetup(RUNTIME_INSTALL[runtime.id])}
+                >
+                  <SquareTerminal size={13} />Install {runtime.displayName}
+                </Button>
               ) : (
                 <Button
                   variant="subtle"
@@ -141,7 +169,7 @@ function ChatAuthentication({
 }: {
   view: AgentSettingsView;
   busy: boolean;
-  onSaveKey: (key: string) => Promise<void>;
+  onSaveKey: (key: string, onAccepted: () => void) => Promise<void>;
   onOpenSetup: (setup: ProviderSetupCommand) => Promise<void>;
 }) {
   const provider = view.providers.find((candidate) =>
@@ -152,9 +180,7 @@ function ChatAuthentication({
   if (!provider) return null;
 
   const saveKey = async () => {
-    const key = apiKey;
-    setApiKey("");
-    await onSaveKey(key);
+    await onSaveKey(apiKey, () => setApiKey(""));
   };
 
   return (
@@ -214,8 +240,15 @@ function MessagingProvider({
     candidate.runtime === view.runtime.selected && candidate.scopes.includes("messaging")), [view]);
   const current = view.currentSelection.messaging;
   const [providerId, setProviderId] = useState(current.provider ?? providers[0]?.id ?? "");
-  const provider = providers.find((candidate) => candidate.id === providerId);
+  const selectedProviderId = providers.some((candidate) => candidate.id === providerId)
+    ? providerId
+    : providers[0]?.id ?? "";
+  const provider = providers.find((candidate) => candidate.id === selectedProviderId);
   const [model, setModel] = useState(current.model ?? availableModels(provider)[0]?.id ?? "");
+  const providerModels = availableModels(provider);
+  const selectedModel = providerModels.some((candidate) => candidate.id === model)
+    ? model
+    : providerModels[0]?.id ?? "";
 
   if (providers.length === 0) {
     return <Empty text="No providers are available for the selected messaging runtime." />;
@@ -230,11 +263,11 @@ function MessagingProvider({
             type="button"
             className="rounded-md border p-2 text-left"
             style={{
-              borderColor: candidate.id === providerId ? "var(--accent)" : "var(--border-default)",
-              background: candidate.id === providerId ? "var(--accent-subtle)" : "transparent",
+              borderColor: candidate.id === selectedProviderId ? "var(--accent)" : "var(--border-default)",
+              background: candidate.id === selectedProviderId ? "var(--accent-subtle)" : "transparent",
             }}
             aria-label={`Choose ${candidate.displayName}`}
-            aria-pressed={candidate.id === providerId}
+            aria-pressed={candidate.id === selectedProviderId}
             onClick={() => {
               setProviderId(candidate.id);
               setModel(availableModels(candidate)[0]?.id ?? "");
@@ -251,10 +284,10 @@ function MessagingProvider({
           className="mt-1 h-8 w-full rounded-md border bg-transparent px-2 text-sm outline-none"
           style={{ borderColor: "var(--border-default)", color: "var(--text-primary)" }}
           aria-label="Messaging model"
-          value={model}
+          value={selectedModel}
           onChange={(event) => setModel(event.target.value)}
         >
-          {availableModels(provider).map((candidate) => (
+          {providerModels.map((candidate) => (
             <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>
           ))}
         </select>
@@ -267,7 +300,11 @@ function MessagingProvider({
         >
           <SquareTerminal size={13} />Configure
         </Button>
-        <Button variant="primary" disabled={busy || !providerId || !model} onClick={() => onSave(providerId, model)}>
+        <Button
+          variant="primary"
+          disabled={busy || !selectedProviderId || !selectedModel}
+          onClick={() => onSave(selectedProviderId, selectedModel)}
+        >
           Save messaging model
         </Button>
       </div>
@@ -308,6 +345,7 @@ export default function AgentRuntimeSettingsCard() {
       })
       .catch((loadError: unknown) => {
         if (!cancelled) {
+          setView(null);
           setLegacy(false);
           setError(toUserMessage(loadError));
         }
@@ -325,13 +363,22 @@ export default function AgentRuntimeSettingsCard() {
     setBusy(true);
     setError(null);
     try {
-      const raw = await api.put<unknown>(AGENT_PATH, body);
-      const config = normalizeAgentConfig(raw);
-      if (config.extended) setView(config.extended);
-      else await load();
-    } catch (mutationError: unknown) {
-      setLegacy(false);
-      setError(toUserMessage(mutationError) || UPDATE_ERROR);
+      let raw: unknown;
+      try {
+        raw = await api.put<unknown>(AGENT_PATH, body);
+      } catch (mutationError: unknown) {
+        setError(toUserMessage(mutationError) || UPDATE_ERROR);
+        return;
+      }
+      try {
+        const config = normalizeAgentConfig(raw);
+        if (config.extended) setView(config.extended);
+        else await load();
+      } catch (mutationError: unknown) {
+        setView(null);
+        setLegacy(false);
+        setError(toUserMessage(mutationError) || UPDATE_ERROR);
+      }
     } finally {
       setBusy(false);
     }
@@ -345,15 +392,25 @@ export default function AgentRuntimeSettingsCard() {
     }
   };
 
-  const saveKey = async (key: string) => {
+  const saveKey = async (key: string, onAccepted: () => void): Promise<void> => {
     if (!api) return;
     setBusy(true);
     setError(null);
     try {
-      await api.post(API_KEY_PATH, { apiKey: key });
-      await load();
-    } catch (keyError: unknown) {
-      setError(toUserMessage(keyError));
+      try {
+        await api.post(API_KEY_PATH, { apiKey: key });
+      } catch (keyError: unknown) {
+        setError(toUserMessage(keyError));
+        return;
+      }
+      onAccepted();
+      try {
+        await load();
+      } catch (loadError: unknown) {
+        setView(null);
+        setLegacy(false);
+        setError(toUserMessage(loadError));
+      }
     } finally {
       setBusy(false);
     }
@@ -387,6 +444,7 @@ export default function AgentRuntimeSettingsCard() {
       <RuntimeOptions
         view={view}
         busy={busy}
+        onOpenSetup={openSetup}
         onSwitch={(runtime) => void mutate({ runtime, revision: view.revision })}
       />
       <div className="flex flex-col gap-2">

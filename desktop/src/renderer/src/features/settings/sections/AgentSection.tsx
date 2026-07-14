@@ -464,6 +464,7 @@ function RuntimeProvidersCard() {
 }
 
 export default function AgentSection() {
+  const runtimeScope = useConnection((state) => `${state.runtimeSlot}:${state.authGeneration}`);
   return (
     <>
       <SectionHeader
@@ -471,7 +472,7 @@ export default function AgentSection() {
         description="Tune Matrix Chat, choose the runtime for messaging channels, authenticate providers, edit SOUL, and check which coding agents are connected."
       />
       <ModelEffortCard />
-      <AgentRuntimeSettingsCard />
+      <AgentRuntimeSettingsCard key={runtimeScope} />
       <RuntimeProvidersCard />
       <ProvidersCard />
       <SoulEditor />
