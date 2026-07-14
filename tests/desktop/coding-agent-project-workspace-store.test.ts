@@ -526,6 +526,37 @@ describe("coding-agent project workspace store", () => {
     });
   });
 
+  it("resolves a new chat target for a preserved out-of-page task selection", async () => {
+    const invoke = vi.fn(async () => {
+      throw new Error("workspace refresh should not be requested");
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+    // An externally focused conversation can select a task outside the bounded
+    // tasks and taskThreads pages; selection reconciliation preserved it, so a
+    // new chat for that selection must still resolve.
+    useCodingAgentProjectWorkspace.setState({
+      status: "ready",
+      runtimeId: "rt_primary",
+      runtimeScope: "rt_primary",
+      summary: summary("rt_primary", "matrix-os", "Matrix OS"),
+      workspace: workspace("matrix-os", "task_auth", "thread_plan"),
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_external",
+      selectedThreadId: "thread_external",
+    });
+
+    const relation = await useCodingAgentProjectWorkspace.getState().resolveNewChatTarget(
+      "matrix-os",
+      "task_external",
+    );
+
+    expect(relation).toEqual({ projectId: "matrix-os", taskId: "task_external" });
+    expect(invoke).not.toHaveBeenCalledWith("runtime:get-project-workspace", expect.anything());
+  });
+
   it("resolves a new chat target immediately when the current workspace already lists it", async () => {
     const invoke = vi.fn(async () => {
       throw new Error("workspace refresh should not be requested");

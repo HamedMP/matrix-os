@@ -257,20 +257,30 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
       projectId,
       taskId,
     ): Promise<{ projectId: string; taskId?: string } | null> => {
-      const immediate = resolveNewChatRelation(
-        useCodingAgentProjectWorkspace.getState().workspace,
-        projectId,
-        taskId,
-      );
+      const attempt = (): { projectId: string; taskId?: string } | null => {
+        const state = useCodingAgentProjectWorkspace.getState();
+        const relation = resolveNewChatRelation(state.workspace, projectId, taskId);
+        if (relation) return relation;
+        // Selection reconciliation can preserve a task outside the bounded
+        // tasks/taskThreads pages (an externally focused conversation). That
+        // selection was already validated against the runtime, so a new chat
+        // for it must resolve even though no page lists the task.
+        if (
+          taskId
+          && state.workspace?.project.id === projectId
+          && state.selectedTaskId === taskId
+          && state.selectedThreadId
+        ) {
+          return { projectId, taskId };
+        }
+        return null;
+      };
+      const immediate = attempt();
       if (immediate) return immediate;
       // The snapshot may not be loaded yet or its task page may be stale; refresh
       // once and retry, but never loop.
       await useCodingAgentProjectWorkspace.getState().refresh();
-      return resolveNewChatRelation(
-        useCodingAgentProjectWorkspace.getState().workspace,
-        projectId,
-        taskId,
-      );
+      return attempt();
     },
 
     selectProject: async (projectId) => {
