@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   mkdtempSync,
   mkdirSync,
@@ -10,6 +10,7 @@ import {
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { Hono } from "hono";
+import { AgentSettingsViewSchema } from "@matrix-os/contracts";
 import { createSettingsRoutes } from "../../packages/gateway/src/routes/settings.js";
 
 function stubChannelManager() {
@@ -429,6 +430,161 @@ describe("Settings: desktop + theme + wallpapers", () => {
   });
 
   describe("GET /agent (kernel config)", () => {
+    it("returns one additive v2 view without changing legacy fields", async () => {
+      const res = await app.request("/api/settings/agent");
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      expect(data.kernel).toEqual({ model: null, effort: null });
+      expect(data.availableModels.map((model: { id: string }) => model.id))
+        .toEqual([
+          "claude-opus-4-6",
+          "claude-sonnet-4-5",
+          "claude-haiku-4-5",
+        ]);
+      expect(AgentSettingsViewSchema.safeParse(data).success).toBe(true);
+      expect(data.runtime.selected).toBe("hermes");
+      expect(data.runtime.options).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "hermes", selectionState: "active" }),
+        expect.objectContaining({ id: "openclaw", installState: "missing" }),
+      ]));
+    });
+
+    it("reports persisted BYOK readiness without returning the key", async () => {
+      const canary = "sk-ant-secret-canary";
+      writeFileSync(
+        join(homePath, "system/config.json"),
+        JSON.stringify({ kernel: { anthropicApiKey: canary } }),
+      );
+
+      const res = await app.request("/api/settings/agent");
+      const data = await res.json();
+
+      expect(data.chat.authKind).toBe("api_key");
+      expect(data.providers[0].authKind).toBe("api_key");
+      expect(data.providers[0].authStatus).toMatchObject({
+        state: "ready",
+        authenticated: true,
+      });
+      expect(JSON.stringify(data)).not.toContain(canary);
+    });
+
+    it("reports an owner-local subscription login when BYOK is absent", async () => {
+      writeFileSync(
+        join(homePath, ".claude.json"),
+        JSON.stringify({ oauthAccount: { accountUuid: "account-123" } }),
+      );
+
+      const res = await app.request("/api/settings/agent");
+      const data = await res.json();
+
+      expect(data.chat.authKind).toBe("oauth_login");
+      expect(data.providers[0]).toMatchObject({
+        authKind: "oauth_login",
+        authStatus: { state: "ready", authenticated: true },
+      });
+    });
+
+    it("merges a normalized messaging runtime snapshot into the same view", async () => {
+      const routes = createSettingsRoutes({
+        homePath,
+        channelManager: stubChannelManager() as any,
+        agentRuntimeSource: async () => ({
+          runtime: {
+            selected: "hermes",
+            options: [
+              {
+                id: "hermes",
+                displayName: "Hermes",
+                installState: "installed",
+                health: "healthy",
+                selectionState: "active",
+                configured: true,
+                capabilities: ["provider_catalog", "model_selection", "authentication"],
+              },
+              {
+                id: "openclaw",
+                displayName: "OpenClaw",
+                installState: "missing",
+                health: "stopped",
+                selectionState: "unavailable",
+                configured: false,
+                capabilities: ["install"],
+                setupAction: "install",
+              },
+            ],
+            transition: null,
+          },
+          providers: [{
+            id: "nous",
+            displayName: "Nous Portal",
+            runtime: "hermes",
+            scopes: ["messaging"],
+            authKind: "oauth_login",
+            supportedAuthKinds: ["oauth_login"],
+            models: [{
+              id: "hermes-4-405b",
+              displayName: "Hermes 4 405B",
+              capabilities: ["tools"],
+              efforts: [],
+              available: true,
+            }],
+            authStatus: { state: "ready", authenticated: true, action: "none" },
+          }],
+          messaging: {
+            runtime: "hermes",
+            provider: "nous",
+            model: "hermes-4-405b",
+            configured: true,
+          },
+        }),
+      });
+      const runtimeApp = new Hono();
+      runtimeApp.route("/api/settings", routes);
+
+      const res = await runtimeApp.request("/api/settings/agent");
+      const data = await res.json();
+
+      expect(AgentSettingsViewSchema.safeParse(data).success).toBe(true);
+      expect(data.providers.map((provider: { id: string }) => provider.id))
+        .toEqual(["anthropic", "nous"]);
+      expect(data.currentSelection.messaging).toEqual({
+        runtime: "hermes",
+        provider: "nous",
+        model: "hermes-4-405b",
+        configured: true,
+      });
+    });
+
+    it("degrades safely without logging a runtime probe's raw error", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const canary = "sk-secret-runtime-canary";
+      try {
+        const routes = createSettingsRoutes({
+          homePath,
+          channelManager: stubChannelManager() as any,
+          agentRuntimeSource: async () => {
+            throw new Error(`upstream rejected ${canary}`);
+          },
+        });
+        const runtimeApp = new Hono();
+        runtimeApp.route("/api/settings", routes);
+
+        const res = await runtimeApp.request("/api/settings/agent");
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(body.runtime.options[0]).toMatchObject({
+          id: "hermes",
+          health: "unknown",
+        });
+        expect(JSON.stringify(body)).not.toContain(canary);
+        expect(JSON.stringify(warn.mock.calls)).not.toContain(canary);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
     it("returns null model/effort, the model allowlist, and defaults when unset", async () => {
       const res = await app.request("/api/settings/agent");
       expect(res.status).toBe(200);
@@ -523,6 +679,32 @@ describe("Settings: desktop + theme + wallpapers", () => {
         body: JSON.stringify({ model: "claude-opus-4-6", systemPrompt: "pwn" }),
       });
       expect(res.status).toBe(400);
+    });
+
+    it("fails closed when an extended update has no runtime controller", async () => {
+      const res = await app.request("/api/settings/agent", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runtime: "openclaw", revision: 0 }),
+      });
+
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: "runtime_unavailable" });
+      expect(JSON.parse(readFileSync(join(homePath, "system/config.json"), "utf-8")))
+        .toEqual({});
+    });
+
+    it("rejects agent updates larger than 16 KiB before parsing", async () => {
+      const res = await app.request("/api/settings/agent", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-opus-4-6",
+          padding: "x".repeat(17 * 1024),
+        }),
+      });
+
+      expect(res.status).toBe(413);
     });
   });
 });

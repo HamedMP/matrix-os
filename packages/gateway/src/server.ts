@@ -179,7 +179,12 @@ import {
   type LoadedPlugin,
 } from "./plugins/index.js";
 import { createSettingsRoutes } from "./routes/settings.js";
-import { createHermesRoutes, validateHermesDashboardUrl } from "./routes/hermes.js";
+import { createHermesRoutes } from "./routes/hermes.js";
+import {
+  createHermesDashboardClient,
+  validateHermesDashboardUrl,
+} from "./agent-config/hermes-client.js";
+import { createHermesRuntimeSource } from "./agent-config/hermes-source.js";
 import { createConversationRoutes } from "./routes/conversations.js";
 import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
 import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
@@ -3899,18 +3904,28 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  // T978-T979: Settings API routes
-  const settingsRoutes = createSettingsRoutes({ homePath, channelManager });
-  app.route("/api/settings", settingsRoutes);
-
   // Spec 101: Hermes dashboard proxy (loopback only, auth-gated)
+  const hermesDashboardUrl = process.env.HERMES_DASHBOARD_URL
+    ?? "http://127.0.0.1:9119";
   try {
-    validateHermesDashboardUrl(process.env.HERMES_DASHBOARD_URL ?? "http://127.0.0.1:9119");
+    validateHermesDashboardUrl(hermesDashboardUrl);
   } catch (err) {
-    console.error("[hermes-proxy] startup validation failed:", err instanceof Error ? err.message : String(err));
+    console.error(
+      "[hermes-proxy] startup validation failed:",
+      err instanceof Error ? err.message : "UnknownError",
+    );
     throw err;
   }
-  app.route("/api/hermes", createHermesRoutes());
+  const hermesClient = createHermesDashboardClient({ baseUrl: hermesDashboardUrl });
+
+  // T978-T979: Settings API routes
+  const settingsRoutes = createSettingsRoutes({
+    homePath,
+    channelManager,
+    agentRuntimeSource: createHermesRuntimeSource(hermesClient.readJson),
+  });
+  app.route("/api/settings", settingsRoutes);
+  app.route("/api/hermes", createHermesRoutes({ client: hermesClient }));
 
   if (messagingRepository) {
     app.route("/api/messages", createMessagingRoutes({

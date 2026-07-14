@@ -12,19 +12,23 @@ import {
 } from "node:fs/promises";
 import { dirname, extname, relative, join } from "node:path";
 import { DEFAULT_ICON_STYLE, loadSkills } from "@matrix-os/kernel";
+import { AgentSettingsUpdateSchema } from "@matrix-os/contracts";
 import type { ChannelManager } from "../channels/manager.js";
 import type { ChannelConfig, ChannelId } from "../channels/types.js";
 import { validateApiKeyFormat, validateApiKeyLive, storeApiKey, hasApiKey } from "../onboarding/api-key.js";
 import { buildAgentProfileSummary } from "../agent-profile-summary.js";
 import {
-  KERNEL_DEFAULTS,
-  KERNEL_EFFORTS,
-  KERNEL_MODELS,
   KernelEffortSchema,
   KernelModelSchema,
   normalizeKernelEffort,
   normalizeKernelModel,
 } from "../kernel-settings.js";
+import {
+  buildAgentSettingsView,
+  hasClaudeLogin,
+  readRuntimeSnapshot,
+  type AgentRuntimeSource,
+} from "../agent-config/service.js";
 
 const DESKTOP_DEFAULTS = {
   background: { type: "wallpaper", name: "moraine-lake.jpg" },
@@ -35,6 +39,7 @@ const DESKTOP_DEFAULTS = {
 
 const THEME_DEFAULTS = {};
 const SETTINGS_BODY_LIMIT = 256 * 1024;
+const AGENT_SETTINGS_BODY_LIMIT = 16 * 1024;
 
 const KernelPatchSchema = z
   .object({
@@ -123,6 +128,10 @@ function isNotFoundError(err: unknown): boolean {
   return err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT";
 }
 
+function isBodyLimitError(err: unknown): boolean {
+  return err instanceof Error && err.name === "BodyLimitError";
+}
+
 async function fileExists(path: string): Promise<boolean> {
   try {
     await access(path);
@@ -165,8 +174,9 @@ function mergeDesktopDefaults(config: Record<string, unknown>): Record<string, u
 export function createSettingsRoutes(opts: {
   homePath: string;
   channelManager: ChannelManager;
+  agentRuntimeSource?: AgentRuntimeSource;
 }) {
-  const { homePath, channelManager } = opts;
+  const { homePath, channelManager, agentRuntimeSource } = opts;
   const app = new Hono();
   const configPath = join(homePath, "system/config.json");
 
@@ -228,18 +238,26 @@ export function createSettingsRoutes(opts: {
   app.get("/agent", async (c) => {
     const cfg = await readConfig();
     const handlePath = join(homePath, "system/handle.json");
-    const handle = await readJson(handlePath, {}, "handle");
-    const kernel = (cfg.kernel ?? {}) as Record<string, unknown>;
-    return c.json({
+    const handle = await readJson<Record<string, unknown>>(handlePath, {}, "handle");
+    let runtimeSnapshot;
+    if (agentRuntimeSource) {
+      try {
+        runtimeSnapshot = await readRuntimeSnapshot(agentRuntimeSource);
+      } catch (err) {
+        console.warn(
+          "[settings] Failed to read agent runtime settings:",
+          err instanceof Error ? err.name : "UnknownError",
+        );
+      }
+    }
+    return c.json(buildAgentSettingsView({
       identity: handle,
-      kernel: {
-        model: normalizeKernelModel(kernel.model),
-        effort: normalizeKernelEffort(kernel.effort),
-      },
-      availableModels: KERNEL_MODELS,
-      availableEfforts: KERNEL_EFFORTS,
-      defaults: KERNEL_DEFAULTS,
-    });
+      config: cfg,
+      claudeLoginAvailable: await hasClaudeLogin(homePath),
+      platformCredentialAvailable: typeof process.env.ANTHROPIC_API_KEY === "string"
+        && process.env.ANTHROPIC_API_KEY.length > 0,
+      runtimeSnapshot,
+    }));
   });
 
   app.get("/agent/summary", async (c) => {
@@ -251,24 +269,41 @@ export function createSettingsRoutes(opts: {
     }
   });
 
-  app.put("/agent", bodyLimit({ maxSize: SETTINGS_BODY_LIMIT }), async (c) => {
+  app.put("/agent", bodyLimit({ maxSize: AGENT_SETTINGS_BODY_LIMIT }), async (c) => {
     let raw: unknown;
     try {
       raw = await c.req.json();
     } catch (err) {
+      if (isBodyLimitError(err)) {
+        return c.json({ error: "agent_config_invalid" }, 413);
+      }
       if (!(err instanceof SyntaxError)) {
         console.warn("[settings] Failed to parse agent config request:", err);
       }
       return c.json({ error: "Invalid JSON" }, 400);
     }
-    const parsed = KernelPatchSchema.safeParse(raw);
+    const parsed = AgentSettingsUpdateSchema.safeParse(raw);
     if (!parsed.success) {
-      return c.json({ error: "Invalid kernel settings" }, 400);
+      return c.json({ error: "agent_config_invalid" }, 400);
+    }
+    const hasExtendedMutation = parsed.data.runtime !== undefined
+      || parsed.data.provider !== undefined
+      || parsed.data.messagingModel !== undefined
+      || parsed.data.baseUrl !== undefined;
+    if (hasExtendedMutation) {
+      return c.json({ error: "runtime_unavailable" }, 503);
+    }
+    const kernelPatch = KernelPatchSchema.safeParse({
+      model: parsed.data.model,
+      effort: parsed.data.effort,
+    });
+    if (!kernelPatch.success) {
+      return c.json({ error: "agent_config_invalid" }, 400);
     }
     const cfg = await readConfig();
     const kernel = { ...((cfg.kernel ?? {}) as Record<string, unknown>) };
-    if (parsed.data.model !== undefined) kernel.model = parsed.data.model;
-    if (parsed.data.effort !== undefined) kernel.effort = parsed.data.effort;
+    if (kernelPatch.data.model !== undefined) kernel.model = kernelPatch.data.model;
+    if (kernelPatch.data.effort !== undefined) kernel.effort = kernelPatch.data.effort;
     cfg.kernel = kernel;
     await writeJsonAtomic(configPath, cfg);
     return c.json({
