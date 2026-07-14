@@ -456,6 +456,32 @@ describe("agent runtime controller", () => {
       .rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("keeps gateway startup available when reconciliation cannot create its directory", async () => {
+    const homePath = await createHome({
+      kernel: { model: "claude-opus-4-6", effort: "high" },
+    });
+    await writeFile(join(homePath, "system/agent-runtime"), "not-a-directory");
+    const pauseDelivery = vi.fn(async () => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const controller = createAgentRuntimeController({
+      homePath,
+      adapters: { hermes: fakeAdapter("hermes") },
+      pauseDelivery,
+    });
+
+    try {
+      await expect(controller.reconcile()).resolves.toBeUndefined();
+      expect(pauseDelivery).toHaveBeenCalledOnce();
+      expect(warn).toHaveBeenCalledWith(
+        "[agent-config] Runtime reconciliation failed:",
+        expect.any(String),
+      );
+    } finally {
+      warn.mockRestore();
+      await controller.close();
+    }
+  });
+
   it("ignores untrusted startup lock symlinks without following or removing them", async () => {
     const homePath = await createHome();
     const runtimeDir = join(homePath, "system/agent-runtime");
