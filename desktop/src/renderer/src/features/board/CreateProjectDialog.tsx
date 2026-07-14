@@ -24,14 +24,36 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   const refreshAgentWorkspace = useCodingAgentWorkspace((s) => s.refresh);
   const openCreatedProject = useCodingAgentProjectWorkspace((s) => s.openCreatedProject);
   const runtimeScope = useConnection(codingAgentRuntimeScope);
+  const runtimeSlot = useConnection((s) => s.runtimeSlot);
+  const authGeneration = useConnection((s) => s.authGeneration);
   const [name, setName] = useState("");
   const [mode, setMode] = useState<Mode>("scratch");
   const [url, setUrl] = useState("");
-  const [path, setPath] = useState("");
+  // A folder chosen under one computer/session must not stay submittable under
+  // another, so the selection carries its scope and resolves to "" as soon as
+  // the slot or credential generation changes (synchronously, like the Files
+  // workspace selection).
+  const [folderSelection, setFolderSelection] = useState<{ slot: string; authGeneration: number; path: string } | null>(null);
+  const path = folderSelection && folderSelection.slot === runtimeSlot && folderSelection.authGeneration === authGeneration
+    ? folderSelection.path
+    : "";
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dialogClosedRef = useRef(false);
   const dialogGenerationRef = useRef(0);
+
+  useEffect(() => {
+    setFolderSelection((current) =>
+      current && (current.slot !== runtimeSlot || current.authGeneration !== authGeneration)
+        ? null
+        : current,
+    );
+  }, [authGeneration, runtimeSlot]);
+
+  const chooseFolder = useCallback(
+    (chosen: string) => setFolderSelection({ slot: runtimeSlot, authGeneration, path: chosen }),
+    [authGeneration, runtimeSlot],
+  );
 
   const canSubmit = name.trim().length > 0 && (
     mode === "scratch" ||
@@ -174,7 +196,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
       ) : mode === "folder" ? (
         <div className="flex flex-col gap-1.5">
           <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Choose a folder on this computer</span>
-          <ComputerFileBrowser compact onChooseFolder={setPath} />
+          <ComputerFileBrowser compact onChooseFolder={chooseFolder} />
           <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
             {path ? `Selected: ${path}` : "Select a folder. It stays in place and remains yours."}
           </span>

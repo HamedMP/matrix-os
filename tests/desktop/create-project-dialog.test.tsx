@@ -136,6 +136,46 @@ describe("CreateProjectDialog", () => {
     expect(openTab).not.toHaveBeenCalled();
   });
 
+  it("clears the chosen folder when the signed-in session is replaced", async () => {
+    const createProject = vi.fn(async () => ({
+      slug: "customer-app",
+      name: "Customer app",
+      localPath: "/home/matrix/home/workspaces/customer-app",
+      githubBacked: false,
+    }));
+    const get = vi.fn(async (requestPath: string) => {
+      if (requestPath === "/api/files/list?path=") {
+        return { entries: [{ name: "workspaces", type: "directory" }] };
+      }
+      if (requestPath === "/api/files/list?path=workspaces") {
+        return { entries: [{ name: "customer-app", type: "directory" }] };
+      }
+      return { entries: [] };
+    });
+    useConnection.setState({ api: { post: vi.fn(), get } as never, authGeneration: 1 });
+    useBoard.setState({ createProject, selectProject: vi.fn(async () => undefined) });
+    render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
+
+    fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Customer app" } });
+    fireEvent.click(screen.getByRole("button", { name: "Use existing folder" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open workspaces" })).not.toBeNull());
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Open workspaces" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open customer-app" })).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Open customer-app" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose customer-app" }));
+    expect(screen.getByText(/^Selected:/)).toBeTruthy();
+
+    // A replacement signed-in session (same slot, new credential) must drop the
+    // folder picked under the previous owner.
+    act(() => {
+      useConnection.setState({ authGeneration: 2 });
+    });
+
+    expect(screen.queryByText(/^Selected:/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(createProject).not.toHaveBeenCalled();
+  });
+
   it("keeps the dialog open with an error when the Agents workspace refresh fails after create", async () => {
     const project = { slug: "desktop", name: "Desktop" };
     const createProject = vi.fn(async () => project);
