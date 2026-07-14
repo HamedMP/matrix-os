@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { reconcileDesktopRuntimeChange } from "../../desktop/src/renderer/src/stores/runtime-transition";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
+import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
 import { useCodingAgentProjectWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-project-workspace";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useEditorTabs } from "../../desktop/src/renderer/src/features/editor/editor-tabs-store";
@@ -42,7 +43,7 @@ describe("desktop runtime transition", () => {
 
     expect(disposeRuntimeAttachments).toHaveBeenCalledOnce();
     expect(useBoard.getState()).toMatchObject({ projects: [], activeProjectSlug: null, cardsByProject: {} });
-    expect(useTabs.getState()).toMatchObject({ tabs: [], activeTabId: null });
+    expect(useTabs.getState().tabs.some((tab) => tab.id === "old-task")).toBe(false);
     expect(useSessions.getState()).toMatchObject({ sessions: [], aliasMap: {} });
     expect(useShellSessions.getState().sessions).toEqual([]);
     expect(useGit.getState()).toMatchObject({ branches: [], previews: [], previewScope: null });
@@ -55,6 +56,53 @@ describe("desktop runtime transition", () => {
       selectedTaskId: null,
       selectedThreadId: null,
     });
+  });
+
+  it("reopens the Home tab so the desktop is never left blank after a switch", () => {
+    reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
+
+    const { tabs, activeTabId } = useTabs.getState();
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]).toMatchObject({ kind: "home", closable: false });
+    expect(activeTabId).toBe(tabs[0]?.id);
+  });
+
+  it("clears the Hermes chat transcript and session owned by the previous computer", () => {
+    useHermesChat.setState({
+      messages: [{ id: "m1", role: "user", content: "old transcript", requestId: "r1", timestamp: 1 }],
+      sessionId: "session-old",
+      status: "streaming",
+      activeRequestId: "r1",
+    });
+
+    reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
+
+    expect(useHermesChat.getState()).toMatchObject({
+      messages: [],
+      sessionId: null,
+      status: "idle",
+      activeRequestId: null,
+    });
+  });
+
+  it("discards an in-flight shell create that settles after the computer changes", async () => {
+    let resolveCreate!: (value: { name: string }) => void;
+    const api = {
+      post: vi.fn(() => new Promise<{ name: string }>((resolve) => {
+        resolveCreate = resolve;
+      })),
+      get: vi.fn(async () => ({ sessions: [] })),
+    } as never;
+    useShellSessions.setState({ sessions: [], creating: false, error: null });
+
+    const pending = useShellSessions.getState().create(api);
+    reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
+    resolveCreate({ name: "matrix-old-1" });
+    const created = await pending;
+
+    expect(created).toBeNull();
+    expect(useShellSessions.getState().sessions).toEqual([]);
+    expect(useShellSessions.getState().creating).toBe(false);
   });
 
   it("rejects a project response that settles after the computer changes", async () => {

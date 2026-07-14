@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, lstat, mkdir, readdir, rename, rm } from "node:fs/promises";
+import { access, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
@@ -245,20 +245,18 @@ export function createProjectManager(options: {
           return genericError(400, "invalid_slug", "Project slug is invalid");
         }
         const localPath = input.path ? resolveExistingFileApiPath(homePath, input.path) : null;
-        const metadataPath = projectPath(homePath, slug);
-        if (
-          !localPath
-          || localPath === metadataPath
-          || localPath.startsWith(`${metadataPath}/`)
-          || isProtectedFolderProjectPath(homePath, localPath)
-        ) {
+        if (!localPath) {
           return genericError(400, "invalid_project_path", "Project folder is invalid");
         }
+        let realLocalPath: string;
+        let realHomePath: string;
         try {
           const stats = await lstat(localPath);
           if (!stats.isDirectory()) {
             return genericError(400, "invalid_project_path", "Project folder is invalid");
           }
+          realLocalPath = await realpath(localPath);
+          realHomePath = await realpath(homePath);
         } catch (err: unknown) {
           console.warn(
             "[projects] folder project path became unreadable:",
@@ -266,6 +264,26 @@ export function createProjectManager(options: {
           );
           return genericError(400, "invalid_project_path", "Project folder is invalid");
         }
+        // Check the lexical path AND the fully resolved path against the same
+        // rules so a symlinked ancestor cannot alias a protected subtree, and
+        // reject any root that would contain the project registry: metadata
+        // (config.json, sibling projects) must never live inside an
+        // agent-writable workspace.
+        for (const candidate of [
+          { base: homePath, path: localPath },
+          { base: realHomePath, path: realLocalPath },
+        ]) {
+          const registryEntry = join(candidate.base, "projects", slug);
+          if (
+            candidate.path === registryEntry
+            || candidate.path.startsWith(`${registryEntry}${sep}`)
+            || registryEntry.startsWith(`${candidate.path}${sep}`)
+            || isProtectedFolderProjectPath(candidate.base, candidate.path)
+          ) {
+            return genericError(400, "invalid_project_path", "Project folder is invalid");
+          }
+        }
+        const metadataPath = projectPath(homePath, slug);
         return withProjectLock(slug, async () => {
           if (await pathExists(metadataPath)) {
             return genericError(409, "slug_conflict", "Project slug already exists");

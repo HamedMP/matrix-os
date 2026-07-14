@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { AppError, type AppErrorCategory } from "../../../shared/app-error";
 import type { ApiClient } from "../lib/api";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
 
 export type ShellSessionPlacement = "active" | "background";
 export type ShellVisualStatus = "running" | "waiting" | "finished" | "idle";
@@ -221,11 +222,16 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
 
   create: async (api) => {
     if (get().creating) return null;
+    // A computer switch advances the runtime generation and clears this store;
+    // a create that settles afterwards belongs to the previous computer and
+    // must not repopulate the new one (the transition already reset `creating`).
+    const generation = captureRuntimeGeneration();
     set({ creating: true, error: null });
     for (let attempt = 0; attempt < CREATE_ATTEMPTS; attempt += 1) {
       const name = nextShellName();
       try {
         const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name, cwd: DEFAULT_CWD });
+        if (!isCurrentRuntimeGeneration(generation)) return null;
         const createdName = typeof response.name === "string" && isValidShellSessionName(response.name) ? response.name : name;
         let created: ShellSessionSummary = {
           name: createdName,
@@ -237,6 +243,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
         set({ loadSequence: refreshSequence });
         try {
           const sessions = await fetchShellSessions(api);
+          if (!isCurrentRuntimeGeneration(generation)) return null;
           if (refreshSequence !== get().loadSequence) {
             set({ creating: false, error: null });
             return created;
@@ -249,6 +256,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
             error: null,
           }));
         } catch (refreshErr: unknown) {
+          if (!isCurrentRuntimeGeneration(generation)) return null;
           if (refreshSequence !== get().loadSequence) {
             set({ creating: false, error: null });
             return created;
@@ -263,6 +271,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
         }
         return created;
       } catch (err: unknown) {
+        if (!isCurrentRuntimeGeneration(generation)) return null;
         if (isSessionExistsError(err) && attempt < CREATE_ATTEMPTS - 1) continue;
         console.error("[shell-sessions] Failed to create shell session:", err);
         set({ creating: false, error: errorCategory(err) });

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -187,6 +187,31 @@ describe("project-manager", () => {
         path,
       })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
     }
+  });
+
+  it("rejects symlinked aliases of protected subtrees as folder projects", async () => {
+    await mkdir(join(homePath, "system", "wallpapers"), { recursive: true });
+    await symlink(join(homePath, "system"), join(homePath, "alias"));
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    await expect(manager.createProject({
+      mode: "folder",
+      name: "Alias",
+      slug: "alias-project",
+      path: "alias/wallpapers",
+    })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
+  });
+
+  it("rejects the Matrix project registry as a folder project root", async () => {
+    await mkdir(join(homePath, "projects"), { recursive: true });
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    await expect(manager.createProject({
+      mode: "folder",
+      name: "Registry",
+      slug: "registry",
+      path: "projects",
+    })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
   });
 
   it("requires existing folder project paths to be directories", async () => {

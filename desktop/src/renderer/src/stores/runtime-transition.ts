@@ -2,6 +2,7 @@ import { resetAttachManager } from "../features/terminal/terminal-runtime";
 import { useEditorTabs } from "../features/editor/editor-tabs-store";
 import { resetKernel } from "../lib/kernel-wiring";
 import { useBoard } from "./board";
+import { useHermesChat } from "./hermes-chat";
 import { clearCodingAgentProjectRuntime } from "./coding-agent-project-workspace";
 import { clearCodingAgentRuntimeSelection } from "./coding-agent-workspace";
 import { useFileTree } from "./file-tree";
@@ -35,6 +36,12 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
     error: null,
   });
   useTabs.setState({ tabs: [], activeTabId: null });
+  // MissionControl only opens Home in its mount-only effect, so reopen it here
+  // or a successful switch leaves the already-mounted desktop with no active tab.
+  useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+  // The Hermes transcript and kernel session follow the selected computer; the
+  // kernel socket is already reset above, so drop the chat state with it.
+  useHermesChat.setState({ messages: [], sessionId: null, status: "idle", activeRequestId: null });
   useSessions.setState({
     sessions: [],
     aliasMap: {},
