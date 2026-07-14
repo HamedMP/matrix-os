@@ -279,14 +279,17 @@ export const useBoard = create<BoardState>()((set, get) => {
       set({ error: "server" });
       return Promise.resolve();
     }
+    const runtimeGeneration = captureRuntimeGeneration();
     patchCard(slug, taskId, (card) => ({ ...card, ...patch }));
     return enqueueTaskMutation(taskId, async () => {
       try {
         const response = await api.patch<{ task: unknown }>(taskPath(slug, taskId), patch);
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
         const card = toCard(response.task);
         if (card) patchCard(slug, taskId, () => card);
         set({ error: null });
       } catch (err: unknown) {
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
         console.error("[board] Task update failed:", err);
         patchCard(slug, taskId, () => before);
         // FR-011: a rejected write may mean our base was stale — converge on
@@ -327,6 +330,9 @@ export const useBoard = create<BoardState>()((set, get) => {
     },
 
     createProject: async (api, input) => {
+      // A create that settles after a computer switch must not repopulate the
+      // new computer's board with the previous runtime's projects.
+      const runtimeGeneration = captureRuntimeGeneration();
       try {
         const body = input.mode === "github"
           ? { name: input.name, mode: "github" as const, url: input.url }
@@ -334,6 +340,7 @@ export const useBoard = create<BoardState>()((set, get) => {
             ? { name: input.name, mode: "folder" as const, path: input.path }
             : { name: input.name, mode: "scratch" as const };
         const res = await api.post<{ project: unknown }>("/api/projects", body);
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
         const project = toProject(res.project);
         if (!project) {
           const refreshed = await get().loadProjects(api);
@@ -345,6 +352,7 @@ export const useBoard = create<BoardState>()((set, get) => {
         if (refreshed) set({ error: null });
         return project;
       } catch (err: unknown) {
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
         console.error("[board] Create project failed:", err);
         set({ error: categoryOf(err) });
         return null;
@@ -371,8 +379,10 @@ export const useBoard = create<BoardState>()((set, get) => {
     },
 
     createTask: async (api, slug, input) => {
+      const runtimeGeneration = captureRuntimeGeneration();
       try {
         const response = await api.post<{ task: unknown }>(taskPath(slug), input);
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
         const card = toCard(response.task);
         if (!card) {
           set({ error: "server" });
@@ -389,6 +399,7 @@ export const useBoard = create<BoardState>()((set, get) => {
         }));
         return card;
       } catch (err: unknown) {
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
         console.error("[board] Task create failed:", err);
         set({ error: categoryOf(err) });
         return null;

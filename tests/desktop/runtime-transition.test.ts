@@ -148,6 +148,53 @@ describe("desktop runtime transition", () => {
     expect(useSessions.getState().sessions).toEqual([]);
   });
 
+  it("discards an in-flight board project create that settles after the computer changes", async () => {
+    let resolveCreate!: (value: unknown) => void;
+    const api = {
+      post: vi.fn(() => new Promise((resolve) => {
+        resolveCreate = resolve;
+      })),
+      get: vi.fn(async () => ({ projects: [{ slug: "stale", name: "Stale" }] })),
+    } as never;
+    useBoard.setState({ projects: [], activeProjectSlug: null, error: null });
+
+    const pending = useBoard.getState().createProject(api, { mode: "scratch", name: "Stale" });
+    reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
+    resolveCreate({ project: { slug: "stale", name: "Stale" } });
+    const created = await pending;
+
+    expect(created).toBeNull();
+    expect(useBoard.getState().projects).toEqual([]);
+  });
+
+  it("discards an in-flight task create that settles after the computer changes", async () => {
+    let resolveCreate!: (value: unknown) => void;
+    const api = {
+      post: vi.fn(() => new Promise((resolve) => {
+        resolveCreate = resolve;
+      })),
+      get: vi.fn(async () => ({ tasks: [], nextCursor: null })),
+    } as never;
+    useBoard.setState({ cardsByProject: {}, error: null });
+
+    const pending = useBoard.getState().createTask(api, "old-project", { title: "Stale task" });
+    reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
+    resolveCreate({
+      task: {
+        id: "task_stale",
+        projectSlug: "old-project",
+        title: "Stale task",
+        status: "todo",
+        priority: "normal",
+        order: 0,
+      },
+    });
+    const created = await pending;
+
+    expect(created).toBeNull();
+    expect(useBoard.getState().cardsByProject["old-project"]).toBeUndefined();
+  });
+
   it("rejects a project response that settles after the computer changes", async () => {
     let resolveProjects!: (value: { projects: unknown[] }) => void;
     const api = {
