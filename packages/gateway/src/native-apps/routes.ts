@@ -454,6 +454,7 @@ export function createNativeWebSocketHandler(c: Context, service: NativeAppSessi
   }
   const search = streamSearchWithoutBootstrapToken(c);
   const upstreamUrl = `ws://127.0.0.1:${target.port}${requestPath.upstreamPath}${search}`;
+  const targetStillMatches = () => service.getStreamTarget(sessionId, streamToken)?.port === target.port;
 
   return {
     onOpen(_evt: unknown, ws: NativeWebSocketState) {
@@ -464,6 +465,11 @@ export function createNativeWebSocketHandler(c: Context, service: NativeAppSessi
       import("ws").then((wsModule) => {
         const WebSocket = resolveWebSocketConstructor(wsModule);
         if (ws._nativeClosed?.()) return;
+        if (!targetStillMatches()) {
+          ws._nativeMarkClosed?.();
+          ws.close();
+          return;
+        }
         const upstream = new WebSocket(upstreamUrl, "binary");
         ws._nativeUpstream = upstream;
         if (ws._nativeClosed?.()) {
@@ -471,6 +477,12 @@ export function createNativeWebSocketHandler(c: Context, service: NativeAppSessi
           return;
         }
         upstream.on("open", () => {
+          if (ws._nativeClosed?.() || !targetStillMatches()) {
+            ws._nativeMarkClosed?.();
+            upstream.close();
+            ws.close();
+            return;
+          }
           upstreamOpen = true;
           for (const item of pending.splice(0)) upstream.send(item as never);
           ws._nativeResetPendingBytes?.();

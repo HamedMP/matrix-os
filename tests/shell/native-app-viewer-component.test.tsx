@@ -253,4 +253,40 @@ describe("NativeAppViewer", () => {
 
     await waitFor(() => expect(deleteAttempts).toBe(3));
   });
+
+  it("drains active native sessions with an unload-safe request on pagehide", async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl === "/api/native-apps/xterm/sessions" && init?.method === "POST") {
+        return new Response(JSON.stringify({
+          session: {
+            id: "session_jjjjjjjjjjjjjjjjjjjjjjjj",
+            appId: "xterm",
+            status: "running",
+            streamUrl: "/api/native-apps/sessions/session_jjjjjjjjjjjjjjjjjjjjjjjj/stream/",
+          },
+        }), { status: 201, headers: { "Content-Type": "application/json" } });
+      }
+      if (
+        requestUrl === "/api/native-apps/sessions/session_jjjjjjjjjjjjjjjjjjjjjjjj"
+        && init?.method === "DELETE"
+      ) {
+        return new Response(null, { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    Object.defineProperty(window, "fetch", { configurable: true, value: fetchMock });
+
+    render(<NativeAppViewer appId="xterm" windowId="win-pagehide" />);
+    await screen.findByTitle("xterm native app");
+    window.dispatchEvent(new PageTransitionEvent("pagehide"));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/native-apps/sessions/session_jjjjjjjjjjjjjjjjjjjjjjjj",
+        expect.objectContaining({ method: "DELETE", keepalive: true }),
+      );
+    });
+  });
 });

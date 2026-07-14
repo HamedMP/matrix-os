@@ -38,6 +38,7 @@ interface NativeSessionLeaseHandle {
 }
 
 const nativeSessionLeases = new Map<string, NativeSessionLease>();
+let pageHideListenerInstalled = false;
 
 function safeViewerMessage(value: unknown): string {
   if (!value || typeof value !== "object") return "Native apps are not available on this runtime";
@@ -114,6 +115,32 @@ async function terminateNativeSession(sessionId: string): Promise<void> {
   console.warn("[native-app-viewer] terminate failed after retries:", lastFailure);
 }
 
+function terminateNativeSessionOnPageHide(sessionId: string): void {
+  void fetch(nativeApiPath(`/sessions/${sessionId}`), {
+    method: "DELETE",
+    keepalive: true,
+  }).catch((err: unknown) => {
+    console.warn("[native-app-viewer] unload termination failed:", err instanceof Error ? err.message : String(err));
+  });
+}
+
+function drainNativeSessionLeasesOnPageHide(): void {
+  const leases = [...nativeSessionLeases.values()];
+  nativeSessionLeases.clear();
+  for (const lease of leases) {
+    void lease.session.then(
+      (session) => terminateNativeSessionOnPageHide(session.id),
+      () => undefined,
+    );
+  }
+}
+
+function ensurePageHideListener(): void {
+  if (pageHideListenerInstalled || typeof window === "undefined") return;
+  window.addEventListener("pagehide", drainNativeSessionLeasesOnPageHide);
+  pageHideListenerInstalled = true;
+}
+
 function terminateLease(windowId: string, lease: NativeSessionLease): void {
   if (nativeSessionLeases.get(windowId) === lease) {
     nativeSessionLeases.delete(windowId);
@@ -136,6 +163,7 @@ function evictIdleNativeSessionLease(): boolean {
 }
 
 function acquireNativeSessionLease(windowId: string, appId: string): NativeSessionLeaseHandle {
+  ensurePageHideListener();
   const existing = nativeSessionLeases.get(windowId);
   if (existing?.appId === appId) {
     existing.consumers += 1;

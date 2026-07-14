@@ -686,6 +686,61 @@ describe("native app routes", () => {
     expect(wsMock.WebSocket).not.toHaveBeenCalled();
   });
 
+  it("does not create an upstream websocket after its session target is released during setup", async () => {
+    const { service } = createApp("alice");
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    const streamToken = service.streamCookieValue(session.id);
+    vi.spyOn(service, "getStreamTarget")
+      .mockReturnValueOnce({ port: 46000 })
+      .mockReturnValue(null);
+    const context = {
+      req: {
+        param: (name: string) => name === "sessionId" ? session.id : "",
+        path: `/api/native-apps/sessions/${session.id}/stream/${streamToken}/`,
+        raw: { headers: new Headers() },
+        url: `http://matrix.local/api/native-apps/sessions/${session.id}/stream/${streamToken}/`,
+      },
+    };
+    const handler = createNativeWebSocketHandler(context as never, service);
+    const ws = { close: vi.fn(), send: vi.fn() };
+
+    handler.onOpen(null, ws);
+    await vi.waitFor(() => expect(ws.close).toHaveBeenCalledTimes(1));
+
+    expect(wsMock.WebSocket).not.toHaveBeenCalled();
+  });
+
+  it("does not flush queued websocket frames after the session port mapping changes", async () => {
+    const { service } = createApp("alice");
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    const streamToken = service.streamCookieValue(session.id);
+    vi.spyOn(service, "getStreamTarget")
+      .mockReturnValueOnce({ port: 46000 })
+      .mockReturnValueOnce({ port: 46000 })
+      .mockReturnValueOnce({ port: 46000 })
+      .mockReturnValue({ port: 47000 });
+    const context = {
+      req: {
+        param: (name: string) => name === "sessionId" ? session.id : "",
+        path: `/api/native-apps/sessions/${session.id}/stream/${streamToken}/`,
+        raw: { headers: new Headers() },
+        url: `http://matrix.local/api/native-apps/sessions/${session.id}/stream/${streamToken}/`,
+      },
+    };
+    const handler = createNativeWebSocketHandler(context as never, service);
+    const ws = { close: vi.fn(), send: vi.fn() };
+
+    handler.onOpen(null, ws);
+    handler.onMessage({ data: "hello" }, ws);
+    await vi.waitFor(() => expect(wsMock.WebSocket).toHaveBeenCalledTimes(1));
+    const upstream = wsMock.instances[0]!;
+    upstream.listeners.get("open")?.();
+
+    expect(upstream.send).not.toHaveBeenCalled();
+    expect(upstream.close).toHaveBeenCalledTimes(1);
+    expect(ws.close).toHaveBeenCalledTimes(1);
+  });
+
   it("closes oversized websocket frames before opening an upstream socket", async () => {
     const { service } = createApp("alice");
     const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
