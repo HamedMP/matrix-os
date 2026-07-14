@@ -42,6 +42,12 @@ function snapshot(overrides: Partial<AgentRuntimeSettingsSnapshot> = {}): AgentR
         capabilities: ["tools"],
         efforts: [],
         available: true,
+      }, {
+        id: "hermes-4-70b",
+        displayName: "Hermes 4 70B",
+        capabilities: ["tools"],
+        efforts: [],
+        available: true,
       }],
       authStatus: { state: "ready", authenticated: true, action: "none" },
     }],
@@ -101,5 +107,34 @@ describe("Hermes messaging runtime adapter", () => {
       baseUrl: "https://models.example.com/v1",
     }, signal)).rejects.toMatchObject({ kind: "not_configured" });
     expect(requestJson).not.toHaveBeenCalled();
+  });
+
+  it("restores the prior selection when post-mutation verification fails", async () => {
+    const source = Object.assign(vi.fn(async () => snapshot()), {
+      invalidate: vi.fn(),
+    });
+    const requestJson = vi.fn(async () => ({ ok: true }));
+    const adapter = createHermesRuntimeAdapter({ source, requestJson });
+
+    await expect(adapter.configure({
+      provider: "nous",
+      model: "hermes-4-70b",
+    }, new AbortController().signal)).rejects.toMatchObject({
+      kind: "invalid_response",
+    });
+
+    expect(requestJson).toHaveBeenNthCalledWith(2,
+      "/api/model/set",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          scope: "main",
+          provider: "nous",
+          model: "hermes-4-405b",
+        }),
+      }),
+      expect.any(AbortSignal),
+    );
+    expect(source.invalidate).toHaveBeenCalledTimes(2);
   });
 });
