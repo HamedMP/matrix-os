@@ -347,6 +347,25 @@ describe("native app routes", () => {
     expect(stream.headers.get("vary")).toContain("Origin");
   });
 
+  it("rejects an HTTP stream response when its session target changes during proxying", async () => {
+    const { app, service } = createApp("alice");
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    const streamToken = service.streamCookieValue(session.id);
+    vi.spyOn(service, "getStreamTarget")
+      .mockReturnValueOnce({ port: 46000 })
+      .mockReturnValue(null);
+    const fetchMock = vi.fn(async () => new Response("stale xpra response", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const stream = await app.request(
+      `/api/native-apps/sessions/${session.id}/stream/${streamToken}/index.html`,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(stream.status).toBe(401);
+    expect(await stream.json()).toEqual({ error: "Unauthorized" });
+  });
+
   it("rejects malformed native stream bootstrap tokens at the route boundary", async () => {
     const { app } = createApp("alice");
     await app.request("/api/native-apps/xterm/sessions", {

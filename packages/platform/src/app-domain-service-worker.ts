@@ -2,6 +2,10 @@ const APP_DOMAIN_SAFE_SERVICE_WORKER = `
 const VERSION = "app-v1";
 const CACHE_STATIC = "matrix-os-static-" + VERSION;
 
+self.addEventListener("install", (event) => {
+  event.waitUntil(self.skipWaiting());
+});
+
 self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();

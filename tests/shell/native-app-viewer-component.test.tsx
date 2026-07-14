@@ -323,4 +323,34 @@ describe("NativeAppViewer", () => {
       );
     });
   });
+
+  it("keeps native sessions alive when pagehide enters the back-forward cache", async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl === "/api/native-apps/xterm/sessions" && init?.method === "POST") {
+        return new Response(JSON.stringify({
+          session: {
+            id: "session_kkkkkkkkkkkkkkkkkkkkkkkk",
+            appId: "xterm",
+            status: "running",
+            streamUrl: "/api/native-apps/sessions/session_kkkkkkkkkkkkkkkkkkkkkkkk/stream/",
+          },
+        }), { status: 201, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(null, { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    Object.defineProperty(window, "fetch", { configurable: true, value: fetchMock });
+
+    const viewer = render(<NativeAppViewer appId="xterm" windowId="win-bfcache" />);
+    await screen.findByTitle("xterm native app");
+    window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/native-apps/sessions/session_kkkkkkkkkkkkkkkkkkkkkkkk",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+    viewer.unmount();
+  });
 });

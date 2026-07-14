@@ -528,7 +528,7 @@ export class NativeAppSessionService {
     }
     const available = await this.commandExists(command);
     this.commandExistsCache.delete(command);
-    this.commandExistsCache.set(command, { available, checkedAt: now });
+    if (available) this.commandExistsCache.set(command, { available, checkedAt: now });
     while (this.commandExistsCache.size > COMMAND_CHECK_CACHE_MAX) {
       const oldest = this.commandExistsCache.keys().next().value;
       if (oldest === undefined) break;

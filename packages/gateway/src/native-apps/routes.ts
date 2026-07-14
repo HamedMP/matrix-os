@@ -420,9 +420,17 @@ async function proxyStreamRequest(c: Context, service: NativeAppSessionService):
     redirect: "error",
     signal: AbortSignal.timeout(STREAM_FETCH_TIMEOUT_MS),
   });
+  const targetStillMatches = () => service.getStreamTarget(sessionId, token)?.port === target.port;
+  if (!targetStillMatches()) {
+    await response.body?.cancel().catch((err: unknown) => {
+      console.warn("[native-apps] failed to cancel stale stream response:", err instanceof Error ? err.message : String(err));
+    });
+    return c.json({ error: "Unauthorized" }, 401);
+  }
   const headers = sanitizeProxyHeaders(response.headers);
   applyOpaqueOriginCorsHeaders(c, headers);
   const bufferedBody = await readBoundedStreamResponseBody(response);
+  if (!targetStillMatches()) return c.json({ error: "Unauthorized" }, 401);
   const body = injectXpraWorkerFallback(
     bufferedBody,
     requestPath.upstreamPath,

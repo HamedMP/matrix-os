@@ -147,7 +147,8 @@ function terminateNativeSessionOnPageHide(sessionId: string): void {
   });
 }
 
-function drainNativeSessionLeasesOnPageHide(): void {
+function drainNativeSessionLeasesOnPageHide(event: PageTransitionEvent): void {
+  if (event.persisted) return;
   const leases = [...nativeSessionLeases.values()];
   nativeSessionLeases.clear();
   for (const lease of leases) {

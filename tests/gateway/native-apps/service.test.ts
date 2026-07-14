@@ -468,6 +468,20 @@ describe("NativeAppSessionService", () => {
     expect(commandExists).toHaveBeenCalledWith("xterm");
   });
 
+  it("rechecks missing native tools on the next launch while bootstrap converges", async () => {
+    let xpraAvailable = false;
+    const commandExists = vi.fn(async (command: string) => command === "xpra" ? xpraAvailable : true);
+    const { service } = createService({ commandExists });
+
+    await expect(service.launchSession({ ownerId: "alice", appId: "xterm" }))
+      .rejects.toMatchObject({ code: "native_unavailable" });
+    xpraAvailable = true;
+
+    await expect(service.launchSession({ ownerId: "alice", appId: "xterm" }))
+      .resolves.toMatchObject({ status: "running" });
+    expect(commandExists.mock.calls.filter(([command]) => command === "xpra")).toHaveLength(2);
+  });
+
   it("logs bounded xpra stderr when a child process errors", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { service, children } = createService();
