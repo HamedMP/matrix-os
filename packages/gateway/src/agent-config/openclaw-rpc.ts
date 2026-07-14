@@ -51,6 +51,13 @@ const RetryableConnectErrorSchema = z.object({
 }).passthrough();
 
 const EmptyParamsSchema = z.object({}).strict();
+const ModelsListParamsSchema = z.object({
+  includeProviderCapabilities: z.boolean().optional(),
+  view: z.enum(["default", "configured", "provider-config", "all"]).optional(),
+}).strict();
+const ModelsAuthStatusParamsSchema = z.object({
+  refresh: z.boolean().optional(),
+}).strict();
 const ConfigPatchParamsSchema = z.object({
   raw: z.string().min(2).max(MAX_REQUEST_BYTES),
   baseHash: z.string().min(1).max(256),
@@ -58,8 +65,8 @@ const ConfigPatchParamsSchema = z.object({
 const MethodParamsSchemas: Record<string, z.ZodType> = {
   health: EmptyParamsSchema,
   "channels.status": EmptyParamsSchema,
-  "models.list": EmptyParamsSchema,
-  "models.authStatus": EmptyParamsSchema,
+  "models.list": ModelsListParamsSchema,
+  "models.authStatus": ModelsAuthStatusParamsSchema,
   "config.get": EmptyParamsSchema,
   "config.patch": ConfigPatchParamsSchema,
 };
