@@ -123,6 +123,41 @@ describe("OpenClaw gateway RPC", () => {
     await client.close();
   });
 
+  it("accepts the bounded OpenClaw catalog parameter surface", async () => {
+    const socketFactory = vi.fn(() => new FakeSocket());
+    const client = createOpenClawRpcClient({
+      url: "ws://127.0.0.1:18789",
+      token: "f".repeat(64),
+      socketFactory,
+      timeoutMs: 100,
+    });
+
+    await expect(client.call("models.list", {
+      view: "all",
+      includeProviderCapabilities: true,
+    }, new AbortController().signal)).rejects.toMatchObject({
+      kind: "runtime_unavailable",
+    });
+    await expect(client.call("models.authStatus", {
+      refresh: false,
+    }, new AbortController().signal)).rejects.toMatchObject({
+      kind: "runtime_unavailable",
+    });
+    expect(socketFactory).toHaveBeenCalled();
+
+    await expect(client.call("models.list", {
+      view: "private",
+    }, new AbortController().signal)).rejects.toMatchObject({
+      kind: "agent_config_invalid",
+    });
+    await expect(client.call("models.authStatus", {
+      refresh: "yes",
+    }, new AbortController().signal)).rejects.toMatchObject({
+      kind: "agent_config_invalid",
+    });
+    await client.close();
+  });
+
   it("enforces the published eight-correlation ceiling", () => {
     expect(() => createOpenClawRpcClient({
       url: "ws://127.0.0.1:18789",
