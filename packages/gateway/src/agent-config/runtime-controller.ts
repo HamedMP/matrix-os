@@ -452,10 +452,14 @@ export function createAgentRuntimeController(
       }
       if (transitionStat?.isFile()) {
         await unlink(transitionPath).catch((error: unknown) => {
-          if (!isErrno(error, "ENOENT")) throw error;
+          if (!isErrno(error, "ENOENT")) {
+            logBestEffortFailure("Transition marker cleanup failed", error);
+          }
         });
       }
-      await releaseLock();
+      await releaseLock().catch((error: unknown) => {
+        logBestEffortFailure("Runtime reconciliation lock release failed", error);
+      });
     }
   }
 

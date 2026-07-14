@@ -7,6 +7,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -454,6 +455,55 @@ describe("agent runtime controller", () => {
       .rejects.toMatchObject({ code: "ENOENT" });
     await expect(lstat(join(runtimeDir, "transition.json")))
       .rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps gateway startup available when transition cleanup fails", async () => {
+    const homePath = await createHome();
+    const runtimeDir = join(homePath, "system/agent-runtime");
+    await mkdir(runtimeDir, { recursive: true });
+    await writeFile(join(runtimeDir, "transition.json"), JSON.stringify({
+      id: "6f06cf2c-806f-4c44-b92e-97e041ff088b",
+      from: "openclaw",
+      to: "hermes",
+      state: "verifying",
+      startedAt: "2026-07-13T00:00:00.000Z",
+      deadlineAt: "2026-07-13T00:00:10.000Z",
+    }));
+    const warn = vi.spyOn(console, "warn").mockImplementation((message) => {
+      if (message === "[agent-config] Transition marker cleanup failed:") {
+        chmodSync(runtimeDir, 0o700);
+      }
+    });
+    const hermes = fakeAdapter("hermes", {
+      probe: vi.fn(async () => {
+        chmodSync(runtimeDir, 0o500);
+        return {
+          id: "hermes",
+          displayName: "Hermes",
+          installState: "installed",
+          health: "healthy",
+          selectionState: "active",
+          configured: true,
+          capabilities: ["provider_catalog", "model_selection"],
+        };
+      }),
+    });
+    const controller = createAgentRuntimeController({
+      homePath,
+      adapters: { hermes },
+    });
+
+    try {
+      await expect(controller.reconcile()).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(
+        "[agent-config] Transition marker cleanup failed:",
+        expect.any(String),
+      );
+    } finally {
+      chmodSync(runtimeDir, 0o700);
+      warn.mockRestore();
+      await controller.close();
+    }
   });
 
   it("keeps gateway startup available when reconciliation cannot create its directory", async () => {
