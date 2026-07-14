@@ -282,6 +282,100 @@ describe("Canvas Agent runtime settings", () => {
     ));
   });
 
+  it("reconciles Chat model state when a settings refresh changes availability", async () => {
+    const initial = makeView();
+    const refreshed = structuredClone(initial);
+    refreshed.providers[0].models = [
+      {
+        id: "claude-opus-4-6",
+        displayName: "Claude Opus 4.6",
+        capabilities: ["tools", "vision", "reasoning"],
+        efforts: ["low", "medium", "high", "max"],
+        available: false,
+      },
+      {
+        id: "claude-sonnet-4-6",
+        displayName: "Claude Sonnet 4.6",
+        capabilities: ["tools", "vision", "reasoning"],
+        efforts: ["low", "medium", "high"],
+        available: true,
+      },
+    ];
+    AgentSettingsViewSchema.parse(refreshed);
+    let putCalls = 0;
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        putCalls += 1;
+        return response(refreshed);
+      }
+      return response(initial);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<AgentRuntimePanel />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Save Chat model" }));
+    await waitFor(() => expect(putCalls).toBe(1));
+    expect(screen.getByRole("combobox", { name: "Chat model" })).toHaveValue("claude-sonnet-4-6");
+    fireEvent.click(screen.getByRole("button", { name: "Save Chat model" }));
+
+    await waitFor(() => expect(fetcher).toHaveBeenLastCalledWith(
+      expect.stringContaining("/api/settings/agent"),
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ model: "claude-sonnet-4-6", effort: "high" }),
+      }),
+    ));
+  });
+
+  it("reconciles Messaging model state when a settings refresh changes availability", async () => {
+    const initial = makeView();
+    const refreshed = structuredClone(initial);
+    refreshed.providers[1].models = [
+      {
+        id: "hermes-4-405b",
+        displayName: "Hermes 4 405B",
+        capabilities: ["tools"],
+        efforts: [],
+        available: false,
+      },
+      {
+        id: "hermes-4-70b",
+        displayName: "Hermes 4 70B",
+        capabilities: ["tools"],
+        efforts: [],
+        available: true,
+      },
+    ];
+    AgentSettingsViewSchema.parse(refreshed);
+    let putCalls = 0;
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        putCalls += 1;
+        return response(refreshed);
+      }
+      return response(initial);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<AgentRuntimePanel />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Save messaging model" }));
+    await waitFor(() => expect(putCalls).toBe(1));
+    expect(screen.getByRole("combobox", { name: "Messaging model" })).toHaveValue("hermes-4-70b");
+    fireEvent.click(screen.getByRole("button", { name: "Save messaging model" }));
+
+    await waitFor(() => expect(fetcher).toHaveBeenLastCalledWith(
+      expect.stringContaining("/api/settings/agent"),
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          provider: "nous",
+          messagingModel: "hermes-4-70b",
+          revision: 4,
+        }),
+      }),
+    ));
+  });
+
   it("shows a useful legacy fallback and retryable safe error state", async () => {
     let calls = 0;
     vi.stubGlobal("fetch", vi.fn(async () => {
