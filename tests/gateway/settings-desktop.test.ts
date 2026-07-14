@@ -639,6 +639,27 @@ describe("Settings: desktop + theme + wallpapers", () => {
       expect(saved.channels.telegram.enabled).toBe(true);
     });
 
+    it("clears an incompatible saved effort when explicitly set to null", async () => {
+      writeFileSync(
+        join(homePath, "system/config.json"),
+        JSON.stringify({ kernel: { model: "claude-opus-4-6", effort: "high" } }),
+      );
+
+      const res = await app.request("/api/settings/agent", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "claude-sonnet-4-5", effort: null }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        ok: true,
+        kernel: { model: "claude-sonnet-4-5", effort: null },
+      });
+      const saved = JSON.parse(readFileSync(join(homePath, "system/config.json"), "utf-8"));
+      expect(saved.kernel).toEqual({ model: "claude-sonnet-4-5" });
+    });
+
     it("delegates legacy Chat patches to the runtime controller when available", async () => {
       const updateKernel = vi.fn(async () => ({
         model: "claude-haiku-4-5" as const,

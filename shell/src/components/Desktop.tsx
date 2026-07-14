@@ -46,7 +46,11 @@ import { iconUrlForSlug } from "@/lib/app-launch";
 import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
-import { enqueueTerminalLaunch, TERMINAL_SETUP_WINDOW_PATH } from "@/lib/terminal-launch";
+import {
+  createTerminalLaunchPath,
+  enqueueTerminalLaunch,
+  TERMINAL_SETUP_WINDOW_PATH,
+} from "@/lib/terminal-launch";
 import {
   loadShellSnapshot,
   saveShellSnapshot,
@@ -1608,7 +1612,14 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         </div>
       </div>
 
-      <Settings open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <Settings
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        onOpenAgentTerminal={(action) => {
+          setSettingsOpen(false);
+          openSetupTerminal(createTerminalLaunchPath(action));
+        }}
+      />
       {/* Single ChatPopover instance shared by desktop + mobile dock
           buttons. Lives outside both dock-orientation branches so it
           isn't unmounted when the viewport orientation flips. */}

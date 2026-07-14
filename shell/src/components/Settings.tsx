@@ -27,6 +27,7 @@ import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { UserButton as AccountButton } from "./UserButton";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { isSelfHostedRuntime } from "@/lib/self-host-mode";
+import type { TerminalLaunchAction } from "@/lib/terminal-launch";
 
 
 const sections = [
@@ -48,7 +49,6 @@ type SectionId = typeof sections[number]["id"];
 // The section components and render branches below are intentionally kept so a
 // section can be re-enabled by removing its id here. See AGENTS.md "Deferred work".
 const HIDDEN_SECTION_IDS = new Set<SectionId>([
-  "agent",
   "channels",
   "skills",
   "security",
@@ -118,6 +118,7 @@ interface SettingsProps {
   billingMode?: "settings" | "provisioning" | "device-setup";
   onBillingCheckoutIntent?: () => void;
   billingCheckoutReturnPath?: string;
+  onOpenAgentTerminal?: (action: TerminalLaunchAction) => void;
 }
 
 export function Settings({
@@ -153,6 +154,7 @@ function SettingsFrame({
   billingMode = "settings",
   onBillingCheckoutIntent,
   billingCheckoutReturnPath,
+  onOpenAgentTerminal,
   billingActive,
   showBillingSection,
 }: SettingsFrameProps) {
@@ -296,7 +298,7 @@ function SettingsFrame({
 
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
               {activeSection === "appearance" && <AppearanceSection />}
-              {activeSection === "agent" && <AgentSection />}
+              {activeSection === "agent" && <AgentSection onOpenTerminal={onOpenAgentTerminal} />}
               {activeSection === "channels" && <ChannelsSection />}
               {activeSection === "integrations" && <IntegrationsSection />}
               {activeSection === "skills" && <SkillsSection />}

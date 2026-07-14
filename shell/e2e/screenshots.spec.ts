@@ -1,11 +1,102 @@
 import { test, expect } from "@playwright/test";
 
+function agentSettingsView() {
+  const chat = {
+    provider: "anthropic",
+    model: "claude-opus-4-6",
+    effort: "high",
+    source: "saved",
+    authKind: "platform",
+  };
+  return {
+    identity: {},
+    kernel: { model: chat.model, effort: chat.effort },
+    availableModels: [{ id: chat.model, label: "Claude Opus 4.6", tier: "Most capable" }],
+    availableEfforts: ["low", "medium", "high", "max"],
+    defaults: { model: chat.model, effort: chat.effort },
+    contractVersion: 2,
+    revision: 4,
+    chat,
+    runtime: {
+      selected: "hermes",
+      options: [
+        {
+          id: "hermes",
+          displayName: "Hermes",
+          installState: "installed",
+          health: "healthy",
+          selectionState: "active",
+          configured: true,
+          capabilities: ["provider_catalog", "model_selection", "authentication", "messaging_dashboard"],
+          version: "1.2.0",
+        },
+        {
+          id: "openclaw",
+          displayName: "OpenClaw",
+          installState: "missing",
+          health: "stopped",
+          selectionState: "unavailable",
+          configured: false,
+          capabilities: ["install"],
+          setupAction: "install",
+        },
+      ],
+      transition: null,
+    },
+    providers: [
+      {
+        id: "anthropic",
+        displayName: "Anthropic",
+        runtime: null,
+        scopes: ["chat"],
+        authKind: "platform",
+        supportedAuthKinds: ["platform", "api_key", "oauth_login"],
+        models: [{
+          id: chat.model,
+          displayName: "Claude Opus 4.6",
+          capabilities: ["tools", "vision", "reasoning"],
+          efforts: ["low", "medium", "high", "max"],
+          available: true,
+        }],
+        authStatus: { state: "ready", authenticated: true, action: "none" },
+      },
+      {
+        id: "nous",
+        displayName: "Nous Research",
+        runtime: "hermes",
+        scopes: ["messaging"],
+        authKind: "oauth_login",
+        supportedAuthKinds: ["oauth_login"],
+        models: [{
+          id: "hermes-4-405b",
+          displayName: "Hermes 4 405B",
+          capabilities: ["tools"],
+          efforts: [],
+          available: true,
+        }],
+        authStatus: { state: "ready", authenticated: true, action: "none" },
+      },
+    ],
+    currentSelection: {
+      chat,
+      messaging: {
+        runtime: "hermes",
+        provider: "nous",
+        model: "hermes-4-405b",
+        configured: true,
+      },
+    },
+  };
+}
+
 test.describe("Visual regression", () => {
   test.beforeEach(async ({ page }) => {
     // Mock gateway APIs so the shell renders without a running backend
     await page.route("**/api/settings/**", (route) => {
       const pathname = new URL(route.request().url()).pathname;
-      const body = pathname.endsWith("/onboarding-status")
+      const body = pathname.endsWith("/agent")
+        ? agentSettingsView()
+        : pathname.endsWith("/onboarding-status")
         ? { complete: true }
         : {
             background: { type: "pattern" },
@@ -68,6 +159,16 @@ test.describe("Visual regression", () => {
     await page.mouse.move(720, 450);
     await page.waitForTimeout(300);
     await expect(page).toHaveScreenshot("settings-panel.png", {
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+
+  test("Agent runtime settings", async ({ page }) => {
+    await page.getByTestId("dock-settings").dispatchEvent("click");
+    await page.getByText("Agent", { exact: true }).click();
+    await expect(page.getByText("Chat agent", { exact: true })).toBeVisible();
+    await page.mouse.move(720, 450);
+    await expect(page).toHaveScreenshot("agent-settings.png", {
       maxDiffPixelRatio: 0.01,
     });
   });

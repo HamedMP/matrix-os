@@ -49,7 +49,7 @@ const AGENT_SETTINGS_BODY_LIMIT = 16 * 1024;
 const KernelPatchSchema = z
   .object({
     model: KernelModelSchema.optional(),
-    effort: KernelEffortSchema.optional(),
+    effort: KernelEffortSchema.nullable().optional(),
   })
   .strict();
 
@@ -371,7 +371,8 @@ export function createSettingsRoutes(opts: {
     const cfg = await readConfig();
     const kernel = { ...((cfg.kernel ?? {}) as Record<string, unknown>) };
     if (kernelPatch.data.model !== undefined) kernel.model = kernelPatch.data.model;
-    if (kernelPatch.data.effort !== undefined) kernel.effort = kernelPatch.data.effort;
+    if (kernelPatch.data.effort === null) delete kernel.effort;
+    else if (kernelPatch.data.effort !== undefined) kernel.effort = kernelPatch.data.effort;
     cfg.kernel = kernel;
     await writeJsonAtomic(configPath, cfg);
     return c.json({
