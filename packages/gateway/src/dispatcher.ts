@@ -25,6 +25,7 @@ import {
   aiTokensTotal,
 } from "./metrics.js";
 import { buildKernelEnv } from "./kernel-credentials.js";
+import type { KernelEffort, KernelModel } from "./kernel-settings.js";
 
 export type SpawnFn = typeof spawnKernel;
 
@@ -45,6 +46,11 @@ export interface DispatchContext {
   senderId?: string;
   senderName?: string;
   chatId?: string;
+}
+
+export interface KernelDispatchOverrides {
+  model?: KernelModel;
+  effort?: KernelEffort;
 }
 
 export interface BatchEntry {
@@ -68,6 +74,9 @@ export interface Dispatcher {
     /** Optional abort controller. Caller (gateway) passes this so it can
         stop the in-flight kernel run on user request. */
     abortController?: AbortController,
+    /** Allowlisted, per-dispatch kernel selection. These values never mutate
+        the persisted defaults or another queued dispatch. */
+    kernelOverrides?: KernelDispatchOverrides,
   ): Promise<void>;
   dispatchBatch(entries: BatchEntry[]): Promise<BatchResult[]>;
   readonly queueLength: number;
@@ -84,6 +93,7 @@ type InternalEntry =
       onEvent: (event: KernelEvent) => void;
       context?: DispatchContext;
       abortController?: AbortController;
+      kernelOverrides?: KernelDispatchOverrides;
       resolve: () => void;
       reject: (error: Error) => void;
     }
@@ -146,6 +156,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
 
     const startTime = Date.now();
     const source = entry.context?.channel ?? "web";
+    const dispatchModel = entry.kernelOverrides?.model ?? opts.model;
     const toolsUsed: string[] = [];
     let resultSessionId = "";
     let resultData: KernelResult | undefined;
@@ -174,7 +185,8 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         db,
         homePath,
         sessionId: entry.sessionId,
-        model: opts.model,
+        model: dispatchModel,
+        effort: entry.kernelOverrides?.effort,
         maxTurns: opts.maxTurns,
         env: await buildKernelEnv(homePath),
       };
@@ -198,19 +210,19 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
       kernelDispatchDuration.observe({ source }, durationSec);
       if (resultData) {
         if (resultData.cost > 0) {
-          aiCostTotal.inc({ model: opts.model ?? "unknown" }, resultData.cost);
+          aiCostTotal.inc({ model: dispatchModel ?? "unknown" }, resultData.cost);
         }
       }
 
       const tokensIn = resultData?.tokensIn ?? 0;
       const tokensOut = resultData?.tokensOut ?? 0;
-      const model = opts.model ?? "unknown";
+      const model = dispatchModel ?? "unknown";
       if (tokensIn > 0) aiTokensTotal.inc({ model, direction: "in" }, tokensIn);
       if (tokensOut > 0) aiTokensTotal.inc({ model, direction: "out" }, tokensOut);
 
       recordAiGeneration({
         traceId: resultSessionId || entry.sessionId,
-        model: opts.model,
+        model: dispatchModel,
         latencyMs: durationMs,
         tokensIn: resultData?.tokensIn,
         tokensOut: resultData?.tokensOut,
@@ -228,7 +240,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
           durationMs,
           result: "ok",
           senderId: entry.context?.senderId,
-          model: opts.model,
+          model: dispatchModel,
         });
       } catch (err) {
         logNonFatal("[dispatcher] interaction logger failed:", err);
@@ -239,7 +251,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         try {
           usageTracker.track("dispatch", costUsd, {
             senderId: entry.context?.senderId,
-            model: opts.model,
+            model: dispatchModel,
             tokensIn,
             tokensOut,
           });
@@ -257,7 +269,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
 
       recordAiGeneration({
         traceId: resultSessionId || entry.sessionId,
-        model: opts.model,
+        model: dispatchModel,
         latencyMs: durationMs,
         tokensIn: resultData?.tokensIn,
         tokensOut: resultData?.tokensOut,
@@ -277,7 +289,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
           durationMs,
           result: "error",
           senderId: entry.context?.senderId,
-          model: opts.model,
+          model: dispatchModel,
           error: {
             name: err.name,
             message: err.message,
@@ -432,7 +444,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
       return active;
     },
 
-    dispatch(message, sessionId, onEvent, context, abortController) {
+    dispatch(message, sessionId, onEvent, context, abortController, kernelOverrides) {
       if (queue.length >= MAX_QUEUE_SIZE) {
         return Promise.reject(new Error("Dispatch queue full — try again later"));
       }
@@ -444,6 +456,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
           onEvent,
           context,
           abortController,
+          kernelOverrides,
           resolve,
           reject,
         });
