@@ -232,13 +232,33 @@ describe("project-manager", () => {
 
     // A repo checkout nested inside a managed project stays connectable: it
     // contains no registry metadata.
-    await mkdir(join(homePath, "projects", "other", "repo"), { recursive: true });
+    await mkdir(join(homePath, "projects", "other", "repo", "src"), { recursive: true });
     await expect(manager.createProject({
       mode: "folder",
       name: "Other repo",
       slug: "other-repo",
       path: "projects/other/repo",
     })).resolves.toMatchObject({ ok: true, status: 201 });
+    await expect(manager.createProject({
+      mode: "folder",
+      name: "Other repo src",
+      slug: "other-repo-src",
+      path: "projects/other/repo/src",
+    })).resolves.toMatchObject({ ok: true, status: 201 });
+  });
+
+  it("rejects managed worktree and metadata areas as folder project roots", async () => {
+    await mkdir(join(homePath, "projects", "other", "worktrees", "wt-1"), { recursive: true });
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    for (const path of ["projects/other/worktrees", "projects/other/worktrees/wt-1"]) {
+      await expect(manager.createProject({
+        mode: "folder",
+        name: "Worktree",
+        slug: `worktree-${path.split("/").length}`,
+        path,
+      })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
+    }
   });
 
   it("requires existing folder project paths to be directories", async () => {

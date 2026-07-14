@@ -234,7 +234,7 @@ describe("sidebar computer menu", () => {
   });
 
   it("clears owner-scoped inventory when a signed-in session is replaced in place", async () => {
-    useConnection.setState({ api: { get: vi.fn(), post: vi.fn(), delete: vi.fn() } as never });
+    useConnection.setState({ authGeneration: 1, api: { get: vi.fn(), post: vi.fn(), delete: vi.fn() } as never });
     const view = render(<RuntimeComputerMenu collapsed={false} />);
     await waitFor(() => expect(screen.getByText("operator")).not.toBeNull());
     view.unmount();
@@ -257,11 +257,26 @@ describe("sidebar computer menu", () => {
       return { ok: true };
     });
     act(() => {
-      useConnection.setState({ api: { get: vi.fn(), post: vi.fn(), delete: vi.fn() } as never });
+      useConnection.setState({ authGeneration: 2, api: { get: vi.fn(), post: vi.fn(), delete: vi.fn() } as never });
     });
 
     render(<RuntimeComputerMenu collapsed={false} />);
     await waitFor(() => expect(screen.getByText("operator-new-session")).not.toBeNull());
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:list-computers", {});
+  });
+
+  it("keeps the ready inventory when a same-session refresh replaces the api client", async () => {
+    render(<RuntimeComputerMenu collapsed={false} />);
+    await waitFor(() => expect(screen.getByText("Main Computer")).not.toBeNull());
+
+    // A failed switch refreshes auth status and constructs a new ApiClient
+    // while the credential (and its generation) is unchanged; the ready
+    // inventory must survive so the picker is not left empty.
+    act(() => {
+      useConnection.setState({ api: { get: vi.fn(), post: vi.fn(), delete: vi.fn() } as never });
+    });
+
+    expect(useRuntimeComputers.getState().status).toBe("ready");
+    expect(screen.getByText("Main Computer")).not.toBeNull();
   });
 });

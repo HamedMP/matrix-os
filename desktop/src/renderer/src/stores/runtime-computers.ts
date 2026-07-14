@@ -113,9 +113,12 @@ export const useRuntimeComputers = create<RuntimeComputerState>()((set, get) => 
 
 useConnection.subscribe((connection, previous) => {
   const signedOut = previous.status === "signed-in" && connection.status !== "signed-in";
+  // The credential generation is the replacement signal; the ApiClient object
+  // is recreated on every auth refresh (including after a failed switch) and
+  // must not wipe a still-valid inventory.
   const signedInSessionReplaced = previous.status === "signed-in"
     && connection.status === "signed-in"
-    && (previous.api !== connection.api || previous.authGeneration !== connection.authGeneration);
+    && previous.authGeneration !== connection.authGeneration;
   if (!signedOut && !signedInSessionReplaced) return;
   refreshGeneration += 1;
   useRuntimeComputers.setState({
