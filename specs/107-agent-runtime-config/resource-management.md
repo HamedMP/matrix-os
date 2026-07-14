@@ -15,10 +15,10 @@
 | Model capabilities | 12 | Schema |
 | Runtime capabilities | 16 | Schema |
 | Concurrent runtime transitions | 1 | Exclusive `wx` lock |
-| Runtime transition duration | 10 seconds hard deadline | Controller timeout |
+| Runtime transition duration | 75 seconds hard deadline | Controller timeout |
 | Active-work drain | 5 seconds | Controller deadline + abort |
 | Runtime status cache | 2 runtimes, TTL 5 seconds | Fixed keys, replace in place |
-| In-flight adapter RPC | 8 total, 4 per runtime | Semaphore; excess returns busy/retry |
+| In-flight OpenClaw RPC | 8 total | Correlation ceiling; excess returns busy/retry |
 | OpenClaw config writes | At most 3 per rolling 60 seconds per device/IP | One serialized owner queue; debounce/coalesce compatible pending patches and reject excess work with a bounded retry state |
 | Setup/login sessions | 4 owner-local, TTL 10 minutes | Bounded registry + recurring sweep |
 | Diagnostic events | 500 entries or 30 days | Owner-local capped rotation |
@@ -27,10 +27,11 @@
 
 - Agent settings aggregate read: 3 seconds hard budget.
 - Individual runtime health/config/catalog probe: 2 seconds.
-- Runtime config mutation: 10 seconds.
+- Kernel/provider config mutation without a runtime switch: 10 seconds.
 - Provider credential validation: 10 seconds.
 - Custom endpoint validation/probe if enabled after DNS-pinning decision: 10 seconds, redirect error.
-- Service start/stop state wait: 2 seconds each, within the 10-second transition budget.
+- Host runtime control action: 70 seconds, within the 75-second transition budget.
+- OpenClaw post-activation readiness probe: 10 seconds, within the same transition budget.
 - WebSocket connect and authenticated handshake: 2 seconds.
 - Terminal setup session creation: existing terminal API timeout, no hidden background wait.
 

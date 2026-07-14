@@ -39,6 +39,12 @@ A quick reference for the terms you'll see across these guides.
 
 **Coding agent** — An AI coding tool — Claude, Codex, Pi, or OpenCode — that you install and run on your Matrix computer inside a session. See [Coding Agents](/docs/coding-agents).
 
-**Hermes** — Matrix's always-on chat agent. It runs in the background and replies across web chat, mobile, and messaging channels. Hermes is model-agnostic — [pick a model](/docs/hermes) (Claude, GPT, Gemini, and more) before it can respond.
+**Chat kernel** — The Matrix OS agent behind Chat in the web shell, desktop app, and mobile app. Its provider, model, effort, and authentication are configured in [Agent settings](/docs/hermes).
+
+**Messaging runtime** — An optional owner-local background process that can receive and reply to permitted messaging rooms. Hermes is the default; OpenClaw is an alternative when installed and healthy. It is separate from the Chat kernel.
+
+**Hermes** — The default Messaging runtime. Hermes has its own provider and model configuration and never gains room access merely by being selected.
+
+**OpenClaw** — An optional Messaging runtime. Matrix only activates it after installation, authentication, and a successful health check.
 
 **Skill** — A short instruction file that coding agents discover and use to learn how Matrix works — build conventions, UI patterns, and debug playbooks. See [Matrix Skills](/docs/matrix-skills).

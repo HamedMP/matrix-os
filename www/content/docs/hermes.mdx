@@ -1,97 +1,95 @@
 ---
-title: Hermes
-description: The always-on Matrix chat agent that responds across web, mobile, and messaging channels.
+title: Agent runtime
+description: Choose the Chat model and the optional messaging runtime on your Matrix computer.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Card, Cards } from 'fumadocs-ui/components/card';
 import { Step, Steps } from 'fumadocs-ui/components/steps';
 
-Hermes is the Matrix system agent: always running in the background, reachable across
-web chat, mobile, and connected messaging channels. It is distinct from the coding agents
-(Claude Code, Codex, OpenCode, Pi) that you install and launch from the Terminal.
+Matrix OS has two separate agent layers. The names used by earlier releases made them
+easy to confuse:
 
-<Callout type="warn" title="Pick a model before using Hermes">
-  Hermes is model-agnostic — it works with many LLM providers. Choose a model and add that
-  provider's credential before Hermes can respond. Until a model is configured, Hermes shows
-  as active but can't generate replies.
+- The **Chat kernel** powers Chat in the web shell, desktop app, and mobile app. It uses
+  Claude Agent SDK V1 and remains the Matrix OS kernel.
+- A **Messaging runtime** is an optional background process for permitted Telegram and
+  WhatsApp rooms. Hermes is the default option; OpenClaw is an alternative when it is
+  installed and healthy.
+
+Changing the Messaging runtime does not replace the Chat kernel, migrate Chat
+conversations, or change the model used by Chat.
+
+<Callout type="info" title="One settings surface, two independent selections">
+  Open **Settings → Agent** to see the effective Chat model and effort, authentication
+  state, available Messaging runtimes, and the provider and model used by the selected
+  Messaging runtime.
 </Callout>
 
-## What Hermes is
+## Configure Chat
 
-Hermes fills the role of a persistent background agent that is always reachable. Coding
-agents are interactive: you open a terminal, launch the agent, and it runs for that
-session. Hermes is different — it stays alive across sessions and responds to messages
-without you having to start it each time.
+The current Chat catalog uses Anthropic models. Choose a model and effort level in Agent
+settings. The saved choice becomes the computer default; supported shells can also send
+an allowlisted model and effort for one message without changing that default.
 
-## Choose your model
-
-Hermes runs on a **main model** for its core reasoning, plus a set of auxiliary models for
-specialized tasks (each defaults to your main model unless you override it). It is not tied
-to any single provider — it works with:
+Authentication is shown as a coarse state, never as a credential:
 
 <Cards>
-  <Card title="Nous Portal" description="300+ models via OpenRouter through a single Nous Portal subscription. The fastest way to get started." />
-  <Card title="Anthropic" description="Claude models, using your Anthropic API key or login." />
-  <Card title="OpenAI" description="GPT models with your OpenAI key." />
-  <Card title="Google" description="Gemini models with your Google credential." />
-  <Card title="Custom endpoint" description="Point Hermes at any compatible model server with your own base URL." />
+  <Card title="Platform-provided" description="Use the model access included with your Matrix computer. No key entry is required." />
+  <Card title="Your API key" description="Submit a BYOK key through the write-only gateway flow. The key is validated and never returned to a shell." />
+  <Card title="Subscription login" description="Open the visible, named terminal setup flow and complete the provider login on your Matrix computer." />
 </Cards>
 
-Configure which model Hermes uses:
+Provider secrets are never stored in the browser or desktop renderer. Agent settings
+clears key-entry fields after submission and receives only states such as connected,
+action required, or unavailable.
+
+## Choose a Messaging runtime
+
+<Cards>
+  <Card title="Hermes" description="The default messaging-agent runtime, with its own provider and model configuration." />
+  <Card title="OpenClaw" description="An optional owner-local gateway. It must be installed, authenticated, and healthy before it can be selected." />
+</Cards>
+
+The runtime cards show install state, health, selection eligibility, and the active
+provider and model. Provider choices belong to that Messaging runtime; they do not alter
+the Chat model.
+
+To configure a runtime:
 
 <Steps>
-  <Step>Add a provider credential first — only providers you've authenticated are selectable.</Step>
-  <Step>Run `hermes model` in a terminal for interactive setup, or `/model <name>` inside a chat. You can also run `hermes setup --portal` to use Nous Portal in one step.</Step>
-  <Step>Prefer editing config directly? Set your model in `~/.hermes/config.yaml`.</Step>
+  <Step>Open **Settings → Agent** and choose Hermes or OpenClaw under Messaging runtime.</Step>
+  <Step>Select an available provider and model. Unavailable models cannot be saved.</Step>
+  <Step>Use the authentication action shown for that provider: platform access, API key, subscription login, or a custom base URL when that runtime and provider support it.</Step>
+  <Step>Save the selection. Matrix activates it only after a bounded health check succeeds.</Step>
 </Steps>
 
-For the full provider list and model slots, see the [Hermes model configuration docs](https://hermes-agent.nousresearch.com/docs/user-guide/configuring-models).
+Hermes and OpenClaw keep their own configuration and authentication state in the
+owner-controlled home directory on the Matrix computer. Agent settings exposes a safe,
+normalized view rather than raw runtime configuration.
 
-### Before Hermes can respond
+## Failure and recovery
 
-- A **main model** must be selected.
-- The **provider credential** for that model must be set (API key, OAuth, or a custom endpoint).
+If OpenClaw is missing, stopped, unauthenticated, or unhealthy, Matrix marks it as
+unavailable and rejects activation. A failed switch keeps Chat available and keeps the
+current healthy messaging runtime selected. It never falls back to an unauthenticated
+runtime or sends work to two runtimes.
 
-Until both are in place, Hermes still appears as the system agent, room permissions and
-automation rules are still stored, and pending drafts stay visible — but it can't generate
-chat responses, drafts, or assistant results.
+If provider authentication expires, Agent settings shows **Action required** and offers
+the appropriate setup flow. It does not expose the provider response or raw error.
 
-## Where you talk to Hermes
+<Callout type="warn" title="Messaging access remains default-deny">
+  Selecting or authenticating a Messaging runtime does not grant it access to any room.
+  Read, reply, and automation permissions are still granted and revoked per room in
+  Messages. See [Messages](/docs/messages) for the permission model.
+</Callout>
 
-<Cards>
-  <Card title="Web shell chat" description="The chat surface built into the Matrix OS web shell. Start a conversation from any page." />
-  <Card title="Mobile" description="The Matrix OS mobile app surfaces the same Hermes conversation. Responses arrive even when the web shell is closed." />
-  <Card title="Messages" description="Connect Telegram or WhatsApp accounts and grant Hermes per-room access. See Messages for the privacy model." href="/docs/messages" />
-</Cards>
+## Messaging runtimes versus coding agents
 
-## What Hermes can do
+Hermes and OpenClaw are owner-local background runtimes for permitted message delivery.
+Claude Code, Codex, OpenCode, and Pi are coding tools that you install and launch in named
+terminal sessions. See [Coding Agents](/docs/coding-agents) for that workflow.
 
-Hermes can access shell, files, skills, and integrations — each gated by explicit
-owner permission. The default state is no access to any room or integration.
-
-- **Shell and files**: requires the owner to grant terminal or file-browser access in
-  the room permission settings.
-- **Skills**: Hermes loads the Matrix skill pack at startup. Skills teach it how to build
-  apps, use the design system, and navigate the project layout. See
-  [Matrix Skills](/docs/matrix-skills).
-- **Integrations**: assistant capabilities (calendar, email, summaries) require the
-  owner to approve each capability in the Integrations panel. Hermes starts with no
-  integration access.
-- **Messages**: default-deny. Each room must have read and reply access explicitly
-  granted. See [Messages](/docs/messages) for per-room controls.
-
-## Hermes versus coding agents
-
-| | Hermes | Coding agents |
-|---|---|---|
-| Always running | Yes | No — you start them per session |
-| Reachable via messaging channels | Yes | No |
-| Requires install | No | Yes (from Terminal menu) |
-| Requires its own login | No | Yes (per-agent login) |
-| Needs a model configured | Yes | The agent brings its own |
-
-Coding agents are better for long interactive development sessions where you want a
-persistent terminal context. Hermes is better for background tasks, quick questions,
-and ambient access across web, mobile, and messaging. See
-[Coding Agents](/docs/coding-agents) for how to install and launch them.
+For runtime-specific commands and provider support, see the official
+[Hermes documentation](https://hermes-agent.nousresearch.com/docs) and
+[OpenClaw documentation](https://docs.openclaw.ai/). Matrix keeps those setup actions
+visible in a terminal so you can inspect and resume them.
