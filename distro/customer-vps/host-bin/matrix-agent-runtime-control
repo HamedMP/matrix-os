@@ -93,6 +93,20 @@ switch_runtime() {
   printf '{"ok":true,"runtime":"%s"}\n' "$runtime"
 }
 
+stop_runtime() {
+  local runtime="$1" unit
+  case "$runtime" in
+    hermes) unit=matrix-hermes-dashboard.service ;;
+    openclaw) unit=matrix-openclaw-gateway.service ;;
+    *) printf '{"ok":false,"code":"invalid_request"}\n'; exit 2 ;;
+  esac
+  if ! sudo timeout 20 systemctl disable --now "$unit"; then
+    printf '{"ok":false,"code":"deactivation_failed"}\n'
+    exit 5
+  fi
+  printf '{"ok":true,"runtime":"%s"}\n' "$runtime"
+}
+
 case "${1:-}" in
   status)
     [ "$#" -eq 1 ] || { printf '{"ok":false,"code":"invalid_request"}\n'; exit 2; }
@@ -103,6 +117,14 @@ case "${1:-}" in
     case "${2:-}" in
       hermes) switch_runtime hermes ;;
       openclaw) switch_runtime openclaw ;;
+      *) printf '{"ok":false,"code":"invalid_request"}\n'; exit 2 ;;
+    esac
+    ;;
+  stop)
+    [ "$#" -eq 2 ] || { printf '{"ok":false,"code":"invalid_request"}\n'; exit 2; }
+    case "${2:-}" in
+      hermes) stop_runtime hermes ;;
+      openclaw) stop_runtime openclaw ;;
       *) printf '{"ok":false,"code":"invalid_request"}\n'; exit 2 ;;
     esac
     ;;

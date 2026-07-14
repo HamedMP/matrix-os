@@ -71,12 +71,13 @@ describe("customer VPS OpenClaw runtime", () => {
     expect(unit).toContain("ReadWritePaths=/home/matrix/home/.openclaw /home/matrix/home/system/agent-runtime");
   });
 
-  it("exposes only exact status and switch commands", async () => {
+  it("exposes only exact status, switch, and stop commands", async () => {
     const controller = await readFile(controllerPath, "utf8");
 
     expect(controller).toContain('case "${1:-}" in');
     expect(controller).toContain("status)");
     expect(controller).toContain("switch)");
+    expect(controller).toContain("stop)");
     expect(controller).toContain('case "${2:-}" in');
     expect(controller).toContain("hermes)");
     expect(controller).toContain("openclaw)");
