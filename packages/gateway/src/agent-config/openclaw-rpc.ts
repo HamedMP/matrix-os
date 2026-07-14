@@ -19,6 +19,17 @@ const ChallengeSchema = z.object({
   payload: z.object({ nonce: z.string().min(1).max(512), ts: z.number() }).strict(),
 }).strict();
 
+const EventSchema = z.object({
+  type: z.literal("event"),
+  event: z.string().min(1).max(128),
+  payload: z.unknown().optional(),
+  seq: z.number().int().nonnegative().optional(),
+  stateVersion: z.object({
+    presence: z.number().int().nonnegative(),
+    health: z.number().int().nonnegative(),
+  }).strict().optional(),
+}).strict();
+
 const ResponseSchema = z.object({
   type: z.literal("res"),
   id: z.string().uuid(),
@@ -78,6 +89,7 @@ interface OpenClawRpcClientOptions {
   socketFactory?: (url: string) => SocketLike;
   maxPending?: number;
   timeoutMs?: number;
+  now?: () => number;
 }
 
 function validateUrl(value: string): string {
@@ -125,6 +137,7 @@ export function createOpenClawRpcClient(
   }
   const maxPending = options.maxPending ?? 32;
   const timeoutMs = options.timeoutMs ?? 2_000;
+  const now = options.now ?? Date.now;
   if (!Number.isInteger(maxPending) || maxPending < 1 || maxPending > 64) {
     throw new RangeError("Invalid OpenClaw pending-call cap");
   }
@@ -145,6 +158,7 @@ export function createOpenClawRpcClient(
   let connectResolve: (() => void) | null = null;
   let connectReject: ((error: unknown) => void) | null = null;
   let connectTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectAfter = 0;
 
   function rejectPending(error: AgentConfigError): void {
     for (const [id, entry] of pending) {
@@ -156,16 +170,18 @@ export function createOpenClawRpcClient(
   }
 
   function failConnection(error: AgentConfigError): void {
+    reconnectAfter = Math.max(reconnectAfter, now() + timeoutMs);
     if (connectTimer !== null) clearTimeout(connectTimer);
     connectTimer = null;
     connectReject?.(error);
     connectResolve = null;
     connectReject = null;
     rejectPending(error);
-    if (socket?.readyState !== WebSocket.CLOSED) socket?.close();
+    const failedSocket = socket;
     socket = null;
     connectPromise = null;
     connectId = null;
+    if (failedSocket?.readyState !== WebSocket.CLOSED) failedSocket?.close();
   }
 
   function handleResponse(frame: z.infer<typeof ResponseSchema>): void {
@@ -185,6 +201,7 @@ export function createOpenClawRpcClient(
       if (connectTimer !== null) clearTimeout(connectTimer);
       connectTimer = null;
       connectId = null;
+      reconnectAfter = 0;
       connectResolve?.();
       connectResolve = null;
       connectReject = null;
@@ -204,7 +221,7 @@ export function createOpenClawRpcClient(
     try {
       const raw = JSON.parse(frameText(data));
       const challenge = ChallengeSchema.safeParse(raw);
-      if (challenge.success && connectId === null) {
+      if (challenge.success && connectResolve !== null && connectId === null) {
         connectId = randomUUID();
         socket?.send(JSON.stringify({
           type: "req",
@@ -232,8 +249,12 @@ export function createOpenClawRpcClient(
         return;
       }
       const response = ResponseSchema.safeParse(raw);
-      if (!response.success) throw new AgentConfigError("invalid_response", response.error);
-      handleResponse(response.data);
+      if (response.success) {
+        handleResponse(response.data);
+        return;
+      }
+      if (EventSchema.safeParse(raw).success) return;
+      throw new AgentConfigError("invalid_response", response.error);
     } catch (error) {
       console.warn(
         "[agent-config] OpenClaw RPC protocol failure:",
@@ -248,18 +269,26 @@ export function createOpenClawRpcClient(
   function ensureConnected(): Promise<void> {
     if (closed) return Promise.reject(new AgentConfigError("runtime_unavailable"));
     if (connectPromise !== null) return connectPromise;
+    if (now() < reconnectAfter) {
+      return Promise.reject(new AgentConfigError("runtime_unavailable"));
+    }
     const deferred = Promise.withResolvers<void>();
-    connectPromise = deferred.promise;
+    const connecting = deferred.promise;
+    connectPromise = connecting;
     connectResolve = deferred.resolve;
     connectReject = deferred.reject;
-    socket = socketFactory(url);
-    socket.on("message", handleMessage);
-    socket.on("close", () => failConnection(new AgentConfigError("runtime_unavailable")));
-    socket.on("error", () => failConnection(new AgentConfigError("runtime_unavailable")));
-    connectTimer = setTimeout(() => {
-      failConnection(new AgentConfigError("runtime_unavailable"));
-    }, timeoutMs);
-    return connectPromise;
+    try {
+      socket = socketFactory(url);
+      socket.on("message", handleMessage);
+      socket.on("close", () => failConnection(new AgentConfigError("runtime_unavailable")));
+      socket.on("error", () => failConnection(new AgentConfigError("runtime_unavailable")));
+      connectTimer = setTimeout(() => {
+        failConnection(new AgentConfigError("runtime_unavailable"));
+      }, timeoutMs);
+    } catch (error) {
+      failConnection(new AgentConfigError("runtime_unavailable", error));
+    }
+    return connecting;
   }
 
   return {

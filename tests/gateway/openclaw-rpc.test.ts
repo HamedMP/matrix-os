@@ -154,4 +154,77 @@ describe("OpenClaw gateway RPC", () => {
     await active.client.close();
     await healthClosed;
   });
+
+  it("ignores bounded server events and duplicate challenges after handshake", async () => {
+    const active = await beginCall();
+
+    active.socket.receive({
+      type: "event",
+      event: "health",
+      payload: { ts: 1_789_000_000_000 },
+      seq: 4,
+      stateVersion: { presence: 2, health: 3 },
+    });
+    active.socket.receive({
+      type: "event",
+      event: "connect.challenge",
+      payload: { nonce: "duplicate", ts: 1_789_000_000_001 },
+    });
+
+    expect(active.socket.sent).toHaveLength(2);
+    active.socket.receive({
+      type: "res",
+      id: active.request.id,
+      ok: true,
+      payload: { ok: true },
+    });
+    await expect(active.call).resolves.toEqual({ ok: true });
+    await active.client.close();
+  });
+
+  it("backs off sequential reconnects and maps synchronous socket failures", async () => {
+    let now = 1_000;
+    const sockets: FakeSocket[] = [];
+    const socketFactory = vi.fn(() => {
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      return socket;
+    });
+    const client = createOpenClawRpcClient({
+      url: "ws://127.0.0.1:18789",
+      token: "c".repeat(64),
+      socketFactory,
+      timeoutMs: 100,
+      now: () => now,
+    });
+    const first = client.call("health", {}, new AbortController().signal);
+    sockets[0]!.emit("close");
+    await expect(first).rejects.toMatchObject({ kind: "runtime_unavailable" });
+
+    await expect(client.call("health", {}, new AbortController().signal))
+      .rejects.toMatchObject({ kind: "runtime_unavailable" });
+    expect(socketFactory).toHaveBeenCalledOnce();
+
+    now += 101;
+    const retry = client.call("health", {}, new AbortController().signal);
+    expect(socketFactory).toHaveBeenCalledTimes(2);
+    const retryClosed = expect(retry).rejects.toMatchObject({
+      kind: "runtime_unavailable",
+    });
+    await client.close();
+    await retryClosed;
+
+    const throwingFactory = vi.fn(() => {
+      throw new Error("provider socket detail");
+    });
+    const throwing = createOpenClawRpcClient({
+      url: "ws://127.0.0.1:18789",
+      token: "d".repeat(64),
+      socketFactory: throwingFactory,
+      timeoutMs: 100,
+    });
+    await expect(throwing.call("health", {}, new AbortController().signal))
+      .rejects.toMatchObject({ kind: "runtime_unavailable" });
+    await throwing.close();
+  });
 });
