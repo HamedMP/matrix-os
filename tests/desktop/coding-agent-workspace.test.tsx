@@ -14,6 +14,12 @@ import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { toast } from "sonner";
+
+vi.mock("sonner", () => ({
+  toast: { error: vi.fn(), success: vi.fn(), message: vi.fn() },
+  Toaster: () => null,
+}));
 
 async function selectInspectorTab(name: "Changes" | "Terminal" | "Preview" | "Activity") {
   fireEvent.click(await screen.findByRole("tab", { name: new RegExp(`^${name}\\b`) }));
@@ -3901,5 +3907,120 @@ describe("AgentWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await selectInspectorTab("Activity");
     await screen.findByText("Fix settings route");
+  });
+
+  function projectWorkspaceReadySummary() {
+    return {
+      runtime: { id: "rt_primary", label: "Primary", status: "available" },
+      capabilities: [
+        { id: "codingAgentsRuntimeSummary", enabled: true },
+        { id: "codingAgentsProjectWorkspace", enabled: true },
+        { id: "codingAgentsConversationView", enabled: true },
+        { id: "codingAgentsThreadCreate", enabled: true },
+        { id: "codingAgentsSameThreadTurns", enabled: true },
+        { id: "codingAgentsReview", enabled: true },
+      ],
+      providers: [
+        {
+          id: "codex",
+          kind: "codex",
+          displayName: "Codex",
+          availability: "available",
+          installStatus: "installed",
+          authStatus: "authenticated",
+          supportedModes: ["default"],
+          defaultMode: "default",
+          setupActions: [],
+        },
+      ],
+      projects: {
+        items: [{ id: "matrix-os", label: "Matrix OS", status: "available", taskCount: 1, threadCount: 0, attentionCount: 0 }],
+        hasMore: false,
+        limit: 20,
+      },
+      activeThreads: { items: [], hasMore: false, limit: 20 },
+      attentionThreads: { items: [], hasMore: false, limit: 20 },
+      terminalSessions: { items: [], hasMore: false, limit: 20 },
+      previewSessions: { items: [], hasMore: false, limit: 50 },
+      recentActivity: { items: [], hasMore: false, limit: 20 },
+      limits: { maxPromptBytes: 16384, maxAttachmentCount: 8, maxTerminalInputBytes: 8192, maxListItems: 20 },
+      serverTime: "2026-07-06T00:03:00.000Z",
+    };
+  }
+
+  function projectWorkspaceReadyFixture() {
+    return {
+      project: { id: "matrix-os", label: "Matrix OS", status: "available", taskCount: 1, threadCount: 0, attentionCount: 0 },
+      tasks: {
+        items: [{
+          id: "task_auth",
+          projectId: "matrix-os",
+          title: "Harden authentication",
+          status: "running",
+          priority: "high",
+          order: 0,
+          threadCount: 0,
+          activeThreadCount: 0,
+          attentionCount: 0,
+        }],
+        hasMore: false,
+        limit: 100,
+      },
+      projectThreads: { items: [], hasMore: false, limit: 100 },
+      taskThreads: { items: [], hasMore: false, limit: 100 },
+      updatedAt: "2026-07-10T12:00:00.000Z",
+    };
+  }
+
+  function wireProjectWorkspaceReadyIpc() {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(projectWorkspaceReadySummary());
+      if (channel === "runtime:get-project-workspace") return Promise.resolve(projectWorkspaceReadyFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-notification-preferences") {
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
+      }
+      if (channel === "state:get") return Promise.resolve({ value: null });
+      if (channel === "state:set") return Promise.resolve({ ok: true });
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+  }
+
+  it("opens the composer after a stale toolbar new chat resolves against a refreshed workspace", async () => {
+    vi.mocked(toast.error).mockClear();
+    wireProjectWorkspaceReadyIpc();
+
+    render(<AgentWorkspace />);
+
+    const newChat = await screen.findByRole("button", { name: "New chat in selected project" });
+    const resolveNewChatTarget = vi.fn(async () => ({ projectId: "matrix-os", taskId: "task_auth" }));
+    act(() => {
+      useCodingAgentProjectWorkspace.setState({ resolveNewChatTarget });
+    });
+
+    fireEvent.click(newChat);
+
+    expect(await screen.findByLabelText("Agent run prompt")).toBeTruthy();
+    expect(resolveNewChatTarget).toHaveBeenCalledWith("matrix-os", undefined);
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a visible error when a toolbar new chat cannot be resolved after refreshing", async () => {
+    vi.mocked(toast.error).mockClear();
+    wireProjectWorkspaceReadyIpc();
+
+    render(<AgentWorkspace />);
+
+    const newChat = await screen.findByRole("button", { name: "New chat in selected project" });
+    const resolveNewChatTarget = vi.fn(async () => null);
+    act(() => {
+      useCodingAgentProjectWorkspace.setState({ resolveNewChatTarget });
+    });
+
+    fireEvent.click(newChat);
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(screen.queryByLabelText("Agent run prompt")).toBeNull();
+    expect(screen.getByRole("button", { name: "New chat in selected project" })).toBeTruthy();
   });
 });

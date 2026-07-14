@@ -32,7 +32,7 @@ import { AgentWorkspaceViewSwitch } from "./AgentKanbanBoard";
 import { AgentKanbanWorkspace } from "./AgentKanbanWorkspace";
 import { AgentConversationInspector } from "./AgentConversationInspector";
 import { AgentWorkspaceSection as Section } from "./AgentWorkspaceSection";
-import { resolveNewChatRelation } from "./project-workspace-model";
+import { toast } from "sonner";
 
 const STATUS_COLOR: Record<string, string> = {
   available: "var(--success)",
@@ -1412,6 +1412,7 @@ export default function AgentWorkspace() {
   const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
   const loadNotificationPreferences = useCodingAgentWorkspace((s) => s.loadNotificationPreferences);
   const refreshProjectWorkspace = useCodingAgentProjectWorkspace((s) => s.refresh);
+  const resolveNewChatTarget = useCodingAgentProjectWorkspace((s) => s.resolveNewChatTarget);
   const projectWorkspace = useCodingAgentProjectWorkspace((s) => s.workspace);
   const viewMode = useCodingAgentProjectWorkspace((s) => s.viewMode);
   const setViewMode = useCodingAgentProjectWorkspace((s) => s.setViewMode);
@@ -1508,9 +1509,12 @@ export default function AgentWorkspace() {
   const canCreateFollowUp = capabilityEnabled(summary, "codingAgentsThreadCreate");
   const projectWorkspaceEnabled = capabilityEnabled(summary, "codingAgentsProjectWorkspace");
 
-  function openNewChat(projectId: string, taskId?: string) {
-    const relation = resolveNewChatRelation(projectWorkspace, projectId, taskId);
-    if (!relation) return;
+  async function openNewChat(projectId: string, taskId?: string) {
+    const relation = await resolveNewChatTarget(projectId, taskId);
+    if (!relation) {
+      toast.error("Couldn't start a new chat here. Refresh the workspace and try again.");
+      return;
+    }
     setComposerSeed({
       seedId: Date.now(),
       draft: {
@@ -1595,7 +1599,7 @@ export default function AgentWorkspace() {
                               setComposerSeed(null);
                               return;
                             }
-                            if (selectedProjectId) openNewChat(selectedProjectId, selectedTaskId ?? undefined);
+                            if (selectedProjectId) void openNewChat(selectedProjectId, selectedTaskId ?? undefined);
                           }}
                         >
                           {composerOpen ? "Cancel" : "New chat"}

@@ -134,4 +134,23 @@ describe("coding-agent project workspace model", () => {
     expect(resolveNewChatRelation(workspace(), "proj_legacy", "task_auth")).toBeNull();
     expect(resolveNewChatRelation(workspace(), "matrix-os", "task_other")).toBeNull();
   });
+
+  it("accepts a selected paged task carried by an unlisted task thread", () => {
+    const paged = workspace();
+    paged.taskThreads = {
+      ...paged.taskThreads,
+      items: [
+        ...paged.taskThreads.items,
+        thread("thread_paged", "Paged task chat", "task_paged"),
+      ],
+      hasMore: true,
+    };
+    // task_paged is outside the bounded tasks page but a visible thread carries it.
+    expect(resolveNewChatRelation(paged, "matrix-os", "task_paged")).toEqual({
+      projectId: "matrix-os",
+      taskId: "task_paged",
+    });
+    // A task neither in the page nor carried by any thread is still rejected.
+    expect(resolveNewChatRelation(paged, "matrix-os", "task_missing")).toBeNull();
+  });
 });

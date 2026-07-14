@@ -10,6 +10,7 @@ import { useConnection } from "../../desktop/src/renderer/src/stores/connection"
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import { useCodingAgentProjectWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-project-workspace";
 
 describe("CreateProjectDialog", () => {
   beforeEach(() => {
@@ -30,6 +31,7 @@ describe("CreateProjectDialog", () => {
     });
     useTabs.setState({ tabs: [], activeTabId: null });
     useUi.setState({ createProjectDestination: "board" });
+    useCodingAgentWorkspace.setState({ summary: null });
   });
 
   afterEach(() => {
@@ -118,6 +120,32 @@ describe("CreateProjectDialog", () => {
 
     await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
     expect(selectProject).not.toHaveBeenCalled();
+    expect(openTab).not.toHaveBeenCalled();
+  });
+
+  it("lands the coding-agent navigator on the project created from the Agents empty state", async () => {
+    const project = { slug: "desktop", name: "Desktop" };
+    const summary = { runtime: { id: "rt_primary" } } as never;
+    const createProject = vi.fn(async () => project);
+    const refresh = vi.fn(async () => undefined);
+    const openCreatedProject = vi.fn(async () => undefined);
+    const openTab = vi.fn();
+    useUi.setState({ createProjectDestination: "agents" });
+    useBoard.setState({ createProject, selectProject: vi.fn(async () => undefined) });
+    useCodingAgentWorkspace.setState({ refresh, summary });
+    useCodingAgentProjectWorkspace.setState({ openCreatedProject });
+    useTabs.setState({ openTab });
+
+    render(<CreateProjectDialog open onClose={vi.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Desktop" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    await waitFor(() => expect(openCreatedProject).toHaveBeenCalledWith(
+      summary,
+      "desktop",
+      "operator|https://platform.test|primary",
+    ));
     expect(openTab).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,8 @@ import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { useCodingAgentProjectWorkspace } from "../../stores/coding-agent-project-workspace";
+import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 
 type Mode = "scratch" | "folder" | "github";
 
@@ -19,6 +21,8 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   const openTab = useTabs((s) => s.openTab);
   const destination = useUi((s) => s.createProjectDestination);
   const refreshAgentWorkspace = useCodingAgentWorkspace((s) => s.refresh);
+  const openCreatedProject = useCodingAgentProjectWorkspace((s) => s.openCreatedProject);
+  const runtimeScope = useConnection(codingAgentRuntimeScope);
   const [name, setName] = useState("");
   const [mode, setMode] = useState<Mode>("scratch");
   const [url, setUrl] = useState("");
@@ -74,6 +78,13 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
       }
       if (destination === "agents") {
         await refreshAgentWorkspace();
+        if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
+        // Land the navigator on the new project; a failed workspace load surfaces
+        // through the project-workspace store's own error state.
+        const agentSummary = useCodingAgentWorkspace.getState().summary;
+        if (agentSummary) {
+          await openCreatedProject(agentSummary, project.slug, runtimeScope);
+        }
       } else {
         await selectProject(api, project.slug);
       }
