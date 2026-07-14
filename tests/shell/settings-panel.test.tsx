@@ -2,7 +2,7 @@
 
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering.js";
 
@@ -74,6 +74,18 @@ describe("Settings panel", () => {
     await waitFor(() => expect(accountRegion).toBeVisible());
     expect(screen.getByTestId("settings-clerk-user-button")).toBeVisible();
     expect(accountRegion.className).toContain("sm:mt-auto");
+  });
+
+  it("unhides only the Agent section from the deferred settings set", async () => {
+    const { Settings } = await import("../../shell/src/components/Settings.js");
+
+    render(<Settings open onOpenChange={() => {}} />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Agent" })).toBeVisible());
+    expect(screen.queryByRole("button", { name: "Channels" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Skills" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Agent" }));
+    expect(screen.getByText("Agent settings")).toBeVisible();
   });
 
   it("keeps account controls available while billing is locked for provisioning", async () => {
