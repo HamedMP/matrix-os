@@ -20,6 +20,7 @@ describe("agent runtime public docs", () => {
     expect(agentRuntime).toContain("Platform-provided");
     expect(agentRuntime).toContain("API key");
     expect(agentRuntime).toContain("subscription login");
+    expect(agentRuntime).toContain("custom base URL when that runtime and provider support it");
     expect(agentRuntime).toContain("never stored in the browser");
     expect(agentRuntime).toContain("keeps Chat available");
     expect(agentRuntime).toMatch(/keeps the\s+current healthy messaging runtime selected/);
