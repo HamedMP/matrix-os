@@ -103,6 +103,145 @@ describe("AgentSection", () => {
     vi.restoreAllMocks();
   });
 
+  it("renders the additive runtime and provider controls and sends revisioned updates", async () => {
+    const current = {
+      identity: {},
+      kernel: { model: null, effort: null },
+      availableModels: [{ id: "sonnet", label: "Sonnet", tier: "Balanced" }],
+      availableEfforts: ["medium"],
+      defaults: { model: "sonnet", effort: "medium" },
+      contractVersion: 2,
+      revision: 7,
+      chat: {
+        provider: "anthropic",
+        model: "sonnet",
+        effort: "medium",
+        source: "default",
+        authKind: "platform",
+      },
+      runtime: {
+        selected: "hermes",
+        transition: null,
+        options: [
+          {
+            id: "hermes",
+            displayName: "Hermes",
+            installState: "installed",
+            health: "healthy",
+            selectionState: "active",
+            configured: true,
+            capabilities: ["provider_catalog", "model_selection", "authentication"],
+          },
+          {
+            id: "openclaw",
+            displayName: "OpenClaw",
+            installState: "installed",
+            health: "stopped",
+            selectionState: "available",
+            configured: false,
+            capabilities: ["provider_catalog", "model_selection", "authentication"],
+          },
+        ],
+      },
+      providers: [
+        {
+          id: "anthropic",
+          displayName: "Anthropic",
+          runtime: null,
+          scopes: ["chat"],
+          authKind: "platform",
+          supportedAuthKinds: ["platform", "api_key", "oauth_login"],
+          models: [{
+            id: "sonnet",
+            displayName: "Sonnet",
+            capabilities: ["tools", "reasoning"],
+            efforts: ["medium"],
+            available: true,
+          }],
+          authStatus: { state: "ready", authenticated: true, action: "none" },
+        },
+        {
+          id: "openrouter",
+          displayName: "OpenRouter",
+          runtime: "hermes",
+          scopes: ["messaging"],
+          authKind: "api_key",
+          supportedAuthKinds: ["api_key"],
+          models: [{
+            id: "openrouter/auto",
+            displayName: "Auto",
+            capabilities: ["tools"],
+            efforts: [],
+            available: true,
+          }],
+          authStatus: {
+            state: "action_required",
+            authenticated: false,
+            action: "enter_api_key",
+          },
+        },
+      ],
+      currentSelection: {
+        chat: {
+          provider: "anthropic",
+          model: "sonnet",
+          effort: "medium",
+          source: "default",
+          authKind: "platform",
+        },
+        messaging: {
+          runtime: "hermes",
+          provider: "openrouter",
+          model: "openrouter/auto",
+          configured: true,
+        },
+      },
+    };
+    api.get.mockImplementation((path: string) => {
+      if (path === "/api/settings/agent") return Promise.resolve(current);
+      if (path === "/api/agents/credentials/status") return Promise.resolve({});
+      return Promise.reject(new Error(`unexpected path ${path}`));
+    });
+    api.put.mockResolvedValue(current);
+    api.post.mockResolvedValue({ valid: true });
+
+    render(<AgentSection />);
+
+    expect(await screen.findByText("Messaging runtime")).toBeTruthy();
+    expect(screen.getByText("Hermes is active")).toBeTruthy();
+    expect(screen.getByText("Anthropic")).toBeTruthy();
+    expect(screen.getByText("OpenRouter")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Use OpenClaw" }));
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith(
+      "/api/settings/agent",
+      { runtime: "openclaw", revision: 7 },
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: "Use my API key" }));
+    const keyInput = screen.getByLabelText("Anthropic API key") as HTMLInputElement;
+    fireEvent.change(keyInput, { target: { value: "sk-ant-desktop-test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save API key" }));
+    expect(keyInput.value).toBe("");
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/api/settings/api-key",
+      { apiKey: "sk-ant-desktop-test" },
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: "Configure Hermes provider" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/api/terminal/sessions",
+      expect.objectContaining({ cmd: "hermes model", cwd: "projects" }),
+    ));
+  });
+
+  it("shows a runtime update fallback for older gateways", async () => {
+    render(<AgentSection />);
+
+    expect(await screen.findByText("Runtime update needed")).toBeTruthy();
+    expect(screen.getByText(/needs a newer gateway for runtime and provider controls/i)).toBeTruthy();
+  });
+
   it("does not crash when provider status omits agents", async () => {
     render(<AgentSection />);
 
