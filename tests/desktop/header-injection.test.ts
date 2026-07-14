@@ -146,6 +146,12 @@ describe("installGatewayCors", () => {
     expect(scriptDirective(csp)).toBe("script-src 'self'");
   });
 
+  it("allows blob: images so object-URL previews render in the packaged app", () => {
+    const csp = buildRendererCsp(GATEWAY, "null");
+    const imgDirective = csp.split(";").map((part) => part.trim()).find((part) => part.startsWith("img-src "));
+    expect(imgDirective).toBe("img-src 'self' data: blob: https:");
+  });
+
   it("allows Vite React Refresh inline preamble for localhost development renderers with explicit ports", () => {
     const localhostCsp = buildRendererCsp(GATEWAY, "http://localhost:3000");
     const loopbackCsp = buildRendererCsp(GATEWAY, "http://127.0.0.1:5173");

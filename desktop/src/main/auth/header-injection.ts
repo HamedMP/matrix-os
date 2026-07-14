@@ -107,7 +107,9 @@ export function buildRendererCsp(gatewayOrigin: string | null, rendererOrigin: s
     `connect-src ${connectSources}`,
     "worker-src 'self' blob:",
     "font-src 'self' data:",
-    "img-src 'self' data: https:",
+    // blob: renders same-renderer object URLs (authenticated file previews);
+    // it cannot reference external content.
+    "img-src 'self' data: blob: https:",
   ].join("; ");
 }
 
