@@ -68,7 +68,7 @@ const ConfigSnapshotSchema = z.object({
     agents: z.object({
       defaults: z.object({
         model: z.object({
-          primary: z.string().trim().min(1).max(241).optional(),
+          primary: z.string().trim().min(1).max(241).nullish(),
         }).passthrough().optional(),
       }).passthrough().optional(),
     }).passthrough().optional(),
@@ -133,10 +133,14 @@ function normalizeCatalog(
 ): AgentProviderDescriptor[] {
   const models = ModelsListSchema.parse(modelResponse).models;
   const authProviders = AuthStatusSchema.parse(authResponse).providers;
-  const authByProvider = new Map(authProviders.map((provider) => [provider.provider, provider]));
   const grouped = new Map<string, z.infer<typeof ModelChoiceSchema>[]>();
   for (const model of models) {
-    const entries = grouped.get(model.provider) ?? [];
+    let entries = grouped.get(model.provider);
+    if (entries === undefined) {
+      if (grouped.size >= MAX_OPENCLAW_PROVIDERS) continue;
+      entries = [];
+      grouped.set(model.provider, entries);
+    }
     const duplicateIndex = entries.findIndex((entry) => entry.id === model.id);
     if (duplicateIndex === -1 && entries.length < MAX_MODELS_PER_PROVIDER) {
       entries.push(model);
@@ -145,14 +149,13 @@ function normalizeCatalog(
       && model.available === true) {
       entries[duplicateIndex] = model;
     }
-    grouped.set(model.provider, entries);
   }
 
   const providers: AgentProviderDescriptor[] = [];
   let modelCount = 0;
   for (const [id, entries] of [...grouped].sort(([left], [right]) => left.localeCompare(right))) {
     if (providers.length === MAX_OPENCLAW_PROVIDERS || modelCount === MAX_OPENCLAW_MODELS) break;
-    const auth = authByProvider.get(id);
+    const auth = authProviders.find((candidate) => candidate.provider === id);
     const authKind = authKindForProvider(auth?.profiles ?? []);
     const ready = auth === undefined
       ? entries.some((model) => model.available === true)
@@ -203,15 +206,30 @@ export function createOpenClawRuntimeAdapter(options: {
   rpc: OpenClawRpcClient;
   lifecycle: OpenClawLifecycle;
 }): MessagingRuntimeAdapter {
-  async function readConfig(signal: AbortSignal): Promise<ConfigSelection> {
+  async function readConfig(
+    signal: AbortSignal,
+    tolerateMalformedPrimary = false,
+  ): Promise<ConfigSelection> {
     const snapshot = ConfigSnapshotSchema.parse(
       await options.rpc.call("config.get", {}, signal),
     );
     const primary = snapshot.config.agents?.defaults?.model?.primary ?? null;
+    let selection: AgentMessagingSelection;
+    try {
+      selection = parsePrimary(primary ?? undefined);
+    } catch (error) {
+      if (!tolerateMalformedPrimary || !(error instanceof AgentConfigError)) throw error;
+      selection = {
+        runtime: "openclaw",
+        provider: null,
+        model: null,
+        configured: false,
+      };
+    }
     return {
       hash: snapshot.hash,
       primary,
-      selection: parsePrimary(primary ?? undefined),
+      selection,
     };
   }
 
@@ -307,7 +325,7 @@ export function createOpenClawRuntimeAdapter(options: {
         });
       }
       HealthResponseSchema.parse(await options.rpc.call("health", {}, signal));
-      const current = await readConfig(signal);
+      const current = await readConfig(signal, true);
       return AgentRuntimeDescriptorSchema.parse({
         id: "openclaw",
         displayName: "OpenClaw",

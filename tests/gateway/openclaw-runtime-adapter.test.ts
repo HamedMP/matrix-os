@@ -119,6 +119,26 @@ describe("OpenClaw messaging runtime adapter", () => {
     );
   });
 
+  it("caps provider grouping during catalog ingestion", async () => {
+    const providerModels = Array.from({ length: 32 }, (_, index) => ({
+      id: `model-${index}`,
+      name: `Model ${index}`,
+      provider: `p${String(index).padStart(2, "0")}`,
+      available: true,
+    })).reverse();
+    const rpc = createRpc({
+      "models.list": [{ models: providerModels }],
+      "models.authStatus": [{ ts: 1_789_000_000_000, providers: [] }],
+    });
+    const adapter = createOpenClawRuntimeAdapter({ rpc, lifecycle: lifecycle() });
+
+    const catalog = await adapter.catalog(new AbortController().signal);
+
+    expect(catalog).toHaveLength(31);
+    expect(catalog.some((provider) => provider.id === "p31")).toBe(true);
+    expect(catalog.some((provider) => provider.id === "p00")).toBe(false);
+  });
+
   it("reads the selected provider/model only from the redacted config snapshot", async () => {
     const rpc = createRpc({ "config.get": [config("anthropic/claude-opus-4-6")] });
     const adapter = createOpenClawRuntimeAdapter({ rpc, lifecycle: lifecycle() });
@@ -128,6 +148,24 @@ describe("OpenClaw messaging runtime adapter", () => {
       provider: "anthropic",
       model: "claude-opus-4-6",
       configured: true,
+    });
+  });
+
+  it("accepts an explicit null primary as an unconfigured selection", async () => {
+    const rpc = createRpc({
+      "config.get": [{
+        valid: true,
+        hash: "config-hash",
+        config: { agents: { defaults: { model: { primary: null } } } },
+      }],
+    });
+    const adapter = createOpenClawRuntimeAdapter({ rpc, lifecycle: lifecycle() });
+
+    await expect(adapter.selection(new AbortController().signal)).resolves.toEqual({
+      runtime: "openclaw",
+      provider: null,
+      model: null,
+      configured: false,
     });
   });
 
@@ -306,6 +344,18 @@ describe("OpenClaw messaging runtime adapter", () => {
       selectionState: "active",
       configured: true,
       version: "2026.7.1",
+    });
+
+    const malformedRpc = createRpc({
+      health: [{ ts: 1_789_000_000_001 }],
+      "config.get": [config("INVALID PRIMARY")],
+    });
+    const malformed = createOpenClawRuntimeAdapter({ rpc: malformedRpc, lifecycle: lifecycle() });
+    await expect(malformed.probe(new AbortController().signal)).resolves.toMatchObject({
+      installState: "installed",
+      health: "healthy",
+      selectionState: "active",
+      configured: false,
     });
   });
 });
