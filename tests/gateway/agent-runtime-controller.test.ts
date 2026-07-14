@@ -272,6 +272,49 @@ describe("agent runtime controller", () => {
     );
   });
 
+  it("restores a changed target selection before deactivating rollback", async () => {
+    const homePath = await createHome();
+    const calls: string[] = [];
+    let active = false;
+    const openclaw = fakeAdapter("openclaw", {
+      activate: vi.fn(async () => { active = true; calls.push("activate"); }),
+      deactivate: vi.fn(async () => { active = false; calls.push("deactivate"); }),
+      selection: vi.fn(async () => ({
+        runtime: "openclaw",
+        provider: "old-provider",
+        model: "old-model",
+        configured: true,
+      })),
+      configure: vi.fn(async (input) => {
+        if (!active) throw new Error("runtime must be active");
+        calls.push(`configure:${input.provider}/${input.model}`);
+        return {
+          runtime: "openclaw",
+          provider: input.provider,
+          model: input.model,
+          configured: true,
+        };
+      }),
+    });
+    const controller = createAgentRuntimeController({
+      homePath,
+      adapters: { hermes: fakeAdapter("hermes"), openclaw },
+      resumeDelivery: vi.fn(async (runtime) => {
+        if (runtime === "openclaw") throw new Error("delivery failed");
+      }),
+    });
+
+    await expect(controller.update({
+      runtime: "openclaw",
+      provider: "new-provider",
+      messagingModel: "new-model",
+      revision: 0,
+    })).rejects.toMatchObject({ kind: "runtime_switch_failed" });
+    expect(calls).toContain("configure:old-provider/old-model");
+    expect(calls.indexOf("configure:old-provider/old-model"))
+      .toBeLessThan(calls.indexOf("deactivate"));
+  });
+
   it("admits only one concurrent transition and leaves no lock file", async () => {
     const homePath = await createHome();
     let releasePrepare: (() => void) | undefined;
