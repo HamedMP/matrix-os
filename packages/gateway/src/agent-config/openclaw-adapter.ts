@@ -203,15 +203,30 @@ export function createOpenClawRuntimeAdapter(options: {
   rpc: OpenClawRpcClient;
   lifecycle: OpenClawLifecycle;
 }): MessagingRuntimeAdapter {
-  async function readConfig(signal: AbortSignal): Promise<ConfigSelection> {
+  async function readConfig(
+    signal: AbortSignal,
+    tolerateMalformedPrimary = false,
+  ): Promise<ConfigSelection> {
     const snapshot = ConfigSnapshotSchema.parse(
       await options.rpc.call("config.get", {}, signal),
     );
     const primary = snapshot.config.agents?.defaults?.model?.primary ?? null;
+    let selection: AgentMessagingSelection;
+    try {
+      selection = parsePrimary(primary ?? undefined);
+    } catch (error) {
+      if (!tolerateMalformedPrimary || !(error instanceof AgentConfigError)) throw error;
+      selection = {
+        runtime: "openclaw",
+        provider: null,
+        model: null,
+        configured: false,
+      };
+    }
     return {
       hash: snapshot.hash,
       primary,
-      selection: parsePrimary(primary ?? undefined),
+      selection,
     };
   }
 
@@ -307,7 +322,7 @@ export function createOpenClawRuntimeAdapter(options: {
         });
       }
       HealthResponseSchema.parse(await options.rpc.call("health", {}, signal));
-      const current = await readConfig(signal);
+      const current = await readConfig(signal, true);
       return AgentRuntimeDescriptorSchema.parse({
         id: "openclaw",
         displayName: "OpenClaw",

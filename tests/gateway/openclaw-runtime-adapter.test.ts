@@ -307,5 +307,17 @@ describe("OpenClaw messaging runtime adapter", () => {
       configured: true,
       version: "2026.7.1",
     });
+
+    const malformedRpc = createRpc({
+      health: [{ ts: 1_789_000_000_001 }],
+      "config.get": [config("INVALID PRIMARY")],
+    });
+    const malformed = createOpenClawRuntimeAdapter({ rpc: malformedRpc, lifecycle: lifecycle() });
+    await expect(malformed.probe(new AbortController().signal)).resolves.toMatchObject({
+      installState: "installed",
+      health: "healthy",
+      selectionState: "active",
+      configured: false,
+    });
   });
 });
