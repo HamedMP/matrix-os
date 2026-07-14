@@ -138,7 +138,7 @@ function ChatCard({
 }: {
   view: AgentSettingsView;
   busy: boolean;
-  onSave: (model: string, effort: AgentEffort) => void;
+  onSave: (model: string, effort?: AgentEffort) => void;
   onOpenTerminal?: (action: TerminalLaunchAction) => void;
   onSaveKey: (key: string) => Promise<void>;
 }) {
@@ -155,7 +155,7 @@ function ChatCard({
   const preferredEffort = effortOverride || view.chat.effort;
   const selectedEffort = effortOptions.includes(preferredEffort)
     ? preferredEffort
-    : effortOptions[0] ?? view.chat.effort;
+    : effortOptions[0] ?? "";
   const [showKey, setShowKey] = useState(false);
   const [apiKey, setApiKey] = useState("");
 
@@ -199,6 +199,7 @@ function ChatCard({
               value={selectedEffort}
               onChange={(event) => setEffortOverride(event.target.value as AgentEffort)}
             >
+              {effortOptions.length === 0 && <option value="">Not available</option>}
               {effortOptions.map((entry) => <option key={entry} value={entry}>{statusLabel(entry)}</option>)}
             </select>
           </div>
@@ -208,7 +209,13 @@ function ChatCard({
             <StatusBadge state={provider?.authStatus.state ?? "unknown"} />
             <span>{provider?.displayName ?? "Provider unavailable"}</span>
           </div>
-          <Button size="sm" disabled={busy || !selectedModel} onClick={() => onSave(selectedModel, selectedEffort)}>Save Chat model</Button>
+          <Button
+            size="sm"
+            disabled={busy || !selectedModel}
+            onClick={() => onSave(selectedModel, selectedEffort || undefined)}
+          >
+            Save Chat model
+          </Button>
         </div>
         {provider && (
           <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
@@ -468,7 +475,10 @@ export function AgentRuntimePanel({ onOpenTerminal }: AgentRuntimePanelProps) {
         view={view}
         busy={busy}
         onOpenTerminal={onOpenTerminal}
-        onSave={(model, effort) => void mutate(() => updateAgentSettings({ model, effort }))}
+        onSave={(model, effort) => void mutate(() => updateAgentSettings({
+          model,
+          ...(effort ? { effort } : {}),
+        }))}
         onSaveKey={saveKey}
       />
       <RuntimeCards

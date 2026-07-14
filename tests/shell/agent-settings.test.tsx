@@ -282,6 +282,42 @@ describe("Canvas Agent runtime settings", () => {
     ));
   });
 
+  it("clears a stale Chat effort when the available model has no effort choices", async () => {
+    const initial = makeView();
+    initial.providers[0].models = [
+      {
+        id: "claude-opus-4-6",
+        displayName: "Claude Opus 4.6",
+        capabilities: ["tools", "vision", "reasoning"],
+        efforts: ["low", "medium", "high", "max"],
+        available: false,
+      },
+      {
+        id: "claude-sonnet-4-6",
+        displayName: "Claude Sonnet 4.6",
+        capabilities: ["tools", "vision", "reasoning"],
+        efforts: [],
+        available: true,
+      },
+    ];
+    AgentSettingsViewSchema.parse(initial);
+    const fetcher = vi.fn(async () => response(initial));
+    vi.stubGlobal("fetch", fetcher);
+    render(<AgentRuntimePanel />);
+
+    expect(await screen.findByRole("combobox", { name: "Chat model" })).toHaveValue("claude-sonnet-4-6");
+    expect(screen.getByRole("combobox", { name: "Chat effort" })).toHaveValue("");
+    fireEvent.click(screen.getByRole("button", { name: "Save Chat model" }));
+
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining("/api/settings/agent"),
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ model: "claude-sonnet-4-6" }),
+      }),
+    ));
+  });
+
   it("reconciles Chat model state when a settings refresh changes availability", async () => {
     const initial = makeView();
     const refreshed = structuredClone(initial);
