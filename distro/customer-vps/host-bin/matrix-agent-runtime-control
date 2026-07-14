@@ -61,6 +61,7 @@ switch_runtime() {
       target_unit=matrix-openclaw-gateway.service
       other_unit=matrix-hermes-dashboard.service
       ;;
+    *) printf '{"ok":false,"code":"invalid_request"}\n'; exit 2 ;;
   esac
 
   is_active "$other_unit" && prior_active=true
@@ -68,7 +69,10 @@ switch_runtime() {
   if ! sudo timeout 20 systemctl start "$target_unit" || ! wait_active "$target_unit"; then
     sudo systemctl stop "$target_unit" || true
     if [ "$prior_active" = true ]; then
-      sudo systemctl start "$other_unit" || true
+      if ! sudo timeout 20 systemctl start "$other_unit" || ! wait_active "$other_unit"; then
+        printf '{"ok":false,"code":"rollback_failed"}\n'
+        exit 6
+      fi
     fi
     printf '{"ok":false,"code":"activation_failed"}\n'
     exit 5

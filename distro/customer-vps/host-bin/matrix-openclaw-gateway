@@ -68,6 +68,8 @@ if (
   config.gateway?.auth?.mode !== "token" ||
   !Array.isArray(config.plugins?.allow) ||
   config.plugins.allow.length !== 0 ||
+  !(config.tools?.allow === undefined ||
+    (Array.isArray(config.tools.allow) && config.tools.allow.length === 0)) ||
   JSON.stringify(actualDenied) !== JSON.stringify(expectedDenied)
 ) {
   process.exit(1);
