@@ -138,9 +138,9 @@ describe("agent runtime configuration contracts", () => {
       action: "enter_api_key",
     }).success).toBe(false);
     expect(AgentProviderAuthStatusSchema.safeParse({
-      state: "missing",
+      state: "unavailable",
       authenticated: false,
-      action: "login",
+      action: "contact_owner",
     }).success).toBe(false);
   });
 
