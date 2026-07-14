@@ -360,6 +360,22 @@ describe("ConversationStore", () => {
       expect(results.every((r) => r.content.includes("world"))).toBe(true);
     });
 
+    it("limits results to one session when a sessionId is provided", () => {
+      const store = createConversationStore(homePath);
+      const selectedId = store.create();
+      store.addUserMessage(selectedId, "shared search phrase in selected session");
+      store.finalize(selectedId);
+
+      const otherId = store.create();
+      store.addUserMessage(otherId, "shared search phrase in another session");
+      store.finalize(otherId);
+
+      const results = store.search("shared search phrase", { sessionId: selectedId });
+
+      expect(results).toHaveLength(1);
+      expect(results[0].sessionId).toBe(selectedId);
+    });
+
     it("returns empty array when nothing matches", () => {
       const store = createConversationStore(homePath);
       const id = store.create();

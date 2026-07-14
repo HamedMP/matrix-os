@@ -46,7 +46,7 @@ export interface ConversationStore {
   get(id: string): ConversationFile | null;
   create(channel?: string): string;
   delete(id: string): boolean;
-  search(query: string, opts?: { limit?: number }): SearchResult[];
+  search(query: string, opts?: { limit?: number; sessionId?: string }): SearchResult[];
 }
 
 const CONVERSATION_IDLE_TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -266,7 +266,10 @@ export function createConversationStore(homePath: string): ConversationStore {
       const lowerQuery = query.toLowerCase();
       const results: SearchResult[] = [];
 
-      const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+      const files = readdirSync(dir).filter((fileName) =>
+        fileName.endsWith(".json")
+        && (!opts?.sessionId || fileName === `${opts.sessionId}.json`)
+      );
       for (const f of files) {
         const id = f.replace(".json", "");
         const conv = readFromDisk(id);
