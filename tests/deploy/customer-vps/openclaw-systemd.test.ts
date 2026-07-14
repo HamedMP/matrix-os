@@ -48,6 +48,8 @@ describe("customer VPS OpenClaw runtime", () => {
     expect(wrapper).toContain("gateway.auth.mode token");
     expect(wrapper).toContain("plugins.allow");
     expect(wrapper).toContain("tools.deny");
+    expect(wrapper).toContain("config.tools?.allow === undefined");
+    expect(wrapper).toContain("config.tools.allow.length === 0");
     expect(wrapper).toContain("runtime policy validation failed");
     expect(wrapper).toContain("gateway run --bind loopback --port 18789 --auth token");
     expect(wrapper).not.toMatch(/--token[ =]/);
@@ -85,6 +87,12 @@ describe("customer VPS OpenClaw runtime", () => {
     expect(controller).toContain("timeout 20");
     expect(controller).toContain("MemAvailable");
     expect(controller).toContain("1048576");
+    const switchBody = controller.slice(
+      controller.indexOf("switch_runtime()"),
+      controller.indexOf('is_active "$other_unit"'),
+    );
+    expect(switchBody).toContain('*) printf \'{"ok":false,"code":"invalid_request"}\\n\'; exit 2 ;;');
+    expect(controller).toContain('"code":"rollback_failed"');
     expect(controller).not.toContain("eval ");
     expect(controller).not.toContain('systemctl "$');
   });
