@@ -79,12 +79,18 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
       if (destination === "agents") {
         await refreshAgentWorkspace();
         if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
+        // The workspace store catches refresh failures internally and clears
+        // the summary. The project already exists at this point, so keep the
+        // dialog open with a recoverable message instead of closing silently
+        // with nothing selected.
+        const agentSummary = useCodingAgentWorkspace.getState().summary;
+        if (!agentSummary) {
+          setError("The project was created, but the workspace didn't refresh. Close this dialog and open it from Agents.");
+          return;
+        }
         // Land the navigator on the new project; a failed workspace load surfaces
         // through the project-workspace store's own error state.
-        const agentSummary = useCodingAgentWorkspace.getState().summary;
-        if (agentSummary) {
-          await openCreatedProject(agentSummary, project.slug, runtimeScope);
-        }
+        await openCreatedProject(agentSummary, project.slug, runtimeScope);
       } else {
         await selectProject(api, project.slug);
       }

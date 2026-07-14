@@ -3993,6 +3993,9 @@ describe("AgentWorkspace", () => {
     render(<AgentWorkspace />);
 
     const newChat = await screen.findByRole("button", { name: "New chat in selected project" });
+    // The button is disabled until the async project-workspace hydration
+    // populates selectedProjectId; clicking earlier is silently ignored.
+    await waitFor(() => expect(newChat.hasAttribute("disabled")).toBe(false));
     const resolveNewChatTarget = vi.fn(async () => ({ projectId: "matrix-os", taskId: "task_auth" }));
     act(() => {
       useCodingAgentProjectWorkspace.setState({ resolveNewChatTarget });
@@ -4012,6 +4015,9 @@ describe("AgentWorkspace", () => {
     render(<AgentWorkspace />);
 
     const newChat = await screen.findByRole("button", { name: "New chat in selected project" });
+    // The button is disabled until the async project-workspace hydration
+    // populates selectedProjectId; clicking earlier is silently ignored.
+    await waitFor(() => expect(newChat.hasAttribute("disabled")).toBe(false));
     const resolveNewChatTarget = vi.fn(async () => null);
     act(() => {
       useCodingAgentProjectWorkspace.setState({ resolveNewChatTarget });
