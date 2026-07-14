@@ -1,13 +1,34 @@
 // @vitest-environment jsdom
 import React from "react";
 import { render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NativeAppViewer } from "../../shell/src/components/NativeAppViewer.js";
 
+const nativeAppFlag = vi.hoisted(() => ({ enabled: true }));
+
+vi.mock("../../shell/src/hooks/useNativeLinuxAppsEnabled.js", () => ({
+  useNativeLinuxAppsEnabled: () => nativeAppFlag.enabled,
+}));
+
 describe("NativeAppViewer", () => {
+  beforeEach(() => {
+    nativeAppFlag.enabled = true;
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     window.history.replaceState({}, "", "/");
+  });
+
+  it("does not launch a session when the rollout flag is disabled", async () => {
+    nativeAppFlag.enabled = false;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = render(<NativeAppViewer appId="xterm" windowId="win-disabled" />);
+
+    expect(container.innerHTML).toBe("");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("launches a native session in an opaque-origin sandbox and terminates on close", async () => {

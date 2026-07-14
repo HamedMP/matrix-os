@@ -9,6 +9,12 @@ import type { useDesktopConfigStore } from "../../shell/src/stores/desktop-confi
 import type { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache.js";
 
+const nativeAppFlag = vi.hoisted(() => ({ enabled: false }));
+
+vi.mock("../../shell/src/hooks/useNativeLinuxAppsEnabled.js", () => ({
+  useNativeLinuxAppsEnabled: () => nativeAppFlag.enabled,
+}));
+
 vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
   useFileWatcher: () => undefined,
 }));
@@ -164,6 +170,7 @@ function resetShellMode(mode: "canvas" | "dev", hydrated: boolean) {
 describe("Desktop launcher dock button by mode", () => {
   beforeEach(async () => {
     vi.resetModules();
+    nativeAppFlag.enabled = false;
     const storage = createMemoryStorage();
     vi.stubGlobal("localStorage", storage);
     Object.defineProperty(window, "localStorage", {
@@ -255,6 +262,7 @@ describe("Desktop launcher dock button by mode", () => {
   });
 
   it("restores saved native app windows after the native registry loads", async () => {
+    nativeAppFlag.enabled = true;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
@@ -301,6 +309,42 @@ describe("Desktop launcher dock button by mode", () => {
       expect(windowManagerStore.getState().apps.some((app) => app.path === "native:xterm")).toBe(true);
       expect(windowManagerStore.getState().windows.some((win) => win.path === "native:xterm")).toBe(true);
     });
+  });
+
+  it("does not discover or restore native apps when the rollout flag is disabled", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
+      if (url.includes("/api/shell/bootstrap")) {
+        return jsonResponse({
+          layout: {
+            windows: [{
+              id: "native-window",
+              title: "Xterm",
+              path: "native:xterm",
+              x: 80,
+              y: 90,
+              width: 900,
+              height: 640,
+              minimized: false,
+              zIndex: 4,
+            }],
+          },
+          apps: [],
+          modules: [],
+        });
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    resetShellMode("dev", true);
+
+    render(<DesktopComponent />);
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/shell/bootstrap"))).toBe(true));
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/native-apps"))).toBe(false);
+    expect(windowManagerStore.getState().apps.some((app) => app.path.startsWith("native:"))).toBe(false);
+    expect(windowManagerStore.getState().windows.some((win) => win.path.startsWith("native:"))).toBe(false);
   });
 
   it("ignores stale bootstrap responses after cache scope changes", async () => {

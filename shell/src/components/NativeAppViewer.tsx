@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useNativeLinuxAppsEnabled } from "@/hooks/useNativeLinuxAppsEnabled";
 
 interface NativeAppViewerProps {
   appId: string;
@@ -236,20 +237,22 @@ function releaseNativeSessionLease(windowId: string, lease: NativeSessionLease):
 }
 
 export function NativeAppViewer({ appId, windowId }: NativeAppViewerProps) {
+  const nativeLinuxAppsEnabled = useNativeLinuxAppsEnabled();
   const [state, setState] = useState<ViewerState>({ status: "loading" });
   const [launchViewport, setLaunchViewport] = useState<NativeAppViewport | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const leaseRef = useRef<NativeSessionLeaseHandle | null>(null);
 
   useLayoutEffect(() => {
+    if (!nativeLinuxAppsEnabled) return;
     const rect = containerRef.current?.getBoundingClientRect();
     const width = Math.min(3840, Math.max(320, Math.floor(rect?.width || 900)));
     const height = Math.min(2160, Math.max(240, Math.floor(rect?.height || 640)));
     setLaunchViewport({ width, height });
-  }, [appId, windowId]);
+  }, [appId, nativeLinuxAppsEnabled, windowId]);
 
   useEffect(() => {
-    if (!launchViewport) return;
+    if (!nativeLinuxAppsEnabled || !launchViewport) return;
     let cancelled = false;
     setState({ status: "loading" });
     const lease = acquireNativeSessionLease(windowId, appId, launchViewport);
@@ -272,7 +275,9 @@ export function NativeAppViewer({ appId, windowId }: NativeAppViewerProps) {
       if (leaseRef.current === lease) leaseRef.current = null;
       lease.release();
     };
-  }, [appId, launchViewport, windowId]);
+  }, [appId, launchViewport, nativeLinuxAppsEnabled, windowId]);
+
+  if (!nativeLinuxAppsEnabled) return null;
 
   if (state.status === "ready") {
     return (

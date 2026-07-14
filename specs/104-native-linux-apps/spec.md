@@ -98,6 +98,10 @@ Before enabling browsers, Spotify, or third-party native apps, Matrix OS needs a
 
 ## Enabling On A VPS
 
+Managed Matrix Cloud keeps native Linux app discovery and launch hidden unless the PostHog feature flag `native-linux-apps` resolves explicitly true for the signed-in Clerk user. Missing, loading, and false flag values fail closed. Configure the flag with an explicit person allowlist before production rollout; future curated native apps inherit the same capability-level gate.
+
+The flag controls shell exposure, not authorization. Gateway routes remain authenticated and owner-bound so operators can run direct smoke tests while the shell catalog is disabled.
+
 The VPS-native Linux tools service installs Xpra from its signed LTS repository. The package versions are pinned so Ubuntu's unsupported `3.1` package cannot satisfy the runtime dependency:
 
 ```bash

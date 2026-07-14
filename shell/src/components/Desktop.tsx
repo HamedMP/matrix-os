@@ -7,6 +7,7 @@ import { useCommandStore } from "@/stores/commands";
 import { useDesktopMode, type DesktopMode } from "@/stores/desktop-mode";
 import { useVocalStore } from "@/stores/vocal";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
+import { useNativeLinuxAppsEnabled } from "@/hooks/useNativeLinuxAppsEnabled";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { saveDesktopConfigPatch } from "@/hooks/useDesktopConfig";
 import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
@@ -159,6 +160,7 @@ interface DesktopProps {
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the state values here (interacting, settingsOpen, chatOpen, minimizingIds, firstRunStatus, manualSetupVisible, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
 export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope }: DesktopProps) {
   const cacheKey = cacheScope?.storageKey;
+  const nativeLinuxAppsEnabled = useNativeLinuxAppsEnabled();
   const windows = useWindowManager((s) => s.windows);
   const apps = useWindowManager((s) => s.apps);
   const wmCloseWindow = useWindowManager((s) => s.closeWindow);
@@ -707,6 +709,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       if (bootstrap === null) return;
       if (bootstrapRes?.ok) saveShellSnapshot(cacheScope, { bootstrap });
       await applyBootstrap(bootstrap, { resolveModuleMetadata: true });
+      if (!nativeLinuxAppsEnabled) return;
       const nativeLayoutBootstrap = bootstrapRes?.ok ? bootstrap : cachedBootstrap;
       const nativeRes = await fetchForLoad(`${GATEWAY_URL}/api/native-apps`).catch((err) => {
         if (isLoadAborted()) return null;
@@ -731,7 +734,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       if (isLoadAborted()) return;
       console.warn("[desktop] Failed to load desktop modules:", err);
     }
-  }, [addApp, cacheScope, openWindow, wmLoadLayout]);
+  }, [addApp, cacheScope, nativeLinuxAppsEnabled, openWindow, wmLoadLayout]);
 
   useEffect(() => {
     const controller = new AbortController();

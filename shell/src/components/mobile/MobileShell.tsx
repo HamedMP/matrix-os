@@ -20,6 +20,7 @@
 
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNativeLinuxAppsEnabled } from "@/hooks/useNativeLinuxAppsEnabled";
 import { AnimatePresence, motion, MotionConfig, type PanInfo } from "framer-motion";
 import { toast } from "sonner";
 import { MobileQuickActions } from "@/components/mobile/MobileQuickActions";
@@ -192,6 +193,7 @@ interface MobileShellProps {
 export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }: MobileShellProps) {
   const chat = useChatContext();
   const cacheKey = cacheScope?.storageKey;
+  const nativeLinuxAppsEnabled = useNativeLinuxAppsEnabled();
 
   const [apps, setApps] = useState<MobileApp[]>(() => mergeMobileApps(
     BUILT_IN_APPS,
@@ -256,26 +258,28 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
           saveShellSnapshot(cacheScope, { bootstrap });
         }
         let nextApps = mobileAppsFromBootstrap(bootstrap);
-        const nativeRes = await fetch(`${getGatewayUrl()}/api/native-apps`, {
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-        }).catch((err: unknown) => {
-          console.warn("[mobile-shell] failed to load /api/native-apps:", err instanceof Error ? err.message : err);
-          return null;
-        });
-        if (nativeRes?.ok) {
-          const nativeBody = await nativeRes.json().catch((err: unknown) => {
-            console.warn("[mobile-shell] failed to parse /api/native-apps:", err instanceof Error ? err.message : String(err));
-            return {};
-          }) as { apps?: NativeAppSummary[] };
-          if (Array.isArray(nativeBody.apps)) {
-            nextApps = [
-              ...nextApps,
-              ...nativeBody.apps.flatMap((app) => (
-                app.enabled && app.runtime === "linux-native"
-                  ? [{ id: `native:${app.id}`, name: app.name, path: `native:${app.id}`, iconSlug: "terminal" }]
-                  : []
-              )),
-            ];
+        if (nativeLinuxAppsEnabled) {
+          const nativeRes = await fetch(`${getGatewayUrl()}/api/native-apps`, {
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+          }).catch((err: unknown) => {
+            console.warn("[mobile-shell] failed to load /api/native-apps:", err instanceof Error ? err.message : err);
+            return null;
+          });
+          if (nativeRes?.ok) {
+            const nativeBody = await nativeRes.json().catch((err: unknown) => {
+              console.warn("[mobile-shell] failed to parse /api/native-apps:", err instanceof Error ? err.message : String(err));
+              return {};
+            }) as { apps?: NativeAppSummary[] };
+            if (Array.isArray(nativeBody.apps)) {
+              nextApps = [
+                ...nextApps,
+                ...nativeBody.apps.flatMap((app) => (
+                  app.enabled && app.runtime === "linux-native"
+                    ? [{ id: `native:${app.id}`, name: app.name, path: `native:${app.id}`, iconSlug: "terminal" }]
+                    : []
+                )),
+              ];
+            }
           }
         }
         setApps((prev) => mergeMobileApps(prev, nextApps));
@@ -286,7 +290,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
     return () => {
       cancelled = true;
     };
-  }, [cacheKey, cacheScope]);
+  }, [cacheKey, cacheScope, nativeLinuxAppsEnabled]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the launch-path useEffect dependency array below; removing useCallback would re-run that effect on every render and could re-open the launch app.
   const openApp = useCallback((app: MobileApp) => {

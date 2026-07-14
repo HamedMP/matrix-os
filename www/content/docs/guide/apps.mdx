@@ -58,6 +58,8 @@ Native app sessions run as the non-root Matrix runtime user on your VPS. The gat
 
 Matrix measures the app window before launch, keeps Xpra's own menu hidden, and fits the primary Linux app to the Matrix window. Dialogs and popovers keep their native geometry.
 
+On managed Matrix Cloud, this surface is an allowlist rollout. The `native-linux-apps` PostHog feature flag must resolve true for the signed-in user before the shell discovers or launches any curated native app. A missing or unresolved flag keeps the catalog hidden.
+
 On Matrix VPS images, install the pinned, signed Xpra LTS packages through the Linux tools service:
 
 ```bash
