@@ -982,6 +982,23 @@ describe("zellij terminal WebSocket", () => {
     handler.dispose();
   });
 
+  it("treats a hard declaration without a size as legacy", async () => {
+    const pty = new FakePty();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      maxReplayBytes: 4096,
+      sizingDebounceMs: 5,
+    });
+
+    const session = await handler.open({ ws: socket(), session: "main", fromSeq: 0, clientClass: "hard" });
+    session.onMessage(JSON.stringify({ type: "resize", cols: 100, rows: 30 }));
+
+    // no declared size -> legacy semantics: resize-follow still works
+    expect(pty.resizes).toContainEqual({ cols: 100, rows: 30 });
+    handler.dispose();
+  });
+
   it("negotiates canonical size across hard clients and pins the shared attach pty", async () => {
     const pty = new FakePty();
     const sizes: Array<{ cols: number; rows: number } | undefined> = [];
@@ -1006,7 +1023,8 @@ describe("zellij terminal WebSocket", () => {
     await handler.open({ ws: socket(), session: "main", fromSeq: 0, clientClass: "hard", declaredSize: { cols: 190, rows: 60 } });
     await new Promise((resolve) => setTimeout(resolve, 15));
 
-    // the shared attach spawns once, at the first hard client's declared size
+    // the first hard attach spawns the shared pty at its own declared size,
+    // not the fallback
     expect(sizes).toEqual([{ cols: 200, rows: 50 }]);
     // after negotiation the shared pty is pinned to the component-wise minimum
     expect(pty.resizes.at(-1)).toEqual({ cols: 190, rows: 50 });

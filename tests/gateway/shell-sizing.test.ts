@@ -106,6 +106,16 @@ describe("shell session sizing arbiter", () => {
     expect(size!.rows).toBeGreaterThanOrEqual(1);
   });
 
+  it("cancels a pending apply when the last classified client detaches", async () => {
+    const { sizing, applied, persisted } = harness();
+    sizing.attach("cli", "hard", { cols: 120, rows: 40 });
+    sizing.detach("cli"); // detach before the debounce fires
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(applied).toEqual([]);
+    expect(persisted).toEqual([]);
+  });
+
   it("dispose cancels pending applications", async () => {
     const { sizing, applied } = harness();
     sizing.attach("a", "hard", { cols: 200, rows: 50 });

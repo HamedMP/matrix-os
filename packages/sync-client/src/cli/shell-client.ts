@@ -487,10 +487,12 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
     const url = new URL(`${base}/ws/terminal/session`);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.searchParams.set("session", name);
-    // Declare as a hard sizing client (spec 107 FR-007): a TTY cannot scale
-    // its render, so its size participates in canonical-size negotiation.
-    url.searchParams.set("client", "hard");
     if (attachOptions.size) {
+      // Declare as a hard sizing client (spec 107 FR-007): a TTY cannot scale
+      // its render, so its size participates in canonical-size negotiation.
+      // Without a known size the declaration is omitted (legacy behavior) so
+      // an undeclared hard client can never pin the session to a fallback.
+      url.searchParams.set("client", "hard");
       url.searchParams.set("cols", String(attachOptions.size.cols));
       url.searchParams.set("rows", String(attachOptions.size.rows));
     }

@@ -77,14 +77,20 @@ export function createSessionSizing(options: SessionSizingOptions) {
   }
 
   function scheduleApply(): void {
+    // Always cancel first: a timer armed while classified clients existed
+    // must not fire after the last one detached and persist a stale fallback.
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
     if (disposed || classifiedCount() === 0) {
       return;
     }
-    if (timer) {
-      clearTimeout(timer);
-    }
     timer = setTimeout(() => {
       timer = null;
+      if (disposed || classifiedCount() === 0) {
+        return;
+      }
       const next = computeCanonical();
       if (applied && applied.cols === next.cols && applied.rows === next.rows) {
         return;
