@@ -28,4 +28,8 @@ describe("resolveShellAuthRedirect", () => {
   it("falls back to the shell root when no return target is present", () => {
     expect(resolveShellAuthRedirect(undefined, "https://app.matrix-os.com")).toBe("/");
   });
+
+  it("falls back to the shell root when the configured app origin is invalid", () => {
+    expect(resolveShellAuthRedirect("/vm/pr-703", "not an origin")).toBe("/");
+  });
 });

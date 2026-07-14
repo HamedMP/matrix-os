@@ -565,6 +565,7 @@ exit 99
     expect(installer).toContain('B4993B57323148E37977E5D873254CAD17978FAF');
     expect(installer).toContain('xpra-x11=${XPRA_VERSION}');
     expect(installer).toContain('xpra-html5=${XPRA_HTML5_VERSION}');
+    expect(installer).toContain('install_xpra_lts || true');
     expect(existsSync(join(root, 'distro/customer-vps/systemd/matrix-linux-tools.service'))).toBe(true);
     expect(syncAgent).toContain('matrix-linux-tools.service');
     expect(syncAgent).toContain('systemctl start --no-block matrix-linux-tools.service');
