@@ -14,7 +14,7 @@ import {
 import * as Clipboard from "expo-clipboard";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useGateway } from "@/app/_layout";
 import { TerminalControlBar } from "@/components/TerminalControlBar";
@@ -469,13 +469,26 @@ export default function TerminalScreen() {
     terminalResumeLoaded,
   ]);
 
+  // The terminal is a dark console inside a light app: mount a light status
+  // bar only while this tab is focused. Tab screens stay mounted, so an
+  // unconditioned <StatusBar> here would leak light style onto every other
+  // tab; declarative mount/unmount hands control back to the root's dark bar
+  // (imperative setStatusBarStyle gets overridden by later component updates).
+  const [statusBarFocused, setStatusBarFocused] = useState(false);
+  useFocusEffect(
+    useCallback(() => {
+      setStatusBarFocused(true);
+      return () => setStatusBarFocused(false);
+    }, []),
+  );
+
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
+      {statusBarFocused ? <StatusBar style="light" /> : null}
       <WindowHeader
         tone="terminal"
         paddingTop={insets.top + (chromeExpanded ? 8 : 3)}
-        title={chromeExpanded ? "Terminal" : cwd}
+        title={state.activeSessionId ?? "Terminal"}
         subtitle={chromeExpanded ? cwd : undefined}
         titleAffordance
         onTitlePress={() => setChromeExpanded((value) => !value)}

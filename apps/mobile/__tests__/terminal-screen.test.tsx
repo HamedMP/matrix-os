@@ -41,6 +41,15 @@ jest.mock("@/app/_layout", () => ({
 
 jest.mock("expo-router", () => ({
   useRouter: () => ({ back: jest.fn() }),
+  useFocusEffect: (callback: () => void | (() => void)) => {
+    const React = require("react");
+    React.useEffect(callback, [callback]);
+  },
+}));
+
+jest.mock("expo-status-bar", () => ({
+  setStatusBarStyle: jest.fn(),
+  StatusBar: () => null,
 }));
 
 jest.mock("react-native-safe-area-context", () => ({
@@ -130,7 +139,9 @@ describe("TerminalScreen", () => {
       await Promise.resolve();
     });
 
-    await waitFor(() => expect(screen.getAllByText("~/projects").length).toBeGreaterThan(0));
+    // The session name is the visible window title; the path shows in the
+    // expanded chrome subtitle.
+    await waitFor(() => expect(screen.getAllByText(SESSION_ID).length).toBeGreaterThan(0));
     // Output is written into the embedded xterm.js emulator (WebView), not a Text node.
     await waitFor(() =>
       expect(webViewInjections.some((js: string) => js.includes("deploy@matrix:~/projects$ "))).toBe(true),

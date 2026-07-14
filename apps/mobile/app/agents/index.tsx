@@ -9,6 +9,7 @@ import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { AgentCockpit } from "@/components/agent-cockpit";
 import { AGENT_WORKSPACE_CONNECTION_LABELS, capabilityEnabled } from "@/components/agents/agent-workspace-shared";
 import { useRuntimeSummary } from "@/lib/use-runtime-summary";
+import { capture } from "@/lib/analytics";
 import { routedReviewIdParam } from "./reviews";
 
 type NavCard = {
@@ -118,7 +119,10 @@ export default function AgentsScreen() {
         canCreate={canCreate}
         onCreate={() => router.push("/agents/new")}
         onCreateInProject={(projectId) => router.push({ pathname: "/agents/new", params: { projectId } } as never)}
-        onOpenThread={(thread) => router.push(`/agents/${thread.id}` as any)}
+        onOpenThread={(thread) => {
+          capture("agent_thread_opened");
+          router.push(`/agents/${thread.id}` as any);
+        }}
       />
 
       <View style={styles.navRow}>

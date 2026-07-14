@@ -119,3 +119,37 @@ jest.mock("expo-blur", () => {
     },
   };
 });
+
+// async-storage is a native module (null in Jest). lib/analytics imports it, and
+// analytics is now pulled into most screens, so provide the official in-memory mock
+// globally. Suites with their own async-storage factory still override this.
+jest.mock(
+  "@react-native-async-storage/async-storage",
+  () => require("@react-native-async-storage/async-storage/jest/async-storage-mock"),
+);
+
+// PostHog pulls in optional native modules (expo-file-system/application/device,
+// the session-replay plugin) at import time. Stub it globally so screen tests that
+// transitively import lib/analytics never load the real SDK. The provider and mask
+// are passthroughs; analytics.test.ts overrides this with assertion spies.
+jest.mock("posthog-react-native", () => {
+  const { View } = require("react-native");
+  const mockReact = require("react");
+  class PostHog {
+    capture() {}
+    screen() {
+      return Promise.resolve();
+    }
+    identify() {}
+    reset() {}
+  }
+  return {
+    __esModule: true,
+    default: PostHog,
+    PostHog,
+    PostHogProvider: (props) =>
+      mockReact.createElement(mockReact.Fragment, null, props.children),
+    PostHogMaskView: (props) =>
+      mockReact.createElement(View, props, props.children),
+  };
+});

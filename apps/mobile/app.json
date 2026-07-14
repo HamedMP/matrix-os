@@ -19,12 +19,13 @@
         },
         "ITSAppUsesNonExemptEncryption": false
       },
-      "appleTeamId": "PX4JL74Y2K"
+      "appleTeamId": "PX4JL74Y2K",
+      "icon": "./assets/app.icon"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#FAFAF9"
+        "backgroundColor": "#EEEEE2"
       },
       "package": "com.matrixos.mobile",
       "permissions": [
