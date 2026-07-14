@@ -64,18 +64,28 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
   },
 
   selectRuntime: async (slot) => {
+    // The trusted core emits runtime:changed before the runtime:select invoke
+    // resolves. If the wired listener refreshed immediately, the new slot and
+    // API would become observable before reconciliation, letting surfaces load
+    // the new computer under the old runtime generation only to be wiped.
+    runtimeSwitchesInFlight += 1;
     try {
       await invoke("runtime:select", { slot });
+      // Clear previous-computer state only after the trusted core confirms the
+      // switch, and before the new slot becomes observable to the UI.
+      reconcileDesktopRuntimeChange();
+      set({ runtimeSlot: slot });
     } catch (err: unknown) {
       // The switch never happened: keep every surface on the still-selected
       // computer and refresh the auth snapshot so the API client stays valid.
       await get().refresh();
       throw err;
+    } finally {
+      runtimeSwitchesInFlight -= 1;
     }
-    // Clear previous-computer state only after the trusted core confirms the
-    // switch, and before the new slot becomes observable to the UI.
-    reconcileDesktopRuntimeChange();
-    set({ runtimeSlot: slot });
+    // Publish the post-switch snapshot (handle, authGeneration, API) now that
+    // the previous computer's state is gone.
+    await get().refresh();
   },
 
   signOut: async () => {
@@ -86,6 +96,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
 
 let wired = false;
 let connectionEventCleanups: Array<() => void> = [];
+let runtimeSwitchesInFlight = 0;
 
 function refreshFromConnectionEvent(): void {
   void useConnection
@@ -96,12 +107,19 @@ function refreshFromConnectionEvent(): void {
     });
 }
 
+function refreshFromRuntimeChangedEvent(): void {
+  // selectRuntime reconciles and refreshes itself; refreshing here would
+  // publish the new slot before the previous computer's state is cleared.
+  if (runtimeSwitchesInFlight > 0) return;
+  refreshFromConnectionEvent();
+}
+
 export function wireConnectionEvents(): void {
   if (wired) return;
   wired = true;
   connectionEventCleanups = [
     onEvent("auth:changed", refreshFromConnectionEvent),
-    onEvent("runtime:changed", refreshFromConnectionEvent),
+    onEvent("runtime:changed", refreshFromRuntimeChangedEvent),
   ];
 }
 
