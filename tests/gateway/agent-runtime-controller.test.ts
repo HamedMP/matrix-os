@@ -298,6 +298,33 @@ describe("agent runtime controller", () => {
     )).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("does not let reconciliation remove a live transition lock", async () => {
+    const homePath = await createHome();
+    let releasePrepare: (() => void) | undefined;
+    const prepareGate = new Promise<void>((resolve) => {
+      releasePrepare = resolve;
+    });
+    const openclaw = fakeAdapter("openclaw", {
+      prepare: vi.fn(async () => prepareGate),
+    });
+    const controller = createAgentRuntimeController({
+      homePath,
+      adapters: { hermes: fakeAdapter("hermes"), openclaw },
+    });
+    const update = controller.update({ runtime: "openclaw", revision: 0 });
+    await vi.waitFor(() => expect(openclaw.prepare).toHaveBeenCalledOnce());
+    const lockPath = join(homePath, "system/agent-runtime/transition.lock");
+
+    await expect(controller.reconcile()).rejects.toMatchObject({
+      kind: "agent_config_conflict",
+    });
+    await expect(lstat(lockPath)).resolves.toMatchObject({});
+
+    releasePrepare?.();
+    await expect(update).resolves.toMatchObject({ runtime: "openclaw" });
+    await expect(lstat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("serializes legacy Chat patches with runtime transitions", async () => {
     const homePath = await createHome({
       kernel: { model: "claude-opus-4-6", effort: "high" },

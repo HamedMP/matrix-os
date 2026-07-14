@@ -35,6 +35,7 @@ export function createHermesRuntimeAdapter(options: {
     signal: AbortSignal,
   ): Promise<AgentMessagingSelection> {
     const current = await snapshot(signal);
+    const previousSelection = AgentMessagingSelectionSchema.parse(current.messaging);
     const providers = AgentProviderCatalogSchema.parse(current.providers);
     const provider = providers.find((entry) =>
       entry.runtime === "hermes"
@@ -61,17 +62,43 @@ export function createHermesRuntimeAdapter(options: {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     }, signal);
-    const parsed = HermesMutationResponseSchema.safeParse(response);
-    if (!parsed.success) throw new AgentConfigError("invalid_response", parsed.error);
-    options.source.invalidate?.();
-    const updated = await snapshot(signal);
-    const selection = AgentMessagingSelectionSchema.parse(updated.messaging);
-    if (!selection.configured
-      || selection.provider !== input.provider
-      || selection.model !== input.model) {
-      throw new AgentConfigError("invalid_response");
+    try {
+      const parsed = HermesMutationResponseSchema.safeParse(response);
+      if (!parsed.success) throw new AgentConfigError("invalid_response", parsed.error);
+      options.source.invalidate?.();
+      const updated = await snapshot(signal);
+      const selection = AgentMessagingSelectionSchema.parse(updated.messaging);
+      if (!selection.configured
+        || selection.provider !== input.provider
+        || selection.model !== input.model) {
+        throw new AgentConfigError("invalid_response");
+      }
+      return selection;
+    } catch (error) {
+      if (previousSelection.configured
+        && previousSelection.provider !== null
+        && previousSelection.model !== null) {
+        const rollbackSignal = AbortSignal.timeout(2_000);
+        await options.requestJson("/api/model/set", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            scope: "main",
+            provider: previousSelection.provider,
+            model: previousSelection.model,
+          }),
+        }, rollbackSignal).then(() => {
+          options.source.invalidate?.();
+        }).catch((rollbackError: unknown) => {
+          console.warn(
+            "[agent-config] Hermes selection restore failed:",
+            rollbackError instanceof Error ? rollbackError.name : "UnknownError",
+          );
+        });
+      }
+      if (error instanceof AgentConfigError) throw error;
+      throw new AgentConfigError("invalid_response", error);
     }
-    return selection;
   }
 
   return {
