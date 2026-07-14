@@ -14,6 +14,9 @@ interface ConnectionState {
   imageUrl: string | null;
   platformHost: string;
   runtimeSlot: string;
+  // Trusted-core credential generation; advances on every credential
+  // replacement so caches keyed on visible identity cannot cross sessions.
+  authGeneration: number;
   api: ApiClient | null;
   refresh: () => Promise<void>;
   selectRuntime: (slot: string) => Promise<void>;
@@ -27,6 +30,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
   imageUrl: null,
   platformHost: "",
   runtimeSlot: "primary",
+  authGeneration: 0,
   api: null,
 
   refresh: async () => {
@@ -50,6 +54,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
         imageUrl: status.imageUrl ?? null,
         platformHost: status.platformHost,
         runtimeSlot: status.runtimeSlot,
+        authGeneration: status.authGeneration,
         api,
       });
     } catch (err: unknown) {
@@ -59,16 +64,18 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
   },
 
   selectRuntime: async (slot) => {
-    reconcileDesktopRuntimeChange();
     try {
       await invoke("runtime:select", { slot });
-      set({ runtimeSlot: slot });
     } catch (err: unknown) {
-      // Recreate the API client so runtime-bound surfaces reload the still
-      // selected computer after a failed switch.
+      // The switch never happened: keep every surface on the still-selected
+      // computer and refresh the auth snapshot so the API client stays valid.
       await get().refresh();
       throw err;
     }
+    // Clear previous-computer state only after the trusted core confirms the
+    // switch, and before the new slot becomes observable to the UI.
+    reconcileDesktopRuntimeChange();
+    set({ runtimeSlot: slot });
   },
 
   signOut: async () => {

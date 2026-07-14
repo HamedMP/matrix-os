@@ -144,6 +144,95 @@ describe("sidebar computer menu", () => {
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:list-computers", {});
   });
 
+  it("refetches inventory when the credential generation changes behind an identical identity", async () => {
+    act(() => {
+      useConnection.setState({ authGeneration: 1 });
+    });
+    render(<RuntimeComputerMenu collapsed={false} />);
+    await waitFor(() => expect(screen.getByText("Main Computer")).not.toBeNull());
+
+    window.operator.invoke = vi.fn(async (channel: string) => {
+      if (channel === "runtime:list-computers") {
+        return {
+          ...computers,
+          items: [{
+            handle: "operator-replaced",
+            runtimeSlot: "primary",
+            label: "Main Computer",
+            availability: "available",
+            kind: "customer",
+            gatewayPath: "/vm/operator-replaced",
+            capabilities: [],
+          }],
+        };
+      }
+      return { ok: true };
+    });
+    act(() => {
+      useConnection.setState({ authGeneration: 2 });
+    });
+
+    await waitFor(() => expect(screen.getByText("operator-replaced")).not.toBeNull());
+    expect(window.operator.invoke).toHaveBeenCalledWith("runtime:list-computers", {});
+  });
+
+  it("marks the server-reported selected slot as current when the profile slot is stale", async () => {
+    window.operator.invoke = vi.fn(async (channel: string) => {
+      if (channel === "runtime:list-computers") return { ...computers, selectedSlot: "review" };
+      return { ok: true };
+    });
+    const selectRuntime = vi.fn(async () => undefined);
+    useConnection.setState({ selectRuntime });
+
+    render(<RuntimeComputerMenu collapsed={false} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Change computer, currently Additional Computer" })).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /Change computer/i }));
+
+    expect(screen.getByRole("option", { name: /Additional Computer.*Current/i }).hasAttribute("disabled")).toBe(true);
+    const staleProfileOption = screen.getByRole("option", { name: /Main Computer.*Available/i });
+    expect(staleProfileOption.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(staleProfileOption);
+    await waitFor(() => expect(selectRuntime).toHaveBeenCalledWith("primary"));
+  });
+
+  it("caps long computer lists behind a scrollable region", async () => {
+    const manyComputers = {
+      ...computers,
+      items: Array.from({ length: 20 }, (_, index) => ({
+        handle: `operator-${index}`,
+        runtimeSlot: index === 0 ? "primary" : `slot-${index}`,
+        label: index === 0 ? "Main Computer" : "Additional Computer",
+        availability: "available",
+        kind: index === 0 ? "customer" : "preview",
+        gatewayPath: index === 0 ? "/vm/operator-0" : `/vm/operator-${index}?runtime=slot-${index}`,
+        capabilities: [],
+      })),
+    };
+    window.operator.invoke = vi.fn(async (channel: string) => (
+      channel === "runtime:list-computers" ? manyComputers : { ok: true }
+    ));
+
+    render(<RuntimeComputerMenu collapsed={false} />);
+    await waitFor(() => expect(screen.getByText("operator-0")).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /Change computer/i }));
+
+    const listbox = screen.getByRole("listbox", { name: "Choose computer" });
+    const scrollRegion = listbox.querySelector(".overflow-y-auto");
+    expect(scrollRegion).not.toBeNull();
+    expect(scrollRegion?.className).toMatch(/max-h-/);
+    expect(screen.getAllByRole("option")).toHaveLength(20);
+  });
+
+  it("keeps the collapsed rail menu wide enough to read computer labels", async () => {
+    render(<RuntimeComputerMenu collapsed />);
+    await waitFor(() => expect(window.operator.invoke).toHaveBeenCalledWith("runtime:list-computers", {}));
+    fireEvent.click(screen.getByRole("button", { name: /Change computer/i }));
+
+    const listbox = screen.getByRole("listbox", { name: "Choose computer" });
+    expect(listbox.className).toMatch(/w-64/);
+    expect(listbox.className).not.toMatch(/right-2/);
+  });
+
   it("clears owner-scoped inventory when a signed-in session is replaced in place", async () => {
     useConnection.setState({ api: { get: vi.fn(), post: vi.fn(), delete: vi.fn() } as never });
     const view = render(<RuntimeComputerMenu collapsed={false} />);

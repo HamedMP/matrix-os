@@ -131,6 +131,7 @@ export const INVOKE_CHANNELS = {
         imageUrl: z.string().url().max(2048).optional(),
         runtimeSlot: z.string().max(64),
         platformHost: z.string().max(256),
+        authGeneration: z.number().int().nonnegative(),
       })
       .strict(),
   },

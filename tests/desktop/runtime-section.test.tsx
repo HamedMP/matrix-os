@@ -89,6 +89,24 @@ describe("desktop runtime settings", () => {
     await waitFor(() => expect(selectRuntime).toHaveBeenCalledWith("review"));
   });
 
+  it("drives the current badge from the server-reported selected slot when the profile is stale", async () => {
+    window.operator.invoke = vi.fn(async (channel: string) => {
+      if (channel === "runtime:list-computers") return { ...computers, selectedSlot: "review" };
+      return { ok: true };
+    });
+    const selectRuntime = vi.fn(async () => undefined);
+    useConnection.setState({ selectRuntime });
+
+    render(<RuntimeSection />);
+    await waitFor(() => expect(screen.getByText("Additional Computer")).not.toBeNull());
+
+    expect(screen.getByRole("button", { name: "Current computer" }).hasAttribute("disabled")).toBe(true);
+    const staleProfileButton = screen.getByRole("button", { name: "Use Main Computer" });
+    expect(staleProfileButton.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(staleProfileButton);
+    await waitFor(() => expect(selectRuntime).toHaveBeenCalledWith("primary"));
+  });
+
   it("contains malformed responses and switching failures behind safe messages", async () => {
     window.operator.invoke = vi.fn(async (channel: string) => {
       if (channel === "runtime:list-computers") {

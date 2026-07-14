@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, mkdir, readdir, rename, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { access, lstat, mkdir, readdir, rename, rm } from "node:fs/promises";
+import { join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
 import { atomicWriteJson, readJsonFile, withProjectLock, type OwnerScope } from "./state-ops.js";
@@ -175,6 +175,18 @@ function projectPath(homePath: string, slug: string): string {
   return join(homePath, "projects", slug);
 }
 
+// OS-owned subtrees that must never become an agent-accessible project root.
+// A folder project's localPath is handed to shells and coding-agent sandboxes
+// as a workspace cwd, so granting these would expose kernel/agent state.
+const PROTECTED_FOLDER_PROJECT_PREFIXES = ["system", "agents", ".trash"];
+
+function isProtectedFolderProjectPath(homePath: string, resolvedPath: string): boolean {
+  const rel = relative(resolve(homePath), resolvedPath);
+  if (rel === "") return true;
+  const firstSegment = rel.split(sep)[0];
+  return firstSegment !== undefined && PROTECTED_FOLDER_PROJECT_PREFIXES.includes(firstSegment);
+}
+
 async function readProjectConfig(homePath: string, slug: string): Promise<ProjectConfig | null> {
   try {
     return await readJsonFile<ProjectConfig>(join(projectPath(homePath, slug), "config.json"));
@@ -234,7 +246,24 @@ export function createProjectManager(options: {
         }
         const localPath = input.path ? resolveExistingFileApiPath(homePath, input.path) : null;
         const metadataPath = projectPath(homePath, slug);
-        if (!localPath || localPath === metadataPath || localPath.startsWith(`${metadataPath}/`)) {
+        if (
+          !localPath
+          || localPath === metadataPath
+          || localPath.startsWith(`${metadataPath}/`)
+          || isProtectedFolderProjectPath(homePath, localPath)
+        ) {
+          return genericError(400, "invalid_project_path", "Project folder is invalid");
+        }
+        try {
+          const stats = await lstat(localPath);
+          if (!stats.isDirectory()) {
+            return genericError(400, "invalid_project_path", "Project folder is invalid");
+          }
+        } catch (err: unknown) {
+          console.warn(
+            "[projects] folder project path became unreadable:",
+            err instanceof Error ? err.message : String(err),
+          );
           return genericError(400, "invalid_project_path", "Project folder is invalid");
         }
         return withProjectLock(slug, async () => {

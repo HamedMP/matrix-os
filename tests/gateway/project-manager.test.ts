@@ -173,6 +173,34 @@ describe("project-manager", () => {
     })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
   });
 
+  it("rejects the home root and protected OS subtrees as folder projects", async () => {
+    await mkdir(join(homePath, "system", "wallpapers"), { recursive: true });
+    await mkdir(join(homePath, "agents", "custom"), { recursive: true });
+    await mkdir(join(homePath, ".trash"), { recursive: true });
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    for (const path of [".", "system", "system/wallpapers", "agents", "agents/custom", ".trash"]) {
+      await expect(manager.createProject({
+        mode: "folder",
+        name: "Protected",
+        slug: `protected-${path.replace(/[^a-z0-9]+/g, "-")}`,
+        path,
+      })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
+    }
+  });
+
+  it("requires existing folder project paths to be directories", async () => {
+    await writeFile(join(homePath, "notes.txt"), "owner notes");
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    await expect(manager.createProject({
+      mode: "folder",
+      name: "Notes",
+      slug: "notes",
+      path: "notes.txt",
+    })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
+  });
+
   it("rejects slug conflicts before cloning", async () => {
     await mkdir(join(homePath, "projects", "repo"), { recursive: true });
     const runCommand = vi.fn();

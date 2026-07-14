@@ -16,6 +16,7 @@ beforeEach(() => {
     handle: null,
     platformHost: "",
     runtimeSlot: "primary",
+    authGeneration: 0,
     api: null,
   });
 });
@@ -26,11 +27,14 @@ afterEach(() => {
 });
 
 describe("connection event wiring", () => {
-  it("invalidates the previous runtime before the trusted runtime switch", async () => {
+  it("keeps the previous desktop state intact until the trusted runtime switch succeeds", async () => {
     useBoard.setState({ projects: [{ slug: "old", name: "Old" }], activeProjectSlug: "old" });
     const invoke = vi.fn(async (channel: string) => {
       if (channel === "runtime:select") {
-        expect(useBoard.getState()).toMatchObject({ projects: [], activeProjectSlug: null });
+        expect(useBoard.getState()).toMatchObject({
+          projects: [{ slug: "old", name: "Old" }],
+          activeProjectSlug: "old",
+        });
       }
       return {};
     });
@@ -39,7 +43,51 @@ describe("connection event wiring", () => {
     await useConnection.getState().selectRuntime("preview");
 
     expect(invoke).toHaveBeenCalledWith("runtime:select", { slot: "preview" });
+    expect(useBoard.getState()).toMatchObject({ projects: [], activeProjectSlug: null });
     expect(useConnection.getState().runtimeSlot).toBe("preview");
+  });
+
+  it("preserves desktop state and the selected slot when the runtime switch fails", async () => {
+    useBoard.setState({ projects: [{ slug: "old", name: "Old" }], activeProjectSlug: "old" });
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "runtime:select") throw new Error("switch failed");
+      if (channel === "auth:status") {
+        return {
+          signedIn: true,
+          handle: "neo",
+          platformHost: "https://app.matrix-os.com",
+          runtimeSlot: "primary",
+          authGeneration: 1,
+        };
+      }
+      return {};
+    });
+    window.operator = { invoke, on: vi.fn() };
+
+    await expect(useConnection.getState().selectRuntime("preview")).rejects.toThrow();
+
+    expect(useBoard.getState()).toMatchObject({
+      projects: [{ slug: "old", name: "Old" }],
+      activeProjectSlug: "old",
+    });
+    expect(useConnection.getState().runtimeSlot).toBe("primary");
+  });
+
+  it("exposes the trusted-core auth generation on refresh", async () => {
+    window.operator = {
+      invoke: vi.fn(async () => ({
+        signedIn: true,
+        handle: "neo",
+        platformHost: "https://app.matrix-os.com",
+        runtimeSlot: "primary",
+        authGeneration: 7,
+      })),
+      on: vi.fn(),
+    };
+
+    await useConnection.getState().refresh();
+
+    expect(useConnection.getState().authGeneration).toBe(7);
   });
 
   it("recovers from an initial auth status failure instead of staying loading", async () => {

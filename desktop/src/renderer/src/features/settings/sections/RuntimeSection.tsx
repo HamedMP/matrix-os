@@ -83,19 +83,24 @@ export default function RuntimeSection() {
   const handle = useConnection((state) => state.handle);
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
+  const authGeneration = useConnection((state) => state.authGeneration);
   const loadState = useRuntimeComputers((state) => state.status);
   const computers = useRuntimeComputers((state) => state.computers);
+  const serverSelectedSlot = useRuntimeComputers((state) => state.runtimeSlot);
   const switchingSlot = useRuntimeComputers((state) => state.switchingSlot);
   const switchError = useRuntimeComputers((state) => state.switchError);
   const refresh = useRuntimeComputers((state) => state.refresh);
   const selectComputer = useRuntimeComputers((state) => state.select);
+  // The inventory response's selectedSlot reflects the credential in use; the
+  // persisted profile slot is only a fallback until the first refresh lands.
+  const selectedSlot = serverSelectedSlot ?? runtimeSlot;
 
   useEffect(() => {
     void refresh();
-  }, [connectionStatus, handle, platformHost, refresh, runtimeSlot]);
+  }, [authGeneration, connectionStatus, handle, platformHost, refresh, runtimeSlot]);
 
   async function switchComputer(computer: MatrixComputer): Promise<void> {
-    if (computer.runtimeSlot === runtimeSlot || computer.availability !== "available" || switchingSlot) return;
+    if (computer.runtimeSlot === selectedSlot || computer.availability !== "available" || switchingSlot) return;
     await selectComputer(computer.runtimeSlot);
   }
 
@@ -140,7 +145,7 @@ export default function RuntimeSection() {
               <ComputerCard
                 key={computer.runtimeSlot}
                 computer={computer}
-                selected={computer.runtimeSlot === runtimeSlot}
+                selected={computer.runtimeSlot === selectedSlot}
                 switching={switchingSlot === computer.runtimeSlot}
                 onSelect={(next) => {
                   void switchComputer(next);

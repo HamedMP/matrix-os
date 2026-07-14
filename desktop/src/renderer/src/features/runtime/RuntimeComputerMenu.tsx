@@ -19,18 +19,23 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
   const platformHost = useConnection((state) => state.platformHost);
   const handle = useConnection((state) => state.handle);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
+  const authGeneration = useConnection((state) => state.authGeneration);
   const loadStatus = useRuntimeComputers((state) => state.status);
   const computers = useRuntimeComputers((state) => state.computers);
+  const serverSelectedSlot = useRuntimeComputers((state) => state.runtimeSlot);
   const switchingSlot = useRuntimeComputers((state) => state.switchingSlot);
   const switchError = useRuntimeComputers((state) => state.switchError);
   const refresh = useRuntimeComputers((state) => state.refresh);
   const select = useRuntimeComputers((state) => state.select);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  // The token can be on a different slot than the persisted profile (stale
+  // profile write); the inventory response's selectedSlot is authoritative.
+  const selectedSlot = serverSelectedSlot ?? runtimeSlot;
 
   useEffect(() => {
     void refresh();
-  }, [connectionStatus, handle, platformHost, refresh, runtimeSlot]);
+  }, [authGeneration, connectionStatus, handle, platformHost, refresh, runtimeSlot]);
 
   useEffect(() => {
     if (!open) return;
@@ -49,11 +54,11 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
   }, [open]);
 
   const current = useMemo(
-    () => computers.find((computer) => computer.runtimeSlot === runtimeSlot)
+    () => computers.find((computer) => computer.runtimeSlot === selectedSlot)
       ?? null,
-    [computers, runtimeSlot],
+    [computers, selectedSlot],
   );
-  const currentLabel = current?.label ?? fallbackComputerLabel(runtimeSlot);
+  const currentLabel = current?.label ?? fallbackComputerLabel(selectedSlot);
   const buttonLabel = loadStatus === "error"
     ? "Computer list unavailable"
     : `Change computer, currently ${currentLabel}`;
@@ -64,7 +69,7 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
         <div
           role="listbox"
           aria-label="Choose computer"
-          className="absolute bottom-full left-2 right-2 mb-1 overflow-hidden rounded-xl border p-1 shadow-lg"
+          className={`absolute bottom-full left-2 mb-1 overflow-hidden rounded-xl border p-1 shadow-lg ${collapsed ? "w-64" : "right-2"}`}
           style={{ zIndex: 20, borderColor: "var(--border-default)", background: "var(--bg-elevated)" }}
         >
           <div className="flex items-center justify-between gap-2 px-2 py-1.5">
@@ -90,36 +95,38 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
               <LoaderCircle size={13} className="animate-spin" aria-hidden="true" /> Loading computers…
             </p>
           ) : null}
-          {computers.map((computer) => {
-            const selected = computer.runtimeSlot === runtimeSlot;
-            const switching = switchingSlot === computer.runtimeSlot;
-            const disabled = selected || computer.availability !== "available" || Boolean(switchingSlot);
-            return (
-              <button
-                key={computer.runtimeSlot}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                disabled={disabled}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-60"
-                onClick={() => {
-                  setOpen(false);
-                  void select(computer.runtimeSlot);
-                }}
-              >
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md" style={{ background: selected ? "var(--accent-muted)" : "var(--bg-hover)", color: selected ? "var(--accent)" : "var(--text-secondary)" }}>
-                  {switching ? <LoaderCircle size={14} className="animate-spin" aria-hidden="true" /> : <Monitor size={14} aria-hidden="true" />}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs font-medium" style={{ color: "var(--text-primary)" }}>{computer.label}</span>
-                  <span className="block truncate text-[10px]" style={{ color: "var(--text-tertiary)" }}>
-                    {selected ? "Current" : STATUS_LABEL[computer.availability]} · {computer.handle}
+          <div className="max-h-72 overflow-y-auto">
+            {computers.map((computer) => {
+              const selected = computer.runtimeSlot === selectedSlot;
+              const switching = switchingSlot === computer.runtimeSlot;
+              const disabled = selected || computer.availability !== "available" || Boolean(switchingSlot);
+              return (
+                <button
+                  key={computer.runtimeSlot}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  disabled={disabled}
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-60"
+                  onClick={() => {
+                    setOpen(false);
+                    void select(computer.runtimeSlot);
+                  }}
+                >
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md" style={{ background: selected ? "var(--accent-muted)" : "var(--bg-hover)", color: selected ? "var(--accent)" : "var(--text-secondary)" }}>
+                    {switching ? <LoaderCircle size={14} className="animate-spin" aria-hidden="true" /> : <Monitor size={14} aria-hidden="true" />}
                   </span>
-                </span>
-                {selected ? <Check size={13} className="shrink-0" style={{ color: "var(--accent)" }} aria-hidden="true" /> : null}
-              </button>
-            );
-          })}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-medium" style={{ color: "var(--text-primary)" }}>{computer.label}</span>
+                    <span className="block truncate text-[10px]" style={{ color: "var(--text-tertiary)" }}>
+                      {selected ? "Current" : STATUS_LABEL[computer.availability]} · {computer.handle}
+                    </span>
+                  </span>
+                  {selected ? <Check size={13} className="shrink-0" style={{ color: "var(--accent)" }} aria-hidden="true" /> : null}
+                </button>
+              );
+            })}
+          </div>
           {switchError ? <p className="px-2 py-2 text-[11px]" style={{ color: "var(--danger)" }}>Couldn&apos;t switch computers. Try again.</p> : null}
         </div>
       ) : null}

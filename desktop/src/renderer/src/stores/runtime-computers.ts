@@ -24,8 +24,11 @@ let refreshGeneration = 0;
 function currentScope(): { scope: string; runtimeSlot: string } | null {
   const connection = useConnection.getState();
   if (connection.status !== "signed-in" || !connection.platformHost) return null;
+  // The trusted-core auth generation is part of the cache key: a replacement
+  // credential with the same host/handle/slot must never reuse the previous
+  // owner's ready inventory.
   return {
-    scope: `${connection.platformHost}|${connection.handle ?? "signed-in"}`,
+    scope: `${connection.platformHost}|${connection.handle ?? "signed-in"}|${connection.authGeneration}`,
     runtimeSlot: connection.runtimeSlot,
   };
 }
@@ -83,11 +86,14 @@ export const useRuntimeComputers = create<RuntimeComputerState>()((set, get) => 
     const state = get();
     const computer = state.computers.find((candidate) => candidate.runtimeSlot === slot);
     const connection = useConnection.getState();
+    // The server-reported selected slot (refresh response) is authoritative;
+    // the profile-derived connection slot is only a fallback so a stale
+    // profile cannot block switching back to the slot it still names.
+    const effectiveSlot = state.runtimeSlot ?? connection.runtimeSlot;
     if (
       !computer
       || computer.availability !== "available"
-      || state.runtimeSlot === slot
-      || connection.runtimeSlot === slot
+      || effectiveSlot === slot
       || state.switchingSlot
     ) {
       return false;
@@ -109,7 +115,7 @@ useConnection.subscribe((connection, previous) => {
   const signedOut = previous.status === "signed-in" && connection.status !== "signed-in";
   const signedInSessionReplaced = previous.status === "signed-in"
     && connection.status === "signed-in"
-    && previous.api !== connection.api;
+    && (previous.api !== connection.api || previous.authGeneration !== connection.authGeneration);
   if (!signedOut && !signedInSessionReplaced) return;
   refreshGeneration += 1;
   useRuntimeComputers.setState({
