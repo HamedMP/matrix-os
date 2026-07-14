@@ -28,6 +28,9 @@ export interface ShellAttachProcess {
   kill(): void;
   onData(listener: (data: string) => void): Disposable;
   onExit(listener: (event: PtyExitEvent) => void): Disposable;
+  /** node-pty flow control; used by WS backpressure to pause a slow client. */
+  pause?(): void;
+  resume?(): void;
 }
 type PtySpawn = (
   command: string,

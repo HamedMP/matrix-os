@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
@@ -16,7 +16,7 @@ type ViewerState =
   | { status: "loading" }
   | { status: "text"; content: string }
   | { status: "image"; authHeader?: string }
-  | { status: "unpreviewable"; reason: "too-large" | "binary"; size?: number }
+  | { status: "unpreviewable"; reason: "too-large" | "binary" | "unknown-size"; size?: number }
   | { status: "error" };
 
 function viewerReducer(_state: ViewerState, action: ViewerState): ViewerState {
@@ -37,6 +37,9 @@ export function FileViewer({
   const { theme } = useUnistyles();
   const [state, dispatch] = useReducer(viewerReducer, { status: "loading" });
   const isImage = isImageFile(entry.name);
+  // Shared cancellation flag so both the mount effect and manual retry stop
+  // dispatching once this view unmounts.
+  const requestIdRef = useRef(0);
 
   // Resolves the preview to its terminal state. Never dispatches "loading"
   // itself, so the mount effect stays cascading-render free; the initial state
@@ -65,19 +68,25 @@ export function FileViewer({
     [client, path, isImage],
   );
 
+  // Per-request token: each load (mount or retry) invalidates every earlier
+  // in-flight resolution, so a retry cannot un-cancel a previous call and let
+  // its stale result dispatch over the fresh one.
   useEffect(() => {
     // File kind only — never the path or file name.
     capture("file_previewed", { kind: isImage ? "image" : "text" });
-    let cancelled = false;
-    void resolvePreview(() => cancelled);
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    void resolvePreview(() => requestIdRef.current !== requestId);
     return () => {
-      cancelled = true;
+      requestIdRef.current += 1;
     };
   }, [resolvePreview, isImage]);
 
   const handleRetry = useCallback(() => {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     dispatch({ status: "loading" });
-    void resolvePreview(() => false);
+    void resolvePreview(() => requestIdRef.current !== requestId);
   }, [resolvePreview]);
 
   const sizeLabel = formatFileSize(entry.size);
@@ -127,7 +136,11 @@ export function FileViewer({
         <View style={styles.centered}>
           <Ionicons name="document-outline" size={26} color={theme.colors.mutedForeground} />
           <Text style={styles.centerTitle}>
-            {state.reason === "too-large" ? "File is too large to preview" : "Preview not available"}
+            {state.reason === "too-large"
+              ? "File is too large to preview"
+              : state.reason === "unknown-size"
+                ? "Preview unavailable for this file"
+                : "Preview not available"}
           </Text>
           {sizeLabel || state.size ? (
             <Text style={styles.centerBody}>{sizeLabel || formatFileSize(state.size)}</Text>

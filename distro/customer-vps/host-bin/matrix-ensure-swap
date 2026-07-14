@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -u
+
+# matrix-ensure-swap — idempotently ensure the host has swap configured.
+#
+# Target size comes from MATRIX_SWAP_SIZE_GB (default 8). Existing swap of any
+# kind counts toward the target; when a deficit remains, an additional swapfile
+# is created (never swapoff on a live box — shrinking or replacing active swap
+# under memory pressure can hang the machine). A disk guard caps the allocation
+# so at least MATRIX_SWAP_MIN_FREE_GB (default 10) stays free on / afterwards;
+# if less than 2 GiB fits, nothing is allocated.
+#
+# This script must never break its caller: it exits 0 on every path and only
+# logs failures. Run as root (the sync agent invokes it via sudo).
+
+log() { echo "matrix-ensure-swap: $*"; }
+
+if [ "$(id -u)" != "0" ]; then
+  log "must run as root; skipping"
+  exit 0
+fi
+
+TARGET_GB="${MATRIX_SWAP_SIZE_GB:-8}"
+MIN_FREE_GB="${MATRIX_SWAP_MIN_FREE_GB:-10}"
+case "$TARGET_GB" in *[!0-9]*|'') log "invalid MATRIX_SWAP_SIZE_GB=$TARGET_GB; skipping"; exit 0 ;; esac
+case "$MIN_FREE_GB" in *[!0-9]*|'') MIN_FREE_GB=10 ;; esac
+
+current_kb="$(awk '/SwapTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+target_kb=$((TARGET_GB * 1024 * 1024))
+deficit_kb=$((target_kb - current_kb))
+
+sysctl_conf=/etc/sysctl.d/99-matrix-swap.conf
+if [ ! -f "$sysctl_conf" ]; then
+  printf 'vm.swappiness=10\n' > "$sysctl_conf" && sysctl -p "$sysctl_conf" >/dev/null 2>&1
+  log "set vm.swappiness=10"
+fi
+
+if [ "$deficit_kb" -le 0 ]; then
+  log "swap already at $((current_kb / 1024 / 1024))GiB (target ${TARGET_GB}GiB); nothing to do"
+  exit 0
+fi
+
+free_kb="$(df -k --output=avail / 2>/dev/null | tail -1 | tr -d ' ')"
+case "$free_kb" in *[!0-9]*|'') log "could not read free disk space; skipping"; exit 0 ;; esac
+min_free_kb=$((MIN_FREE_GB * 1024 * 1024))
+budget_kb=$((free_kb - min_free_kb))
+if [ "$budget_kb" -lt "$deficit_kb" ]; then
+  deficit_kb="$budget_kb"
+fi
+# round down to whole GiB; require at least 2 GiB to be worth allocating
+alloc_gb=$((deficit_kb / 1024 / 1024))
+if [ "$alloc_gb" -lt 2 ]; then
+  log "insufficient disk headroom (free $((free_kb / 1024 / 1024))GiB, keep ${MIN_FREE_GB}GiB free); skipping allocation"
+  exit 0
+fi
+
+# pick an unused swapfile path (existing files may already be active swap)
+swapfile=""
+for candidate in /swapfile /swapfile2 /swapfile3; do
+  if [ ! -e "$candidate" ]; then
+    swapfile="$candidate"
+    break
+  fi
+done
+if [ -z "$swapfile" ]; then
+  log "no free swapfile slot (/swapfile{,2,3} all exist); skipping"
+  exit 0
+fi
+
+log "allocating ${alloc_gb}GiB at $swapfile (current $((current_kb / 1024 / 1024))GiB, target ${TARGET_GB}GiB)"
+if ! fallocate -l "${alloc_gb}G" "$swapfile" 2>/dev/null; then
+  if ! dd if=/dev/zero of="$swapfile" bs=1M count=$((alloc_gb * 1024)) status=none; then
+    log "allocation failed; cleaning up"
+    rm -f "$swapfile"
+    exit 0
+  fi
+fi
+chmod 600 "$swapfile"
+if ! mkswap "$swapfile" >/dev/null 2>&1 || ! swapon "$swapfile" 2>/dev/null; then
+  log "mkswap/swapon failed; cleaning up"
+  swapoff "$swapfile" 2>/dev/null
+  rm -f "$swapfile"
+  exit 0
+fi
+if ! awk -v path="$swapfile" '$1 == path { found = 1 } END { exit found ? 0 : 1 }' /etc/fstab 2>/dev/null; then
+  printf '%s none swap sw 0 0\n' "$swapfile" >> /etc/fstab
+fi
+log "swap active: $(awk '/SwapTotal/ {print int($2/1024/1024) "GiB"}' /proc/meminfo)"
+exit 0

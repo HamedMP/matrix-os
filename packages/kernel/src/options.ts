@@ -1,4 +1,12 @@
-import { readFileSync, existsSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+} from "node:fs";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
 import type { MatrixDB } from "./db.js";
 import { createIpcServer } from "./ipc-server.js";
@@ -70,7 +78,52 @@ function loadBrowserConfig(homePath: string): {
 }
 
 const KERNEL_EFFORT_VALUES = ["low", "medium", "high", "max"] as const;
-type KernelEffort = (typeof KERNEL_EFFORT_VALUES)[number];
+const SAFE_KERNEL_MODEL = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/;
+const KERNEL_CONFIG_MAX_BYTES = 256 * 1024;
+export type KernelEffort = (typeof KERNEL_EFFORT_VALUES)[number];
+export const DEFAULT_KERNEL_MODEL = "claude-opus-4-6";
+export const DEFAULT_KERNEL_EFFORT: KernelEffort = "high";
+
+function parseKernelConfigFile(raw: string): { model?: string; effort?: KernelEffort } {
+  const config = JSON.parse(raw);
+  const kernel = config.kernel;
+  if (!kernel || typeof kernel !== "object") return {};
+  const model = typeof kernel.model === "string" && SAFE_KERNEL_MODEL.test(kernel.model)
+    ? kernel.model
+    : undefined;
+  const effort = KERNEL_EFFORT_VALUES.includes(kernel.effort) ? (kernel.effort as KernelEffort) : undefined;
+  return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+}
+
+function isMissingKernelConfig(err: unknown): boolean {
+  return err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+function readKernelConfigBoundedSync(path: string): string | undefined {
+  const fd = openSync(path, "r");
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > KERNEL_CONFIG_MAX_BYTES) return undefined;
+    const buffer = Buffer.alloc(stat.size);
+    const bytesRead = readSync(fd, buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, bytesRead).toString("utf-8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+async function readKernelConfigBounded(path: string): Promise<string | undefined> {
+  const file = await open(path, "r");
+  try {
+    const stat = await file.stat();
+    if (!stat.isFile() || stat.size > KERNEL_CONFIG_MAX_BYTES) return undefined;
+    const buffer = Buffer.alloc(stat.size);
+    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, bytesRead).toString("utf-8");
+  } finally {
+    await file.close();
+  }
+}
 
 // User-tunable kernel settings persisted by the gateway settings UI under the
 // `kernel` key of ~/system/config.json (Everything Is a File). Read at spawn so
@@ -78,17 +131,46 @@ type KernelEffort = (typeof KERNEL_EFFORT_VALUES)[number];
 export function loadKernelConfigFile(homePath: string): { model?: string; effort?: KernelEffort } {
   try {
     const configPath = join(homePath, "system", "config.json");
-    if (!existsSync(configPath)) return {};
-    const config = JSON.parse(readFileSync(configPath, "utf-8"));
-    const kernel = config.kernel;
-    if (!kernel || typeof kernel !== "object") return {};
-    const model = typeof kernel.model === "string" && kernel.model.length > 0 ? kernel.model : undefined;
-    const effort = KERNEL_EFFORT_VALUES.includes(kernel.effort) ? (kernel.effort as KernelEffort) : undefined;
-    return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+    const raw = readKernelConfigBoundedSync(configPath);
+    return raw === undefined ? {} : parseKernelConfigFile(raw);
   } catch (err: unknown) {
-    console.warn("[kernel-options] Could not load kernel config:", err instanceof Error ? err.message : String(err));
+    if (!isMissingKernelConfig(err)) {
+      console.warn("[kernel-options] Could not load kernel config:", err instanceof Error ? err.message : String(err));
+    }
     return {};
   }
+}
+
+export async function loadKernelConfigFileAsync(
+  homePath: string,
+): Promise<{ model?: string; effort?: KernelEffort }> {
+  try {
+    const raw = await readKernelConfigBounded(join(homePath, "system", "config.json"));
+    return raw === undefined ? {} : parseKernelConfigFile(raw);
+  } catch (err: unknown) {
+    if (!isMissingKernelConfig(err)) {
+      console.warn("[kernel-options] Could not load kernel config:", err instanceof Error ? err.message : String(err));
+    }
+    return {};
+  }
+}
+
+export function resolveKernelConfigFile(homePath: string): { model: string; effort: KernelEffort } {
+  const fileKernel = loadKernelConfigFile(homePath);
+  return {
+    model: fileKernel.model ?? DEFAULT_KERNEL_MODEL,
+    effort: fileKernel.effort ?? DEFAULT_KERNEL_EFFORT,
+  };
+}
+
+export async function resolveKernelConfigFileAsync(
+  homePath: string,
+): Promise<{ model: string; effort: KernelEffort }> {
+  const fileKernel = await loadKernelConfigFileAsync(homePath);
+  return {
+    model: fileKernel.model ?? DEFAULT_KERNEL_MODEL,
+    effort: fileKernel.effort ?? DEFAULT_KERNEL_EFFORT,
+  };
 }
 
 export async function tryCreateBrowserServer(
@@ -124,9 +206,9 @@ export async function kernelOptions(config: KernelConfig) {
 
   // Explicit per-call config wins; otherwise fall back to the persisted
   // ~/system/config.json kernel settings, then hardcoded defaults.
-  const fileKernel = loadKernelConfigFile(homePath);
-  const effort = (config.effort ?? fileKernel.effort) as KernelEffort | undefined;
-  const resolvedEffort = effort && KERNEL_EFFORT_VALUES.includes(effort) ? effort : undefined;
+  const fileKernel = resolveKernelConfigFile(homePath);
+  const effort = (config.effort ?? fileKernel.effort) as KernelEffort;
+  const resolvedEffort = KERNEL_EFFORT_VALUES.includes(effort) ? effort : DEFAULT_KERNEL_EFFORT;
 
   const ipcServer = await createIpcServer(db, homePath);
   const coreAgents = getCoreAgents(homePath);
@@ -151,8 +233,8 @@ export async function kernelOptions(config: KernelConfig) {
   }
 
   return {
-    model: config.model ?? fileKernel.model ?? "claude-opus-4-6",
-    ...(resolvedEffort ? { effort: resolvedEffort } : {}),
+    model: config.model ?? fileKernel.model,
+    effort: resolvedEffort,
     systemPrompt,
     cwd: homePath,
     ...(config.env ? { env: config.env } : {}),

@@ -111,6 +111,15 @@ function buildProjectGroups(
     ensureGroup(project.id, project.label, project.status);
   }
 
+  // Attention threads are excluded from group thread lists but still drive the
+  // per-project attention badge and the group's recency, so an attention-only
+  // project sorts by its real activity instead of sinking below quieter ones.
+  for (const thread of needsAttention) {
+    const projectId = thread.projectId ?? null;
+    const group = ensureGroup(projectId, projectId === null ? "No project" : projectId, "unknown");
+    group.latestActivityMs = Math.max(group.latestActivityMs, updatedAtMs(thread));
+  }
+
   for (const thread of groupedThreads) {
     if (attentionIds.has(thread.id)) continue;
     const projectId = thread.projectId ?? null;

@@ -101,7 +101,7 @@ function nextSourceCommitRequestId(): string {
   return `req_mobile_${Date.now().toString(36)}_${sourceCommitRequestSeq}`;
 }
 
-function routedReviewIdParam(value: string | string[] | undefined): string | null {
+export function routedReviewIdParam(value: string | string[] | undefined): string | null {
   const candidate = Array.isArray(value) ? value[0] : value;
   const parsed = ReviewIdSchema.safeParse(candidate);
   return parsed.success ? parsed.data : null;

@@ -12,7 +12,7 @@ import {
   type MatrixDB,
 } from "@matrix-os/kernel";
 import { wrapExternalContent, detectSuspiciousPatterns } from "@matrix-os/kernel/security/external-content";
-import { appendFile, readFile } from "node:fs/promises";
+import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ChannelId } from "./channels/types.js";
 import type { AiGenerationInput } from "./ai-analytics.js";
@@ -24,6 +24,7 @@ import {
   aiCostTotal,
   aiTokensTotal,
 } from "./metrics.js";
+import { buildKernelEnv } from "./kernel-credentials.js";
 
 export type SpawnFn = typeof spawnKernel;
 
@@ -75,13 +76,6 @@ export interface Dispatcher {
   homePath: string;
 }
 
-function hasClaudeOauthConfig(value: unknown): boolean {
-  if (!value || typeof value !== "object") return false;
-  const account = (value as { oauthAccount?: unknown }).oauthAccount;
-  if (!account || typeof account !== "object") return false;
-  return typeof (account as { accountUuid?: unknown }).accountUuid === "string";
-}
-
 type InternalEntry =
   | {
       kind: "serial";
@@ -126,39 +120,6 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
     } catch (err: unknown) {
       logNonFatal("[dispatcher] ai generation capture failed:", err);
     }
-  }
-
-  async function buildKernelEnv(): Promise<Record<string, string | undefined> | undefined> {
-    const env = { ...process.env };
-    try {
-      const raw = await readFile(join(homePath, "system/config.json"), "utf-8");
-      const userConfig = JSON.parse(raw);
-      const byokKey = userConfig?.kernel?.anthropicApiKey;
-      if (byokKey && typeof byokKey === "string") {
-        env.ANTHROPIC_API_KEY = byokKey;
-        return env;
-      }
-    } catch (err: unknown) {
-      if (!(err instanceof Error) || (err as NodeJS.ErrnoException).code !== "ENOENT") {
-        logNonFatal("[dispatcher] failed to read user API key config:", err);
-      }
-    }
-
-    try {
-      const raw = await readFile(join(homePath, ".claude.json"), "utf-8");
-      if (hasClaudeOauthConfig(JSON.parse(raw))) {
-        env.HOME = homePath;
-        delete env.ANTHROPIC_API_KEY;
-        delete env.ANTHROPIC_BASE_URL;
-        return env;
-      }
-    } catch (err: unknown) {
-      if (!(err instanceof Error) || (err as NodeJS.ErrnoException).code !== "ENOENT") {
-        logNonFatal("[dispatcher] failed to read Claude OAuth config:", err);
-      }
-    }
-
-    return undefined;
   }
 
   function processQueue() {
@@ -215,7 +176,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         sessionId: entry.sessionId,
         model: opts.model,
         maxTurns: opts.maxTurns,
-        env: await buildKernelEnv(),
+        env: await buildKernelEnv(homePath),
       };
 
       for await (const event of spawnFn(message, config, entry.abortController)) {
@@ -349,7 +310,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             homePath,
             model: opts.model,
             maxTurns: opts.maxTurns,
-            env: await buildKernelEnv(),
+            env: await buildKernelEnv(homePath),
           };
 
           try {
