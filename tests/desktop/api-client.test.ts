@@ -126,4 +126,33 @@ describe("createApiClient", () => {
     });
     await expect(client.get("/api/apps")).rejects.toMatchObject({ category: "server" });
   });
+
+  it("fetches binary blobs through the authenticated client with a timeout signal", async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValue(new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "image/png" } }));
+    const client = createApiClient({
+      baseUrl: "https://app.matrix-os.com",
+      getRuntimeSlot: () => "vm-2",
+      fetchFn,
+    });
+    const blob = await client.getBlob("/api/files/blob?path=hero.png");
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.size).toBe(3);
+    const [url, init] = fetchFn.mock.calls[0]!;
+    expect(url).toBe("https://app.matrix-os.com/api/files/blob?path=hero.png&runtime=vm-2");
+    expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("maps blob 401s to unauthorized without leaking bytes", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(401, {}));
+    const client = createApiClient({
+      baseUrl: "https://x.test",
+      getRuntimeSlot: () => "primary",
+      fetchFn,
+    });
+    await expect(client.getBlob("/api/files/blob?path=hero.png")).rejects.toMatchObject({
+      category: "unauthorized",
+    });
+  });
 });

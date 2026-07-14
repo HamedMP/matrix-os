@@ -26,6 +26,7 @@ export interface ApiClientOptions {
 export interface ApiClient {
   get<T>(path: string): Promise<T>;
   getText(path: string): Promise<string>;
+  getBlob(path: string): Promise<Blob>;
   post<T>(path: string, body: unknown): Promise<T>;
   patch<T>(path: string, body: unknown): Promise<T>;
   put<T>(path: string, body: unknown): Promise<T>;
@@ -83,10 +84,20 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     }
   }
 
+  async function requestBlob(path: string, init: RequestInit): Promise<Blob> {
+    const response = await send(path, init);
+    try {
+      return await response.blob();
+    } catch (err: unknown) {
+      throw new AppError("server", { cause: err });
+    }
+  }
+
   return {
     baseUrl: options.baseUrl,
     get: (path) => request(path, { method: "GET" }),
     getText: (path) => requestText(path, { method: "GET" }),
+    getBlob: (path) => requestBlob(path, { method: "GET" }),
     post: (path, body) =>
       request(path, {
         method: "POST",
