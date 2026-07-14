@@ -307,7 +307,10 @@ export default function AgentRuntimeSettingsCard() {
         setError(null);
       })
       .catch((loadError: unknown) => {
-        if (!cancelled) setError(toUserMessage(loadError));
+        if (!cancelled) {
+          setLegacy(false);
+          setError(toUserMessage(loadError));
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -327,6 +330,7 @@ export default function AgentRuntimeSettingsCard() {
       if (config.extended) setView(config.extended);
       else await load();
     } catch (mutationError: unknown) {
+      setLegacy(false);
       setError(toUserMessage(mutationError) || UPDATE_ERROR);
     } finally {
       setBusy(false);

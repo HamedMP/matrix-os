@@ -242,6 +242,142 @@ describe("AgentSection", () => {
     expect(screen.getByText(/needs a newer gateway for runtime and provider controls/i)).toBeTruthy();
   });
 
+  it("replaces a stale legacy fallback when a current-contract load is malformed", async () => {
+    render(<AgentSection />);
+    expect(await screen.findByText("Runtime update needed")).toBeTruthy();
+
+    const invalidApi = {
+      ...api,
+      get: vi.fn((path: string) => path === "/api/settings/agent"
+        ? Promise.resolve({ contractVersion: 2 })
+        : Promise.resolve({})),
+    };
+    act(() => useConnection.setState({ api: invalidApi as never }));
+
+    await waitFor(() => expect(screen.queryByText("Runtime update needed")).toBeNull());
+    expect(screen.getAllByText("Something went wrong. Please try again.").length).toBeGreaterThan(0);
+  });
+
+  it("replaces a stale legacy fallback when a current-contract mutation is malformed", async () => {
+    const current = {
+      identity: {},
+      kernel: { model: null, effort: null },
+      availableModels: [{ id: "sonnet", label: "Sonnet", tier: "Balanced" }],
+      availableEfforts: ["medium"],
+      defaults: { model: "sonnet", effort: "medium" },
+      contractVersion: 2,
+      revision: 7,
+      chat: {
+        provider: "anthropic",
+        model: "sonnet",
+        effort: "medium",
+        source: "default",
+        authKind: "platform",
+      },
+      runtime: {
+        selected: "hermes",
+        transition: null,
+        options: [
+          {
+            id: "hermes",
+            displayName: "Hermes",
+            installState: "installed",
+            health: "healthy",
+            selectionState: "active",
+            configured: true,
+            capabilities: ["provider_catalog", "model_selection", "authentication"],
+          },
+          {
+            id: "openclaw",
+            displayName: "OpenClaw",
+            installState: "installed",
+            health: "stopped",
+            selectionState: "available",
+            configured: false,
+            capabilities: ["provider_catalog", "model_selection", "authentication"],
+          },
+        ],
+      },
+      providers: [
+        {
+          id: "anthropic",
+          displayName: "Anthropic",
+          runtime: null,
+          scopes: ["chat"],
+          authKind: "platform",
+          supportedAuthKinds: ["platform", "api_key", "oauth_login"],
+          models: [{
+            id: "sonnet",
+            displayName: "Sonnet",
+            capabilities: ["tools", "reasoning"],
+            efforts: ["medium"],
+            available: true,
+          }],
+          authStatus: { state: "ready", authenticated: true, action: "none" },
+        },
+        {
+          id: "openrouter",
+          displayName: "OpenRouter",
+          runtime: "hermes",
+          scopes: ["messaging"],
+          authKind: "api_key",
+          supportedAuthKinds: ["api_key"],
+          models: [{
+            id: "openrouter/auto",
+            displayName: "Auto",
+            capabilities: ["tools"],
+            efforts: [],
+            available: true,
+          }],
+          authStatus: { state: "action_required", authenticated: false, action: "enter_api_key" },
+        },
+      ],
+      currentSelection: {
+        chat: {
+          provider: "anthropic",
+          model: "sonnet",
+          effort: "medium",
+          source: "default",
+          authKind: "platform",
+        },
+        messaging: {
+          runtime: "hermes",
+          provider: "openrouter",
+          model: "openrouter/auto",
+          configured: true,
+        },
+      },
+    };
+    api.get.mockImplementation((path: string) => path === "/api/settings/agent"
+      ? Promise.resolve(current)
+      : Promise.resolve({}));
+    let resolveMutation!: (value: unknown) => void;
+    api.put.mockReturnValue(new Promise((resolve) => {
+      resolveMutation = resolve;
+    }));
+    render(<AgentSection />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Use OpenClaw" }));
+    const legacyApi = {
+      ...api,
+      get: vi.fn((path: string) => path === "/api/settings/agent"
+        ? Promise.resolve({
+          kernel: { model: null, effort: null },
+          availableModels: [{ id: "sonnet", label: "Sonnet", tier: "Balanced" }],
+          availableEfforts: ["medium"],
+          defaults: { model: "sonnet", effort: "medium" },
+        })
+        : Promise.resolve({})),
+    };
+    act(() => useConnection.setState({ api: legacyApi as never }));
+    expect(await screen.findByText("Runtime update needed")).toBeTruthy();
+
+    await act(async () => resolveMutation({ contractVersion: 2 }));
+
+    await waitFor(() => expect(screen.queryByText("Runtime update needed")).toBeNull());
+    expect(screen.getAllByText("Something went wrong. Please try again.").length).toBeGreaterThan(0);
+  });
+
   it("does not crash when provider status omits agents", async () => {
     render(<AgentSection />);
 
