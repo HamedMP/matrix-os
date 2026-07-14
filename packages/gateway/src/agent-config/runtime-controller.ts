@@ -356,36 +356,37 @@ export function createAgentRuntimeController(
 
   async function performReconcile(): Promise<void> {
     if (closed) return;
-    await mkdir(runtimeDir, { recursive: true, mode: 0o700 });
-    let staleLock;
-    try {
-      staleLock = await lstat(lockPath);
-    } catch (error) {
-      if (!isErrno(error, "ENOENT")) {
-        console.warn(
-          "[agent-config] Runtime reconciliation lock check failed:",
-          error instanceof Error ? error.name : "UnknownError",
-        );
-        return;
-      }
-    }
-    if (staleLock?.isSymbolicLink()) {
-      console.warn("[agent-config] Ignoring untrusted runtime transition lock");
-      return;
-    }
-    if (staleLock !== undefined) {
-      if (!staleLock.isFile()) {
-        console.warn("[agent-config] Ignoring invalid runtime transition lock");
-        return;
-      }
-      await unlink(lockPath).catch((error: unknown) => {
-        if (!isErrno(error, "ENOENT")) throw error;
-      });
-    }
-
-    const releaseLock = await acquireLock(lockPath);
     const probeDeadline = deadlineSignal(Math.min(timeoutMs, 2_000));
+    let releaseLock: (() => Promise<void>) | null = null;
     try {
+      await mkdir(runtimeDir, { recursive: true, mode: 0o700 });
+      let staleLock;
+      try {
+        staleLock = await lstat(lockPath);
+      } catch (error) {
+        if (!isErrno(error, "ENOENT")) {
+          console.warn(
+            "[agent-config] Runtime reconciliation lock check failed:",
+            error instanceof Error ? error.name : "UnknownError",
+          );
+          return;
+        }
+      }
+      if (staleLock?.isSymbolicLink()) {
+        console.warn("[agent-config] Ignoring untrusted runtime transition lock");
+        return;
+      }
+      if (staleLock !== undefined) {
+        if (!staleLock.isFile()) {
+          console.warn("[agent-config] Ignoring invalid runtime transition lock");
+          return;
+        }
+        await unlink(lockPath).catch((error: unknown) => {
+          if (!isErrno(error, "ENOENT")) throw error;
+        });
+      }
+
+      releaseLock = await acquireLock(lockPath);
       await validateStartupTransitionMarker(transitionPath);
       const config = await readConfig(configPath);
       const agent = readAgentConfig(config);
@@ -437,6 +438,7 @@ export function createAgentRuntimeController(
       });
     } finally {
       probeDeadline.close();
+      if (releaseLock === null) return;
       let transitionStat;
       try {
         transitionStat = await lstat(transitionPath);
