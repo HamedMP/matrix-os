@@ -1,6 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+validate_request() {
+  case "${1:-}" in
+    status)
+      [ "$#" -eq 1 ] || return 1
+      ;;
+    install|switch)
+      [ "$#" -eq 2 ] || return 1
+      case "${2:-}" in
+        hermes|openclaw) ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_request "$@" || { printf '{"ok":false,"code":"invalid_request"}\n'; exit 2; }
+
+# All mutations cross one validated, root-owned host-control boundary. This
+# keeps the visible terminal command unprivileged and gives the hardened sudo
+# policy one exact executable to allow instead of exposing installer commands.
+if [ "${1:-}" != status ] && [ "$(id -u)" -ne 0 ]; then
+  exec sudo -n /opt/matrix/bin/matrix-agent-runtime-control "$@"
+fi
+
 if [ -r /opt/matrix/env/host.env ]; then
   source /opt/matrix/env/host.env
 fi
@@ -11,17 +36,21 @@ fi
 
 MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-${MATRIX_HOME:-/home/matrix/home}}"
 MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"
+MATRIX_RUNTIME_USER="${MATRIX_RUNTIME_USER:-matrix}"
+MATRIX_RUNTIME_GROUP="${MATRIX_RUNTIME_GROUP:-$MATRIX_RUNTIME_USER}"
+install_timeout_seconds=1810
 lock_dir="$MATRIX_RUNTIME_HOME/system/agent-runtime"
-install -d -m 0700 "$lock_dir"
+install -d -o "$MATRIX_RUNTIME_USER" -g "$MATRIX_RUNTIME_GROUP" -m 0700 "$lock_dir"
 exec 9>"$lock_dir/host-control.lock"
+chown "$MATRIX_RUNTIME_USER:$MATRIX_RUNTIME_GROUP" "$lock_dir/host-control.lock" 2>/dev/null || true
 flock -w 30 9 || { printf '{"ok":false,"code":"runtime_busy"}\n'; exit 4; }
 
 is_active() {
-  sudo systemctl is-active --quiet "$1"
+  systemctl is-active --quiet "$1"
 }
 
 is_enabled() {
-  sudo systemctl is-enabled --quiet "$1"
+  systemctl is-enabled --quiet "$1"
 }
 
 print_status() {
@@ -50,6 +79,31 @@ openclaw_admission_ready() {
   [ "$memory_available_kib" -ge 786432 ] && [ "$disk_available_kib" -ge 1048576 ]
 }
 
+install_runtime() {
+  local runtime="$1" installer executable
+  case "$runtime" in
+    hermes)
+      installer=/opt/matrix/bin/matrix-install-hermes
+      executable="$MATRIX_RUNTIME_HOME/.local/bin/hermes"
+      ;;
+    openclaw)
+      installer=/opt/matrix/bin/matrix-install-openclaw
+      executable="$MATRIX_NODE_PREFIX/bin/openclaw"
+      ;;
+    *) printf '{"ok":false,"code":"invalid_request"}\n'; exit 2 ;;
+  esac
+
+  [ -x "$installer" ] || { printf '{"ok":false,"code":"runtime_unavailable"}\n'; exit 3; }
+  if [ ! -x "$executable" ]; then
+    if ! timeout "$install_timeout_seconds" "$installer"; then
+      printf '{"ok":false,"code":"install_failed"}\n'
+      exit 5
+    fi
+  fi
+  [ -x "$executable" ] || { printf '{"ok":false,"code":"install_failed"}\n'; exit 5; }
+  printf '{"ok":true,"runtime":"%s","installed":true}\n' "$runtime"
+}
+
 switch_runtime() {
   local runtime="$1" target_unit other_unit prior_active=false prior_enabled=false
   case "$runtime" in
@@ -70,19 +124,19 @@ switch_runtime() {
 
   is_active "$other_unit" && prior_active=true
   is_enabled "$other_unit" && prior_enabled=true
-  if ! sudo timeout 20 systemctl disable --now "$other_unit"; then
+  if ! timeout 20 systemctl disable --now "$other_unit"; then
     printf '{"ok":false,"code":"deactivation_failed"}\n'
     exit 5
   fi
-  if ! sudo timeout 20 systemctl enable --now "$target_unit" || ! wait_active "$target_unit"; then
-    sudo timeout 20 systemctl disable --now "$target_unit" || true
+  if ! timeout 20 systemctl enable --now "$target_unit" || ! wait_active "$target_unit"; then
+    timeout 20 systemctl disable --now "$target_unit" || true
     if [ "$prior_enabled" = true ]; then
-      if ! sudo timeout 20 systemctl enable --now "$other_unit" || ! wait_active "$other_unit"; then
+      if ! timeout 20 systemctl enable --now "$other_unit" || ! wait_active "$other_unit"; then
         printf '{"ok":false,"code":"rollback_failed"}\n'
         exit 6
       fi
     elif [ "$prior_active" = true ]; then
-      if ! sudo timeout 20 systemctl start "$other_unit" || ! wait_active "$other_unit"; then
+      if ! timeout 20 systemctl start "$other_unit" || ! wait_active "$other_unit"; then
         printf '{"ok":false,"code":"rollback_failed"}\n'
         exit 6
       fi
@@ -95,11 +149,12 @@ switch_runtime() {
 
 case "${1:-}" in
   status)
-    [ "$#" -eq 1 ] || { printf '{"ok":false,"code":"invalid_request"}\n'; exit 2; }
     print_status
     ;;
+  install)
+    install_runtime "$2"
+    ;;
   switch)
-    [ "$#" -eq 2 ] || { printf '{"ok":false,"code":"invalid_request"}\n'; exit 2; }
     case "${2:-}" in
       hermes) switch_runtime hermes ;;
       openclaw) switch_runtime openclaw ;;

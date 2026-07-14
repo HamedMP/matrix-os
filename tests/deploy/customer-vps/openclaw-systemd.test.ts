@@ -9,6 +9,7 @@ const installerPath = "distro/customer-vps/host-bin/matrix-install-openclaw";
 const wrapperPath = "distro/customer-vps/host-bin/matrix-openclaw-gateway";
 const controllerPath = "distro/customer-vps/host-bin/matrix-agent-runtime-control";
 const unitPath = "distro/customer-vps/systemd/matrix-openclaw-gateway.service";
+const legacyInstallUnitPath = "distro/customer-vps/systemd/matrix-openclaw-install.service";
 
 describe("customer VPS OpenClaw runtime", () => {
   it("pins and integrity-checks the optional OpenClaw install", async () => {
@@ -30,10 +31,22 @@ describe("customer VPS OpenClaw runtime", () => {
   it("fails admission before downloading on constrained hosts", async () => {
     const installer = await readFile(installerPath, "utf8");
 
+    expect(installer).toContain('memory_total_kib" -lt 3670016');
+    expect(installer).not.toContain('memory_total_kib" -lt 4194304');
     expect(installer).toContain("MemAvailable");
     expect(installer).toContain("786432");
     expect(installer).toContain("1048576");
     expect(installer.indexOf("check_admission")).toBeLessThan(installer.indexOf("curl --fail"));
+  });
+
+  it("keeps the verified archive readable while dropping to the runtime user without PAM", async () => {
+    const installer = await readFile(installerPath, "utf8");
+
+    expect(installer).toContain('chown "root:$MATRIX_RUNTIME_USER" "$tmp_dir" "$archive"');
+    expect(installer).toContain('chmod 0750 "$tmp_dir"');
+    expect(installer).toContain('chmod 0640 "$archive"');
+    expect(installer).toContain('setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_USER" --init-groups');
+    expect(installer).toContain('run_installer_as_runtime_user env \\');
   });
 
   it("keeps gateway authentication out of argv and binds to loopback", async () => {
@@ -71,16 +84,40 @@ describe("customer VPS OpenClaw runtime", () => {
     expect(unit).toContain("ReadWritePaths=/home/matrix/home/.openclaw /home/matrix/home/system/agent-runtime");
   });
 
-  it("exposes only exact status and switch commands", async () => {
+  it("installs optional runtimes directly inside the validated root-owned host-control path", async () => {
+    const controller = await readFile(controllerPath, "utf8");
+
+    expect(controller).toContain('exec sudo -n /opt/matrix/bin/matrix-agent-runtime-control "$@"');
+    expect(controller).toContain("install)");
+    expect(controller).toContain("/opt/matrix/bin/matrix-install-hermes");
+    expect(controller).toContain("/opt/matrix/bin/matrix-install-openclaw");
+    expect(controller).toContain('timeout "$install_timeout_seconds" "$installer"');
+    expect(controller).not.toContain('systemctl start "$unit"');
+    await expect(access(legacyInstallUnitPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("exposes only exact status, install, and switch commands", async () => {
     const controller = await readFile(controllerPath, "utf8");
 
     expect(controller).toContain('case "${1:-}" in');
     expect(controller).toContain("status)");
+    expect(controller).toContain("install)");
     expect(controller).toContain("switch)");
     expect(controller).toContain('case "${2:-}" in');
     expect(controller).toContain("hermes)");
     expect(controller).toContain("openclaw)");
     expect(controller).toContain("flock -w 30");
+    expect(controller).toContain(
+      'install -d -o "$MATRIX_RUNTIME_USER" -g "$MATRIX_RUNTIME_GROUP" -m 0700 "$lock_dir"',
+    );
+    const lockOpen = controller.indexOf('exec 9>"$lock_dir/host-control.lock"');
+    const lockOwnerRepair = controller.indexOf(
+      'chown "$MATRIX_RUNTIME_USER:$MATRIX_RUNTIME_GROUP" "$lock_dir/host-control.lock"',
+    );
+    const lockAcquire = controller.indexOf("flock -w 30");
+    expect(lockOpen).toBeGreaterThan(-1);
+    expect(lockOwnerRepair).toBeGreaterThan(lockOpen);
+    expect(lockAcquire).toBeGreaterThan(lockOwnerRepair);
     expect(controller).toContain("matrix-hermes-dashboard.service");
     expect(controller).toContain("matrix-openclaw-gateway.service");
     expect(controller).toContain("systemctl is-active --quiet");

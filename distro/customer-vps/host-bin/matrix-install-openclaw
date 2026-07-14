@@ -22,6 +22,14 @@ log() {
   printf 'matrix-install-openclaw: %s\n' "$*"
 }
 
+run_installer_as_runtime_user() {
+  if [ "$(id -u)" = "0" ] && command -v setpriv >/dev/null 2>&1; then
+    timeout 300 setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_USER" --init-groups "$@"
+    return
+  fi
+  timeout 300 sudo -H -u "$MATRIX_RUNTIME_USER" "$@"
+}
+
 check_admission() {
   local cpu_count memory_total_kib memory_available_kib disk_available_kib
   cpu_count="$(getconf _NPROCESSORS_ONLN)"
@@ -29,7 +37,7 @@ check_admission() {
   memory_available_kib="$(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo)"
   disk_available_kib="$(df -Pk "$MATRIX_RUNTIME_HOME" | awk 'NR == 2 { print $4 }')"
 
-  if [ "$cpu_count" -lt 2 ] || [ "$memory_total_kib" -lt 4194304 ]; then
+  if [ "$cpu_count" -lt 2 ] || [ "$memory_total_kib" -lt 3670016 ]; then
     echo "matrix-install-openclaw: computer does not meet the runtime baseline" >&2
     exit 2
   fi
@@ -74,9 +82,12 @@ curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
 printf '%s  %s\n' "$OPENCLAW_SHA512" "$archive" >"$tmp_dir/openclaw.sha512"
 sha512sum -c "$tmp_dir/openclaw.sha512"
 tar -tzf "$archive" package/npm-shrinkwrap.json package/package.json package/openclaw.mjs >/dev/null
+chown "root:$MATRIX_RUNTIME_USER" "$tmp_dir" "$archive"
+chmod 0750 "$tmp_dir"
+chmod 0640 "$archive"
 
 log "installing pinned OpenClaw runtime"
-timeout 300 sudo -H -u "$MATRIX_RUNTIME_USER" env \
+run_installer_as_runtime_user env \
   HOME="$MATRIX_RUNTIME_HOME" \
   OPENCLAW_STATE_DIR="$OPENCLAW_STATE_DIR" \
   PATH="$MATRIX_NODE_PREFIX/bin:/usr/local/bin:/usr/bin:/bin" \
