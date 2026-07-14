@@ -308,6 +308,7 @@ export default function AgentRuntimeSettingsCard() {
       })
       .catch((loadError: unknown) => {
         if (!cancelled) {
+          setView(null);
           setLegacy(false);
           setError(toUserMessage(loadError));
         }
@@ -330,6 +331,7 @@ export default function AgentRuntimeSettingsCard() {
       if (config.extended) setView(config.extended);
       else await load();
     } catch (mutationError: unknown) {
+      setView(null);
       setLegacy(false);
       setError(toUserMessage(mutationError) || UPDATE_ERROR);
     } finally {
@@ -353,6 +355,8 @@ export default function AgentRuntimeSettingsCard() {
       await api.post(API_KEY_PATH, { apiKey: key });
       await load();
     } catch (keyError: unknown) {
+      setView(null);
+      setLegacy(false);
       setError(toUserMessage(keyError));
     } finally {
       setBusy(false);

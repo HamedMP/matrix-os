@@ -218,6 +218,30 @@ describe("AgentSection", () => {
       { runtime: "openclaw", revision: 7 },
     ));
 
+    fireEvent.click(screen.getByRole("button", { name: "Configure Hermes provider" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/api/terminal/sessions",
+      expect.objectContaining({ cmd: "hermes model", cwd: "projects" }),
+    ));
+
+    const invalidApi = {
+      ...api,
+      get: vi.fn((path: string) => path === "/api/settings/agent"
+        ? Promise.resolve({ contractVersion: 2 })
+        : Promise.resolve({})),
+    };
+    act(() => useConnection.setState({ api: invalidApi as never }));
+
+    await waitFor(() => expect(screen.queryByText("Messaging runtime")).toBeNull());
+    expect(screen.queryByRole("button", { name: "Use OpenClaw" })).toBeNull();
+    expect(screen.getAllByText("Something went wrong. Please try again.").length).toBeGreaterThan(0);
+
+    act(() => useConnection.setState({ api: api as never }));
+    expect(await screen.findByText("Messaging runtime")).toBeTruthy();
+    api.get.mockImplementation((path: string) => path === "/api/settings/agent"
+      ? Promise.resolve({ contractVersion: 2 })
+      : Promise.resolve({}));
+
     fireEvent.click(screen.getByRole("button", { name: "Use my API key" }));
     const keyInput = screen.getByLabelText("Anthropic API key") as HTMLInputElement;
     fireEvent.change(keyInput, { target: { value: "sk-ant-desktop-test" } });
@@ -227,12 +251,8 @@ describe("AgentSection", () => {
       "/api/settings/api-key",
       { apiKey: "sk-ant-desktop-test" },
     ));
-
-    fireEvent.click(screen.getByRole("button", { name: "Configure Hermes provider" }));
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
-      "/api/terminal/sessions",
-      expect.objectContaining({ cmd: "hermes model", cwd: "projects" }),
-    ));
+    await waitFor(() => expect(screen.queryByText("Messaging runtime")).toBeNull());
+    expect(screen.queryByRole("button", { name: "Use OpenClaw" })).toBeNull();
   });
 
   it("shows a runtime update fallback for older gateways", async () => {
@@ -258,7 +278,7 @@ describe("AgentSection", () => {
     expect(screen.getAllByText("Something went wrong. Please try again.").length).toBeGreaterThan(0);
   });
 
-  it("replaces a stale legacy fallback when a current-contract mutation is malformed", async () => {
+  it("clears stale current-contract controls when a mutation response is malformed", async () => {
     const current = {
       identity: {},
       kernel: { model: null, effort: null },
@@ -358,23 +378,10 @@ describe("AgentSection", () => {
     render(<AgentSection />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Use OpenClaw" }));
-    const legacyApi = {
-      ...api,
-      get: vi.fn((path: string) => path === "/api/settings/agent"
-        ? Promise.resolve({
-          kernel: { model: null, effort: null },
-          availableModels: [{ id: "sonnet", label: "Sonnet", tier: "Balanced" }],
-          availableEfforts: ["medium"],
-          defaults: { model: "sonnet", effort: "medium" },
-        })
-        : Promise.resolve({})),
-    };
-    act(() => useConnection.setState({ api: legacyApi as never }));
-    expect(await screen.findByText("Runtime update needed")).toBeTruthy();
-
     await act(async () => resolveMutation({ contractVersion: 2 }));
 
-    await waitFor(() => expect(screen.queryByText("Runtime update needed")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("Messaging runtime")).toBeNull());
+    expect(screen.queryByRole("button", { name: "Use OpenClaw" })).toBeNull();
     expect(screen.getAllByText("Something went wrong. Please try again.").length).toBeGreaterThan(0);
   });
 
