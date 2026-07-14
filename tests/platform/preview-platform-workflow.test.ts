@@ -59,6 +59,17 @@ describe("preview platform workflow", () => {
     expect(workflow).toContain('_NEXT_PUBLIC_MATRIX_APP_URL=$preview_public_url');
   });
 
+  it("configures the public app origin for the auth shell server runtime", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain(
+      "NEXT_PUBLIC_MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}",
+    );
+  });
+
   it("accepts the Cloud Run service host used by the preview Cloudflare origin", () => {
     const workflow = readFileSync(
       join(root, ".github/workflows/preview-platform.yml"),
