@@ -6,7 +6,9 @@ function createRpc(responses: Record<string, unknown[]>) {
     call: vi.fn(async (method: string) => {
       const queue = responses[method];
       if (!queue?.length) throw new Error(`Unexpected RPC method: ${method}`);
-      return queue.shift();
+      const response = queue.shift();
+      if (response instanceof Error) throw response;
+      return response;
     }),
     close: vi.fn(async () => {}),
   };
@@ -213,6 +215,58 @@ describe("OpenClaw messaging runtime adapter", () => {
     });
   });
 
+  it("restores the prior primary when the initial patch outcome is unknown", async () => {
+    const rpc = createRpc({
+      "models.list": [models],
+      "models.authStatus": [auth],
+      "config.get": [
+        config("openai/gpt-5.4", "before-hash"),
+        config("anthropic/claude-opus-4-6", "rollback-read-hash"),
+      ],
+      "config.patch": [new Error("connection closed after write"), { ok: true }],
+    });
+    const adapter = createOpenClawRuntimeAdapter({ rpc, lifecycle: lifecycle() });
+
+    await expect(adapter.configure({
+      provider: "anthropic",
+      model: "claude-opus-4-6",
+    }, new AbortController().signal)).rejects.toMatchObject({ kind: "invalid_response" });
+
+    const patchCalls = rpc.call.mock.calls.filter(([method]) => method === "config.patch");
+    expect(patchCalls).toHaveLength(2);
+    expect(patchCalls[1]?.[1]).toEqual({
+      raw: JSON.stringify({
+        agents: { defaults: { model: { primary: "openai/gpt-5.4" } } },
+      }),
+      baseHash: "rollback-read-hash",
+    });
+  });
+
+  it("can restore an initially unset primary after a verification mismatch", async () => {
+    const rpc = createRpc({
+      "models.list": [models],
+      "models.authStatus": [auth],
+      "config.get": [
+        config(null, "before-hash"),
+        config("openai/gpt-5.4", "mutated-hash"),
+        config("anthropic/claude-opus-4-6", "rollback-read-hash"),
+      ],
+      "config.patch": [{ ok: true }, { ok: true }],
+    });
+    const adapter = createOpenClawRuntimeAdapter({ rpc, lifecycle: lifecycle() });
+
+    await expect(adapter.configure({
+      provider: "anthropic",
+      model: "claude-opus-4-6",
+    }, new AbortController().signal)).rejects.toMatchObject({ kind: "invalid_response" });
+
+    const patchCalls = rpc.call.mock.calls.filter(([method]) => method === "config.patch");
+    expect(patchCalls[1]?.[1]).toEqual({
+      raw: JSON.stringify({ agents: { defaults: { model: { primary: null } } } }),
+      baseHash: "rollback-read-hash",
+    });
+  });
+
   it("fails closed when OpenClaw is absent and health-checks active installs", async () => {
     const missingRpc = createRpc({});
     const missing = createOpenClawRuntimeAdapter({
@@ -227,6 +281,19 @@ describe("OpenClaw messaging runtime adapter", () => {
       setupAction: "install",
     });
     expect(missingRpc.call).not.toHaveBeenCalled();
+
+    const stoppedRpc = createRpc({});
+    const stopped = createOpenClawRuntimeAdapter({
+      rpc: stoppedRpc,
+      lifecycle: lifecycle({ installed: true, active: false }),
+    });
+    await expect(stopped.probe(new AbortController().signal)).resolves.toMatchObject({
+      installState: "installed",
+      health: "stopped",
+      selectionState: "available",
+      configured: false,
+    });
+    expect(stoppedRpc.call).not.toHaveBeenCalled();
 
     const activeRpc = createRpc({
       health: [{ ts: 1_789_000_000_000 }],
