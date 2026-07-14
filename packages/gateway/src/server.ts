@@ -184,7 +184,7 @@ import {
   createHermesDashboardClient,
   validateHermesDashboardUrl,
 } from "./agent-config/hermes-client.js";
-import { createHermesRuntimeSource } from "./agent-config/hermes-source.js";
+import { createHermesAgentRuntimeServices } from "./agent-config/runtime-services.js";
 import { createConversationRoutes } from "./routes/conversations.js";
 import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
 import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
@@ -3917,12 +3917,18 @@ export async function createGateway(config: GatewayConfig) {
     throw err;
   }
   const hermesClient = createHermesDashboardClient({ baseUrl: hermesDashboardUrl });
+  const agentRuntimeServices = createHermesAgentRuntimeServices({
+    homePath,
+    client: hermesClient,
+  });
+  await agentRuntimeServices.controller.reconcile();
 
   // T978-T979: Settings API routes
   const settingsRoutes = createSettingsRoutes({
     homePath,
     channelManager,
-    agentRuntimeSource: createHermesRuntimeSource(hermesClient.readJson),
+    agentRuntimeSource: agentRuntimeServices.source,
+    agentRuntimeController: agentRuntimeServices.controller,
   });
   app.route("/api/settings", settingsRoutes);
   app.route("/api/hermes", createHermesRoutes({ client: hermesClient }));
@@ -4210,6 +4216,7 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
+      await agentRuntimeServices.controller.close();
       await codingAgentTurnLifecycle.shutdown();
       codingAgentThreadStream?.shutdown();
       codingAgentAttentionNotifications?.dispose();

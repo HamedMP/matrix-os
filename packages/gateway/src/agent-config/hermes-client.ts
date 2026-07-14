@@ -134,8 +134,12 @@ export function createHermesDashboardClient(options: {
     }
   }
 
-  async function readJson(path: string, signal: AbortSignal): Promise<unknown> {
-    const response = await fetchPath(path, { signal });
+  async function requestJson(
+    path: string,
+    init: Omit<RequestInit, "signal" | "redirect">,
+    signal: AbortSignal,
+  ): Promise<unknown> {
+    const response = await fetchPath(path, { ...init, signal });
     if (!response.ok) throw new HermesUpstreamResponseError();
     const body = await readBoundedBody(response);
     try {
@@ -145,7 +149,11 @@ export function createHermesDashboardClient(options: {
     }
   }
 
-  return { fetch: fetchPath, readJson };
+  async function readJson(path: string, signal: AbortSignal): Promise<unknown> {
+    return requestJson(path, { method: "GET" }, signal);
+  }
+
+  return { fetch: fetchPath, readJson, requestJson };
 }
 
 export type HermesDashboardClient = ReturnType<typeof createHermesDashboardClient>;
