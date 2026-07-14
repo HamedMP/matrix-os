@@ -20,6 +20,10 @@ is_active() {
   sudo systemctl is-active --quiet "$1"
 }
 
+is_enabled() {
+  sudo systemctl is-enabled --quiet "$1"
+}
+
 print_status() {
   local hermes_installed=false hermes_running=false openclaw_installed=false openclaw_running=false
   [ -x "$MATRIX_RUNTIME_HOME/.local/bin/hermes" ] && hermes_installed=true
@@ -47,7 +51,7 @@ openclaw_admission_ready() {
 }
 
 switch_runtime() {
-  local runtime="$1" target_unit other_unit prior_active=false
+  local runtime="$1" target_unit other_unit prior_active=false prior_enabled=false
   case "$runtime" in
     hermes)
       [ -x "$MATRIX_RUNTIME_HOME/.local/bin/hermes" ] || { printf '{"ok":false,"code":"runtime_unavailable"}\n'; exit 3; }
@@ -65,10 +69,19 @@ switch_runtime() {
   esac
 
   is_active "$other_unit" && prior_active=true
-  sudo systemctl stop "$other_unit"
-  if ! sudo timeout 20 systemctl start "$target_unit" || ! wait_active "$target_unit"; then
-    sudo systemctl stop "$target_unit" || true
-    if [ "$prior_active" = true ]; then
+  is_enabled "$other_unit" && prior_enabled=true
+  if ! sudo timeout 20 systemctl disable --now "$other_unit"; then
+    printf '{"ok":false,"code":"deactivation_failed"}\n'
+    exit 5
+  fi
+  if ! sudo timeout 20 systemctl enable --now "$target_unit" || ! wait_active "$target_unit"; then
+    sudo timeout 20 systemctl disable --now "$target_unit" || true
+    if [ "$prior_enabled" = true ]; then
+      if ! sudo timeout 20 systemctl enable --now "$other_unit" || ! wait_active "$other_unit"; then
+        printf '{"ok":false,"code":"rollback_failed"}\n'
+        exit 6
+      fi
+    elif [ "$prior_active" = true ]; then
       if ! sudo timeout 20 systemctl start "$other_unit" || ! wait_active "$other_unit"; then
         printf '{"ok":false,"code":"rollback_failed"}\n'
         exit 6
