@@ -43,6 +43,9 @@ export function normalizeAgentConfig(raw: unknown): AgentConfigView {
   const kernel = asRecord(root.kernel);
   const defaults = asRecord(root.defaults);
   const extended = AgentSettingsViewSchema.safeParse(raw);
+  if (!extended.success && root.contractVersion !== undefined) {
+    throw new Error("Agent settings response is invalid");
+  }
   return {
     kernel: { model: asStringOrNull(kernel.model), effort: asStringOrNull(kernel.effort) },
     availableModels: Array.isArray(root.availableModels)

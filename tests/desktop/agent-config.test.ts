@@ -37,6 +37,17 @@ describe("normalizeAgentConfig", () => {
     expect(cfg.defaults).toEqual({ model: "a", effort: "low" });
   });
 
+  it("rejects a malformed current contract instead of labeling it as an older gateway", () => {
+    expect(() => normalizeAgentConfig({
+      contractVersion: 2,
+      identity: {},
+      kernel: { model: "sonnet", effort: "medium" },
+      availableModels: [{ id: "sonnet", label: "Sonnet", tier: "Balanced" }],
+      availableEfforts: ["medium"],
+      defaults: { model: "sonnet", effort: "medium" },
+    })).toThrow("Agent settings response is invalid");
+  });
+
   it("preserves the validated additive runtime and provider contract", () => {
     const cfg = normalizeAgentConfig({
       identity: {},
