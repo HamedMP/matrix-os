@@ -308,9 +308,11 @@ test.describe("Visual regression", () => {
     await page.getByTestId("dock-settings").dispatchEvent("click");
     await page.getByText("Agent", { exact: true }).click();
     await expect(page.getByText("Chat agent", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Install OpenClaw" })).toBeVisible();
     await page.mouse.move(720, 450);
     await expect(page).toHaveScreenshot("agent-settings.png", {
-      maxDiffPixelRatio: 0.01,
+      animations: "allow",
+      maxDiffPixelRatio: 0.001,
     });
   });
 

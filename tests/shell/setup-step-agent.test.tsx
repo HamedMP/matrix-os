@@ -4,7 +4,6 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const calls = vi.hoisted(() => ({ opened: [] as string[] }));
-vi.mock("@/lib/terminal-launch", () => ({ createTerminalLaunchPath: (id: string) => `__terminal__:${id}` }));
 
 async function load() {
   vi.resetModules();
@@ -43,6 +42,6 @@ describe("AgentStep", () => {
     );
     const connect = await screen.findByRole("button", { name: /connect/i });
     fireEvent.click(connect);
-    expect(calls.opened.some((p) => p.includes("codex-login"))).toBe(true);
+    expect(calls.opened).toContain("codex-login");
   });
 });

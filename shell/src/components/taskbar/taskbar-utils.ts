@@ -20,7 +20,7 @@ const BUILT_IN_START_APPS: readonly (Omit<TaskbarAppEntry, "iconUrl"> & { iconSl
   { name: "Chat", path: "__chat__", iconSlug: "chat" },
 ];
 
-/** Window paths may carry an instance suffix (`__terminal__:setup`, app
+/** Window paths may carry an instance suffix (`__terminal__:session`, app
     multi-windows) — the app identity is the base path before `:`. */
 export function baseWindowPath(path: string): string {
   return path.split(":")[0];

@@ -55,9 +55,9 @@ import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/featur
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
 import {
-  createTerminalLaunchPath,
   enqueueTerminalLaunch,
   TERMINAL_SETUP_WINDOW_PATH,
+  type TerminalLaunchAction,
 } from "@/lib/terminal-launch";
 import {
   loadShellSnapshot,
@@ -477,7 +477,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     }
   }, [focusCanvasWindow, openWindow, wmRestoreAndFocusWindow]);
 
-  const openSetupTerminal = (launchPath: string) => {
+  const openSetupTerminal = (action: TerminalLaunchAction) => {
     const windows = useWindowManager.getState().windows;
     const focusedId = useWindowManager.getState().focusedWindowId;
     const focusedTerminal = windows.find((w) => w.id === focusedId && w.path.startsWith("__terminal__"));
@@ -510,7 +510,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           );
         }
       }
-      enqueueTerminalLaunch(launchPath, win?.id);
+      enqueueTerminalLaunch(action, win?.id);
     });
   };
 
@@ -1720,7 +1720,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         onOpenChange={setSettingsOpen}
         onOpenAgentTerminal={(action) => {
           setSettingsOpen(false);
-          openSetupTerminal(createTerminalLaunchPath(action));
+          openSetupTerminal(action);
         }}
       />
       {/* Single ChatPopover instance shared by desktop + mobile dock

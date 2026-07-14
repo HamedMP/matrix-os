@@ -3,6 +3,7 @@ import { useSetupChecklist, type SetupStepId } from "@/hooks/useSetupChecklist";
 import { AgentStep } from "./steps/AgentStep";
 import { GithubStep } from "./steps/GithubStep";
 import { RepoStep } from "./steps/RepoStep";
+import type { TerminalLaunchAction } from "@/lib/terminal-launch";
 
 const STEP_META: Record<SetupStepId, { title: string }> = {
   agent: { title: "Connect a coding agent" },
@@ -10,7 +11,7 @@ const STEP_META: Record<SetupStepId, { title: string }> = {
   repo: { title: "Clone or import a repo" },
 };
 
-export function SetupChecklist({ onOpenTerminal }: { onOpenTerminal: (path: string) => void }) {
+export function SetupChecklist({ onOpenTerminal }: { onOpenTerminal: (action: TerminalLaunchAction) => void }) {
   const { steps, activeId, dismissed, dismiss, refresh } = useSetupChecklist();
   if (dismissed) return null;
   const doneCount = steps.filter((s) => s.status === "done").length;

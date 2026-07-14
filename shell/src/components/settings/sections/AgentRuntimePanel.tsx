@@ -68,10 +68,12 @@ function StatusBadge({ state }: { state: string }) {
 function RuntimeCards({
   view,
   busy,
+  onOpenTerminal,
   onSwitch,
 }: {
   view: AgentSettingsView;
   busy: boolean;
+  onOpenTerminal?: (action: TerminalLaunchAction) => void;
   onSwitch: (runtime: AgentRuntimeId) => void;
 }) {
   return (
@@ -89,6 +91,10 @@ function RuntimeCards({
         {view.runtime.options.map((runtime) => {
           const selected = runtime.id === view.runtime.selected;
           const installed = runtime.installState === "installed";
+          const installAction: TerminalLaunchAction = runtime.id === "hermes"
+            ? "hermes-install"
+            : "openclaw-install";
+          const canInstall = !installed && runtime.setupAction === "install" && onOpenTerminal;
           return (
             <article
               key={runtime.id}
@@ -109,6 +115,16 @@ function RuntimeCards({
               <div className="mt-4">
                 {selected ? (
                   <p className="text-xs font-medium text-forest">{runtime.displayName} is active</p>
+                ) : canInstall ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => onOpenTerminal(installAction)}
+                    aria-label={`Install ${runtime.displayName}`}
+                  >
+                    <TerminalIcon className="size-3.5" /> Install {runtime.displayName}
+                  </Button>
                 ) : (
                   <Button
                     size="sm"
@@ -293,6 +309,11 @@ function MessagingProviders({
           <AlertTriangleIcon className="size-5 text-muted-foreground" />
           <p className="text-sm font-medium">No providers available</p>
           <p className="max-w-sm text-xs text-muted-foreground">Start and configure the selected messaging runtime, then retry.</p>
+          {onOpenTerminal && (
+            <Button size="sm" variant="outline" onClick={() => onOpenTerminal(terminalAction)} aria-label={`Configure ${statusLabel(view.runtime.selected)} provider`}>
+              <TerminalIcon className="size-3.5" /> Configure {statusLabel(view.runtime.selected)}
+            </Button>
+          )}
         </CardContent>
       </Card>
     );
@@ -366,10 +387,25 @@ function MessagingProviders({
   );
 }
 
-function LegacyFallback({ settings }: { settings: Extract<NormalizedAgentSettings, { kind: "legacy" }> }) {
-  const modelLabel = settings.view.availableModels?.find((entry) => entry.id === settings.model)?.label
-    ?? settings.model
-    ?? "Default model";
+function LegacyFallback({
+  settings,
+  busy,
+  onSave,
+}: {
+  settings: Extract<NormalizedAgentSettings, { kind: "legacy" }>;
+  busy: boolean;
+  onSave: (model: string, effort: AgentEffort | null) => void;
+}) {
+  const models = settings.view.availableModels ?? [];
+  const efforts = settings.view.availableEfforts ?? [];
+  const initialEffort = settings.effort && efforts.includes(settings.effort)
+    ? settings.effort
+    : "";
+  const initialModel = settings.model && models.some((entry) => entry.id === settings.model)
+    ? settings.model
+    : models[0]?.id ?? "";
+  const [model, setModel] = useState(initialModel);
+  const [effort, setEffort] = useState<AgentEffort | "">(initialEffort);
   return (
     <section aria-label="Legacy agent settings" className="space-y-3">
       <div className="rounded-xl border border-warning/30 bg-warning/5 p-4">
@@ -377,10 +413,39 @@ function LegacyFallback({ settings }: { settings: Extract<NormalizedAgentSetting
         <p className="mt-1 text-xs text-muted-foreground">This computer supports Chat model and effort, but needs a newer gateway for runtime and provider controls.</p>
       </div>
       <Card>
-        <CardHeader><CardTitle className="text-sm">Current Chat selection</CardTitle></CardHeader>
-        <CardContent className="flex flex-wrap gap-3 text-sm">
-          <Badge variant="secondary">{modelLabel}</Badge>
-          <Badge variant="secondary">{settings.effort ? `${statusLabel(settings.effort)} effort` : "Default effort"}</Badge>
+        <CardHeader><CardTitle className="text-sm">Chat agent</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="legacy-agent-chat-model">Model</Label>
+              <select
+                id="legacy-agent-chat-model"
+                aria-label="Legacy Chat model"
+                className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+              >
+                {!model && <option value="">Default model</option>}
+                {models.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="legacy-agent-chat-effort">Effort</Label>
+              <select
+                id="legacy-agent-chat-effort"
+                aria-label="Legacy Chat effort"
+                className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+                value={effort}
+                onChange={(event) => setEffort(event.target.value as AgentEffort | "")}
+              >
+                <option value="">Default effort</option>
+                {efforts.map((entry) => <option key={entry} value={entry}>{statusLabel(entry)}</option>)}
+              </select>
+            </div>
+          </div>
+          <Button size="sm" disabled={busy || !model} onClick={() => onSave(model, effort || null)}>
+            Save Chat model
+          </Button>
         </CardContent>
       </Card>
     </section>
@@ -392,6 +457,7 @@ export function AgentRuntimePanel({ onOpenTerminal }: AgentRuntimePanelProps) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editResetVersion, setEditResetVersion] = useState(0);
 
   const reload = async () => {
     setLoading(true);
@@ -429,6 +495,7 @@ export function AgentRuntimePanel({ onOpenTerminal }: AgentRuntimePanelProps) {
       setSettings(updated);
     } catch (mutationError) {
       setError(safeMessage(mutationError));
+      setEditResetVersion((version) => version + 1);
     }
     setBusy(false);
   };
@@ -463,7 +530,19 @@ export function AgentRuntimePanel({ onOpenTerminal }: AgentRuntimePanelProps) {
     );
   }
 
-  if (settings?.kind === "legacy") return <LegacyFallback settings={settings} />;
+  if (settings?.kind === "legacy") {
+    return (
+      <div className="space-y-4">
+        {error && <div role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</div>}
+        <LegacyFallback
+          key={editResetVersion}
+          settings={settings}
+          busy={busy}
+          onSave={(model, effort) => void mutate(() => updateAgentSettings({ model, effort }))}
+        />
+      </div>
+    );
+  }
   if (settings?.kind !== "current") return null;
   const view = settings.view;
 
@@ -471,23 +550,24 @@ export function AgentRuntimePanel({ onOpenTerminal }: AgentRuntimePanelProps) {
     <div className="space-y-4">
       {error && <div role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</div>}
       <ChatCard
-        key={`${view.chat.model}:${view.chat.effort}:${view.chat.authKind}`}
+        key={`${view.chat.model}:${view.chat.effort}:${view.chat.authKind}:${editResetVersion}`}
         view={view}
         busy={busy}
         onOpenTerminal={onOpenTerminal}
         onSave={(model, effort) => void mutate(() => updateAgentSettings({
           model,
-          ...(effort ? { effort } : {}),
+          effort: effort ?? null,
         }))}
         onSaveKey={saveKey}
       />
       <RuntimeCards
         view={view}
         busy={busy}
+        onOpenTerminal={onOpenTerminal}
         onSwitch={(runtime) => void mutate(() => updateAgentSettings({ runtime, revision: view.revision }))}
       />
       <MessagingProviders
-        key={`${view.runtime.selected}:${view.currentSelection.messaging.provider ?? "none"}`}
+        key={`${view.runtime.selected}:${view.currentSelection.messaging.provider ?? "none"}:${editResetVersion}`}
         view={view}
         busy={busy}
         onOpenTerminal={onOpenTerminal}

@@ -2,7 +2,9 @@ export type TerminalLaunchAction =
   | "claude-login"
   | "codex-login"
   | "github-ssh-login"
+  | "hermes-install"
   | "hermes-model"
+  | "openclaw-install"
   | "openclaw-model-auth";
 
 export interface TerminalLaunchConfig {
@@ -29,10 +31,20 @@ const TERMINAL_ACTIONS: Record<TerminalLaunchAction, TerminalLaunchConfig> = {
     label: "GitHub browser login",
     command: "printf 'Matrix authenticates GitHub separately from SSH keys.\\nUse browser login here. Do not upload local private keys; secure repository SSH uses a Matrix-managed key inside the runtime.\\n\\n' && gh auth login --hostname github.com --web",
   },
+  "hermes-install": {
+    action: "hermes-install",
+    label: "Install Hermes",
+    command: "/opt/matrix/bin/matrix-agent-runtime-control install hermes",
+  },
   "hermes-model": {
     action: "hermes-model",
     label: "Hermes provider setup",
     command: "hermes model",
+  },
+  "openclaw-install": {
+    action: "openclaw-install",
+    label: "Install OpenClaw",
+    command: "/opt/matrix/bin/matrix-agent-runtime-control install openclaw",
   },
   "openclaw-model-auth": {
     action: "openclaw-model-auth",
@@ -46,19 +58,16 @@ export const TERMINAL_SETUP_WINDOW_PATH = "__terminal__";
 export const TERMINAL_LAUNCH_EVENT = "matrix:terminal-launch";
 
 interface QueuedTerminalLaunch {
-  path: string;
+  action: TerminalLaunchAction;
   targetId?: string;
 }
 
-export function createTerminalLaunchPath(action: TerminalLaunchAction): string {
-  return `__terminal__:setup-${action}-${Date.now().toString(36)}`;
+function isTerminalLaunchAction(value: unknown): value is TerminalLaunchAction {
+  return typeof value === "string" && Object.hasOwn(TERMINAL_ACTIONS, value);
 }
 
-export function parseTerminalLaunchPath(path: string): TerminalLaunchConfig | null {
-  if (!path.startsWith("__terminal__:setup-")) return null;
-  const match = path.match(/^__terminal__:setup-(claude-login|codex-login|github-ssh-login|hermes-model|openclaw-model-auth)(?:-[A-Za-z0-9]+)?$/);
-  if (!match) return null;
-  return TERMINAL_ACTIONS[match[1] as TerminalLaunchAction];
+export function terminalLaunchConfig(action: TerminalLaunchAction): TerminalLaunchConfig {
+  return TERMINAL_ACTIONS[action];
 }
 
 function readLaunchQueue(): QueuedTerminalLaunch[] {
@@ -69,15 +78,14 @@ function readLaunchQueue(): QueuedTerminalLaunch[] {
     if (!Array.isArray(parsed)) return [];
     return parsed
       .flatMap((item): QueuedTerminalLaunch[] => {
-        if (typeof item === "string") return [{ path: item }];
         if (
           item &&
           typeof item === "object" &&
-          typeof (item as { path?: unknown }).path === "string"
+          isTerminalLaunchAction((item as { action?: unknown }).action)
         ) {
           const targetId = (item as { targetId?: unknown }).targetId;
           return [{
-            path: (item as { path: string }).path,
+            action: (item as { action: TerminalLaunchAction }).action,
             targetId: typeof targetId === "string" ? targetId : undefined,
           }];
         }
@@ -99,9 +107,9 @@ function writeLaunchQueue(launches: QueuedTerminalLaunch[]) {
   }
 }
 
-export function enqueueTerminalLaunch(path: string, targetId?: string): void {
-  if (!parseTerminalLaunchPath(path)) return;
-  writeLaunchQueue([...readLaunchQueue(), { path, targetId }]);
+export function enqueueTerminalLaunch(action: TerminalLaunchAction, targetId?: string): void {
+  if (!isTerminalLaunchAction(action)) return;
+  writeLaunchQueue([...readLaunchQueue(), { action, targetId }]);
   window.dispatchEvent(new CustomEvent(TERMINAL_LAUNCH_EVENT, { detail: { targetId } }));
 }
 
@@ -114,5 +122,5 @@ export function drainTerminalLaunchQueue(targetId?: string): TerminalLaunchConfi
     else remaining.push(launch);
   }
   writeLaunchQueue(remaining);
-  return matched.map((launch) => parseTerminalLaunchPath(launch.path)).filter((config): config is TerminalLaunchConfig => config !== null);
+  return matched.map((launch) => terminalLaunchConfig(launch.action));
 }

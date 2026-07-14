@@ -62,17 +62,13 @@ export function AgentSection({
     setSaving(true);
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to reset `saving` on every path; the code is correct and the finalizer must run whether the request resolves, rejects, or throws.
     try {
-      await fetch(`${GATEWAY}/api/bridge/data`, {
-        method: "POST",
+      const response = await fetch(`${GATEWAY}/files/system/soul.md`, {
+        method: "PUT",
         signal: AbortSignal.timeout(AGENT_FETCH_TIMEOUT_MS),
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "write",
-          app: "_system",
-          key: "soul-backup",
-          value: content,
-        }),
+        headers: { "Content-Type": "text/markdown; charset=utf-8" },
+        body: content,
       });
+      if (!response.ok) throw new Error("SOUL update failed");
       setSoulContent(content);
     } finally {
       setSaving(false);

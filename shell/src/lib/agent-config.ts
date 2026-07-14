@@ -8,7 +8,8 @@ import {
 import { z } from "zod/v4";
 import { getGatewayUrl } from "./gateway";
 
-const REQUEST_TIMEOUT_MS = 10_000;
+const READ_TIMEOUT_MS = 10_000;
+const MUTATION_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const SAFE_ERROR_CODE_MAX = 64;
 
@@ -112,10 +113,10 @@ async function boundedJson(response: Response): Promise<unknown> {
   }
 }
 
-function requestInit(init: RequestInit = {}): RequestInit {
+function requestInit(init: RequestInit = {}, timeoutMs = READ_TIMEOUT_MS): RequestInit {
   return {
     ...init,
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   };
 }
 
@@ -162,7 +163,7 @@ export async function updateAgentSettings(
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(update),
-    }));
+    }, MUTATION_TIMEOUT_MS));
   } catch (error) {
     throw new AgentSettingsClientError(
       "unavailable",
@@ -189,7 +190,7 @@ export async function saveAnthropicApiKey(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ apiKey }),
-    }));
+    }, MUTATION_TIMEOUT_MS));
   } catch (error) {
     throw new AgentSettingsClientError(
       "unavailable",

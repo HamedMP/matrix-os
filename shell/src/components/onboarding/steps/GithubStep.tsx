@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { palette as c, fonts, radii, statusTones } from "@matrix-os/brand";
 import { StatusPill } from "@matrix-os/brand";
 import { getGatewayUrl } from "@/lib/gateway";
-import { createTerminalLaunchPath } from "@/lib/terminal-launch";
+import type { TerminalLaunchAction } from "@/lib/terminal-launch";
 
 interface GithubStatus {
   installed: boolean;
@@ -15,7 +15,7 @@ interface GithubStepProps {
   title: string;
   status?: "done" | "active" | "pending";
   expanded?: boolean;
-  onOpenTerminal?: (path: string) => void;
+  onOpenTerminal?: (action: TerminalLaunchAction) => void;
   onChange?: () => void;
 }
 
@@ -51,7 +51,7 @@ export function GithubStep({
 
   function handleAuthorize() {
     if (!onOpenTerminal) return;
-    onOpenTerminal(createTerminalLaunchPath("github-ssh-login"));
+    onOpenTerminal("github-ssh-login");
   }
 
   const pillTone: keyof typeof statusTones =

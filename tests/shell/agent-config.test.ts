@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSettingsView } from "@matrix-os/contracts";
 import {
   AgentSettingsClientError,
@@ -16,6 +16,10 @@ const chat = {
   source: "saved",
   authKind: "platform",
 } as const;
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 export function currentAgentSettingsView(): AgentSettingsView {
   return {
@@ -153,6 +157,7 @@ describe("shell agent settings wire client", () => {
   });
 
   it("uses abortable credential-free settings requests", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.signal).toBeInstanceOf(AbortSignal);
       if (init?.method === "PUT") {
@@ -170,9 +175,13 @@ describe("shell agent settings wire client", () => {
       expect.objectContaining({ method: "PUT", body: JSON.stringify({ effort: "low" }) }),
     );
     expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(timeout).toHaveBeenNthCalledWith(1, 10_000);
+    expect(timeout).toHaveBeenNthCalledWith(2, 15_000);
+    expect(timeout).toHaveBeenNthCalledWith(3, 10_000);
   });
 
   it("submits a BYOK value only to the existing write-only route", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.signal).toBeInstanceOf(AbortSignal);
       return Response.json({ valid: true });
@@ -188,5 +197,6 @@ describe("shell agent settings wire client", () => {
       }),
     );
     expect(JSON.stringify(fetcher.mock.calls)).toContain("sk-ant-secret-canary");
+    expect(timeout).toHaveBeenCalledWith(15_000);
   });
 });

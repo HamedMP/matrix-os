@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { palette as c, fonts, radii, StatusPill } from "@matrix-os/brand";
 import { getGatewayUrl } from "@/lib/gateway";
-import { createTerminalLaunchPath } from "@/lib/terminal-launch";
+import type { TerminalLaunchAction } from "@/lib/terminal-launch";
 
 interface AgentRow {
   id: "claude" | "codex" | "hermes";
@@ -62,7 +62,7 @@ export function AgentStep({
   title: string;
   status?: "done" | "active" | "pending";
   expanded?: boolean;
-  onOpenTerminal?: (path: string) => void;
+  onOpenTerminal?: (action: TerminalLaunchAction) => void;
   onChange?: () => void;
 }) {
   const mountedRef = useRef(false);
@@ -154,7 +154,7 @@ export function AgentStep({
                     style={connectButtonStyle}
                     onClick={() => {
                       if (row.loginAction) {
-                        onOpenTerminal?.(createTerminalLaunchPath(row.loginAction));
+                        onOpenTerminal?.(row.loginAction);
                         onChange?.();
                       }
                     }}

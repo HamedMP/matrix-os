@@ -122,11 +122,10 @@ export function createAgentRuntimeController(
         if (!parsedKernel.success) {
           throw new AgentConfigError("agent_config_invalid", parsedKernel.error);
         }
-        nextKernel = {
-          ...parsedKernel.data,
-          ...(updateInput.model === undefined ? {} : { model: updateInput.model }),
-          ...(updateInput.effort === undefined ? {} : { effort: updateInput.effort }),
-        };
+        nextKernel = { ...parsedKernel.data };
+        if (updateInput.model !== undefined) nextKernel.model = updateInput.model;
+        if (updateInput.effort === null) delete nextKernel.effort;
+        else if (updateInput.effort !== undefined) nextKernel.effort = updateInput.effort;
       }
       const nextConfig = {
         ...config,
@@ -327,11 +326,10 @@ export function createAgentRuntimeController(
       if (!parsedKernel.success) {
         throw new AgentConfigError("agent_config_invalid", parsedKernel.error);
       }
-      const kernel = {
-        ...parsedKernel.data,
-        ...(patch.model === undefined ? {} : { model: patch.model }),
-        ...(patch.effort === undefined ? {} : { effort: patch.effort }),
-      };
+      const kernel = { ...parsedKernel.data };
+      if (patch.model !== undefined) kernel.model = patch.model;
+      if (patch.effort === null) delete kernel.effort;
+      else if (patch.effort !== undefined) kernel.effort = patch.effort;
       await writeJsonAtomic(configPath, { ...config, kernel });
       return { model: kernel.model, effort: kernel.effort };
     } finally {

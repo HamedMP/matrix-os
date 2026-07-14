@@ -368,7 +368,7 @@ const HttpsUrlSchema = z.string().min(8).max(2048).url().refine(
 
 export const AgentSettingsUpdateSchema = z.object({
   model: ModelReferenceSchema.optional(),
-  effort: AgentEffortSchema.optional(),
+  effort: AgentEffortSchema.nullable().optional(),
   runtime: AgentRuntimeIdSchema.optional(),
   provider: SafeSlugSchema.optional(),
   messagingModel: ModelReferenceSchema.optional(),

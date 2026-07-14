@@ -138,6 +138,8 @@ describe("Canvas Agent runtime settings", () => {
     expect(screen.getByText("Hermes")).toBeVisible();
     expect(screen.getByText("OpenClaw")).toBeVisible();
     expect(screen.getByText("Not installed")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Install OpenClaw" }));
+    expect(onOpenTerminal).toHaveBeenCalledWith("openclaw-install");
     expect(screen.getAllByText("Nous Research").some((element) => element.tagName === "SPAN")).toBe(true);
     expect(screen.getByText("Healthy")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Choose OpenRouter" }));
@@ -157,6 +159,25 @@ describe("Canvas Agent runtime settings", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign in with Claude" }));
     expect(onOpenTerminal).toHaveBeenCalledWith("claude-login");
     fireEvent.click(screen.getByRole("button", { name: "Configure Hermes provider" }));
+    expect(onOpenTerminal).toHaveBeenCalledWith("hermes-model");
+  });
+
+  it("offers visible provider setup when the selected runtime has no catalog", async () => {
+    const view = makeView();
+    view.providers = view.providers.filter((provider) => provider.runtime !== "hermes");
+    view.currentSelection.messaging = {
+      runtime: "hermes",
+      provider: null,
+      model: null,
+      configured: false,
+    };
+    view.runtime.options[0].configured = false;
+    const onOpenTerminal = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(async () => response(view)));
+
+    render(<AgentRuntimePanel onOpenTerminal={onOpenTerminal} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Configure Hermes provider" }));
     expect(onOpenTerminal).toHaveBeenCalledWith("hermes-model");
   });
 
@@ -313,7 +334,7 @@ describe("Canvas Agent runtime settings", () => {
       expect.stringContaining("/api/settings/agent"),
       expect.objectContaining({
         method: "PUT",
-        body: JSON.stringify({ model: "claude-sonnet-4-6" }),
+        body: JSON.stringify({ model: "claude-sonnet-4-6", effort: null }),
       }),
     ));
   });
@@ -412,6 +433,24 @@ describe("Canvas Agent runtime settings", () => {
     ));
   });
 
+  it("discards unsaved local selections after a failed settings mutation", async () => {
+    const initial = makeView();
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => (
+      init?.method === "PUT"
+        ? response({ error: "agent_config_conflict" }, 409)
+        : response(initial)
+    ));
+    vi.stubGlobal("fetch", fetcher);
+    render(<AgentRuntimePanel />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Choose OpenRouter" }));
+    expect(screen.getByRole("combobox", { name: "Messaging model" })).toHaveValue("qwen-3-coder");
+    fireEvent.click(screen.getByRole("button", { name: "Save messaging model" }));
+
+    expect(await screen.findByText("Agent settings changed elsewhere. Refresh and try again.")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Messaging model" })).toHaveValue("hermes-4-405b");
+  });
+
   it("shows a useful legacy fallback and retryable safe error state", async () => {
     let calls = 0;
     vi.stubGlobal("fetch", vi.fn(async () => {
@@ -433,6 +472,94 @@ describe("Canvas Agent runtime settings", () => {
     expect(await screen.findByText("Runtime update needed")).toBeVisible();
     const legacy = screen.getByRole("region", { name: "Legacy agent settings" });
     expect(within(legacy).getByText("Claude Sonnet 4.6")).toBeVisible();
-    expect(within(legacy).getByText("Medium effort")).toBeVisible();
+    expect(within(legacy).getByRole("combobox", { name: "Legacy Chat effort" })).toHaveValue("medium");
+  });
+
+  it("keeps legacy Chat model and effort controls editable", async () => {
+    const legacy = {
+      identity: {},
+      kernel: { model: "claude-sonnet-4-6", effort: "medium" },
+      availableModels: [
+        { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", tier: "Balanced" },
+        { id: "claude-opus-4-6", label: "Claude Opus 4.6", tier: "Most capable" },
+      ],
+      availableEfforts: ["low", "medium", "high"],
+      defaults: { model: "claude-opus-4-6", effort: "high" },
+    };
+    const fetcher = vi.fn(async () => response(legacy));
+    vi.stubGlobal("fetch", fetcher);
+    render(<AgentRuntimePanel />);
+
+    const region = await screen.findByRole("region", { name: "Legacy agent settings" });
+    fireEvent.change(within(region).getByRole("combobox", { name: "Legacy Chat model" }), {
+      target: { value: "claude-opus-4-6" },
+    });
+    fireEvent.change(within(region).getByRole("combobox", { name: "Legacy Chat effort" }), {
+      target: { value: "high" },
+    });
+    fireEvent.click(within(region).getByRole("button", { name: "Save Chat model" }));
+
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining("/api/settings/agent"),
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ model: "claude-opus-4-6", effort: "high" }),
+      }),
+    ));
+  });
+
+  it("clears a legacy saved effort that is no longer available", async () => {
+    const legacy = {
+      identity: {},
+      kernel: { model: "claude-sonnet-4-6", effort: "max" },
+      availableModels: [
+        { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", tier: "Balanced" },
+      ],
+      availableEfforts: ["low", "medium", "high"],
+      defaults: { model: "claude-sonnet-4-6", effort: "medium" },
+    };
+    const fetcher = vi.fn(async () => response(legacy));
+    vi.stubGlobal("fetch", fetcher);
+    render(<AgentRuntimePanel />);
+
+    const region = await screen.findByRole("region", { name: "Legacy agent settings" });
+    expect(within(region).getByRole("combobox", { name: "Legacy Chat effort" })).toHaveValue("");
+    fireEvent.click(within(region).getByRole("button", { name: "Save Chat model" }));
+
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining("/api/settings/agent"),
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ model: "claude-sonnet-4-6", effort: null }),
+      }),
+    ));
+  });
+
+  it("reconciles a stale legacy Chat model before saving", async () => {
+    const legacy = {
+      identity: {},
+      kernel: { model: "claude-retired", effort: "medium" },
+      availableModels: [
+        { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", tier: "Balanced" },
+      ],
+      availableEfforts: ["low", "medium", "high"],
+      defaults: { model: "claude-sonnet-4-6", effort: "medium" },
+    };
+    const fetcher = vi.fn(async () => response(legacy));
+    vi.stubGlobal("fetch", fetcher);
+    render(<AgentRuntimePanel />);
+
+    const region = await screen.findByRole("region", { name: "Legacy agent settings" });
+    expect(within(region).getByRole("combobox", { name: "Legacy Chat model" }))
+      .toHaveValue("claude-sonnet-4-6");
+    fireEvent.click(within(region).getByRole("button", { name: "Save Chat model" }));
+
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining("/api/settings/agent"),
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ model: "claude-sonnet-4-6", effort: "medium" }),
+      }),
+    ));
   });
 });
