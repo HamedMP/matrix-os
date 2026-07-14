@@ -219,9 +219,9 @@ describe("Canvas Agent runtime settings", () => {
     ];
     initial.currentSelection.messaging = {
       runtime: "hermes",
-      provider: null,
-      model: null,
-      configured: false,
+      provider: "nous",
+      model: "offline-model",
+      configured: true,
     };
     AgentSettingsViewSchema.parse(initial);
     const fetcher = vi.fn(async () => response(initial));
