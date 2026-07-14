@@ -84,6 +84,8 @@ describe("customer VPS OpenClaw runtime", () => {
     expect(controller).toContain("matrix-hermes-dashboard.service");
     expect(controller).toContain("matrix-openclaw-gateway.service");
     expect(controller).toContain("systemctl is-active --quiet");
+    expect(controller).toContain('systemctl disable --now "$other_unit"');
+    expect(controller).toContain('systemctl enable --now "$target_unit"');
     expect(controller).toContain("timeout 20");
     expect(controller).toContain("MemAvailable");
     expect(controller).toContain("1048576");
