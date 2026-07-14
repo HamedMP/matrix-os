@@ -285,7 +285,11 @@ describe("NativeAppViewer", () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/native-apps/sessions/session_jjjjjjjjjjjjjjjjjjjjjjjj",
-        expect.objectContaining({ method: "DELETE", keepalive: true }),
+        expect.objectContaining({
+          method: "DELETE",
+          keepalive: true,
+          signal: expect.any(AbortSignal),
+        }),
       );
     });
   });

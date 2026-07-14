@@ -119,6 +119,7 @@ function terminateNativeSessionOnPageHide(sessionId: string): void {
   void fetch(nativeApiPath(`/sessions/${sessionId}`), {
     method: "DELETE",
     keepalive: true,
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   }).catch((err: unknown) => {
     console.warn("[native-app-viewer] unload termination failed:", err instanceof Error ? err.message : String(err));
   });
