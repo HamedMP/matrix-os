@@ -26,6 +26,7 @@ export function createHermesRuntimeAdapter(options: {
   requestJson: HermesJsonRequester;
   activate?: (signal: AbortSignal) => Promise<void>;
   deactivate?: (signal: AbortSignal) => Promise<void>;
+  prepare?: (signal: AbortSignal) => Promise<void>;
   validateBaseUrl?: (value: string) => Promise<void>;
 }): MessagingRuntimeAdapter {
   async function snapshot(signal: AbortSignal) {
@@ -121,12 +122,13 @@ export function createHermesRuntimeAdapter(options: {
       return AgentMessagingSelectionSchema.parse((await snapshot(signal)).messaging);
     },
     configure,
-    async prepare(signal) {
-      const descriptor = await this.probe(signal);
-      if (descriptor.installState !== "installed") {
+    prepare: options.prepare ?? (async (signal) => {
+      const descriptor = (await snapshot(signal)).runtime.options
+        .find((entry) => entry.id === "hermes");
+      if (descriptor?.installState !== "installed") {
         throw new AgentConfigError("runtime_unavailable");
       }
-    },
+    }),
     activate: options.activate ?? (async () => {}),
     deactivate: options.deactivate ?? (async () => {}),
     async dashboard() {

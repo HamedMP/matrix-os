@@ -184,7 +184,7 @@ import {
   createHermesDashboardClient,
   validateHermesDashboardUrl,
 } from "./agent-config/hermes-client.js";
-import { createHermesAgentRuntimeServices } from "./agent-config/runtime-services.js";
+import { createAgentRuntimeServices } from "./agent-config/runtime-services.js";
 import { createConversationRoutes } from "./routes/conversations.js";
 import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
 import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
@@ -3917,7 +3917,7 @@ export async function createGateway(config: GatewayConfig) {
     throw err;
   }
   const hermesClient = createHermesDashboardClient({ baseUrl: hermesDashboardUrl });
-  const agentRuntimeServices = createHermesAgentRuntimeServices({
+  const agentRuntimeServices = createAgentRuntimeServices({
     homePath,
     client: hermesClient,
   });

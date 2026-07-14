@@ -71,12 +71,13 @@ describe("customer VPS OpenClaw runtime", () => {
     expect(unit).toContain("ReadWritePaths=/home/matrix/home/.openclaw /home/matrix/home/system/agent-runtime");
   });
 
-  it("exposes only exact status and switch commands", async () => {
+  it("exposes only exact status, switch, and stop commands", async () => {
     const controller = await readFile(controllerPath, "utf8");
 
     expect(controller).toContain('case "${1:-}" in');
     expect(controller).toContain("status)");
     expect(controller).toContain("switch)");
+    expect(controller).toContain("stop)");
     expect(controller).toContain('case "${2:-}" in');
     expect(controller).toContain("hermes)");
     expect(controller).toContain("openclaw)");
@@ -86,7 +87,9 @@ describe("customer VPS OpenClaw runtime", () => {
     expect(controller).toContain("systemctl is-active --quiet");
     expect(controller).toContain('systemctl disable --now "$other_unit"');
     expect(controller).toContain('systemctl enable --now "$target_unit"');
-    expect(controller).toContain("timeout 20");
+    expect(controller).toContain("action_timeout_seconds=10");
+    expect(controller).toContain("active_wait_seconds=10");
+    expect(controller).toContain('timeout "$action_timeout_seconds"');
     expect(controller).toContain("MemAvailable");
     expect(controller).toContain("1048576");
     const switchBody = controller.slice(
