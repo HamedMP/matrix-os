@@ -177,7 +177,7 @@ As a Matrix OS owner using mobile Chat, I want session history and effective mod
 - **SC-003**: A saved model or effort change appears consistently in web, desktop, and legacy-compatible mobile reads within 2 seconds on the same computer.
 - **SC-004**: In validation, 100% of unsupported per-message choices are rejected before agent work begins, and 100% of accepted overrides leave the saved default unchanged.
 - **SC-005**: In failure tests where OpenClaw is absent, unhealthy, or loses authentication, 100% preserve Chat availability and the last healthy messaging-runtime selection.
-- **SC-006**: In runtime-switch tests, no source event is delivered to both runtimes and new messaging work resumes within 10 seconds or returns a clear retryable state.
+- **SC-006**: In runtime-switch tests, no source event is delivered to both runtimes and new messaging work resumes within the 75-second hard deadline or returns a clear retryable state.
 - **SC-007**: In security tests, no settings, status, error, diagnostic, or conversation response contains provider credentials, login tokens, raw upstream errors, or filesystem paths.
 - **SC-008**: Existing desktop and mobile contract tests for model/effort continue to pass unchanged while current clients can consume the extended fields.
 - **SC-009**: An owner can switch mobile Chat sessions and load the stored transcript and effective model on every validated session change.

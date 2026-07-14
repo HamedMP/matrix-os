@@ -164,7 +164,7 @@ Transient owner-local JSON under `system/agent-runtime/transition.json`, mode 06
 | `to` | AgentRuntimeId | Required and different. |
 | `state` | enum | `validating`, `pausing`, `draining`, `activating`, `verifying`, `committing`, `rolling_back`. |
 | `startedAt` | ISO timestamp | Required. |
-| `deadlineAt` | ISO timestamp | At most 10 seconds after start. |
+| `deadlineAt` | ISO timestamp | At most 75 seconds after start. |
 
 State transitions:
 

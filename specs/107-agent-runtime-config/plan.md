@@ -17,7 +17,7 @@ The work lands as a Graphite stack of small, independently testable PRs. Three c
 **Testing**: Vitest unit/route/component tests, systemd/host-bundle tests, current mobile compatibility tests, React Doctor, production shell build, preview VPS live probes
 **Target Platform**: VPS-native Linux gateway and systemd services; web Canvas/desktop shell; Electron desktop renderer with trusted main/preload boundary; mobile contract consumers
 **Project Type**: Monorepo backend contracts + gateway + host runtime + web shell + Electron desktop
-**Performance Goals**: Agent settings visible within 2 seconds; runtime status probes bounded to 2 seconds each and performed concurrently; runtime switch completes or safely fails within 10 seconds; no effect on Chat request latency when messaging runtimes are absent
+**Performance Goals**: Agent settings visible within 2 seconds; runtime status probes bounded to 2 seconds each and performed concurrently; runtime switch completes or safely fails within 75 seconds, including a host-control action bounded to 70 seconds; no effect on Chat request latency when messaging runtimes are absent
 **Constraints**: Additive wire compatibility; no browser-side secrets; no provider-specific raw errors; loopback-only external dashboards with auth; bounded catalogs and queues; no direct OpenClaw Matrix room membership; kernel prompt remains under 7K tokens
 **Scale/Scope**: One owner per customer VPS; two selectable messaging runtimes; maximum 32 provider descriptors, 256 models total, 128 models per provider; one serialized runtime transition; existing Chat queue limits unchanged
 
