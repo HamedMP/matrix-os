@@ -22,21 +22,38 @@ const LIST: Record<string, { entries: Array<{ name: string; type: string }> }> =
     entries: [
       { name: "hero.png", type: "file" },
       { name: "app.ts", type: "file" },
+      { name: "util.ts", type: "file" },
     ],
   },
 };
 
-function makeApi(overrides?: { statFor?: (path: string) => { size?: number } }) {
+interface ApiOverrides {
+  statFor?: (path: string) => { size?: number };
+  statImpl?: (path: string) => Promise<{ size?: number }>;
+  textFor?: (path: string) => string;
+}
+
+function makeApi(overrides?: ApiOverrides) {
   const get = vi.fn(async (path: string) => {
     if (path.startsWith("/api/files/list?path=")) return LIST[path] ?? { entries: [] };
     if (path.startsWith("/api/files/stat?path=")) {
+      if (overrides?.statImpl) return overrides.statImpl(path);
       return overrides?.statFor ? overrides.statFor(path) : { size: 128 };
     }
     return { entries: [] };
   });
-  const getText = vi.fn(async () => "# Matrix files\n\nA remote home you can inspect.");
+  const getText = vi.fn(async (path: string) =>
+    overrides?.textFor ? overrides.textFor(path) : "# Matrix files\n\nA remote home you can inspect.",
+  );
   const getBlob = vi.fn(async () => new Blob([new Uint8Array([1, 2, 3, 4])], { type: "image/png" }));
   return { get, getText, getBlob, baseUrl: "https://app.matrix-os.com" };
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
 }
 
 describe("Files workspace", () => {
@@ -59,6 +76,7 @@ describe("Files workspace", () => {
       handle: "operator",
       platformHost: "https://app.matrix-os.com",
       runtimeSlot: "pr-919",
+      authGeneration: 3,
       api: api as never,
     });
     useTabs.setState({ tabs: [], activeTabId: null });
@@ -155,20 +173,127 @@ describe("Files workspace", () => {
     );
     expect(staleStat).toBeUndefined();
   });
+
+  it("does not fetch a text blob against the new computer when the slot changes mid-stat", async () => {
+    let resolveStat!: (value: { size: number }) => void;
+    const statPromise = new Promise<{ size: number }>((resolve) => {
+      resolveStat = resolve;
+    });
+    const custom = makeApi({ statImpl: () => statPromise });
+    useConnection.setState({ api: custom as never });
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open app.ts" }));
+
+    // Switch the selected computer while the stat request is still pending.
+    act(() => {
+      useConnection.setState({ runtimeSlot: "pr-920" });
+    });
+    await act(async () => {
+      resolveStat({ size: 128 });
+      await Promise.resolve();
+    });
+
+    expect(custom.getText).not.toHaveBeenCalled();
+  });
+
+  it("does not fetch an image blob against the new computer when the slot changes mid-stat", async () => {
+    let resolveStat!: (value: { size: number }) => void;
+    const statPromise = new Promise<{ size: number }>((resolve) => {
+      resolveStat = resolve;
+    });
+    const custom = makeApi({ statImpl: () => statPromise });
+    useConnection.setState({ api: custom as never });
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open hero.png" }));
+
+    act(() => {
+      useConnection.setState({ runtimeSlot: "pr-920" });
+    });
+    await act(async () => {
+      resolveStat({ size: 128 });
+      await Promise.resolve();
+    });
+
+    expect(custom.getBlob).not.toHaveBeenCalled();
+  });
+
+  it("clears the preview when the session identity changes on the same computer", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open app.ts" }));
+    expect(await screen.findByText(/A remote home you can inspect/)).not.toBeNull();
+
+    api.getText.mockClear();
+    api.get.mockClear();
+    // Same runtime slot, but a replacement signed-in session (new credential).
+    act(() => {
+      useConnection.setState({ authGeneration: 4 });
+    });
+
+    expect(await screen.findByText("Choose a file")).not.toBeNull();
+    expect(api.getText).not.toHaveBeenCalled();
+    const staleStat = api.get.mock.calls.find(
+      ([p]) => String(p).includes("/api/files/stat") && String(p).includes("app.ts"),
+    );
+    expect(staleStat).toBeUndefined();
+  });
+
+  it("shows loading for a newly selected file rather than the previous file's content", async () => {
+    let resolveSecondStat!: (value: { size: number }) => void;
+    const secondStat = new Promise<{ size: number }>((resolve) => {
+      resolveSecondStat = resolve;
+    });
+    const custom = makeApi({
+      textFor: (path) => `content of ${path}`,
+      statImpl: (path) => (path.includes("util.ts") ? secondStat : Promise.resolve({ size: 128 })),
+    });
+    useConnection.setState({ api: custom as never });
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open app.ts" }));
+    expect(
+      await screen.findByText("content of /api/files/blob?path=workspaces%2Fapp.ts"),
+    ).not.toBeNull();
+
+    // Switch to another text file whose stat has not resolved yet.
+    fireEvent.click(screen.getByRole("button", { name: "Open util.ts" }));
+    expect(
+      screen.queryByText("content of /api/files/blob?path=workspaces%2Fapp.ts"),
+    ).toBeNull();
+    expect(screen.getByText("Loading preview…")).not.toBeNull();
+
+    await act(async () => {
+      resolveSecondStat({ size: 128 });
+      await Promise.resolve();
+    });
+    expect(
+      await screen.findByText("content of /api/files/blob?path=workspaces%2Futil.ts"),
+    ).not.toBeNull();
+  });
 });
 
 describe("resolveActivePath", () => {
-  it("returns the stored path only when the runtime slot matches", () => {
-    expect(resolveActivePath({ slot: "pr-919", path: "workspaces/app.ts" }, "pr-919")).toBe(
-      "workspaces/app.ts",
-    );
+  it("returns the stored path when slot and auth generation match", () => {
+    expect(
+      resolveActivePath({ slot: "pr-919", authGeneration: 3, path: "workspaces/app.ts" }, "pr-919", 3),
+    ).toBe("workspaces/app.ts");
   });
 
-  it("returns null when the stored slot differs from the current slot", () => {
-    expect(resolveActivePath({ slot: "pr-919", path: "workspaces/app.ts" }, "pr-920")).toBeNull();
+  it("returns null when the stored slot differs", () => {
+    expect(
+      resolveActivePath({ slot: "pr-919", authGeneration: 3, path: "workspaces/app.ts" }, "pr-920", 3),
+    ).toBeNull();
+  });
+
+  it("returns null when the auth generation differs", () => {
+    expect(
+      resolveActivePath({ slot: "pr-919", authGeneration: 3, path: "workspaces/app.ts" }, "pr-919", 4),
+    ).toBeNull();
   });
 
   it("returns null when nothing is selected", () => {
-    expect(resolveActivePath(null, "pr-919")).toBeNull();
+    expect(resolveActivePath(null, "pr-919", 3)).toBeNull();
   });
 });

@@ -17,14 +17,22 @@ const MAX_IMAGE_PREVIEW_BYTES = 10 * 1024 * 1024;
 
 export interface FileSelection {
   slot: string;
+  authGeneration: number;
   path: string;
 }
 
-// A selection captured under one computer must never resolve to a preview under
-// another. Derived synchronously so a runtime switch clears the path in the same
-// render, before any stat/blob request can target the new computer.
-export function resolveActivePath(selection: FileSelection | null, runtimeSlot: string): string | null {
-  if (!selection || selection.slot !== runtimeSlot) return null;
+// A selection captured under one computer/session must never resolve to a
+// preview under another. Scoped to both the runtime slot and the credential
+// generation (a replacement session can keep the same slot). Derived
+// synchronously so a switch clears the path in the same render, before any
+// stat/blob request can target the new computer or owner.
+export function resolveActivePath(
+  selection: FileSelection | null,
+  runtimeSlot: string,
+  authGeneration: number,
+): string | null {
+  if (!selection) return null;
+  if (selection.slot !== runtimeSlot || selection.authGeneration !== authGeneration) return null;
   return selection.path;
 }
 
@@ -58,10 +66,14 @@ function TextPreview({ path, markdown = false }: { path: string; markdown?: bool
       .then(async (stat) => {
         // Fail closed: a missing or non-finite size must not bypass the bound.
         if (!isFiniteSizeWithin(stat.size, MAX_TEXT_PREVIEW_BYTES)) throw new Error("file_too_large");
+        // The selected computer may have changed while stat was in flight; the
+        // api client resolves the CURRENT runtime slot per request, so fetching
+        // now would read this path from the newly selected computer. Bail first.
+        if (cancelled) return null;
         return api.getText(`/api/files/blob?path=${encodeURIComponent(path)}`);
       })
       .then((content) => {
-        if (!cancelled) setState({ status: "ready", content });
+        if (!cancelled && content !== null) setState({ status: "ready", content });
       })
       .catch((err: unknown) => {
         if (!cancelled) setState({ status: "error", error: previewErrorMessage(err) });
@@ -92,13 +104,17 @@ function ImagePreview({ path, name }: { path: string; name: string }) {
       .then(async (stat) => {
         // Fail closed like text previews: bound the bytes read into renderer memory.
         if (!isFiniteSizeWithin(stat.size, MAX_IMAGE_PREVIEW_BYTES)) throw new Error("file_too_large");
+        // The selected computer may have changed while stat was in flight; the
+        // api client resolves the CURRENT runtime slot per request, so fetching
+        // now would read this path from the newly selected computer. Bail first.
+        if (cancelled) return null;
         // Load bytes through the authenticated client so credentials injected at
         // the network layer apply. A bare <img src> to the blob route cannot
         // carry them and would expose the selected computer's file by URL.
         return api.getBlob(`/api/files/blob?path=${encodeURIComponent(path)}`);
       })
       .then((blob) => {
-        if (cancelled) return;
+        if (cancelled || blob === null) return;
         objectUrl = URL.createObjectURL(blob);
         setState({ status: "ready", url: objectUrl });
       })
@@ -127,28 +143,37 @@ function FilePreview({ path }: { path: string | null }) {
     return <EmptyState icon={<FileCode2 size={26} />} headline="Choose a file" description="Preview images, Markdown, and code from this computer." />;
   }
   const name = path.split("/").pop() ?? path;
-  if (isImage(path)) return <ImagePreview path={path} name={name} />;
-  if (isMarkdown(path)) return <TextPreview path={path} markdown />;
-  return <TextPreview path={path} />;
+  // key={path} remounts the preview when the file changes so its loading state
+  // resets synchronously, instead of showing the previous file until the effect
+  // runs after paint.
+  if (isImage(path)) return <ImagePreview key={path} path={path} name={name} />;
+  if (isMarkdown(path)) return <TextPreview key={path} path={path} markdown />;
+  return <TextPreview key={path} path={path} />;
 }
 
 export default function FilesWorkspace() {
   const handle = useConnection((state) => state.handle);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
+  const authGeneration = useConnection((state) => state.authGeneration);
   const [selection, setSelection] = useState<FileSelection | null>(null);
 
   // Correctness comes from this synchronous derivation, not the effect below:
-  // a selection made under another computer resolves to null on the first render
-  // with the new slot, so FilePreview never sees a stale path.
-  const activePath = resolveActivePath(selection, runtimeSlot);
+  // a selection made under another computer/session resolves to null on the
+  // first render with the new slot or generation, so FilePreview never sees a
+  // stale path.
+  const activePath = resolveActivePath(selection, runtimeSlot, authGeneration);
 
   useEffect(() => {
-    setSelection((current) => (current && current.slot !== runtimeSlot ? null : current));
-  }, [runtimeSlot]);
+    setSelection((current) =>
+      current && (current.slot !== runtimeSlot || current.authGeneration !== authGeneration)
+        ? null
+        : current,
+    );
+  }, [runtimeSlot, authGeneration]);
 
   const handleOpenFile = useCallback(
-    (path: string) => setSelection({ slot: runtimeSlot, path }),
-    [runtimeSlot],
+    (path: string) => setSelection({ slot: runtimeSlot, authGeneration, path }),
+    [runtimeSlot, authGeneration],
   );
 
   return (
