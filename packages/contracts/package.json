@@ -6,6 +6,10 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "imports": {
+    "#agent-runtime-config": "./src/agent-runtime-config.ts",
+    "#contract-primitives": "./src/primitives.ts"
+  },
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
