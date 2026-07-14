@@ -242,6 +242,50 @@ describe("agent runtime controller", () => {
     });
   });
 
+  it("uses a fresh deadline to restore a same-runtime selection after persistence fails", async () => {
+    const homePath = await createHome({
+      agent: { messagingRuntime: "hermes", revision: 0 },
+    });
+    const configPath = join(homePath, "system/config.json");
+    const rollbackSignals: boolean[] = [];
+    const hermes = fakeAdapter("hermes", {
+      selection: vi.fn(async () => ({
+        runtime: "hermes",
+        provider: "old-provider",
+        model: "old-model",
+        configured: true,
+      })),
+      configure: vi.fn(async (input, signal) => {
+        if (input.provider === "new-provider") {
+          await rm(configPath);
+          await mkdir(configPath);
+          await new Promise((resolve) => setTimeout(resolve, 120));
+        } else {
+          rollbackSignals.push(signal.aborted);
+          signal.throwIfAborted();
+        }
+        return {
+          runtime: "hermes",
+          provider: input.provider,
+          model: input.model,
+          configured: true,
+        };
+      }),
+    });
+    const controller = createAgentRuntimeController({
+      homePath,
+      adapters: { hermes },
+      timeoutMs: 100,
+    });
+
+    await expect(controller.update({
+      provider: "new-provider",
+      messagingModel: "new-model",
+      revision: 0,
+    })).rejects.toBeDefined();
+    expect(rollbackSignals).toEqual([false]);
+  });
+
   it("does not query a stopped target selection before prepare and activation", async () => {
     const homePath = await createHome();
     let active = false;
