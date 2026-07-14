@@ -553,10 +553,18 @@ exit 99
     const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-linux-tools'), 'utf8');
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
 
-    for (const pkg of ['dbus-x11', 'x11-apps', 'xauth', 'xpra', 'xterm']) {
+    for (const pkg of ['dbus-x11', 'x11-apps', 'xauth', 'xterm']) {
       expect(cloudInit).toContain(pkg);
       expect(installer).toContain(pkg);
     }
+    expect(cloudInit).not.toContain('native_app_packages="dbus-x11 x11-apps xauth xpra xterm"');
+    expect(installer).toContain('"xpra=${XPRA_VERSION}"');
+    expect(installer).toContain('XPRA_VERSION="5.1.6-r0-1"');
+    expect(installer).toContain('XPRA_HTML5_VERSION="17.2-r0-1"');
+    expect(installer).toContain('URIs: https://xpra.org/lts');
+    expect(installer).toContain('B4993B57323148E37977E5D873254CAD17978FAF');
+    expect(installer).toContain('xpra-x11=${XPRA_VERSION}');
+    expect(installer).toContain('xpra-html5=${XPRA_HTML5_VERSION}');
     expect(existsSync(join(root, 'distro/customer-vps/systemd/matrix-linux-tools.service'))).toBe(true);
     expect(syncAgent).toContain('matrix-linux-tools.service');
     expect(syncAgent).toContain('systemctl start --no-block matrix-linux-tools.service');

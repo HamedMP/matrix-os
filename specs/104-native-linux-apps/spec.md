@@ -2,7 +2,7 @@
 
 ## Summary
 
-Native Linux Apps lets the Matrix shell open curated Linux desktop apps running on the user's Matrix VPS/cloud runtime. The MVP supports `xterm` and `xcalc`, launched as the non-root runtime user through `xpra`, and streamed back into a Matrix window through same-origin authenticated gateway routes.
+Native Linux Apps lets the Matrix shell open curated Linux desktop apps running on the user's Matrix VPS/cloud runtime. The MVP supports `xterm` and `xcalc`, launched as the non-root runtime user through a pinned Xpra 5.1 LTS transport, and streamed back into a Matrix window through same-origin authenticated gateway routes.
 
 This is intentionally not a general native app platform. There is no manifest-supplied command execution, app store installation, custom Wayland/WebRTC compositor, or broad filesystem/network permission UI in this slice.
 
@@ -62,7 +62,7 @@ Display numbers and ports are allocated from bounded local pools and released on
 | Method | Route | Auth | Body | Response |
 | --- | --- | --- | --- | --- |
 | `GET` | `/api/native-apps` | Matrix gateway auth | none | `{ apps }` curated enabled registry |
-| `POST` | `/api/native-apps/:appId/sessions` | Matrix gateway auth + `bodyLimit` | `{ width?: number, height?: number }` | `201 { session }` plus scoped HttpOnly stream cookie |
+| `POST` | `/api/native-apps/:appId/sessions` | Matrix gateway auth + `bodyLimit` | `{ width?: number, height?: number }` | `201 { session }` with `transport`, `transportVersion`, and a scoped HttpOnly stream cookie |
 | `GET` | `/api/native-apps/sessions/:sessionId` | Matrix gateway auth | none | `{ session }` for owner only |
 | `DELETE` | `/api/native-apps/sessions/:sessionId` | Matrix gateway auth + `bodyLimit` | ignored | `{ session }` after termination |
 | `GET/ALL` | `/api/native-apps/sessions/:sessionId/stream/*` | scoped stream cookie, or launch-returned bootstrap token that mints the cookie | proxied | same-origin proxy to loopback xpra |
@@ -75,6 +75,9 @@ Display numbers and ports are allocated from bounded local pools and released on
 - User input is never appended to shell commands.
 - `spawn()` is called with argv arrays.
 - Launch refuses if the gateway process is running as uid `0`.
+- Launch refuses unsupported Xpra server versions; the production host installer pins the supported `5.1` series.
+- The embedded HTML5 client disables its duplicate menu, audio, clipboard, printing, file transfer, reconnect, diagnostics, and offscreen paths for the curated MVP.
+- Matrix removes Xpra's duplicate decoration from the primary app window and maximizes it to the measured Matrix window; transient dialogs keep their own geometry.
 - Session IDs are unguessable `session_*` values.
 - Stream access uses a per-session HttpOnly cookie scoped to the exact stream path. The launch response also returns a same-origin bootstrap stream URL so the first stream request can mint the cookie if an app-domain proxy or browser path drops the launch `Set-Cookie`.
 - Bootstrap stream tokens are unguessable `stream_*` values, tied to the session, validated at the route boundary, and stripped before proxying to `127.0.0.1`.
@@ -95,11 +98,11 @@ Before enabling browsers, Spotify, or third-party native apps, Matrix OS needs a
 
 ## Enabling On A VPS
 
-Install only the MVP dependencies on the user runtime host:
+The VPS-native Linux tools service installs Xpra from its signed LTS repository. The package versions are pinned so Ubuntu's unsupported `3.1` package cannot satisfy the runtime dependency:
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y xpra xpra-html5 xterm x11-apps
+sudo systemctl start matrix-linux-tools.service
+xpra --version
 ```
 
 Then restart the Matrix gateway so `/api/native-apps` can detect `xpra`:
@@ -115,6 +118,9 @@ Production rollout still follows the VPS-native host bundle path. Do not use Doc
 Automated coverage:
 
 - Registry only returns curated enabled apps.
+- Unsupported Xpra versions are rejected before a session is allocated.
+- Launch uses the measured Matrix window dimensions as Xpra's initial resizable display geometry.
+- The embedded client hides duplicate transport chrome and maximizes only the primary app window.
 - Invalid app IDs and arbitrary command payloads are rejected.
 - Max sessions per owner is enforced.
 - Owners cannot inspect or terminate another owner's session.

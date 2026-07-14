@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 interface NativeAppViewerProps {
   appId: string;
@@ -12,6 +12,13 @@ interface NativeAppSession {
   appId: string;
   status: "starting" | "running" | "exited" | "terminated" | "failed";
   streamUrl: string;
+  transport: "xpra";
+  transportVersion: string;
+}
+
+interface NativeAppViewport {
+  width: number;
+  height: number;
 }
 
 type ViewerState =
@@ -24,6 +31,17 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const TERMINATION_ATTEMPTS = 3;
 const MAX_NATIVE_SESSION_LEASES = 64;
 const SAFE_RUNTIME_SLOT = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+const XPRA_EMBED_OPTIONS = {
+  clipboard: "false",
+  file_transfer: "false",
+  floating_menu: "false",
+  offscreen: "false",
+  printing: "false",
+  reconnect: "false",
+  remote_logging: "false",
+  sound: "false",
+  submit: "false",
+} as const;
 
 interface NativeSessionLease {
   appId: string;
@@ -65,7 +83,11 @@ function nativeStreamUrl(streamUrl: string): string {
   const explicitStreamUrl = prefix && streamUrl.startsWith("/api/native-apps/")
     ? `${prefix}${streamUrl}`
     : streamUrl;
-  return withSelectedRuntime(explicitStreamUrl);
+  const url = new URL(explicitStreamUrl, window.location.origin);
+  for (const [name, value] of Object.entries(XPRA_EMBED_OPTIONS)) {
+    url.searchParams.set(name, value);
+  }
+  return withSelectedRuntime(`${url.pathname}${url.search}${url.hash}`);
 }
 
 function withSelectedRuntime(path: string): string {
@@ -77,11 +99,11 @@ function withSelectedRuntime(path: string): string {
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
-async function launchNativeSession(appId: string): Promise<NativeAppSession> {
+async function launchNativeSession(appId: string, viewport: NativeAppViewport): Promise<NativeAppSession> {
   const response = await fetch(nativeApiPath(`/${appId}/sessions`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
+    body: JSON.stringify(viewport),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const body = await response.json().catch((err: unknown) => {
@@ -163,7 +185,11 @@ function evictIdleNativeSessionLease(): boolean {
   return true;
 }
 
-function acquireNativeSessionLease(windowId: string, appId: string): NativeSessionLeaseHandle {
+function acquireNativeSessionLease(
+  windowId: string,
+  appId: string,
+  viewport: NativeAppViewport,
+): NativeSessionLeaseHandle {
   ensurePageHideListener();
   const existing = nativeSessionLeases.get(windowId);
   if (existing?.appId === appId) {
@@ -187,7 +213,7 @@ function acquireNativeSessionLease(windowId: string, appId: string): NativeSessi
     appId,
     consumers: 1,
     lastTouched: Date.now(),
-    session: launchNativeSession(appId),
+    session: launchNativeSession(appId, viewport),
   };
   nativeSessionLeases.set(windowId, lease);
   return {
@@ -210,12 +236,22 @@ function releaseNativeSessionLease(windowId: string, lease: NativeSessionLease):
 
 export function NativeAppViewer({ appId, windowId }: NativeAppViewerProps) {
   const [state, setState] = useState<ViewerState>({ status: "loading" });
+  const [launchViewport, setLaunchViewport] = useState<NativeAppViewport | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const leaseRef = useRef<NativeSessionLeaseHandle | null>(null);
 
+  useLayoutEffect(() => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    const width = Math.min(3840, Math.max(320, Math.floor(rect?.width || 900)));
+    const height = Math.min(2160, Math.max(240, Math.floor(rect?.height || 640)));
+    setLaunchViewport({ width, height });
+  }, [appId, windowId]);
+
   useEffect(() => {
+    if (!launchViewport) return;
     let cancelled = false;
     setState({ status: "loading" });
-    const lease = acquireNativeSessionLease(windowId, appId);
+    const lease = acquireNativeSessionLease(windowId, appId, launchViewport);
     leaseRef.current = lease;
     lease.session
       .then((session) => {
@@ -235,22 +271,24 @@ export function NativeAppViewer({ appId, windowId }: NativeAppViewerProps) {
       if (leaseRef.current === lease) leaseRef.current = null;
       lease.release();
     };
-  }, [appId, windowId]);
+  }, [appId, launchViewport, windowId]);
 
   if (state.status === "ready") {
     return (
-      <iframe
-        title={`${appId} native app`}
-        src={state.session.streamUrl}
-        className="ph-no-capture h-full w-full border-0 bg-black"
-        sandbox="allow-scripts allow-forms allow-pointer-lock allow-popups"
-      />
+      <div ref={containerRef} className="h-full w-full overflow-hidden bg-black">
+        <iframe
+          title={`${appId} native app`}
+          src={state.session.streamUrl}
+          className="ph-no-capture block h-full w-full border-0 bg-black"
+          sandbox="allow-scripts allow-forms allow-pointer-lock allow-popups"
+        />
+      </div>
     );
   }
 
   if (state.status === "failed") {
     return (
-      <div className="flex h-full items-center justify-center bg-card px-6 text-center text-sm text-muted-foreground">
+      <div ref={containerRef} className="flex h-full items-center justify-center bg-card px-6 text-center text-sm text-muted-foreground">
         {state.message}
       </div>
     );
@@ -258,14 +296,14 @@ export function NativeAppViewer({ appId, windowId }: NativeAppViewerProps) {
 
   if (state.status === "terminated") {
     return (
-      <div className="flex h-full items-center justify-center bg-card px-6 text-center text-sm text-muted-foreground">
+      <div ref={containerRef} className="flex h-full items-center justify-center bg-card px-6 text-center text-sm text-muted-foreground">
         Native app session ended
       </div>
     );
   }
 
   return (
-    <div className="flex h-full items-center justify-center bg-card px-6 text-center text-sm text-muted-foreground">
+    <div ref={containerRef} className="flex h-full items-center justify-center bg-card px-6 text-center text-sm text-muted-foreground">
       Opening native app...
     </div>
   );

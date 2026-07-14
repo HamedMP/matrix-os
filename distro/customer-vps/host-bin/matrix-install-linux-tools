@@ -4,6 +4,9 @@ set -euo pipefail
 BREW_BIN="${HOMEBREW_BIN:-/home/linuxbrew/.linuxbrew/bin/brew}"
 BREW_PREFIX="${HOMEBREW_PREFIX:-/home/linuxbrew/.linuxbrew}"
 INSTALLER_URL="${HOMEBREW_INSTALLER_URL:-https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh}"
+XPRA_VERSION="5.1.6-r0-1"
+XPRA_HTML5_VERSION="17.2-r0-1"
+XPRA_SIGNING_FINGERPRINT="B4993B57323148E37977E5D873254CAD17978FAF"
 if [ -r /opt/matrix/env/host.env ]; then
   source /opt/matrix/env/host.env
 fi
@@ -84,17 +87,61 @@ write_homebrew_shell_config() {
   done
 }
 
+install_xpra_lts() {
+  local distro_id version_codename key_tmp key_fingerprint
+  distro_id="$(. /etc/os-release && printf '%s' "${ID:-}")"
+  version_codename="$(. /etc/os-release && printf '%s' "${VERSION_CODENAME:-}")"
+  if { [ "$distro_id" != "ubuntu" ] && [ "$distro_id" != "debian" ]; } || [ "$version_codename" != "noble" ]; then
+    echo "matrix-install-linux-tools: Xpra LTS is not packaged for this runtime" >&2
+    return 1
+  fi
+
+  key_tmp="$(mktemp)"
+  trap 'rm -f "${key_tmp:-}"' RETURN
+  retry 3 5 curl --fail --location --retry 3 --retry-delay 2 --retry-all-errors \
+    --connect-timeout 10 --max-time 30 https://xpra.org/xpra.asc -o "$key_tmp"
+  key_fingerprint="$(gpg --show-keys --with-colons "$key_tmp" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')"
+  if [ "$key_fingerprint" != "$XPRA_SIGNING_FINGERPRINT" ]; then
+    echo "matrix-install-linux-tools: Xpra signing key verification failed" >&2
+    return 1
+  fi
+  sudo install -o root -g root -m 0644 "$key_tmp" /usr/share/keyrings/xpra.asc
+  rm -f "$key_tmp"
+  trap - RETURN
+
+  sudo tee /etc/apt/sources.list.d/xpra-lts.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://xpra.org/lts
+Suites: noble
+Components: main
+Signed-By: /usr/share/keyrings/xpra.asc
+Architectures: amd64 arm64
+EOF
+  sudo tee /etc/apt/preferences.d/matrix-xpra >/dev/null <<'EOF'
+Package: xpra xpra-* xserver-xorg-video-dummy
+Pin: origin xpra.org
+Pin-Priority: 1001
+EOF
+  retry 3 15 sudo apt-get update \
+    -o Acquire::Retries=5 \
+    -o Acquire::http::Timeout=20 \
+    -o Acquire::https::Timeout=20
+  retry 2 30 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    "xpra=${XPRA_VERSION}" \
+    "xpra-x11=${XPRA_VERSION}" \
+    "xpra-html5=${XPRA_HTML5_VERSION}" \
+    xserver-xorg-video-dummy
+}
+
 if [ "$(id -u)" = "0" ]; then
   echo "matrix-install-linux-tools: run as the matrix user, not root" >&2
   exit 1
 fi
 
 if command -v apt-get >/dev/null 2>&1; then
-  native_app_packages="dbus-x11 x11-apps xauth xpra xterm"
-  if apt-cache show xpra-html5 >/dev/null 2>&1; then
-    native_app_packages="${native_app_packages} xpra-html5"
-  fi
+  native_app_packages="dbus-x11 gnupg x11-apps xauth xterm"
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential procps curl file git ${native_app_packages}
+  install_xpra_lts
 fi
 
 cd "${HOME:-/home/matrix/home}"

@@ -48,6 +48,7 @@ const LaunchBodySchema = z.object({
 }).strict();
 const NATIVE_STREAM_TOKEN_PARAM = "nativeStreamToken";
 const XPRA_WORKER_FALLBACK_MARKER = "matrix-xpra-worker-fallback";
+const XPRA_EMBED_MARKER = "matrix-xpra-embedded-window";
 const XPRA_WORKER_FALLBACK_SCRIPT = `<script id="${XPRA_WORKER_FALLBACK_MARKER}">
 (() => {
   const NativeWorker = window.Worker;
@@ -70,6 +71,24 @@ const XPRA_WORKER_FALLBACK_SCRIPT = `<script id="${XPRA_WORKER_FALLBACK_MARKER}"
     }
   };
 })();
+</script>`;
+const XPRA_EMBED_SCRIPT = `<script id="${XPRA_EMBED_MARKER}">
+document.addEventListener("DOMContentLoaded", () => {
+  if (typeof XpraClient !== "function" || typeof XpraClient.prototype._new_window !== "function") return;
+  const createWindow = XpraClient.prototype._new_window;
+  XpraClient.prototype._new_window = function MatrixEmbeddedWindow(...args) {
+    const metadata = args[5];
+    const overrideRedirect = Boolean(args[6]);
+    const isPrimaryWindow = !overrideRedirect && Object.values(this.id_to_window || {})
+      .every((win) => win.override_redirect || win.tray);
+    if (isPrimaryWindow && metadata && typeof metadata === "object") metadata.decorations = false;
+    createWindow.apply(this, args);
+    const win = this.id_to_window?.[args[0]];
+    if (isPrimaryWindow && win && typeof win.set_maximized === "function") {
+      requestAnimationFrame(() => win.set_maximized(true));
+    }
+  };
+}, { once: true });
 </script>`;
 
 export interface NativeAppRoutesOptions {
@@ -368,7 +387,7 @@ function injectXpraWorkerFallback(
   if (!headMatch) return body;
   const insertAt = headMatch.index + headMatch[0].length;
   return new TextEncoder().encode(
-    `${html.slice(0, insertAt)}${XPRA_WORKER_FALLBACK_SCRIPT}${html.slice(insertAt)}`,
+    `${html.slice(0, insertAt)}${XPRA_WORKER_FALLBACK_SCRIPT}${XPRA_EMBED_SCRIPT}${html.slice(insertAt)}`,
   );
 }
 

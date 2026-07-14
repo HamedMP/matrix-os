@@ -46,6 +46,7 @@ function createApp(ownerId?: string) {
   const service = new NativeAppSessionService({
     registry: createDefaultNativeAppRegistry(),
     commandExists: vi.fn(async () => true),
+    transportVersion: vi.fn(async () => "5.1.6"),
     getuid: () => 1000,
     randomId: vi.fn()
       .mockReturnValueOnce("session_aaaaaaaaaaaaaaaaaaaaaaaa")
@@ -277,6 +278,30 @@ describe("native app routes", () => {
     expect(html).toContain("matrix-xpra-worker-fallback");
     expect(html.indexOf("matrix-xpra-worker-fallback")).toBeLessThan(html.indexOf('src="js/Client.js"'));
     expect(html).not.toContain("allow-same-origin");
+  });
+
+  it("embeds the single native window without duplicate xpra chrome or margins", async () => {
+    const { app } = createApp("alice");
+    const launch = await app.request("/api/native-apps/xterm/sessions", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: { "Content-Type": "application/json" },
+    });
+    const body = await launch.json() as { session: { streamUrl: string } };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      '<html><head><script src="js/Client.js"></script></head><body></body></html>',
+      { status: 200, headers: { "Content-Type": "text/html" } },
+    )));
+
+    const stream = await app.request(body.session.streamUrl, {
+      headers: { Accept: "text/html" },
+    });
+    const html = await stream.text();
+
+    expect(html).toContain("matrix-xpra-embedded-window");
+    expect(html).toContain("metadata.decorations = false");
+    expect(html).toContain("win.set_maximized(true)");
+    expect(html.indexOf("matrix-xpra-embedded-window")).toBeLessThan(html.indexOf('src="js/Client.js"'));
   });
 
   it("authenticates opaque iframe assets through the stream capability path", async () => {

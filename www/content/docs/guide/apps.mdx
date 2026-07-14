@@ -52,22 +52,17 @@ These default apps are bundled into the Matrix host bundle so every user starts 
 
 ## Native Linux Apps MVP
 
-Matrix can also surface a small curated set of native Linux apps from your Matrix runtime. The current MVP starts with Xterm and streams it into a normal Matrix window through an authenticated xpra session.
+Matrix can also surface a small curated set of native Linux apps from your Matrix runtime. The current MVP starts with Xterm and streams it into a normal Matrix window through an authenticated Xpra session.
 
-Native app sessions run as the non-root Matrix runtime user on your VPS. The gateway owns the session, enforces owner checks, caps active sessions, cleans up stale sessions, and proxies the xpra stream through a same-origin Matrix URL. The stream uses a short-lived gateway token to mint a scoped HttpOnly cookie, then all xpra traffic stays behind the same-origin proxy.
+Native app sessions run as the non-root Matrix runtime user on your VPS. The gateway owns the session, enforces owner checks, caps active sessions, cleans up stale sessions, and proxies the Xpra stream through a same-origin Matrix URL. The stream uses a short-lived gateway token to mint a scoped HttpOnly cookie, then all Xpra traffic stays behind the same-origin proxy.
 
-To enable the MVP on a Linux runtime, install:
+Matrix measures the app window before launch, keeps Xpra's own menu hidden, and fits the primary Linux app to the Matrix window. Dialogs and popovers keep their native geometry.
 
-```bash
-sudo apt-get update
-sudo apt-get install -y xpra xpra-html5 xterm x11-apps
-sudo systemctl restart matrix-gateway
-```
-
-On Matrix VPS images that include the optional Linux tools service, this can also be installed with:
+On Matrix VPS images, install the pinned, signed Xpra LTS packages through the Linux tools service:
 
 ```bash
 sudo systemctl start matrix-linux-tools.service
+xpra --version
 sudo systemctl restart matrix-gateway.service
 ```
 

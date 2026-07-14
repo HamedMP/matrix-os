@@ -25,6 +25,7 @@ function createService(options: Partial<ConstructorParameters<typeof NativeAppSe
   const service = new NativeAppSessionService({
     registry: createDefaultNativeAppRegistry(),
     commandExists: vi.fn(async (command) => ["xpra", "xterm", "xcalc"].includes(command)),
+    transportVersion: vi.fn(async () => "5.1.6"),
     getuid: () => 1000,
     killProcess: missingProcessGroup,
     randomId: vi.fn()
@@ -123,6 +124,8 @@ describe("NativeAppSessionService", () => {
       ownerId: "alice",
       appId: "xterm",
       status: "running",
+      transport: "xpra",
+      transportVersion: "5.1.6",
       streamUrl: "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/stream_bbbbbbbbbbbbbbbbbbbbbbbb/",
     });
     expect(launched).toHaveLength(1);
@@ -137,6 +140,7 @@ describe("NativeAppSessionService", () => {
       "--bind-tcp=127.0.0.1:46000",
       "--html=on",
       "--daemon=no",
+      "--resize-display=1024x768",
       "--file-transfer=no",
       "--open-files=no",
     ]));
@@ -147,6 +151,19 @@ describe("NativeAppSessionService", () => {
       XPRA_SYSTEM_CONF_DIRS: "/dev/null",
       XPRA_USER_CONF_DIRS: "/dev/null",
     });
+  });
+
+  it("rejects unsupported xpra releases before allocating a session", async () => {
+    const { service, launched } = createService({
+      transportVersion: vi.fn(async () => "3.1.5"),
+    });
+
+    await expect(service.launchSession({ ownerId: "alice", appId: "xterm" }))
+      .rejects.toMatchObject({
+        code: "native_unavailable",
+        clientMessage: "Native apps are not available on this runtime",
+      });
+    expect(launched).toEqual([]);
   });
 
   it("waits for xpra readiness before returning the session", async () => {

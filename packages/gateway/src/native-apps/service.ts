@@ -1,4 +1,4 @@
-import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
+import { execFile as nodeExecFile, spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createConnection } from "node:net";
@@ -19,6 +19,8 @@ export interface NativeAppSession {
   appId: string;
   status: NativeAppSessionStatus;
   streamUrl: string;
+  transport: "xpra";
+  transportVersion: string;
   width: number;
   height: number;
   createdAt: number;
@@ -91,6 +93,7 @@ export interface NativeAppSessionServiceOptions {
   reaperIntervalMs?: number;
   sessionTtlMs?: number;
   stopGraceMs?: number;
+  transportVersion?: () => Promise<string | null>;
   spawn?: (command: string, args: string[], options: Parameters<typeof nodeSpawn>[2]) => NativeAppChildProcess;
 }
 
@@ -102,6 +105,20 @@ const READINESS_RETRY_MS = 100;
 const READINESS_TIMEOUT_MS = 5000;
 const SIGTERM_GRACE_MS = 5000;
 const SAFE_XPRA_CHILD_ARG = /^[A-Za-z0-9_./:@%+=,-]+$/;
+const SUPPORTED_XPRA_VERSION = /^5\.1(?:\.|$)/;
+
+export function probeXpraVersion(): Promise<string | null> {
+  return new Promise((resolve) => {
+    nodeExecFile("xpra", ["--version"], { timeout: COMMAND_CHECK_TIMEOUT_MS, maxBuffer: 4096 }, (error, stdout, stderr) => {
+      if (error) {
+        resolve(null);
+        return;
+      }
+      const match = `${stdout}\n${stderr}`.match(/\bv?(\d+\.\d+(?:\.\d+)?)\b/);
+      resolve(match?.[1] ?? null);
+    });
+  });
+}
 
 function defaultRandomId(prefix: "session" | "stream"): string {
   return `${prefix}_${randomBytes(24).toString("base64url")}`;
@@ -205,6 +222,8 @@ export class NativeAppSessionService {
   private readonly registry: NativeAppDefinition[];
   private readonly sessionTtlMs: number;
   private readonly stopGraceMs: number;
+  private readonly transportVersion: () => Promise<string | null>;
+  private transportVersionCache: { checkedAt: number; version: string | null } | null = null;
   private readonly sessions = new Map<string, NativeAppSessionRecord>();
   private readonly spawnProcess: (command: string, args: string[], options: Parameters<typeof nodeSpawn>[2]) => NativeAppChildProcess;
   private readonly reaper: ReturnType<typeof setInterval> | null;
@@ -228,6 +247,7 @@ export class NativeAppSessionService {
     this.readinessTimeoutMs = options.readinessTimeoutMs ?? READINESS_TIMEOUT_MS;
     this.sessionTtlMs = options.sessionTtlMs ?? DEFAULT_TTL_MS;
     this.stopGraceMs = options.stopGraceMs ?? SIGTERM_GRACE_MS;
+    this.transportVersion = options.transportVersion ?? probeXpraVersion;
     this.spawnProcess = options.spawn ?? ((command, args, spawnOptions) =>
       nodeSpawn(command, args, spawnOptions) as ChildProcess as NativeAppChildProcess);
 
@@ -271,6 +291,15 @@ export class NativeAppSessionService {
     if (!await this.cachedCommandExists("xpra")) {
       throw new NativeAppError("native_unavailable", 503, "Native apps are not available on this runtime", "xpra missing");
     }
+    const transportVersion = await this.readTransportVersion();
+    if (!transportVersion || !SUPPORTED_XPRA_VERSION.test(transportVersion)) {
+      throw new NativeAppError(
+        "native_unavailable",
+        503,
+        "Native apps are not available on this runtime",
+        "unsupported xpra version",
+      );
+    }
     if (!await this.cachedCommandExists(executable)) {
       throw new NativeAppError("native_unavailable", 503, "Native apps are not available on this runtime", "native app binary missing");
     }
@@ -294,6 +323,8 @@ export class NativeAppSessionService {
       app,
       status: "starting",
       streamUrl: `/api/native-apps/sessions/${id}/stream/`,
+      transport: "xpra",
+      transportVersion,
       display,
       port,
       pid: null,
@@ -309,7 +340,7 @@ export class NativeAppSessionService {
     this.sessions.set(id, record);
 
     try {
-      const args = this.buildXpraArgs(app, display, port);
+      const args = this.buildXpraArgs(app, display, port, width, height);
       const child = this.spawnProcess("xpra", args, {
         cwd: "/tmp",
         env: this.buildEnvironment(width, height),
@@ -391,7 +422,13 @@ export class NativeAppSessionService {
     this.sessions.clear();
   }
 
-  private buildXpraArgs(app: NativeAppDefinition, display: number, port: number): string[] {
+  private buildXpraArgs(
+    app: NativeAppDefinition,
+    display: number,
+    port: number,
+    width: number,
+    height: number,
+  ): string[] {
     return [
       "start",
       `:${display}`,
@@ -402,6 +439,13 @@ export class NativeAppSessionService {
       `--bind-tcp=127.0.0.1:${port}`,
       "--html=on",
       "--daemon=no",
+      `--resize-display=${width}x${height}`,
+      "--mdns=no",
+      "--notifications=no",
+      "--printing=no",
+      "--speaker=off",
+      "--microphone=off",
+      "--webcam=no",
       app.permissions.clipboard ? "--clipboard=yes" : "--clipboard=no",
       ...(app.permissions.filesystem === "none" ? ["--file-transfer=no", "--open-files=no"] : []),
     ];
@@ -491,6 +535,19 @@ export class NativeAppSessionService {
       this.commandExistsCache.delete(oldest);
     }
     return available;
+  }
+
+  private async readTransportVersion(): Promise<string | null> {
+    const now = this.now();
+    if (
+      this.transportVersionCache
+      && now - this.transportVersionCache.checkedAt < this.commandExistsCacheTtlMs
+    ) {
+      return this.transportVersionCache.version;
+    }
+    const version = await this.transportVersion();
+    this.transportVersionCache = { checkedAt: now, version };
+    return version;
   }
 
   private async waitForReadiness(record: NativeAppSessionRecord): Promise<void> {

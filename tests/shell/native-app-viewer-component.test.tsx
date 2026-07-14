@@ -11,6 +11,17 @@ describe("NativeAppViewer", () => {
   });
 
   it("launches a native session in an opaque-origin sandbox and terminates on close", async () => {
+    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      width: 1180,
+      height: 720,
+      top: 0,
+      left: 0,
+      right: 1180,
+      bottom: 720,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const requestUrl = String(url);
       if (requestUrl === "/api/native-apps/xterm/sessions" && init?.method === "POST") {
@@ -40,8 +51,22 @@ describe("NativeAppViewer", () => {
     const { unmount } = render(<NativeAppViewer appId="xterm" windowId="win-native" />);
     const frame = await screen.findByTitle("xterm native app");
 
-    expect(frame.getAttribute("src")).toBe("/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/");
+    const frameUrl = new URL(frame.getAttribute("src")!, "http://localhost");
+    expect(frameUrl.pathname).toBe("/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/");
+    expect(Object.fromEntries(frameUrl.searchParams)).toEqual({
+      clipboard: "false",
+      file_transfer: "false",
+      floating_menu: "false",
+      offscreen: "false",
+      printing: "false",
+      reconnect: "false",
+      remote_logging: "false",
+      sound: "false",
+      submit: "false",
+    });
     expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
+    const launchCall = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(JSON.parse(String(launchCall?.[1]?.body))).toEqual({ width: 1180, height: 720 });
 
     unmount();
 
@@ -51,6 +76,7 @@ describe("NativeAppViewer", () => {
         expect.objectContaining({ method: "DELETE" }),
       );
     });
+    rectSpy.mockRestore();
   });
 
   it("pins native app routes to the explicit VM when opened under /vm/:handle", async () => {
@@ -84,9 +110,9 @@ describe("NativeAppViewer", () => {
     const { unmount } = render(<NativeAppViewer appId="xterm" windowId="win-native" />);
     const frame = await screen.findByTitle("xterm native app");
 
-    expect(frame.getAttribute("src")).toBe(
-      "/vm/7a/api/native-apps/sessions/session_bbbbbbbbbbbbbbbbbbbbbbbb/stream/?nativeStreamToken=stream_cccccccccccccccccccccccc",
-    );
+    const frameUrl = new URL(frame.getAttribute("src")!, "http://localhost");
+    expect(frameUrl.pathname).toBe("/vm/7a/api/native-apps/sessions/session_bbbbbbbbbbbbbbbbbbbbbbbb/stream/");
+    expect(frameUrl.searchParams.get("nativeStreamToken")).toBe("stream_cccccccccccccccccccccccc");
 
     unmount();
 
@@ -126,9 +152,11 @@ describe("NativeAppViewer", () => {
     const viewer = render(<NativeAppViewer appId="xterm" windowId="win-review-runtime" />);
     const frame = await screen.findByTitle("xterm native app");
 
-    expect(frame.getAttribute("src")).toBe(
-      "/vm/alice/api/native-apps/sessions/session_ffffffffffffffffffffffff/stream/stream_gggggggggggggggggggggggg/?runtime=review",
+    const frameUrl = new URL(frame.getAttribute("src")!, "http://localhost");
+    expect(frameUrl.pathname).toBe(
+      "/vm/alice/api/native-apps/sessions/session_ffffffffffffffffffffffff/stream/stream_gggggggggggggggggggggggg/",
     );
+    expect(frameUrl.searchParams.get("runtime")).toBe("review");
 
     viewer.unmount();
     await waitFor(() => {
@@ -167,9 +195,11 @@ describe("NativeAppViewer", () => {
     const viewer = render(<NativeAppViewer appId="xterm" windowId="win-root-review-runtime" />);
     const frame = await screen.findByTitle("xterm native app");
 
-    expect(frame.getAttribute("src")).toBe(
-      "/vm/alice/api/native-apps/sessions/session_hhhhhhhhhhhhhhhhhhhhhhhh/stream/stream_iiiiiiiiiiiiiiiiiiiiiiii/?runtime=review",
+    const frameUrl = new URL(frame.getAttribute("src")!, "http://localhost");
+    expect(frameUrl.pathname).toBe(
+      "/vm/alice/api/native-apps/sessions/session_hhhhhhhhhhhhhhhhhhhhhhhh/stream/stream_iiiiiiiiiiiiiiiiiiiiiiii/",
     );
+    expect(frameUrl.searchParams.get("runtime")).toBe("review");
 
     viewer.unmount();
     await waitFor(() => {
