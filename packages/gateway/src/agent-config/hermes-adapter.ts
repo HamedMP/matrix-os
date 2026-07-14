@@ -6,6 +6,7 @@ import {
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { AgentConfigError } from "./errors.js";
+import { validateProviderBaseUrl } from "./base-url-policy.js";
 import type {
   MessagingRuntimeAdapter,
   RuntimeConfigureInput,
@@ -25,6 +26,7 @@ export function createHermesRuntimeAdapter(options: {
   requestJson: HermesJsonRequester;
   activate?: (signal: AbortSignal) => Promise<void>;
   deactivate?: (signal: AbortSignal) => Promise<void>;
+  validateBaseUrl?: (value: string) => Promise<void>;
 }): MessagingRuntimeAdapter {
   async function snapshot(signal: AbortSignal) {
     return options.source(signal);
@@ -50,6 +52,9 @@ export function createHermesRuntimeAdapter(options: {
     if (input.baseUrl !== undefined
       && !provider.supportedAuthKinds.includes("base_url")) {
       throw new AgentConfigError("not_configured");
+    }
+    if (input.baseUrl !== undefined) {
+      await (options.validateBaseUrl ?? validateProviderBaseUrl)(input.baseUrl);
     }
     const body = {
       scope: "main",

@@ -137,4 +137,26 @@ describe("Hermes messaging runtime adapter", () => {
     );
     expect(source.invalidate).toHaveBeenCalledTimes(2);
   });
+
+  it("blocks private custom-provider base URLs before runtime mutation", async () => {
+    const current = snapshot();
+    const source = Object.assign(vi.fn(async () => snapshot({
+      providers: [{
+        ...current.providers[0]!,
+        authKind: "base_url",
+        supportedAuthKinds: ["base_url"],
+      }],
+    })), { invalidate: vi.fn() });
+    const requestJson = vi.fn(async () => ({ ok: true }));
+    const adapter = createHermesRuntimeAdapter({ source, requestJson });
+
+    await expect(adapter.configure({
+      provider: "nous",
+      model: "hermes-4-405b",
+      baseUrl: "https://127.0.0.1:8443/v1",
+    }, new AbortController().signal)).rejects.toMatchObject({
+      kind: "agent_config_invalid",
+    });
+    expect(requestJson).not.toHaveBeenCalled();
+  });
 });

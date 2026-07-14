@@ -242,6 +242,17 @@ export function createAgentRuntimeController(
         return { revision: nextRevision, runtime: targetRuntime, selection };
       } catch (error) {
         const rollbackSignal = AbortSignal.timeout(2_000);
+        if (targetConfigured
+          && previousTargetSelection?.configured
+          && previousTargetSelection.provider !== null
+          && previousTargetSelection.model !== null) {
+          await targetAdapter.configure({
+            provider: previousTargetSelection.provider,
+            model: previousTargetSelection.model,
+          }, rollbackSignal).catch((rollbackError: unknown) => {
+            logBestEffortFailure("Target provider restore failed", rollbackError);
+          });
+        }
         if (targetActivationAttempted || currentDeactivated) {
           await setTransition("rolling_back").catch((rollbackError: unknown) => {
             logBestEffortFailure("Rollback marker write failed", rollbackError);
@@ -256,17 +267,6 @@ export function createAgentRuntimeController(
               logBestEffortFailure("Previous runtime restore failed", rollbackError);
             });
           }
-        }
-        if (targetConfigured
-          && previousTargetSelection?.configured
-          && previousTargetSelection.provider !== null
-          && previousTargetSelection.model !== null) {
-          await targetAdapter.configure({
-            provider: previousTargetSelection.provider,
-            model: previousTargetSelection.model,
-          }, rollbackSignal).catch((rollbackError: unknown) => {
-            logBestEffortFailure("Target provider restore failed", rollbackError);
-          });
         }
         if (committed) {
           await writeJsonAtomic(configPath, config).catch((rollbackError: unknown) => {
