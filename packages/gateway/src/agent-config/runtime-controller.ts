@@ -160,10 +160,11 @@ export function createAgentRuntimeController(
             && previousSelection.model !== null
             && (previousSelection.provider !== selection.provider
               || previousSelection.model !== selection.model)) {
+            const rollbackSignal = AbortSignal.timeout(2_000);
             await targetAdapter.configure({
               provider: previousSelection.provider,
               model: previousSelection.model,
-            }, deadline.signal).catch((error: unknown) => {
+            }, rollbackSignal).catch((error: unknown) => {
               logBestEffortFailure("Provider selection restore failed", error);
             });
           }
