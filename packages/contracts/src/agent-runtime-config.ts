@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { IsoTimestampSchema, SAFE_SLUG } from "./primitives.ts";
+import { IsoTimestampSchema, SAFE_SLUG } from "#contract-primitives";
 
 const SafeSlugSchema = z.string().min(1).max(80).regex(SAFE_SLUG);
 const SafeLabelSchema = z.string().trim().min(1).max(120);
