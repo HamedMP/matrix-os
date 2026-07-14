@@ -255,7 +255,7 @@ function MessagingProviders({
   const current = view.currentSelection.messaging;
   const [providerId, setProviderId] = useState(current.provider ?? providers[0]?.id ?? "");
   const provider = providers.find((entry) => entry.id === providerId);
-  const [model, setModel] = useState(current.model ?? provider?.models[0]?.id ?? "");
+  const [model, setModel] = useState(current.model ?? availableModels(provider)[0]?.id ?? "");
   const terminalAction = view.runtime.selected === "hermes" ? "hermes-model" : "openclaw-model-auth";
 
   if (providers.length === 0) {
