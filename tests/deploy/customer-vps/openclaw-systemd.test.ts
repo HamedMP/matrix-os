@@ -87,7 +87,9 @@ describe("customer VPS OpenClaw runtime", () => {
     expect(controller).toContain("systemctl is-active --quiet");
     expect(controller).toContain('systemctl disable --now "$other_unit"');
     expect(controller).toContain('systemctl enable --now "$target_unit"');
-    expect(controller).toContain("timeout 20");
+    expect(controller).toContain("action_timeout_seconds=10");
+    expect(controller).toContain("active_wait_seconds=10");
+    expect(controller).toContain('timeout "$action_timeout_seconds"');
     expect(controller).toContain("MemAvailable");
     expect(controller).toContain("1048576");
     const switchBody = controller.slice(

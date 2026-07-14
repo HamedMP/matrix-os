@@ -7,6 +7,7 @@ import {
   type AgentRuntimeSelection,
 } from "@matrix-os/contracts";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { AgentConfigError } from "./errors.js";
 import { createHermesRuntimeAdapter } from "./hermes-adapter.js";
 import { createHermesRuntimeSource, type HermesJsonReader } from "./hermes-source.js";
@@ -53,56 +54,128 @@ interface LazyOpenClawRpcOptions {
   createClient?: typeof createOpenClawRpcClient;
 }
 
+interface ResettableOpenClawRpc extends OpenClawRpcClient {
+  reset(): Promise<void>;
+}
+
 export function createLazyOpenClawRpc(
   homePath: string,
   options: LazyOpenClawRpcOptions = {},
-): OpenClawRpcClient {
+): ResettableOpenClawRpc {
   let client: OpenClawRpcClient | null = null;
   let pending: Promise<OpenClawRpcClient> | null = null;
+  let resetting: Promise<void> | null = null;
   let closed = false;
+  let epoch = 0;
   const readToken = options.readToken ?? readOpenClawGatewayToken;
   const createClient = options.createClient ?? createOpenClawRpcClient;
 
   async function getClient(): Promise<OpenClawRpcClient> {
     if (closed) throw new AgentConfigError("runtime_unavailable");
+    await resetting;
+    if (closed) throw new AgentConfigError("runtime_unavailable");
     if (client !== null) return client;
     if (pending === null) {
-      pending = readToken(homePath).then((token) => {
+      const creationEpoch = epoch;
+      const creation = readToken(homePath).then((token) => {
         const created = createClient({
           url: "ws://127.0.0.1:18789",
           token,
         });
-        client = created;
+        if (!closed && epoch === creationEpoch) client = created;
         return created;
       }).finally(() => {
-        pending = null;
+        if (pending === creation) pending = null;
       });
+      pending = creation;
     }
+    const requestEpoch = epoch;
     const active = await pending;
     // close() marks the wrapper closed before awaiting an in-flight creation.
     // Recheck after that shared promise settles so no caller can start an RPC
     // on the client that the shutdown path is about to close.
     if (closed) throw new AgentConfigError("runtime_unavailable");
+    if (epoch !== requestEpoch) return getClient();
     return active;
+  }
+
+  async function reset(): Promise<void> {
+    if (closed) throw new AgentConfigError("runtime_unavailable");
+    if (resetting !== null) return resetting;
+    epoch += 1;
+    const active = client;
+    const creating = pending;
+    client = null;
+    const operation = (async () => {
+      const created = active ?? await creating?.catch((error: unknown) => {
+        console.warn(
+          "[agent-config] OpenClaw RPC creation stopped during reset:",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+        return null;
+      }) ?? null;
+      await created?.close();
+    })();
+    resetting = operation;
+    try {
+      await operation;
+    } finally {
+      if (resetting === operation) resetting = null;
+    }
   }
 
   return {
     async call(method, params, signal) {
       return (await getClient()).call(method, params, signal);
     },
+    reset,
     async close() {
+      const resetInFlight = resetting;
+      const activeClient = client;
+      const creatingClient = pending;
       closed = true;
-      const active = client ?? await pending?.catch((error: unknown) => {
-        console.warn(
-          "[agent-config] OpenClaw RPC creation stopped during shutdown:",
-          error instanceof Error ? error.name : "UnknownError",
-        );
-        return null;
-      }) ?? null;
+      epoch += 1;
+      await resetInFlight;
+      const active = resetInFlight === null
+        ? activeClient ?? await creatingClient?.catch((error: unknown) => {
+          console.warn(
+            "[agent-config] OpenClaw RPC creation stopped during shutdown:",
+            error instanceof Error ? error.name : "UnknownError",
+          );
+          return null;
+        }) ?? null
+        : null;
       await active?.close();
       client = null;
     },
   };
+}
+
+async function resetOpenClawRpc(rpc: OpenClawRpcClient): Promise<void> {
+  const reset = (rpc as Partial<ResettableOpenClawRpc>).reset;
+  if (typeof reset === "function") await reset.call(rpc);
+}
+
+async function waitForOpenClawReady(
+  rpc: OpenClawRpcClient,
+  signal: AbortSignal,
+): Promise<void> {
+  const readinessSignal = AbortSignal.any([
+    signal,
+    AbortSignal.timeout(10_000),
+  ]);
+  while (true) {
+    try {
+      await rpc.call("health", {}, readinessSignal);
+      return;
+    } catch (error) {
+      if (signal.aborted) throw error;
+      if (readinessSignal.aborted) {
+        throw new AgentConfigError("runtime_switch_failed", error);
+      }
+      await delay(250, undefined, { signal: readinessSignal });
+    }
+  }
 }
 
 function capabilities(runtime: AgentRuntimeId) {
@@ -198,7 +271,15 @@ function createUnifiedRuntimeSource(options: {
           .filter((provider) => provider.runtime === selected);
       }
       if (selectionResult.status === "fulfilled") {
-        messaging = AgentMessagingSelectionSchema.parse(selectionResult.value);
+        const selection = AgentMessagingSelectionSchema.parse(selectionResult.value);
+        const selectedModelIsCataloged = !selection.configured || providers.some((provider) =>
+          provider.runtime === selected
+          && provider.id === selection.provider
+          && provider.models.some((model) =>
+            model.id === selection.model && model.available
+          )
+        );
+        if (selectedModelIsCataloged) messaging = selection;
       }
       if ([probeResult, catalogResult, selectionResult]
         .some((result) => result.status === "rejected")) {
@@ -239,6 +320,7 @@ export function createAgentRuntimeServices(options: {
 }): AgentRuntimeServices {
   const hostControl = options.hostControl ?? createHostRuntimeControl();
   const hermesSource = createHermesRuntimeSource(options.client.readJson);
+  const openClawRpc = options.openClawRpc ?? createLazyOpenClawRpc(options.homePath);
   const hermes = createHermesRuntimeAdapter({
     source: hermesSource,
     requestJson: options.client.requestJson,
@@ -246,14 +328,14 @@ export function createAgentRuntimeServices(options: {
       const status = await hostControl.status(signal);
       if (!status.hermes.installed) throw new AgentConfigError("runtime_unavailable");
     },
-    activate(signal) {
-      return hostControl.switch("hermes", signal);
+    async activate(signal) {
+      hermesSource.invalidate?.();
+      await hostControl.switch("hermes", signal);
+      hermesSource.invalidate?.();
+      await resetOpenClawRpc(openClawRpc);
     },
-    deactivate(signal) {
-      return hostControl.stop("hermes", signal);
-    },
+    deactivate: async () => {},
   });
-  const openClawRpc = options.openClawRpc ?? createLazyOpenClawRpc(options.homePath);
   const openclaw = createOpenClawRuntimeAdapter({
     rpc: openClawRpc,
     lifecycle: {
@@ -264,12 +346,12 @@ export function createAgentRuntimeServices(options: {
           active: status.openclaw.running,
         };
       },
-      activate(signal) {
-        return hostControl.switch("openclaw", signal);
+      async activate(signal) {
+        await resetOpenClawRpc(openClawRpc);
+        await hostControl.switch("openclaw", signal);
+        await waitForOpenClawReady(openClawRpc, signal);
       },
-      deactivate(signal) {
-        return hostControl.stop("openclaw", signal);
-      },
+      deactivate: async () => {},
     },
   });
   const adapters = { hermes, openclaw };
@@ -281,6 +363,7 @@ export function createAgentRuntimeServices(options: {
   const controller = createAgentRuntimeController({
     homePath: options.homePath,
     adapters,
+    timeoutMs: 75_000,
   });
   return { source, controller };
 }

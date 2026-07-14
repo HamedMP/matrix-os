@@ -113,7 +113,7 @@ export function createHostRuntimeControl(options: {
   async function execute(args: readonly string[], signal: AbortSignal) {
     try {
       return await run(HOST_CONTROL_PATH, args, {
-        timeout: 25_000,
+        timeout: 70_000,
         maxBuffer: MAX_CONTROL_OUTPUT_BYTES,
         signal,
         windowsHide: true,

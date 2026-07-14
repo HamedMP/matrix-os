@@ -11,6 +11,8 @@ fi
 
 MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-${MATRIX_HOME:-/home/matrix/home}}"
 MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"
+action_timeout_seconds=10
+active_wait_seconds=10
 lock_dir="$MATRIX_RUNTIME_HOME/system/agent-runtime"
 install -d -m 0700 "$lock_dir"
 exec 9>"$lock_dir/host-control.lock"
@@ -35,7 +37,7 @@ print_status() {
 }
 
 wait_active() {
-  local unit="$1" deadline=$((SECONDS + 20))
+  local unit="$1" deadline=$((SECONDS + active_wait_seconds))
   while [ "$SECONDS" -lt "$deadline" ]; do
     is_active "$unit" && return 0
     sleep 0.5
@@ -70,19 +72,19 @@ switch_runtime() {
 
   is_active "$other_unit" && prior_active=true
   is_enabled "$other_unit" && prior_enabled=true
-  if ! sudo timeout 20 systemctl disable --now "$other_unit"; then
+  if ! sudo timeout "$action_timeout_seconds" systemctl disable --now "$other_unit"; then
     printf '{"ok":false,"code":"deactivation_failed"}\n'
     exit 5
   fi
-  if ! sudo timeout 20 systemctl enable --now "$target_unit" || ! wait_active "$target_unit"; then
-    sudo timeout 20 systemctl disable --now "$target_unit" || true
+  if ! sudo timeout "$action_timeout_seconds" systemctl enable --now "$target_unit" || ! wait_active "$target_unit"; then
+    sudo timeout "$action_timeout_seconds" systemctl disable --now "$target_unit" || true
     if [ "$prior_enabled" = true ]; then
-      if ! sudo timeout 20 systemctl enable --now "$other_unit" || ! wait_active "$other_unit"; then
+      if ! sudo timeout "$action_timeout_seconds" systemctl enable --now "$other_unit" || ! wait_active "$other_unit"; then
         printf '{"ok":false,"code":"rollback_failed"}\n'
         exit 6
       fi
     elif [ "$prior_active" = true ]; then
-      if ! sudo timeout 20 systemctl start "$other_unit" || ! wait_active "$other_unit"; then
+      if ! sudo timeout "$action_timeout_seconds" systemctl start "$other_unit" || ! wait_active "$other_unit"; then
         printf '{"ok":false,"code":"rollback_failed"}\n'
         exit 6
       fi
@@ -100,7 +102,7 @@ stop_runtime() {
     openclaw) unit=matrix-openclaw-gateway.service ;;
     *) printf '{"ok":false,"code":"invalid_request"}\n'; exit 2 ;;
   esac
-  if ! sudo timeout 20 systemctl disable --now "$unit"; then
+  if ! sudo timeout "$action_timeout_seconds" systemctl disable --now "$unit"; then
     printf '{"ok":false,"code":"deactivation_failed"}\n'
     exit 5
   fi
