@@ -280,6 +280,19 @@ function ImageAttachments({ images, client }: { images: { alt: string; path: str
     };
   }, [client, attempt]);
 
+  // Bounded retries can settle hidden while the gateway is unreachable; a
+  // reconnect restarts resolution so images recover without a remount.
+  useEffect(() => {
+    return client.onStateChange((state) => {
+      if (state !== "connected") return;
+      setHeader((current) => {
+        if (current) return current;
+        setAttempt(0);
+        return undefined;
+      });
+    });
+  }, [client]);
+
   // Render nothing until a non-empty Authorization header is available.
   if (!header) return null;
 
