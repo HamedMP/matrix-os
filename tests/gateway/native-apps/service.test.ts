@@ -6,7 +6,7 @@ import {
   createDefaultNativeAppRegistry,
   type NativeAppChildProcess,
 } from "../../../packages/gateway/src/native-apps/index.js";
-import { probeNativeCommand } from "../../../packages/gateway/src/native-apps/service.js";
+import { probeNativeCommand, probeXpraServer } from "../../../packages/gateway/src/native-apps/service.js";
 
 function createChild(pid = 4321): NativeAppChildProcess & EventEmitter {
   const child = new EventEmitter() as NativeAppChildProcess & EventEmitter;
@@ -66,6 +66,32 @@ describe("NativeAppSessionService", () => {
       "/bin/sh",
       ["-c", 'command -v -- "$1" >/dev/null 2>&1', "matrix-native-command-probe", "xterm"],
       expect.objectContaining({ stdio: "ignore", detached: false }),
+    );
+  });
+
+  it("requires an Xpra HTML response before declaring the stream ready", async () => {
+    const unrelatedFetch = vi.fn(async () => new Response("unrelated localhost service", {
+      status: 200,
+      headers: { "Content-Type": "text/html" },
+    }));
+    const xpraFetch = vi.fn(async () => new Response("<title>Xpra HTML5 Client</title>", {
+      status: 200,
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    }));
+    const oversizedFetch = vi.fn(async () => new Response(
+      `${"x".repeat(64 * 1024 + 1)}${"<title>Xpra HTML5 Client</title>"}`,
+      { status: 200, headers: { "Content-Type": "text/html" } },
+    ));
+
+    await expect(probeXpraServer(46000, unrelatedFetch)).resolves.toBe(false);
+    await expect(probeXpraServer(46000, xpraFetch)).resolves.toBe(true);
+    await expect(probeXpraServer(46000, oversizedFetch)).resolves.toBe(false);
+    expect(xpraFetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:46000/",
+      expect.objectContaining({
+        redirect: "error",
+        signal: expect.any(AbortSignal),
+      }),
     );
   });
 

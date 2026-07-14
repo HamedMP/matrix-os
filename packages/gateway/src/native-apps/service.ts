@@ -1,7 +1,6 @@
 import { execFile as nodeExecFile, spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { createConnection } from "node:net";
 import { PortPool } from "../app-runtime/port-pool.js";
 import { timingSafeStringEquals } from "../security/timing-safe.js";
 import {
@@ -103,6 +102,8 @@ const COMMAND_CHECK_CACHE_MAX = 16;
 const COMMAND_CHECK_TIMEOUT_MS = 3000;
 const READINESS_RETRY_MS = 100;
 const READINESS_TIMEOUT_MS = 5000;
+const XPRA_READINESS_BODY_MAX_BYTES = 64 * 1024;
+const XPRA_READINESS_MARKER = "Xpra HTML5 Client";
 const SIGTERM_GRACE_MS = 5000;
 const SAFE_XPRA_CHILD_ARG = /^[A-Za-z0-9_./:@%+=,-]+$/;
 const SUPPORTED_XPRA_VERSION = /^5\.1(?:\.|$)/;
@@ -182,19 +183,56 @@ async function defaultCommandExists(command: string): Promise<boolean> {
   return probeNativeCommand(command);
 }
 
+async function responseContainsXpraMarker(response: Response): Promise<boolean> {
+  if (!response.ok || !response.headers.get("content-type")?.toLowerCase().includes("text/html") || !response.body) {
+    return false;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let body = "";
+  let bytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return `${body}${decoder.decode()}`.includes(XPRA_READINESS_MARKER);
+      bytes += value.byteLength;
+      if (bytes > XPRA_READINESS_BODY_MAX_BYTES) {
+        await reader.cancel();
+        return false;
+      }
+      body += decoder.decode(value, { stream: true });
+      if (body.includes(XPRA_READINESS_MARKER)) {
+        await reader.cancel();
+        return true;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+export async function probeXpraServer(
+  port: number,
+  request: typeof fetch = fetch,
+): Promise<boolean> {
+  try {
+    const response = await request(`http://127.0.0.1:${port}/`, {
+      cache: "no-store",
+      headers: { Accept: "text/html" },
+      redirect: "error",
+      signal: AbortSignal.timeout(500),
+    });
+    return await responseContainsXpraMarker(response);
+  } catch (err: unknown) {
+    if (!(err instanceof Error)) {
+      console.warn("[native-apps] unexpected readiness probe failure type");
+    }
+    return false;
+  }
+}
+
 async function defaultReadinessProbe(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = createConnection({ host: "127.0.0.1", port });
-    const finish = (ready: boolean) => {
-      socket.removeAllListeners();
-      socket.destroy();
-      resolve(ready);
-    };
-    socket.setTimeout(500);
-    socket.once("connect", () => finish(true));
-    socket.once("error", () => finish(false));
-    socket.once("timeout", () => finish(false));
-  });
+  return probeXpraServer(port);
 }
 
 async function sleep(ms: number): Promise<void> {

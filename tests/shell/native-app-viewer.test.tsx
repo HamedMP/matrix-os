@@ -114,4 +114,40 @@ describe("Native Linux app shell routing", () => {
     });
     expect(appViewerRender).not.toHaveBeenCalled();
   });
+
+  it("defers an initially minimized Desktop native app but preserves it after first visibility", async () => {
+    const callbacks = {
+      onAnimateMinimize: vi.fn(),
+      onCloseWindow: vi.fn(),
+      onDragEnd: vi.fn(),
+      onDragMove: vi.fn(),
+      onDragStart: vi.fn(),
+      onFocusWindow: vi.fn(),
+      onOpenWindow: vi.fn(),
+      onResizeEnd: vi.fn(),
+      onResizeMove: vi.fn(),
+      onResizeStart: vi.fn(),
+      onToggleFullscreen: vi.fn(),
+    };
+    const renderWindow = (minimized: boolean) => (
+      <DesktopWindow
+        win={{ ...nativeWindow, minimized }}
+        dockPosition="bottom"
+        fullscreenWindowId={null}
+        interacting={false}
+        minimizingIds={new Set()}
+        {...callbacks}
+      />
+    );
+    const view = render(renderWindow(true));
+
+    expect(screen.queryByTitle("native app viewer")).toBeNull();
+    expect(nativeViewerRender).not.toHaveBeenCalled();
+
+    view.rerender(renderWindow(false));
+    expect(await screen.findByTitle("native app viewer")).toBeTruthy();
+
+    view.rerender(renderWindow(true));
+    expect(screen.getByTitle("native app viewer")).toBeTruthy();
+  });
 });

@@ -1,4 +1,4 @@
-import type { CSSProperties, PointerEvent } from "react";
+import { useEffect, useState, type CSSProperties, type PointerEvent } from "react";
 import type { ChatState } from "@/hooks/useChatState";
 import type { AppWindow } from "@/hooks/useWindowManager";
 import type { DockConfig } from "@/stores/desktop-config";
@@ -65,6 +65,19 @@ export function DesktopWindow({
   const isHidden = win.minimized && !isMinimizing && !isFullscreen;
   const terminalOwnsChrome = win.path.startsWith("__terminal__");
   const nativeAppId = nativeAppIdFromPath(win.path);
+  const [hydratedNativeAppId, setHydratedNativeAppId] = useState<string | null>(() => (
+    nativeAppId && !isHidden ? nativeAppId : null
+  ));
+  useEffect(() => {
+    if (!nativeAppId) {
+      setHydratedNativeAppId(null);
+    } else if (!isHidden) {
+      setHydratedNativeAppId(nativeAppId);
+    }
+  }, [isHidden, nativeAppId]);
+  const shouldRenderNativeApp = Boolean(
+    nativeAppId && (!isHidden || hydratedNativeAppId === nativeAppId),
+  );
 
   let dockTargetX = 0;
   let dockTargetY = 0;
@@ -188,8 +201,10 @@ export function DesktopWindow({
           </div>
         ) : win.path === "__activity-monitor__" ? (
           <ActivityMonitorApp />
-        ) : nativeAppId ? (
+        ) : nativeAppId && shouldRenderNativeApp ? (
           <NativeAppViewer appId={nativeAppId} windowId={win.id} />
+        ) : nativeAppId ? (
+          null
         ) : (
           <AppViewer path={win.path} onOpenApp={onOpenWindow} />
         )}
