@@ -241,7 +241,8 @@ function filesUrlToRelPath(path: string): string {
 // The <Image> mounts only in the ready state, so it never renders without the
 // credential and 401s on an authed gateway, mirroring the file preview path.
 const IMAGE_AUTH_RETRY_DELAY_MS = 1_500;
-const IMAGE_AUTH_MAX_ATTEMPTS = 3;
+const IMAGE_AUTH_SLOW_RETRY_DELAY_MS = 30_000;
+const IMAGE_AUTH_FAST_ATTEMPTS = 2;
 
 function ImageAttachments({ images, client }: { images: { alt: string; path: string }[]; client: GatewayClient }) {
   const [header, setHeader] = useState<string | null | undefined>(undefined);
@@ -250,16 +251,18 @@ function ImageAttachments({ images, client }: { images: { alt: string; path: str
   useEffect(() => {
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    // A transient token failure must not permanently hide the images for this
-    // message: retry a bounded number of times before settling on hidden.
+    // A failed token resolution must not permanently hide the images: retry
+    // quickly at first, then keep trying at a slow cadence while mounted, so
+    // an already-connected client that hydrates its session later (no state
+    // transition fires) still recovers.
     const scheduleRetry = () => {
-      if (cancelled || attempt >= IMAGE_AUTH_MAX_ATTEMPTS - 1) {
-        if (!cancelled) setHeader(null);
-        return;
-      }
+      if (cancelled) return;
+      const delay = attempt < IMAGE_AUTH_FAST_ATTEMPTS
+        ? IMAGE_AUTH_RETRY_DELAY_MS
+        : IMAGE_AUTH_SLOW_RETRY_DELAY_MS;
       retryTimer = setTimeout(() => {
         if (!cancelled) setAttempt((current) => current + 1);
-      }, IMAGE_AUTH_RETRY_DELAY_MS);
+      }, delay);
     };
     client.getAuthorizationHeader()
       .then((resolved) => {
