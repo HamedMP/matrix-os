@@ -414,6 +414,10 @@ export class NativeAppSessionService {
       LANG: process.env.LANG ?? "C.UTF-8",
       MATRIX_NATIVE_APP_WIDTH: String(width),
       MATRIX_NATIVE_APP_HEIGHT: String(height),
+      XPRA_CONF_DIR: "/etc/xpra",
+      XPRA_DEFAULT_CONF_DIRS: "/dev/null",
+      XPRA_SYSTEM_CONF_DIRS: "/dev/null",
+      XPRA_USER_CONF_DIRS: "/dev/null",
     };
   }
 

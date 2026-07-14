@@ -17,7 +17,7 @@ function createChild(pid = 4321): NativeAppChildProcess & EventEmitter {
 }
 
 function createService(options: Partial<ConstructorParameters<typeof NativeAppSessionService>[0]> = {}) {
-  const launched: Array<{ command: string; args: string[] }> = [];
+  const launched: Array<{ command: string; args: string[]; env: NodeJS.ProcessEnv | undefined }> = [];
   const children: Array<NativeAppChildProcess & EventEmitter> = [];
   const missingProcessGroup = vi.fn(() => {
     throw Object.assign(new Error("process group not found"), { code: "ESRCH" });
@@ -41,8 +41,8 @@ function createService(options: Partial<ConstructorParameters<typeof NativeAppSe
     readinessRetryMs: 1,
     readinessTimeoutMs: 20,
     stopGraceMs: 1,
-    spawn: (command, args) => {
-      launched.push({ command, args });
+    spawn: (command, args, spawnOptions) => {
+      launched.push({ command, args, env: spawnOptions.env });
       const child = createChild(4000 + children.length);
       children.push(child);
       return child;
@@ -141,6 +141,12 @@ describe("NativeAppSessionService", () => {
       "--open-files=no",
     ]));
     expect(launched[0].args.join(" ")).not.toContain("rm -rf");
+    expect(launched[0].env).toMatchObject({
+      XPRA_CONF_DIR: "/etc/xpra",
+      XPRA_DEFAULT_CONF_DIRS: "/dev/null",
+      XPRA_SYSTEM_CONF_DIRS: "/dev/null",
+      XPRA_USER_CONF_DIRS: "/dev/null",
+    });
   });
 
   it("waits for xpra readiness before returning the session", async () => {
