@@ -88,7 +88,7 @@ export type ListProjectsResult =
 
 export type ReadTextFileResult =
   | { ok: true; content: string; truncated: boolean }
-  | { ok: false; reason: "too-large" | "binary" | "unavailable"; size?: number };
+  | { ok: false; reason: "too-large" | "binary" | "unknown-size" | "unavailable"; size?: number };
 
 function logFilesWarning(scope: string, detail: unknown): void {
   const reason = detail instanceof Error && detail.name === "AbortError" ? "aborted" : detail;
@@ -265,13 +265,28 @@ export async function readTextFile(
       logFilesWarning("read unavailable", `status ${res.status}`);
       return { ok: false, reason: "unavailable" };
     }
-    const declared = Number(res.headers.get("content-length"));
-    if (Number.isFinite(declared) && declared > maxBytes) {
+    // React Native's fetch does not expose a readable `response.body` stream, so
+    // there is no way to abort a download mid-body. Content-Length is the only
+    // bound available before `res.text()` buffers the whole response, so refuse
+    // to download a body whose size we cannot verify up front rather than risk
+    // buffering an arbitrarily large response into memory.
+    const declaredHeader = res.headers.get("content-length");
+    if (declaredHeader === null || declaredHeader.trim().length === 0) {
+      logFilesWarning("read missing content-length", "missing content-length");
+      return { ok: false, reason: "unknown-size" };
+    }
+    const declared = Number(declaredHeader);
+    if (!Number.isFinite(declared) || declared < 0) {
+      logFilesWarning("read invalid content-length", "invalid content-length");
+      return { ok: false, reason: "unknown-size" };
+    }
+    if (declared > maxBytes) {
       return { ok: false, reason: "too-large", size: declared };
     }
     const content = await res.text();
-    // Each character is at least one UTF-8 byte, so a char count over the cap is
-    // already over the byte cap; avoids a full byte-length scan for large files.
+    // Defends against an understated Content-Length: each character is at least
+    // one UTF-8 byte, so a char count over the cap is already over the byte cap;
+    // avoids a full byte-length scan for large files.
     if (content.length > maxBytes) {
       return { ok: false, reason: "too-large", size: content.length };
     }
