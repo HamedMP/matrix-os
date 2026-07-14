@@ -283,6 +283,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
   },
 
   deleteSession: async (api, name) => {
+    const generation = captureRuntimeGeneration();
     const previous = get().sessions;
     const deletedIndex = previous.findIndex((session) => session.name === name);
     const deleted = deletedIndex >= 0 ? previous[deletedIndex] : undefined;
@@ -291,6 +292,9 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
       await api.delete(`/api/terminal/sessions/${encodeURIComponent(name)}?force=1`);
       return true;
     } catch (err: unknown) {
+      // After a computer switch the cleared list must not get the old
+      // computer's session restored into it.
+      if (!isCurrentRuntimeGeneration(generation)) return false;
       console.error("[shell-sessions] Failed to delete shell session:", err);
       set((state) => ({
         sessions: deleted ? insertSessionAt(state.sessions, deleted, deletedIndex) : state.sessions,
@@ -307,6 +311,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
       set({ error: "server" });
       return false;
     }
+    const generation = captureRuntimeGeneration();
     const previous = get().sessions;
     const originalIndex = previous.findIndex((session) => session.name === name);
     const original = originalIndex >= 0 ? previous[originalIndex] : undefined;
@@ -316,6 +321,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
     });
     try {
       const response = await api.put<{ session?: unknown }>(`/api/terminal/sessions/${encodeURIComponent(name)}/rename`, { name: nextName });
+      if (!isCurrentRuntimeGeneration(generation)) return false;
       const renamed = asShellSession(response.session) ?? null;
       if (renamed) {
         set((state) => ({
@@ -325,6 +331,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
       }
       return true;
     } catch (err: unknown) {
+      if (!isCurrentRuntimeGeneration(generation)) return false;
       console.error("[shell-sessions] Failed to rename shell session:", err);
       set((state) => ({
         sessions: original ? rollbackRename(state.sessions, original, originalIndex, nextName) : state.sessions,

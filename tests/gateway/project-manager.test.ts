@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdir, mkdtemp, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -155,9 +155,11 @@ describe("project-manager", () => {
       ownerScope: { type: "user", id: "user_123" },
     });
 
+    // The stored localPath is the fully resolved path so later symlink
+    // repoints cannot bypass the create-time validation.
     expect(created).toMatchObject({
       ok: true,
-      project: { localPath: existing },
+      project: { localPath: await realpath(existing) },
     });
     if (created.ok) expect(created.project.github).toBeUndefined();
     await expect(manager.deleteProject("customer-app")).resolves.toEqual({ ok: true });
@@ -177,9 +179,11 @@ describe("project-manager", () => {
     await mkdir(join(homePath, "system", "wallpapers"), { recursive: true });
     await mkdir(join(homePath, "agents", "custom"), { recursive: true });
     await mkdir(join(homePath, ".trash"), { recursive: true });
+    await mkdir(join(homePath, ".hermes"), { recursive: true });
+    await mkdir(join(homePath, ".claude"), { recursive: true });
     const manager = createProjectManager({ homePath, runCommand: vi.fn() });
 
-    for (const path of [".", "system", "system/wallpapers", "agents", "agents/custom", ".trash"]) {
+    for (const path of [".", "system", "system/wallpapers", "agents", "agents/custom", ".trash", ".hermes", ".claude"]) {
       await expect(manager.createProject({
         mode: "folder",
         name: "Protected",

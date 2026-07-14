@@ -266,18 +266,22 @@ export const useSessions = create<SessionsState>()((set, get) => ({
   },
 
   kill: async (api, attachName) => {
+    const runtimeGeneration = captureRuntimeGeneration();
     try {
       await deleteAttachableSession(api, attachName);
     } catch (err: unknown) {
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
       if (!(err instanceof AppError && err.category === "notFound")) {
         console.error("[sessions] Failed to kill session:", err);
         set({ error: err instanceof AppError ? err.category : "server" });
         return false;
       }
     }
+    if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
     try {
       await get().load(api);
     } catch (err: unknown) {
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
       console.error("[sessions] Failed to reload after kill:", err);
       set({ error: err instanceof AppError ? err.category : "server" });
     }

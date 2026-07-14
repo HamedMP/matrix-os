@@ -178,13 +178,18 @@ function projectPath(homePath: string, slug: string): string {
 // OS-owned subtrees that must never become an agent-accessible project root.
 // A folder project's localPath is handed to shells and coding-agent sandboxes
 // as a workspace cwd, so granting these would expose kernel/agent state.
-const PROTECTED_FOLDER_PROJECT_PREFIXES = ["system", "agents", ".trash"];
+const PROTECTED_FOLDER_PROJECT_PREFIXES = ["system", "agents"];
 
 function isProtectedFolderProjectPath(homePath: string, resolvedPath: string): boolean {
   const rel = relative(resolve(homePath), resolvedPath);
   if (rel === "") return true;
   const firstSegment = rel.split(sep)[0];
-  return firstSegment !== undefined && PROTECTED_FOLDER_PROJECT_PREFIXES.includes(firstSegment);
+  if (firstSegment === undefined) return false;
+  // Every top-level dot directory under the Matrix home is owner or tool
+  // state (.trash, .hermes, .claude, .codex, .ssh, ...), never a user
+  // workspace; deny the whole class instead of chasing individual names.
+  if (firstSegment.startsWith(".")) return true;
+  return PROTECTED_FOLDER_PROJECT_PREFIXES.includes(firstSegment);
 }
 
 async function readProjectConfig(homePath: string, slug: string): Promise<ProjectConfig | null> {
@@ -303,7 +308,11 @@ export function createProjectManager(options: {
             id: `proj_${randomUUID()}`,
             name,
             slug,
-            localPath,
+            // Persist the fully resolved path: session launches use the stored
+            // localPath as cwd/sandbox root without rerunning these checks, so
+            // a symlink ancestor repointed at a protected subtree later must
+            // not be able to bypass the validation that ran here.
+            localPath: realLocalPath,
             addedAt: timestamp,
             updatedAt: timestamp,
             ownerScope: input.ownerScope ?? { type: "user", id: "local" },
