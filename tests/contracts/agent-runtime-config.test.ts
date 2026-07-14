@@ -332,6 +332,11 @@ describe("agent runtime configuration contracts", () => {
       .toEqual({ model: "claude-opus-4-6", effort: "high" });
   });
 
+  it("accepts an explicit null effort to clear an incompatible saved value", () => {
+    expect(AgentSettingsUpdateSchema.parse({ effort: null }))
+      .toEqual({ effort: null });
+  });
+
   it("rejects revision-only no-op updates", () => {
     expect(AgentSettingsUpdateSchema.safeParse({ revision: 4 }).success).toBe(false);
   });

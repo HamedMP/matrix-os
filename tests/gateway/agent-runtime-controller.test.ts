@@ -488,6 +488,50 @@ describe("agent runtime controller", () => {
     });
   });
 
+  it("removes a saved Chat effort when an explicit null patch clears it", async () => {
+    const homePath = await createHome({
+      kernel: { model: "claude-opus-4-6", effort: "high" },
+      agent: { messagingRuntime: "hermes", revision: 0 },
+    });
+    const controller = createAgentRuntimeController({
+      homePath,
+      adapters: { hermes: fakeAdapter("hermes") },
+    });
+
+    await expect(controller.updateKernel({ effort: null })).resolves.toEqual({
+      model: "claude-opus-4-6",
+      effort: undefined,
+    });
+    const config = JSON.parse(await readFile(
+      join(homePath, "system/config.json"),
+      "utf8",
+    ));
+    expect(config.kernel).toEqual({ model: "claude-opus-4-6" });
+  });
+
+  it("removes a saved Chat effort during a combined revisioned update", async () => {
+    const homePath = await createHome({
+      kernel: { model: "claude-opus-4-6", effort: "high" },
+      agent: { messagingRuntime: "hermes", revision: 0 },
+    });
+    const controller = createAgentRuntimeController({
+      homePath,
+      adapters: { hermes: fakeAdapter("hermes") },
+    });
+
+    await controller.update({
+      provider: "provider",
+      messagingModel: "model",
+      effort: null,
+      revision: 0,
+    });
+    const config = JSON.parse(await readFile(
+      join(homePath, "system/config.json"),
+      "utf8",
+    ));
+    expect(config.kernel).toEqual({ model: "claude-opus-4-6" });
+  });
+
   it("reconciles a stale transition to the persisted healthy runtime", async () => {
     const homePath = await createHome({
       agent: { messagingRuntime: "hermes", revision: 4 },

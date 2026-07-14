@@ -477,7 +477,7 @@ export function AgentRuntimePanel({ onOpenTerminal }: AgentRuntimePanelProps) {
         onOpenTerminal={onOpenTerminal}
         onSave={(model, effort) => void mutate(() => updateAgentSettings({
           model,
-          ...(effort ? { effort } : {}),
+          effort: effort ?? null,
         }))}
         onSaveKey={saveKey}
       />

@@ -313,7 +313,7 @@ describe("Canvas Agent runtime settings", () => {
       expect.stringContaining("/api/settings/agent"),
       expect.objectContaining({
         method: "PUT",
-        body: JSON.stringify({ model: "claude-sonnet-4-6" }),
+        body: JSON.stringify({ model: "claude-sonnet-4-6", effort: null }),
       }),
     ));
   });
