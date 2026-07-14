@@ -96,13 +96,14 @@ describe("customer VPS OpenClaw runtime", () => {
     await expect(access(legacyInstallUnitPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("exposes only exact status, install, and switch commands", async () => {
+  it("exposes only exact status, install, switch, and stop commands", async () => {
     const controller = await readFile(controllerPath, "utf8");
 
     expect(controller).toContain('case "${1:-}" in');
     expect(controller).toContain("status)");
     expect(controller).toContain("install)");
     expect(controller).toContain("switch)");
+    expect(controller).toContain("stop)");
     expect(controller).toContain('case "${2:-}" in');
     expect(controller).toContain("hermes)");
     expect(controller).toContain("openclaw)");
