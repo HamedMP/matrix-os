@@ -75,6 +75,17 @@ describe("fixed host runtime control", () => {
     await expect(failed.switch("openclaw", new AbortController().signal))
       .rejects.toMatchObject({ kind: "runtime_switch_failed" });
   });
+
+  it("preserves caller cancellation instead of mapping it to a switch failure", async () => {
+    const controller = new AbortController();
+    controller.abort(new DOMException("shutdown", "AbortError"));
+    const exec = vi.fn(async () => {
+      throw controller.signal.reason;
+    });
+    const control = createHostRuntimeControl({ exec });
+
+    await expect(control.status(controller.signal)).rejects.toBe(controller.signal.reason);
+  });
 });
 
 describe("OpenClaw gateway token loading", () => {

@@ -120,6 +120,7 @@ export function createHostRuntimeControl(options: {
         encoding: "utf8",
       });
     } catch (error) {
+      if (signal.aborted) throw error;
       throw mapFailure(error);
     }
   }
