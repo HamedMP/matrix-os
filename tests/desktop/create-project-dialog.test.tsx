@@ -31,7 +31,7 @@ describe("CreateProjectDialog", () => {
     });
     useTabs.setState({ tabs: [], activeTabId: null });
     useUi.setState({ createProjectDestination: "board" });
-    useCodingAgentWorkspace.setState({ summary: null });
+    useCodingAgentWorkspace.setState({ summary: null, status: "idle" });
   });
 
   afterEach(() => {
@@ -150,6 +150,32 @@ describe("CreateProjectDialog", () => {
     expect(openTab).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("treats a failed refresh with a stale summary like a missing one", async () => {
+    const project = { slug: "desktop", name: "Desktop" };
+    const staleSummary = { runtime: { id: "rt_primary" } } as never;
+    const createProject = vi.fn(async () => project);
+    // A failed refresh records status "error" but keeps the previous summary;
+    // the dialog must not treat that as success and select against stale data.
+    const refresh = vi.fn(async () => {
+      useCodingAgentWorkspace.setState({ status: "error", summary: staleSummary });
+    });
+    const openCreatedProject = vi.fn(async () => undefined);
+    const onClose = vi.fn();
+    useUi.setState({ createProjectDestination: "agents" });
+    useBoard.setState({ createProject, selectProject: vi.fn(async () => undefined) });
+    useCodingAgentWorkspace.setState({ refresh, summary: staleSummary, status: "ready" });
+    useCodingAgentProjectWorkspace.setState({ openCreatedProject });
+
+    render(<CreateProjectDialog open onClose={onClose} />);
+    fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Desktop" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByText(/project was created/i)).toBeTruthy());
+    expect(openCreatedProject).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("lands the coding-agent navigator on the project created from the Agents empty state", async () => {
