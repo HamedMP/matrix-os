@@ -58,4 +58,16 @@ describe("preview platform workflow", () => {
     );
     expect(workflow).toContain('_NEXT_PUBLIC_MATRIX_APP_URL=$preview_public_url');
   });
+
+  it("accepts the Cloud Run service host used by the preview Cloudflare origin", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain('local app_domain_hosts="$2"');
+    expect(workflow).toContain('MATRIX_APP_DOMAIN_HOSTS=${app_domain_hosts}');
+    expect(workflow).toContain('PREVIEW_SERVICE_DOMAIN="${service_base_url#https://}"');
+    expect(workflow).toContain('deploy_preview "$PREVIEW_API_ORIGIN" "$PREVIEW_SERVICE_DOMAIN"');
+  });
 });
