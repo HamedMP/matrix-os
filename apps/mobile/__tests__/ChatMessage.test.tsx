@@ -14,10 +14,11 @@ import { ChatMessage } from "../components/ChatMessage";
 import type { Message } from "../app/(tabs)/chat";
 import type { GatewayClient } from "../lib/gateway-client";
 
-function imageClient(overrides: Partial<Record<"homeFileUrl" | "getAuthorizationHeader", unknown>> = {}) {
+function imageClient(overrides: Partial<Record<"homeFileUrl" | "getAuthorizationHeader" | "onStateChange", unknown>> = {}) {
   return {
     homeFileUrl: jest.fn((rel: string) => `http://gw.test/files/${rel}`),
     getAuthorizationHeader: jest.fn().mockResolvedValue("Bearer test-token"),
+    onStateChange: jest.fn(() => () => {}),
     ...overrides,
   };
 }
