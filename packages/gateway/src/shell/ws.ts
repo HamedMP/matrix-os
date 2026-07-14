@@ -4,6 +4,7 @@ import { ShellReplayBuffer } from "./replay-buffer.js";
 import { PendingPersistQueue } from "./output-pipeline.js";
 import type { ScrollbackStore } from "./scrollback-store.js";
 import { validateSessionName } from "./names.js";
+import { createSessionSizing, type SessionSizing, type ShellClientClass, type TerminalSize } from "./sizing.js";
 import type { ShellAttachProcess } from "./zellij.js";
 import {
   createTerminalOutputCompatStream,
@@ -53,11 +54,11 @@ export interface ShellWsSocket {
 }
 
 interface ShellWsRegistry {
-  list(): Promise<Array<{ name: string; status?: "active" | "exited" }>>;
+  list(): Promise<Array<{ name: string; status?: "active" | "exited"; canonicalSize?: TerminalSize | null }>>;
 }
 
 interface ShellWsAdapter {
-  attachSession(name: string, options?: { signal?: AbortSignal }): ShellAttachProcess;
+  attachSession(name: string, options?: { signal?: AbortSignal; size?: TerminalSize }): ShellAttachProcess;
 }
 
 export interface ShellWsFlowControlOptions {
@@ -80,12 +81,18 @@ export interface ShellWsHandlerOptions {
   staleAttachTtlMs?: number;
   idleAttachGraceMs?: number;
   flowControl?: ShellWsFlowControlOptions;
+  sizingDebounceMs?: number;
+  defaultCanonicalSize?: TerminalSize;
+  persistCanonicalSize?: (name: string, size: TerminalSize) => void;
 }
 
 export interface ShellWsOpenOptions {
   ws: ShellWsSocket;
   session: string;
   fromSeq?: number;
+  /** Sizing class (spec 107 FR-007): absent = legacy (pre-upgrade client). */
+  clientClass?: Exclude<ShellClientClass, "legacy">;
+  declaredSize?: TerminalSize;
 }
 
 export interface ShellWsSession {
@@ -141,6 +148,7 @@ interface SessionRuntime {
   attachPromise: Promise<boolean> | null;
   idleCloseTimer: NodeJS.Timeout | null;
   disposed: boolean;
+  sizing: SessionSizing | null;
 }
 
 export function createShellWsHandler(options: ShellWsHandlerOptions) {
@@ -151,6 +159,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
   const highWaterMark = options.flowControl?.highWaterMark ?? 1024 * 1024;
 
   const runtimes = new Map<string, SessionRuntime>();
+  let connCounter = 0;
 
   function createQueue(name: string): PendingPersistQueue | null {
     return options.scrollbackStore
@@ -204,6 +213,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       attachPromise: null,
       idleCloseTimer: null,
       disposed: false,
+      sizing: null,
     };
     runtimes.set(name, runtime);
     return runtime;
@@ -369,6 +379,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       try {
         child = options.adapter.attachSession(safeName, {
           signal: abortController.signal,
+          size: runtime.sizing?.spawnSize(),
         });
       } catch (err: unknown) {
         if (canUseAttachPromise(runtime, attachPromise)) {
@@ -408,6 +419,8 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
   async function disposeRuntime(runtime: SessionRuntime, warnContext: string): Promise<void> {
     runtime.disposed = true;
     cancelIdleClose(runtime);
+    runtime.sizing?.dispose();
+    runtime.sizing = null;
     for (const conn of runtime.conns) {
       conn.closed = true;
       conn.ws.close?.();
@@ -445,7 +458,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     return false;
   }
 
-  async function open({ ws, session, fromSeq = 0 }: ShellWsOpenOptions): Promise<ShellWsSession> {
+  async function open({ ws, session, fromSeq = 0, clientClass: openOptionsClass, declaredSize }: ShellWsOpenOptions): Promise<ShellWsSession> {
     const safeName = validateSessionName(session);
     const sessions = await options.registry.list();
     const info = sessions.find((candidate) => candidate.name === safeName);
@@ -470,6 +483,20 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     }
 
     const replayBuffer = runtime.buffer;
+    if (!runtime.sizing) {
+      runtime.sizing = createSessionSizing({
+        initialSize: info.canonicalSize ?? null,
+        defaultSize: options.defaultCanonicalSize,
+        debounceMs: options.sizingDebounceMs,
+        onApply: (size) => {
+          runtime.child?.resize(size.cols, size.rows);
+        },
+        persist: (size) => {
+          options.persistCanonicalSize?.(safeName, size);
+        },
+      });
+    }
+    const sizing = runtime.sizing;
     await replayBuffer.ensureSeeded();
 
     // Re-check capacity: awaits since the first check (seeding, registry
@@ -478,7 +505,19 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       return { onMessage: () => undefined, onClose: () => undefined };
     }
 
+    // A hard declaration without a size cannot participate in negotiation;
+    // treat it as legacy so it does not disable legacy resize-follow while
+    // contributing nothing (review finding on spec 107 FR-007).
+    const clientClass: ShellClientClass =
+      openOptionsClass === "hard" && !declaredSize ? "legacy" : (openOptionsClass ?? "legacy");
+    const connId = `conn-${++connCounter}`;
+    // Register before the shared attach so the first client's pty spawns at
+    // its own declared size instead of the fallback corrected after the
+    // debounce.
+    sizing.attach(connId, clientClass, declaredSize ?? null);
+
     if (!(await ensureSharedAttach(runtime, safeName, replayBuffer))) {
+      sizing.detach(connId);
       sendJson(ws, {
         type: "error",
         code: "attach_failed",
@@ -491,6 +530,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     // One or more concurrent opens may have filled the final client slot while
     // this call awaited the shared attach startup.
     if (runtime.conns.size >= maxAttachedClients && !evictStaleOrReject(runtime, ws)) {
+      sizing.detach(connId);
       return { onMessage: () => undefined, onClose: () => undefined };
     }
 
@@ -539,6 +579,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
 
     const detachConn = () => {
       runtime.conns.delete(conn);
+      sizing.detach(connId);
       if (runtime.conns.size === 0) {
         scheduleIdleClose(runtime);
       }
@@ -558,6 +599,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           }
         }
         runtime.conns.delete(conn);
+        sizing.detach(connId);
         await closeSharedAttach(runtime);
         return;
       }
@@ -601,7 +643,24 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           return;
         }
         if (msg.type === "resize") {
-          runtime.child?.resize(msg.cols, msg.rows);
+          const requested = { cols: msg.cols, rows: msg.rows };
+          if (clientClass === "hard") {
+            // A hard client's terminal changed size: update its declaration
+            // and let the arbiter re-pin the shared attach pty (spec 107
+            // FR-008/9).
+            sizing.declared(connId, requested);
+            return;
+          }
+          if (clientClass === "soft") {
+            // Soft viewports render the canonical grid scaled; their resize
+            // frames are hints only and never touch the pty.
+            return;
+          }
+          // Legacy clients keep resize-follow behavior only while no
+          // classified client is attached (spec 107 FR-007).
+          if (sizing.legacyResizeAllowed()) {
+            runtime.child?.resize(msg.cols, msg.rows);
+          }
         }
       },
       onClose() {

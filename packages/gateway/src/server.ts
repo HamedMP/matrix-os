@@ -368,6 +368,11 @@ export async function createGateway(config: GatewayConfig) {
     registry: zellijShellRegistry,
     adapter: zellijAdapter,
     scrollbackStore: shellScrollbackStore,
+    persistCanonicalSize: (name, size) => {
+      void zellijShellRegistry.updateCanonicalSize(name, size).catch((err: unknown) => {
+        console.warn("[shell] canonical size persist failed:", err instanceof Error ? err.message : String(err));
+      });
+    },
   });
   const shellSessionReaper = createShellSessionReaper({ registry: zellijShellRegistry });
   shellSessionReaper.start();
@@ -2167,11 +2172,29 @@ export async function createGateway(config: GatewayConfig) {
     upgradeWebSocket(() => forwardTunnelHub.createHandler()),
   );
 
+  const parseTerminalSizingParams = (
+    query: (name: string) => string | undefined,
+  ): { clientClass?: "hard" | "soft"; declaredSize?: { cols: number; rows: number } } => {
+    const clientParam = query("client");
+    const clientClass = clientParam === "hard" || clientParam === "soft" ? clientParam : undefined;
+    const colsParam = query("cols");
+    const rowsParam = query("rows");
+    const cols = colsParam && /^\d{1,3}$/.test(colsParam) ? Number(colsParam) : null;
+    const rows = rowsParam && /^\d{1,3}$/.test(rowsParam) ? Number(rowsParam) : null;
+    const declaredSize =
+      cols && rows && cols >= 1 && cols <= 500 && rows >= 1 && rows <= 200
+        ? { cols, rows }
+        : undefined;
+    return { clientClass, declaredSize };
+  };
+
+
   app.get(
     "/ws/terminal/session",
     upgradeWebSocket((c) => {
       const namedSession = c.req.query("session");
       const fromSeqParam = c.req.query("fromSeq");
+      const sizingParams = parseTerminalSizingParams((name) => c.req.query(name));
       let namedHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
       let namedSocketClosed = false;
       const pendingInput = createPendingTerminalInputQueue();
@@ -2195,6 +2218,8 @@ export async function createGateway(config: GatewayConfig) {
             ws,
             session: namedSession,
             fromSeq,
+            clientClass: sizingParams.clientClass,
+            declaredSize: sizingParams.declaredSize,
           }).then((session) => {
             if (namedSocketClosed) {
               session.onClose();
@@ -2366,6 +2391,7 @@ export async function createGateway(config: GatewayConfig) {
       const cwdParam = c.req.query("cwd");
       const namedSession = c.req.query("session");
       const fromSeqParam = c.req.query("fromSeq");
+      const sizingParams = parseTerminalSizingParams((name) => c.req.query(name));
       let handle: SessionHandle | null = null;
       let namedHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
       let namedSocketClosed = false;
@@ -2418,6 +2444,8 @@ export async function createGateway(config: GatewayConfig) {
               ws,
               session: namedSession,
               fromSeq,
+              clientClass: sizingParams.clientClass,
+              declaredSize: sizingParams.declaredSize,
             }).then((session) => {
               if (namedSocketClosed) {
                 session.onClose();
