@@ -235,28 +235,69 @@ function filesUrlToRelPath(path: string): string {
 
 // Owner `/files/*` images require the gateway Authorization header and the
 // base routing query (`/vm/<handle>?runtime=`), so build the URL through
-// `client.homeFileUrl` and attach the auth header once it resolves. Rendering
-// waits for the header so the <Image> mounts a single time with the credential,
-// mirroring the authenticated file preview path.
+// `client.homeFileUrl` and attach the auth header once it resolves. The header
+// is tracked as three states: `undefined` while pending, `null` when resolution
+// failed or produced an empty credential, and a non-empty string when ready.
+// The <Image> mounts only in the ready state, so it never renders without the
+// credential and 401s on an authed gateway, mirroring the file preview path.
+const IMAGE_AUTH_RETRY_DELAY_MS = 1_500;
+const IMAGE_AUTH_SLOW_RETRY_DELAY_MS = 30_000;
+const IMAGE_AUTH_FAST_ATTEMPTS = 2;
+
 function ImageAttachments({ images, client }: { images: { alt: string; path: string }[]; client: GatewayClient }) {
-  const [auth, setAuth] = useState<{ ready: boolean; header?: string }>({ ready: false });
+  const [header, setHeader] = useState<string | null | undefined>(undefined);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    // A failed token resolution must not permanently hide the images: retry
+    // quickly at first, then keep trying at a slow cadence while mounted, so
+    // an already-connected client that hydrates its session later (no state
+    // transition fires) still recovers.
+    const scheduleRetry = () => {
+      if (cancelled) return;
+      const delay = attempt < IMAGE_AUTH_FAST_ATTEMPTS
+        ? IMAGE_AUTH_RETRY_DELAY_MS
+        : IMAGE_AUTH_SLOW_RETRY_DELAY_MS;
+      retryTimer = setTimeout(() => {
+        if (!cancelled) setAttempt((current) => current + 1);
+      }, delay);
+    };
     client.getAuthorizationHeader()
-      .then((header) => {
-        if (!cancelled) setAuth({ ready: true, header });
+      .then((resolved) => {
+        if (cancelled) return;
+        if (resolved) {
+          setHeader(resolved);
+          return;
+        }
+        scheduleRetry();
       })
       .catch((err: unknown) => {
         console.warn("[mobile] chat image auth header unavailable", err instanceof Error ? err.name : "unknown");
-        if (!cancelled) setAuth({ ready: true });
+        scheduleRetry();
       });
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
     };
+  }, [client, attempt]);
+
+  // Bounded retries can settle hidden while the gateway is unreachable; a
+  // reconnect restarts resolution so images recover without a remount.
+  useEffect(() => {
+    return client.onStateChange((state) => {
+      if (state !== "connected") return;
+      setHeader((current) => {
+        if (current) return current;
+        setAttempt(0);
+        return undefined;
+      });
+    });
   }, [client]);
 
-  if (!auth.ready) return null;
+  // Render nothing until a non-empty Authorization header is available.
+  if (!header) return null;
 
   return (
     <View style={styles.imageContainer}>
@@ -266,7 +307,7 @@ function ImageAttachments({ images, client }: { images: { alt: string; path: str
           accessibilityLabel={img.alt || "Image"}
           source={{
             uri: client.homeFileUrl(filesUrlToRelPath(img.path)),
-            headers: auth.header ? { Authorization: auth.header } : undefined,
+            headers: { Authorization: header },
           }}
           style={styles.inlineImage}
           contentFit="contain"
