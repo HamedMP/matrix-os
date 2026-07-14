@@ -37,12 +37,25 @@ export default function ComputerFileBrowser({
 }) {
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
+  const authGeneration = useConnection((state) => state.authGeneration);
   const [currentPath, setCurrentPath] = useState("");
   const [candidatePath, setCandidatePath] = useState("");
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [status, setStatus] = useState<BrowserStatus>("loading");
   const [error, setError] = useState<string | null>(null);
   const requestGeneration = useRef(0);
+  // Listings belong to one computer/session. Derive the rendered view
+  // synchronously from the scope they were loaded under, so a runtime switch
+  // or replacement session never shows the previous owner's directory names or
+  // lets stale rows fire onOpenFile/onChooseFolder against the new API.
+  const browserScope = `${runtimeSlot}|${authGeneration}`;
+  const [loadedScope, setLoadedScope] = useState(browserScope);
+  const scoped = loadedScope === browserScope;
+  const viewCurrentPath = scoped ? currentPath : "";
+  const viewCandidatePath = scoped ? candidatePath : "";
+  const viewEntries = scoped ? entries : [];
+  const viewStatus: BrowserStatus = scoped ? status : "loading";
+  const viewError = scoped ? error : null;
 
   const load = useCallback(async (path: string) => {
     if (!api) return;
@@ -63,13 +76,14 @@ export default function ComputerFileBrowser({
   }, [api]);
 
   useEffect(() => {
+    setLoadedScope(browserScope);
     setCurrentPath("");
     setCandidatePath("");
     void load("");
     return () => {
       requestGeneration.current += 1;
     };
-  }, [load, runtimeSlot]);
+  }, [browserScope, load]);
 
   const navigate = useCallback((path: string) => {
     setCurrentPath(path);
@@ -78,11 +92,11 @@ export default function ComputerFileBrowser({
   }, [load]);
 
   const crumbs = useMemo(() => {
-    const segments = currentPath ? currentPath.split("/") : [];
+    const segments = viewCurrentPath ? viewCurrentPath.split("/") : [];
     return segments.map((label, index) => ({ label, path: segments.slice(0, index + 1).join("/") }));
-  }, [currentPath]);
+  }, [viewCurrentPath]);
 
-  const chosenName = (candidatePath.split("/").pop() || "Matrix home");
+  const chosenName = (viewCandidatePath.split("/").pop() || "Matrix home");
 
   return (
     <div
@@ -94,7 +108,7 @@ export default function ComputerFileBrowser({
           type="button"
           aria-label="Matrix home"
           className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium hover:bg-[var(--bg-hover)]"
-          style={{ color: currentPath ? "var(--text-secondary)" : "var(--text-primary)" }}
+          style={{ color: viewCurrentPath ? "var(--text-secondary)" : "var(--text-primary)" }}
           onClick={() => navigate("")}
         >
           <Home size={13} />
@@ -106,7 +120,7 @@ export default function ComputerFileBrowser({
             <button
               type="button"
               className="max-w-[150px] truncate rounded px-1.5 py-1 text-xs hover:bg-[var(--bg-hover)]"
-              style={{ color: crumb.path === currentPath ? "var(--text-primary)" : "var(--text-secondary)" }}
+              style={{ color: crumb.path === viewCurrentPath ? "var(--text-primary)" : "var(--text-secondary)" }}
               onClick={() => navigate(crumb.path)}
             >
               {crumb.label}
@@ -114,27 +128,27 @@ export default function ComputerFileBrowser({
           </span>
         ))}
         <span className="ml-auto">
-          <IconButton label="Refresh folder" onClick={() => void load(currentPath)}>
+          <IconButton label="Refresh folder" onClick={() => void load(viewCurrentPath)}>
             <RefreshCw size={13} />
           </IconButton>
         </span>
       </div>
 
       <div className={`${compact ? "h-52" : "min-h-0 flex-1"} overflow-y-auto p-1.5`}>
-        {status === "loading" ? (
+        {viewStatus === "loading" ? (
           <div className="flex h-full items-center justify-center text-xs" style={{ color: "var(--text-tertiary)" }}>Loading folder…</div>
-        ) : status === "error" ? (
+        ) : viewStatus === "error" ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
-            <span className="text-sm" style={{ color: "var(--danger)" }}>{error}</span>
-            <Button variant="subtle" onClick={() => void load(currentPath)}>Try again</Button>
+            <span className="text-sm" style={{ color: "var(--danger)" }}>{viewError}</span>
+            <Button variant="subtle" onClick={() => void load(viewCurrentPath)}>Try again</Button>
           </div>
-        ) : entries.length === 0 ? (
+        ) : viewEntries.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm" style={{ color: "var(--text-tertiary)" }}>This folder is empty.</div>
         ) : (
           <div className="grid grid-cols-1 gap-0.5">
-            {entries.map((entry) => {
-              const path = joinPath(currentPath, entry.name);
-              const selected = entry.type === "directory" && candidatePath === path;
+            {viewEntries.map((entry) => {
+              const path = joinPath(viewCurrentPath, entry.name);
+              const selected = entry.type === "directory" && viewCandidatePath === path;
               return (
                 <button
                   key={`${entry.type}:${path}`}
@@ -168,10 +182,10 @@ export default function ComputerFileBrowser({
 
       {onChooseFolder ? (
         <div className="flex shrink-0 items-center justify-between gap-3 border-t px-3 py-2" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }}>
-          <span className="min-w-0 truncate text-xs" style={{ color: "var(--text-secondary)" }} title={candidatePath || "Matrix home"}>
-            {candidatePath || "Matrix home"}
+          <span className="min-w-0 truncate text-xs" style={{ color: "var(--text-secondary)" }} title={viewCandidatePath || "Matrix home"}>
+            {viewCandidatePath || "Matrix home"}
           </span>
-          <Button variant="primary" disabled={!candidatePath} onClick={() => onChooseFolder(candidatePath)}>
+          <Button variant="primary" disabled={!viewCandidatePath} onClick={() => onChooseFolder(viewCandidatePath)}>
             Choose {chosenName}
           </Button>
         </div>

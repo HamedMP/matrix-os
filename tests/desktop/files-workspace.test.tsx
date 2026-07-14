@@ -272,6 +272,20 @@ describe("Files workspace", () => {
       await screen.findByText("content of /api/files/blob?path=workspaces%2Futil.ts"),
     ).not.toBeNull();
   });
+
+  it("hides browser entries loaded under a previous session scope", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open workspaces" })).toBeTruthy());
+
+    // A replacement session can keep the same runtime slot; the previous
+    // owner's directory listing must not stay visible or clickable.
+    act(() => {
+      useConnection.setState({ authGeneration: 4 });
+    });
+
+    expect(screen.queryByRole("button", { name: "Open workspaces" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open README.md" })).toBeNull();
+  });
 });
 
 describe("resolveActivePath", () => {
