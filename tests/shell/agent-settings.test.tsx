@@ -4,7 +4,7 @@ import React from "react";
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentSettingsView } from "@matrix-os/contracts";
+import { AgentSettingsViewSchema, type AgentSettingsView } from "@matrix-os/contracts";
 import { AgentRuntimePanel } from "../../shell/src/components/settings/sections/AgentRuntimePanel.js";
 
 function makeView(): AgentSettingsView {
@@ -197,6 +197,51 @@ describe("Canvas Agent runtime settings", () => {
       }),
     ));
     expect(await screen.findByText("OpenClaw is active")).toBeVisible();
+  });
+
+  it("never falls back to an unavailable messaging model", async () => {
+    const initial = makeView();
+    initial.providers[1].models = [
+      {
+        id: "offline-model",
+        displayName: "Offline model",
+        capabilities: [],
+        efforts: [],
+        available: false,
+      },
+      {
+        id: "ready-model",
+        displayName: "Ready model",
+        capabilities: ["tools"],
+        efforts: [],
+        available: true,
+      },
+    ];
+    initial.currentSelection.messaging = {
+      runtime: "hermes",
+      provider: null,
+      model: null,
+      configured: false,
+    };
+    AgentSettingsViewSchema.parse(initial);
+    const fetcher = vi.fn(async () => response(initial));
+    vi.stubGlobal("fetch", fetcher);
+    render(<AgentRuntimePanel />);
+
+    expect(await screen.findByRole("combobox", { name: "Messaging model" })).toHaveValue("ready-model");
+    fireEvent.click(screen.getByRole("button", { name: "Save messaging model" }));
+
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining("/api/settings/agent"),
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          provider: "nous",
+          messagingModel: "ready-model",
+          revision: 4,
+        }),
+      }),
+    ));
   });
 
   it("shows a useful legacy fallback and retryable safe error state", async () => {
