@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -r /opt/matrix/env/host.env ]; then
+  source /opt/matrix/env/host.env
+fi
+if [ -r /opt/matrix/bin/matrix-owner-env ]; then
+  source /opt/matrix/bin/matrix-owner-env
+  matrix_export_owner_env
+fi
+
+MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-${MATRIX_HOME:-/home/matrix/home}}"
+MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"
+OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-$MATRIX_RUNTIME_HOME/.openclaw}"
+OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-$OPENCLAW_STATE_DIR/openclaw.json}"
+OPENCLAW_ENV_FILE="${OPENCLAW_ENV_FILE:-$MATRIX_RUNTIME_HOME/system/agent-runtime/openclaw.env}"
+OPENCLAW_BIN="${OPENCLAW_BIN:-$MATRIX_NODE_PREFIX/bin/openclaw}"
+
+if [ ! -x "$OPENCLAW_BIN" ]; then
+  echo "matrix-openclaw-gateway: runtime is not installed" >&2
+  exit 3
+fi
+if [ ! -r "$OPENCLAW_ENV_FILE" ]; then
+  echo "matrix-openclaw-gateway: runtime authentication is unavailable" >&2
+  exit 3
+fi
+IFS= read -r token_line <"$OPENCLAW_ENV_FILE" || true
+if [[ ! "$token_line" =~ ^OPENCLAW_GATEWAY_TOKEN=[A-Fa-f0-9]{64}$ ]]; then
+  echo "matrix-openclaw-gateway: runtime authentication is unavailable" >&2
+  exit 3
+fi
+OPENCLAW_GATEWAY_TOKEN="${token_line#OPENCLAW_GATEWAY_TOKEN=}"
+: "${OPENCLAW_GATEWAY_TOKEN:?matrix-openclaw-gateway: runtime authentication is unavailable}"
+
+install -d -m 0700 "$OPENCLAW_STATE_DIR"
+if [ ! -e "$OPENCLAW_CONFIG_PATH" ]; then
+  config_tmp="$(mktemp "$OPENCLAW_STATE_DIR/.openclaw.json.XXXXXX")"
+  cleanup() { rm -f "$config_tmp"; }
+  trap cleanup EXIT INT TERM
+  cat >"$config_tmp" <<'JSON'
+{
+  "gateway": {
+    "mode": "local",
+    "bind": "loopback",
+    "port": 18789,
+    "auth": { "mode": "token" }
+  },
+  "plugins": { "allow": [] },
+  "tools": {
+    "deny": ["gateway", "cron", "sessions_spawn", "sessions_send"]
+  }
+}
+JSON
+  chmod 0600 "$config_tmp"
+  mv -f "$config_tmp" "$OPENCLAW_CONFIG_PATH"
+  trap - EXIT INT TERM
+fi
+
+if ! "$MATRIX_NODE_PREFIX/bin/node" - "$OPENCLAW_CONFIG_PATH" <<'NODE'
+const { readFileSync } = require("node:fs");
+const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const expectedDenied = ["cron", "gateway", "sessions_send", "sessions_spawn"];
+const actualDenied = Array.isArray(config.tools?.deny) ? [...config.tools.deny].sort() : [];
+if (
+  config.gateway?.mode !== "local" ||
+  config.gateway?.bind !== "loopback" ||
+  config.gateway?.port !== 18789 ||
+  config.gateway?.auth?.mode !== "token" ||
+  !Array.isArray(config.plugins?.allow) ||
+  config.plugins.allow.length !== 0 ||
+  JSON.stringify(actualDenied) !== JSON.stringify(expectedDenied)
+) {
+  process.exit(1);
+}
+NODE
+then
+  echo "matrix-openclaw-gateway: runtime policy validation failed" >&2
+  exit 3
+fi
+
+# Matrix owns gateway.mode local, gateway.bind loopback,
+# gateway.auth.mode token, plugins.allow, and tools.deny at bootstrap.
+export HOME="$MATRIX_RUNTIME_HOME"
+export OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_GATEWAY_TOKEN
+exec "$OPENCLAW_BIN" gateway run --bind loopback --port 18789 --auth token

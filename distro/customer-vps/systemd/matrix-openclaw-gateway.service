@@ -1,0 +1,38 @@
+[Unit]
+Description=Matrix OS OpenClaw messaging gateway (loopback)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/matrix/bin/matrix-openclaw-gateway
+ConditionFileIsExecutable=/opt/matrix/runtime/node/bin/openclaw
+StartLimitIntervalSec=5min
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=matrix
+Group=matrix
+EnvironmentFile=/opt/matrix/env/host.env
+WorkingDirectory=/home/matrix/home
+ExecStart=/opt/matrix/bin/matrix-openclaw-gateway
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=45
+TimeoutStopSec=30
+MemoryMax=1G
+TasksMax=256
+LimitNOFILE=4096
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/matrix/home/.openclaw /home/matrix/home/system/agent-runtime
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

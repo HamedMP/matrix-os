@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -r /opt/matrix/env/host.env ]; then
+  source /opt/matrix/env/host.env
+fi
+if [ -r /opt/matrix/bin/matrix-owner-env ]; then
+  source /opt/matrix/bin/matrix-owner-env
+  matrix_export_owner_env
+fi
+
+MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-${MATRIX_HOME:-/home/matrix/home}}"
+MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"
+lock_dir="$MATRIX_RUNTIME_HOME/system/agent-runtime"
+install -d -m 0700 "$lock_dir"
+exec 9>"$lock_dir/host-control.lock"
+flock -w 30 9 || { printf '{"ok":false,"code":"runtime_busy"}\n'; exit 4; }
+
+is_active() {
+  sudo systemctl is-active --quiet "$1"
+}
+
+print_status() {
+  local hermes_installed=false hermes_running=false openclaw_installed=false openclaw_running=false
+  [ -x "$MATRIX_RUNTIME_HOME/.local/bin/hermes" ] && hermes_installed=true
+  [ -x "$MATRIX_NODE_PREFIX/bin/openclaw" ] && openclaw_installed=true
+  is_active matrix-hermes-dashboard.service && hermes_running=true
+  is_active matrix-openclaw-gateway.service && openclaw_running=true
+  printf '{"ok":true,"hermes":{"installed":%s,"running":%s},"openclaw":{"installed":%s,"running":%s}}\n' \
+    "$hermes_installed" "$hermes_running" "$openclaw_installed" "$openclaw_running"
+}
+
+wait_active() {
+  local unit="$1" deadline=$((SECONDS + 20))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    is_active "$unit" && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+openclaw_admission_ready() {
+  local memory_available_kib disk_available_kib
+  memory_available_kib="$(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo)"
+  disk_available_kib="$(df -Pk "$MATRIX_RUNTIME_HOME" | awk 'NR == 2 { print $4 }')"
+  [ "$memory_available_kib" -ge 786432 ] && [ "$disk_available_kib" -ge 1048576 ]
+}
+
+switch_runtime() {
+  local runtime="$1" target_unit other_unit prior_active=false
+  case "$runtime" in
+    hermes)
+      [ -x "$MATRIX_RUNTIME_HOME/.local/bin/hermes" ] || { printf '{"ok":false,"code":"runtime_unavailable"}\n'; exit 3; }
+      target_unit=matrix-hermes-dashboard.service
+      other_unit=matrix-openclaw-gateway.service
+      ;;
+    openclaw)
+      [ -x "$MATRIX_NODE_PREFIX/bin/openclaw" ] || { printf '{"ok":false,"code":"runtime_unavailable"}\n'; exit 3; }
+      [ -s "$MATRIX_RUNTIME_HOME/system/agent-runtime/openclaw.env" ] || { printf '{"ok":false,"code":"auth_required"}\n'; exit 3; }
+      openclaw_admission_ready || { printf '{"ok":false,"code":"resources_unavailable"}\n'; exit 3; }
+      target_unit=matrix-openclaw-gateway.service
+      other_unit=matrix-hermes-dashboard.service
+      ;;
+  esac
+
+  is_active "$other_unit" && prior_active=true
+  sudo systemctl stop "$other_unit"
+  if ! sudo timeout 20 systemctl start "$target_unit" || ! wait_active "$target_unit"; then
+    sudo systemctl stop "$target_unit" || true
+    if [ "$prior_active" = true ]; then
+      sudo systemctl start "$other_unit" || true
+    fi
+    printf '{"ok":false,"code":"activation_failed"}\n'
+    exit 5
+  fi
+  printf '{"ok":true,"runtime":"%s"}\n' "$runtime"
+}
+
+case "${1:-}" in
+  status)
+    [ "$#" -eq 1 ] || { printf '{"ok":false,"code":"invalid_request"}\n'; exit 2; }
+    print_status
+    ;;
+  switch)
+    [ "$#" -eq 2 ] || { printf '{"ok":false,"code":"invalid_request"}\n'; exit 2; }
+    case "${2:-}" in
+      hermes) switch_runtime hermes ;;
+      openclaw) switch_runtime openclaw ;;
+      *) printf '{"ok":false,"code":"invalid_request"}\n'; exit 2 ;;
+    esac
+    ;;
+  *) printf '{"ok":false,"code":"invalid_request"}\n'; exit 2 ;;
+esac
