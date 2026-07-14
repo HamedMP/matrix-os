@@ -4,6 +4,9 @@ import { z } from "zod/v4";
 import { AgentConfigError } from "./errors.js";
 
 const MAX_FRAME_BYTES = 1024 * 1024;
+const MAX_REQUEST_BYTES = 16 * 1024;
+const CONFIG_PATCH_LIMIT = 3;
+const CONFIG_PATCH_WINDOW_MS = 60_000;
 const ALLOWED_METHODS = new Set([
   "health",
   "channels.status",
@@ -24,10 +27,10 @@ const EventSchema = z.object({
   event: z.string().min(1).max(128),
   payload: z.unknown().optional(),
   seq: z.number().int().nonnegative().optional(),
-  stateVersion: z.object({
-    presence: z.number().int().nonnegative(),
-    health: z.number().int().nonnegative(),
-  }).strict().optional(),
+  stateVersion: z.record(
+    z.string().min(1).max(128),
+    z.number().int().nonnegative(),
+  ).refine((value) => Object.keys(value).length <= 64).optional(),
 }).strict();
 
 const ResponseSchema = z.object({
@@ -37,6 +40,29 @@ const ResponseSchema = z.object({
   payload: z.unknown().optional(),
   error: z.unknown().optional(),
 }).strict();
+
+const RetryableConnectErrorSchema = z.object({
+  code: z.literal("UNAVAILABLE"),
+  details: z.object({
+    reason: z.literal("startup-sidecars"),
+    retryAfterMs: z.number().int().nonnegative().max(10_000).optional(),
+  }).passthrough(),
+  retryAfterMs: z.number().int().nonnegative().max(10_000).optional(),
+}).passthrough();
+
+const EmptyParamsSchema = z.object({}).strict();
+const ConfigPatchParamsSchema = z.object({
+  raw: z.string().min(2).max(MAX_REQUEST_BYTES),
+  baseHash: z.string().min(1).max(256),
+}).strict();
+const MethodParamsSchemas: Record<string, z.ZodType> = {
+  health: EmptyParamsSchema,
+  "channels.status": EmptyParamsSchema,
+  "models.list": EmptyParamsSchema,
+  "models.authStatus": EmptyParamsSchema,
+  "config.get": EmptyParamsSchema,
+  "config.patch": ConfigPatchParamsSchema,
+};
 
 const HelloSchema = z.object({
   type: z.literal("hello-ok"),
@@ -59,7 +85,7 @@ const HelloSchema = z.object({
     maxBufferedBytes: z.number().int().positive(),
     tickIntervalMs: z.number().int().positive(),
   }).passthrough(),
-}).strict();
+}).passthrough();
 
 interface SocketLike {
   readyState: number;
@@ -128,6 +154,24 @@ function frameText(data: unknown): string {
   return buffer.toString("utf8");
 }
 
+function serializeRequest(id: string, method: string, params: unknown): string {
+  const schema = MethodParamsSchemas[method];
+  const parsed = schema?.safeParse(params);
+  if (parsed?.success !== true) {
+    throw new AgentConfigError("agent_config_invalid", parsed?.error);
+  }
+  let serialized: string;
+  try {
+    serialized = JSON.stringify({ type: "req", id, method, params: parsed.data });
+  } catch (error) {
+    throw new AgentConfigError("agent_config_invalid", error);
+  }
+  if (Buffer.byteLength(serialized) > MAX_REQUEST_BYTES) {
+    throw new AgentConfigError("agent_config_invalid");
+  }
+  return serialized;
+}
+
 export function createOpenClawRpcClient(
   options: OpenClawRpcClientOptions,
 ): OpenClawRpcClient {
@@ -135,10 +179,10 @@ export function createOpenClawRpcClient(
   if (!/^[A-Fa-f0-9]{64}$/.test(options.token)) {
     throw new AgentConfigError("agent_config_invalid");
   }
-  const maxPending = options.maxPending ?? 32;
+  const maxPending = options.maxPending ?? 8;
   const timeoutMs = options.timeoutMs ?? 2_000;
   const now = options.now ?? Date.now;
-  if (!Number.isInteger(maxPending) || maxPending < 1 || maxPending > 64) {
+  if (!Number.isInteger(maxPending) || maxPending < 1 || maxPending > 8) {
     throw new RangeError("Invalid OpenClaw pending-call cap");
   }
   if (!Number.isFinite(timeoutMs) || timeoutMs < 100 || timeoutMs > 10_000) {
@@ -158,7 +202,11 @@ export function createOpenClawRpcClient(
   let connectResolve: (() => void) | null = null;
   let connectReject: ((error: unknown) => void) | null = null;
   let connectTimer: ReturnType<typeof setTimeout> | null = null;
+  let connectRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  let connectDeadline = 0;
   let reconnectAfter = 0;
+  let configPatchInFlight = false;
+  const configPatchWrites: number[] = [];
 
   function rejectPending(error: AgentConfigError): void {
     for (const [id, entry] of pending) {
@@ -172,7 +220,10 @@ export function createOpenClawRpcClient(
   function failConnection(error: AgentConfigError): void {
     reconnectAfter = Math.max(reconnectAfter, now() + timeoutMs);
     if (connectTimer !== null) clearTimeout(connectTimer);
+    if (connectRetryTimer !== null) clearTimeout(connectRetryTimer);
     connectTimer = null;
+    connectRetryTimer = null;
+    connectDeadline = 0;
     connectReject?.(error);
     connectResolve = null;
     connectReject = null;
@@ -184,9 +235,39 @@ export function createOpenClawRpcClient(
     if (failedSocket?.readyState !== WebSocket.CLOSED) failedSocket?.close();
   }
 
+  function retryDelay(error: unknown): number | null {
+    const parsed = RetryableConnectErrorSchema.safeParse(error);
+    if (!parsed.success) return null;
+    return parsed.data.retryAfterMs ?? parsed.data.details.retryAfterMs ?? null;
+  }
+
+  function scheduleConnectRetry(delayMs: number): void {
+    if (connectPromise === null || now() + delayMs >= connectDeadline) {
+      failConnection(new AgentConfigError("runtime_unavailable"));
+      return;
+    }
+    const retrySocket = socket;
+    socket = null;
+    connectId = null;
+    if (retrySocket?.readyState !== WebSocket.CLOSED) retrySocket?.close();
+    connectRetryTimer = setTimeout(() => {
+      connectRetryTimer = null;
+      if (closed || connectPromise === null || now() >= connectDeadline) {
+        failConnection(new AgentConfigError("runtime_unavailable"));
+        return;
+      }
+      openSocket();
+    }, delayMs);
+  }
+
   function handleResponse(frame: z.infer<typeof ResponseSchema>): void {
     if (frame.id === connectId) {
       if (!frame.ok) {
+        const delayMs = retryDelay(frame.error);
+        if (delayMs !== null) {
+          scheduleConnectRetry(delayMs);
+          return;
+        }
         failConnection(new AgentConfigError("runtime_unavailable"));
         return;
       }
@@ -200,6 +281,9 @@ export function createOpenClawRpcClient(
       }
       if (connectTimer !== null) clearTimeout(connectTimer);
       connectTimer = null;
+      if (connectRetryTimer !== null) clearTimeout(connectRetryTimer);
+      connectRetryTimer = null;
+      connectDeadline = 0;
       connectId = null;
       reconnectAfter = 0;
       connectResolve?.();
@@ -266,6 +350,27 @@ export function createOpenClawRpcClient(
     }
   }
 
+  function openSocket(): void {
+    try {
+      const created = socketFactory(url);
+      socket = created;
+      created.on("message", (data) => {
+        if (socket !== created) return;
+        handleMessage(data);
+      });
+      created.on("close", () => {
+        if (socket !== created) return;
+        failConnection(new AgentConfigError("runtime_unavailable"));
+      });
+      created.on("error", () => {
+        if (socket !== created) return;
+        failConnection(new AgentConfigError("runtime_unavailable"));
+      });
+    } catch (error) {
+      failConnection(new AgentConfigError("runtime_unavailable", error));
+    }
+  }
+
   function ensureConnected(): Promise<void> {
     if (closed) return Promise.reject(new AgentConfigError("runtime_unavailable"));
     if (connectPromise !== null) return connectPromise;
@@ -277,18 +382,89 @@ export function createOpenClawRpcClient(
     connectPromise = connecting;
     connectResolve = deferred.resolve;
     connectReject = deferred.reject;
-    try {
-      socket = socketFactory(url);
-      socket.on("message", handleMessage);
-      socket.on("close", () => failConnection(new AgentConfigError("runtime_unavailable")));
-      socket.on("error", () => failConnection(new AgentConfigError("runtime_unavailable")));
-      connectTimer = setTimeout(() => {
-        failConnection(new AgentConfigError("runtime_unavailable"));
-      }, timeoutMs);
-    } catch (error) {
-      failConnection(new AgentConfigError("runtime_unavailable", error));
-    }
+    connectDeadline = now() + timeoutMs;
+    connectTimer = setTimeout(() => {
+      failConnection(new AgentConfigError("runtime_unavailable"));
+    }, timeoutMs);
+    openSocket();
     return connecting;
+  }
+
+  async function waitForConnection(signal: AbortSignal): Promise<void> {
+    if (signal.aborted) throw new AgentConfigError("runtime_unavailable");
+    const connecting = ensureConnected();
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        signal.removeEventListener("abort", onAbort);
+        reject(new AgentConfigError("runtime_unavailable"));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      connecting.then(
+        () => {
+          signal.removeEventListener("abort", onAbort);
+          resolve();
+        },
+        (error: unknown) => {
+          signal.removeEventListener("abort", onAbort);
+          reject(error);
+        },
+      );
+      // Close the check-then-listen race when the caller aborts between the
+      // initial guard and listener registration.
+      if (signal.aborted) onAbort();
+    });
+  }
+
+  function pruneConfigPatchWrites(): void {
+    const cutoff = now() - CONFIG_PATCH_WINDOW_MS;
+    while (configPatchWrites[0] !== undefined && configPatchWrites[0] <= cutoff) {
+      configPatchWrites.shift();
+    }
+  }
+
+  async function performCall(
+    method: string,
+    serialized: string,
+    id: string,
+    signal: AbortSignal,
+  ): Promise<unknown> {
+    await waitForConnection(signal);
+    if (closed || socket === null || socket.readyState !== WebSocket.OPEN) {
+      throw new AgentConfigError("runtime_unavailable");
+    }
+    if (pending.size >= maxPending) {
+      throw new AgentConfigError("agent_config_conflict");
+    }
+    if (signal.aborted) throw new AgentConfigError("runtime_unavailable");
+    const deferred = Promise.withResolvers<unknown>();
+    const onAbort = () => {
+      if (!pending.has(id)) return;
+      failConnection(new AgentConfigError("runtime_unavailable"));
+    };
+    const timer = setTimeout(() => {
+      if (!pending.has(id)) return;
+      failConnection(new AgentConfigError("runtime_unavailable"));
+    }, timeoutMs);
+    pending.set(id, {
+      resolve: deferred.resolve,
+      reject: deferred.reject,
+      timer,
+      signal,
+      onAbort,
+    });
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (method === "config.patch") configPatchWrites.push(now());
+    try {
+      socket.send(serialized);
+    } catch (error) {
+      pending.delete(id);
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      const failure = new AgentConfigError("runtime_unavailable", error);
+      failConnection(failure);
+      throw failure;
+    }
+    return deferred.promise;
   }
 
   return {
@@ -296,47 +472,21 @@ export function createOpenClawRpcClient(
       if (!ALLOWED_METHODS.has(method)) {
         throw new AgentConfigError("agent_config_invalid");
       }
-      await ensureConnected();
-      if (closed || socket === null || socket.readyState !== WebSocket.OPEN) {
-        throw new AgentConfigError("runtime_unavailable");
+      const id = randomUUID();
+      const serialized = serializeRequest(id, method, params);
+      if (method !== "config.patch") {
+        return performCall(method, serialized, id, signal);
       }
-      if (pending.size >= maxPending) {
+      pruneConfigPatchWrites();
+      if (configPatchInFlight || configPatchWrites.length >= CONFIG_PATCH_LIMIT) {
         throw new AgentConfigError("agent_config_conflict");
       }
-      if (signal.aborted) throw new AgentConfigError("runtime_unavailable");
-      const id = randomUUID();
-      const deferred = Promise.withResolvers<unknown>();
-      const onAbort = () => {
-        const entry = pending.get(id);
-        if (!entry) return;
-        pending.delete(id);
-        clearTimeout(entry.timer);
-        entry.reject(new AgentConfigError("runtime_unavailable"));
-      };
-      const timer = setTimeout(() => {
-        const entry = pending.get(id);
-        if (!entry) return;
-        pending.delete(id);
-        signal.removeEventListener("abort", onAbort);
-        entry.reject(new AgentConfigError("runtime_unavailable"));
-      }, timeoutMs);
-      pending.set(id, {
-        resolve: deferred.resolve,
-        reject: deferred.reject,
-        timer,
-        signal,
-        onAbort,
-      });
-      signal.addEventListener("abort", onAbort, { once: true });
+      configPatchInFlight = true;
       try {
-        socket.send(JSON.stringify({ type: "req", id, method, params }));
-      } catch (error) {
-        pending.delete(id);
-        clearTimeout(timer);
-        signal.removeEventListener("abort", onAbort);
-        throw new AgentConfigError("runtime_unavailable", error);
+        return await performCall(method, serialized, id, signal);
+      } finally {
+        configPatchInFlight = false;
       }
-      return deferred.promise;
     },
     async close() {
       if (closed) return;
@@ -346,11 +496,15 @@ export function createOpenClawRpcClient(
       connectResolve = null;
       connectReject = null;
       if (connectTimer !== null) clearTimeout(connectTimer);
+      if (connectRetryTimer !== null) clearTimeout(connectRetryTimer);
       connectTimer = null;
+      connectRetryTimer = null;
+      connectDeadline = 0;
       socket?.close();
       socket = null;
       connectPromise = null;
       connectId = null;
+      configPatchWrites.length = 0;
     },
   };
 }
