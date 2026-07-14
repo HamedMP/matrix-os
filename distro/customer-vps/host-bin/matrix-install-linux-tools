@@ -138,10 +138,11 @@ if [ "$(id -u)" = "0" ]; then
   exit 1
 fi
 
+xpra_install_failed=0
 if command -v apt-get >/dev/null 2>&1; then
   native_app_packages="dbus-x11 gnupg x11-apps xauth xterm"
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential procps curl file git ${native_app_packages}
-  install_xpra_lts || true
+  install_xpra_lts || xpra_install_failed=1
 fi
 
 cd "${HOME:-/home/matrix/home}"
@@ -176,4 +177,9 @@ fi
 "$BREW_BIN" --version
 if [ -x "$BREW_PREFIX/bin/gh" ]; then
   "$BREW_PREFIX/bin/gh" --version
+fi
+
+if [ "$xpra_install_failed" -ne 0 ]; then
+  echo "matrix-install-linux-tools: Xpra installation did not converge; retrying via systemd" >&2
+  exit 1
 fi

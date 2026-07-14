@@ -68,6 +68,11 @@ describe("preview platform workflow", () => {
     expect(workflow).toContain('local app_domain_hosts="$2"');
     expect(workflow).toContain('MATRIX_APP_DOMAIN_HOSTS=${app_domain_hosts}');
     expect(workflow).toContain('PREVIEW_SERVICE_DOMAIN="${service_base_url#https://}"');
-    expect(workflow).toContain('deploy_preview "$PREVIEW_API_ORIGIN" "$PREVIEW_SERVICE_DOMAIN"');
+    expect(workflow).toContain('PREVIEW_TAGGED_DOMAIN="${PREVIEW_API_ORIGIN#https://}"');
+    expect(workflow).toContain(
+      'PREVIEW_APP_DOMAIN_HOSTS="${PREVIEW_DOMAIN},${PREVIEW_SERVICE_DOMAIN},${PREVIEW_TAGGED_DOMAIN}"',
+    );
+    expect(workflow).toContain('deploy_preview "$PREVIEW_API_ORIGIN" "$PREVIEW_APP_DOMAIN_HOSTS"');
+    expect(workflow).toContain('--set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|');
   });
 });
