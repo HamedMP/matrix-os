@@ -90,7 +90,7 @@ interface NativeWebSocketState {
   _nativeUpstreamOpen?: () => boolean;
 }
 
-type WebSocketConstructor = new (url: string) => {
+type WebSocketConstructor = new (url: string, protocols?: string | string[]) => {
   close(): void;
   on(event: string, listener: (...args: any[]) => void): unknown;
   send(data: never): void;
@@ -238,6 +238,18 @@ function sanitizeProxyHeaders(headers: Headers): Headers {
   out.delete("set-cookie");
   out.delete("set-cookie2");
   return out;
+}
+
+function applyOpaqueOriginCorsHeaders(c: Context, headers: Headers): void {
+  if (c.req.header("origin") !== "null") return;
+  headers.set("Access-Control-Allow-Origin", "null");
+  headers.set("Access-Control-Allow-Credentials", "true");
+  const vary = headers.get("Vary");
+  if (!vary) {
+    headers.set("Vary", "Origin");
+  } else if (!vary.split(",").some((value) => value.trim().toLowerCase() === "origin")) {
+    headers.set("Vary", `${vary}, Origin`);
+  }
 }
 
 function sanitizeProxyRequestHeaders(headers: Headers): Headers {
@@ -390,6 +402,7 @@ async function proxyStreamRequest(c: Context, service: NativeAppSessionService):
     signal: AbortSignal.timeout(STREAM_FETCH_TIMEOUT_MS),
   });
   const headers = sanitizeProxyHeaders(response.headers);
+  applyOpaqueOriginCorsHeaders(c, headers);
   const bufferedBody = await readBoundedStreamResponseBody(response);
   const body = injectXpraWorkerFallback(
     bufferedBody,
@@ -451,7 +464,7 @@ export function createNativeWebSocketHandler(c: Context, service: NativeAppSessi
       import("ws").then((wsModule) => {
         const WebSocket = resolveWebSocketConstructor(wsModule);
         if (ws._nativeClosed?.()) return;
-        const upstream = new WebSocket(upstreamUrl);
+        const upstream = new WebSocket(upstreamUrl, "binary");
         ws._nativeUpstream = upstream;
         if (ws._nativeClosed?.()) {
           upstream.close();

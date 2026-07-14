@@ -2,9 +2,10 @@ import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const wsMock = vi.hoisted(() => {
-  const instances: Array<{ close: ReturnType<typeof vi.fn>; listeners: Map<string, (...args: unknown[]) => void>; on: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn>; url: string }> = [];
-  const WebSocket = vi.fn(function MockWebSocket(this: { close: ReturnType<typeof vi.fn>; listeners: Map<string, (...args: unknown[]) => void>; on: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn>; url: string }, url: string) {
+  const instances: Array<{ close: ReturnType<typeof vi.fn>; listeners: Map<string, (...args: unknown[]) => void>; on: ReturnType<typeof vi.fn>; protocol: string | string[] | undefined; send: ReturnType<typeof vi.fn>; url: string }> = [];
+  const WebSocket = vi.fn(function MockWebSocket(this: { close: ReturnType<typeof vi.fn>; listeners: Map<string, (...args: unknown[]) => void>; on: ReturnType<typeof vi.fn>; protocol: string | string[] | undefined; send: ReturnType<typeof vi.fn>; url: string }, url: string, protocol?: string | string[]) {
     this.url = url;
+    this.protocol = protocol;
     this.close = vi.fn();
     this.send = vi.fn();
     this.listeners = new Map();
@@ -299,6 +300,26 @@ describe("native app routes", () => {
     expect(stream.headers.get("content-type")).toContain("text/css");
     expect(await stream.text()).toBe("body { color: black; }");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows opaque iframe fonts through the stream capability path", async () => {
+    const { app, service } = createApp("alice");
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    const streamToken = service.streamCookieValue(session.id);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array([0, 1, 2]), {
+      status: 200,
+      headers: { "Content-Type": "font/woff" },
+    })));
+
+    const stream = await app.request(
+      `/api/native-apps/sessions/${session.id}/stream/${streamToken}/icons/materialicons-regular.woff`,
+      { headers: { Origin: "null" } },
+    );
+
+    expect(stream.status).toBe(200);
+    expect(stream.headers.get("access-control-allow-origin")).toBe("null");
+    expect(stream.headers.get("access-control-allow-credentials")).toBe("true");
+    expect(stream.headers.get("vary")).toContain("Origin");
   });
 
   it("rejects malformed native stream bootstrap tokens at the route boundary", async () => {
@@ -636,6 +657,7 @@ describe("native app routes", () => {
     await vi.waitFor(() => expect(wsMock.WebSocket).toHaveBeenCalledTimes(1));
 
     expect(wsMock.instances[0]?.url).toBe("ws://127.0.0.1:46000/");
+    expect(wsMock.instances[0]?.protocol).toBe("binary");
     handler.onClose(null, ws);
   });
 
