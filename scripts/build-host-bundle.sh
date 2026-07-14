@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="${HOST_BUNDLE_DIST_DIR:-$ROOT_DIR/dist/host-bundle}"
 STAGE_DIR="$DIST_DIR/stage"
 BUNDLE_NAME="matrix-host-bundle.tar.gz"
-NODE_VERSION="${HOST_BUNDLE_NODE_VERSION:-$(node -p 'process.versions.node')}"
+NODE_VERSION="${HOST_BUNDLE_NODE_VERSION:-24.18.0}"
 NODE_DIST="node-v${NODE_VERSION}-linux-x64"
 NODE_ARCHIVE="${NODE_DIST}.tar.xz"
 NODE_BASE_URL="https://nodejs.org/dist/v${NODE_VERSION}"
@@ -82,7 +82,7 @@ cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.
-chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-sync-bundled-home-assets" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-symphony" "$STAGE_DIR/bin/matrix-symphony-control" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-ensure-swap" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-hermes-dashboard" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-install-tool-pack" "$STAGE_DIR/bin/matrix-install-developer-tools" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"
+chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-sync-bundled-home-assets" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-symphony" "$STAGE_DIR/bin/matrix-symphony-control" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-ensure-swap" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-hermes-dashboard" "$STAGE_DIR/bin/matrix-install-openclaw" "$STAGE_DIR/bin/matrix-openclaw-gateway" "$STAGE_DIR/bin/matrix-agent-runtime-control" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-install-tool-pack" "$STAGE_DIR/bin/matrix-install-developer-tools" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"
 
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"

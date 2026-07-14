@@ -16,10 +16,21 @@
 
 ### Tested artifact
 
-- Package: `openclaw@2026.6.11`, the current stable npm release on 2026-07-13.
-- Host: Node.js 24.14.1, pnpm 10.33.4.
+- Package: `openclaw@2026.7.1`, the current stable npm release re-verified on 2026-07-13.
+- Registry artifact: `openclaw-2026.7.1.tgz`, SHA-512
+  `81efd7b2cf7d0870233cbfe29261ff505a223ab8dcc43078b16df2f66872083f9d616df0cd5ed329b015764ad7160006d9dd818e92687cff7bcd467eba6c68f2`.
+- The published artifact includes `npm-shrinkwrap.json`; the optional host
+  installer verifies the outer tarball before npm installs the pinned,
+  shrinkwrapped dependency graph.
+- Required Node engine: `>=24.15.0 <25` on Matrix's Node 24 line. Host bundles
+  therefore default to the official Node.js 24.18.0 archive while retaining an
+  explicit build override.
+- Spike host: Node.js 24.14.1, pnpm 10.33.4. The newer release correctly fails
+  its engine admission on that host, which established the bundle-runtime bump.
 - Throwaway install root and state directory under `/tmp`; both removed after the spike.
-- CLI reported `OpenClaw 2026.6.11 (e085fa1)`.
+- The prior live process spike used 2026.6.11. The 2026.7.1 package manifest,
+  binary entrypoint, shrinkwrap, lifecycle scripts, and engine range were
+  re-verified from the exact registry tarball before host implementation.
 
 ### Process and network model
 
@@ -143,8 +154,12 @@
 
 ## Source Links
 
-- OpenClaw gateway configuration: https://docs.openclaw.ai/gateway/configuration
-- OpenClaw gateway operation: https://docs.openclaw.ai/gateway
+- OpenClaw gateway configuration: https://docs.openclaw.ai/gateway/configuration-reference
+- OpenClaw gateway operation: https://docs.openclaw.ai/cli/gateway
+- OpenClaw gateway protocol: https://docs.openclaw.ai/gateway/protocol
+- OpenClaw administrative RPC: https://docs.openclaw.ai/gateway/admin-http-rpc
+- OpenClaw plugin policy: https://docs.openclaw.ai/plugins
+- OpenClaw tool policy: https://docs.openclaw.ai/gateway/config-tools
 - OpenClaw model CLI and authentication: https://docs.openclaw.ai/cli/models
 - OpenClaw gateway authentication: https://docs.openclaw.ai/gateway/authentication
 - OpenClaw Matrix channel: https://docs.openclaw.ai/channels/matrix

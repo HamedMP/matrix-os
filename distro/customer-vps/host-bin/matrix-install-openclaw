@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MATRIX_RUNTIME_USER="${MATRIX_RUNTIME_USER:-matrix}"
+if [ -r /opt/matrix/env/host.env ]; then
+  source /opt/matrix/env/host.env
+fi
+if [ -r /opt/matrix/bin/matrix-owner-env ]; then
+  source /opt/matrix/bin/matrix-owner-env
+  matrix_export_owner_env
+fi
+
+MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-${MATRIX_HOME:-/home/matrix/home}}"
+MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"
+OPENCLAW_VERSION="${OPENCLAW_VERSION:-2026.7.1}"
+OPENCLAW_SHA512="${OPENCLAW_SHA512:-81efd7b2cf7d0870233cbfe29261ff505a223ab8dcc43078b16df2f66872083f9d616df0cd5ed329b015764ad7160006d9dd818e92687cff7bcd467eba6c68f2}"
+OPENCLAW_TARBALL_URL="${OPENCLAW_TARBALL_URL:-https://registry.npmjs.org/openclaw/-/openclaw-${OPENCLAW_VERSION}.tgz}"
+OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-$MATRIX_RUNTIME_HOME/.openclaw}"
+OPENCLAW_ENV_FILE="${OPENCLAW_ENV_FILE:-$MATRIX_RUNTIME_HOME/system/agent-runtime/openclaw.env}"
+
+log() {
+  printf 'matrix-install-openclaw: %s\n' "$*"
+}
+
+check_admission() {
+  local cpu_count memory_total_kib memory_available_kib disk_available_kib
+  cpu_count="$(getconf _NPROCESSORS_ONLN)"
+  memory_total_kib="$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)"
+  memory_available_kib="$(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo)"
+  disk_available_kib="$(df -Pk "$MATRIX_RUNTIME_HOME" | awk 'NR == 2 { print $4 }')"
+
+  if [ "$cpu_count" -lt 2 ] || [ "$memory_total_kib" -lt 4194304 ]; then
+    echo "matrix-install-openclaw: computer does not meet the runtime baseline" >&2
+    exit 2
+  fi
+  if [ "$memory_available_kib" -lt 786432 ] || [ "$disk_available_kib" -lt 1048576 ]; then
+    echo "matrix-install-openclaw: insufficient available resources" >&2
+    exit 2
+  fi
+}
+
+check_node_version() {
+  local node_major node_minor
+  node_major="$($MATRIX_NODE_PREFIX/bin/node -p 'process.versions.node.split(".")[0]')"
+  node_minor="$($MATRIX_NODE_PREFIX/bin/node -p 'process.versions.node.split(".")[1]')"
+  if [ "$node_major" -ne 24 ] || { [ "$node_major" -eq 24 ] && [ "$node_minor" -lt 15 ]; }; then
+    echo "matrix-install-openclaw: bundled Node runtime is incompatible" >&2
+    exit 2
+  fi
+}
+
+if ! id "$MATRIX_RUNTIME_USER" >/dev/null 2>&1; then
+  echo "matrix-install-openclaw: runtime user is unavailable" >&2
+  exit 1
+fi
+
+check_node_version
+check_admission
+
+install -d -o "$MATRIX_RUNTIME_USER" -g "$MATRIX_RUNTIME_USER" -m 0700 \
+  "$OPENCLAW_STATE_DIR" "$(dirname "$OPENCLAW_ENV_FILE")"
+
+tmp_dir="$(mktemp -d /tmp/matrix-openclaw-install.XXXXXX)"
+cleanup() {
+  find "$tmp_dir" -mindepth 1 -maxdepth 1 -type l -delete 2>/dev/null || true
+  rm -rf "$tmp_dir"
+}
+trap cleanup EXIT INT TERM
+archive="$tmp_dir/openclaw.tgz"
+
+curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
+  --connect-timeout 10 --max-time 180 \
+  "$OPENCLAW_TARBALL_URL" -o "$archive"
+printf '%s  %s\n' "$OPENCLAW_SHA512" "$archive" >"$tmp_dir/openclaw.sha512"
+sha512sum -c "$tmp_dir/openclaw.sha512"
+tar -tzf "$archive" package/npm-shrinkwrap.json package/package.json package/openclaw.mjs >/dev/null
+
+log "installing pinned OpenClaw runtime"
+timeout 300 sudo -H -u "$MATRIX_RUNTIME_USER" env \
+  HOME="$MATRIX_RUNTIME_HOME" \
+  OPENCLAW_STATE_DIR="$OPENCLAW_STATE_DIR" \
+  PATH="$MATRIX_NODE_PREFIX/bin:/usr/local/bin:/usr/bin:/bin" \
+  "$MATRIX_NODE_PREFIX/bin/npm" install --global --prefix "$MATRIX_NODE_PREFIX" "$archive"
+
+test -x "$MATRIX_NODE_PREFIX/bin/openclaw"
+
+if [ ! -s "$OPENCLAW_ENV_FILE" ]; then
+  token="$(openssl rand -hex 32)"
+  token_tmp="$(mktemp "$(dirname "$OPENCLAW_ENV_FILE")/.openclaw.env.XXXXXX")"
+  printf 'OPENCLAW_GATEWAY_TOKEN=%s\n' "$token" >"$token_tmp"
+  chown "$MATRIX_RUNTIME_USER:$MATRIX_RUNTIME_USER" "$token_tmp"
+  chmod 0600 "$token_tmp"
+  mv -f "$token_tmp" "$OPENCLAW_ENV_FILE"
+fi
+
+log "OpenClaw ${OPENCLAW_VERSION} installed"
