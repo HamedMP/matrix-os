@@ -6,6 +6,7 @@ import {
   createAgentRuntimeServices,
   createHermesAgentRuntimeServices,
   createLazyOpenClawRpc,
+  waitForOpenClawReady,
 } from "../../packages/gateway/src/agent-config/runtime-services.js";
 
 const cleanupPaths: string[] = [];
@@ -18,6 +19,22 @@ afterEach(async () => {
 });
 
 describe("Hermes agent runtime services", () => {
+  it("maps an OpenClaw readiness timeout during retry backoff to a runtime error", async () => {
+    const rpc = {
+      call: vi.fn(async () => { throw new Error("gateway binding"); }),
+      close: vi.fn(async () => {}),
+    };
+
+    await expect(waitForOpenClawReady(
+      rpc,
+      new AbortController().signal,
+      1,
+    )).rejects.toMatchObject({
+      name: "AgentConfigError",
+      kind: "runtime_switch_failed",
+    });
+  });
+
   it("does not release a newly created OpenClaw client to callers after shutdown starts", async () => {
     let resolveToken: ((token: string) => void) | undefined;
     const token = new Promise<string>((resolve) => {
@@ -206,6 +223,7 @@ describe("Hermes agent runtime services", () => {
         throw new Error("Unexpected OpenClaw method");
       }),
       close: vi.fn(async () => {}),
+      reset: vi.fn(async () => { lifecycleCalls.push("reset:openclaw"); }),
     };
     const services = createAgentRuntimeServices({
       homePath,
@@ -232,7 +250,7 @@ describe("Hermes agent runtime services", () => {
 
     await expect(services.controller.update({ runtime: "hermes", revision: 0 }))
       .resolves.toMatchObject({ runtime: "hermes" });
-    expect(lifecycleCalls).toEqual(["switch:hermes"]);
+    expect(lifecycleCalls).toEqual(["reset:openclaw", "switch:hermes"]);
     await services.controller.close();
     expect(openClawRpc.close).toHaveBeenCalledOnce();
   });
