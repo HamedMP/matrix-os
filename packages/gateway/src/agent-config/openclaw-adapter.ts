@@ -263,8 +263,11 @@ export function createOpenClawRuntimeAdapter(options: {
     }
     const previous = await readConfig(signal);
     const primary = `${input.provider}/${input.model}`;
-    await patchPrimary(primary, previous.hash, signal);
     try {
+      // A transport failure can occur after OpenClaw accepted the patch but
+      // before Matrix received the response. Keep the write inside the
+      // restore boundary so an unknown outcome is treated like a mismatch.
+      await patchPrimary(primary, previous.hash, signal);
       const verified = await readConfig(signal);
       if (verified.primary !== primary) throw new AgentConfigError("invalid_response");
       return verified.selection;
