@@ -144,12 +144,18 @@ function ChatCard({
 }) {
   const provider = view.providers.find((entry) => entry.runtime === null && entry.scopes.includes("chat"));
   const chatModels = availableModels(provider);
-  const [model, setModel] = useState(() => (
-    chatModels.some((entry) => entry.id === view.chat.model)
-      ? view.chat.model
-      : chatModels[0]?.id ?? ""
-  ));
-  const [effort, setEffort] = useState<AgentEffort>(view.chat.effort);
+  const [modelOverride, setModelOverride] = useState("");
+  const [effortOverride, setEffortOverride] = useState<AgentEffort | "">("");
+  const preferredModel = modelOverride || view.chat.model;
+  const selectedModel = chatModels.some((entry) => entry.id === preferredModel)
+    ? preferredModel
+    : chatModels[0]?.id ?? "";
+  const effortOptions = provider?.models.find((entry) => entry.id === selectedModel)?.efforts
+    ?? view.availableEfforts;
+  const preferredEffort = effortOverride || view.chat.effort;
+  const selectedEffort = effortOptions.includes(preferredEffort)
+    ? preferredEffort
+    : effortOptions[0] ?? view.chat.effort;
   const [showKey, setShowKey] = useState(false);
   const [apiKey, setApiKey] = useState("");
 
@@ -176,8 +182,8 @@ function ChatCard({
               id="agent-chat-model"
               aria-label="Chat model"
               className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-              value={model}
-              onChange={(event) => setModel(event.target.value)}
+              value={selectedModel}
+              onChange={(event) => setModelOverride(event.target.value)}
             >
               {chatModels.map((entry) => (
                 <option key={entry.id} value={entry.id}>{entry.displayName}</option>
@@ -190,11 +196,10 @@ function ChatCard({
               id="agent-chat-effort"
               aria-label="Chat effort"
               className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-              value={effort}
-              onChange={(event) => setEffort(event.target.value as AgentEffort)}
+              value={selectedEffort}
+              onChange={(event) => setEffortOverride(event.target.value as AgentEffort)}
             >
-              {(provider?.models.find((entry) => entry.id === model)?.efforts ?? view.availableEfforts)
-                .map((entry) => <option key={entry} value={entry}>{statusLabel(entry)}</option>)}
+              {effortOptions.map((entry) => <option key={entry} value={entry}>{statusLabel(entry)}</option>)}
             </select>
           </div>
         </div>
@@ -203,7 +208,7 @@ function ChatCard({
             <StatusBadge state={provider?.authStatus.state ?? "unknown"} />
             <span>{provider?.displayName ?? "Provider unavailable"}</span>
           </div>
-          <Button size="sm" disabled={busy || !model} onClick={() => onSave(model, effort)}>Save Chat model</Button>
+          <Button size="sm" disabled={busy || !selectedModel} onClick={() => onSave(selectedModel, selectedEffort)}>Save Chat model</Button>
         </div>
         {provider && (
           <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
@@ -258,14 +263,20 @@ function MessagingProviders({
 }) {
   const providers = view.providers.filter((provider) => provider.runtime === view.runtime.selected);
   const current = view.currentSelection.messaging;
-  const [providerId, setProviderId] = useState(current.provider ?? providers[0]?.id ?? "");
-  const provider = providers.find((entry) => entry.id === providerId);
+  const [providerOverride, setProviderOverride] = useState("");
+  const preferredProviderId = providerOverride || current.provider || "";
+  const selectedProviderId = providers.some((entry) => entry.id === preferredProviderId)
+    ? preferredProviderId
+    : current.provider && providers.some((entry) => entry.id === current.provider)
+      ? current.provider
+      : providers[0]?.id ?? "";
+  const provider = providers.find((entry) => entry.id === selectedProviderId);
   const providerModels = availableModels(provider);
-  const [model, setModel] = useState(() => (
-    current.model && providerModels.some((entry) => entry.id === current.model)
-      ? current.model
-      : providerModels[0]?.id ?? ""
-  ));
+  const [modelOverride, setModelOverride] = useState("");
+  const preferredModel = modelOverride || current.model || "";
+  const selectedModel = providerModels.some((entry) => entry.id === preferredModel)
+    ? preferredModel
+    : providerModels[0]?.id ?? "";
   const terminalAction = view.runtime.selected === "hermes" ? "hermes-model" : "openclaw-model-auth";
 
   if (providers.length === 0) {
@@ -289,7 +300,7 @@ function MessagingProviders({
       <CardContent className="space-y-4">
         <div role="group" aria-label="Messaging providers" className="grid gap-2 sm:grid-cols-2">
           {providers.map((entry) => {
-            const selected = entry.id === providerId;
+            const selected = entry.id === selectedProviderId;
             return (
               <button
                 key={entry.id}
@@ -298,8 +309,8 @@ function MessagingProviders({
                 aria-pressed={selected}
                 className={`rounded-xl border p-3 text-left transition-colors ${selected ? "border-ember/50 bg-ember/5" : "border-border/60 bg-background/30 hover:border-border"}`}
                 onClick={() => {
-                  setProviderId(entry.id);
-                  setModel(availableModels(entry)[0]?.id ?? "");
+                  setProviderOverride(entry.id);
+                  setModelOverride(availableModels(entry)[0]?.id ?? "");
                 }}
               >
                 <span className="flex items-start justify-between gap-2">
@@ -319,8 +330,8 @@ function MessagingProviders({
             id="agent-messaging-model"
             aria-label="Messaging model"
             className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-            value={model}
-            onChange={(event) => setModel(event.target.value)}
+            value={selectedModel}
+            onChange={(event) => setModelOverride(event.target.value)}
           >
             {availableModels(provider).map((entry) => (
               <option key={entry.id} value={entry.id}>{entry.displayName}</option>
@@ -338,7 +349,7 @@ function MessagingProviders({
                 <TerminalIcon className="size-3.5" /> Configure
               </Button>
             )}
-            <Button size="sm" disabled={busy || !providerId || !model} onClick={() => onSave(providerId, model)}>
+            <Button size="sm" disabled={busy || !selectedProviderId || !selectedModel} onClick={() => onSave(selectedProviderId, selectedModel)}>
               Save messaging model
             </Button>
           </div>
