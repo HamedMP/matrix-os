@@ -51,7 +51,9 @@
         // derives the team from your authenticated session) during submit.
         // After the first successful submit, paste the real values here to skip
         // lookups: "ascAppId": "1234567890", "appleTeamId": "ABCDE12345".
-        "appleId": "thehamedmp@gmail.com"
+        "appleId": "thehamedmp@gmail.com",
+        "ascAppId": "6785629815",
+        "appleTeamId": "PX4JL74Y2K"
         // Alternative (fully non-interactive CI): use an App Store Connect API key:
         //   "ascApiKeyPath": "./asc-api-key.p8",
         //   "ascApiKeyId": "XXXXXXXXXX",
