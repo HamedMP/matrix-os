@@ -238,6 +238,41 @@ describe("agent runtime controller", () => {
     expect(resumeDelivery).toHaveBeenCalledWith("openclaw", expect.any(AbortSignal));
   });
 
+  it("persists a reachable degraded runtime before provider setup", async () => {
+    const homePath = await createHome({
+      agent: { messagingRuntime: "openclaw", revision: 0 },
+    });
+    const hermes = fakeAdapter("hermes", {
+      probe: vi.fn(async () => ({
+        id: "hermes" as const,
+        displayName: "Hermes",
+        installState: "installed" as const,
+        health: "degraded" as const,
+        selectionState: "active" as const,
+        configured: false,
+        capabilities: ["provider_catalog" as const, "model_selection" as const],
+      })),
+      selection: vi.fn(async () => ({
+        runtime: "hermes" as const,
+        provider: null,
+        model: null,
+        configured: false,
+      })),
+    });
+    const controller = createAgentRuntimeController({
+      homePath,
+      adapters: { hermes, openclaw: fakeAdapter("openclaw") },
+    });
+
+    await expect(controller.update({ runtime: "hermes", revision: 0 }))
+      .resolves.toMatchObject({ revision: 1, runtime: "hermes" });
+    const config = JSON.parse(await readFile(
+      join(homePath, "system/config.json"),
+      "utf8",
+    ));
+    expect(config.agent).toMatchObject({ messagingRuntime: "hermes", revision: 1 });
+  });
+
   it("atomically preserves and patches Chat settings in a combined update", async () => {
     const homePath = await createHome({
       kernel: {

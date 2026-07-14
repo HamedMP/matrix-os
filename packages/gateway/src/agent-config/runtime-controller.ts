@@ -219,7 +219,7 @@ export function createAgentRuntimeController(
         const descriptor = AgentRuntimeDescriptorSchema.parse(
           await targetAdapter.probe(deadline.signal),
         );
-        if (descriptor.health !== "healthy") {
+        if (descriptor.health !== "healthy" && descriptor.health !== "degraded") {
           throw new AgentConfigError("runtime_switch_failed");
         }
         previousTargetSelection = await targetAdapter.selection(deadline.signal);

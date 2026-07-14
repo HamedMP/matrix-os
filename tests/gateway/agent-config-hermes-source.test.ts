@@ -82,6 +82,36 @@ describe("Hermes agent settings source", () => {
     expect(readJson).toHaveBeenNthCalledWith(2, "/api/model/options", signal);
   });
 
+  it("keeps dashboard reachability when provider inventory requires authentication", async () => {
+    const readJson = vi.fn(async (path: string) => {
+      if (path === "/api/status") {
+        return { gateway_running: false, version: "0.19.1" };
+      }
+      throw new Error("provider inventory unauthorized");
+    });
+    const logWarning = vi.fn();
+    const source = createHermesRuntimeSource(readJson, { logWarning });
+
+    const snapshot = await source(new AbortController().signal);
+
+    expect(snapshot.runtime.options[0]).toMatchObject({
+      id: "hermes",
+      installState: "installed",
+      health: "degraded",
+      configured: false,
+      version: "0.19.1",
+    });
+    expect(snapshot.providers).toEqual([]);
+    expect(snapshot.messaging).toEqual({
+      runtime: "hermes",
+      provider: null,
+      model: null,
+      configured: false,
+    });
+    expect(logWarning).toHaveBeenCalledOnce();
+    expect(logWarning).toHaveBeenCalledWith("Error");
+  });
+
   it("orders selected and ready catalog entries deterministically", () => {
     const snapshot = normalizeHermesRuntimeSnapshot({
       status: { gateway_running: true },

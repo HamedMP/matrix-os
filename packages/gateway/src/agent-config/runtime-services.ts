@@ -156,24 +156,32 @@ async function resetOpenClawRpc(rpc: OpenClawRpcClient): Promise<void> {
   if (typeof reset === "function") await reset.call(rpc);
 }
 
-async function waitForOpenClawReady(
+export const OPENCLAW_READINESS_TIMEOUT_MS = 45_000;
+
+export async function waitForOpenClawReady(
   rpc: OpenClawRpcClient,
   signal: AbortSignal,
+  timeoutMs = OPENCLAW_READINESS_TIMEOUT_MS,
 ): Promise<void> {
   const readinessSignal = AbortSignal.any([
     signal,
-    AbortSignal.timeout(10_000),
+    AbortSignal.timeout(timeoutMs),
   ]);
   while (true) {
     try {
       await rpc.call("health", {}, readinessSignal);
       return;
     } catch (error) {
-      if (signal.aborted) throw error;
+      if (signal.aborted) throw signal.reason ?? error;
       if (readinessSignal.aborted) {
         throw new AgentConfigError("runtime_switch_failed", error);
       }
-      await delay(250, undefined, { signal: readinessSignal });
+      try {
+        await delay(250, undefined, { signal: readinessSignal });
+      } catch (delayError) {
+        if (signal.aborted) throw signal.reason ?? delayError;
+        throw new AgentConfigError("runtime_switch_failed", delayError);
+      }
     }
   }
 }
@@ -261,8 +269,12 @@ function createUnifiedRuntimeSource(options: {
       signal.throwIfAborted();
       if (probeResult.status === "fulfilled") {
         const probed = AgentRuntimeDescriptorSchema.parse(probeResult.value);
+        const hostInstallState = descriptors.get(selected)?.installState;
         descriptors.set(selected, AgentRuntimeDescriptorSchema.parse({
           ...probed,
+          ...(hostStatus !== undefined && hostInstallState !== undefined
+            ? { installState: hostInstallState }
+            : {}),
           selectionState: "active",
         }));
       }
@@ -332,7 +344,6 @@ export function createAgentRuntimeServices(options: {
       hermesSource.invalidate?.();
       await hostControl.switch("hermes", signal);
       hermesSource.invalidate?.();
-      await resetOpenClawRpc(openClawRpc);
     },
     deactivate: async () => {},
   });
@@ -351,7 +362,9 @@ export function createAgentRuntimeServices(options: {
         await hostControl.switch("openclaw", signal);
         await waitForOpenClawReady(openClawRpc, signal);
       },
-      deactivate: async () => {},
+      async deactivate() {
+        await resetOpenClawRpc(openClawRpc);
+      },
     },
   });
   const adapters = { hermes, openclaw };

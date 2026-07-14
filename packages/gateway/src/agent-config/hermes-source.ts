@@ -255,12 +255,24 @@ export function createHermesRuntimeSource(
     if (cached !== null && cached.expiresAt > now()) return cached.value;
     if (inFlight === null || inFlight.generation !== generation) {
       const requestGeneration = generation;
-      const promise = Promise.all([
+      const promise = Promise.allSettled([
         readJson("/api/status", signal),
         readJson("/api/model/options", signal),
-      ]).then(([status, modelOptions]) => {
+      ]).then(([statusResult, modelOptionsResult]) => {
+        signal.throwIfAborted();
+        if (statusResult.status === "rejected") throw statusResult.reason;
+        let modelOptions: unknown = { providers: [] };
+        if (modelOptionsResult.status === "fulfilled") {
+          modelOptions = modelOptionsResult.value;
+        } else {
+          logWarning(
+            modelOptionsResult.reason instanceof Error
+              ? modelOptionsResult.reason.name
+              : "UnknownError",
+          );
+        }
         return normalizeHermesRuntimeSnapshot({
-          status,
+          status: statusResult.value,
           options: modelOptions,
         });
       }).catch((err: unknown) => {

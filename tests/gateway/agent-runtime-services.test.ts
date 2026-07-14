@@ -6,6 +6,8 @@ import {
   createAgentRuntimeServices,
   createHermesAgentRuntimeServices,
   createLazyOpenClawRpc,
+  OPENCLAW_READINESS_TIMEOUT_MS,
+  waitForOpenClawReady,
 } from "../../packages/gateway/src/agent-config/runtime-services.js";
 
 const cleanupPaths: string[] = [];
@@ -18,6 +20,26 @@ afterEach(async () => {
 });
 
 describe("Hermes agent runtime services", () => {
+  it("budgets first-start OpenClaw readiness for bounded migrations", () => {
+    expect(OPENCLAW_READINESS_TIMEOUT_MS).toBe(45_000);
+  });
+
+  it("maps an OpenClaw readiness timeout during retry backoff to a runtime error", async () => {
+    const rpc = {
+      call: vi.fn(async () => { throw new Error("gateway binding"); }),
+      close: vi.fn(async () => {}),
+    };
+
+    await expect(waitForOpenClawReady(
+      rpc,
+      new AbortController().signal,
+      1,
+    )).rejects.toMatchObject({
+      name: "AgentConfigError",
+      kind: "runtime_switch_failed",
+    });
+  });
+
   it("does not release a newly created OpenClaw client to callers after shutdown starts", async () => {
     let resolveToken: ((token: string) => void) | undefined;
     const token = new Promise<string>((resolve) => {
@@ -206,6 +228,7 @@ describe("Hermes agent runtime services", () => {
         throw new Error("Unexpected OpenClaw method");
       }),
       close: vi.fn(async () => {}),
+      reset: vi.fn(async () => { lifecycleCalls.push("reset:openclaw"); }),
     };
     const services = createAgentRuntimeServices({
       homePath,
@@ -232,7 +255,7 @@ describe("Hermes agent runtime services", () => {
 
     await expect(services.controller.update({ runtime: "hermes", revision: 0 }))
       .resolves.toMatchObject({ runtime: "hermes" });
-    expect(lifecycleCalls).toEqual(["switch:hermes"]);
+    expect(lifecycleCalls).toEqual(["reset:openclaw", "switch:hermes"]);
     await services.controller.close();
     expect(openClawRpc.close).toHaveBeenCalledOnce();
   });
@@ -267,6 +290,46 @@ describe("Hermes agent runtime services", () => {
 
     await expect(services.controller.reconcile()).resolves.toBeUndefined();
     expect(hostControl.stop).not.toHaveBeenCalled();
+    await services.controller.close();
+  });
+
+  it("keeps authoritative host install state when the active Hermes probe is unavailable", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "agent-runtime-services-"));
+    cleanupPaths.push(homePath);
+    await mkdir(join(homePath, "system"), { recursive: true });
+    await writeFile(join(homePath, "system/config.json"), JSON.stringify({
+      agent: { messagingRuntime: "hermes", revision: 0 },
+    }));
+    const services = createAgentRuntimeServices({
+      homePath,
+      client: {
+        readJson: vi.fn(async () => { throw new Error("dashboard starting"); }),
+        requestJson: vi.fn(async () => ({ ok: true })),
+      },
+      hostControl: {
+        status: vi.fn(async () => ({
+          hermes: { installed: true, running: true },
+          openclaw: { installed: false, running: false },
+        })),
+        switch: vi.fn(async () => {}),
+        stop: vi.fn(async () => {}),
+      },
+      openClawRpc: {
+        call: vi.fn(async () => { throw new Error("not selected"); }),
+        close: vi.fn(async () => {}),
+      },
+    });
+
+    await expect(services.source(new AbortController().signal)).resolves.toMatchObject({
+      runtime: {
+        selected: "hermes",
+        options: [
+          { id: "hermes", installState: "installed", selectionState: "active" },
+          { id: "openclaw", installState: "missing", selectionState: "unavailable" },
+        ],
+      },
+    });
+
     await services.controller.close();
   });
 
