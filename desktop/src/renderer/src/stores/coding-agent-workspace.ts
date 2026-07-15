@@ -237,6 +237,8 @@ export function clearCodingAgentRuntimeSelection(): void {
     reviewsStatus: "idle",
     reviews: null,
     reviewsError: null,
+    // One-shot focus signals must not leak across runtimes.
+    reviewFocusRequestId: 0,
     ...clearReviewSelectionState(),
   });
 }

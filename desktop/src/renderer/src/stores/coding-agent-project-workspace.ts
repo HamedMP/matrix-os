@@ -157,9 +157,14 @@ async function loadProjectWorkspace(
   } catch {
     if (generation !== hydrationGeneration) return;
     console.warn("[coding-agents] project workspace refresh failed");
+    // Keep the last known projection when it belongs to the same project so a
+    // failed refresh degrades to stale-with-error instead of an empty board.
+    // Callers that change project/scope null the workspace before loading, so
+    // this only retains data for same-project refreshes.
+    const currentWorkspace = useCodingAgentProjectWorkspace.getState().workspace;
     useCodingAgentProjectWorkspace.setState({
       status: "error",
-      workspace: null,
+      workspace: currentWorkspace?.project.id === selectedProjectId ? currentWorkspace : null,
       selectedProjectId,
       selectedTaskId: preserveSelectionOnError ? preferred.selectedTaskId : null,
       selectedThreadId: preserveSelectionOnError ? preferred.selectedThreadId : null,
@@ -216,7 +221,10 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
       const state = useCodingAgentProjectWorkspace.getState();
       if (!state.summary) return;
       const generation = ++hydrationGeneration;
-      set({ status: "loading", workspace: null, error: null });
+      // Stale-while-revalidate: keep the last projection visible while the
+      // refresh is in flight so a transient failure after a mutation (e.g. a
+      // Kanban task move) does not drop the user out of the board.
+      set({ status: "loading", error: null });
       await loadProjectWorkspace(
         state.summary,
         currentSelection(state),

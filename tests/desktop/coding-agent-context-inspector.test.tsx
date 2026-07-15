@@ -128,6 +128,24 @@ describe("AgentConversationInspector", () => {
     expect(controlledPanel("Changes").hidden).toBe(false);
   });
 
+  it("ignores a stale review-focus request when mounting", () => {
+    render(
+      <AgentConversationInspector
+        defaultTab="terminal"
+        changesFocusRequestId={3}
+        counts={{ changes: 2, terminal: 1, preview: 3, activity: 4 }}
+        toolbar={<div>Tools</div>}
+        changes={<div>Changed files</div>}
+        terminal={<div>Matrix shell</div>}
+        preview={<div>Preview sessions</div>}
+        activity={<div>Workspace activity</div>}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: /^Terminal\b/ }).getAttribute("aria-selected")).toBe("true");
+    expect(controlledPanel("Terminal").hidden).toBe(false);
+  });
+
   it("supports keyboard arrow navigation without losing the selected pane", () => {
     renderInspector();
 

@@ -7,7 +7,7 @@ import AgentWorkspace, {
   clearComposerLaunchContext,
   mergeComposerSeed,
 } from "../../desktop/src/renderer/src/features/coding-agents/AgentWorkspace";
-import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import { clearCodingAgentRuntimeSelection, useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useCodingAgentProjectWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-project-workspace";
 import { reconcileDesktopRuntimeChange } from "../../desktop/src/renderer/src/stores/runtime-transition";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
@@ -1678,6 +1678,33 @@ describe("AgentWorkspace", () => {
     });
     expect(await screen.findByText("Approval resolved")).toBeTruthy();
     expect(screen.getByText("approve")).toBeTruthy();
+  });
+
+  it("suppresses decision buttons for approvals already resolved in the snapshot", async () => {
+    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-thread-snapshot") {
+        return Promise.resolve(approvalResolvedThreadSnapshotFixture());
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    expect(await screen.findByText("Approval resolved")).toBeTruthy();
+    expect(screen.getByText("Approval needed")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /approve run tests/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /decline run tests/i })).toBeNull();
+  });
+
+  it("resets the review focus signal when the runtime selection is cleared", () => {
+    useCodingAgentWorkspace.setState({ reviewFocusRequestId: 7 });
+
+    clearCodingAgentRuntimeSelection();
+
+    expect(useCodingAgentWorkspace.getState().reviewFocusRequestId).toBe(0);
   });
 
   it("subscribes through trusted IPC and applies live thread events", async () => {

@@ -47,8 +47,15 @@ export function AgentConversationInspector({
     activity,
   };
 
+  // A focus request is a one-shot signal: react only to increments observed
+  // after mount. A stale non-zero id from an earlier review selection must not
+  // force the Changes pane onto a fresh inspector (e.g. after a runtime switch
+  // to a computer without review support).
+  const lastFocusRequestId = useRef(changesFocusRequestId);
   useEffect(() => {
-    if (changesFocusRequestId > 0) setSelectedTab("changes");
+    if (changesFocusRequestId === lastFocusRequestId.current) return;
+    lastFocusRequestId.current = changesFocusRequestId;
+    setSelectedTab("changes");
   }, [changesFocusRequestId]);
 
   function selectTab(index: number) {

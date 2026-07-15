@@ -192,7 +192,11 @@ function approvalLabel(decision: string) {
   return "Decide";
 }
 
-function SystemEvent({ event, answeredInputs }: { event: AgentThreadEvent; answeredInputs: ReadonlySet<string> }) {
+function SystemEvent({ event, answeredInputs, resolvedApprovals }: {
+  event: AgentThreadEvent;
+  answeredInputs: ReadonlySet<string>;
+  resolvedApprovals: ReadonlySet<string>;
+}) {
   const copy = eventCopy(event);
   const pendingApprovalKeys = useCodingAgentWorkspace((state) => state.pendingApprovalKeys);
   const approvalErrors = useCodingAgentWorkspace((state) => state.approvalActionErrors);
@@ -213,7 +217,7 @@ function SystemEvent({ event, answeredInputs }: { event: AgentThreadEvent; answe
         <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>{event.occurredAt}</span>
       </div>
       <p className="mt-0.5 text-xs" style={{ color: "var(--text-secondary)" }}>{copy.detail}</p>
-      {approval ? (
+      {approval && approvalKey && !resolvedApprovals.has(approvalKey) ? (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {approval.allowedDecisions.map((decision) => (
             <Button key={decision} variant={decision.startsWith("approve") ? "primary" : "danger"} aria-label={`${approvalLabel(decision)} ${approval.title}`} disabled={Boolean(approvalKey && pendingApprovalKeys.includes(approvalKey))} onClick={() => void submitApproval({ threadId: approval.threadId, approvalId: approval.approvalId, decision, correlationId: approval.correlationId })}>
@@ -296,6 +300,12 @@ export function AgentConversationView({
   const answeredInputs = useMemo(() => new Set((snapshot?.events.items ?? [])
     .filter((event) => event.type === "user_input.answered")
     .map((event) => codingAgentInputActionKey(event.threadId, event.requestId))), [snapshot?.events.items]);
+  // Approvals already resolved in the snapshot must not re-render live
+  // decision buttons; a second click would reach the provider as a duplicate
+  // decision under a fresh client request id.
+  const resolvedApprovals = useMemo(() => new Set((snapshot?.events.items ?? [])
+    .filter((event) => event.type === "approval.resolved")
+    .map((event) => codingAgentApprovalActionKey(event.threadId, event.approvalId))), [snapshot?.events.items]);
   useEffect(() => {
     const target = endRef.current as (HTMLDivElement & { scrollIntoView?: (options?: ScrollIntoViewOptions) => void }) | null;
     target?.scrollIntoView?.({ block: "end" });
@@ -321,7 +331,7 @@ export function AgentConversationView({
         {items.map((item) => item.kind === "assistant" ? <AssistantBubble key={item.key} events={item.events} />
           : item.kind === "tool" ? <ToolActivity key={item.key} events={item.events} />
             : item.event.type === "user.message" ? <UserBubble key={item.event.eventId} event={item.event} />
-              : <SystemEvent key={item.event.eventId} event={item.event} answeredInputs={answeredInputs} />)}
+              : <SystemEvent key={item.event.eventId} event={item.event} answeredInputs={answeredInputs} resolvedApprovals={resolvedApprovals} />)}
         {items.length === 0 ? (
           <p className="py-12 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>
             {canSendTurns ? "This conversation is ready. Send a message to continue." : "No messages yet."}
