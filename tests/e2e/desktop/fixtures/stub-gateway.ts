@@ -6,8 +6,10 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { WebSocketServer, type WebSocket } from "ws";
 import {
   AgentThreadSnapshotSchema,
+  ProjectAgentWorkspaceSchema,
   RuntimeSummarySchema,
   type AgentThreadSnapshot,
+  type ProjectAgentWorkspace,
   type RuntimeSummary,
 } from "@matrix-os/contracts";
 
@@ -99,6 +101,94 @@ function codingAgentThread(prompt = "Fix the failing auth tests"): AgentThreadSn
   };
 }
 
+function codingAgentTaskThread(
+  id: string,
+  taskId: string,
+  title: string,
+  status: AgentThreadSnapshot["thread"]["status"],
+): AgentThreadSnapshot["thread"] {
+  return {
+    id,
+    providerId: "codex",
+    title,
+    status,
+    attention: status === "completed" ? "completed" : "none",
+    projectId: "matrix-os",
+    taskId,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+}
+
+export function codingAgentProjectWorkspace(): ProjectAgentWorkspace {
+  return ProjectAgentWorkspaceSchema.parse({
+    project: {
+      id: "matrix-os",
+      label: "Matrix OS",
+      status: "available",
+      taskCount: 2,
+      threadCount: 3,
+      attentionCount: 0,
+      updatedAt: NOW,
+    },
+    tasks: {
+      items: [
+        {
+          id: "task_auth",
+          projectId: "matrix-os",
+          title: "Fix the failing auth tests",
+          status: "todo",
+          priority: "high",
+          order: 0,
+          threadCount: 2,
+          activeThreadCount: 1,
+          attentionCount: 0,
+          latestThreadAt: NOW,
+          revision: 1,
+        },
+        {
+          id: "task_polish",
+          projectId: "matrix-os",
+          title: "Polish the board design",
+          status: "running",
+          priority: "normal",
+          order: 1,
+          threadCount: 0,
+          activeThreadCount: 0,
+          attentionCount: 0,
+          revision: 1,
+        },
+      ],
+      hasMore: false,
+      limit: 50,
+    },
+    projectThreads: {
+      items: [codingAgentThread()],
+      hasMore: false,
+      limit: 50,
+    },
+    taskThreads: {
+      items: [
+        codingAgentTaskThread(
+          "thread_task_auth_1",
+          "task_auth",
+          "Investigate auth callback",
+          "running",
+        ),
+        codingAgentTaskThread(
+          "thread_task_auth_2",
+          "task_auth",
+          "Verify token refresh",
+          "completed",
+        ),
+      ],
+      hasMore: false,
+      limit: 50,
+    },
+    updatedAt: NOW,
+  });
+}
+
 export function codingAgentSnapshot(prompt = "Fix the failing auth tests"): AgentThreadSnapshot {
   const thread = codingAgentThread(prompt);
   return AgentThreadSnapshotSchema.parse({
@@ -160,6 +250,7 @@ export function codingAgentSummary(): RuntimeSummary {
     capabilities: [
       { id: "codingAgentsRuntimeSummary", enabled: true },
       { id: "codingAgentsDesktopWorkspace", enabled: true },
+      { id: "codingAgentsProjectWorkspace", enabled: true },
       { id: "codingAgentsThreadCreate", enabled: true },
       { id: "codingAgentsNativeMobileTerminal", enabled: true },
     ],
@@ -178,7 +269,15 @@ export function codingAgentSummary(): RuntimeSummary {
       },
     ],
     projects: {
-      items: [{ id: "matrix-os", label: "Matrix OS", status: "available", updatedAt: NOW }],
+      items: [{
+        id: "matrix-os",
+        label: "Matrix OS",
+        status: "available",
+        taskCount: 2,
+        threadCount: 3,
+        attentionCount: 0,
+        updatedAt: NOW,
+      }],
       hasMore: false,
       limit: 50,
     },
@@ -348,6 +447,13 @@ export async function startStubGateway(): Promise<StubGateway> {
     }
     if (req.method === "GET" && path === "/api/coding-agents/summary") {
       json(res, 200, codingAgentSummary());
+      return;
+    }
+    if (
+      req.method === "GET"
+      && path === "/api/coding-agents/projects/matrix-os/workspace"
+    ) {
+      json(res, 200, codingAgentProjectWorkspace());
       return;
     }
     if (req.method === "GET" && path === "/api/coding-agents/notification-preferences") {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createCodingAgentThread,
   createCodingAgentSourcePullRequest,
+  fetchCodingAgentProjectWorkspace,
   fetchCodingAgentFileBrowse,
   fetchCodingAgentFileContent,
   fetchCodingAgentFileSearch,
@@ -127,6 +128,23 @@ function fileSearchBody() {
       hasMore: false,
       limit: 20,
     },
+  };
+}
+
+function projectWorkspaceBody() {
+  return {
+    project: {
+      id: "matrix-os",
+      label: "Matrix OS",
+      status: "available",
+      taskCount: 1,
+      threadCount: 0,
+      attentionCount: 0,
+    },
+    tasks: { items: [], hasMore: false, limit: 100 },
+    projectThreads: { items: [], hasMore: false, limit: 100 },
+    taskThreads: { items: [], hasMore: false, limit: 100 },
+    updatedAt: "2026-07-10T12:00:00.000Z",
   };
 }
 
@@ -814,5 +832,58 @@ describe("coding agent desktop runtime client", () => {
       body: "Review updates are ready.",
       clientRequestId: "req_desktop_create_pr",
     }, fetchFn)).rejects.toThrow("pull request unavailable");
+  });
+
+  it("DT-001 fetches and validates a bounded project workspace in the trusted core", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(projectWorkspaceBody()), { status: 200 }),
+    );
+
+    await expect(fetchCodingAgentProjectWorkspace(auth("secondary"), {
+      projectId: "matrix-os",
+    }, fetchFn)).resolves.toEqual(projectWorkspaceBody());
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://runtime.test/api/coding-agents/projects/matrix-os/workspace?runtime=secondary",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({ Authorization: "Bearer desktop-token" }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("SEC-003 keeps project workspace failures and unsafe responses generic", async () => {
+    const failedFetch = vi.fn().mockResolvedValue(
+      new Response("filesystem failed at /home/matrix/private", { status: 500 }),
+    );
+    await expect(fetchCodingAgentProjectWorkspace(auth(), {
+      projectId: "matrix-os",
+    }, failedFetch)).rejects.toThrow("project workspace unavailable");
+    await expect(fetchCodingAgentProjectWorkspace(auth(), {
+      projectId: "matrix-os",
+    }, failedFetch)).rejects.not.toThrow("/home/matrix");
+
+    const unsafeFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...projectWorkspaceBody(),
+      bearerToken: "secret",
+    }), { status: 200 }));
+    await expect(fetchCodingAgentProjectWorkspace(auth(), {
+      projectId: "matrix-os",
+    }, unsafeFetch)).rejects.toThrow("project workspace unavailable");
+
+    const mismatchedFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...projectWorkspaceBody(),
+      project: {
+        ...projectWorkspaceBody().project,
+        id: "website",
+      },
+      tasks: { items: [], hasMore: false, limit: 100 },
+      projectThreads: { items: [], hasMore: false, limit: 100 },
+      taskThreads: { items: [], hasMore: false, limit: 100 },
+    }), { status: 200 }));
+    await expect(fetchCodingAgentProjectWorkspace(auth(), {
+      projectId: "matrix-os",
+    }, mismatchedFetch)).rejects.toThrow("project workspace unavailable");
   });
 });

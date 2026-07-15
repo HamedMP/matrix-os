@@ -29,6 +29,7 @@ describe("IPC contract", () => {
       "runtime:get-review-snapshot",
       "runtime:get-reviews",
       "runtime:get-summary",
+      "runtime:get-project-workspace",
       "runtime:select",
       "state:get",
       "state:set",
@@ -301,6 +302,32 @@ describe("IPC contract", () => {
 
     expect(schema.safeParse(valid).success).toBe(true);
     expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
+  });
+
+  it("SEC-003 validates project workspace IPC without credential or transcript fields", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:get-project-workspace"].request;
+    const responseSchema = INVOKE_CHANNELS["runtime:get-project-workspace"].response;
+    const valid = {
+      project: {
+        id: "matrix-os",
+        label: "Matrix OS",
+        status: "available",
+        taskCount: 1,
+        threadCount: 1,
+        attentionCount: 0,
+      },
+      tasks: { items: [], hasMore: false, limit: 100 },
+      projectThreads: { items: [], hasMore: false, limit: 100 },
+      taskThreads: { items: [], hasMore: false, limit: 100 },
+      updatedAt: "2026-07-10T12:00:00.000Z",
+    };
+
+    expect(requestSchema.safeParse({ projectId: "matrix-os" }).success).toBe(true);
+    expect(requestSchema.safeParse({ projectId: "../matrix-os" }).success).toBe(false);
+    expect(requestSchema.safeParse({ projectId: "matrix-os", bearerToken: "secret" }).success).toBe(false);
+    expect(responseSchema.safeParse(valid).success).toBe(true);
+    expect(responseSchema.safeParse({ ...valid, transcript: ["private"] }).success).toBe(false);
+    expect(responseSchema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
   });
 
   it("validates notification preference IPC without credential fields", () => {
@@ -678,6 +705,16 @@ describe("IPC contract", () => {
   it("caps state:set values at 64KB and only allows known keys", () => {
     const schema = INVOKE_CHANNELS["state:set"].request;
     expect(schema.safeParse({ key: "appearance", value: { theme: "dark" } }).success).toBe(true);
+    expect(schema.safeParse({
+      key: "codingAgentWorkspace",
+      value: {
+        selectedProjectId: "matrix-os",
+        selectedTaskId: "task_auth",
+        selectedThreadId: "thread_plan",
+        viewMode: "conversation",
+        updatedAt: "2026-07-10T12:00:00.000Z",
+      },
+    }).success).toBe(true);
     expect(schema.safeParse({ key: "nope", value: 1 }).success).toBe(false);
     const big = { blob: "x".repeat(70_000) };
     expect(schema.safeParse({ key: "panelLayouts", value: big }).success).toBe(false);

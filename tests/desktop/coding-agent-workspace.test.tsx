@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AgentWorkspace, {
   clearComposerLaunchContext,
   mergeComposerSeed,
 } from "../../desktop/src/renderer/src/features/coding-agents/AgentWorkspace";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import { useCodingAgentProjectWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-project-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
@@ -657,6 +658,17 @@ function multiInputAnsweredThreadSnapshotFixture(inputRequestId: string, correla
 
 describe("AgentWorkspace", () => {
   beforeEach(() => {
+    useCodingAgentProjectWorkspace.setState({
+      status: "idle",
+      runtimeId: null,
+      summary: null,
+      workspace: null,
+      error: null,
+      selectedProjectId: null,
+      selectedTaskId: null,
+      selectedThreadId: null,
+      viewMode: "conversation",
+    });
     useCodingAgentWorkspace.setState({
       status: "idle",
       summary: null,
@@ -731,6 +743,293 @@ describe("AgentWorkspace", () => {
     expect(screen.getByText("Fix settings route")).toBeTruthy();
     expect(screen.getByText("matrix-abc1234")).toBeTruthy();
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-summary", {});
+  });
+
+  it("hides the prior account summary until the full connection scope refresh completes", async () => {
+    const firstSummary = summaryFixture();
+    const secondSummary = {
+      ...firstSummary,
+      activeThreads: {
+        ...firstSummary.activeThreads,
+        items: firstSummary.activeThreads.items.map((thread) => ({
+          ...thread,
+          title: "Second account thread",
+        })),
+      },
+    };
+    let resolveSecondSummary: ((value: typeof secondSummary) => void) | undefined;
+    const pendingSecondSummary = new Promise<typeof secondSummary>((resolve) => {
+      resolveSecondSummary = resolve;
+    });
+    let resolveSecondReviews: ((value: ReturnType<typeof reviewsFixture>) => void) | undefined;
+    const pendingSecondReviews = new Promise<ReturnType<typeof reviewsFixture>>((resolve) => {
+      resolveSecondReviews = resolve;
+    });
+    let summaryRequests = 0;
+    let reviewRequests = 0;
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") {
+        summaryRequests += 1;
+        return summaryRequests === 1
+          ? Promise.resolve(firstSummary)
+          : pendingSecondSummary;
+      }
+      if (channel === "runtime:get-reviews") {
+        reviewRequests += 1;
+        return reviewRequests === 1
+          ? Promise.resolve(reviewsFixture())
+          : pendingSecondReviews;
+      }
+      if (channel === "runtime:get-notification-preferences") {
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
+      }
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+
+    render(<AgentWorkspace />);
+    await screen.findByText("Fix settings route");
+    act(() => {
+      useCodingAgentWorkspace.setState({
+        createdThreadHandles: [...firstSummary.activeThreads.items],
+        reviewsStatus: "ready",
+        reviews: reviewsFixture(),
+        selectedReviewId: "rev_desktop_1",
+        reviewSnapshotStatus: "ready",
+        reviewSnapshot: reviewSnapshotFixture(),
+        fileReadStatus: "ready",
+        fileRead: fileReadFixture(),
+        selectedFilePath: "packages/gateway/src/coding-agents/routes.ts",
+        selectedFileReference: {
+          projectId: "matrix-os",
+          worktreeId: "wt_desktop_1",
+          path: "packages/gateway/src/coding-agents/routes.ts",
+        },
+        sourceCommitStatus: "prepared",
+        sourceCommit: {
+          status: "committed",
+          commitSha: "0123456789abcdef0123456789abcdef01234567",
+          branch: "feature/review-fix",
+          changedFileCount: 1,
+          safeMessage: "Changes were committed.",
+        },
+        sourcePullRequestStatus: "ready",
+        sourcePullRequest: {
+          status: "created",
+          number: 808,
+          url: "https://github.com/HamedMP/matrix-os/pull/808",
+          headBranch: "feature/review-fix",
+          baseBranch: "main",
+          safeMessage: "Pull request is ready for review.",
+        },
+      });
+    });
+
+    act(() => {
+      useConnection.setState({
+        handle: "second-account",
+        platformHost: "https://second.platform.test",
+      });
+    });
+
+    await waitFor(() => {
+      expect(summaryRequests).toBe(2);
+    });
+    expect(screen.queryByText("Fix settings route")).toBeNull();
+    expect(screen.getByText("Loading workspace...")).toBeTruthy();
+    expect(useCodingAgentWorkspace.getState()).toMatchObject({
+      createdThreadHandles: [],
+      reviewsStatus: "idle",
+      reviews: null,
+      selectedReviewId: null,
+      reviewSnapshotStatus: "idle",
+      reviewSnapshot: null,
+      fileReadStatus: "idle",
+      fileRead: null,
+      selectedFilePath: null,
+      selectedFileReference: null,
+      sourceCommitStatus: "idle",
+      sourceCommit: null,
+      sourcePullRequestStatus: "idle",
+      sourcePullRequest: null,
+    });
+
+    await act(async () => {
+      resolveSecondSummary?.(secondSummary);
+      await pendingSecondSummary;
+    });
+    await screen.findByText("Second account thread");
+    expect(useCodingAgentWorkspace.getState().reviews).toBeNull();
+
+    await act(async () => {
+      resolveSecondReviews?.(reviewsFixture());
+      await pendingSecondReviews;
+    });
+  });
+
+  it("DT-001 through DT-003 hydrates the persistent project and conversation navigator", async () => {
+    const baseSummary = summaryFixture({ threadCreate: true });
+    const summary = {
+      ...baseSummary,
+      capabilities: [
+        ...baseSummary.capabilities,
+        { id: "codingAgentsProjectWorkspace", enabled: true },
+        { id: "codingAgentsConversationView", enabled: true },
+      ],
+      projects: {
+        items: [
+          { id: "matrix-os", label: "Matrix OS", status: "available", taskCount: 1, threadCount: 3, attentionCount: 0 },
+          { id: "website", label: "Website", status: "available", taskCount: 0, threadCount: 0, attentionCount: 0 },
+        ],
+        hasMore: false,
+        limit: 20,
+      },
+    };
+    const workspace = {
+      project: { id: "matrix-os", label: "Matrix OS", status: "available", taskCount: 1, threadCount: 3, attentionCount: 0 },
+      tasks: {
+        items: [{
+          id: "task_auth",
+          projectId: "matrix-os",
+          title: "Harden authentication",
+          status: "running",
+          priority: "high",
+          order: 0,
+          threadCount: 2,
+          activeThreadCount: 2,
+          attentionCount: 0,
+        }],
+        hasMore: false,
+        limit: 100,
+      },
+      projectThreads: {
+        items: [{
+          ...baseSummary.activeThreads.items[0],
+          id: "thread_audit",
+          title: "Audit architecture",
+          projectId: "matrix-os",
+          attention: "none",
+        }],
+        hasMore: false,
+        limit: 100,
+      },
+      taskThreads: {
+        items: [
+          {
+            ...baseSummary.activeThreads.items[0],
+            id: "thread_plan",
+            title: "Plan auth changes",
+            projectId: "matrix-os",
+            taskId: "task_auth",
+            attention: "none",
+          },
+          {
+            ...baseSummary.activeThreads.items[0],
+            id: "thread_fix",
+            title: "Implement auth changes",
+            projectId: "matrix-os",
+            taskId: "task_auth",
+            attention: "none",
+          },
+        ],
+        hasMore: false,
+        limit: 100,
+      },
+      updatedAt: "2026-07-10T12:00:00.000Z",
+    };
+    const selectedSnapshot = {
+      ...threadSnapshotFixture(),
+      thread: workspace.projectThreads.items[0],
+    };
+    let resolveManualSummary: (value: typeof summary) => void = () => undefined;
+    const manualSummary = new Promise<typeof summary>((resolve) => {
+      resolveManualSummary = resolve;
+    });
+    let summaryRequestCount = 0;
+    window.operator.invoke = vi.fn((channel: string, payload?: unknown) => {
+      if (channel === "runtime:get-summary") {
+        summaryRequestCount += 1;
+        if (summaryRequestCount === 3) return manualSummary;
+        return Promise.resolve({
+          ...summary,
+          serverTime: summaryRequestCount === 1
+            ? "2026-07-10T12:00:00.000Z"
+            : "2026-07-10T12:00:01.000Z",
+        });
+      }
+      if (channel === "runtime:get-project-workspace") return Promise.resolve(workspace);
+      if (channel === "runtime:get-thread-snapshot") {
+        const threadId = (payload as { threadId: string }).threadId;
+        const thread = [
+          ...workspace.projectThreads.items,
+          ...workspace.taskThreads.items,
+        ].find((candidate) => candidate.id === threadId) ?? selectedSnapshot.thread;
+        return Promise.resolve({ ...selectedSnapshot, thread });
+      }
+      if (channel === "runtime:subscribe-thread-events") return Promise.resolve({ ok: true });
+      if (channel === "runtime:unsubscribe-thread-events") return Promise.resolve({ ok: true });
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-notification-preferences") {
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
+      }
+      if (channel === "state:get") return Promise.resolve({ value: null });
+      if (channel === "state:set") return Promise.resolve({ ok: true });
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+
+    render(<AgentWorkspace />);
+
+    expect(await screen.findByRole("button", { name: "Project Matrix OS" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Project Website" })).toBeTruthy();
+    const task = screen.getByRole("group", { name: "Task Harden authentication" });
+    expect(within(task).getByRole("button", { name: "Chat Plan auth changes" })).toBeTruthy();
+    expect(within(task).getByRole("button", { name: "Chat Implement auth changes" })).toBeTruthy();
+    expect(within(screen.getByRole("group", { name: "Project chats" })).getByRole(
+      "button",
+      { name: "Chat Audit architecture" },
+    )).toBeTruthy();
+
+    await act(async () => {
+      await useCodingAgentWorkspace.getState().refresh();
+    });
+    await waitFor(() => {
+      const summaryRequests = vi.mocked(window.operator.invoke).mock.calls.filter(
+        ([channel]) => channel === "runtime:get-summary",
+      );
+      expect(summaryRequests).toHaveLength(2);
+    });
+    expect(vi.mocked(window.operator.invoke).mock.calls.filter(
+      ([channel]) => channel === "runtime:get-project-workspace",
+    )).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+    await waitFor(() => {
+      const summaryRequests = vi.mocked(window.operator.invoke).mock.calls.filter(
+        ([channel]) => channel === "runtime:get-summary",
+      );
+      expect(summaryRequests).toHaveLength(3);
+    });
+    expect(vi.mocked(window.operator.invoke).mock.calls.filter(
+      ([channel]) => channel === "runtime:get-project-workspace",
+    )).toHaveLength(1);
+
+    resolveManualSummary(summary);
+    await waitFor(() => {
+      const workspaceRequests = vi.mocked(window.operator.invoke).mock.calls.filter(
+        ([channel]) => channel === "runtime:get-project-workspace",
+      );
+      expect(workspaceRequests).toHaveLength(2);
+    });
+    await waitFor(() => {
+      expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_audit");
+      expect(useCodingAgentWorkspace.getState().threadSnapshot?.thread.id).toBe("thread_audit");
+    });
+
+    act(() => {
+      useCodingAgentWorkspace.setState({ activeThreadId: "thread_fix" });
+    });
+    await waitFor(() => {
+      expect(useCodingAgentProjectWorkspace.getState().selectedThreadId).toBe("thread_fix");
+    });
   });
 
   it("renders a clear new-run unavailable state when thread creation is disabled", async () => {
@@ -2446,6 +2745,31 @@ describe("AgentWorkspace", () => {
     expect(draft.projectId).toBeUndefined();
   });
 
+  it("applies navigator project context without appending an empty seed prompt", () => {
+    const draft = mergeComposerSeed(
+      {
+        providerId: "codex",
+        prompt: "Keep my in-progress instructions.",
+        mode: "default",
+        approvalPolicy: "on_request",
+        sandboxMode: "workspace_write",
+      },
+      {
+        providerId: "codex",
+        prompt: "",
+        mode: "default",
+        approvalPolicy: "on_request",
+        sandboxMode: "workspace_write",
+        projectId: "matrix-os",
+        taskId: "task_auth",
+      },
+    );
+
+    expect(draft.prompt).toBe("Keep my in-progress instructions.");
+    expect(draft.projectId).toBe("matrix-os");
+    expect(draft.taskId).toBe("task_auth");
+  });
+
   it("preserves user attachments when clearing failed desktop follow-up launch context", () => {
     const cleaned = clearComposerLaunchContext({
       providerId: "codex",
@@ -3140,13 +3464,24 @@ describe("AgentWorkspace", () => {
   });
 
   it("shows a generic safe error when summary refresh fails", async () => {
-    window.operator.invoke = vi.fn().mockRejectedValue(
-      new Error("connect ECONNREFUSED /home/matrix/private"),
-    );
+    let summaryRequests = 0;
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") {
+        summaryRequests += 1;
+        return summaryRequests === 1
+          ? Promise.reject(new Error("connect ECONNREFUSED /home/matrix/private"))
+          : Promise.resolve(summaryFixture());
+      }
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      return Promise.reject(new Error("unavailable"));
+    });
 
     render(<AgentWorkspace />);
 
     await screen.findByText("Runtime summary unavailable");
     expect(screen.queryByText(/home\/matrix/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("Fix settings route");
   });
 });

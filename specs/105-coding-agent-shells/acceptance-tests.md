@@ -1,6 +1,6 @@
 # Acceptance Tests: Project Conversations And Kanban
 
-**Status**: Phase 18 contracts and Phase 19 read-model evidence added; remaining gateway mutations, shell, security, and cross-shell evidence remains planned
+**Status**: Phase 18-20 backend evidence and Phase 21.1 desktop navigator evidence added; Conversation, Kanban, mobile, and cross-shell evidence remains planned
 **Updated**: 2026-07-10
 
 This matrix is the executable acceptance contract for the clarified coding-agent shell model. A task checkbox in `tasks.md` is complete only when its named test IDs have current evidence on the exact implementation head. Existing checkpoint tests remain required regressions but do not prove these new cases.
@@ -73,10 +73,10 @@ Every clarified functional requirement and buildable success criterion has at le
 
 | ID | Requirement | Expected Evidence |
 | --- | --- | --- |
-| DT-001 | Navigator renders both projects from trusted IPC projection. | Renderer test with fixture model. |
-| DT-002 | One task expands to two independently selectable thread rows. | Accessible labels and selected thread assertions. |
-| DT-003 | Project-level thread is not rendered as task-bound. | Grouping helper/component test. |
-| DT-004 | Stale persisted project/task/thread references reconcile to a valid fallback. | Store hydration/runtime-switch tests. |
+| DT-001 | Navigator renders both projects from trusted IPC projection. | `tests/desktop/coding-agent-project-navigator.test.tsx`, the integrated `AgentWorkspace` fixture, and trusted-core client/IPC tests. |
+| DT-002 | One task expands to two independently selectable thread rows. | Accessible independent-row assertions in `tests/desktop/coding-agent-project-navigator.test.tsx` plus grouping-model coverage. |
+| DT-003 | Project-level thread is not rendered as task-bound. | `tests/desktop/coding-agent-project-workspace.test.ts` and the project-chat/task-group component assertions. |
+| DT-004 | Stale persisted project/task/thread references reconcile to a valid fallback. | `tests/desktop/coding-agent-project-workspace-store.test.ts` covers initial hydration and runtime switching; model tests cover stale task/thread fallback. |
 | DT-005 | Selected-thread composer invokes turn IPC, not create-thread IPC. | Exact invocation test with thread ID/idempotency key. |
 | DT-006 | Busy/offline/duplicate turn outcomes keep draft/selection safely recoverable. | Store/component failure tests with generic copy. |
 | DT-007 | Explicit new-chat action remains separate and can target project plus optional task. | Composer routing and contract tests. |
@@ -106,7 +106,7 @@ Every clarified functional requirement and buildable success criterion has at le
 | --- | --- | --- |
 | SEC-001 | Every new mutation applies `bodyLimit` before parsing and validates route/body with Zod 4. | Turn route oversized/malformed tests in `tests/gateway/coding-agents-turns.test.ts`, route-focused mutation tests, and pattern scan. |
 | SEC-002 | Project/task/thread/turn authorization is owner-scoped and rejects cross-owner references. | Project workspace, thread relation, and turn principal matrices in their focused gateway tests. |
-| SEC-003 | Desktop renderer receives no bearer/provider credentials or provider resume IDs. | IPC contract/handler fixtures and forbidden-key scan. |
+| SEC-003 | Desktop renderer receives no bearer/provider credentials or provider resume IDs. | Strict project-workspace IPC request/response tests, trusted-core client tests, local resume-state schema tests, and forbidden-field assertions in the focused desktop suites. |
 | SEC-004 | Mobile persistence excludes transcripts, events, terminal output, file/diff data, approvals, tokens, and provider state. | AsyncStorage serialization tests. |
 | SEC-005 | Every external provider call has timeout/AbortSignal and safe error mapping. | Adapter timeout/failure tests. |
 | SEC-006 | All collections, subscriber registries, turn/idempotency caches, and nested API lists have caps plus cleanup/drain behavior. | Unit tests and review checklist evidence. |
@@ -120,7 +120,7 @@ Every clarified functional requirement and buildable success criterion has at le
 | E2E-003 | Mobile sends a follow-up; desktop receives events on the same thread. | Cross-shell real-runtime smoke with exact thread ID. |
 | E2E-004 | Both shells switch Conversation/Kanban and reopen the same task/thread. | Desktop automated smoke, mobile device smoke, and recorded IDs. |
 | E2E-005 | Explicit task move propagates while mixed thread states do not auto-move it. | Gateway workspace event plus both-shell projection smoke. |
-| E2E-006 | Terminal, approval, review, preview, notification, offline/reconnect, and runtime-switch regressions pass with the project hierarchy enabled. | Existing suites plus updated desktop operator and SDK 57 device checklists. |
+| E2E-006 | Terminal, approval, review, preview, notification, offline/reconnect, and runtime-switch regressions pass with the project hierarchy enabled. | Existing suites plus updated desktop operator and SDK 57 device checklists. The Phase 21.1 desktop integration/store tests cover external thread focus and runtime switching; the remaining cross-shell evidence stays open. |
 
 ## Full Workspace V2 Contract And Persistence Tests
 
@@ -190,6 +190,20 @@ pnpm --filter matrix-os-mobile run test
 pnpm --filter matrix-os-mobile run lint
 pnpm --filter matrix-os-mobile exec tsc --noEmit
 ```
+
+Current Phase 21.1 evidence on the desktop navigator slice:
+
+- `pnpm exec vitest run tests/desktop/coding-agent-project-workspace.test.ts tests/desktop/coding-agent-project-navigator.test.tsx tests/desktop/coding-agent-project-workspace-store.test.ts tests/desktop/coding-agent-workspace-section.test.tsx tests/desktop/coding-agent-runtime-client.test.ts tests/desktop/ipc-contract.test.ts tests/desktop/ipc-handlers.test.ts tests/desktop/local-store.test.ts tests/desktop/coding-agent-workspace.test.tsx`
+- `pnpm exec vitest run tests/desktop --reporter=dot`
+- `bun run typecheck`
+- `bun run check:patterns`
+- `bun run build:desktop`
+- `pnpm exec vitest run tests/e2e/desktop/operator.e2e.test.ts`
+
+These checks prove `DT-001` through `DT-004` and the desktop portion of
+`SEC-003`. The integrated desktop tests additionally preserve external thread
+focus and explicit projection refresh behavior from `E2E-006`; they do not
+prove the still-open Conversation/Kanban or cross-shell acceptance cases.
 
 Gateway/contract PRs additionally run the exact focused Vitest files named in their PR body. Desktop UI PRs run the operator E2E and screenshot checks. Mobile UI PRs run the SDK 57 dev-client device smoke before their rollout gate. `vp` commands may be reported unavailable, but they are not silently substituted for repository commands.
 

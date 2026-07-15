@@ -1,6 +1,6 @@
 # Tasks: Coding Agent Shells
 
-**Status**: Backend Phases 18-20 implemented; Phase 21 shell implementation next; real-process Gate 3 smoke pending
+**Status**: Backend Phases 18-20 and desktop Phase 21.1 implemented; Phase 21.2-21.5 shell implementation next; real-process Gate 3 smoke pending
 **Lineage**: foundation merged through the recorded implementation checkpoint; clarified follow-up is specified against current `main`
 **Rule**: Preserve all existing desktop and mobile functionality. Add coding-agent capabilities incrementally behind contracts, tests, and feature flags.
 
@@ -1172,14 +1172,21 @@ Goal: replace the checkpoint dashboard with the confirmed project-first desktop 
 
 ### 21.1 Project/Task/Thread Navigator
 
-- [ ] Add persistent project groups in the left navigator.
-- [ ] Render project-level threads and task groups.
-- [ ] Render every thread under a task; do not infer cardinality from singular `linkedSessionId`.
-- [ ] Add new-chat action with required project and optional task/provider.
-- [ ] Reconcile persisted selected project/task/thread against live projections.
-- [ ] Keep renderer bearer/provider credentials absent through trusted IPC.
+- [x] Add persistent project groups in the left navigator.
+- [x] Render project-level threads and task groups.
+- [x] Render every thread under a task; do not infer cardinality from singular `linkedSessionId`.
+- [x] Add new-chat action with required project and optional task/provider.
+- [x] Reconcile persisted selected project/task/thread against live projections.
+- [x] Keep renderer bearer/provider credentials absent through trusted IPC.
 
 Tests: `DT-001`, `DT-002`, `DT-003`, `DT-004`, `SEC-003`.
+
+Evidence: focused renderer/model/store tests, strict main/preload IPC contract
+tests, trusted-core project-workspace client tests, local resume-state
+validation, external thread-focus/runtime-switch reconciliation, desktop
+typecheck/build, and the built-app operator flow are recorded in
+`acceptance-tests.md`. Conversation and Kanban work remains open in 21.2 and
+21.3.
 
 ### 21.2 Conversation View
 

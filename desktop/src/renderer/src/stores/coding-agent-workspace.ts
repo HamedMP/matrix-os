@@ -46,6 +46,7 @@ const MAX_LOCAL_CREATED_THREAD_HANDLES = 10;
 interface CodingAgentWorkspaceState {
   status: WorkspaceStatus;
   summary: RuntimeSummary | null;
+  summaryRevision: number;
   error: string | null;
   notificationPreferencesStatus: NotificationPreferencesStatus;
   notificationPreferences: CodingAgentNotificationPreferences | null;
@@ -330,6 +331,26 @@ function detachActiveThreadEventStream(): void {
   });
 }
 
+export function clearCodingAgentThreadSelection(): void {
+  detachActiveThreadEventStream();
+  useCodingAgentWorkspace.setState({
+    activeThreadId: null,
+    ...clearThreadSnapshotState(),
+  });
+}
+
+export function clearCodingAgentRuntimeSelection(): void {
+  clearCodingAgentThreadSelection();
+  reviewsSeq += 1;
+  useCodingAgentWorkspace.setState({
+    createdThreadHandles: [],
+    reviewsStatus: "idle",
+    reviews: null,
+    reviewsError: null,
+    ...clearReviewSelectionState(),
+  });
+}
+
 function attachActiveThreadEventStream(snapshot: AgentThreadSnapshot): void {
   const threadId = snapshot.thread.id;
   if (activeThreadEventSubscriptionId === threadId) return;
@@ -424,6 +445,7 @@ async function flushNotificationPreferenceUpdates(): Promise<void> {
 export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set) => ({
   status: "idle",
   summary: null,
+  summaryRevision: 0,
   error: null,
   notificationPreferencesStatus: "idle",
   notificationPreferences: null,
@@ -492,6 +514,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         return {
           status: "ready",
           summary,
+          summaryRevision: state.summaryRevision + 1,
           error: null,
           ...(activeThreadStillPresent
             ? {}

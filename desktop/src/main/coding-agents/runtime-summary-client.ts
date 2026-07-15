@@ -10,6 +10,7 @@ import {
   FileSearchResponseSchema,
   FileWriteRequestSchema,
   FileWriteResponseSchema,
+  ProjectAgentWorkspaceSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
@@ -29,6 +30,7 @@ import {
   type FileSearchResponse,
   type FileWriteRequest,
   type FileWriteResponse,
+  type ProjectAgentWorkspace,
   type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
@@ -41,8 +43,13 @@ import {
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { AuthService } from "../auth/auth-service";
+import {
+  CodingAgentProjectWorkspaceRequestSchema,
+  type CodingAgentProjectWorkspaceRequest,
+} from "../../shared/coding-agent-project-workspace";
 
 const RUNTIME_SUMMARY_TIMEOUT_MS = 10_000;
+const PROJECT_WORKSPACE_TIMEOUT_MS = 10_000;
 const NOTIFICATION_PREFERENCES_TIMEOUT_MS = 10_000;
 const REVIEW_SUMMARY_TIMEOUT_MS = 10_000;
 const REVIEW_SNAPSHOT_TIMEOUT_MS = 10_000;
@@ -108,6 +115,45 @@ export async function fetchCodingAgentRuntimeSummary(
   const parsed = RuntimeSummarySchema.safeParse(body);
   if (!parsed.success) {
     throw new Error("runtime summary unavailable");
+  }
+  return parsed.data;
+}
+
+export async function fetchCodingAgentProjectWorkspace(
+  auth: AuthService,
+  request: CodingAgentProjectWorkspaceRequest,
+  fetchFn: FetchFn = fetch,
+): Promise<ProjectAgentWorkspace> {
+  const token = auth.getToken();
+  const parsedRequest = CodingAgentProjectWorkspaceRequestSchema.safeParse(request);
+  if (!token || !parsedRequest.success) {
+    throw new Error("project workspace unavailable");
+  }
+
+  const { projectId, ...query } = parsedRequest.data;
+  const url = buildRuntimeUrl(
+    auth,
+    `/api/coding-agents/projects/${encodeURIComponent(projectId)}/workspace`,
+  );
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined) url.searchParams.set(key, String(value));
+  }
+  const res = await fetchFn(url.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+    signal: AbortSignal.timeout(PROJECT_WORKSPACE_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error("project workspace unavailable");
+  }
+
+  const body = await res.json();
+  const parsed = ProjectAgentWorkspaceSchema.safeParse(body);
+  if (!parsed.success || parsed.data.project.id !== projectId) {
+    throw new Error("project workspace unavailable");
   }
   return parsed.data;
 }
