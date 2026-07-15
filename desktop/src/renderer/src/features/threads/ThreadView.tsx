@@ -4,15 +4,8 @@ import ReactMarkdown from "react-markdown";
 import { Button, StatusDot } from "../../design/primitives";
 import { groupMessages, type ChatMessage } from "../../lib/chat";
 import { abortKernelRequest } from "../../lib/kernel-wiring";
-import { useThreads, type ThreadStatus } from "../../stores/threads";
-
-const STATUS_META: Record<ThreadStatus, { label: string; color: string }> = {
-  running: { label: "Running", color: "var(--status-running)" },
-  "needs-attention": { label: "Needs attention", color: "var(--status-attention)" },
-  done: { label: "Done", color: "var(--status-complete)" },
-  failed: { label: "Failed", color: "var(--status-failed)" },
-  aborted: { label: "Aborted", color: "var(--status-todo)" },
-};
+import { useThreads } from "../../stores/threads";
+import { UNIFIED_THREAD_STATUS_META } from "../../stores/unified-threads";
 
 function ToolRow({ message }: { message: ChatMessage }) {
   return (
@@ -80,7 +73,7 @@ export default function ThreadView({ threadId, embedded = false }: { threadId: s
     );
   }
 
-  const status = STATUS_META[thread.status];
+  const status = UNIFIED_THREAD_STATUS_META[thread.status];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

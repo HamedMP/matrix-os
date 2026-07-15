@@ -18,9 +18,11 @@ import { IconButton } from "../../design/primitives";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { invoke } from "../../lib/operator";
 import { useBoard } from "../../stores/board";
+import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
 import { AGENTS_WORKSPACE_TAB_SPEC, FILES_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
+import { codingAgentAttentionCount, kernelThreadAttentionCount } from "../../stores/unified-threads";
 import { useUi } from "../../stores/ui";
 import RuntimeComputerMenu from "../runtime/RuntimeComputerMenu";
 
@@ -98,7 +100,8 @@ export default function Sidebar() {
   const profileName = useConnection((s) => s.displayName);
   const imageUrl = useConnection((s) => s.imageUrl);
   const platformHost = useConnection((s) => s.platformHost);
-  const unread = useThreads((s) => s.threads.filter((t) => t.unread || t.status === "needs-attention").length);
+  const chatAttention = useThreads((s) => kernelThreadAttentionCount(s.threads));
+  const agentsAttention = useCodingAgentWorkspace((s) => codingAgentAttentionCount(s.summary));
   const collapsed = useUi((s) => s.sidebarCollapsed);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
   const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
@@ -147,9 +150,9 @@ export default function Sidebar() {
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-2">
         <nav className="flex flex-col gap-0.5">
           <NavRow icon={<Home size={15} />} label="Home" collapsed={collapsed} active={activeTab?.kind === "home"} onClick={() => openTab({ kind: "home", title: "Home", closable: false })} />
-          <NavRow icon={<Sparkles size={15} />} label="Chat" collapsed={collapsed} active={activeTab?.kind === "chat"} onClick={() => { useThreads.getState().setActiveThread(null); openTab({ kind: "chat", title: "Hermes", closable: false }); }} />
+          <NavRow icon={<Sparkles size={15} />} label="Chat" collapsed={collapsed} active={activeTab?.kind === "chat"} badge={chatAttention} onClick={() => { useThreads.getState().setActiveThread(null); openTab({ kind: "chat", title: "Hermes", closable: false }); }} />
           {CODING_AGENTS_DESKTOP_WORKSPACE ? (
-            <NavRow icon={<Bot size={15} />} label="Agents" collapsed={collapsed} active={activeTab?.kind === "agents"} onClick={() => openTab(AGENTS_WORKSPACE_TAB_SPEC)} />
+            <NavRow icon={<Bot size={15} />} label="Agents" collapsed={collapsed} active={activeTab?.kind === "agents"} badge={agentsAttention} onClick={() => openTab(AGENTS_WORKSPACE_TAB_SPEC)} />
           ) : null}
           <NavRow icon={<SquareTerminal size={15} />} label="Terminal" collapsed={collapsed} active={activeTab?.kind === "terminals"} onClick={() => openTab({ kind: "terminals", title: "Terminal" })} />
           <NavRow icon={<FolderTree size={15} />} label="Files" collapsed={collapsed} active={activeTab?.kind === "files"} onClick={() => openTab(FILES_WORKSPACE_TAB_SPEC)} />
