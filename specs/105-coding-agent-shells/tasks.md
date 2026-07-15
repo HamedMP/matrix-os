@@ -1241,6 +1241,25 @@ Gate:
 
 - [x] Desktop typecheck, focused Vitest, operator E2E, Canvas/Desktop regression, pattern scan, and screenshot checks pass.
 
+### 21.5 Contextual Conversation Inspector
+
+- [x] Replace the mixed tool stack with Changes, Terminal, Preview, and Activity tabs.
+- [x] Keep review files, bounded content editing, diffs, commit, and pull-request actions together under Changes.
+- [x] Keep canonical Matrix shell sessions under Terminal and safe preview summaries under Preview.
+- [x] Preserve attention, active/created chat handles, provider state, and notification preferences under Activity.
+- [x] Show bounded server-derived counts and keep exactly one inspector surface visible at a time.
+- [x] Bring externally opened reviews into Changes while preserving unsaved file drafts across tab switches.
+- [x] Support arrow, Home, and End keyboard navigation with a single responsive narrow/desktop layout.
+
+Tests: `DT-012` plus the existing file, review, source-control, terminal,
+preview, activity, and credential-boundary desktop regressions.
+
+Evidence: the focused inspector component tests prove selection, counts,
+single-pane rendering, persistent new-chat controls, and keyboard behavior. The
+integrated workspace suite proves existing trusted IPC actions continue through
+their original gateway-owned contracts. Surface validation is recorded in
+`acceptance-tests.md`.
+
 ## Phase 22 - Mobile Project Conversation And Kanban
 
 Goal: expose the same hierarchy and conversations with SDK 57 phone/tablet ergonomics.

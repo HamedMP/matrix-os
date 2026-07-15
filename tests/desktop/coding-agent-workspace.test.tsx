@@ -14,6 +14,10 @@ import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
+async function selectInspectorTab(name: "Changes" | "Terminal" | "Preview" | "Activity") {
+  fireEvent.click(await screen.findByRole("tab", { name: new RegExp(`^${name}\\b`) }));
+}
+
 function summaryFixture({
   threadCreate = false,
   sameThreadTurns = true,
@@ -706,6 +710,7 @@ describe("AgentWorkspace", () => {
       turnRetry: null,
       turnThreadId: null,
       composerFocusRequestId: 0,
+      reviewFocusRequestId: 0,
       approvalActionStatus: "idle",
       pendingApprovalId: null,
       approvalActionError: null,
@@ -752,8 +757,10 @@ describe("AgentWorkspace", () => {
 
     expect(screen.getByText("Loading workspace...")).toBeTruthy();
     await screen.findByText("Primary");
+    await selectInspectorTab("Activity");
     expect(screen.getByText("Codex")).toBeTruthy();
     expect(screen.getByText("Fix settings route")).toBeTruthy();
+    await selectInspectorTab("Terminal");
     expect(screen.getByText("matrix-abc1234")).toBeTruthy();
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-summary", {});
   });
@@ -800,6 +807,7 @@ describe("AgentWorkspace", () => {
     });
 
     render(<AgentWorkspace />);
+    await selectInspectorTab("Activity");
     await screen.findByText("Fix settings route");
     act(() => {
       useCodingAgentWorkspace.setState({
@@ -870,6 +878,7 @@ describe("AgentWorkspace", () => {
       resolveSecondSummary?.(secondSummary);
       await pendingSecondSummary;
     });
+    await selectInspectorTab("Activity");
     await screen.findByText("Second account thread");
     expect(useCodingAgentWorkspace.getState().reviews).toBeNull();
 
@@ -1469,6 +1478,8 @@ describe("AgentWorkspace", () => {
 
     render(<AgentWorkspace />);
 
+    await selectInspectorTab("Activity");
+
     const failedToggle = await screen.findByRole("checkbox", { name: "Failed run alerts" });
     expect((failedToggle as HTMLInputElement).checked).toBe(false);
 
@@ -1488,6 +1499,8 @@ describe("AgentWorkspace", () => {
 
     render(<AgentWorkspace />);
 
+    await selectInspectorTab("Activity");
+
     const activeThread = await screen.findByLabelText("Active thread Fix settings route");
     expect(activeThread.getAttribute("aria-current")).toBe("true");
   });
@@ -1500,6 +1513,8 @@ describe("AgentWorkspace", () => {
     });
 
     render(<AgentWorkspace />);
+
+    await selectInspectorTab("Activity");
 
     expect(await screen.findByText("Needs Attention")).toBeTruthy();
     expect(screen.getByText("Approve deployment")).toBeTruthy();
@@ -1518,6 +1533,8 @@ describe("AgentWorkspace", () => {
 
     render(<AgentWorkspace />);
 
+    await selectInspectorTab("Preview");
+
     expect(await screen.findByText("Previews")).toBeTruthy();
     expect(screen.getByText("Local web app")).toBeTruthy();
     expect(screen.getByText("http://localhost:3000")).toBeTruthy();
@@ -1535,6 +1552,8 @@ describe("AgentWorkspace", () => {
     });
 
     render(<AgentWorkspace />);
+
+    await selectInspectorTab("Preview");
 
     fireEvent.click(await screen.findByRole("button", { name: "Inspect preview Local web app" }));
     expect(screen.getByText("Preview details")).toBeTruthy();
@@ -1564,6 +1583,8 @@ describe("AgentWorkspace", () => {
 
     render(<AgentWorkspace />);
 
+    await selectInspectorTab("Activity");
+
     fireEvent.click(await screen.findByRole("button", { name: "Open details for Repair failed run, Failed" }));
     expect(await screen.findByText("Thread details")).toBeTruthy();
     expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_failed");
@@ -1581,6 +1602,8 @@ describe("AgentWorkspace", () => {
     useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
 
     render(<AgentWorkspace />);
+
+    await selectInspectorTab("Terminal");
 
     expect(await screen.findByText("Thread details")).toBeTruthy();
     expect(screen.getByText("waiting for approval")).toBeTruthy();
@@ -1608,6 +1631,7 @@ describe("AgentWorkspace", () => {
 
     expect(await screen.findByText("Review ready")).toBeTruthy();
     expect(screen.getByText("2 files changed, +12 -4, partial")).toBeTruthy();
+    await selectInspectorTab("Activity");
     fireEvent.click(screen.getByRole("button", { name: "Open review from thread" }));
 
     await waitFor(() => {
@@ -1615,6 +1639,7 @@ describe("AgentWorkspace", () => {
         reviewId: "rev_desktop_1",
       });
     });
+    expect(screen.getByRole("tab", { name: /^Changes\b/ }).getAttribute("aria-selected")).toBe("true");
     expect(await screen.findByText("PR #758 review details")).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
   });
@@ -2088,6 +2113,8 @@ describe("AgentWorkspace", () => {
 
     render(<AgentWorkspace />);
 
+    await selectInspectorTab("Activity");
+
     expect(await screen.findByText("Thread details")).toBeTruthy();
 
     const refreshedSummary = {
@@ -2125,6 +2152,8 @@ describe("AgentWorkspace", () => {
 
     render(<AgentWorkspace />);
 
+    await selectInspectorTab("Activity");
+
     await screen.findByText("Fix settings route");
     fireEvent.click(screen.getByRole("button", { name: "Open terminal for Fix settings route" }));
 
@@ -2152,6 +2181,8 @@ describe("AgentWorkspace", () => {
 
     render(<AgentWorkspace />);
 
+    await selectInspectorTab("Activity");
+
     await screen.findByText("Fix settings route");
     fireEvent.click(screen.getByRole("button", { name: "Open terminal for Fix settings route" }));
 
@@ -2174,6 +2205,8 @@ describe("AgentWorkspace", () => {
     });
 
     render(<AgentWorkspace />);
+
+    await selectInspectorTab("Activity");
 
     await screen.findByText("Fix settings route");
     expect(screen.queryByRole("button", { name: "Open terminal for Fix settings route" })).toBeNull();
@@ -3537,6 +3570,7 @@ describe("AgentWorkspace", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Start run" }));
     expect(await screen.findByText("Investigate retained workspace handle")).toBeTruthy();
+    await selectInspectorTab("Activity");
     fireEvent.click(screen.getByRole("button", { name: "Open details for Fix settings route" }));
     await waitFor(() => {
       expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_alpha");
@@ -3818,6 +3852,7 @@ describe("AgentWorkspace", () => {
     expect(screen.queryByText(/home\/matrix/)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await selectInspectorTab("Activity");
     await screen.findByText("Fix settings route");
   });
 });

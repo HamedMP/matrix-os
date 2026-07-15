@@ -117,6 +117,23 @@ suite("operator desktop e2e", () => {
 
     await page.getByRole("button", { name: "Conversation" }).click();
     await page.getByRole("region", { name: "Conversation Fix the failing auth tests" }).waitFor();
+    await page.getByRole("tablist", { name: "Conversation tools" }).waitFor();
+    await page.getByRole("button", { name: "Open review PR #917" }).click();
+    await page.getByText("PR #917 review details").waitFor();
+    await page.getByRole("button", { name: "Prepare commit for review PR #917" }).waitFor();
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "04d-agents-changes-inspector.png") });
+    await page.setViewportSize({ width: 820, height: 720 });
+    await page.getByRole("complementary", { name: "Conversation tools" }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "04e-agents-changes-inspector-narrow.png") });
+    await page.setViewportSize({ width: 1280, height: 720 });
+
+    await page.getByRole("tab", { name: /^Terminal\b/ }).click();
+    await page.getByText("Matrix shell").waitFor();
+    await page.getByRole("tab", { name: /^Preview\b/ }).click();
+    await page.getByRole("button", { name: "Inspect preview Matrix OS web" }).waitFor();
+    await page.getByRole("tab", { name: /^Activity\b/ }).click();
+    await page.getByRole("heading", { name: "Codex" }).waitFor();
+    await page.getByRole("tab", { name: /^Changes\b/ }).click();
   }, 30_000);
 
   it("starts an agent thread from the Agents workspace composer", async () => {

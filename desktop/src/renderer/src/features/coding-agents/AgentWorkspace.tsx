@@ -30,10 +30,8 @@ import { AgentProjectWorkspaceShell } from "./AgentProjectWorkspaceShell";
 import { AgentConversationView } from "./AgentConversationView";
 import { AgentWorkspaceViewSwitch } from "./AgentKanbanBoard";
 import { AgentKanbanWorkspace } from "./AgentKanbanWorkspace";
-import {
-  AgentWorkspaceSection as Section,
-  AgentWorkspaceStack,
-} from "./AgentWorkspaceSection";
+import { AgentConversationInspector } from "./AgentConversationInspector";
+import { AgentWorkspaceSection as Section } from "./AgentWorkspaceSection";
 
 const STATUS_COLOR: Record<string, string> = {
   available: "var(--success)",
@@ -73,6 +71,17 @@ function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
   return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
 }
 
+function InspectorEmptyState({ message }: { message: string }) {
+  return (
+    <p
+      className="rounded-md border p-3 text-sm"
+      style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)", background: "var(--bg-surface)" }}
+    >
+      {message}
+    </p>
+  );
+}
+
 const NOTIFICATION_TOGGLES: Array<{ key: NotificationPreferenceKey; label: string; detail: string }> = [
   { key: "approval", label: "Approval alerts", detail: "Approval-required runs" },
   { key: "input", label: "Input request alerts", detail: "Runs waiting for a response" },
@@ -90,7 +99,7 @@ function NotificationPreferencesPanel() {
   return (
     <Section title="Notifications">
       <div
-        className="grid gap-2 rounded-md border p-3 md:grid-cols-4"
+        className="grid gap-2 rounded-md border p-3"
         style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
       >
         {NOTIFICATION_TOGGLES.map((item) => (
@@ -124,7 +133,7 @@ function NotificationPreferencesPanel() {
           </label>
         ))}
         {error ? (
-          <p className="md:col-span-3 text-xs" style={{ color: "var(--danger)" }}>
+          <p className="text-xs" style={{ color: "var(--danger)" }}>
             {error}
           </p>
         ) : null}
@@ -136,7 +145,7 @@ function NotificationPreferencesPanel() {
 function ProviderList({ summary }: { summary: RuntimeSummary }) {
   return (
     <Section title="Providers" count={summary.providers.length}>
-      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-2">
         {summary.providers.map((provider) => (
           <article
             key={provider.id}
@@ -199,7 +208,7 @@ function AttentionThreadList({ summary }: { summary: RuntimeSummary }) {
 
   return (
     <Section title="Needs Attention" count={summary.attentionThreads.items.length}>
-      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-2">
         {summary.attentionThreads.items.map((thread) => {
           const active = activeThreadId === thread.id;
           const attentionLabel = threadAttentionLabel(thread.attention) ?? thread.status.replace(/_/g, " ");
@@ -626,7 +635,7 @@ function ReviewDiffLines({ lines }: { lines: ReviewSnapshotLine[] }) {
 
   return (
     <div
-      className="ph-no-capture mx-3 mb-2 overflow-hidden rounded border font-mono text-xs"
+      className="ph-no-capture mx-3 mb-2 min-w-0 overflow-x-auto rounded border font-mono text-xs"
       style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
     >
       {lines.map((line, index) => (
@@ -849,7 +858,7 @@ function ReviewSnapshotPanel({
   const sourcePullRequestUrl = canOpenPreviewExternally(sourcePullRequest?.url) ? sourcePullRequest.url : null;
 
   return (
-    <article className="grid gap-3 rounded-md border p-3" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
+    <article className="grid min-w-0 max-w-full gap-3 overflow-hidden rounded-md border p-3" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <h3 className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
@@ -864,7 +873,7 @@ function ReviewSnapshotPanel({
         </span>
       </div>
       {canPrepareCommit ? (
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-start gap-2">
           {sourceCommitStatus === "prepared" ? (
             <span className="text-xs" style={{ color: "var(--success)" }}>
               Commit prepared
@@ -945,11 +954,11 @@ function ReviewSnapshotPanel({
           onOpenFile={onOpenFile}
         />
       ) : null}
-      <div className="grid gap-2">
+      <div className="grid min-w-0 gap-2">
         {snapshot.files.items.map((file, fileIndex) => (
           <div
             key={`${file.path}:${fileIndex}`}
-            className="grid gap-2 rounded-md border px-3 py-2"
+            className="grid min-w-0 gap-2 overflow-hidden rounded-md border px-3 py-2"
             style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}
           >
             <div className="flex items-center justify-between gap-3">
@@ -1026,7 +1035,7 @@ function ReviewSnapshotPanel({
                   return (
                     <div
                       key={`${file.path}:${fileIndex}:${hunk.id}:${hunkIndex}`}
-                      className="grid gap-1 rounded-md border transition-colors duration-100"
+                      className="grid min-w-0 gap-1 overflow-hidden rounded-md border transition-colors duration-100"
                       style={{
                         borderColor: selected ? "var(--accent)" : "var(--border-subtle)",
                         background: selected ? "var(--accent-muted)" : "transparent",
@@ -1194,13 +1203,13 @@ function ReviewFileBrowserPanel({
   };
 
   return (
-    <div className="grid gap-2 rounded-md border p-3" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}>
+    <div className="grid min-w-0 gap-2 overflow-hidden rounded-md border p-3" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <h4 className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
             File browser
           </h4>
-          <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+          <p className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
             {`${projectId} / ${worktreeId}`}
           </p>
         </div>
@@ -1218,7 +1227,7 @@ function ReviewFileBrowserPanel({
       <div className="flex flex-wrap items-center gap-2">
         <input
           aria-label="Search review workspace files"
-          className="no-drag min-w-[180px] flex-1 rounded-md border bg-transparent px-3 py-1.5 text-sm outline-none"
+          className="no-drag min-w-0 flex-1 basis-40 rounded-md border bg-transparent px-3 py-1.5 text-sm outline-none"
           style={{ borderColor: "var(--border-subtle)", color: "var(--text-primary)" }}
           value={searchQuery}
           onChange={(event) => setSearchQuery(event.currentTarget.value.slice(0, 80))}
@@ -1397,6 +1406,8 @@ export default function AgentWorkspace() {
   const threadSnapshotStatus = useCodingAgentWorkspace((s) => s.threadSnapshotStatus);
   const threadSnapshot = useCodingAgentWorkspace((s) => s.threadSnapshot);
   const threadSnapshotError = useCodingAgentWorkspace((s) => s.threadSnapshotError);
+  const reviews = useCodingAgentWorkspace((s) => s.reviews);
+  const reviewFocusRequestId = useCodingAgentWorkspace((s) => s.reviewFocusRequestId);
   const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
   const loadNotificationPreferences = useCodingAgentWorkspace((s) => s.loadNotificationPreferences);
   const refreshProjectWorkspace = useCodingAgentProjectWorkspace((s) => s.refresh);
@@ -1510,6 +1521,14 @@ export default function AgentWorkspace() {
   }
 
   const showKanban = kanbanEnabled && viewMode === "kanban" && projectWorkspace;
+  const reviewEnabled = capabilityEnabled(summary, "codingAgentsReview");
+  const previewEnabled = capabilityEnabled(summary, "codingAgentsPreview");
+  const inspectorCounts = {
+    changes: reviewEnabled ? (reviews?.items.length ?? 0) : 0,
+    terminal: summary.terminalSessions.items.length,
+    preview: previewEnabled ? (summary.previewSessions?.items.length ?? 0) : 0,
+    activity: summary.attentionThreads.items.length + summary.activeThreads.items.length,
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -1548,67 +1567,84 @@ export default function AgentWorkspace() {
                   canSendTurns={capabilityEnabled(summary, "codingAgentsSameThreadTurns")}
                 />
               </div>
-              <aside aria-label="Conversation tools" className="min-h-0 min-w-0 overflow-y-auto" style={{ background: "var(--bg-secondary)" }}>
-                <AgentWorkspaceStack>
-              {projectWorkspaceEnabled ? (
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Conversation tools</h2>
-                    <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Terminal, review, files, diff, and preview</p>
-                  </div>
-                  <Button
-                    variant={composerOpen ? "subtle" : "primary"}
-                    disabled={!selectedProjectId}
-                    aria-label={composerOpen ? "Close new chat composer" : "New chat in selected project"}
-                    onClick={() => {
-                      if (composerOpen) {
+              <aside
+                aria-label="Conversation tools"
+                className="flex min-h-[520px] min-w-0 flex-col overflow-hidden lg:min-h-0"
+                style={{ background: "var(--bg-secondary)" }}
+              >
+                <AgentConversationInspector
+                  defaultTab={reviewEnabled ? "changes" : "terminal"}
+                  changesFocusRequestId={reviewFocusRequestId}
+                  counts={inspectorCounts}
+                  toolbar={(
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Conversation tools</h2>
+                        <p className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>Inspect the current project without leaving the chat</p>
+                      </div>
+                      {projectWorkspaceEnabled ? (
+                        <Button
+                          variant={composerOpen ? "subtle" : "primary"}
+                          disabled={!selectedProjectId}
+                          aria-label={composerOpen ? "Close new chat composer" : "New chat in selected project"}
+                          onClick={() => {
+                            if (composerOpen) {
+                              setComposerOpen(false);
+                              setComposerSeed(null);
+                              return;
+                            }
+                            if (selectedProjectId) openNewChat(selectedProjectId, selectedTaskId ?? undefined);
+                          }}
+                        >
+                          {composerOpen ? "Cancel" : "New chat"}
+                        </Button>
+                      ) : null}
+                    </div>
+                  )}
+                  composer={!projectWorkspaceEnabled || composerOpen ? (
+                    <AgentComposer
+                      summary={summary}
+                      seed={composerSeed}
+                      focusRequestId={composerFocusRequestId}
+                      onCreated={() => {
+                        if (!projectWorkspaceEnabled) return;
                         setComposerOpen(false);
                         setComposerSeed(null);
-                        return;
-                      }
-                      if (selectedProjectId) openNewChat(selectedProjectId, selectedTaskId ?? undefined);
-                    }}
-                  >
-                    {composerOpen ? "Cancel" : "New chat"}
-                  </Button>
-                </div>
-              ) : null}
-              {!projectWorkspaceEnabled || composerOpen ? (
-                <AgentComposer
-                  summary={summary}
-                  seed={composerSeed}
-                  focusRequestId={composerFocusRequestId}
-                  onCreated={() => {
-                    if (!projectWorkspaceEnabled) return;
-                    setComposerOpen(false);
-                    setComposerSeed(null);
-                  }}
+                      }}
+                    />
+                  ) : undefined}
+                  changes={reviewEnabled ? (
+                    <ReviewList
+                      canReadFiles={capabilityEnabled(summary, "codingAgentsFiles")}
+                      canPrepareCommit={capabilityEnabled(summary, "codingAgentsSourceControl")}
+                      canCreateFollowUp={canCreateFollowUp}
+                      onAskHunkFollowUp={(snapshot, selected) => {
+                        setComposerSeed({
+                          seedId: Date.now(),
+                          draft: reviewHunkFollowUpDraft(summary, snapshot, selected),
+                        });
+                        setComposerOpen(true);
+                      }}
+                    />
+                  ) : (
+                    <InspectorEmptyState message="Change review is not available on this computer." />
+                  )}
+                  terminal={<AgentTerminalList summary={summary} />}
+                  preview={previewEnabled ? (
+                    <AgentPreviewList summary={summary} />
+                  ) : (
+                    <InspectorEmptyState message="No preview capability is available for this project." />
+                  )}
+                  activity={(
+                    <div className="space-y-4">
+                      <AttentionThreadList summary={summary} />
+                      <ThreadList summary={summary} />
+                      <CreatedThreadHandleList summary={summary} />
+                      <ProviderList summary={summary} />
+                      <NotificationPreferencesPanel />
+                    </div>
+                  )}
                 />
-              ) : null}
-              {capabilityEnabled(summary, "codingAgentsReview") ? (
-                <ReviewList
-                  canReadFiles={capabilityEnabled(summary, "codingAgentsFiles")}
-                  canPrepareCommit={capabilityEnabled(summary, "codingAgentsSourceControl")}
-                  canCreateFollowUp={canCreateFollowUp}
-                  onAskHunkFollowUp={(snapshot, selected) => {
-                    setComposerSeed({
-                      seedId: Date.now(),
-                      draft: reviewHunkFollowUpDraft(summary, snapshot, selected),
-                    });
-                    setComposerOpen(true);
-                  }}
-                />
-              ) : null}
-              {capabilityEnabled(summary, "codingAgentsPreview") ? (
-                <AgentPreviewList summary={summary} />
-              ) : null}
-              <AgentTerminalList summary={summary} />
-              <AttentionThreadList summary={summary} />
-              <ThreadList summary={summary} />
-              <CreatedThreadHandleList summary={summary} />
-              <ProviderList summary={summary} />
-              <NotificationPreferencesPanel />
-                </AgentWorkspaceStack>
               </aside>
             </div>
           )}
