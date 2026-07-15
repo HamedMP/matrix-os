@@ -36,6 +36,7 @@ export function AgentProjectWorkspaceShell({
     (state) => state.selectedThreadId,
   );
   const hydrate = useCodingAgentProjectWorkspace((state) => state.hydrate);
+  const refresh = useCodingAgentProjectWorkspace((state) => state.refresh);
   const selectProject = useCodingAgentProjectWorkspace((state) => state.selectProject);
   const selectTask = useCodingAgentProjectWorkspace((state) => state.selectTask);
   const selectThread = useCodingAgentProjectWorkspace((state) => state.selectThread);
@@ -214,6 +215,34 @@ export function AgentProjectWorkspaceShell({
         </nav>
       )}
       <main className="flex min-h-0 min-w-[320px] flex-1 flex-col overflow-hidden">
+        {/* A failed refresh retains the last projection (stale-while-
+            revalidate); the strip makes the staleness explicit instead of
+            silently rendering pre-mutation data. */}
+        {scopeReady && scopeMatches && status === "error" && workspace ? (
+          <div
+            role="alert"
+            className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-2 text-xs"
+            style={{ borderColor: "var(--border-subtle)", background: "var(--warning-muted)", color: "var(--warning)" }}
+          >
+            <span>{error ?? "Project workspace unavailable"} — showing the last loaded board.</span>
+            <button
+              type="button"
+              aria-label="Retry loading the project workspace"
+              className="shrink-0 rounded-md border px-2 py-1 font-medium"
+              style={{ borderColor: "var(--warning)", color: "var(--warning)" }}
+              onClick={() => {
+                refresh().catch((err: unknown) => {
+                  console.warn(
+                    "[coding-agents] workspace retry failed:",
+                    err instanceof Error ? err.message : String(err),
+                  );
+                });
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        ) : null}
         {scopeReady ? children : (
           <div
             role="status"
