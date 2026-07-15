@@ -300,6 +300,27 @@ describe("project-manager", () => {
     })).resolves.toMatchObject({ ok: true, status: 201 });
   });
 
+  it("rejects ancestors of denied subtrees while allowing sibling folders", async () => {
+    await mkdir(join(homePath, "data", "browser-profiles"), { recursive: true });
+    await mkdir(join(homePath, "data", "exports"), { recursive: true });
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    // data contains data/browser-profiles (persistent browser login state).
+    await expect(manager.createProject({
+      mode: "folder",
+      name: "Data",
+      slug: "data-root",
+      path: "data",
+    })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
+
+    await expect(manager.createProject({
+      mode: "folder",
+      name: "Exports",
+      slug: "data-exports",
+      path: "data/exports",
+    })).resolves.toMatchObject({ ok: true, status: 201 });
+  });
+
   it("rejects managed worktree and metadata areas as folder project roots", async () => {
     await mkdir(join(homePath, "projects", "other", "worktrees", "wt-1"), { recursive: true });
     const manager = createProjectManager({ homePath, runCommand: vi.fn() });

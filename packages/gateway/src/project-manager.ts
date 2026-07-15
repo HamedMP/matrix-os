@@ -6,7 +6,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
 import { atomicWriteJson, readJsonFile, withProjectLock, type OwnerScope } from "./state-ops.js";
-import { resolveExistingFileApiPath } from "./path-security.js";
+import { containsDeniedFileApiPath, resolveExistingFileApiPath } from "./path-security.js";
 
 export const PROJECT_SLUG_REGEX = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
@@ -292,6 +292,10 @@ export function createProjectManager(options: {
             || candidate.path.startsWith(`${registryEntry}${sep}`)
             || registryEntry.startsWith(`${candidate.path}${sep}`)
             || isProtectedFolderProjectPath(candidate.base, candidate.path)
+            // An ancestor of a denied subtree (data/browser-profiles holds
+            // persistent browser login state) would expose it as part of the
+            // agent-writable workspace.
+            || containsDeniedFileApiPath(candidate.base, candidate.path)
           ) {
             return genericError(400, "invalid_project_path", "Project folder is invalid");
           }

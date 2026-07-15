@@ -25,6 +25,14 @@ export function isDeniedFileApiPath(homePath: string, requestedPath: string): bo
   return DENIED_FILE_API_PREFIXES.some((prefix) => rel === prefix || rel.startsWith(`${prefix}/`));
 }
 
+// True when the resolved path is an ancestor of (or equal to) a denied
+// subtree: granting it as a workspace root would expose the denied content.
+export function containsDeniedFileApiPath(homePath: string, resolvedPath: string): boolean {
+  const rel = relative(resolve(homePath), resolvedPath).split(sep).join("/");
+  if (rel === "") return true;
+  return DENIED_FILE_API_PREFIXES.some((prefix) => prefix === rel || prefix.startsWith(`${rel}/`));
+}
+
 function isWithinRealPath(baseReal: string, candidateReal: string): boolean {
   return candidateReal === baseReal || candidateReal.startsWith(`${baseReal}${sep}`);
 }

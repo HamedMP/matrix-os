@@ -421,13 +421,16 @@ export const useBoard = create<BoardState>()((set, get) => {
         ...(fields.linkedWorktreeId !== undefined ? { linkedWorktreeId: fields.linkedWorktreeId } : {}),
         ...(fields.status !== undefined ? { status: fields.status } : {}),
       }));
+      const runtimeGeneration = captureRuntimeGeneration();
       return enqueueTaskMutation(taskId, async () => {
         try {
           const response = await api.patch<{ task: unknown }>(taskPath(slug, taskId), fields);
+          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
           const card = toCard(response.task);
           if (card) patchCard(slug, taskId, () => card);
           set({ error: null });
         } catch (err: unknown) {
+          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
           console.error("[board] Link session failed:", err);
           patchCard(slug, taskId, () => before);
           await refreshInto(api, slug);
@@ -447,15 +450,18 @@ export const useBoard = create<BoardState>()((set, get) => {
         set({ error: "server" });
         return Promise.resolve();
       }
+      const runtimeGeneration = captureRuntimeGeneration();
       return enqueueTaskMutation(taskId, async () => {
         try {
           const response = await api.patch<{ task: unknown }>(taskPath(slug, taskId), {
             status: "archived",
           });
+          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
           const card = toCard(response.task);
           if (card) patchCard(slug, taskId, () => card);
           set({ error: null });
         } catch (err: unknown) {
+          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
           console.error("[board] Task archive failed:", err);
           set({ error: categoryOf(err) });
         }
@@ -469,9 +475,11 @@ export const useBoard = create<BoardState>()((set, get) => {
         set({ error: "server" });
         return Promise.resolve();
       }
+      const runtimeGeneration = captureRuntimeGeneration();
       return enqueueTaskMutation(taskId, async () => {
         try {
           await api.delete<{ ok: boolean }>(taskPath(slug, taskId));
+          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
           set((state) => {
             const current = state.cardsByProject[slug] ?? [];
             return {
@@ -483,6 +491,7 @@ export const useBoard = create<BoardState>()((set, get) => {
             };
           });
         } catch (err: unknown) {
+          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
           console.error("[board] Task delete failed:", err);
           set({ error: categoryOf(err) });
         }

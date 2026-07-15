@@ -195,6 +195,45 @@ describe("desktop runtime transition", () => {
     expect(useBoard.getState().cardsByProject["old-project"]).toBeUndefined();
   });
 
+  it("does not commit stale board mutation results after the computer changes", async () => {
+    const card = {
+      id: "task_old",
+      projectSlug: "old-project",
+      title: "Old task",
+      description: "",
+      status: "todo" as const,
+      priority: "normal" as const,
+      order: 0,
+      parentTaskId: null,
+      linkedSessionId: null,
+      linkedWorktreeId: null,
+      previewIds: [],
+      tags: [],
+      updatedAt: null,
+      revision: null,
+    };
+    useBoard.setState({ cardsByProject: { "old-project": [card] }, error: null });
+    let rejectDelete: ((err: unknown) => void) | undefined;
+    const api = {
+      delete: vi.fn(() => new Promise((_resolve, reject) => {
+        rejectDelete = reject;
+      })),
+      get: vi.fn(async () => ({ tasks: [], nextCursor: null })),
+      patch: vi.fn(async () => ({ task: card })),
+    } as never;
+
+    const pending = useBoard.getState().deleteTask(api, "old-project", "task_old");
+    reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
+    // The per-task mutation queue starts the request on a microtask.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    rejectDelete?.(new Error("old runtime rejected"));
+    await pending;
+
+    // The failure belongs to the previous computer; the new board must not
+    // inherit its error state.
+    expect(useBoard.getState().error).toBeNull();
+  });
+
   it("rejects a project response that settles after the computer changes", async () => {
     let resolveProjects!: (value: { projects: unknown[] }) => void;
     const api = {
