@@ -112,7 +112,7 @@ describe("Files workspace", () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
     fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
     fireEvent.click(await screen.findByRole("button", { name: "Open app.ts" }));
-    await waitFor(() => expect(api.getText).toHaveBeenCalledWith("/api/files/blob?path=workspaces%2Fapp.ts"));
+    await waitFor(() => expect(api.getText).toHaveBeenCalledWith("/api/files/blob?path=workspaces%2Fapp.ts", { maxBytes: 1024 * 1024 }));
     expect(screen.getByText(/A remote home you can inspect/).closest("pre")).not.toBeNull();
   });
 
@@ -132,7 +132,7 @@ describe("Files workspace", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Open hero.png" }));
     const image = await screen.findByRole("img", { name: "hero.png" });
     await waitFor(() =>
-      expect(api.getBlob).toHaveBeenCalledWith("/api/files/blob?path=workspaces%2Fhero.png"),
+      expect(api.getBlob).toHaveBeenCalledWith("/api/files/blob?path=workspaces%2Fhero.png", { maxBytes: 10 * 1024 * 1024 }),
     );
     const src = image.getAttribute("src") ?? "";
     expect(src).toMatch(/^blob:mock\//);

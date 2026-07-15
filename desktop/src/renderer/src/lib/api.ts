@@ -23,10 +23,17 @@ export interface ApiClientOptions {
   onUnauthorized?: () => void;
 }
 
+export interface BoundedReadOptions {
+  // Hard cap on the bytes read from the response body. The stat that sized a
+  // file can be stale by the time the body is fetched, so the cap must apply
+  // to the transfer itself; exceeding it rejects with "file_too_large".
+  maxBytes?: number;
+}
+
 export interface ApiClient {
   get<T>(path: string): Promise<T>;
-  getText(path: string): Promise<string>;
-  getBlob(path: string): Promise<Blob>;
+  getText(path: string, options?: BoundedReadOptions): Promise<string>;
+  getBlob(path: string, options?: BoundedReadOptions): Promise<Blob>;
   post<T>(path: string, body: unknown): Promise<T>;
   patch<T>(path: string, body: unknown): Promise<T>;
   put<T>(path: string, body: unknown): Promise<T>;
@@ -75,20 +82,60 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     }
   }
 
-  async function requestText(path: string, init: RequestInit): Promise<string> {
+  async function readBoundedBytes(response: Response, maxBytes: number): Promise<Uint8Array[]> {
+    const reader = response.body?.getReader();
+    if (!reader) {
+      // Test doubles and legacy responses may not expose a stream; the cap
+      // still applies to the buffered body.
+      const buffered = new Uint8Array(await response.arrayBuffer());
+      if (buffered.byteLength > maxBytes) throw new Error("file_too_large");
+      return [buffered];
+    }
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        total += chunk.value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel();
+          throw new Error("file_too_large");
+        }
+        chunks.push(chunk.value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    return chunks;
+  }
+
+  async function requestText(path: string, init: RequestInit, bounds?: BoundedReadOptions): Promise<string> {
     const response = await send(path, init);
     try {
+      if (bounds?.maxBytes !== undefined) {
+        const chunks = await readBoundedBytes(response, bounds.maxBytes);
+        const decoder = new TextDecoder();
+        return chunks.map((chunk) => decoder.decode(chunk, { stream: true })).join("") + decoder.decode();
+      }
       return await response.text();
     } catch (err: unknown) {
+      if (err instanceof Error && err.message === "file_too_large") throw err;
       throw new AppError("server", { cause: err });
     }
   }
 
-  async function requestBlob(path: string, init: RequestInit): Promise<Blob> {
+  async function requestBlob(path: string, init: RequestInit, bounds?: BoundedReadOptions): Promise<Blob> {
     const response = await send(path, init);
     try {
+      if (bounds?.maxBytes !== undefined) {
+        const chunks = await readBoundedBytes(response, bounds.maxBytes);
+        const type = response.headers.get("content-type") ?? "";
+        return new Blob(chunks as BlobPart[], type ? { type } : undefined);
+      }
       return await response.blob();
     } catch (err: unknown) {
+      if (err instanceof Error && err.message === "file_too_large") throw err;
       throw new AppError("server", { cause: err });
     }
   }
@@ -96,8 +143,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   return {
     baseUrl: options.baseUrl,
     get: (path) => request(path, { method: "GET" }),
-    getText: (path) => requestText(path, { method: "GET" }),
-    getBlob: (path) => requestBlob(path, { method: "GET" }),
+    getText: (path, boundedOptions) => requestText(path, { method: "GET" }, boundedOptions),
+    getBlob: (path, boundedOptions) => requestBlob(path, { method: "GET" }, boundedOptions),
     post: (path, body) =>
       request(path, {
         method: "POST",

@@ -70,7 +70,9 @@ function TextPreview({ path, markdown = false }: { path: string; markdown?: bool
         // api client resolves the CURRENT runtime slot per request, so fetching
         // now would read this path from the newly selected computer. Bail first.
         if (cancelled) return null;
-        return api.getText(`/api/files/blob?path=${encodeURIComponent(path)}`);
+        // The stat can be stale by the time the blob is read (the file may
+        // have grown), so the transfer itself is capped too.
+        return api.getText(`/api/files/blob?path=${encodeURIComponent(path)}`, { maxBytes: MAX_TEXT_PREVIEW_BYTES });
       })
       .then((content) => {
         if (!cancelled && content !== null) setState({ status: "ready", content });
@@ -110,8 +112,9 @@ function ImagePreview({ path, name }: { path: string; name: string }) {
         if (cancelled) return null;
         // Load bytes through the authenticated client so credentials injected at
         // the network layer apply. A bare <img src> to the blob route cannot
-        // carry them and would expose the selected computer's file by URL.
-        return api.getBlob(`/api/files/blob?path=${encodeURIComponent(path)}`);
+        // carry them and would expose the selected computer's file by URL. The
+        // transfer is capped as well: the stat may be stale by read time.
+        return api.getBlob(`/api/files/blob?path=${encodeURIComponent(path)}`, { maxBytes: MAX_IMAGE_PREVIEW_BYTES });
       })
       .then((blob) => {
         if (cancelled || blob === null) return;
