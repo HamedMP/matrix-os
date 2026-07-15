@@ -145,12 +145,14 @@ export default function ChatTab() {
   const threads = useThreads((s) => s.threads);
   const activeThreadId = useThreads((s) => s.activeThreadId);
   const setActiveThread = useThreads((s) => s.setActiveThread);
-  const summary = useCodingAgentWorkspace((s) => s.summary);
+  // Short-circuit inside the selector so a disabled workspace never re-renders
+  // the rail on coding-agent store updates.
+  const summary = useCodingAgentWorkspace((s) => (CODING_AGENTS_DESKTOP_WORKSPACE ? s.summary : null));
   const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
   const openTab = useTabs((s) => s.openTab);
 
   const railThreads = useMemo(
-    () => listUnifiedThreads(threads, CODING_AGENTS_DESKTOP_WORKSPACE ? summary : null),
+    () => listUnifiedThreads(threads, summary),
     [threads, summary],
   );
 
@@ -159,7 +161,12 @@ export default function ChatTab() {
       setActiveThread(item.id);
       return;
     }
-    void loadThreadSnapshot(item.id);
+    loadThreadSnapshot(item.id).catch((err: unknown) => {
+      console.warn(
+        "[chat] coding-agent thread open failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    });
     openTab(AGENTS_WORKSPACE_TAB_SPEC);
   };
 

@@ -152,7 +152,12 @@ export function wireKernel(): () => void {
       useTabs.getState().openTab({ kind: "chat", title: "Hermes", closable: false });
       return;
     }
-    void useCodingAgentWorkspace.getState().loadThreadSnapshot(route.select);
+    useCodingAgentWorkspace.getState().loadThreadSnapshot(route.select).catch((err: unknown) => {
+      console.warn(
+        "[kernel-wiring] notification thread open failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    });
     useTabs.getState().openTab(AGENTS_WORKSPACE_TAB_SPEC);
   });
 
