@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../design/primitives";
 import { invoke, onEvent } from "../../lib/operator";
+import { useConnection } from "../../stores/connection";
 
 // Hosts a main-process WebContentsView positioned over this element's rect.
 // The remote content renders in an isolated partition with no IPC access.
@@ -16,6 +17,7 @@ export default function EmbedHost({
   slug?: string;
   active?: boolean;
 }) {
+  const runtimeSlot = useConnection((connection) => connection.runtimeSlot);
   const hostRef = useRef<HTMLDivElement>(null);
   const embedIdRef = useRef<string | null>(null);
   const activeRef = useRef(active);
@@ -41,6 +43,7 @@ export default function EmbedHost({
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    setState("loading");
     let disposed = false;
     let offState: (() => void) | null = null;
     const pendingStates = new Map<string, typeof state>();
@@ -95,7 +98,7 @@ export default function EmbedHost({
       if (id) void invoke("embed:close", { embedId: id });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, slug]);
+  }, [kind, slug, runtimeSlot]);
 
   // Attach/detach the native view as the hosting tab activates/deactivates.
   useEffect(() => {

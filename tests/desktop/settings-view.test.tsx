@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SettingsView from "../../desktop/src/renderer/src/features/settings/SettingsView";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -39,5 +39,6 @@ describe("SettingsView", () => {
 
     await waitFor(() => expect(document.documentElement.getAttribute("data-theme")).toBe("light"));
     expect(window.operator.invoke).toHaveBeenCalledWith("state:get", { key: "appearance" });
+    expect(screen.getByRole("button", { name: "Computers" })).not.toBeNull();
   });
 });
