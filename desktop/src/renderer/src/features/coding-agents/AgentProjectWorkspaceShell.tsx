@@ -195,7 +195,13 @@ export function AgentProjectWorkspaceShell({
           }}
           onNewChat={onNewChat}
           onNewProject={() => openCreateProject("agents")}
-          onOpenSettings={() => openTab({ kind: "settings", title: "Settings", slug: "settings" })}
+          onOpenSettings={() => {
+            // Land on the Agent section and share the canonical Settings tab
+            // identity so an already-open Settings tab is focused, not
+            // duplicated.
+            useUi.getState().requestSettingsSection("agent");
+            openTab({ kind: "settings", title: "Settings" });
+          }}
         />
       ) : (
         <nav
