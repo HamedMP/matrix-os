@@ -174,6 +174,30 @@ describe("Files workspace", () => {
     expect(staleStat).toBeUndefined();
   });
 
+  it("pins the session scope at fetch time even before React commits the switch", async () => {
+    let resolveStat!: (value: { size: number }) => void;
+    const statPromise = new Promise<{ size: number }>((resolve) => {
+      resolveStat = resolve;
+    });
+    const custom = makeApi({ statImpl: () => statPromise });
+    useConnection.setState({ api: custom as never });
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open app.ts" }));
+
+    // The store commits the replacement session before React re-renders and
+    // runs the effect cleanup; the stat can settle inside that gap, so the
+    // cancelled flag alone cannot stop the follow-up blob fetch.
+    useConnection.setState({ authGeneration: 4 });
+    resolveStat({ size: 128 });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(custom.getText).not.toHaveBeenCalled();
+  });
+
   it("does not fetch a text blob against the new computer when the slot changes mid-stat", async () => {
     let resolveStat!: (value: { size: number }) => void;
     const statPromise = new Promise<{ size: number }>((resolve) => {

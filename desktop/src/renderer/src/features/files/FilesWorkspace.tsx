@@ -40,6 +40,15 @@ function isFiniteSizeWithin(size: unknown, max: number): boolean {
   return typeof size === "number" && Number.isFinite(size) && size <= max;
 }
 
+// The api client resolves the CURRENT runtime slot per request, so a preview
+// that started under one computer/session must re-check the scope immediately
+// before any follow-up fetch instead of relying only on the effect-cleanup
+// flag, which runs on React's schedule.
+function captureConnectionScope(): string {
+  const { runtimeSlot, authGeneration } = useConnection.getState();
+  return `${runtimeSlot}|${authGeneration}`;
+}
+
 function isImage(path: string): boolean {
   return /\.(png|jpe?g|gif|webp|svg)$/i.test(path);
 }
@@ -61,15 +70,16 @@ function TextPreview({ path, markdown = false }: { path: string; markdown?: bool
   useEffect(() => {
     if (!api) return;
     let cancelled = false;
+    const scope = captureConnectionScope();
     setState({ status: "loading" });
     void api.get<{ size?: number }>(`/api/files/stat?path=${encodeURIComponent(path)}`)
       .then(async (stat) => {
         // Fail closed: a missing or non-finite size must not bypass the bound.
         if (!isFiniteSizeWithin(stat.size, MAX_TEXT_PREVIEW_BYTES)) throw new Error("file_too_large");
-        // The selected computer may have changed while stat was in flight; the
-        // api client resolves the CURRENT runtime slot per request, so fetching
-        // now would read this path from the newly selected computer. Bail first.
-        if (cancelled) return null;
+        // The selected computer/session may have changed while stat was in
+        // flight; check the pinned scope (not only the effect-cleanup flag)
+        // before fetching this path against the newly selected computer.
+        if (cancelled || captureConnectionScope() !== scope) return null;
         // The stat can be stale by the time the blob is read (the file may
         // have grown), so the transfer itself is capped too.
         return api.getText(`/api/files/blob?path=${encodeURIComponent(path)}`, { maxBytes: MAX_TEXT_PREVIEW_BYTES });
@@ -101,15 +111,16 @@ function ImagePreview({ path, name }: { path: string; name: string }) {
     if (!api) return;
     let cancelled = false;
     let objectUrl: string | null = null;
+    const scope = captureConnectionScope();
     setState({ status: "loading" });
     void api.get<{ size?: number }>(`/api/files/stat?path=${encodeURIComponent(path)}`)
       .then(async (stat) => {
         // Fail closed like text previews: bound the bytes read into renderer memory.
         if (!isFiniteSizeWithin(stat.size, MAX_IMAGE_PREVIEW_BYTES)) throw new Error("file_too_large");
-        // The selected computer may have changed while stat was in flight; the
-        // api client resolves the CURRENT runtime slot per request, so fetching
-        // now would read this path from the newly selected computer. Bail first.
-        if (cancelled) return null;
+        // The selected computer/session may have changed while stat was in
+        // flight; check the pinned scope (not only the effect-cleanup flag)
+        // before fetching this path against the newly selected computer.
+        if (cancelled || captureConnectionScope() !== scope) return null;
         // Load bytes through the authenticated client so credentials injected at
         // the network layer apply. A bare <img src> to the blob route cannot
         // carry them and would expose the selected computer's file by URL. The
