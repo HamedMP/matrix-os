@@ -116,6 +116,14 @@ function genericError(status: number, code: string, message: string): Failure {
   return { ok: false, status, error: { code, message } };
 }
 
+function isNotAGitRepositoryError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const stderr = "stderr" in err && typeof (err as { stderr?: unknown }).stderr === "string"
+    ? (err as { stderr: string }).stderr
+    : "";
+  return /not a git repository/i.test(stderr) || /not a git repository/i.test(err.message);
+}
+
 function nowIso(now?: () => string): string {
   return now ? now() : new Date().toISOString();
 }
@@ -546,10 +554,31 @@ export function createProjectManager(options: {
     async listBranches(slug: string): Promise<Result<{ branches: BranchSummary[]; refreshedAt: string }> | Failure> {
       const projectResult = await this.getProject(slug);
       if (!projectResult.ok) return projectResult;
-      if (!await pathExists(join(projectResult.project.localPath, ".git"))) {
-        return { ok: true, branches: [], refreshedAt: nowIso(options.now) };
+      const refreshedAt = nowIso(options.now);
+      // Probe Git itself instead of checking for a local .git entry: a folder
+      // project can point at a subdirectory of a repository (monorepo
+      // packages) whose .git lives in an ancestor.
+      let repoTopLevel: string;
+      try {
+        const probe = await runCommand("git", ["rev-parse", "--show-toplevel"], {
+          cwd: projectResult.project.localPath,
+          timeout: DEFAULT_TIMEOUT_MS,
+        });
+        repoTopLevel = probe.stdout.trim();
+      } catch (err: unknown) {
+        if (isNotAGitRepositoryError(err)) {
+          return { ok: true, branches: [], refreshedAt };
+        }
+        if (err instanceof Error) console.warn("[project-manager] Failed to probe git worktree:", err.message);
+        return genericError(502, "git_request_failed", "Git request failed");
       }
       try {
+        // The Matrix home itself is a versioned Git repo; a plain folder that
+        // resolves to it as its toplevel has no project branches to show.
+        const [homeReal, repoReal] = await Promise.all([realpath(homePath), realpath(repoTopLevel)]);
+        if (homeReal === repoReal) {
+          return { ok: true, branches: [], refreshedAt };
+        }
         const result = await runCommand("git", ["branch", "--list", "--format=%(refname:short)"], {
           cwd: projectResult.project.localPath,
           timeout: DEFAULT_TIMEOUT_MS,

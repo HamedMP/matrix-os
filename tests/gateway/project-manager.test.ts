@@ -118,7 +118,14 @@ describe("project-manager", () => {
   });
 
   it("treats Git and GitHub as optional capabilities for folder projects", async () => {
-    const runCommand = vi.fn();
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === "git" && args[0] === "rev-parse") {
+        const err = new Error("fatal: not a git repository") as Error & { stderr: string };
+        err.stderr = "fatal: not a git repository (or any of the parent directories): .git";
+        throw err;
+      }
+      return { stdout: "", stderr: "" };
+    });
     const manager = createProjectManager({ homePath, runCommand, now: () => "2026-04-26T00:00:00.000Z" });
     const created = await manager.createProject({
       mode: "scratch",
@@ -138,7 +145,53 @@ describe("project-manager", () => {
       branches: [],
       refreshedAt: "2026-04-26T00:00:00.000Z",
     });
-    expect(runCommand).not.toHaveBeenCalled();
+    expect(runCommand).not.toHaveBeenCalledWith("git", expect.arrayContaining(["branch"]), expect.any(Object));
+  });
+
+  it("lists branches for a folder project nested inside a repository", async () => {
+    const repoRoot = join(homePath, "workspaces", "monorepo");
+    await mkdir(join(repoRoot, "packages", "app"), { recursive: true });
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === "git" && args[0] === "rev-parse") return { stdout: `${repoRoot}\n`, stderr: "" };
+      if (command === "git" && args[0] === "branch") return { stdout: "main\nfeature\n", stderr: "" };
+      return { stdout: "", stderr: "" };
+    });
+    const manager = createProjectManager({ homePath, runCommand, now: () => "2026-04-26T00:00:00.000Z" });
+    await manager.createProject({
+      mode: "folder",
+      name: "Monorepo app",
+      slug: "monorepo-app",
+      path: "workspaces/monorepo/packages/app",
+    });
+
+    await expect(manager.listBranches("monorepo-app")).resolves.toMatchObject({
+      ok: true,
+      branches: [{ name: "main" }, { name: "feature" }],
+    });
+  });
+
+  it("does not show home-versioning branches for plain folders", async () => {
+    await mkdir(join(homePath, "workspaces", "notes"), { recursive: true });
+    // The Matrix home itself is a versioned Git repo: a folder that resolves
+    // to it as its repository toplevel has no project branches to show.
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === "git" && args[0] === "rev-parse") return { stdout: `${homePath}\n`, stderr: "" };
+      return { stdout: "main\n", stderr: "" };
+    });
+    const manager = createProjectManager({ homePath, runCommand, now: () => "2026-04-26T00:00:00.000Z" });
+    await manager.createProject({
+      mode: "folder",
+      name: "Notes",
+      slug: "notes-folder",
+      path: "workspaces/notes",
+    });
+
+    await expect(manager.listBranches("notes-folder")).resolves.toEqual({
+      ok: true,
+      branches: [],
+      refreshedAt: "2026-04-26T00:00:00.000Z",
+    });
+    expect(runCommand).not.toHaveBeenCalledWith("git", expect.arrayContaining(["branch"]), expect.any(Object));
   });
 
   it("connects a project to an existing owner folder without moving or deleting it", async () => {
@@ -323,6 +376,9 @@ describe("project-manager", () => {
     const runCommand = vi.fn(async (command: string, args: string[]) => {
       if (command === "gh" && args[0] === "pr") {
         return { stdout: JSON.stringify([{ number: 7, title: "Fix", author: { login: "octo" }, headRefName: "fix", baseRefName: "main", state: "OPEN" }]), stderr: "" };
+      }
+      if (command === "git" && args[0] === "rev-parse") {
+        return { stdout: `${join(homePath, "projects", "repo", "repo")}\n`, stderr: "" };
       }
       if (command === "git" && args[0] === "branch") {
         return { stdout: "main\nfeature\n", stderr: "" };
