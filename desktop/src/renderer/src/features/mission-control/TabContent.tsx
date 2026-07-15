@@ -15,6 +15,7 @@ import { AppLauncher } from "../embeds";
 import TerminalsTab from "../terminal/TerminalsTab";
 import EmbedHost from "../embeds/EmbedHost";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
+import FilesWorkspace from "../files/FilesWorkspace";
 
 export class TabErrorBoundary extends Component<{
   children: ReactNode;
@@ -54,6 +55,8 @@ function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
       return <ChatTab />;
     case "terminals":
       return <TerminalsTab />;
+    case "files":
+      return <FilesWorkspace />;
     case "apps":
       return <AppLauncher />;
     case "app":

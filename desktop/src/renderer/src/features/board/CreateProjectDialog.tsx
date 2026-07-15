@@ -9,6 +9,7 @@ import { useUi } from "../../stores/ui";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useCodingAgentProjectWorkspace } from "../../stores/coding-agent-project-workspace";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
+import ComputerFileBrowser from "../files/ComputerFileBrowser";
 
 type Mode = "scratch" | "folder" | "github";
 
@@ -23,14 +24,36 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   const refreshAgentWorkspace = useCodingAgentWorkspace((s) => s.refresh);
   const openCreatedProject = useCodingAgentProjectWorkspace((s) => s.openCreatedProject);
   const runtimeScope = useConnection(codingAgentRuntimeScope);
+  const runtimeSlot = useConnection((s) => s.runtimeSlot);
+  const authGeneration = useConnection((s) => s.authGeneration);
   const [name, setName] = useState("");
   const [mode, setMode] = useState<Mode>("scratch");
   const [url, setUrl] = useState("");
-  const [path, setPath] = useState("");
+  // A folder chosen under one computer/session must not stay submittable under
+  // another, so the selection carries its scope and resolves to "" as soon as
+  // the slot or credential generation changes (synchronously, like the Files
+  // workspace selection).
+  const [folderSelection, setFolderSelection] = useState<{ slot: string; authGeneration: number; path: string } | null>(null);
+  const path = folderSelection && folderSelection.slot === runtimeSlot && folderSelection.authGeneration === authGeneration
+    ? folderSelection.path
+    : "";
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dialogClosedRef = useRef(false);
   const dialogGenerationRef = useRef(0);
+
+  useEffect(() => {
+    setFolderSelection((current) =>
+      current && (current.slot !== runtimeSlot || current.authGeneration !== authGeneration)
+        ? null
+        : current,
+    );
+  }, [authGeneration, runtimeSlot]);
+
+  const chooseFolder = useCallback(
+    (chosen: string) => setFolderSelection({ slot: runtimeSlot, authGeneration, path: chosen }),
+    [authGeneration, runtimeSlot],
+  );
 
   const canSubmit = name.trim().length > 0 && (
     mode === "scratch" ||
@@ -171,13 +194,13 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
           <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://github.com/owner/repo" style={field} />
         </label>
       ) : mode === "folder" ? (
-        <label className="flex flex-col gap-1">
-          <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Folder on this computer</span>
-          <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="workspaces/customer-app" style={field} />
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Choose a folder on this computer</span>
+          <ComputerFileBrowser compact onChooseFolder={chooseFolder} />
           <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-            Enter a folder relative to your Matrix home. The folder stays in place and remains yours.
+            {path ? `Selected: ${path}` : "Select a folder. It stays in place and remains yours."}
           </span>
-        </label>
+        </div>
       ) : (
         <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
           A new project folder is created on your Matrix computer. Git and GitHub are optional.
@@ -198,7 +221,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
 
 export default function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
-    <Dialog open={open} onClose={onClose} width={520}>
+    <Dialog open={open} onClose={onClose} width={620}>
       <CreateProjectForm onClose={onClose} />
     </Dialog>
   );

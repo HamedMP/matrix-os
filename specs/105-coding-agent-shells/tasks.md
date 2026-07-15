@@ -1262,6 +1262,18 @@ integrated workspace suite proves existing trusted IPC actions continue through
 their original gateway-owned contracts. Surface validation is recorded in
 `acceptance-tests.md`.
 
+### 21.6 Matrix Computer Files
+
+- [x] Add a first-class Files destination to the desktop navigator.
+- [x] Browse the selected computer's Matrix home with gateway-owned directory listings and breadcrumbs.
+- [x] Preview bounded text/code, rendered Markdown, and images without exposing credentials.
+- [x] Reuse the same browser as the existing-folder chooser when creating a project.
+- [x] Clear the active file and reload folder state when the selected computer changes.
+
+Tests: `tests/desktop/files-workspace.test.tsx`,
+`tests/desktop/create-project-dialog.test.tsx`, and the existing file-panel and
+Markdown-preview regressions.
+
 ## Phase 22 - Mobile Project Conversation And Kanban
 
 Goal: expose the same hierarchy and conversations with SDK 57 phone/tablet ergonomics.
