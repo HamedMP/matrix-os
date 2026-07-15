@@ -31,7 +31,7 @@ export const dracula: UnifiedThemeDefinition = {
       sidebar: "#2e303e",
       sidebarForeground: "#f8f8f2",
       sidebarPrimary: "#bd93f9",
-      sidebarPrimaryForeground: "#f8f8f2",
+      sidebarPrimaryForeground: "#282a36",
       sidebarAccent: "#282a36",
       sidebarAccentForeground: "#f8f8f2",
       sidebarBorder: "rgba(248, 248, 242, 0.10)",

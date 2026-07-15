@@ -31,7 +31,7 @@ export const nord: UnifiedThemeDefinition = {
       sidebar: "#3b4252",
       sidebarForeground: "#d8dee9",
       sidebarPrimary: "#81a1c1",
-      sidebarPrimaryForeground: "#d8dee9",
+      sidebarPrimaryForeground: "#2e3440",
       sidebarAccent: "#2e3440",
       sidebarAccentForeground: "#d8dee9",
       sidebarBorder: "rgba(216, 222, 233, 0.10)",

@@ -31,7 +31,7 @@ export const oneDark: UnifiedThemeDefinition = {
       sidebar: "#2c313c",
       sidebarForeground: "#abb2bf",
       sidebarPrimary: "#61afef",
-      sidebarPrimaryForeground: "#abb2bf",
+      sidebarPrimaryForeground: "#282c34",
       sidebarAccent: "#282c34",
       sidebarAccentForeground: "#abb2bf",
       sidebarBorder: "rgba(171, 178, 191, 0.10)",

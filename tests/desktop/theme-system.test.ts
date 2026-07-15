@@ -104,15 +104,39 @@ describe("applyUnifiedTheme", () => {
   });
 
   it("gives every sidebar primary pair readable contrast", () => {
+    // WCAG relative luminance over hex pairs; non-hex values (oklch) are
+    // exempt because they cannot be parsed here.
+    const hexChannel = (value: string, offset: number) =>
+      Number.parseInt(value.slice(offset, offset + 2), 16) / 255;
+    const linear = (channel: number) =>
+      channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    const luminance = (hex: string) =>
+      0.2126 * linear(hexChannel(hex, 1))
+      + 0.7152 * linear(hexChannel(hex, 3))
+      + 0.0722 * linear(hexChannel(hex, 5));
+    const contrastRatio = (a: string, b: string) => {
+      const [bright, dim] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+      return (bright! + 0.05) / (dim! + 0.05);
+    };
+    const HEX = /^#[0-9a-f]{6}$/i;
+    // 3:1 is the WCAG threshold for user-interface components.
+    const MIN_CONTRAST = 3;
+
+    const violations: string[] = [];
     for (const theme of unifiedThemes) {
-      for (const variant of [theme.dark, theme.light]) {
+      for (const [mode, variant] of [["dark", theme.dark], ["light", theme.light]] as const) {
         if (!variant) continue;
-        expect(
-          variant.chrome.sidebarPrimary.toLowerCase(),
-          `${theme.id} sidebarPrimary vs foreground`,
-        ).not.toBe(variant.chrome.sidebarPrimaryForeground.toLowerCase());
+        const { sidebarPrimary, sidebarPrimaryForeground } = variant.chrome;
+        if (!HEX.test(sidebarPrimary) || !HEX.test(sidebarPrimaryForeground)) continue;
+        const ratio = contrastRatio(sidebarPrimary, sidebarPrimaryForeground);
+        if (ratio < MIN_CONTRAST) {
+          violations.push(
+            `${theme.id} (${mode}) ${sidebarPrimary} on ${sidebarPrimaryForeground} = ${ratio.toFixed(2)}:1`,
+          );
+        }
       }
     }
+    expect(violations).toEqual([]);
   });
 
   it("applies non-default themes as inline variable overrides", () => {

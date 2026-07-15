@@ -31,7 +31,7 @@ export const gruvbox: UnifiedThemeDefinition = {
       sidebar: "#32302f",
       sidebarForeground: "#ebdbb2",
       sidebarPrimary: "#d79921",
-      sidebarPrimaryForeground: "#ebdbb2",
+      sidebarPrimaryForeground: "#282828",
       sidebarAccent: "#282828",
       sidebarAccentForeground: "#ebdbb2",
       sidebarBorder: "rgba(235, 219, 178, 0.10)",

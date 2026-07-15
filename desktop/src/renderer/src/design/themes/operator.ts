@@ -31,7 +31,7 @@ export const operator: UnifiedThemeDefinition = {
       sidebar: "#2c313c",
       sidebarForeground: "#ffffff",
       sidebarPrimary: "#61afef",
-      sidebarPrimaryForeground: "#ffffff",
+      sidebarPrimaryForeground: "#282c34",
       sidebarAccent: "#282c34",
       sidebarAccentForeground: "#ffffff",
       sidebarBorder: "rgba(255, 255, 255, 0.10)",

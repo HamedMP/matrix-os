@@ -31,7 +31,7 @@ export const kanagawa: UnifiedThemeDefinition = {
       sidebar: "#252530",
       sidebarForeground: "#dcd7ba",
       sidebarPrimary: "#7e9cd8",
-      sidebarPrimaryForeground: "#dcd7ba",
+      sidebarPrimaryForeground: "#1f1f28",
       sidebarAccent: "#1f1f28",
       sidebarAccentForeground: "#dcd7ba",
       sidebarBorder: "rgba(220, 215, 186, 0.10)",
