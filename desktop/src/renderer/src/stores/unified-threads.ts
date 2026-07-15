@@ -105,7 +105,12 @@ export function kernelThreadAttentionCount(threads: AgentThread[]): number {
 export function codingAgentAttentionCount(summary: RuntimeSummary | null): number {
   const attentionThreads = summary?.attentionThreads;
   if (!attentionThreads) return 0;
-  return attentionThreads.hasMore ? 999 : attentionThreads.items.length;
+  // The truncation sentinel only applies to a non-empty page: the server never
+  // returns hasMore with zero items, but client-side promotion eviction can
+  // leave hasMore set after every listed thread demotes.
+  return attentionThreads.hasMore && attentionThreads.items.length > 0
+    ? 999
+    : attentionThreads.items.length;
 }
 
 export function unifiedAttentionCount(

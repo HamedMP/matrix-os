@@ -155,6 +155,16 @@ describe("attention counts", () => {
     expect(codingAgentAttentionCount(null)).toBe(0);
   });
 
+  it("ignores the truncation sentinel when the attention list is empty", () => {
+    // Client-side promotion eviction can leave hasMore set after every listed
+    // thread demotes; the server never returns hasMore with an empty page, so
+    // an empty list always counts as zero.
+    const summary = runtimeSummary();
+    summary.attentionThreads.items = [];
+    summary.attentionThreads.hasMore = true;
+    expect(codingAgentAttentionCount(summary)).toBe(0);
+  });
+
   it("sums both systems in the unified count", () => {
     const summary = runtimeSummary();
     summary.attentionThreads.items = [codingAgentThread({ id: "thread_a" })];
