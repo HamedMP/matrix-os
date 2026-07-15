@@ -69,8 +69,10 @@ export function summaryIncludesThread(summary: RuntimeSummary, threadId: string)
 // Reconciles one live-updated thread into the bounded summary lists: updates
 // in place, drops it from attentionThreads when attention clears, and promotes
 // it to the head of attentionThreads when a live event raises attention from
-// "none" (#998). Promotion enforces the server limit and marks truncation; the
-// next full summary refresh restores canonical ordering.
+// "none" (#998). Promotion mirrors the gateway's attentionThread predicate
+// (attention !== "none" && status !== "archived" in coding-agents/
+// thread-store.ts) so the local list anticipates exactly what the next
+// summary refresh returns; the refresh restores canonical ordering.
 export function reconcileSummaryThread(
   summary: RuntimeSummary,
   thread: RuntimeSummary["activeThreads"]["items"][number],
@@ -86,6 +88,8 @@ export function reconcileSummaryThread(
     attentionItems = summary.attentionThreads.items.map((candidate) =>
       candidate.id === thread.id ? thread : candidate,
     );
+  } else if (thread.status === "archived") {
+    attentionItems = summary.attentionThreads.items;
   } else {
     attentionItems = [thread, ...summary.attentionThreads.items];
     const limit = summary.attentionThreads.limit;

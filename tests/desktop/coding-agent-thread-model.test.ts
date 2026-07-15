@@ -73,6 +73,18 @@ describe("reconcileSummaryThread", () => {
     expect(result.activeThreads.items).toEqual([raised]);
   });
 
+  it("does not promote archived threads even when their attention is set", () => {
+    const archived = thread({
+      id: "thread_archived",
+      status: "archived",
+      attention: "completed",
+      updatedAt: "2026-07-06T00:02:00.000Z",
+    });
+    const result = reconcileSummaryThread(summary({ attention: [] }), archived);
+
+    expect(result.attentionThreads.items).toEqual([]);
+  });
+
   it("does not duplicate an already-listed attention thread on promotion", () => {
     const raised = thread({ status: "waiting_for_input", attention: "input_required" });
     const result = reconcileSummaryThread(summary({ active: [raised], attention: [raised] }), raised);
