@@ -438,6 +438,60 @@ describe("coding-agent project workspace store", () => {
     expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({ status: "ready" });
   });
 
+  it("keeps a selection made while a refresh is in flight", async () => {
+    const docsTask = {
+      id: "task_docs",
+      projectId: "matrix-os",
+      title: "Docs task",
+      status: "todo",
+      priority: "normal",
+      order: 1,
+      threadCount: 0,
+      activeThreadCount: 0,
+      attentionCount: 0,
+    } as const;
+    const projectWorkspace = workspace("matrix-os", "task_auth", "thread_plan");
+    projectWorkspace.tasks.items.push({ ...docsTask });
+    const refreshed = workspace("matrix-os", "task_auth", "thread_plan");
+    refreshed.tasks.items.push({ ...docsTask });
+    let resolveReload: (value: ProjectAgentWorkspace) => void = () => undefined;
+    const reload = new Promise<ProjectAgentWorkspace>((resolve) => {
+      resolveReload = resolve;
+    });
+    let workspaceRequestCount = 0;
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "state:get") return { value: null };
+      if (channel === "state:set") return { ok: true };
+      if (channel === "runtime:get-project-workspace") {
+        workspaceRequestCount += 1;
+        return workspaceRequestCount === 1 ? projectWorkspace : reload;
+      }
+      throw new Error(`unexpected channel ${channel}`);
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+
+    await useCodingAgentProjectWorkspace.getState().hydrate(
+      summary("rt_primary", "matrix-os", "Matrix OS"),
+    );
+    const pendingRefresh = useCodingAgentProjectWorkspace.getState().refresh();
+    // The retained board stays interactive during the refresh; a click made
+    // now must survive the refresh settling.
+    useCodingAgentProjectWorkspace.getState().selectTask("task_docs");
+
+    resolveReload(refreshed);
+    await pendingRefresh;
+
+    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
+      status: "ready",
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_docs",
+      selectedThreadId: null,
+    });
+  });
+
   it("E2E-006 reconciles an externally focused thread across project workspaces", async () => {
     const workspaces: Record<string, ProjectAgentWorkspace> = {
       "matrix-os": workspace("matrix-os", "task_auth", "thread_plan"),

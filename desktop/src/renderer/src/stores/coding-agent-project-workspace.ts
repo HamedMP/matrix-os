@@ -113,6 +113,10 @@ async function loadProjectWorkspace(
     preserveSelectionOnError?: boolean;
     preserveMissingPreferredThread?: boolean;
     preserveMissingPreferredProject?: boolean;
+    // Stale-while-revalidate refreshes keep the board interactive, so the
+    // selection captured at call time can be outdated by the time the load
+    // settles; re-read the live selection instead of applying the stale one.
+    preferLatestSelection?: boolean;
   } = {},
 ): Promise<void> {
   const preserveSelectionOnError = options.preserveSelectionOnError ?? true;
@@ -143,8 +147,11 @@ async function loadProjectWorkspace(
       projectId: selectedProjectId,
     });
     if (generation !== hydrationGeneration) return;
+    const effectivePreferred = options.preferLatestSelection
+      ? currentSelection(useCodingAgentProjectWorkspace.getState())
+      : preferred;
     const selection = reconcileProjectWorkspaceSelection(workspace, {
-      ...preferred,
+      ...effectivePreferred,
       selectedProjectId,
     }, options.preserveMissingPreferredThread ?? false);
     useCodingAgentProjectWorkspace.setState({
@@ -161,13 +168,14 @@ async function loadProjectWorkspace(
     // failed refresh degrades to stale-with-error instead of an empty board.
     // Callers that change project/scope null the workspace before loading, so
     // this only retains data for same-project refreshes.
-    const currentWorkspace = useCodingAgentProjectWorkspace.getState().workspace;
+    const currentState = useCodingAgentProjectWorkspace.getState();
+    const failedPreferred = options.preferLatestSelection ? currentSelection(currentState) : preferred;
     useCodingAgentProjectWorkspace.setState({
       status: "error",
-      workspace: currentWorkspace?.project.id === selectedProjectId ? currentWorkspace : null,
+      workspace: currentState.workspace?.project.id === selectedProjectId ? currentState.workspace : null,
       selectedProjectId,
-      selectedTaskId: preserveSelectionOnError ? preferred.selectedTaskId : null,
-      selectedThreadId: preserveSelectionOnError ? preferred.selectedThreadId : null,
+      selectedTaskId: preserveSelectionOnError ? failedPreferred.selectedTaskId : null,
+      selectedThreadId: preserveSelectionOnError ? failedPreferred.selectedThreadId : null,
       error: "Project workspace unavailable",
     });
   }
@@ -233,6 +241,7 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
           preserveMissingPreferredProject: Boolean(
             state.selectedProjectId && state.summary.projects.hasMore,
           ),
+          preferLatestSelection: true,
         },
       );
     },
