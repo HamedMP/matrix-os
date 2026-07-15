@@ -20,6 +20,7 @@ import IntegrationsSection from "./sections/IntegrationsSection";
 import CronSection from "./sections/CronSection";
 import SystemSection from "./sections/SystemSection";
 import { invoke } from "../../lib/operator";
+import { useUi } from "../../stores/ui";
 
 type SectionId =
   | "account"
@@ -54,8 +55,21 @@ function applyDocumentTheme(next: "dark" | "light" | "system") {
   document.documentElement.setAttribute("data-theme", resolved);
 }
 
+function isSectionId(value: string): value is SectionId {
+  return SECTIONS.some((candidate) => candidate.id === value);
+}
+
 export default function SettingsView() {
   const [section, setSection] = useState<SectionId>("account");
+  const requestedSection = useUi((s) => s.requestedSettingsSection);
+
+  // Deep links (for example the provider recovery CTA) request a section
+  // before opening or focusing the Settings tab; consume it once.
+  useEffect(() => {
+    if (!requestedSection) return;
+    if (isSectionId(requestedSection)) setSection(requestedSection);
+    useUi.getState().clearRequestedSettingsSection();
+  }, [requestedSection]);
 
   useEffect(() => {
     void invoke("state:get", { key: "appearance" })

@@ -3,6 +3,23 @@ import type {
   ProjectAgentWorkspace,
   RuntimeSummary,
 } from "@matrix-os/contracts";
+
+export function resolveNewChatRelation(
+  workspace: ProjectAgentWorkspace | null,
+  projectId: string,
+  taskId?: string,
+): { projectId: string; taskId?: string } | null {
+  if (!workspace || workspace.project.id !== projectId) return null;
+  if (!taskId) return { projectId: workspace.project.id };
+  const taskInPage = workspace.tasks.items.some((task) => task.id === taskId);
+  // A selected chat can belong to a paged task outside the bounded tasks page;
+  // taskThreads.items backs both grouped and unlisted task conversations.
+  const taskCarriedByThread = workspace.taskThreads.items.some(
+    (thread) => thread.taskId === taskId,
+  );
+  if (!taskInPage && !taskCarriedByThread) return null;
+  return { projectId: workspace.project.id, taskId };
+}
 import type {
   CodingAgentWorkspaceResumeState,
   CodingAgentWorkspaceViewMode,

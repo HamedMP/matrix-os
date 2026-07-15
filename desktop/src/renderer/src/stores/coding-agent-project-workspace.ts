@@ -7,6 +7,7 @@ import {
 } from "../../../shared/coding-agent-project-workspace";
 import {
   reconcileProjectWorkspaceSelection,
+  resolveNewChatRelation,
   resolveSelectedProjectId,
   type ProjectWorkspaceSelection,
 } from "../features/coding-agents/project-workspace-model";
@@ -23,6 +24,15 @@ interface CodingAgentProjectWorkspaceState extends ProjectWorkspaceSelection {
   error: string | null;
   hydrate: (summary: RuntimeSummary, runtimeScope?: string) => Promise<void>;
   refresh: () => Promise<void>;
+  openCreatedProject: (
+    summary: RuntimeSummary,
+    projectId: string,
+    runtimeScope?: string,
+  ) => Promise<void>;
+  resolveNewChatTarget: (
+    projectId: string,
+    taskId?: string,
+  ) => Promise<{ projectId: string; taskId?: string } | null>;
   selectProject: (projectId: string) => Promise<void>;
   selectTask: (taskId: string) => void;
   selectThread: (threadId: string) => void;
@@ -217,6 +227,60 @@ export const useCodingAgentProjectWorkspace = create<CodingAgentProjectWorkspace
           ),
         },
       );
+    },
+
+    openCreatedProject: async (summary, projectId, runtimeScope = summary.runtime.id) => {
+      const generation = ++hydrationGeneration;
+      const state = useCodingAgentProjectWorkspace.getState();
+      const preferred = {
+        selectedProjectId: projectId,
+        selectedTaskId: null,
+        selectedThreadId: null,
+        viewMode: state.viewMode,
+      } satisfies ProjectWorkspaceSelection;
+      set({
+        status: "loading",
+        runtimeId: summary.runtime.id,
+        runtimeScope,
+        summary,
+        workspace: null,
+        error: null,
+        ...preferred,
+      });
+      await loadProjectWorkspace(summary, preferred, generation, {
+        preserveSelectionOnError: true,
+        preserveMissingPreferredProject: true,
+      });
+    },
+
+    resolveNewChatTarget: async (
+      projectId,
+      taskId,
+    ): Promise<{ projectId: string; taskId?: string } | null> => {
+      const attempt = (): { projectId: string; taskId?: string } | null => {
+        const state = useCodingAgentProjectWorkspace.getState();
+        const relation = resolveNewChatRelation(state.workspace, projectId, taskId);
+        if (relation) return relation;
+        // Selection reconciliation can preserve a task outside the bounded
+        // tasks/taskThreads pages (an externally focused conversation). That
+        // selection was already validated against the runtime, so a new chat
+        // for it must resolve even though no page lists the task.
+        if (
+          taskId
+          && state.workspace?.project.id === projectId
+          && state.selectedTaskId === taskId
+          && state.selectedThreadId
+        ) {
+          return { projectId, taskId };
+        }
+        return null;
+      };
+      const immediate = attempt();
+      if (immediate) return immediate;
+      // The snapshot may not be loaded yet or its task page may be stale; refresh
+      // once and retry, but never loop.
+      await useCodingAgentProjectWorkspace.getState().refresh();
+      return attempt();
     },
 
     selectProject: async (projectId) => {

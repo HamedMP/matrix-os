@@ -526,6 +526,216 @@ describe("coding-agent project workspace store", () => {
     });
   });
 
+  it("resolves a new chat target for a preserved out-of-page task selection", async () => {
+    const invoke = vi.fn(async () => {
+      throw new Error("workspace refresh should not be requested");
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+    // An externally focused conversation can select a task outside the bounded
+    // tasks and taskThreads pages; selection reconciliation preserved it, so a
+    // new chat for that selection must still resolve.
+    useCodingAgentProjectWorkspace.setState({
+      status: "ready",
+      runtimeId: "rt_primary",
+      runtimeScope: "rt_primary",
+      summary: summary("rt_primary", "matrix-os", "Matrix OS"),
+      workspace: workspace("matrix-os", "task_auth", "thread_plan"),
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_external",
+      selectedThreadId: "thread_external",
+    });
+
+    const relation = await useCodingAgentProjectWorkspace.getState().resolveNewChatTarget(
+      "matrix-os",
+      "task_external",
+    );
+
+    expect(relation).toEqual({ projectId: "matrix-os", taskId: "task_external" });
+    expect(invoke).not.toHaveBeenCalledWith("runtime:get-project-workspace", expect.anything());
+  });
+
+  it("resolves a new chat target immediately when the current workspace already lists it", async () => {
+    const invoke = vi.fn(async () => {
+      throw new Error("workspace refresh should not be requested");
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+    useCodingAgentProjectWorkspace.setState({
+      status: "ready",
+      runtimeId: "rt_primary",
+      runtimeScope: "rt_primary",
+      summary: summary("rt_primary", "matrix-os", "Matrix OS"),
+      workspace: workspace("matrix-os", "task_auth", "thread_plan"),
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_auth",
+      selectedThreadId: "thread_plan",
+    });
+
+    const relation = await useCodingAgentProjectWorkspace.getState().resolveNewChatTarget(
+      "matrix-os",
+      "task_auth",
+    );
+
+    expect(relation).toEqual({ projectId: "matrix-os", taskId: "task_auth" });
+    expect(invoke).not.toHaveBeenCalledWith("runtime:get-project-workspace", expect.anything());
+  });
+
+  it("refreshes the workspace once and resolves a stale new chat target", async () => {
+    const staleWorkspace = workspace("matrix-os", "task_auth", "thread_plan");
+    const refreshedWorkspace = workspace("matrix-os", "task_auth", "thread_plan");
+    refreshedWorkspace.tasks.items.push({
+      ...refreshedWorkspace.tasks.items[0]!,
+      id: "task_paged",
+      title: "Paged task",
+    });
+    let workspaceRequests = 0;
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "state:get") return { value: null };
+      if (channel === "state:set") return { ok: true };
+      if (channel === "runtime:get-project-workspace") {
+        workspaceRequests += 1;
+        return refreshedWorkspace;
+      }
+      throw new Error(`unexpected channel ${channel}`);
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+    useCodingAgentProjectWorkspace.setState({
+      status: "ready",
+      runtimeId: "rt_primary",
+      runtimeScope: "rt_primary",
+      summary: summary("rt_primary", "matrix-os", "Matrix OS"),
+      workspace: staleWorkspace,
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_paged",
+      selectedThreadId: null,
+    });
+
+    const relation = await useCodingAgentProjectWorkspace.getState().resolveNewChatTarget(
+      "matrix-os",
+      "task_paged",
+    );
+
+    expect(workspaceRequests).toBe(1);
+    expect(relation).toEqual({ projectId: "matrix-os", taskId: "task_paged" });
+  });
+
+  it("returns null after a single bounded refresh when the target stays unresolved", async () => {
+    const projectWorkspace = workspace("matrix-os", "task_auth", "thread_plan");
+    let workspaceRequests = 0;
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "state:get") return { value: null };
+      if (channel === "state:set") return { ok: true };
+      if (channel === "runtime:get-project-workspace") {
+        workspaceRequests += 1;
+        return projectWorkspace;
+      }
+      throw new Error(`unexpected channel ${channel}`);
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+    useCodingAgentProjectWorkspace.setState({
+      status: "ready",
+      runtimeId: "rt_primary",
+      runtimeScope: "rt_primary",
+      summary: summary("rt_primary", "matrix-os", "Matrix OS"),
+      workspace: projectWorkspace,
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_missing",
+      selectedThreadId: null,
+    });
+
+    const relation = await useCodingAgentProjectWorkspace.getState().resolveNewChatTarget(
+      "matrix-os",
+      "task_missing",
+    );
+
+    expect(relation).toBeNull();
+    expect(workspaceRequests).toBe(1);
+  });
+
+  it("opens a freshly created project and lands the navigator on it", async () => {
+    const createdSummary = summary("rt_primary", "matrix-os", "Matrix OS");
+    createdSummary.projects.items.push({
+      id: "desktop",
+      label: "Desktop",
+      status: "available",
+      taskCount: 0,
+      threadCount: 0,
+      attentionCount: 0,
+    });
+    const desktopWorkspace = workspace("desktop", "task_start", "thread_start");
+    const invoke = vi.fn(async (channel: string, payload: unknown) => {
+      if (channel === "state:get") return { value: null };
+      if (channel === "state:set") return { ok: true };
+      if (channel === "runtime:get-project-workspace") {
+        expect(payload).toEqual({ projectId: "desktop" });
+        return desktopWorkspace;
+      }
+      throw new Error(`unexpected channel ${channel}`);
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+
+    await useCodingAgentProjectWorkspace.getState().openCreatedProject(
+      createdSummary,
+      "desktop",
+      "operator|https://app.matrix-os.com|primary",
+    );
+
+    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
+      status: "ready",
+      runtimeScope: "operator|https://app.matrix-os.com|primary",
+      selectedProjectId: "desktop",
+    });
+    expect(useCodingAgentProjectWorkspace.getState().workspace?.project.id).toBe("desktop");
+  });
+
+  it("surfaces a workspace error state when opening a created project fails to load", async () => {
+    const createdSummary = summary("rt_primary", "matrix-os", "Matrix OS");
+    createdSummary.projects.items.push({
+      id: "desktop",
+      label: "Desktop",
+      status: "available",
+      taskCount: 0,
+      threadCount: 0,
+      attentionCount: 0,
+    });
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === "state:get") return { value: null };
+      if (channel === "state:set") return { ok: true };
+      if (channel === "runtime:get-project-workspace") throw new Error("temporary outage");
+      throw new Error(`unexpected channel ${channel}`);
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+
+    await useCodingAgentProjectWorkspace.getState().openCreatedProject(
+      createdSummary,
+      "desktop",
+      "operator|https://app.matrix-os.com|primary",
+    );
+
+    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject({
+      status: "error",
+      selectedProjectId: "desktop",
+      error: "Project workspace unavailable",
+    });
+  });
+
   it("DT-008 switches view mode without changing project, task, or chat identity", () => {
     const invoke = vi.fn().mockResolvedValue({ ok: true });
     Object.defineProperty(window, "operator", {
