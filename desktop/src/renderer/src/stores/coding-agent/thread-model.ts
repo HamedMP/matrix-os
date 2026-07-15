@@ -66,6 +66,10 @@ export function summaryIncludesThread(summary: RuntimeSummary, threadId: string)
     || summary.attentionThreads.items.some((thread) => thread.id === threadId);
 }
 
+// Known limitation (#998): this updates threads already present in
+// attentionThreads but cannot PROMOTE a thread into the list when a live
+// event raises its attention from "none"; the next full summary refresh
+// reconciles. Behavior moved verbatim from the pre-split store.
 export function reconcileSummaryThread(
   summary: RuntimeSummary,
   thread: RuntimeSummary["activeThreads"]["items"][number],

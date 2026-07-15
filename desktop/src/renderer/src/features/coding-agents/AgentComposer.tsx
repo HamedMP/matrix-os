@@ -8,7 +8,7 @@ import {
 import { Button } from "../../design/primitives";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { AgentWorkspaceSection as Section } from "./AgentWorkspaceSection";
-import { capabilityEnabled } from "./AgentWorkspacePanels";
+import { capabilityEnabled } from "./capabilities";
 
 export type ComposerSeed = {
   seedId: number;

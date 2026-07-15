@@ -21,10 +21,6 @@ const STATUS_COLOR: Record<string, string> = {
 const DEFAULT_STATUS_COLOR = "var(--text-tertiary)";
 type NotificationPreferenceKey = "approval" | "input" | "failed" | "completed";
 
-export function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
-  return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
-}
-
 export function InspectorEmptyState({ message }: { message: string }) {
   return (
     <p

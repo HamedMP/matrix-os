@@ -10,12 +10,8 @@ import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
 import { AgentProjectNavigator } from "./AgentProjectNavigator";
 import { useTabs } from "../../stores/tabs";
+import { capabilityEnabled } from "./capabilities";
 
-function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
-  return summary.capabilities.some(
-    (capability) => capability.id === id && capability.enabled,
-  );
-}
 
 export function AgentProjectWorkspaceShell({
   summary,

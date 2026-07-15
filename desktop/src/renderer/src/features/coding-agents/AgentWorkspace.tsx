@@ -20,11 +20,11 @@ import { toast } from "sonner";
 import { AgentComposer, type ComposerSeed } from "./AgentComposer";
 import {
   AttentionThreadList,
-  capabilityEnabled,
   InspectorEmptyState,
   NotificationPreferencesPanel,
   ProviderList,
 } from "./AgentWorkspacePanels";
+import { capabilityEnabled } from "./capabilities";
 import { CreatedThreadHandleList, ThreadList } from "./AgentThreadLists";
 import { ReviewList, reviewHunkFollowUpDraft } from "./AgentReviewPanel";
 
