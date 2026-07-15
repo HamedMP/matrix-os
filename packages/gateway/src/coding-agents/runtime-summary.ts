@@ -79,6 +79,8 @@ export interface CodingAgentRuntimeSummaryOptions {
   projects?: CodingAgentProjectSummaryStore;
   capabilities?: {
     projectWorkspace?: boolean;
+    conversationView?: boolean;
+    kanbanView?: boolean;
     workspace?: boolean;
     sameThreadTurns?: boolean;
     approvals?: boolean;
@@ -381,6 +383,11 @@ export function createCodingAgentRuntimeSummaryService(
       const sourceControlEnabled = options.capabilities?.sourceControl === true;
       const terminalEnabled = Boolean(options.terminalRegistry) &&
         canReadTerminalSessions(principal, options.terminalOwnerId);
+      const projectWorkspaceConfigured = options.capabilities?.projectWorkspace === true;
+      const projectWorkspaceEnabled = projectWorkspaceConfigured && projectRead.available;
+      const projectWorkspaceReason = !projectRead.available
+        ? "Project workspace is temporarily unavailable"
+        : undefined;
 
       return RuntimeSummarySchema.parse({
         runtime: {
@@ -405,14 +412,26 @@ export function createCodingAgentRuntimeSummaryService(
           capability({ id: "codingAgentsFiles", enabled: filesEnabled }),
           capability({ id: "codingAgentsSourceControl", enabled: sourceControlEnabled }),
           capability({ id: "codingAgentsNativeMobileTerminal", enabled: terminalEnabled }),
-          ...(options.capabilities?.projectWorkspace === true
-            ? [capability({
-              id: "codingAgentsProjectWorkspace",
-              enabled: projectRead.available,
-              reason: !projectRead.available
-                ? "Project workspace is temporarily unavailable"
-                : undefined,
-            })]
+          ...(projectWorkspaceConfigured
+            ? [
+                capability({
+                  id: "codingAgentsProjectWorkspace",
+                  enabled: projectWorkspaceEnabled,
+                  reason: projectWorkspaceReason,
+                }),
+                capability({
+                  id: "codingAgentsConversationView",
+                  enabled: projectWorkspaceEnabled
+                    && options.capabilities?.conversationView === true,
+                  reason: projectWorkspaceReason,
+                }),
+                capability({
+                  id: "codingAgentsKanbanView",
+                  enabled: projectWorkspaceEnabled
+                    && options.capabilities?.kanbanView === true,
+                  reason: projectWorkspaceReason,
+                }),
+              ]
             : []),
         ],
         providers,

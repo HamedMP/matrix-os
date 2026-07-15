@@ -1,6 +1,6 @@
 # Tasks: Coding Agent Shells
 
-**Status**: Backend Phases 18-20 and desktop Phase 21.1-21.2 implemented; Phase 21.3-21.5 shell implementation next; real-process Gate 3 smoke pending
+**Status**: Backend Phases 18-20 and desktop Phase 21 implemented; mobile Phase 22, cross-shell Phase 23, and real-process Gate 3 smoke remain pending
 **Lineage**: foundation merged through the recorded implementation checkpoint; clarified follow-up is specified against current `main`
 **Rule**: Preserve all existing desktop and mobile functionality. Add coding-agent capabilities incrementally behind contracts, tests, and feature flags.
 
@@ -1201,21 +1201,28 @@ Evidence: strict turn IPC/client/handler tests, server-authoritative
 `user.message` replay coverage, retry/idempotency and selection-race store tests,
 durable chat-bubble/component tests, workspace-provider auto-provisioning tests,
 the full focused desktop workspace regression, and desktop typecheck are recorded
-in `acceptance-tests.md`. Kanban remains open in 21.3.
+in `acceptance-tests.md`. Kanban evidence is recorded separately in 21.3.
 
 ### 21.3 Kanban View
 
-- [ ] Add segmented Conversation/Kanban control.
-- [ ] Reuse canonical task columns/order/mutations.
-- [ ] Show bounded thread count, active count, and attention count on task cards.
-- [ ] Open all task threads from a card and preserve selected identity when switching modes.
-- [ ] Never auto-move task status from thread reducer/effects.
+- [x] Add segmented Conversation/Kanban control.
+- [x] Reuse canonical task columns/order/mutations.
+- [x] Show bounded thread count, active count, and attention count on task cards.
+- [x] Open all task threads from a card and preserve selected identity when switching modes.
+- [x] Never auto-move task status from thread reducer/effects.
 
 Tests: `DT-008`, `DT-009`, `DT-010`, `DT-011`.
 
+Evidence: focused Kanban component, project-workspace store, integrated desktop
+workspace, and canonical board-store coverage prove the five visible task
+columns, hidden archived tasks, bounded thread aggregates, explicit task PATCH
+path, multi-chat selection, cross-view identity continuity, and the absence of
+thread-driven task movement. Surface validation is recorded in
+`acceptance-tests.md`.
+
 Gate:
 
-- [ ] Desktop typecheck, focused Vitest, operator E2E, Canvas/Desktop regression, pattern scan, and screenshot checks pass.
+- [x] Desktop typecheck, focused Vitest, operator E2E, Canvas/Desktop regression, pattern scan, and screenshot checks pass.
 
 ## Phase 22 - Mobile Project Conversation And Kanban
 

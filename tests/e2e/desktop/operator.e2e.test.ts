@@ -98,6 +98,25 @@ suite("operator desktop e2e", () => {
     await page.getByRole("button", { name: "Chat Investigate auth callback" }).waitFor();
     await page.getByRole("button", { name: "Chat Verify token refresh" }).waitFor();
     await page.screenshot({ path: join(SCREENSHOT_DIR, "04-agents-project-navigator.png") });
+
+    await page.getByRole("button", { name: "Kanban" }).click();
+    await page.getByRole("region", { name: "Matrix OS Kanban" }).waitFor();
+    await page.getByRole("button", { name: "Open chat Investigate auth callback" }).waitFor();
+    await page.getByRole("button", { name: "Open chat Verify token refresh" }).waitFor();
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "04b-agents-kanban.png") });
+
+    await page.setViewportSize({ width: 820, height: 720 });
+    await page.getByRole("region", { name: "Matrix OS Kanban" }).waitFor();
+    await page.getByRole("button", { name: "Open chat Investigate auth callback" }).waitFor();
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "04c-agents-kanban-narrow.png") });
+    await page.setViewportSize({ width: 1280, height: 720 });
+
+    await page.getByLabel("Move Fix the failing auth tests").selectOption("blocked");
+    await expect.poll(() => gateway.state.taskUpdates.length).toBe(1);
+    expect(gateway.state.taskUpdates[0]).toMatchObject({ taskId: "task_auth", status: "blocked" });
+
+    await page.getByRole("button", { name: "Conversation" }).click();
+    await page.getByRole("region", { name: "Conversation Fix the failing auth tests" }).waitFor();
   }, 30_000);
 
   it("starts an agent thread from the Agents workspace composer", async () => {

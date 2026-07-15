@@ -9,6 +9,8 @@ import AgentWorkspace, {
 } from "../../desktop/src/renderer/src/features/coding-agents/AgentWorkspace";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useCodingAgentProjectWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-project-workspace";
+import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
+import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
@@ -664,6 +666,7 @@ function multiInputAnsweredThreadSnapshotFixture(inputRequestId: string, correla
 
 describe("AgentWorkspace", () => {
   beforeEach(() => {
+    useBoard.setState(useBoard.getInitialState(), true);
     useCodingAgentProjectWorkspace.setState({
       status: "idle",
       runtimeId: null,
@@ -884,6 +887,7 @@ describe("AgentWorkspace", () => {
         ...baseSummary.capabilities,
         { id: "codingAgentsProjectWorkspace", enabled: true },
         { id: "codingAgentsConversationView", enabled: true },
+        { id: "codingAgentsKanbanView", enabled: true },
       ],
       projects: {
         items: [
@@ -955,6 +959,38 @@ describe("AgentWorkspace", () => {
       resolveManualSummary = resolve;
     });
     let summaryRequestCount = 0;
+    const taskWire = {
+      id: "task_auth",
+      projectSlug: "matrix-os",
+      title: "Harden authentication",
+      description: "",
+      status: "running",
+      priority: "high",
+      order: 0,
+      parentTaskId: null,
+      linkedSessionId: null,
+      linkedWorktreeId: null,
+      previewIds: [],
+      tags: [],
+      updatedAt: "2026-07-10T12:00:00.000Z",
+      revision: 1,
+    };
+    const taskGet = vi.fn().mockResolvedValue({ tasks: [taskWire], nextCursor: null });
+    const taskPatch = vi.fn().mockResolvedValue({
+      task: { ...taskWire, status: "blocked", revision: 2 },
+    });
+    useConnection.setState({
+      api: {
+        baseUrl: "https://platform.test",
+        get: taskGet,
+        getText: vi.fn(),
+        post: vi.fn(),
+        patch: taskPatch,
+        put: vi.fn(),
+        delete: vi.fn(),
+        putText: vi.fn(),
+      } as unknown as ApiClient,
+    });
     window.operator.invoke = vi.fn((channel: string, payload?: unknown) => {
       if (channel === "runtime:get-summary") {
         summaryRequestCount += 1;
@@ -998,6 +1034,27 @@ describe("AgentWorkspace", () => {
       { name: "Chat Audit architecture" },
     )).toBeTruthy();
 
+    const identityBeforeKanban = {
+      selectedProjectId: useCodingAgentProjectWorkspace.getState().selectedProjectId,
+      selectedTaskId: useCodingAgentProjectWorkspace.getState().selectedTaskId,
+      selectedThreadId: useCodingAgentProjectWorkspace.getState().selectedThreadId,
+    };
+    fireEvent.click(screen.getByRole("button", { name: "Kanban" }));
+    expect(await screen.findByRole("region", { name: "Matrix OS Kanban" })).toBeTruthy();
+    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject(identityBeforeKanban);
+    await waitFor(() => expect(taskGet).toHaveBeenCalledWith(
+      "/api/projects/matrix-os/tasks?limit=100",
+    ));
+    const move = screen.getByLabelText("Move Harden authentication") as HTMLSelectElement;
+    await waitFor(() => expect(move.disabled).toBe(false));
+    fireEvent.change(move, { target: { value: "blocked" } });
+    await waitFor(() => expect(taskPatch).toHaveBeenCalledWith(
+      "/api/projects/matrix-os/tasks/task_auth",
+      { status: "blocked", order: 0 },
+    ));
+    fireEvent.click(screen.getByRole("button", { name: "Conversation" }));
+    expect(useCodingAgentProjectWorkspace.getState()).toMatchObject(identityBeforeKanban);
+
     await act(async () => {
       await useCodingAgentWorkspace.getState().refresh();
     });
@@ -1009,7 +1066,7 @@ describe("AgentWorkspace", () => {
     });
     expect(vi.mocked(window.operator.invoke).mock.calls.filter(
       ([channel]) => channel === "runtime:get-project-workspace",
-    )).toHaveLength(1);
+    )).toHaveLength(2);
 
     fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
     await waitFor(() => {
@@ -1020,14 +1077,14 @@ describe("AgentWorkspace", () => {
     });
     expect(vi.mocked(window.operator.invoke).mock.calls.filter(
       ([channel]) => channel === "runtime:get-project-workspace",
-    )).toHaveLength(1);
+    )).toHaveLength(2);
 
     resolveManualSummary(summary);
     await waitFor(() => {
       const workspaceRequests = vi.mocked(window.operator.invoke).mock.calls.filter(
         ([channel]) => channel === "runtime:get-project-workspace",
       );
-      expect(workspaceRequests).toHaveLength(2);
+      expect(workspaceRequests).toHaveLength(3);
     });
     await waitFor(() => {
       expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_audit");

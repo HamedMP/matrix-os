@@ -23,6 +23,7 @@ export interface StubGateway {
     terminalInputs: string[];
     kernelMessages: Array<Record<string, unknown>>;
     codingAgentCreates: Array<Record<string, unknown>>;
+    taskUpdates: Array<Record<string, unknown>>;
   };
 }
 
@@ -54,7 +55,7 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
 
 const TASKS = [
   {
-    id: "task-1",
+    id: "task_auth",
     projectSlug: "matrix-os",
     title: "Fix the failing auth tests",
     description: "",
@@ -70,7 +71,7 @@ const TASKS = [
     revision: 1,
   },
   {
-    id: "task-2",
+    id: "task_polish",
     projectSlug: "matrix-os",
     title: "Polish the board design",
     description: "",
@@ -120,7 +121,9 @@ function codingAgentTaskThread(
   };
 }
 
-export function codingAgentProjectWorkspace(): ProjectAgentWorkspace {
+export function codingAgentProjectWorkspace(tasks = TASKS): ProjectAgentWorkspace {
+  const authTask = tasks.find((task) => task.id === "task_auth") ?? TASKS[0];
+  const polishTask = tasks.find((task) => task.id === "task_polish") ?? TASKS[1];
   return ProjectAgentWorkspaceSchema.parse({
     project: {
       id: "matrix-os",
@@ -137,26 +140,26 @@ export function codingAgentProjectWorkspace(): ProjectAgentWorkspace {
           id: "task_auth",
           projectId: "matrix-os",
           title: "Fix the failing auth tests",
-          status: "todo",
+          status: authTask.status,
           priority: "high",
           order: 0,
           threadCount: 2,
           activeThreadCount: 1,
           attentionCount: 0,
           latestThreadAt: NOW,
-          revision: 1,
+          revision: authTask.revision,
         },
         {
           id: "task_polish",
           projectId: "matrix-os",
           title: "Polish the board design",
-          status: "running",
+          status: polishTask.status,
           priority: "normal",
           order: 1,
           threadCount: 0,
           activeThreadCount: 0,
           attentionCount: 0,
-          revision: 1,
+          revision: polishTask.revision,
         },
       ],
       hasMore: false,
@@ -260,6 +263,9 @@ export function codingAgentSummary(): RuntimeSummary {
       { id: "codingAgentsRuntimeSummary", enabled: true },
       { id: "codingAgentsDesktopWorkspace", enabled: true },
       { id: "codingAgentsProjectWorkspace", enabled: true },
+      { id: "codingAgentsConversationView", enabled: true },
+      { id: "codingAgentsKanbanView", enabled: true },
+      { id: "codingAgentsSameThreadTurns", enabled: true },
       { id: "codingAgentsThreadCreate", enabled: true },
       { id: "codingAgentsNativeMobileTerminal", enabled: true },
     ],
@@ -336,12 +342,14 @@ export function codingAgentSummary(): RuntimeSummary {
 }
 
 export async function startStubGateway(): Promise<StubGateway> {
+  const tasks = TASKS.map((task) => ({ ...task, tags: [...task.tags] }));
   const state: StubGateway["state"] = {
     deviceCodeRequests: 0,
     tokenRequests: 0,
     terminalInputs: [],
     kernelMessages: [],
     codingAgentCreates: [],
+    taskUpdates: [],
   };
 
   const server: Server = createServer((req, res) => {
@@ -419,21 +427,29 @@ export async function startStubGateway(): Promise<StubGateway> {
       return;
     }
     if (path === "/api/projects/matrix-os/tasks" && req.method === "GET") {
-      json(res, 200, { tasks: TASKS, nextCursor: null });
+      json(res, 200, { tasks, nextCursor: null });
       return;
     }
     if (path.startsWith("/api/projects/matrix-os/tasks/") && req.method === "PATCH") {
       const id = path.split("/").pop();
       const body = await readBody(req);
-      const task = TASKS.find((t) => t.id === id);
-      json(res, 200, { task: { ...(task ?? TASKS[0]), ...body } });
+      const task = tasks.find((candidate) => candidate.id === id);
+      if (!task) {
+        json(res, 404, { error: "not found" });
+        return;
+      }
+      const status = typeof body.status === "string" ? body.status : task.status;
+      const order = typeof body.order === "number" ? body.order : task.order;
+      Object.assign(task, { status, order, revision: task.revision + 1 });
+      state.taskUpdates.push({ taskId: task.id, ...body });
+      json(res, 200, { task });
       return;
     }
     if (path === "/api/projects/matrix-os/tasks" && req.method === "POST") {
       const body = await readBody(req);
       json(res, 201, {
         task: {
-          ...TASKS[0],
+          ...tasks[0],
           id: `task-${Date.now()}`,
           title: typeof body.title === "string" ? body.title : "New task",
           status: typeof body.status === "string" ? body.status : "todo",
@@ -462,7 +478,7 @@ export async function startStubGateway(): Promise<StubGateway> {
       req.method === "GET"
       && path === "/api/coding-agents/projects/matrix-os/workspace"
     ) {
-      json(res, 200, codingAgentProjectWorkspace());
+      json(res, 200, codingAgentProjectWorkspace(tasks));
       return;
     }
     if (req.method === "GET" && path === "/api/coding-agents/notification-preferences") {

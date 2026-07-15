@@ -42,6 +42,15 @@ conversation. Matrix records accepted user messages on the gateway, so a
 refresh or another desktop session replays the same conversation instead of
 reconstructing it from local UI state.
 
+Switch the selected project between **Conversation** and **Kanban** without
+changing the selected task or chat. Kanban uses the same Matrix task records as
+the rest of the desktop app: Todo, Running, Waiting, Blocked, and Complete.
+Archived tasks stay out of the normal board. Each card shows bounded chat,
+active-run, and attention counts and lists every attached chat in the current
+project projection. Opening one of those chats returns to its exact
+conversation. Moving a task updates its canonical task status; agent thread
+status never moves a card automatically.
+
 ## Supported agents
 
 Four coding agents are supported:

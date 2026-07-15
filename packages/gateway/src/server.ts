@@ -624,6 +624,8 @@ export async function createGateway(config: GatewayConfig) {
     previews: codingAgentPreviewSummaryStore,
     capabilities: {
       projectWorkspace: true,
+      conversationView: true,
+      kanbanView: true,
       workspace: codingAgentWorkspaceEnabled,
       sameThreadTurns: codingAgentTurnsEnabled,
       approvals: false,
