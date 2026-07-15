@@ -247,4 +247,22 @@ suite("operator desktop e2e", () => {
     await page.waitForFunction(() => document.documentElement.getAttribute("data-theme-id") === "operator");
     await page.screenshot({ path: join(SCREENSHOT_DIR, "16-theme-operator-default.png") });
   }, 40_000);
+
+  it("lists coding-agent threads in the unified chat rail and routes selection to Agents", async () => {
+    // The earlier computer switch cleared the workspace summary; opening the
+    // Agents workspace refreshes it before the rail is inspected.
+    await page.locator("aside button", { hasText: "Agents" }).first().click();
+    await page.getByRole("button", { name: "New chat in Matrix OS" }).waitFor({ timeout: 10_000 });
+    await page.locator("aside button", { hasText: "Chat" }).first().click();
+    // The rail lists the server-backed run alongside Hermes under "Agent runs".
+    await page.getByText("Agent runs").waitFor({ timeout: 10_000 });
+    const railItem = page.getByRole("button", { name: "fix the failing auth tests" }).first();
+    await railItem.waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "17-chat-unified-rail.png") });
+
+    // Selecting a coding-agent thread routes to its canonical workspace surface.
+    await railItem.click();
+    await page.getByRole("button", { name: "New chat in Matrix OS" }).waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "18-chat-rail-routes-to-agents.png") });
+  }, 30_000);
 });

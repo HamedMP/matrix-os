@@ -1,24 +1,24 @@
 import { GitBranch, Laptop, MessageSquarePlus, Sparkles, SquareTerminal } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { StatusDot } from "../../design/primitives";
 import { groupMessages } from "../../lib/chat";
+import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { useBoard } from "../../stores/board";
+import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
-import { useThreads, type ThreadStatus } from "../../stores/threads";
+import { AGENTS_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
+import { useThreads } from "../../stores/threads";
+import {
+  listUnifiedThreads,
+  UNIFIED_THREAD_STATUS_META,
+  type UnifiedThreadItem,
+} from "../../stores/unified-threads";
 import ThreadView from "../threads/ThreadView";
 import { Conversation, ConversationContent } from "./elements/conversation";
 import { Message, MessageContent, MessageResponse } from "./elements/message";
 import { PromptInput } from "./elements/prompt-input";
 import { Reasoning } from "./elements/reasoning";
 import { Tool } from "./elements/tool";
-
-const STATUS_COLOR: Record<ThreadStatus, string> = {
-  running: "var(--status-running)",
-  "needs-attention": "var(--status-attention)",
-  done: "var(--status-complete)",
-  failed: "var(--status-failed)",
-  aborted: "var(--status-todo)",
-};
 
 function Pill({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
@@ -139,12 +139,29 @@ function HermesPane() {
 }
 
 // Unified chat: a Codex-style rail listing Hermes + every agent thread on the
-// left, the selected conversation on the right. (The old standalone "Agents"
-// tab folds in here.)
+// left, the selected conversation on the right. Kernel runs open in-pane;
+// coding-agent threads route to their canonical Agents workspace surface.
 export default function ChatTab() {
   const threads = useThreads((s) => s.threads);
   const activeThreadId = useThreads((s) => s.activeThreadId);
   const setActiveThread = useThreads((s) => s.setActiveThread);
+  const summary = useCodingAgentWorkspace((s) => s.summary);
+  const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
+  const openTab = useTabs((s) => s.openTab);
+
+  const railThreads = useMemo(
+    () => listUnifiedThreads(threads, CODING_AGENTS_DESKTOP_WORKSPACE ? summary : null),
+    [threads, summary],
+  );
+
+  const selectRailThread = (item: UnifiedThreadItem) => {
+    if (item.source === "kernel") {
+      setActiveThread(item.id);
+      return;
+    }
+    void loadThreadSnapshot(item.id);
+    openTab(AGENTS_WORKSPACE_TAB_SPEC);
+  };
 
   // activeThreadId is the single source of truth: null → Hermes, otherwise the
   // selected agent run (the composer and sidebar Chat both drive it).
@@ -190,19 +207,19 @@ export default function ChatTab() {
             <Sparkles size={14} style={{ color: showHermes ? "var(--accent)" : "var(--text-tertiary)" }} />,
             "Hermes",
           )}
-          {threads.length > 0 ? (
+          {railThreads.length > 0 ? (
             <span className="px-2.5 pt-2 pb-0.5 text-xs font-semibold tracking-wide uppercase" style={{ color: "var(--text-tertiary)" }}>
               Agent runs
             </span>
           ) : null}
-          {threads.map((thread) =>
+          {railThreads.map((item) =>
             railButton(
-              thread.id,
-              thread.id === activeThreadId,
-              () => setActiveThread(thread.id),
-              <StatusDot color={STATUS_COLOR[thread.status]} pulse={thread.status === "running"} />,
-              thread.title,
-              thread.unread,
+              `${item.source}:${item.id}`,
+              item.source === "kernel" && item.id === activeThreadId,
+              () => selectRailThread(item),
+              <StatusDot color={UNIFIED_THREAD_STATUS_META[item.status].color} pulse={item.status === "running"} />,
+              item.title,
+              item.unread,
             ),
           )}
         </div>

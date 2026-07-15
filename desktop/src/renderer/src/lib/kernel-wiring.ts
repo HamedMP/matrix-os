@@ -13,6 +13,7 @@ import { useHermesChat } from "../stores/hermes-chat";
 import { useCodingAgentWorkspace } from "../stores/coding-agent-workspace";
 import { AGENTS_WORKSPACE_TAB_SPEC, useTabs } from "../stores/tabs";
 import { useThreads } from "../stores/threads";
+import { routeThreadNotification, unifiedAttentionCount } from "../stores/unified-threads";
 
 const KERNEL_CHAT_EVENT_TYPES = new Set([
   "kernel:init",
@@ -36,20 +37,6 @@ function isTaskEvent(msg: KernelServerMessage): msg is BoardTaskEvent {
     typeof msg.taskId === "string" &&
     typeof msg.status === "string"
   );
-}
-
-function legacyThreadAttentionCount(): number {
-  return useThreads.getState().threads.reduce(
-    (sum, thread) => sum + (thread.unread || thread.status === "needs-attention" ? 1 : 0),
-    0,
-  );
-}
-
-function codingAgentAttentionCount(): number {
-  const attentionThreads = useCodingAgentWorkspace.getState().summary?.attentionThreads;
-  return attentionThreads
-    ? attentionThreads.hasMore ? 999 : attentionThreads.items.length
-    : 0;
 }
 
 export function getKernelSocket(): KernelSocket | null {
@@ -101,11 +88,12 @@ export function wireKernel(): () => void {
   const activeSocket = socket;
 
   const unsubscribeMessages = activeSocket.subscribe((msg) => {
-    // A thread is "focused" only when the Agents tab is active and it's the
-    // selected thread; otherwise completions raise a notification.
+    // A kernel thread is "focused" only when the Chat tab (where ThreadView
+    // renders) is active and it's the selected thread; otherwise completions
+    // raise a notification.
     const tabsState = useTabs.getState();
-    const agentsActive = tabsState.tabs.find((t) => t.id === tabsState.activeTabId)?.kind === "agents";
-    const focusedThreadId = agentsActive ? useThreads.getState().activeThreadId : null;
+    const chatActive = tabsState.tabs.find((t) => t.id === tabsState.activeTabId)?.kind === "chat";
+    const focusedThreadId = chatActive ? useThreads.getState().activeThreadId : null;
     const { notification } = useThreads
       .getState()
       .handleKernelMessage(msg, { focusedThreadId });
@@ -133,7 +121,10 @@ export function wireKernel(): () => void {
 
   let lastBadge = -1;
   const updateBadge = () => {
-    const count = legacyThreadAttentionCount() + codingAgentAttentionCount();
+    const count = unifiedAttentionCount(
+      useThreads.getState().threads,
+      useCodingAgentWorkspace.getState().summary,
+    );
     if (count !== lastBadge) {
       lastBadge = count;
       void invoke("badge:set", { count: Math.min(count, 999) }).catch((err: unknown) => {
@@ -148,10 +139,20 @@ export function wireKernel(): () => void {
   const unsubscribeCodingAgentBadge = useCodingAgentWorkspace.subscribe(updateBadge);
   updateBadge();
 
-  // Clicking a native notification focuses the thread in the Agents tab.
+  // Clicking a native notification focuses the thread on its own surface:
+  // kernel threads render in the Chat tab, coding-agent threads in the Agents
+  // workspace. Never select across store namespaces.
   const offNotificationClick = onEvent("notification:clicked", ({ threadId }) => {
-    useThreads.getState().setActiveThread(threadId);
-    useCodingAgentWorkspace.setState({ activeThreadId: threadId });
+    const route = routeThreadNotification(
+      threadId,
+      useThreads.getState().threads.map((thread) => thread.id),
+    );
+    if (route.target === "chat") {
+      useThreads.getState().setActiveThread(route.select);
+      useTabs.getState().openTab({ kind: "chat", title: "Hermes", closable: false });
+      return;
+    }
+    void useCodingAgentWorkspace.getState().loadThreadSnapshot(route.select);
     useTabs.getState().openTab(AGENTS_WORKSPACE_TAB_SPEC);
   });
 

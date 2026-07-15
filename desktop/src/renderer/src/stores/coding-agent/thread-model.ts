@@ -66,10 +66,11 @@ export function summaryIncludesThread(summary: RuntimeSummary, threadId: string)
     || summary.attentionThreads.items.some((thread) => thread.id === threadId);
 }
 
-// Known limitation (#998): this updates threads already present in
-// attentionThreads but cannot PROMOTE a thread into the list when a live
-// event raises its attention from "none"; the next full summary refresh
-// reconciles. Behavior moved verbatim from the pre-split store.
+// Reconciles one live-updated thread into the bounded summary lists: updates
+// in place, drops it from attentionThreads when attention clears, and promotes
+// it to the head of attentionThreads when a live event raises attention from
+// "none" (#998). Promotion enforces the server limit and marks truncation; the
+// next full summary refresh restores canonical ordering.
 export function reconcileSummaryThread(
   summary: RuntimeSummary,
   thread: RuntimeSummary["activeThreads"]["items"][number],
@@ -77,11 +78,22 @@ export function reconcileSummaryThread(
   const activeItems = summary.activeThreads.items.map((candidate) =>
     candidate.id === thread.id ? thread : candidate,
   );
-  const attentionItems = thread.attention === "none"
-    ? summary.attentionThreads.items.filter((candidate) => candidate.id !== thread.id)
-    : summary.attentionThreads.items.map((candidate) =>
-        candidate.id === thread.id ? thread : candidate,
-      );
+  let attentionItems: typeof summary.attentionThreads.items;
+  let attentionHasMore = summary.attentionThreads.hasMore;
+  if (thread.attention === "none") {
+    attentionItems = summary.attentionThreads.items.filter((candidate) => candidate.id !== thread.id);
+  } else if (summary.attentionThreads.items.some((candidate) => candidate.id === thread.id)) {
+    attentionItems = summary.attentionThreads.items.map((candidate) =>
+      candidate.id === thread.id ? thread : candidate,
+    );
+  } else {
+    attentionItems = [thread, ...summary.attentionThreads.items];
+    const limit = summary.attentionThreads.limit;
+    if (attentionItems.length > limit) {
+      attentionItems = attentionItems.slice(0, limit);
+      attentionHasMore = true;
+    }
+  }
   return {
     ...summary,
     activeThreads: {
@@ -91,6 +103,7 @@ export function reconcileSummaryThread(
     attentionThreads: {
       ...summary.attentionThreads,
       items: attentionItems,
+      hasMore: attentionHasMore,
     },
   };
 }
