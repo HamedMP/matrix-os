@@ -92,6 +92,7 @@ interface CodingAgentWorkspaceState {
   turnThreadId: string | null;
   composerFocusRequestId: number;
   reviewFocusRequestId: number;
+  reviewFocusConsumedId: number;
   approvalActionStatus: ActionStatus;
   pendingApprovalId: string | null;
   approvalActionError: string | null;
@@ -126,6 +127,7 @@ interface CodingAgentWorkspaceState {
     correlationId: string;
   }) => Promise<void>;
   requestComposerFocus: () => void;
+  consumeReviewFocusRequest: (requestId: number) => void;
   createThread: (draft: AgentThreadComposerDraft) => Promise<string | null>;
   sendThreadMessage: (input: { threadId: string; message: string }) => Promise<boolean>;
 }
@@ -237,8 +239,13 @@ export function clearCodingAgentRuntimeSelection(): void {
     reviewsStatus: "idle",
     reviews: null,
     reviewsError: null,
-    // One-shot focus signals must not leak across runtimes.
+    // One-shot focus signals and the previous computer's notification
+    // preferences must not leak across runtimes.
     reviewFocusRequestId: 0,
+    reviewFocusConsumedId: 0,
+    notificationPreferencesStatus: "idle",
+    notificationPreferences: null,
+    notificationPreferencesError: null,
     ...clearReviewSelectionState(),
   });
 }
@@ -373,6 +380,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   turnThreadId: null,
   composerFocusRequestId: 0,
   reviewFocusRequestId: 0,
+  reviewFocusConsumedId: 0,
   approvalActionStatus: "idle",
   pendingApprovalId: null,
   approvalActionError: null,
@@ -894,6 +902,12 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         };
       });
     }
+  },
+
+  consumeReviewFocusRequest: (requestId) => {
+    set((state) => ({
+      reviewFocusConsumedId: Math.max(state.reviewFocusConsumedId, requestId),
+    }));
   },
 
   requestComposerFocus: () => {

@@ -7,6 +7,8 @@ type InspectorCounts = Record<AgentConversationInspectorTab, number>;
 interface AgentConversationInspectorProps {
   defaultTab: AgentConversationInspectorTab;
   changesFocusRequestId?: number;
+  changesFocusConsumedId?: number;
+  onChangesFocusConsumed?: (requestId: number) => void;
   counts: InspectorCounts;
   toolbar: ReactNode;
   composer?: ReactNode;
@@ -29,6 +31,8 @@ const TABS: Array<{
 export function AgentConversationInspector({
   defaultTab,
   changesFocusRequestId = 0,
+  changesFocusConsumedId = 0,
+  onChangesFocusConsumed,
   counts,
   toolbar,
   composer,
@@ -47,20 +51,16 @@ export function AgentConversationInspector({
     activity,
   };
 
-  // A focus request is a one-shot signal: react only to increments observed
-  // after mount. A stale non-zero id from an earlier review selection must not
-  // force the Changes pane onto a fresh inspector (e.g. after a runtime switch
-  // to a computer without review support), and the runtime-switch reset back
-  // to zero is not a request either.
-  const lastFocusRequestId = useRef(changesFocusRequestId);
+  // A focus request is a one-shot signal consumed exactly once, tracked by the
+  // owner via the consumed marker. That honors a request raised before this
+  // inspector mounts (the command palette selects a review, then opens the
+  // Agents tab) while an already-consumed id cannot re-force the Changes pane
+  // on later remounts, and the runtime-switch reset to zero is not a request.
   useEffect(() => {
-    if (changesFocusRequestId <= lastFocusRequestId.current) {
-      lastFocusRequestId.current = changesFocusRequestId;
-      return;
-    }
-    lastFocusRequestId.current = changesFocusRequestId;
+    if (changesFocusRequestId <= changesFocusConsumedId) return;
+    onChangesFocusConsumed?.(changesFocusRequestId);
     setSelectedTab("changes");
-  }, [changesFocusRequestId]);
+  }, [changesFocusConsumedId, changesFocusRequestId, onChangesFocusConsumed]);
 
   function selectTab(index: number) {
     const tab = TABS[index];

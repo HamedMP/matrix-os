@@ -86,6 +86,36 @@ describe("AgentConversationView approvals", () => {
     expect(screen.getByRole("button", { name: /decline run tests/i })).toBeTruthy();
   });
 
+  it("disables the follow-up composer while the thread waits for a decision", () => {
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={requestedApprovalSnapshot()}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    const input = screen.getByLabelText("Message conversation") as HTMLTextAreaElement;
+    expect(input.disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Send message" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(input.placeholder).toMatch(/respond to the pending request/i);
+  });
+
+  it("keeps the follow-up composer enabled once the thread is running again", () => {
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={resolvedApprovalSnapshot()}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    const input = screen.getByLabelText("Message conversation") as HTMLTextAreaElement;
+    expect(input.disabled).toBe(false);
+  });
+
   it("suppresses decision buttons for approvals already resolved in the snapshot", () => {
     render(
       <AgentConversationView

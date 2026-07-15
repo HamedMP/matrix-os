@@ -345,16 +345,21 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
     const previous = get().sessions;
     const next = moveSession(previous, fromName, toName);
     if (!next) return true;
+    // A runtime switch clears this store while the PUT is in flight; the old
+    // computer's response must not repopulate the new computer's list.
+    const runtimeGeneration = captureRuntimeGeneration();
     set({ sessions: next, error: null });
     try {
       const response = await api.put<{ sessions?: unknown }>("/api/terminal/sessions/order", {
         order: next.map((session) => session.name),
       });
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return true;
       if (Array.isArray(response.sessions)) {
         set({ sessions: parseShellSessions(response.sessions), error: null });
       }
       return true;
     } catch (err: unknown) {
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
       console.error("[shell-sessions] Failed to reorder shell sessions:", err);
       set((state) => ({ sessions: rollbackOrder(state.sessions, previous), error: errorCategory(err) }));
       return false;

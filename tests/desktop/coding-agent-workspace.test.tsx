@@ -1260,6 +1260,13 @@ describe("AgentWorkspace", () => {
   it("renders the selected conversation as durable chat bubbles with a same-thread composer", async () => {
     const conversationSnapshot = {
       ...threadSnapshotFixture(),
+      // The composer only accepts turns while the thread is not waiting on an
+      // approval or input answer, matching the gateway acceptTurn rule.
+      thread: {
+        ...threadSnapshotFixture().thread,
+        status: "running",
+        attention: "none",
+      },
       events: {
         ...threadSnapshotFixture().events,
         items: [
@@ -1361,7 +1368,12 @@ describe("AgentWorkspace", () => {
       if (channel === "runtime:get-notification-preferences") {
         return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
       }
-      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(threadSnapshotFixture());
+      if (channel === "runtime:get-thread-snapshot") {
+        return Promise.resolve({
+          ...threadSnapshotFixture(),
+          thread: { ...threadSnapshotFixture().thread, status: "running", attention: "none" },
+        });
+      }
       if (channel === "runtime:create-turn") {
         return Promise.resolve({
           ok: false,

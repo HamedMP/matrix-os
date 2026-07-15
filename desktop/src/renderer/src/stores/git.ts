@@ -239,8 +239,12 @@ export const useGit = create<GitState>()((set, get) => ({
   },
 
   createWorktree: async (api, slug, input) => {
+    // A runtime switch clears this store while the POST is in flight; the old
+    // computer's worktree must not appear in the new computer's list.
+    const runtimeGeneration = captureRuntimeGeneration();
     try {
       const res = await api.post<{ worktree?: unknown }>(`/api/projects/${slug}/worktrees`, input);
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
       const parsed = WorktreeSchema.safeParse(res.worktree);
       if (!parsed.success) {
         console.warn("[git] createWorktree returned a malformed worktree");
@@ -254,6 +258,7 @@ export const useGit = create<GitState>()((set, get) => ({
       }));
       return worktree;
     } catch (err: unknown) {
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
       set({ error: categoryOf(err) });
       return null;
     }
