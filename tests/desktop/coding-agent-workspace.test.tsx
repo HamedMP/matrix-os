@@ -3989,6 +3989,10 @@ describe("AgentWorkspace", () => {
   it("opens the composer after a stale toolbar new chat resolves against a refreshed workspace", async () => {
     vi.mocked(toast.error).mockClear();
     wireProjectWorkspaceReadyIpc();
+    // Seed the resolver before render so the component never observes the
+    // store's real implementation.
+    const resolveNewChatTarget = vi.fn(async () => ({ projectId: "matrix-os", taskId: "task_auth" }));
+    useCodingAgentProjectWorkspace.setState({ resolveNewChatTarget });
 
     render(<AgentWorkspace />);
 
@@ -3996,10 +4000,6 @@ describe("AgentWorkspace", () => {
     // The button is disabled until the async project-workspace hydration
     // populates selectedProjectId; clicking earlier is silently ignored.
     await waitFor(() => expect(newChat.hasAttribute("disabled")).toBe(false));
-    const resolveNewChatTarget = vi.fn(async () => ({ projectId: "matrix-os", taskId: "task_auth" }));
-    act(() => {
-      useCodingAgentProjectWorkspace.setState({ resolveNewChatTarget });
-    });
 
     fireEvent.click(newChat);
 
@@ -4011,6 +4011,10 @@ describe("AgentWorkspace", () => {
   it("surfaces a visible error when a toolbar new chat cannot be resolved after refreshing", async () => {
     vi.mocked(toast.error).mockClear();
     wireProjectWorkspaceReadyIpc();
+    // Seed the resolver before render so the component never observes the
+    // store's real implementation.
+    const resolveNewChatTarget = vi.fn(async () => null);
+    useCodingAgentProjectWorkspace.setState({ resolveNewChatTarget });
 
     render(<AgentWorkspace />);
 
@@ -4018,10 +4022,6 @@ describe("AgentWorkspace", () => {
     // The button is disabled until the async project-workspace hydration
     // populates selectedProjectId; clicking earlier is silently ignored.
     await waitFor(() => expect(newChat.hasAttribute("disabled")).toBe(false));
-    const resolveNewChatTarget = vi.fn(async () => null);
-    act(() => {
-      useCodingAgentProjectWorkspace.setState({ resolveNewChatTarget });
-    });
 
     fireEvent.click(newChat);
 
