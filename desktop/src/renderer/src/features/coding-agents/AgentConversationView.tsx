@@ -160,6 +160,19 @@ function AssistantRow({ events }: { events: AssistantEvent[] }) {
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}
           urlTransform={safeUrlTransform}
+          components={{
+            // Never auto-fetch remote images: a transcript image would fire a
+            // request to an arbitrary host the moment the thread opens
+            // (tracking pixel / exfiltration channel). Degrade to inert text.
+            img: ({ alt, src: imageSrc }) => (
+              <span
+                className="rounded border px-1.5 py-0.5 font-mono text-[11px]"
+                style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)" }}
+              >
+                image: {alt || "untitled"}{typeof imageSrc === "string" && imageSrc ? ` (${imageSrc})` : ""}
+              </span>
+            ),
+          }}
         >
           {text}
         </ReactMarkdown>

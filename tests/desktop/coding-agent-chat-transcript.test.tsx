@@ -151,6 +151,22 @@ describe("AgentConversationView transcript", () => {
     expect(screen.queryByText("Send a message to start the conversation.")).toBeNull();
   });
 
+  it("never auto-fetches remote images from assistant markdown", () => {
+    const text = "Look at this: ![build badge](https://tracker.example/pixel.png) done.";
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot([delta("msg_1", text, 1), completedEvent("msg_1")])}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    expect(document.querySelector("img")).toBeNull();
+    // The image degrades to inert text so the user still sees what was sent.
+    expect(screen.getByText(/build badge/)).toBeTruthy();
+  });
+
   it("joins streamed deltas for one message in order", () => {
     render(
       <AgentConversationView

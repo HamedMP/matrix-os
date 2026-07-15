@@ -24,9 +24,13 @@ const CREDENTIAL_PATTERNS: RegExp[] = [
   /\bgithub_pat_[A-Za-z0-9_]{16,}\b/g,
   /\bglpat-[A-Za-z0-9_-]{12,}\b/g,
   /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
-  // password assignments (incl. prefixed names like DB_PASSWORD), bare or
-  // quoted (value only)
-  /(?<=\b[\w-]*password\s*[=:]\s*["'`]?)[^\s'"`]+/gi,
+  // Quoted password assignments (incl. prefixed names like DB_PASSWORD):
+  // the whole quoted value, spaces included, up to the closing quote.
+  /(?<=\b[\w-]*password\s*[=:]\s*")[^"\n]{1,256}/gi,
+  /(?<=\b[\w-]*password\s*[=:]\s*')[^'\n]{1,256}/gi,
+  /(?<=\b[\w-]*password\s*[=:]\s*`)[^`\n]{1,256}/gi,
+  // Bare password assignments (value only).
+  /(?<=\b[\w-]*password\s*[=:]\s*)[^\s'"`]+/gi,
 ];
 
 /**

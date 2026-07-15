@@ -51,6 +51,21 @@ describe("redactCredentialsForDisplay", () => {
     }
   });
 
+  it("masks full quoted passphrases containing spaces", () => {
+    const cases = [
+      'password="correct horse battery" then restart',
+      "db_password: 'correct horse' in the config",
+      "PASSWORD: `correct horse battery staple`",
+    ];
+    for (const input of cases) {
+      const output = redactCredentialsForDisplay(input);
+      expect(output, input).toContain("[redacted]");
+      expect(output, input).not.toContain("correct horse");
+      expect(output, input).not.toMatch(/battery|staple/);
+    }
+    expect(redactCredentialsForDisplay('password="correct horse" then restart')).toContain("then restart");
+  });
+
   it("leaves ordinary coding vocabulary untouched", () => {
     const prose = [
       "The token count exceeded the limit, so I trimmed the prompt.",
