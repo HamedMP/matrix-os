@@ -194,6 +194,15 @@ describe("AgentConversationView transcript", () => {
     expect(screen.getByRole("status", { name: "Agent is working" })).toBeTruthy();
   });
 
+  it("caps the composer draft at the turn schema limit", () => {
+    render(
+      <AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />,
+    );
+
+    const input = screen.getByLabelText("Message conversation") as HTMLTextAreaElement;
+    expect(input.maxLength).toBe(24_000);
+  });
+
   it("clears an unsent draft when switching threads", () => {
     const view = render(
       <AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />,

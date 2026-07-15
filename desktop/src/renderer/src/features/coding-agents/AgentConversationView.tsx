@@ -436,6 +436,9 @@ function ConversationComposer({ threadId, waitingForAction }: { threadId: string
           onSubmit={() => void submit()}
           busy={submitting}
           disabled={waitingForAction || submitting}
+          // Matches the CreateAgentTurnRequestSchema message cap so oversized
+          // drafts are prevented client-side instead of failing generically.
+          maxLength={24_000}
           ariaLabel="Message conversation"
           placeholder={waitingForAction ? "Respond to the pending request above to continue" : "Ask a follow-up…"}
         />

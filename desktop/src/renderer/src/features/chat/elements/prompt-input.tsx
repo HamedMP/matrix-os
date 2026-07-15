@@ -11,6 +11,7 @@ export function PromptInput({
   busy,
   autoFocus,
   disabled = false,
+  maxLength,
   placeholder = "Do anything",
   ariaLabel,
   footer,
@@ -22,6 +23,7 @@ export function PromptInput({
   busy: boolean;
   autoFocus?: boolean;
   disabled?: boolean;
+  maxLength?: number;
   placeholder?: string;
   ariaLabel?: string;
   footer?: ReactNode;
@@ -44,6 +46,7 @@ export function PromptInput({
         ref={ref}
         autoFocus={autoFocus}
         disabled={disabled}
+        maxLength={maxLength}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
