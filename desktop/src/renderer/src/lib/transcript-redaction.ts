@@ -24,13 +24,14 @@ const CREDENTIAL_PATTERNS: RegExp[] = [
   /\bgithub_pat_[A-Za-z0-9_]{16,}\b/g,
   /\bglpat-[A-Za-z0-9_-]{12,}\b/g,
   /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
-  // Quoted password assignments (incl. prefixed names like DB_PASSWORD):
-  // the whole quoted value, spaces included, up to the closing quote.
-  /(?<=\b[\w-]*password\s*[=:]\s*")[^"\n]{1,256}/gi,
-  /(?<=\b[\w-]*password\s*[=:]\s*')[^'\n]{1,256}/gi,
-  /(?<=\b[\w-]*password\s*[=:]\s*`)[^`\n]{1,256}/gi,
-  // Bare password assignments (value only).
-  /(?<=\b[\w-]*password\s*[=:]\s*)[^\s'"`]+/gi,
+  // Secret-named assignments (PASSWORD, AWS_SECRET_ACCESS_KEY, API_KEY,
+  // AUTH_TOKEN, CLIENT_SECRET, ... — any prefixed name ending in a secret
+  // word), quoted values masked through spaces up to the closing quote and
+  // bare values up to whitespace.
+  /(?<=\b[\w-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key)\s*[=:]\s*")[^"\n]{1,256}/gi,
+  /(?<=\b[\w-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key)\s*[=:]\s*')[^'\n]{1,256}/gi,
+  /(?<=\b[\w-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key)\s*[=:]\s*`)[^`\n]{1,256}/gi,
+  /(?<=\b[\w-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key)\s*[=:]\s*)[^\s'"`]+/gi,
 ];
 
 /**

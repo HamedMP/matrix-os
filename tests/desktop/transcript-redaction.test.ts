@@ -66,6 +66,21 @@ describe("redactCredentialsForDisplay", () => {
     expect(redactCredentialsForDisplay('password="correct horse" then restart')).toContain("then restart");
   });
 
+  it("masks secret-named assignments beyond passwords", () => {
+    const cases = [
+      "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+      'aws_secret_access_key = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"',
+      "API_KEY=abcd1234efgh5678",
+      "AUTH_TOKEN: abcd1234efgh5678",
+      "CLIENT_SECRET='abcd 1234 efgh'",
+    ];
+    for (const input of cases) {
+      const output = redactCredentialsForDisplay(input);
+      expect(output, input).toContain("[redacted]");
+      expect(output, input).not.toMatch(/wJalrXUtnFEMI|abcd1234|abcd 1234/);
+    }
+  });
+
   it("leaves ordinary coding vocabulary untouched", () => {
     const prose = [
       "The token count exceeded the limit, so I trimmed the prompt.",
