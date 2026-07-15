@@ -50,10 +50,14 @@ export function AgentConversationInspector({
   // A focus request is a one-shot signal: react only to increments observed
   // after mount. A stale non-zero id from an earlier review selection must not
   // force the Changes pane onto a fresh inspector (e.g. after a runtime switch
-  // to a computer without review support).
+  // to a computer without review support), and the runtime-switch reset back
+  // to zero is not a request either.
   const lastFocusRequestId = useRef(changesFocusRequestId);
   useEffect(() => {
-    if (changesFocusRequestId === lastFocusRequestId.current) return;
+    if (changesFocusRequestId <= lastFocusRequestId.current) {
+      lastFocusRequestId.current = changesFocusRequestId;
+      return;
+    }
     lastFocusRequestId.current = changesFocusRequestId;
     setSelectedTab("changes");
   }, [changesFocusRequestId]);
