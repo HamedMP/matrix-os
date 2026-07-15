@@ -223,4 +223,28 @@ suite("operator desktop e2e", () => {
     await expect.poll(attachedNativeViewCount).toBe(1);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "12-home-shell-restored.png") });
   }, 40_000);
+
+  it("switches unified themes from Appearance settings", async () => {
+    await page.locator("aside button", { hasText: "Settings" }).first().click();
+    await page.getByRole("heading", { name: "Settings" }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Appearance" }).click();
+    await page.getByRole("radiogroup", { name: "Theme" }).waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "13-appearance-theme-picker.png") });
+
+    await page.getByRole("radio", { name: "Use Dracula theme" }).click();
+    await page.waitForFunction(() => document.documentElement.getAttribute("data-theme-id") === "dracula");
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "14-theme-dracula.png") });
+
+    // The terminal palette follows the unified theme.
+    await page.locator("aside button", { hasText: "Terminal" }).first().click();
+    await page.getByText("Shells").first().waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "15-theme-dracula-terminal.png") });
+
+    // Restore the default so later suites see the stock palette.
+    await page.locator("aside button", { hasText: "Settings" }).first().click();
+    await page.getByRole("button", { name: "Appearance" }).click();
+    await page.getByRole("radio", { name: "Use Operator theme" }).click();
+    await page.waitForFunction(() => document.documentElement.getAttribute("data-theme-id") === "operator");
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "16-theme-operator-default.png") });
+  }, 40_000);
 });

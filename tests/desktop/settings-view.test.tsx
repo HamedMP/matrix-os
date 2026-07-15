@@ -35,12 +35,13 @@ describe("SettingsView", () => {
     vi.restoreAllMocks();
   });
 
-  it("applies the persisted theme to the document on mount", async () => {
+  it("renders the section navigation", async () => {
+    // Theme application lives in the appearance store (loaded at App boot),
+    // not in SettingsView.
     render(<SettingsView />);
 
-    await waitFor(() => expect(document.documentElement.getAttribute("data-theme")).toBe("light"));
-    expect(window.operator.invoke).toHaveBeenCalledWith("state:get", { key: "appearance" });
-    expect(screen.getByRole("button", { name: "Computers" })).not.toBeNull();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Computers" })).not.toBeNull());
+    expect(screen.getByRole("heading", { name: "Account" })).not.toBeNull();
   });
 
   it("opens the requested section and consumes the deep-link request", async () => {

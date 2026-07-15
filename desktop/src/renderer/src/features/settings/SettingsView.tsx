@@ -19,7 +19,6 @@ import ChannelsSection from "./sections/ChannelsSection";
 import IntegrationsSection from "./sections/IntegrationsSection";
 import CronSection from "./sections/CronSection";
 import SystemSection from "./sections/SystemSection";
-import { invoke } from "../../lib/operator";
 import { useUi } from "../../stores/ui";
 
 type SectionId =
@@ -45,16 +44,6 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode; group: st
   { id: "system", label: "System", icon: <Cpu size={15} />, group: "Machine" },
 ];
 
-function applyDocumentTheme(next: "dark" | "light" | "system") {
-  const resolved =
-    next === "system"
-      ? window.matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light"
-      : next;
-  document.documentElement.setAttribute("data-theme", resolved);
-}
-
 function isSectionId(value: string): value is SectionId {
   return SECTIONS.some((candidate) => candidate.id === value);
 }
@@ -71,21 +60,6 @@ export default function SettingsView() {
     useUi.getState().clearRequestedSettingsSection();
   }, [requestedSection]);
 
-  useEffect(() => {
-    void invoke("state:get", { key: "appearance" })
-      .then((result) => {
-        const value = result.value as { theme?: string } | null;
-        if (value?.theme === "light" || value?.theme === "system" || value?.theme === "dark") {
-          applyDocumentTheme(value.theme);
-        }
-      })
-      .catch((err: unknown) => {
-        console.warn(
-          "[settings] load appearance failed:",
-          err instanceof Error ? err.message : String(err),
-        );
-      });
-  }, []);
   const groups = Array.from(new Set(SECTIONS.map((s) => s.group)));
 
   return (

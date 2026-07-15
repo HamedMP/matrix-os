@@ -7,11 +7,14 @@ import { markdown } from "@codemirror/lang-markdown";
 import { python } from "@codemirror/lang-python";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { EditorState } from "@codemirror/state";
-import { oneDark } from "@codemirror/theme-one-dark";
 import { EditorView, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
 import { useEffect, useRef, useState } from "react";
+import { getThemeEditorColors } from "../../design/themes";
+import { resolveThemeMode } from "../../design/themes/apply";
 import { toUserMessage } from "../../lib/errors";
+import { useAppearance } from "../../stores/appearance";
 import { useConnection } from "../../stores/connection";
+import { buildEditorTheme } from "./editor-theme";
 import { ConflictBar } from "./EditorPanel";
 import { useEditorTabs } from "./editor-tabs-store";
 import { createFilesApi, openFile, saveFile, saveFileOverwrite, type OpenedFile } from "./editor-save";
@@ -76,6 +79,10 @@ function languageExtension(filename: string) {
 export default function CodeMirrorHost({ taskId, path }: { taskId: string; path: string }) {
   const api = useConnection((s) => s.api);
   const setDirty = useEditorTabs((s) => s.setDirty);
+  // Recreate the editor when the unified theme changes; the document cache
+  // preserves unsaved content across the remount.
+  const themeId = useAppearance((s) => s.themeId);
+  const themeMode = useAppearance((s) => s.mode);
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const fileRef = useRef<OpenedFile | null>(null);
@@ -92,6 +99,11 @@ export default function CodeMirrorHost({ taskId, path }: { taskId: string; path:
     const host = hostRef.current;
     const key = cacheKey(taskId, path);
     let disposed = false;
+    const resolvedThemeMode = resolveThemeMode(themeMode);
+    const editorThemeExtensions = buildEditorTheme(
+      getThemeEditorColors(themeId, resolvedThemeMode),
+      resolvedThemeMode === "dark",
+    );
 
     void openFile(files, path)
       .then((file) => {
@@ -111,7 +123,7 @@ export default function CodeMirrorHost({ taskId, path }: { taskId: string; path:
             history(),
             keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
             languageExtension(path),
-            oneDark,
+            ...editorThemeExtensions,
             EditorView.updateListener.of((update) => {
               if (update.docChanged) {
                 const content = update.state.doc.toString();
@@ -141,7 +153,7 @@ export default function CodeMirrorHost({ taskId, path }: { taskId: string; path:
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-  }, [api, path, setDirty, taskId]);
+  }, [api, path, setDirty, taskId, themeId, themeMode]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
