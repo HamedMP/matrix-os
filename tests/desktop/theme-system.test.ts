@@ -88,9 +88,30 @@ describe("applyUnifiedTheme", () => {
     expect(vars["--bg-app"]).toBe("#282c34");
     expect(vars["--danger"]).toBe("#e06c75");
     expect(vars["--accent"]).toBe("#61afef");
+    // Highlight and warning must stay distinguishable signals.
+    expect(vars["--highlight"]).not.toBe(vars["--warning"]);
     for (const [name, value] of Object.entries(vars)) {
       expect(name.startsWith("--")).toBe(true);
       expect(value.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("builds a valid focus ring for non-hex ring colors", () => {
+    // The Operator light variant uses an oklch() ring; appending a hex alpha
+    // suffix would produce an unparseable box-shadow that browsers discard.
+    const vars = chromeToSemanticVars(getThemeChrome(DEFAULT_THEME_ID, "light"));
+    expect(vars["--focus-ring"]).toBe("0 0 0 3px color-mix(in srgb, oklch(0.55 0 0) 33%, transparent)");
+  });
+
+  it("gives every sidebar primary pair readable contrast", () => {
+    for (const theme of unifiedThemes) {
+      for (const variant of [theme.dark, theme.light]) {
+        if (!variant) continue;
+        expect(
+          variant.chrome.sidebarPrimary.toLowerCase(),
+          `${theme.id} sidebarPrimary vs foreground`,
+        ).not.toBe(variant.chrome.sidebarPrimaryForeground.toLowerCase());
+      }
     }
   });
 

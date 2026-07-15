@@ -43,7 +43,7 @@ export function chromeToSemanticVars(chrome: ChromeColors): Record<string, strin
     "--accent": chrome.ring,
     "--accent-hover": chrome.sidebarPrimary,
     "--accent-muted": chrome.accent,
-    "--highlight": chrome.chart3,
+    "--highlight": chrome.chart4,
     "--highlight-muted": chrome.accent,
     "--success": chrome.chart2,
     "--success-muted": chrome.accent,
@@ -62,7 +62,9 @@ export function chromeToSemanticVars(chrome: ChromeColors): Record<string, strin
     "--status-attention": chrome.chart3,
     "--status-failed": chrome.destructive,
 
-    "--focus-ring": `0 0 0 3px ${chrome.ring}55`,
+    // color-mix keeps the ring translucent for any CSS color form (hex,
+    // rgba, oklch); appending a hex alpha only works for 6-digit hex.
+    "--focus-ring": `0 0 0 3px color-mix(in srgb, ${chrome.ring} 33%, transparent)`,
   };
 }
 
