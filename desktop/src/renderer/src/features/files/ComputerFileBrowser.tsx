@@ -167,6 +167,15 @@ export default function ComputerFileBrowser({
                   onDoubleClick={() => {
                     if (entry.type === "directory") navigate(path);
                   }}
+                  onKeyDown={(event) => {
+                    // Double-click is mouse-only; Enter must let keyboard and
+                    // screen-reader users enter the directory (Space still
+                    // selects it as the folder candidate via the click event).
+                    if (entry.type === "directory" && event.key === "Enter") {
+                      event.preventDefault();
+                      navigate(path);
+                    }
+                  }}
                 >
                   <span style={{ color: entry.type === "directory" ? "var(--accent)" : "var(--text-tertiary)" }}>
                     {entry.type === "directory" ? (selected ? <FolderOpen size={17} /> : <Folder size={17} />) : fileIcon(entry.name)}

@@ -297,6 +297,17 @@ describe("Files workspace", () => {
     ).not.toBeNull();
   });
 
+  it("enters directories with the keyboard", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    const workspaces = await screen.findByRole("button", { name: "Open workspaces" });
+
+    // Keyboard and screen-reader users cannot double-click; Enter on a
+    // directory row must navigate into it.
+    fireEvent.keyDown(workspaces, { key: "Enter" });
+
+    expect(await screen.findByRole("button", { name: "Open app.ts" })).not.toBeNull();
+  });
+
   it("hides browser entries loaded under a previous session scope", async () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
     await waitFor(() => expect(screen.getByRole("button", { name: "Open workspaces" })).toBeTruthy());
