@@ -552,7 +552,6 @@ export async function createGateway(config: GatewayConfig) {
     const codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
       projectManager: codingAgentProjectManager,
       worktreeManager: codingAgentWorktreeManager,
-      projectManager: codingAgentProjectManager,
       agentSessionManager: codingAgentSessionManager,
       agentSandbox: createAgentSandbox({ homePath }),
       sessionRuntimeBridge: workspaceSessionRuntimeBridge,
