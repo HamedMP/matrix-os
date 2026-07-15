@@ -101,11 +101,13 @@ function assistantText(events: AssistantEvent[]): { text: string; completed: boo
     (event): event is Extract<AssistantEvent, { type: "assistant.text.delta" }> => event.type === "assistant.text.delta",
   );
   const completed = events.some((event) => event.type === "assistant.text.completed");
-  let text = deltas.map((event) => event.delta).join("");
+  // Redact BEFORE the defensive tail slice: truncation can sever a credential
+  // prefix (e.g. password=) while its value survives in the retained tail.
+  let text = redactCredentialsForDisplay(deltas.map((event) => event.delta).join(""));
   if (text.length > ASSISTANT_RENDER_MAX_CHARS) {
     text = `_Earlier content truncated._\n\n${text.slice(text.length - ASSISTANT_RENDER_MAX_CHARS)}`;
   }
-  return { text: redactCredentialsForDisplay(text), completed };
+  return { text, completed };
 }
 
 function occurredAtLabel(occurredAt: string): string {
@@ -501,7 +503,7 @@ export function AgentConversationView({
           {showWorking ? <WorkingRow /> : null}
           {items.length === 0 && !showWorking ? (
             <p className="py-12 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>
-              Send a message to start the conversation.
+              {canSendTurns ? "Send a message to start the conversation." : "No messages yet."}
             </p>
           ) : null}
         </ConversationContent>

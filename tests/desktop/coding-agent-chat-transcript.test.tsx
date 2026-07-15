@@ -119,6 +119,38 @@ describe("AgentConversationView transcript", () => {
     expect(body).not.toContain("sk-proj-Abc123_def456ghi789");
   });
 
+  it("redacts credentials before applying the display truncation slice", () => {
+    // The slice boundary lands inside the password value: the prefix falls
+    // outside the retained tail, so slicing before redaction would leak the
+    // remaining value characters. Redaction must run on the full text first.
+    const secret = "h".repeat(200);
+    const text = `password=${secret}${"y".repeat(63_900)}`;
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot([delta("msg_1", text, 1), completedEvent("msg_1")])}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    expect(document.body.textContent).not.toContain("h".repeat(50));
+  });
+
+  it("tells a read-only computer there are no messages instead of inviting one", () => {
+    render(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot([], { status: "completed" })}
+        error={null}
+        canSendTurns={false}
+      />,
+    );
+
+    expect(screen.getByText("No messages yet.")).toBeTruthy();
+    expect(screen.queryByText("Send a message to start the conversation.")).toBeNull();
+  });
+
   it("joins streamed deltas for one message in order", () => {
     render(
       <AgentConversationView
