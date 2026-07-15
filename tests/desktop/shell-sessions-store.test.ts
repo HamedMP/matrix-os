@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "@desktop/shared/app-error";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
+import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 import { isValidShellSessionName, useShellSessions } from "@desktop/renderer/src/stores/shell-sessions";
 
 function makeApi(overrides: Partial<ApiClient> = {}): ApiClient {
@@ -192,6 +193,28 @@ describe("useShellSessions", () => {
     expect(ok).toBe(false);
     expect(put).toHaveBeenCalledWith("/api/terminal/sessions/order", { order: ["matrix-two", "matrix-one"] });
     expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-one", "matrix-two"]);
+  });
+
+  it("drops a reorder response that settles after a runtime switch", async () => {
+    useShellSessions.setState({
+      sessions: [
+        { name: "matrix-one", status: "active", placement: "active" },
+        { name: "matrix-two", status: "active", placement: "active" },
+      ],
+    });
+    let resolvePut: (value: unknown) => void = () => undefined;
+    const put = vi.fn(() => new Promise((resolve) => { resolvePut = resolve; }));
+
+    const pending = useShellSessions.getState().reorder(makeApi({ put }), "matrix-one", "matrix-two");
+    advanceRuntimeGeneration();
+    useShellSessions.setState({ sessions: [] });
+    resolvePut({ sessions: [
+      { name: "matrix-one", status: "active" },
+      { name: "matrix-two", status: "active" },
+    ] });
+    await pending;
+
+    expect(useShellSessions.getState().sessions).toEqual([]);
   });
 
   it("patches /ui-state and rolls back optimistic placement on failure", async () => {

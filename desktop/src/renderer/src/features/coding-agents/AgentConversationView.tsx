@@ -192,7 +192,11 @@ function approvalLabel(decision: string) {
   return "Decide";
 }
 
-function SystemEvent({ event, answeredInputs }: { event: AgentThreadEvent; answeredInputs: ReadonlySet<string> }) {
+function SystemEvent({ event, answeredInputs, resolvedApprovals }: {
+  event: AgentThreadEvent;
+  answeredInputs: ReadonlySet<string>;
+  resolvedApprovals: ReadonlySet<string>;
+}) {
   const copy = eventCopy(event);
   const pendingApprovalKeys = useCodingAgentWorkspace((state) => state.pendingApprovalKeys);
   const approvalErrors = useCodingAgentWorkspace((state) => state.approvalActionErrors);
@@ -213,7 +217,7 @@ function SystemEvent({ event, answeredInputs }: { event: AgentThreadEvent; answe
         <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>{event.occurredAt}</span>
       </div>
       <p className="mt-0.5 text-xs" style={{ color: "var(--text-secondary)" }}>{copy.detail}</p>
-      {approval ? (
+      {approval && approvalKey && !resolvedApprovals.has(approvalKey) ? (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {approval.allowedDecisions.map((decision) => (
             <Button key={decision} variant={decision.startsWith("approve") ? "primary" : "danger"} aria-label={`${approvalLabel(decision)} ${approval.title}`} disabled={Boolean(approvalKey && pendingApprovalKeys.includes(approvalKey))} onClick={() => void submitApproval({ threadId: approval.threadId, approvalId: approval.approvalId, decision, correlationId: approval.correlationId })}>
@@ -245,7 +249,7 @@ function SystemEvent({ event, answeredInputs }: { event: AgentThreadEvent; answe
   );
 }
 
-function ConversationComposer({ threadId }: { threadId: string }) {
+function ConversationComposer({ threadId, waitingForAction }: { threadId: string; waitingForAction: boolean }) {
   const [message, setMessage] = useState("");
   const turnStatus = useCodingAgentWorkspace((state) => state.turnStatus);
   const turnThreadId = useCodingAgentWorkspace((state) => state.turnThreadId);
@@ -255,7 +259,7 @@ function ConversationComposer({ threadId }: { threadId: string }) {
   useEffect(() => setMessage(""), [threadId]);
 
   async function submit() {
-    if (!message.trim() || submitting) return;
+    if (!message.trim() || submitting || waitingForAction) return;
     const sent = await send({ threadId, message });
     if (sent) setMessage("");
   }
@@ -263,7 +267,7 @@ function ConversationComposer({ threadId }: { threadId: string }) {
   return (
     <div className="shrink-0 border-t p-3" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
       <div className="mx-auto max-w-[820px] rounded-xl border p-2" style={{ borderColor: turnError && turnThreadId === threadId ? "var(--danger)" : "var(--border-default)", background: "var(--bg-overlay)" }}>
-        <textarea aria-label="Message conversation" className="min-h-[72px] w-full resize-none bg-transparent px-2 py-1 text-sm leading-6 outline-none" maxLength={24_000} placeholder="Ask a follow-up…" style={{ color: "var(--text-primary)" }} value={message} onChange={(event) => setMessage(event.currentTarget.value)} onKeyDown={(event) => {
+        <textarea aria-label="Message conversation" className="min-h-[72px] w-full resize-none bg-transparent px-2 py-1 text-sm leading-6 outline-none" maxLength={24_000} disabled={waitingForAction} placeholder={waitingForAction ? "Respond to the pending request above to continue" : "Ask a follow-up…"} style={{ color: "var(--text-primary)" }} value={message} onChange={(event) => setMessage(event.currentTarget.value)} onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
             void submit();
@@ -271,7 +275,7 @@ function ConversationComposer({ threadId }: { threadId: string }) {
         }} />
         <div className="flex items-center justify-between gap-3 px-1 pt-1">
           <p className="min-h-4 text-xs" style={{ color: "var(--danger)" }}>{turnThreadId === threadId ? turnError : null}</p>
-          <Button variant="primary" aria-label="Send message" disabled={submitting || !message.trim()} onClick={() => void submit()}>
+          <Button variant="primary" aria-label="Send message" disabled={submitting || waitingForAction || !message.trim()} onClick={() => void submit()}>
             <Send size={14} /> {submitting ? "Sending" : "Send"}
           </Button>
         </div>
@@ -296,6 +300,12 @@ export function AgentConversationView({
   const answeredInputs = useMemo(() => new Set((snapshot?.events.items ?? [])
     .filter((event) => event.type === "user_input.answered")
     .map((event) => codingAgentInputActionKey(event.threadId, event.requestId))), [snapshot?.events.items]);
+  // Approvals already resolved in the snapshot must not re-render live
+  // decision buttons; a second click would reach the provider as a duplicate
+  // decision under a fresh client request id.
+  const resolvedApprovals = useMemo(() => new Set((snapshot?.events.items ?? [])
+    .filter((event) => event.type === "approval.resolved")
+    .map((event) => codingAgentApprovalActionKey(event.threadId, event.approvalId))), [snapshot?.events.items]);
   useEffect(() => {
     const target = endRef.current as (HTMLDivElement & { scrollIntoView?: (options?: ScrollIntoViewOptions) => void }) | null;
     target?.scrollIntoView?.({ block: "end" });
@@ -321,7 +331,7 @@ export function AgentConversationView({
         {items.map((item) => item.kind === "assistant" ? <AssistantBubble key={item.key} events={item.events} />
           : item.kind === "tool" ? <ToolActivity key={item.key} events={item.events} />
             : item.event.type === "user.message" ? <UserBubble key={item.event.eventId} event={item.event} />
-              : <SystemEvent key={item.event.eventId} event={item.event} answeredInputs={answeredInputs} />)}
+              : <SystemEvent key={item.event.eventId} event={item.event} answeredInputs={answeredInputs} resolvedApprovals={resolvedApprovals} />)}
         {items.length === 0 ? (
           <p className="py-12 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>
             {canSendTurns ? "This conversation is ready. Send a message to continue." : "No messages yet."}
@@ -330,7 +340,13 @@ export function AgentConversationView({
         <div ref={endRef} />
       </div>
       {canSendTurns ? (
-        <ConversationComposer threadId={snapshot.thread.id} />
+        // The gateway rejects turns while the thread waits for an approval or
+        // input answer, so the composer is disabled rather than offering a
+        // doomed send.
+        <ConversationComposer
+          threadId={snapshot.thread.id}
+          waitingForAction={snapshot.thread.status === "waiting_for_approval" || snapshot.thread.status === "waiting_for_input"}
+        />
       ) : (
         <p
           className="shrink-0 border-t px-4 py-3 text-center text-xs"

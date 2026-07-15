@@ -128,6 +128,81 @@ describe("AgentConversationInspector", () => {
     expect(controlledPanel("Changes").hidden).toBe(false);
   });
 
+  it("ignores an already-consumed review-focus request when mounting", () => {
+    const onChangesFocusConsumed = vi.fn();
+    render(
+      <AgentConversationInspector
+        defaultTab="terminal"
+        changesFocusRequestId={3}
+        changesFocusConsumedId={3}
+        onChangesFocusConsumed={onChangesFocusConsumed}
+        counts={{ changes: 2, terminal: 1, preview: 3, activity: 4 }}
+        toolbar={<div>Tools</div>}
+        changes={<div>Changed files</div>}
+        terminal={<div>Matrix shell</div>}
+        preview={<div>Preview sessions</div>}
+        activity={<div>Workspace activity</div>}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: /^Terminal\b/ }).getAttribute("aria-selected")).toBe("true");
+    expect(controlledPanel("Terminal").hidden).toBe(false);
+    expect(onChangesFocusConsumed).not.toHaveBeenCalled();
+  });
+
+  it("honors an unconsumed focus request that arrived before mount", () => {
+    // The command palette selects a review and THEN opens the Agents tab, so
+    // the inspector can mount after the signal was raised.
+    const onChangesFocusConsumed = vi.fn();
+    render(
+      <AgentConversationInspector
+        defaultTab="terminal"
+        changesFocusRequestId={3}
+        changesFocusConsumedId={0}
+        onChangesFocusConsumed={onChangesFocusConsumed}
+        counts={{ changes: 2, terminal: 1, preview: 3, activity: 4 }}
+        toolbar={<div>Tools</div>}
+        changes={<div>Changed files</div>}
+        terminal={<div>Matrix shell</div>}
+        preview={<div>Preview sessions</div>}
+        activity={<div>Workspace activity</div>}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: /^Changes\b/ }).getAttribute("aria-selected")).toBe("true");
+    expect(onChangesFocusConsumed).toHaveBeenCalledWith(3);
+  });
+
+  it("does not react when the focus signal resets to zero", () => {
+    const counts = { changes: 2, terminal: 1, preview: 3, activity: 4 };
+    const onChangesFocusConsumed = vi.fn();
+    const inspector = (requestId: number, consumedId: number) => (
+      <AgentConversationInspector
+        defaultTab="terminal"
+        changesFocusRequestId={requestId}
+        changesFocusConsumedId={consumedId}
+        onChangesFocusConsumed={onChangesFocusConsumed}
+        counts={counts}
+        toolbar={<div>Tools</div>}
+        changes={<div>Changed files</div>}
+        terminal={<div>Matrix shell</div>}
+        preview={<div>Preview sessions</div>}
+        activity={<div>Workspace activity</div>}
+      />
+    );
+    const view = render(inspector(0, 0));
+    view.rerender(inspector(2, 0));
+    expect(screen.getByRole("tab", { name: /^Changes\b/ }).getAttribute("aria-selected")).toBe("true");
+    expect(onChangesFocusConsumed).toHaveBeenCalledWith(2);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^Terminal\b/ }));
+    // A runtime switch resets the one-shot counter; that is not a focus request.
+    view.rerender(inspector(0, 0));
+
+    expect(screen.getByRole("tab", { name: /^Terminal\b/ }).getAttribute("aria-selected")).toBe("true");
+    expect(controlledPanel("Terminal").hidden).toBe(false);
+  });
+
   it("supports keyboard arrow navigation without losing the selected pane", () => {
     renderInspector();
 

@@ -36,6 +36,7 @@ export function AgentProjectWorkspaceShell({
     (state) => state.selectedThreadId,
   );
   const hydrate = useCodingAgentProjectWorkspace((state) => state.hydrate);
+  const refresh = useCodingAgentProjectWorkspace((state) => state.refresh);
   const selectProject = useCodingAgentProjectWorkspace((state) => state.selectProject);
   const selectTask = useCodingAgentProjectWorkspace((state) => state.selectTask);
   const selectThread = useCodingAgentProjectWorkspace((state) => state.selectThread);
@@ -55,8 +56,12 @@ export function AgentProjectWorkspaceShell({
   const previousHydratedRuntimeScope = useRef<string | null>(hydratedRuntimeScope);
   const previousSelectedThreadId = useRef<string | null>(selectedThreadId);
   const attemptedExternalThreadId = useRef<string | null>(null);
+  // A retained-error workspace (a same-scope refresh failed after content was
+  // shown) counts as displayable: hiding it behind the generic placeholder on
+  // remount would bury the stale board and its retry strip.
+  const displayableStatus = status === "ready" || (status === "error" && workspace !== null);
   const lastReadyRuntimeScope = useRef<string | null>(
-    status === "ready" ? hydratedRuntimeScope : null,
+    displayableStatus ? hydratedRuntimeScope : null,
   );
   const projectSignature = [
     ...summary.projects.items.map((project) => [
@@ -69,7 +74,7 @@ export function AgentProjectWorkspaceShell({
   ].join("|");
   const enabled = capabilityEnabled(summary, "codingAgentsProjectWorkspace");
   const scopeMatches = hydratedRuntimeScope === runtimeScope;
-  if (scopeMatches && status === "ready") {
+  if (scopeMatches && displayableStatus) {
     lastReadyRuntimeScope.current = runtimeScope;
   }
   const scopeReady = scopeMatches && lastReadyRuntimeScope.current === runtimeScope;
@@ -214,6 +219,34 @@ export function AgentProjectWorkspaceShell({
         </nav>
       )}
       <main className="flex min-h-0 min-w-[320px] flex-1 flex-col overflow-hidden">
+        {/* A failed refresh retains the last projection (stale-while-
+            revalidate); the strip makes the staleness explicit instead of
+            silently rendering pre-mutation data. */}
+        {scopeReady && scopeMatches && status === "error" && workspace ? (
+          <div
+            role="alert"
+            className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-2 text-xs"
+            style={{ borderColor: "var(--border-subtle)", background: "var(--warning-muted)", color: "var(--warning)" }}
+          >
+            <span>{error ?? "Project workspace unavailable"} — showing the last loaded board.</span>
+            <button
+              type="button"
+              aria-label="Retry loading the project workspace"
+              className="shrink-0 rounded-md border px-2 py-1 font-medium"
+              style={{ borderColor: "var(--warning)", color: "var(--warning)" }}
+              onClick={() => {
+                refresh().catch((err: unknown) => {
+                  console.warn(
+                    "[coding-agents] workspace retry failed:",
+                    err instanceof Error ? err.message : String(err),
+                  );
+                });
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        ) : null}
         {scopeReady ? children : (
           <div
             role="status"

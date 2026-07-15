@@ -7,6 +7,8 @@ type InspectorCounts = Record<AgentConversationInspectorTab, number>;
 interface AgentConversationInspectorProps {
   defaultTab: AgentConversationInspectorTab;
   changesFocusRequestId?: number;
+  changesFocusConsumedId?: number;
+  onChangesFocusConsumed?: (requestId: number) => void;
   counts: InspectorCounts;
   toolbar: ReactNode;
   composer?: ReactNode;
@@ -29,6 +31,8 @@ const TABS: Array<{
 export function AgentConversationInspector({
   defaultTab,
   changesFocusRequestId = 0,
+  changesFocusConsumedId = 0,
+  onChangesFocusConsumed,
   counts,
   toolbar,
   composer,
@@ -47,9 +51,16 @@ export function AgentConversationInspector({
     activity,
   };
 
+  // A focus request is a one-shot signal consumed exactly once, tracked by the
+  // owner via the consumed marker. That honors a request raised before this
+  // inspector mounts (the command palette selects a review, then opens the
+  // Agents tab) while an already-consumed id cannot re-force the Changes pane
+  // on later remounts, and the runtime-switch reset to zero is not a request.
   useEffect(() => {
-    if (changesFocusRequestId > 0) setSelectedTab("changes");
-  }, [changesFocusRequestId]);
+    if (changesFocusRequestId <= changesFocusConsumedId) return;
+    onChangesFocusConsumed?.(changesFocusRequestId);
+    setSelectedTab("changes");
+  }, [changesFocusConsumedId, changesFocusRequestId, onChangesFocusConsumed]);
 
   function selectTab(index: number) {
     const tab = TABS[index];

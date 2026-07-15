@@ -42,6 +42,8 @@ export default function AgentWorkspace() {
   const threadSnapshotError = useCodingAgentWorkspace((s) => s.threadSnapshotError);
   const reviews = useCodingAgentWorkspace((s) => s.reviews);
   const reviewFocusRequestId = useCodingAgentWorkspace((s) => s.reviewFocusRequestId);
+  const reviewFocusConsumedId = useCodingAgentWorkspace((s) => s.reviewFocusConsumedId);
+  const consumeReviewFocusRequest = useCodingAgentWorkspace((s) => s.consumeReviewFocusRequest);
   const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
   const loadNotificationPreferences = useCodingAgentWorkspace((s) => s.loadNotificationPreferences);
   const refreshProjectWorkspace = useCodingAgentProjectWorkspace((s) => s.refresh);
@@ -214,6 +216,8 @@ export default function AgentWorkspace() {
                 <AgentConversationInspector
                   defaultTab={reviewEnabled ? "changes" : "terminal"}
                   changesFocusRequestId={reviewFocusRequestId}
+                  changesFocusConsumedId={reviewFocusConsumedId}
+                  onChangesFocusConsumed={consumeReviewFocusRequest}
                   counts={inspectorCounts}
                   toolbar={(
                     <div className="flex items-center justify-between gap-3">
