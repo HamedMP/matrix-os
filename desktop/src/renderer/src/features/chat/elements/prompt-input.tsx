@@ -10,7 +10,9 @@ export function PromptInput({
   onAbort,
   busy,
   autoFocus,
+  disabled = false,
   placeholder = "Do anything",
+  ariaLabel,
   footer,
 }: {
   value: string;
@@ -19,7 +21,9 @@ export function PromptInput({
   onAbort?: () => void;
   busy: boolean;
   autoFocus?: boolean;
+  disabled?: boolean;
   placeholder?: string;
+  ariaLabel?: string;
   footer?: ReactNode;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -39,12 +43,13 @@ export function PromptInput({
       <textarea
         ref={ref}
         autoFocus={autoFocus}
+        disabled={disabled}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        aria-label={placeholder}
+        aria-label={ariaLabel ?? placeholder}
         rows={1}
-        className="w-full resize-none bg-transparent px-4 pt-3.5 text-md outline-none"
+        className="w-full resize-none bg-transparent px-4 pt-3.5 text-md outline-none disabled:opacity-60"
         style={{ color: "var(--text-primary)", maxHeight: 220 }}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {
@@ -82,7 +87,7 @@ export function PromptInput({
             <button
               type="button"
               aria-label="Send"
-              disabled={value.trim().length === 0}
+              disabled={disabled || value.trim().length === 0}
               onClick={onSubmit}
               className="flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:opacity-40"
               style={{ background: value.trim().length ? "var(--accent)" : "var(--bg-active)", color: value.trim().length ? "var(--text-on-accent)" : "var(--text-tertiary)" }}
