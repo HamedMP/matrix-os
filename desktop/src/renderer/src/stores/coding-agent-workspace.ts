@@ -1,13 +1,11 @@
 import {
   buildCreateAgentThreadRequestFromComposer,
-  type AgentThreadEvent,
   type AgentThreadSummary,
   type ApprovalDecisionRequest,
   type AgentThreadSnapshot,
   type AgentThreadComposerDraft,
   type CodingAgentNotificationPreferences,
   type CodingAgentNotificationPreferencesUpdate,
-  type CreateAgentTurnError,
   type FileReadRequest,
   type FileReadResponse,
   type FileWriteRequest,
@@ -22,6 +20,16 @@ import {
 } from "@matrix-os/contracts";
 import { create } from "zustand";
 import { invoke, onEvent } from "../lib/operator";
+import {
+  fileReferenceMatches,
+  mergeLiveThreadEvent,
+  mergeSelectedThreadSnapshot,
+  reconcileSummaryThread,
+  safeTurnError,
+  summaryIncludesThread,
+  withoutRecordKey,
+  type FileReference,
+} from "./coding-agent/thread-model";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
 
 type WorkspaceStatus = "idle" | "loading" | "ready" | "error";
@@ -34,8 +42,6 @@ type NotificationPreferencesStatus = "idle" | "loading" | "ready" | "saving" | "
 type CreateStatus = "idle" | "submitting";
 type TurnStatus = "idle" | "submitting" | "error";
 type ActionStatus = "idle" | "submitting";
-type AgentThreadSnapshotEvent = AgentThreadSnapshot["events"]["items"][number];
-type FileReference = Pick<FileReadRequest, "projectId" | "worktreeId" | "path">;
 type AttentionPushPreferences = CodingAgentNotificationPreferences["attentionPush"];
 type TurnRetry = { threadId: string; message: string; clientRequestId: string };
 type ReviewSummaryList = {
@@ -188,160 +194,6 @@ function nextCreateRequestId(): string {
 function nextActionRequestId(): string {
   actionRequestSeq += 1;
   return `req_desktop_${Date.now().toString(36)}_${actionRequestSeq}`;
-}
-
-function safeTurnError(code: CreateAgentTurnError["code"]): string {
-  if (code === "thread_busy") {
-    return "This conversation is already running. Wait for it to finish and try again.";
-  }
-  if (code === "thread_not_found") {
-    return "Conversation is unavailable. Refresh and try again.";
-  }
-  return "This conversation cannot accept a message right now. Refresh and try again.";
-}
-
-function withoutRecordKey<T>(record: Record<string, T>, key: string): Record<string, T> {
-  const { [key]: _removed, ...rest } = record;
-  return rest;
-}
-
-function fileReferenceMatches(reference: FileReference | null, request: FileReference): boolean {
-  return reference?.projectId === request.projectId
-    && reference.worktreeId === request.worktreeId
-    && reference.path === request.path;
-}
-
-function compareThreadEvents(left: AgentThreadSnapshotEvent, right: AgentThreadSnapshotEvent): number {
-  const occurredAt = left.occurredAt.localeCompare(right.occurredAt);
-  return occurredAt === 0 ? left.eventId.localeCompare(right.eventId) : occurredAt;
-}
-
-function mergeSelectedThreadSnapshot(
-  current: AgentThreadSnapshot | null,
-  next: AgentThreadSnapshot,
-): AgentThreadSnapshot {
-  if (!current || current.thread.id !== next.thread.id) return next;
-  const eventById = new Map<string, AgentThreadSnapshotEvent>();
-  for (const event of current.events.items) eventById.set(event.eventId, event);
-  for (const event of next.events.items) eventById.set(event.eventId, event);
-  const limit = Math.max(current.events.limit, next.events.limit);
-  const items = Array.from(eventById.values())
-    .sort(compareThreadEvents)
-    .slice(-limit);
-  const thread = current.thread.updatedAt > next.thread.updatedAt ? current.thread : next.thread;
-  return {
-    ...next,
-    thread,
-    events: {
-      ...next.events,
-      items,
-      hasMore: current.events.hasMore || next.events.hasMore,
-      limit,
-    },
-  };
-}
-
-function summaryIncludesThread(summary: RuntimeSummary, threadId: string): boolean {
-  return summary.activeThreads.items.some((thread) => thread.id === threadId)
-    || summary.attentionThreads.items.some((thread) => thread.id === threadId);
-}
-
-function reconcileSummaryThread(
-  summary: RuntimeSummary,
-  thread: RuntimeSummary["activeThreads"]["items"][number],
-): RuntimeSummary {
-  const activeItems = summary.activeThreads.items.map((candidate) =>
-    candidate.id === thread.id ? thread : candidate,
-  );
-  const attentionItems = thread.attention === "none"
-    ? summary.attentionThreads.items.filter((candidate) => candidate.id !== thread.id)
-    : summary.attentionThreads.items.map((candidate) =>
-        candidate.id === thread.id ? thread : candidate,
-      );
-  return {
-    ...summary,
-    activeThreads: {
-      ...summary.activeThreads,
-      items: activeItems,
-    },
-    attentionThreads: {
-      ...summary.attentionThreads,
-      items: attentionItems,
-    },
-  };
-}
-
-function attentionForThreadStatus(status: AgentThreadSummary["status"]): AgentThreadSummary["attention"] {
-  switch (status) {
-    case "waiting_for_approval":
-      return "approval_required";
-    case "waiting_for_input":
-      return "input_required";
-    case "failed":
-      return "failed";
-    case "completed":
-      return "completed";
-    default:
-      return "none";
-  }
-}
-
-function reduceThreadSummaryEvent(
-  thread: AgentThreadSummary,
-  event: AgentThreadEvent,
-): AgentThreadSummary {
-  if (event.threadId !== thread.id) return thread;
-  const updatedAt = latestIsoTimestamp(thread.updatedAt, event.occurredAt);
-  switch (event.type) {
-    case "thread.status":
-      return { ...thread, status: event.status, attention: attentionForThreadStatus(event.status), updatedAt };
-    case "approval.requested":
-      return { ...thread, status: "waiting_for_approval", attention: "approval_required", updatedAt };
-    case "approval.resolved":
-      return { ...thread, status: "running", attention: "none", updatedAt };
-    case "user_input.requested":
-      return { ...thread, status: "waiting_for_input", attention: "input_required", updatedAt };
-    case "user_input.answered":
-      return { ...thread, status: "running", attention: "none", updatedAt };
-    case "thread.error":
-      return { ...thread, status: "failed", attention: "failed", updatedAt };
-    case "thread.completed":
-      return {
-        ...thread,
-        status: event.outcome,
-        attention: event.outcome === "completed" ? "completed" : event.outcome === "failed" ? "failed" : "none",
-        updatedAt,
-      };
-    default:
-      return { ...thread, updatedAt };
-  }
-}
-
-function latestIsoTimestamp(a: string, b: string): string {
-  return a.localeCompare(b) >= 0 ? a : b;
-}
-
-function mergeLiveThreadEvent(
-  current: AgentThreadSnapshot,
-  event: AgentThreadEvent,
-): AgentThreadSnapshot {
-  if (event.threadId !== current.thread.id) return current;
-  const existing = new Map(current.events.items.map((item) => [item.eventId, item]));
-  existing.set(event.eventId, event);
-  const limit = current.events.limit;
-  const items = Array.from(existing.values())
-    .sort(compareThreadEvents)
-    .slice(-limit);
-  return {
-    ...current,
-    thread: event.occurredAt.localeCompare(current.thread.updatedAt) >= 0
-      ? reduceThreadSummaryEvent(current.thread, event)
-      : current.thread,
-    events: {
-      ...current.events,
-      items,
-    },
-  };
 }
 
 function detachActiveThreadEventStream(): void {
