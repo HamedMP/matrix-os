@@ -1006,6 +1006,16 @@ export function createCodingAgentThreadStore(
         occurredAt: createdAt,
         thread: stripOwner(thread),
       });
+      const userMessageEvent = AgentThreadEventSchema.parse({
+        type: "user.message",
+        eventId: nextEventId(),
+        threadId: thread.id,
+        occurredAt: createdAt,
+        messageId: `msg_${randomUUID()}`,
+        text: request.prompt,
+        clientRequestId: request.clientRequestId,
+        ...(request.attachments ? { attachments: request.attachments } : {}),
+      });
       let providerEvents: AgentThreadEvent[];
       let providerResumeState: CodingAgentProviderResumeState | undefined;
       try {
@@ -1022,7 +1032,7 @@ export function createCodingAgentThreadStore(
         logCodingAgentWarning("provider start failed", err);
         providerEvents = safeProviderRunFailureEvents(thread.id, now, nextEventId);
       }
-      const events = [createdEvent, ...providerEvents];
+      const events = [createdEvent, userMessageEvent, ...providerEvents];
       for (const event of events.slice(1)) {
         thread = applyEvent(thread, event);
       }
@@ -1160,7 +1170,7 @@ export function createCodingAgentThreadStore(
           }
           const acceptedAt = now().toISOString();
           const turnId = AgentTurnIdSchema.parse(`turn_${randomUUID()}`);
-          const event = AgentThreadEventSchema.parse({
+          const acceptedEvent = AgentThreadEventSchema.parse({
             type: "turn.accepted",
             eventId: nextEventId(),
             threadId,
@@ -1169,6 +1179,18 @@ export function createCodingAgentThreadStore(
             clientRequestId: request.clientRequestId,
             acceptedAt,
           });
+          const userMessageEvent = AgentThreadEventSchema.parse({
+            type: "user.message",
+            eventId: nextEventId(),
+            threadId,
+            occurredAt: acceptedAt,
+            messageId: `msg_${randomUUID()}`,
+            text: request.message,
+            clientRequestId: request.clientRequestId,
+            turnId,
+            ...(request.attachments ? { attachments: request.attachments } : {}),
+          });
+          const acceptedEvents = [acceptedEvent, userMessageEvent];
           const nextThread: StoredThread = {
             ...thread,
             activeTurnId: turnId,
@@ -1189,7 +1211,7 @@ export function createCodingAgentThreadStore(
             state: {
               ...state,
               threads: state.threads.map((candidate) => candidate === thread ? nextThread : candidate),
-              events: [...state.events, event],
+              events: [...state.events, ...acceptedEvents],
               turns: [...state.turns, turn],
             },
             result: {
@@ -1199,7 +1221,7 @@ export function createCodingAgentThreadStore(
                 status: "accepted",
                 acceptedAt,
               }),
-              eventsToPublish: [event],
+              eventsToPublish: acceptedEvents,
               dispatch: { thread: nextThread, turn },
             },
           };

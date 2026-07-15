@@ -42,4 +42,19 @@ describe("coding agent provider adapter boundary", () => {
       outcome: "completed",
     } as never, "thread_provider_1")).toThrow();
   });
+
+  it("rejects provider-authored user messages so the gateway remains authoritative", () => {
+    expect(() => parseCodingAgentProviderRunResult({
+      events: [{
+        type: "user.message",
+        eventId: "evt_provider_user_message",
+        threadId: "thread_provider_1",
+        occurredAt: now,
+        messageId: "msg_provider_user_message",
+        text: "Provider-invented user content",
+        clientRequestId: "req_provider_user_message",
+      }],
+      outcome: "completed",
+    }, "thread_provider_1")).toThrow("Provider cannot emit user messages");
+  });
 });

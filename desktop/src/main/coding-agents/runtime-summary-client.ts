@@ -2,6 +2,9 @@ import {
   AgentThreadSnapshotSchema,
   CodingAgentNotificationPreferencesSchema,
   CodingAgentNotificationPreferencesUpdateSchema,
+  CreateAgentTurnErrorSchema,
+  CreateAgentTurnRequestSchema,
+  CreateAgentTurnResponseSchema,
   FileBrowseRequestSchema,
   FileBrowseResponseSchema,
   FileReadRequestSchema,
@@ -22,6 +25,9 @@ import {
   type CodingAgentNotificationPreferences,
   type CodingAgentNotificationPreferencesUpdate,
   type CreateAgentThreadRequest,
+  type CreateAgentTurnError,
+  type CreateAgentTurnRequest,
+  type CreateAgentTurnResponse,
   type FileBrowseRequest,
   type FileBrowseResponse,
   type FileReadRequest,
@@ -39,6 +45,7 @@ import {
   type SourceControlPrepareCommitRequest,
   type SourceControlPrepareCommitResponse,
   type UserInputAnswerRequest,
+  ThreadIdSchema,
   boundedListSchema,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -59,6 +66,7 @@ const FILE_READ_TIMEOUT_MS = 10_000;
 const FILE_WRITE_TIMEOUT_MS = 10_000;
 const SOURCE_CONTROL_TIMEOUT_MS = 10_000;
 const THREAD_CREATE_TIMEOUT_MS = 15_000;
+const THREAD_TURN_TIMEOUT_MS = 15_000;
 const THREAD_SNAPSHOT_TIMEOUT_MS = 10_000;
 const APPROVAL_DECISION_TIMEOUT_MS = 10_000;
 const INPUT_ANSWER_TIMEOUT_MS = 10_000;
@@ -70,6 +78,38 @@ type ReviewSummaryList = z.infer<typeof ReviewSummaryListSchema>;
 const NotificationPreferencesResponseSchema = z.object({
   preferences: CodingAgentNotificationPreferencesSchema,
 }).strict();
+const CreateAgentTurnErrorEnvelopeSchema = z.object({
+  error: CreateAgentTurnErrorSchema,
+}).strict();
+
+export type CodingAgentCreateTurnResult =
+  | { ok: true; response: CreateAgentTurnResponse }
+  | { ok: false; error: CreateAgentTurnError };
+
+function localTurnError(code: CreateAgentTurnError["code"]): CreateAgentTurnError {
+  if (code === "thread_busy") {
+    return CreateAgentTurnErrorSchema.parse({
+      code,
+      safeMessage: "This conversation is already running. Wait for it to finish and try again.",
+      retryable: true,
+      recoveryActions: ["retry"],
+    });
+  }
+  if (code === "thread_not_found") {
+    return CreateAgentTurnErrorSchema.parse({
+      code,
+      safeMessage: "Conversation is unavailable. Refresh and try again.",
+      retryable: true,
+      recoveryActions: ["retry"],
+    });
+  }
+  return CreateAgentTurnErrorSchema.parse({
+    code,
+    safeMessage: "This conversation cannot accept a message right now. Refresh and try again.",
+    retryable: true,
+    recoveryActions: ["retry"],
+  });
+}
 
 function buildSummaryUrl(origin: string, runtimeSlot: string): string {
   const url = new URL("/api/coding-agents/summary", origin);
@@ -257,6 +297,49 @@ export async function createCodingAgentThread(
     throw new Error("agent thread unavailable");
   }
   return parsed.data;
+}
+
+export async function createCodingAgentTurn(
+  auth: AuthService,
+  request: CreateAgentTurnRequest & { threadId: string },
+  fetchFn: FetchFn = fetch,
+): Promise<CodingAgentCreateTurnResult> {
+  const token = auth.getToken();
+  const { threadId, ...turnRequest } = request;
+  const parsedThreadId = ThreadIdSchema.safeParse(threadId);
+  const parsedRequest = CreateAgentTurnRequestSchema.safeParse(turnRequest);
+  if (!token || !parsedThreadId.success || !parsedRequest.success) {
+    throw new Error("conversation turn unavailable");
+  }
+
+  const url = buildRuntimeUrl(
+    auth,
+    `/api/coding-agents/threads/${encodeURIComponent(parsedThreadId.data)}/turns`,
+  );
+  const res = await fetchFn(url.toString(), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(parsedRequest.data),
+    signal: AbortSignal.timeout(THREAD_TURN_TIMEOUT_MS),
+  });
+  const body = await res.json();
+  if (res.status === 200 || res.status === 202) {
+    const parsed = CreateAgentTurnResponseSchema.safeParse(body);
+    if (!parsed.success || parsed.data.threadId !== parsedThreadId.data) {
+      throw new Error("conversation turn unavailable");
+    }
+    return { ok: true, response: parsed.data };
+  }
+  if (res.status === 404 || res.status === 409) {
+    const parsed = CreateAgentTurnErrorEnvelopeSchema.safeParse(body);
+    if (!parsed.success) throw new Error("conversation turn unavailable");
+    return { ok: false, error: localTurnError(parsed.data.error.code) };
+  }
+  throw new Error("conversation turn unavailable");
 }
 
 export async function fetchCodingAgentThreadSnapshot(

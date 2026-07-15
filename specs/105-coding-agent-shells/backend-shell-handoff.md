@@ -21,7 +21,7 @@ This note is the stable integration boundary for desktop and mobile Conversation
 
 ## Mutations
 
-- Create a new project chat or task chat with `POST /api/coding-agents/threads` and `CreateAgentThreadRequestSchema`. New shell-created threads require `projectId`; `taskId` is optional but must belong to that project.
+- Create a new project chat or task chat with `POST /api/coding-agents/threads` and `CreateAgentThreadRequestSchema`. New shell-created threads require `projectId`; `taskId` is optional but must belong to that project. `worktreeId` remains optional at this boundary: workspace-backed providers provision the deterministic server-owned worktree when it is omitted.
 - Send later messages to the selected conversation with `POST /api/coding-agents/threads/:threadId/turns` and `CreateAgentTurnRequestSchema`. A 202 response is newly accepted, a 200 response is an idempotent retry, and a safe 409 means the shell should keep the current thread selected and offer retry after refresh.
 - Adopt an old unassigned conversation with `POST /api/coding-agents/threads/:threadId/adopt` and `AdoptAgentThreadRequestSchema`. This compatibility route cannot move an already assigned thread.
 - Keep task create/update/delete on the canonical `/api/projects/:projectId/tasks` routes. Thread state never moves a Kanban card automatically.
@@ -34,6 +34,7 @@ Every persisted public thread change emits a bounded `coding-agent.thread.create
 - Fetch `GET /api/coding-agents/threads/:threadId` for the latest bounded `AgentThreadSnapshotSchema` window.
 - Fetch `GET /api/coding-agents/threads/:threadId/events?cursor=...` for bounded continuation.
 - Subscribe to `/ws/coding-agents/thread/:threadId` through the existing authenticated shell client and validate every frame before reducing it.
+- Render user turns only from gateway-authored `user.message` events. Provider adapters cannot emit this event type, and shells must not synthesize user transcript rows after a mutation.
 - Keep the server-provided `threadId`, event cursor, and event IDs. Never store transcripts, terminal output, provider resume identity, approvals, file contents, or diffs in shell persistence.
 
 Workspace input delivery completes the accepted turn but does not complete a still-running thread. The canonical workspace session-stop path owns terminal thread completion/failure. Shell reducers should therefore render turn and thread lifecycle independently.

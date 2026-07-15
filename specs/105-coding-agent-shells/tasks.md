@@ -1,6 +1,6 @@
 # Tasks: Coding Agent Shells
 
-**Status**: Backend Phases 18-20 and desktop Phase 21.1 implemented; Phase 21.2-21.5 shell implementation next; real-process Gate 3 smoke pending
+**Status**: Backend Phases 18-20 and desktop Phase 21.1-21.2 implemented; Phase 21.3-21.5 shell implementation next; real-process Gate 3 smoke pending
 **Lineage**: foundation merged through the recorded implementation checkpoint; clarified follow-up is specified against current `main`
 **Rule**: Preserve all existing desktop and mobile functionality. Add coding-agent capabilities incrementally behind contracts, tests, and feature flags.
 
@@ -1190,12 +1190,18 @@ typecheck/build, and the built-app operator flow are recorded in
 
 ### 21.2 Conversation View
 
-- [ ] Render selected same-thread transcript, attention, approvals, terminal, files, review, and preview context.
-- [ ] Send follow-up through the turn IPC, not thread create.
-- [ ] Keep explicit "new chat from context" separate from same-thread send.
-- [ ] Handle busy/idempotent/offline states with generic recovery copy.
+- [x] Render selected same-thread transcript, attention, approvals, terminal, files, review, and preview context.
+- [x] Send follow-up through the turn IPC, not thread create.
+- [x] Keep explicit "new chat from context" separate from same-thread send.
+- [x] Handle busy/idempotent/offline states with generic recovery copy.
 
 Tests: `DT-005`, `DT-006`, `DT-007`.
+
+Evidence: strict turn IPC/client/handler tests, server-authoritative
+`user.message` replay coverage, retry/idempotency and selection-race store tests,
+durable chat-bubble/component tests, workspace-provider auto-provisioning tests,
+the full focused desktop workspace regression, and desktop typecheck are recorded
+in `acceptance-tests.md`. Kanban remains open in 21.3.
 
 ### 21.3 Kanban View
 

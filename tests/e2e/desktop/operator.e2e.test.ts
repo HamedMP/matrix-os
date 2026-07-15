@@ -91,7 +91,7 @@ suite("operator desktop e2e", () => {
     await page.keyboard.press("Control+K");
     await page.getByLabel("Command palette").waitFor({ timeout: 10_000 });
     await page.getByText("Open Agents").click();
-    await page.getByRole("button", { name: "Start run" }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "New chat in selected project" }).waitFor({ timeout: 10_000 });
     await page.getByRole("navigation", { name: "Projects and conversations" }).waitFor();
     await page.getByRole("group", { name: "Project chats" }).waitFor();
     await page.getByRole("group", { name: "Task Fix the failing auth tests" }).waitFor();
@@ -102,10 +102,12 @@ suite("operator desktop e2e", () => {
 
   it("starts an agent thread from the Agents workspace composer", async () => {
     await page.locator("aside button", { hasText: "Agents" }).first().click({ timeout: 5_000 });
-    await page.locator("textarea:visible").first().fill("fix the failing auth tests", { timeout: 5_000 });
+    await page.getByRole("button", { name: "New chat in Matrix OS" }).click();
+    await page.getByLabel("Agent run prompt").fill("fix the failing auth tests", { timeout: 5_000 });
     await page.getByRole("button", { name: "Start run" }).focus();
     await page.keyboard.press("Enter");
     await expect.poll(() => gateway.state.codingAgentCreates.length, { timeout: 5_000 }).toBe(1);
+    expect(gateway.state.codingAgentCreates[0]).toMatchObject({ projectId: "matrix-os" });
     await page.getByText("fix the failing auth tests").first().waitFor({ timeout: 10_000 });
     await page.getByText("Completed").first().waitFor({ timeout: 10_000 });
     await page.screenshot({ path: join(SCREENSHOT_DIR, "05-agents.png") });

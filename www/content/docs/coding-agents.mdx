@@ -29,6 +29,19 @@ In the browser shell, Canvas remains the primary workspace. The built-in Workspa
   Desktop, mobile, browser shell, and CLI sessions all reconnect to the same Matrix computer. If an agent keeps running after you close one shell, another shell can reopen the same thread, terminal, review, or preview from the gateway state.
 </Callout>
 
+### Project conversations on desktop
+
+The desktop workspace groups coding chats by project. A project can have its
+own chats, and each task can contain several independent chats. Selecting a
+chat opens its durable gateway timeline in the center while terminal, review,
+files, diff, and preview tools stay available beside it.
+
+Use the composer at the bottom of an open conversation to continue that same
+thread. Use a project's or task's **New chat** action when you want a separate
+conversation. Matrix records accepted user messages on the gateway, so a
+refresh or another desktop session replays the same conversation instead of
+reconstructing it from local UI state.
+
 ## Supported agents
 
 Four coding agents are supported:

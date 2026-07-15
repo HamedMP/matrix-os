@@ -1,12 +1,7 @@
-import { Bell, Bot, ChevronDown, ChevronRight, ChevronUp, ClipboardCheck, ExternalLink, FileText, FolderOpen, GitBranch, GitCommitHorizontal, GitPullRequest, Play, Save, Search, Server, SquareTerminal } from "lucide-react";
+import { Bell, Bot, ChevronRight, ClipboardCheck, ExternalLink, FileText, FolderOpen, GitBranch, GitCommitHorizontal, GitPullRequest, Play, Save, Search, Server, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ReviewIdSchema,
-  SafeAssistantPreviewSourceTextSchema,
-  SafeAssistantPreviewTextSchema,
   defaultAgentThreadComposerDraft,
-  type AgentThreadEvent,
-  type AgentThreadSnapshot,
   type AgentThreadComposerDraft,
   type FileBrowseResponse,
   type FileReadRequest,
@@ -25,8 +20,6 @@ import { invoke } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
 import {
   clearCodingAgentRuntimeSelection,
-  codingAgentApprovalActionKey,
-  codingAgentInputActionKey,
   useCodingAgentWorkspace,
 } from "../../stores/coding-agent-workspace";
 import { useCodingAgentProjectWorkspace } from "../../stores/coding-agent-project-workspace";
@@ -34,6 +27,7 @@ import { useTabs } from "../../stores/tabs";
 import { AgentPreviewList, AgentTerminalList } from "./AgentWorkspaceContext";
 import { AgentRuntimeHeader } from "./AgentRuntimeHeader";
 import { AgentProjectWorkspaceShell } from "./AgentProjectWorkspaceShell";
+import { AgentConversationView } from "./AgentConversationView";
 import {
   AgentWorkspaceSection as Section,
   AgentWorkspaceStack,
@@ -55,7 +49,6 @@ const STATUS_COLOR: Record<string, string> = {
 };
 const DEFAULT_STATUS_COLOR = "var(--text-tertiary)";
 type ReviewDetailStatus = "idle" | "loading" | "ready" | "error";
-type ThreadDetailStatus = "idle" | "loading" | "ready" | "error";
 type ReviewSnapshotFile = ReviewSnapshot["files"]["items"][number];
 type ReviewSnapshotHunk = ReviewSnapshotFile["hunks"][number];
 type ReviewSnapshotLine = NonNullable<ReviewSnapshotHunk["lines"]>[number];
@@ -67,20 +60,12 @@ type ComposerSeed = {
   draft: AgentThreadComposerDraft;
 };
 type NotificationPreferenceKey = "approval" | "input" | "failed" | "completed";
-type AssistantTimelineEvent = Extract<AgentThreadEvent, { type: "assistant.text.delta" | "assistant.text.completed" }>;
-type ToolTimelineEvent = Extract<AgentThreadEvent, { type: "tool.started" | "tool.output" | "tool.completed" }>;
-type ThreadTimelineItem =
-  | { kind: "assistant"; key: string; events: AssistantTimelineEvent[]; order: number }
-  | { kind: "event"; event: AgentThreadEvent; order: number }
-  | { kind: "tool"; key: string; events: ToolTimelineEvent[]; order: number };
 type SelectedReviewHunk = {
   key: string;
   file: ReviewSnapshotFile;
   hunk: ReviewSnapshotHunk;
   hunkIndex: number;
 };
-
-const ASSISTANT_PREVIEW_MAX_CHARS = 240;
 
 function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
   return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
@@ -321,7 +306,7 @@ function hasComposerContent(current: AgentThreadComposerDraft): boolean {
     || Boolean(current.attachments?.length);
 }
 
-function AgentComposer({ summary, seed, focusRequestId }: { summary: RuntimeSummary; seed: ComposerSeed | null; focusRequestId: number }) {
+function AgentComposer({ summary, seed, focusRequestId, onCreated }: { summary: RuntimeSummary; seed: ComposerSeed | null; focusRequestId: number; onCreated?: () => void }) {
   const initialDraft = useMemo(() => defaultAgentThreadComposerDraft(summary), [summary]);
   const [draft, setDraft] = useState<AgentThreadComposerDraft>(initialDraft);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
@@ -369,6 +354,7 @@ function AgentComposer({ summary, seed, focusRequestId }: { summary: RuntimeSumm
       return;
     }
     setDraft(initialDraft);
+    onCreated?.();
   }
 
   return (
@@ -584,496 +570,6 @@ function CreatedThreadHandleList({ summary }: { summary: RuntimeSummary }) {
   );
 }
 
-function ThreadSnapshotPanel({
-  status,
-  snapshot,
-  error,
-}: {
-  status: ThreadDetailStatus;
-  snapshot: AgentThreadSnapshot | null;
-  error: string | null;
-}) {
-  if (status === "idle") return null;
-  if (status === "loading") {
-    return (
-      <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
-        Loading thread details...
-      </p>
-    );
-  }
-  if (status === "error") {
-    return (
-      <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
-        {error ?? "Thread state unavailable"}
-      </p>
-    );
-  }
-  if (!snapshot) return null;
-  const answeredInputRequestKeys = new Set(snapshot.events.items
-    .filter((event) => event.type === "user_input.answered")
-    .map((event) => codingAgentInputActionKey(event.threadId, event.requestId)));
-  const timelineItems = createThreadTimelineItems(snapshot.events.items);
-
-  return (
-    <article
-      className="ph-no-capture grid gap-3 rounded-md border p-3"
-      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-            Thread details
-          </h2>
-          <p className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
-            {snapshot.thread.title}
-          </p>
-        </div>
-        <span className="shrink-0 text-xs capitalize" style={{ color: "var(--text-secondary)" }}>
-          {snapshot.thread.status.replace(/_/g, " ")}
-        </span>
-      </div>
-      <dl className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
-        <div>
-          <dt style={{ color: "var(--text-tertiary)" }}>Provider</dt>
-          <dd className="truncate" style={{ color: "var(--text-secondary)" }}>{snapshot.thread.providerId}</dd>
-        </div>
-        <div>
-          <dt style={{ color: "var(--text-tertiary)" }}>Terminal</dt>
-          <dd className="truncate" style={{ color: "var(--text-secondary)" }}>
-            {snapshot.thread.terminalSessionId ?? "Not bound"}
-          </dd>
-        </div>
-        <div>
-          <dt style={{ color: "var(--text-tertiary)" }}>Updated</dt>
-          <dd className="truncate" style={{ color: "var(--text-secondary)" }}>{snapshot.thread.updatedAt}</dd>
-        </div>
-        <div>
-          <dt style={{ color: "var(--text-tertiary)" }}>Events</dt>
-          <dd className="truncate" style={{ color: "var(--text-secondary)" }}>{snapshot.events.items.length}</dd>
-        </div>
-      </dl>
-      <div className="grid gap-2">
-        {timelineItems.map((item) => item.kind === "assistant" ? (
-          <ThreadTimelineSummaryRow
-            key={item.key}
-            occurredAt={item.events[0]?.occurredAt ?? snapshot.thread.updatedAt}
-            {...describeAssistantTimeline(item.events)}
-          />
-        ) : item.kind === "tool" ? (
-          <ThreadToolTimelineRow
-            key={item.key}
-            occurredAt={item.events[0]?.occurredAt ?? snapshot.thread.updatedAt}
-            events={item.events}
-          />
-        ) : (
-          <ThreadEventRow key={item.event.eventId} event={item.event} answeredInputRequestKeys={answeredInputRequestKeys} />
-        ))}
-        {snapshot.events.items.length === 0 ? (
-          <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
-            No thread events yet.
-          </p>
-        ) : null}
-      </div>
-    </article>
-  );
-}
-
-function ThreadTimelineSummaryRow({ title, detail, occurredAt }: { title: string; detail: string; occurredAt: string }) {
-  return (
-    <div
-      className="grid gap-1 rounded-md border px-3 py-2"
-      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-          {title}
-        </p>
-        <span className="shrink-0 text-xs" style={{ color: "var(--text-tertiary)" }}>
-          {occurredAt}
-        </span>
-      </div>
-      <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-        {detail}
-      </p>
-    </div>
-  );
-}
-
-function ThreadToolTimelineRow({ events, occurredAt }: { events: ToolTimelineEvent[]; occurredAt: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const copy = describeToolTimeline(events);
-  const details = describeToolTimelineDetails(events);
-  const outputCount = `${details.outputs.length} ${details.outputs.length === 1 ? "output" : "outputs"}`;
-
-  return (
-    <div
-      className="grid gap-2 rounded-md border px-3 py-2"
-      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-          {copy.title}
-        </p>
-        <span className="shrink-0 text-xs" style={{ color: "var(--text-tertiary)" }}>
-          {occurredAt}
-        </span>
-      </div>
-      <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-        {copy.detail}
-      </p>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs font-medium" style={{ color: "var(--text-tertiary)" }}>
-          {outputCount}
-        </span>
-        <Button
-          variant="ghost"
-          aria-label={`${expanded ? "Collapse" : "Expand"} tool activity ${copy.title}`}
-          onClick={() => setExpanded((value) => !value)}
-        >
-          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          {expanded ? "Hide details" : "Show details"}
-        </Button>
-      </div>
-      {expanded ? (
-        <div className="grid gap-1">
-          {details.started ? (
-            <ThreadToolDetailRow title={`Started ${details.started.kind}`} detail="Tool run started" />
-          ) : null}
-          {details.outputs.map((output, index) => (
-            <ThreadToolDetailRow
-              key={output.eventId}
-              title={`Output ${index + 1}`}
-              detail={output.truncated ? "Output received, partial" : "Output received"}
-            />
-          ))}
-          {details.completed ? (
-            <ThreadToolDetailRow title="Completed" detail={formatToolCompletion(details.completed.outcome)} />
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function ThreadToolDetailRow({ title, detail }: { title: string; detail: string }) {
-  return (
-    <div
-      className="grid gap-1 rounded-md border px-3 py-2"
-      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
-    >
-      <p className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>
-        {title}
-      </p>
-      <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-        {detail}
-      </p>
-    </div>
-  );
-}
-
-function ThreadEventRow({ event, answeredInputRequestKeys }: { event: AgentThreadEvent; answeredInputRequestKeys: ReadonlySet<string> }) {
-  const copy = describeThreadEvent(event);
-  const pendingApprovalKeys = useCodingAgentWorkspace((s) => s.pendingApprovalKeys);
-  const approvalActionErrors = useCodingAgentWorkspace((s) => s.approvalActionErrors);
-  const submitApprovalDecision = useCodingAgentWorkspace((s) => s.submitApprovalDecision);
-  const pendingInputRequestKeys = useCodingAgentWorkspace((s) => s.pendingInputRequestKeys);
-  const inputActionErrors = useCodingAgentWorkspace((s) => s.inputActionErrors);
-  const submitInputAnswer = useCodingAgentWorkspace((s) => s.submitInputAnswer);
-  const selectReview = useCodingAgentWorkspace((s) => s.selectReview);
-  const [inputAnswer, setInputAnswer] = useState("");
-  const approval = event.type === "approval.requested" ? event.approval : null;
-  const inputRequest = event.type === "user_input.requested" ? event.request : null;
-  const approvalKey = approval ? codingAgentApprovalActionKey(approval.threadId, approval.approvalId) : null;
-  const approvalPending = approvalKey ? pendingApprovalKeys.includes(approvalKey) : false;
-  const approvalActionError = approvalKey ? approvalActionErrors[approvalKey] : undefined;
-  const inputKey = inputRequest ? codingAgentInputActionKey(inputRequest.threadId, inputRequest.requestId) : null;
-  const inputPending = inputKey ? pendingInputRequestKeys.includes(inputKey) : false;
-  const inputActionError = inputKey ? inputActionErrors[inputKey] : undefined;
-  const inputAnswered = inputKey ? answeredInputRequestKeys.has(inputKey) : false;
-  const trimmedInputAnswer = inputAnswer.trim();
-  const reviewReadyId = event.type === "review.ready" ? ReviewIdSchema.safeParse(event.reviewId) : null;
-  return (
-    <div
-      className="grid gap-1 rounded-md border px-3 py-2"
-      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-          {copy.title}
-        </p>
-        <span className="shrink-0 text-xs" style={{ color: "var(--text-tertiary)" }}>
-          {event.occurredAt}
-        </span>
-      </div>
-      <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-        {copy.detail}
-      </p>
-      {reviewReadyId?.success ? (
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          <Button
-            aria-label="Open review from thread"
-            variant="subtle"
-            onClick={() => void selectReview(reviewReadyId.data)}
-          >
-            <GitPullRequest size={14} />
-            Open review
-          </Button>
-        </div>
-      ) : null}
-      {approval ? (
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          {approval.allowedDecisions.map((decision) => (
-            <Button
-              key={decision}
-              aria-label={`${approvalDecisionLabel(decision)} ${approval.title}`}
-              variant={approvalDecisionVariant(decision)}
-              disabled={approvalPending}
-              onClick={() => void submitApprovalDecision({
-                threadId: approval.threadId,
-                approvalId: approval.approvalId,
-                decision,
-                correlationId: approval.correlationId,
-              })}
-            >
-              {approvalPending ? "Sending..." : approvalDecisionLabel(decision)}
-            </Button>
-          ))}
-          {approvalActionError ? (
-            <span className="text-xs" style={{ color: "var(--danger)" }}>
-              {approvalActionError}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-      {inputRequest && !inputAnswered ? (
-        <div className="grid gap-2 pt-1">
-          <textarea
-            aria-label={`Answer ${inputRequest.title}`}
-            className="min-h-20 resize-y rounded-md border px-3 py-2 text-sm outline-none"
-            maxLength={8000}
-            placeholder={inputRequest.placeholder ?? "Answer"}
-            style={{
-              borderColor: "var(--border-subtle)",
-              background: "var(--bg-surface)",
-              color: "var(--text-primary)",
-            }}
-            value={inputAnswer}
-            onChange={(e) => setInputAnswer(e.currentTarget.value)}
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              aria-label={`Send ${inputRequest.title}`}
-              variant="primary"
-              disabled={inputPending || (inputRequest.required && trimmedInputAnswer.length === 0)}
-              onClick={() => void submitInputAnswer({
-                threadId: inputRequest.threadId,
-                inputRequestId: inputRequest.requestId,
-                answer: inputAnswer,
-                correlationId: inputRequest.correlationId,
-              })}
-            >
-              {inputPending ? "Sending..." : "Send"}
-            </Button>
-            {inputActionError ? (
-              <span className="text-xs" style={{ color: "var(--danger)" }}>
-                {inputActionError}
-              </span>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function createThreadTimelineItems(events: AgentThreadEvent[]): ThreadTimelineItem[] {
-  const assistantGroups = new Map<string, AssistantTimelineEvent[]>();
-  const toolGroups = new Map<string, ToolTimelineEvent[]>();
-  const items: ThreadTimelineItem[] = [];
-  for (const [order, event] of events.entries()) {
-    if (isAssistantTimelineEvent(event)) {
-      const group = assistantGroups.get(event.messageId);
-      if (group) {
-        group.push(event);
-        continue;
-      }
-      const eventsForMessage = [event];
-      assistantGroups.set(event.messageId, eventsForMessage);
-      items.push({ kind: "assistant", key: `assistant:${event.messageId}`, events: eventsForMessage, order });
-      continue;
-    }
-    if (isToolTimelineEvent(event)) {
-      const group = toolGroups.get(event.toolCallId);
-      if (group) {
-        group.push(event);
-        continue;
-      }
-      const eventsForTool = [event];
-      toolGroups.set(event.toolCallId, eventsForTool);
-      items.push({ kind: "tool", key: `tool:${event.toolCallId}`, events: eventsForTool, order });
-      continue;
-    }
-    items.push({ kind: "event", event, order });
-  }
-  return items.sort((a, b) => a.order - b.order);
-}
-
-function isAssistantTimelineEvent(event: AgentThreadEvent): event is AssistantTimelineEvent {
-  return event.type === "assistant.text.delta" || event.type === "assistant.text.completed";
-}
-
-function isToolTimelineEvent(event: AgentThreadEvent): event is ToolTimelineEvent {
-  return event.type === "tool.started" || event.type === "tool.output" || event.type === "tool.completed";
-}
-
-function describeAssistantTimeline(events: AssistantTimelineEvent[]): { title: string; detail: string } {
-  const deltas = events.filter((event): event is Extract<AssistantTimelineEvent, { type: "assistant.text.delta" }> => event.type === "assistant.text.delta");
-  const completed = events.some((event) => event.type === "assistant.text.completed");
-  const preview = formatAssistantPreview(deltas);
-  if (deltas.length === 1 && !completed) {
-    return { title: "Assistant update", detail: preview ?? "Text update received" };
-  }
-  const updates = `${deltas.length} ${deltas.length === 1 ? "text update" : "text updates"} received`;
-  const statusDetail = completed ? `${updates}, complete` : updates;
-  return {
-    title: completed ? "Assistant message" : "Assistant updates",
-    detail: preview ? completed ? `${statusDetail}. ${preview}` : preview : statusDetail,
-  };
-}
-
-function formatAssistantPreview(deltas: Extract<AssistantTimelineEvent, { type: "assistant.text.delta" }>[]): string | null {
-  const preview = deltas
-    .map((event) => event.delta)
-    .join("")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!preview) {
-    return null;
-  }
-  if (!SafeAssistantPreviewSourceTextSchema.safeParse(preview).success) {
-    return null;
-  }
-  const cappedPreview = preview.length <= ASSISTANT_PREVIEW_MAX_CHARS
-    ? preview
-    : `${preview.slice(0, ASSISTANT_PREVIEW_MAX_CHARS).trimEnd()}...`;
-  return SafeAssistantPreviewTextSchema.safeParse(cappedPreview).success ? cappedPreview : null;
-}
-
-function describeToolTimeline(events: ToolTimelineEvent[]): { title: string; detail: string } {
-  const started = events.find((event): event is Extract<ToolTimelineEvent, { type: "tool.started" }> => event.type === "tool.started");
-  const outputs = events.filter((event): event is Extract<ToolTimelineEvent, { type: "tool.output" }> => event.type === "tool.output");
-  const completed = events.find((event): event is Extract<ToolTimelineEvent, { type: "tool.completed" }> => event.type === "tool.completed");
-  const displayName = started?.displayName ?? "Tool";
-  if (!completed) {
-    return {
-      title: "Tool activity",
-      detail: outputs.length > 0 ? `${displayName} running with output received` : `${displayName} running`,
-    };
-  }
-  const outputState = outputs.length > 0
-    ? outputs.some((event) => event.truncated) ? " after receiving partial output" : " after receiving output"
-    : " without captured output";
-  return {
-    title: "Tool activity",
-    detail: `${displayName} completed ${describeToolOutcome(completed.outcome)}${outputState}`,
-  };
-}
-
-function describeToolTimelineDetails(events: ToolTimelineEvent[]): {
-  started: Extract<ToolTimelineEvent, { type: "tool.started" }> | null;
-  outputs: Array<Extract<ToolTimelineEvent, { type: "tool.output" }>>;
-  completed: Extract<ToolTimelineEvent, { type: "tool.completed" }> | null;
-} {
-  return {
-    started: events.find((event): event is Extract<ToolTimelineEvent, { type: "tool.started" }> => event.type === "tool.started") ?? null,
-    outputs: events.filter((event): event is Extract<ToolTimelineEvent, { type: "tool.output" }> => event.type === "tool.output"),
-    completed: events.find((event): event is Extract<ToolTimelineEvent, { type: "tool.completed" }> => event.type === "tool.completed") ?? null,
-  };
-}
-
-function describeToolOutcome(outcome: string): string {
-  if (outcome === "success") return "successfully";
-  if (outcome === "failed") return "with errors";
-  if (outcome === "cancelled") return "cancelled";
-  return outcome.replace(/_/g, " ");
-}
-
-function formatToolCompletion(outcome: string): string {
-  if (outcome === "success") return "Completed successfully";
-  if (outcome === "failed") return "Failed";
-  if (outcome === "cancelled") return "Cancelled";
-  return outcome.replace(/_/g, " ");
-}
-
-function approvalDecisionLabel(decision: string): string {
-  switch (decision) {
-    case "approve":
-      return "Approve";
-    case "approve_for_session":
-      return "Approve for session";
-    case "decline":
-      return "Decline";
-    case "cancel":
-      return "Cancel";
-    default:
-      return "Decide";
-  }
-}
-
-function approvalDecisionVariant(decision: string): "primary" | "danger" | "subtle" {
-  return decision === "approve" || decision === "approve_for_session" ? "primary" : "danger";
-}
-
-function describeThreadEvent(event: AgentThreadEvent): { title: string; detail: string } {
-  switch (event.type) {
-    case "turn.accepted":
-      return { title: "Message accepted", detail: "Waiting for the agent run" };
-    case "turn.status":
-      return { title: "Message status", detail: event.status };
-    case "thread.created":
-      return { title: "Thread created", detail: event.thread.title };
-    case "thread.status":
-      return { title: "Status changed", detail: event.status.replace(/_/g, " ") };
-    case "assistant.text.delta":
-      return { title: "Assistant update", detail: "Text update received" };
-    case "assistant.text.completed":
-      return { title: "Assistant message complete", detail: "Message complete" };
-    case "tool.started":
-      return { title: "Tool started", detail: event.displayName };
-    case "tool.output":
-      return { title: "Tool output", detail: event.truncated ? "Output received, partial" : "Output received" };
-    case "tool.completed":
-      return { title: "Tool completed", detail: event.outcome };
-    case "approval.requested":
-      return { title: "Approval needed", detail: event.approval.safeDescription };
-    case "approval.resolved":
-      return { title: "Approval resolved", detail: event.decision };
-    case "user_input.requested":
-      return { title: "Input needed", detail: event.request.safeDescription };
-    case "user_input.answered":
-      return { title: "Input answered", detail: "Input answer received" };
-    case "file.changed":
-      return { title: `File ${event.changeKind}`, detail: `${capitalize(event.changeKind)} file` };
-    case "review.ready": {
-      const files = `${event.summary.changedFileCount} ${event.summary.changedFileCount === 1 ? "file" : "files"} changed`;
-      const partial = event.summary.partial ? ", partial" : "";
-      return { title: "Review ready", detail: `${files}, +${event.summary.additions} -${event.summary.deletions}${partial}` };
-    }
-    case "terminal.bound":
-      return { title: "Terminal bound", detail: event.terminalSessionId };
-    case "thread.error":
-      return {
-        title: "Thread needs attention",
-        detail: event.error.retryable ? "Refresh the thread or check the runtime." : "Open the workspace again.",
-      };
-    case "thread.completed":
-      return { title: "Thread completed", detail: event.outcome };
-  }
-}
-
-function capitalize(value: string): string {
-  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
-}
 
 function canOpenPreviewExternally(origin: string | undefined): origin is string {
   if (!origin) return false;
@@ -1904,7 +1400,10 @@ export default function AgentWorkspace() {
   const refreshProjectWorkspace = useCodingAgentProjectWorkspace((s) => s.refresh);
   const requestComposerFocus = useCodingAgentWorkspace((s) => s.requestComposerFocus);
   const composerFocusRequestId = useCodingAgentWorkspace((s) => s.composerFocusRequestId);
+  const selectedProjectId = useCodingAgentProjectWorkspace((s) => s.selectedProjectId);
+  const selectedTaskId = useCodingAgentProjectWorkspace((s) => s.selectedTaskId);
   const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
+  const [composerOpen, setComposerOpen] = useState(false);
   const [summaryRuntimeScope, setSummaryRuntimeScope] = useState<string | null>(null);
   const previousRuntimeScope = useRef(runtimeScope);
 
@@ -1987,6 +1486,20 @@ export default function AgentWorkspace() {
   if (!summary) return null;
 
   const canCreateFollowUp = capabilityEnabled(summary, "codingAgentsThreadCreate");
+  const projectWorkspaceEnabled = capabilityEnabled(summary, "codingAgentsProjectWorkspace");
+
+  function openNewChat(projectId: string, taskId?: string) {
+    setComposerSeed({
+      seedId: Date.now(),
+      draft: {
+        ...defaultAgentThreadComposerDraft(summary!),
+        projectId,
+        ...(taskId ? { taskId } : {}),
+      },
+    });
+    setComposerOpen(true);
+    requestComposerFocus();
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -2001,54 +1514,80 @@ export default function AgentWorkspace() {
       />
       <AgentProjectWorkspaceShell
         summary={summary}
-        onNewChat={(projectId, taskId) => {
-          setComposerSeed({
-            seedId: Date.now(),
-            draft: {
-              ...defaultAgentThreadComposerDraft(summary),
-              projectId,
-              ...(taskId ? { taskId } : {}),
-            },
-          });
-          requestComposerFocus();
-        }}
+        onNewChat={openNewChat}
       >
-        <AgentWorkspaceStack>
-          <AgentComposer summary={summary} seed={composerSeed} focusRequestId={composerFocusRequestId} />
-          <NotificationPreferencesPanel />
-          <ProviderList summary={summary} />
-          <AttentionThreadList summary={summary} />
-          <div className="grid gap-4 xl:grid-cols-2">
-            <div className="grid gap-4">
-              <ThreadList summary={summary} />
-              <CreatedThreadHandleList summary={summary} />
-            </div>
-            <div className="grid gap-4">
-              <ThreadSnapshotPanel
-                status={threadSnapshotStatus}
-                snapshot={threadSnapshot}
-                error={threadSnapshotError}
-              />
+        <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(360px,1fr)_minmax(340px,clamp(340px,34vw,520px))] lg:overflow-hidden">
+          <div className="flex min-h-[460px] min-w-0 flex-col overflow-hidden border-b lg:min-h-0 lg:border-b-0 lg:border-r" style={{ borderColor: "var(--border-subtle)" }}>
+            <AgentConversationView
+              status={threadSnapshotStatus}
+              snapshot={threadSnapshot}
+              error={threadSnapshotError}
+              canSendTurns={capabilityEnabled(summary, "codingAgentsSameThreadTurns")}
+            />
+          </div>
+          <aside aria-label="Conversation tools" className="min-h-0 min-w-0 overflow-y-auto" style={{ background: "var(--bg-secondary)" }}>
+            <AgentWorkspaceStack>
+              {projectWorkspaceEnabled ? (
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Conversation tools</h2>
+                    <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>Terminal, review, files, diff, and preview</p>
+                  </div>
+                  <Button
+                    variant={composerOpen ? "subtle" : "primary"}
+                    disabled={!selectedProjectId}
+                    aria-label={composerOpen ? "Close new chat composer" : "New chat in selected project"}
+                    onClick={() => {
+                      if (composerOpen) {
+                        setComposerOpen(false);
+                        setComposerSeed(null);
+                        return;
+                      }
+                      if (selectedProjectId) openNewChat(selectedProjectId, selectedTaskId ?? undefined);
+                    }}
+                  >
+                    {composerOpen ? "Cancel" : "New chat"}
+                  </Button>
+                </div>
+              ) : null}
+              {!projectWorkspaceEnabled || composerOpen ? (
+                <AgentComposer
+                  summary={summary}
+                  seed={composerSeed}
+                  focusRequestId={composerFocusRequestId}
+                  onCreated={() => {
+                    if (!projectWorkspaceEnabled) return;
+                    setComposerOpen(false);
+                    setComposerSeed(null);
+                  }}
+                />
+              ) : null}
+              {capabilityEnabled(summary, "codingAgentsReview") ? (
+                <ReviewList
+                  canReadFiles={capabilityEnabled(summary, "codingAgentsFiles")}
+                  canPrepareCommit={capabilityEnabled(summary, "codingAgentsSourceControl")}
+                  canCreateFollowUp={canCreateFollowUp}
+                  onAskHunkFollowUp={(snapshot, selected) => {
+                    setComposerSeed({
+                      seedId: Date.now(),
+                      draft: reviewHunkFollowUpDraft(summary, snapshot, selected),
+                    });
+                    setComposerOpen(true);
+                  }}
+                />
+              ) : null}
               {capabilityEnabled(summary, "codingAgentsPreview") ? (
                 <AgentPreviewList summary={summary} />
               ) : null}
               <AgentTerminalList summary={summary} />
-            </div>
-          </div>
-          {capabilityEnabled(summary, "codingAgentsReview") ? (
-            <ReviewList
-              canReadFiles={capabilityEnabled(summary, "codingAgentsFiles")}
-              canPrepareCommit={capabilityEnabled(summary, "codingAgentsSourceControl")}
-              canCreateFollowUp={canCreateFollowUp}
-              onAskHunkFollowUp={(snapshot, selected) => {
-                setComposerSeed({
-                  seedId: Date.now(),
-                  draft: reviewHunkFollowUpDraft(summary, snapshot, selected),
-                });
-              }}
-            />
-          ) : null}
-        </AgentWorkspaceStack>
+              <AttentionThreadList summary={summary} />
+              <ThreadList summary={summary} />
+              <CreatedThreadHandleList summary={summary} />
+              <ProviderList summary={summary} />
+              <NotificationPreferencesPanel />
+            </AgentWorkspaceStack>
+          </aside>
+        </div>
       </AgentProjectWorkspaceShell>
     </div>
   );

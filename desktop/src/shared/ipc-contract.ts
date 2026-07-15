@@ -11,6 +11,9 @@ import {
   CodingAgentNotificationPreferencesSchema,
   CodingAgentNotificationPreferencesUpdateSchema,
   CreateAgentThreadRequestSchema,
+  CreateAgentTurnErrorSchema,
+  CreateAgentTurnRequestSchema,
+  CreateAgentTurnResponseSchema,
   CursorSchema,
   FileBrowseRequestSchema,
   FileBrowseResponseSchema,
@@ -39,6 +42,13 @@ import { CodingAgentProjectWorkspaceRequestSchema } from "./coding-agent-project
 const Empty = z.object({}).strict();
 
 const Ok = z.object({ ok: z.boolean() }).strict();
+const CodingAgentCreateTurnRequestSchema = CreateAgentTurnRequestSchema.extend({
+  threadId: ThreadIdSchema,
+}).strict();
+const CodingAgentCreateTurnResultSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), response: CreateAgentTurnResponseSchema }).strict(),
+  z.object({ ok: z.literal(false), error: CreateAgentTurnErrorSchema }).strict(),
+]);
 const EmbedStateSchema = z.enum(["loading", "ready", "auth-required", "failed"]);
 const ReviewIdSchema = z.string().regex(/^rev_[A-Za-z0-9_-]{1,128}$/);
 
@@ -211,6 +221,10 @@ export const INVOKE_CHANNELS = {
   "runtime:create-thread": {
     request: CreateAgentThreadRequestSchema,
     response: AgentThreadSnapshotSchema,
+  },
+  "runtime:create-turn": {
+    request: CodingAgentCreateTurnRequestSchema,
+    response: CodingAgentCreateTurnResultSchema,
   },
   "state:get": {
     request: z.object({ key: z.enum(STATE_KEYS) }).strict(),

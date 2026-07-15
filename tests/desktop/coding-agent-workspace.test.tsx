@@ -14,11 +14,12 @@ import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
 function summaryFixture({
   threadCreate = false,
+  sameThreadTurns = true,
   files = false,
   sourceControl = false,
   threadTerminalSessionId,
   terminalSessionName = "matrix-abc1234",
-}: { threadCreate?: boolean; files?: boolean; sourceControl?: boolean; threadTerminalSessionId?: string; terminalSessionName?: string } = {}) {
+}: { threadCreate?: boolean; sameThreadTurns?: boolean; files?: boolean; sourceControl?: boolean; threadTerminalSessionId?: string; terminalSessionName?: string } = {}) {
   return {
     runtime: {
       id: "rt_primary",
@@ -34,6 +35,11 @@ function summaryFixture({
         id: "codingAgentsThreadCreate",
         enabled: threadCreate,
         ...(threadCreate ? {} : { reason: "Not enabled yet" }),
+      },
+      {
+        id: "codingAgentsSameThreadTurns",
+        enabled: sameThreadTurns,
+        ...(sameThreadTurns ? {} : { reason: "Not enabled yet" }),
       },
       {
         id: "codingAgentsReview",
@@ -692,6 +698,10 @@ describe("AgentWorkspace", () => {
       threadSnapshotError: null,
       createStatus: "idle",
       createError: null,
+      turnStatus: "idle",
+      turnError: null,
+      turnRetry: null,
+      turnThreadId: null,
       composerFocusRequestId: 0,
       approvalActionStatus: "idle",
       pendingApprovalId: null,
@@ -1172,6 +1182,135 @@ describe("AgentWorkspace", () => {
     expect(screen.getByText(expectedPreview)).toBeTruthy();
     expect(screen.queryByText("msg_desktop_safe_preview")).toBeNull();
     expect(screen.queryByText(/route test\. Reviewed the failing shard and found the route test\.$/)).toBeNull();
+  });
+
+  it("renders the selected conversation as durable chat bubbles with a same-thread composer", async () => {
+    const conversationSnapshot = {
+      ...threadSnapshotFixture(),
+      events: {
+        ...threadSnapshotFixture().events,
+        items: [
+          {
+            type: "user.message" as const,
+            eventId: "evt_desktop_user_message",
+            threadId: "thread_alpha",
+            occurredAt: "2026-07-06T00:01:00.000Z",
+            messageId: "msg_desktop_user",
+            text: "Please inspect the failing desktop test.",
+            clientRequestId: "req_desktop_user",
+            attachments: [],
+          },
+          {
+            type: "assistant.text.delta" as const,
+            eventId: "evt_desktop_agent_message",
+            threadId: "thread_alpha",
+            occurredAt: "2026-07-06T00:02:00.000Z",
+            messageId: "msg_desktop_agent",
+            delta: "I found the failing assertion and prepared a focused fix.",
+          },
+          {
+            type: "assistant.text.completed" as const,
+            eventId: "evt_desktop_agent_complete",
+            threadId: "thread_alpha",
+            occurredAt: "2026-07-06T00:02:01.000Z",
+            messageId: "msg_desktop_agent",
+          },
+        ],
+      },
+    };
+    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-notification-preferences") {
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
+      }
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(conversationSnapshot);
+      if (channel === "runtime:create-turn") {
+        return Promise.resolve({
+          ok: true,
+          response: {
+            threadId: "thread_alpha",
+            turnId: "turn_desktop_chat",
+            status: "accepted",
+            acceptedAt: "2026-07-06T00:03:00.000Z",
+          },
+        });
+      }
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+
+    render(<AgentWorkspace />);
+
+    expect(await screen.findByText("Please inspect the failing desktop test.")).toBeTruthy();
+    expect(screen.getByText("I found the failing assertion and prepared a focused fix.")).toBeTruthy();
+    const composer = screen.getByLabelText("Message conversation");
+    fireEvent.change(composer, { target: { value: "Continue with the focused validation." } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(window.operator.invoke).toHaveBeenCalledWith("runtime:create-turn", {
+        threadId: "thread_alpha",
+        message: "Continue with the focused validation.",
+        clientRequestId: expect.stringMatching(/^req_desktop_/),
+      });
+    });
+    await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe(""));
+  });
+
+  it("withholds the same-thread composer when the runtime does not support turns", async () => {
+    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") {
+        return Promise.resolve(summaryFixture({ sameThreadTurns: false }));
+      }
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-notification-preferences") {
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
+      }
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(threadSnapshotFixture());
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+
+    render(<AgentWorkspace />);
+
+    expect(await screen.findByRole("region", { name: "Conversation Fix settings route" })).toBeTruthy();
+    expect(screen.queryByLabelText("Message conversation")).toBeNull();
+    expect(screen.getByText("Follow-ups are unavailable on this computer.")).toBeTruthy();
+    expect(screen.queryByText(/send a message to continue/i)).toBeNull();
+  });
+
+  it("keeps the conversation draft and shows allowlisted recovery copy after a send conflict", async () => {
+    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-notification-preferences") {
+        return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true, completed: true } });
+      }
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(threadSnapshotFixture());
+      if (channel === "runtime:create-turn") {
+        return Promise.resolve({
+          ok: false,
+          error: {
+            code: "thread_busy",
+            safeMessage: "Unexpected provider copy",
+            retryable: true,
+            recoveryActions: ["retry"],
+          },
+        });
+      }
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+
+    render(<AgentWorkspace />);
+    const composer = await screen.findByLabelText("Message conversation");
+    fireEvent.change(composer, { target: { value: "Keep this draft for retry." } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(await screen.findByText("This conversation is already running. Wait for it to finish and try again.")).toBeTruthy();
+    expect((composer as HTMLTextAreaElement).value).toBe("Keep this draft for retry.");
+    expect(screen.queryByText(/provider copy/i)).toBeNull();
   });
 
   it("collapses desktop tool activity details until expanded", async () => {
@@ -3461,6 +3600,146 @@ describe("AgentWorkspace", () => {
       },
     });
     await expect(first).resolves.toBe("thread_duplicate_1");
+  });
+
+  it("sends a same-thread message and refreshes only the selected conversation", async () => {
+    const refreshedSnapshot = {
+      ...threadSnapshotFixture(),
+      events: {
+        ...threadSnapshotFixture().events,
+        items: [
+          ...threadSnapshotFixture().events.items,
+          {
+            type: "user.message" as const,
+            eventId: "evt_user_message_1",
+            threadId: "thread_alpha",
+            occurredAt: "2026-07-06T00:05:00.000Z",
+            messageId: "msg_desktop_1",
+            text: "Continue with the focused tests.",
+            clientRequestId: "req_desktop_turn_1",
+            turnId: "turn_desktop_1",
+            attachments: [],
+          },
+        ],
+      },
+    };
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:create-turn") {
+        return Promise.resolve({
+          ok: true,
+          response: {
+            threadId: "thread_alpha",
+            turnId: "turn_desktop_1",
+            status: "accepted",
+            acceptedAt: "2026-07-06T00:05:00.000Z",
+          },
+        });
+      }
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(refreshedSnapshot);
+      return Promise.reject(new Error("unexpected channel"));
+    });
+    useCodingAgentWorkspace.setState({
+      activeThreadId: "thread_alpha",
+      threadSnapshotStatus: "ready",
+      threadSnapshot: threadSnapshotFixture(),
+    });
+
+    await expect(useCodingAgentWorkspace.getState().sendThreadMessage({
+      threadId: "thread_alpha",
+      message: "Continue with the focused tests.",
+    })).resolves.toBe(true);
+
+    expect(window.operator.invoke).toHaveBeenCalledWith("runtime:create-turn", {
+      threadId: "thread_alpha",
+      message: "Continue with the focused tests.",
+      clientRequestId: expect.stringMatching(/^req_desktop_/),
+    });
+    expect(useCodingAgentWorkspace.getState().threadSnapshot?.events.items)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ type: "user.message" })]));
+    expect(useCodingAgentWorkspace.getState().turnRetry).toBeNull();
+  });
+
+  it("reuses a turn request id for an identical retry and rotates it after editing", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:create-turn") {
+        return Promise.resolve({
+          ok: false,
+          error: {
+            code: "thread_busy",
+            safeMessage: "Unexpected upstream copy",
+            retryable: true,
+            recoveryActions: ["retry"],
+          },
+        });
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+    useCodingAgentWorkspace.setState({
+      activeThreadId: "thread_alpha",
+      threadSnapshotStatus: "ready",
+      threadSnapshot: threadSnapshotFixture(),
+    });
+
+    const send = (message: string) => useCodingAgentWorkspace.getState().sendThreadMessage({
+      threadId: "thread_alpha",
+      message,
+    });
+    await send("Continue with the focused tests.");
+    await send("Continue with the focused tests.");
+    await send("Continue with the focused tests, then report back.");
+
+    const requests = vi.mocked(window.operator.invoke).mock.calls
+      .filter(([channel]) => channel === "runtime:create-turn")
+      .map(([, request]) => request as { clientRequestId: string });
+    expect(requests[0]?.clientRequestId).toBe(requests[1]?.clientRequestId);
+    expect(requests[2]?.clientRequestId).not.toBe(requests[1]?.clientRequestId);
+    expect(useCodingAgentWorkspace.getState().turnError)
+      .toBe("This conversation is already running. Wait for it to finish and try again.");
+    expect(useCodingAgentWorkspace.getState().turnError).not.toContain("upstream");
+  });
+
+  it("does not refresh or reopen a conversation after selection changes during send", async () => {
+    let resolveTurn: ((value: unknown) => void) | null = null;
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:create-turn") {
+        return new Promise((resolve) => {
+          resolveTurn = resolve;
+        });
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+    useCodingAgentWorkspace.setState({
+      activeThreadId: "thread_alpha",
+      threadSnapshotStatus: "ready",
+      threadSnapshot: threadSnapshotFixture(),
+    });
+
+    const pending = useCodingAgentWorkspace.getState().sendThreadMessage({
+      threadId: "thread_alpha",
+      message: "Continue with the focused tests.",
+    });
+    useCodingAgentWorkspace.setState({
+      activeThreadId: "thread_beta",
+      threadSnapshotStatus: "ready",
+      threadSnapshot: betaThreadSnapshotFixture(),
+    });
+    resolveTurn?.({
+      ok: true,
+      response: {
+        threadId: "thread_alpha",
+        turnId: "turn_desktop_1",
+        status: "accepted",
+        acceptedAt: "2026-07-06T00:05:00.000Z",
+      },
+    });
+    await pending;
+
+    expect(useCodingAgentWorkspace.getState().activeThreadId).toBe("thread_beta");
+    expect(useCodingAgentWorkspace.getState().threadSnapshot?.thread.id).toBe("thread_beta");
+    expect(window.operator.invoke).not.toHaveBeenCalledWith(
+      "runtime:get-thread-snapshot",
+      expect.anything(),
+    );
   });
 
   it("shows a generic safe error when summary refresh fails", async () => {

@@ -61,6 +61,9 @@ export interface HandlerContext {
   createAgentThread: (
     request: CreateAgentThreadRequest,
   ) => Promise<z.infer<typeof AgentThreadSnapshotSchema>>;
+  createAgentTurn: (
+    request: InvokeRequest<"runtime:create-turn">,
+  ) => Promise<InvokeResponse<"runtime:create-turn">>;
   subscribeThreadEvents: (
     request: InvokeRequest<"runtime:subscribe-thread-events">,
   ) => Promise<void>;
@@ -146,6 +149,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("runtime:submit-approval-decision", (request) => ctx.submitApprovalDecision(request));
   handle("runtime:submit-input-answer", (request) => ctx.submitInputAnswer(request));
   handle("runtime:create-thread", (request) => ctx.createAgentThread(request));
+  handle("runtime:create-turn", (request) => ctx.createAgentTurn(request));
 
   handle("state:get", async ({ key }) => ({
     value: await ctx.store.get(key as LocalStoreKey),
