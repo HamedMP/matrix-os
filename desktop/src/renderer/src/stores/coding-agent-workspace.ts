@@ -378,6 +378,10 @@ export function clearCodingAgentRuntimeSelection(): void {
     summary: null,
     error: null,
     createdThreadHandles: [],
+    // A create abandoned mid-flight by the switch must not leave the new
+    // runtime's composer blocked on a phantom "submitting" state.
+    createStatus: "idle",
+    createError: null,
     reviewsStatus: "idle",
     reviews: null,
     reviewsError: null,

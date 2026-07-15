@@ -3736,6 +3736,8 @@ describe("AgentWorkspace", () => {
     expect(useCodingAgentWorkspace.getState().activeThreadId).toBeNull();
     expect(useCodingAgentWorkspace.getState().threadSnapshot).toBeNull();
     expect(useCodingAgentWorkspace.getState().createdThreadHandles).toEqual([]);
+    // The new runtime's composer must not inherit a phantom submitting state.
+    expect(useCodingAgentWorkspace.getState().createStatus).toBe("idle");
   });
 
   it("sends a same-thread message and refreshes only the selected conversation", async () => {
