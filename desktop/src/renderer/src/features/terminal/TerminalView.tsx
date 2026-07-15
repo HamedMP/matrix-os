@@ -5,7 +5,9 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { Button } from "../../design/primitives";
-import { getTerminalThemePreset } from "../../lib/terminal/terminal-themes";
+import { getThemeTerminalColors } from "../../design/themes";
+import { resolveThemeMode } from "../../design/themes/apply";
+import { useAppearance } from "../../stores/appearance";
 import { buildTerminalFontStack } from "../../lib/terminal/terminal-fonts";
 import type { ActiveAttachment } from "./attach-manager";
 import type { ShellSocketState } from "../../lib/shell-socket";
@@ -43,7 +45,8 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const theme = getTerminalThemePreset("one-dark");
+    const appearance = useAppearance.getState();
+    const theme = getThemeTerminalColors(appearance.themeId, resolveThemeMode(appearance.mode));
     const screenReaderMode = navigator.webdriver === true;
     const terminal = new Terminal({
       allowProposedApi: true,
@@ -73,6 +76,11 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
     fitRef.current = fit;
     serializeRef.current = serialize;
 
+    // Restyle live terminals when the unified theme changes.
+    const unsubscribeAppearance = useAppearance.subscribe((state) => {
+      terminal.options.theme = getThemeTerminalColors(state.themeId, resolveThemeMode(state.mode));
+    });
+
     let rafId: number | null = null;
     const observer = new ResizeObserver(() => {
       if (rafId !== null) cancelAnimationFrame(rafId);
@@ -85,6 +93,7 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
     observer.observe(host);
 
     return () => {
+      unsubscribeAppearance();
       observer.disconnect();
       if (rafId !== null) {
         cancelAnimationFrame(rafId);
