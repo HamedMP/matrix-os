@@ -178,10 +178,36 @@ suite("operator desktop e2e", () => {
     await expect.poll(attachedNativeViewCount).toBe(0);
     await page.getByRole("button", { name: "Computers" }).click();
     await page.getByText("Additional Computer").waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "09-settings-no-shell-overlay.png") });
     await page.getByRole("button", { name: "Use Additional Computer" }).click();
     await expect.poll(() => gateway.state.runtimeSelections).toEqual(["review"]);
+    // A successful switch tears down the previous computer's desktop (all tabs
+    // close), so the persistent sidebar computer menu is the post-switch
+    // assertion surface: it must report the server-selected computer.
+    await page.getByRole("button", { name: "Change computer, currently Additional Computer" }).waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "09b-computer-switched.png") });
+
+    // Reopening Settings must mark the server-reported slot as current and
+    // leave the other computer selectable.
+    await page.locator("aside button", { hasText: "Settings" }).first().click();
+    await page.getByRole("heading", { name: "Settings" }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Computers" }).click();
     await page.getByRole("button", { name: "Current computer" }).waitFor({ timeout: 10_000 });
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "09-settings-no-shell-overlay.png") });
+    await page.getByRole("button", { name: "Use Main Computer" }).waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "09c-settings-current-computer.png") });
+
+    // Sidebar computer menu evidence: expanded rail, then the collapsed rail
+    // popup that must keep a readable fixed width.
+    await page.getByRole("button", { name: /Change computer, currently/ }).click();
+    await page.getByRole("listbox", { name: "Choose computer" }).waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "09d-computer-menu.png") });
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Collapse sidebar (⌘B)" }).click();
+    await page.getByRole("button", { name: /Change computer, currently/ }).click();
+    await page.getByRole("listbox", { name: "Choose computer" }).waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "09e-computer-menu-collapsed.png") });
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Expand sidebar (⌘B)" }).click();
 
     await page.locator("aside button", { hasText: "Chat" }).first().click();
     await page.getByRole("heading", { name: /What should we build/i }).waitFor({ timeout: 10_000 });

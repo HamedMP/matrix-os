@@ -26,6 +26,7 @@ import {
   ProjectAgentWorkspaceSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
+  MatrixComputerListSchema,
   RuntimeSelectionRequestSchema,
   RuntimeSummarySchema,
   SafeClientErrorSchema,
@@ -130,11 +131,16 @@ export const INVOKE_CHANNELS = {
         imageUrl: z.string().url().max(2048).optional(),
         runtimeSlot: z.string().max(64),
         platformHost: z.string().max(256),
+        authGeneration: z.number().int().nonnegative(),
       })
       .strict(),
   },
   "auth:sign-out": { request: Empty, response: Ok },
   "auth:session-expired": { request: Empty, response: Ok },
+  "runtime:list-computers": {
+    request: Empty,
+    response: MatrixComputerListSchema,
+  },
   "runtime:select": {
     request: RuntimeSelectionRequestSchema,
     response: Ok,

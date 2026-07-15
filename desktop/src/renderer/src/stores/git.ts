@@ -6,6 +6,7 @@ import { create } from "zustand";
 import { z } from "zod/v4";
 import { AppError, type AppErrorCategory } from "../../../shared/app-error";
 import type { ApiClient } from "../lib/api";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
 
 const BranchSchema = z.object({
   name: z.string().min(1),
@@ -158,6 +159,7 @@ export const useGit = create<GitState>()((set, get) => ({
   previewError: null,
 
   loadAll: async (api, slug) => {
+    const runtimeGeneration = captureRuntimeGeneration();
     const requestSeq = ++loadAllRequestSeq;
     set({ loading: true, error: null });
     const failures: AppErrorCategory[] = [];
@@ -199,7 +201,7 @@ export const useGit = create<GitState>()((set, get) => ({
     ]);
 
     set((state) => {
-      if (requestSeq !== loadAllRequestSeq) {
+      if (requestSeq !== loadAllRequestSeq || !isCurrentRuntimeGeneration(runtimeGeneration)) {
         return {};
       }
       return {
@@ -212,6 +214,7 @@ export const useGit = create<GitState>()((set, get) => ({
   },
 
   loadPreviews: async (api, slug, taskId) => {
+    const runtimeGeneration = captureRuntimeGeneration();
     const scope: PreviewScope = { projectSlug: slug, taskId: taskId ?? null };
     const request = markPreviewRequest(scope);
     const query = taskId ? `?limit=100&taskId=${encodeURIComponent(taskId)}` : "?limit=100";
@@ -220,14 +223,14 @@ export const useGit = create<GitState>()((set, get) => ({
       const res = await api.get<{ previews?: unknown }>(`/api/projects/${slug}/previews${query}`);
       const incoming = parseRows(PreviewSchema, res.previews);
       set((state) => {
-        if (!isLatestPreviewRequest(request.key, request.seq)) {
+        if (!isLatestPreviewRequest(request.key, request.seq) || !isCurrentRuntimeGeneration(runtimeGeneration)) {
           return {};
         }
         return { previews: mergePreviewsForScope(state.previews, incoming, slug, taskId), previewError: null };
       });
     } catch (err: unknown) {
       set((state) => {
-        if (!isLatestPreviewRequest(request.key, request.seq)) {
+        if (!isLatestPreviewRequest(request.key, request.seq) || !isCurrentRuntimeGeneration(runtimeGeneration)) {
           return {};
         }
         return { previewError: categoryOf(err) };

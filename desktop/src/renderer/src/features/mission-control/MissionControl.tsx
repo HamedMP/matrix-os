@@ -87,7 +87,7 @@ export default function MissionControl() {
     return () => {
       cancelled = true;
     };
-  }, [api, loadProjects]);
+  }, [api, loadProjects, runtimeSlot]);
 
   useEffect(() => {
     if (!api) return;

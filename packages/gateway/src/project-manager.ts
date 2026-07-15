@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, mkdir, readdir, rename, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { access, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
+import { join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
 import { atomicWriteJson, readJsonFile, withProjectLock, type OwnerScope } from "./state-ops.js";
+import { containsDeniedFileApiPath, resolveExistingFileApiPath } from "./path-security.js";
 
 export const PROJECT_SLUG_REGEX = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
@@ -68,7 +69,7 @@ type CommandRunner = (
 
 type Result<T> = { ok: true; status?: number } & T;
 type Failure = { ok: false; status: number; error: WorkspaceError };
-type CreateProjectMode = "scratch" | "github";
+type CreateProjectMode = "scratch" | "github" | "folder";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const CLONE_TIMEOUT_MS = 5 * 60_000;
@@ -113,6 +114,14 @@ const defaultRunCommand: CommandRunner = async (command, args, options) => {
 
 function genericError(status: number, code: string, message: string): Failure {
   return { ok: false, status, error: { code, message } };
+}
+
+function isNotAGitRepositoryError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const stderr = "stderr" in err && typeof (err as { stderr?: unknown }).stderr === "string"
+    ? (err as { stderr: string }).stderr
+    : "";
+  return /not a git repository/i.test(stderr) || /not a git repository/i.test(err.message);
 }
 
 function nowIso(now?: () => string): string {
@@ -174,6 +183,23 @@ function projectPath(homePath: string, slug: string): string {
   return join(homePath, "projects", slug);
 }
 
+// OS-owned subtrees that must never become an agent-accessible project root.
+// A folder project's localPath is handed to shells and coding-agent sandboxes
+// as a workspace cwd, so granting these would expose kernel/agent state.
+const PROTECTED_FOLDER_PROJECT_PREFIXES = ["system", "agents"];
+
+function isProtectedFolderProjectPath(homePath: string, resolvedPath: string): boolean {
+  const rel = relative(resolve(homePath), resolvedPath);
+  if (rel === "") return true;
+  const firstSegment = rel.split(sep)[0];
+  if (firstSegment === undefined) return false;
+  // Every top-level dot directory under the Matrix home is owner or tool
+  // state (.trash, .hermes, .claude, .codex, .ssh, ...), never a user
+  // workspace; deny the whole class instead of chasing individual names.
+  if (firstSegment.startsWith(".")) return true;
+  return PROTECTED_FOLDER_PROJECT_PREFIXES.includes(firstSegment);
+}
+
 async function readProjectConfig(homePath: string, slug: string): Promise<ProjectConfig | null> {
   try {
     return await readJsonFile<ProjectConfig>(join(projectPath(homePath, slug), "config.json"));
@@ -215,6 +241,7 @@ export function createProjectManager(options: {
       url?: string;
       slug?: string;
       name?: string;
+      path?: string;
       mode?: CreateProjectMode;
       ownerScope?: OwnerScope;
       clientRequestId?: string;
@@ -223,6 +250,92 @@ export function createProjectManager(options: {
         return genericError(400, "invalid_request", "Project request is invalid");
       }
       const mode = input.mode ?? (input.url ? "github" : "scratch");
+      if (mode === "folder") {
+        const name = input.name?.trim() || "";
+        if (!name) return genericError(400, "invalid_project_name", "Project name is required");
+        const slug = input.slug ? input.slug.trim() : slugify(name);
+        if (!SlugSchema.safeParse(slug).success) {
+          return genericError(400, "invalid_slug", "Project slug is invalid");
+        }
+        const localPath = input.path ? resolveExistingFileApiPath(homePath, input.path) : null;
+        if (!localPath) {
+          return genericError(400, "invalid_project_path", "Project folder is invalid");
+        }
+        let realLocalPath: string;
+        let realHomePath: string;
+        try {
+          const stats = await lstat(localPath);
+          if (!stats.isDirectory()) {
+            return genericError(400, "invalid_project_path", "Project folder is invalid");
+          }
+          realLocalPath = await realpath(localPath);
+          realHomePath = await realpath(homePath);
+        } catch (err: unknown) {
+          console.warn(
+            "[projects] folder project path became unreadable:",
+            err instanceof Error ? err.message : String(err),
+          );
+          return genericError(400, "invalid_project_path", "Project folder is invalid");
+        }
+        // Check the lexical path AND the fully resolved path against the same
+        // rules so a symlinked ancestor cannot alias a protected subtree, and
+        // reject any root that would contain the project registry: metadata
+        // (config.json, sibling projects) must never live inside an
+        // agent-writable workspace.
+        for (const candidate of [
+          { base: homePath, path: localPath },
+          { base: realHomePath, path: realLocalPath },
+        ]) {
+          const registryEntry = join(candidate.base, "projects", slug);
+          if (
+            candidate.path === registryEntry
+            || candidate.path.startsWith(`${registryEntry}${sep}`)
+            || registryEntry.startsWith(`${candidate.path}${sep}`)
+            || isProtectedFolderProjectPath(candidate.base, candidate.path)
+            // An ancestor of a denied subtree (data/browser-profiles holds
+            // persistent browser login state) would expose it as part of the
+            // agent-writable workspace.
+            || containsDeniedFileApiPath(candidate.base, candidate.path)
+          ) {
+            return genericError(400, "invalid_project_path", "Project folder is invalid");
+          }
+          // Inside the registry only the repo checkout (projects/<slug>/repo
+          // and below) is user content. The project root holds config.json,
+          // and worktrees/ holds Matrix-owned leases and .matrix metadata;
+          // none of it may become an agent-writable workspace root.
+          const relFromRegistry = relative(join(candidate.base, "projects"), candidate.path);
+          const insideRegistry = relFromRegistry !== "" && !relFromRegistry.startsWith("..");
+          if (insideRegistry) {
+            const segments = relFromRegistry.split(sep);
+            if (segments.length === 1 || segments[1] !== "repo") {
+              return genericError(400, "invalid_project_path", "Project folder is invalid");
+            }
+          }
+        }
+        const metadataPath = projectPath(homePath, slug);
+        return withProjectLock(slug, async () => {
+          if (await pathExists(metadataPath)) {
+            return genericError(409, "slug_conflict", "Project slug already exists");
+          }
+          await mkdir(metadataPath, { recursive: true });
+          const timestamp = nowIso(options.now);
+          const project: ProjectConfig = {
+            id: `proj_${randomUUID()}`,
+            name,
+            slug,
+            // Persist the fully resolved path: session launches use the stored
+            // localPath as cwd/sandbox root without rerunning these checks, so
+            // a symlink ancestor repointed at a protected subtree later must
+            // not be able to bypass the validation that ran here.
+            localPath: realLocalPath,
+            addedAt: timestamp,
+            updatedAt: timestamp,
+            ownerScope: input.ownerScope ?? { type: "user", id: "local" },
+          };
+          await atomicWriteJson(join(metadataPath, "config.json"), project);
+          return { ok: true, status: 201, project };
+        });
+      }
       if (mode === "scratch") {
         const name = input.name?.trim() || input.slug?.trim() || "";
         if (!name) {
@@ -422,7 +535,7 @@ export function createProjectManager(options: {
       if (!projectResult.ok) return projectResult;
       const project = projectResult.project;
       if (!project.github) {
-        return genericError(400, "not_github_project", "Project is not linked to GitHub");
+        return { ok: true, prs: [], refreshedAt: nowIso(options.now) };
       }
       try {
         const result = await runCommand(
@@ -445,7 +558,31 @@ export function createProjectManager(options: {
     async listBranches(slug: string): Promise<Result<{ branches: BranchSummary[]; refreshedAt: string }> | Failure> {
       const projectResult = await this.getProject(slug);
       if (!projectResult.ok) return projectResult;
+      const refreshedAt = nowIso(options.now);
+      // Probe Git itself instead of checking for a local .git entry: a folder
+      // project can point at a subdirectory of a repository (monorepo
+      // packages) whose .git lives in an ancestor.
+      let repoTopLevel: string;
       try {
+        const probe = await runCommand("git", ["rev-parse", "--show-toplevel"], {
+          cwd: projectResult.project.localPath,
+          timeout: DEFAULT_TIMEOUT_MS,
+        });
+        repoTopLevel = probe.stdout.trim();
+      } catch (err: unknown) {
+        if (isNotAGitRepositoryError(err)) {
+          return { ok: true, branches: [], refreshedAt };
+        }
+        if (err instanceof Error) console.warn("[project-manager] Failed to probe git worktree:", err.message);
+        return genericError(502, "git_request_failed", "Git request failed");
+      }
+      try {
+        // The Matrix home itself is a versioned Git repo; a plain folder that
+        // resolves to it as its toplevel has no project branches to show.
+        const [homeReal, repoReal] = await Promise.all([realpath(homePath), realpath(repoTopLevel)]);
+        if (homeReal === repoReal) {
+          return { ok: true, branches: [], refreshedAt };
+        }
         const result = await runCommand("git", ["branch", "--list", "--format=%(refname:short)"], {
           cwd: projectResult.project.localPath,
           timeout: DEFAULT_TIMEOUT_MS,

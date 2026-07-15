@@ -9,6 +9,7 @@ import AgentWorkspace, {
 } from "../../desktop/src/renderer/src/features/coding-agents/AgentWorkspace";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useCodingAgentProjectWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-project-workspace";
+import { reconcileDesktopRuntimeChange } from "../../desktop/src/renderer/src/stores/runtime-transition";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -3691,6 +3692,52 @@ describe("AgentWorkspace", () => {
       },
     });
     await expect(first).resolves.toBe("thread_duplicate_1");
+  });
+
+  it("discards an in-flight thread create that settles after the computer changes", async () => {
+    let resolveCreate: (value: unknown) => void = () => undefined;
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:create-thread") {
+        return new Promise((resolve) => {
+          resolveCreate = resolve;
+        });
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+    useCodingAgentWorkspace.setState({ summary: summaryFixture({ threadCreate: true }) });
+    const draft = {
+      providerId: "codex",
+      prompt: "Stale create after switch",
+      mode: "default",
+      approvalPolicy: "on_request",
+      sandboxMode: "workspace_write",
+    } as const;
+
+    const pending = useCodingAgentWorkspace.getState().createThread(draft);
+    reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
+    resolveCreate({
+      thread: {
+        id: "thread_stale_1",
+        providerId: "codex",
+        title: "Stale create after switch",
+        status: "queued",
+        attention: "none",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+      },
+      events: {
+        items: [],
+        hasMore: false,
+        limit: 200,
+      },
+    });
+
+    await expect(pending).resolves.toBeNull();
+    expect(useCodingAgentWorkspace.getState().activeThreadId).toBeNull();
+    expect(useCodingAgentWorkspace.getState().threadSnapshot).toBeNull();
+    expect(useCodingAgentWorkspace.getState().createdThreadHandles).toEqual([]);
+    // The new runtime's composer must not inherit a phantom submitting state.
+    expect(useCodingAgentWorkspace.getState().createStatus).toBe("idle");
   });
 
   it("sends a same-thread message and refreshes only the selected conversation", async () => {

@@ -1,6 +1,8 @@
 import {
+  MatrixComputerListSchema,
   RuntimeSelectionRequestSchema,
   RuntimeSelectionResponseSchema,
+  type MatrixComputerList,
 } from "@matrix-os/contracts";
 // Trusted-core auth orchestration: owns the device flow, the credential, and
 // the connection profile. The renderer only ever sees status snapshots.
@@ -29,6 +31,10 @@ export interface AuthStatus {
   platformHost: string;
   displayName?: string;
   imageUrl?: string;
+  // Monotonic credential generation. Advances on every credential replacement
+  // or drop so renderer caches keyed on identity cannot survive a session swap
+  // that keeps the same handle/host/slot.
+  authGeneration: number;
 }
 
 export type PollResult = {
@@ -82,6 +88,7 @@ interface AuthServiceDeps {
 
 export class AuthService {
   private credential: StoredCredential | null = null;
+  private authGeneration = 0;
   private profile: ConnectionProfile | null = null;
   private flowState: "idle" | "pending" | "authorized" | "expired" = "idle";
   private flowNonce = 0;
@@ -149,7 +156,13 @@ export class AuthService {
       ...(signedIn && this.profile?.imageUrl ? { imageUrl: this.profile.imageUrl } : {}),
       runtimeSlot: this.profile?.runtimeSlot ?? "primary",
       platformHost: this.getGatewayOrigin(),
+      authGeneration: this.authGeneration,
     };
+  }
+
+  private replaceCredential(credential: StoredCredential | null): void {
+    this.credential = credential;
+    this.authGeneration += 1;
   }
 
   async startDeviceFlow(): Promise<Pick<DeviceCodeResponse, "userCode" | "verificationUri" | "expiresIn">> {
@@ -208,7 +221,7 @@ export class AuthService {
           }
         }
         if (nonce !== this.flowNonce) return;
-        this.credential = credential;
+        this.replaceCredential(credential);
         const profile: ConnectionProfile = {
           handle: credential.handle,
           userId: token.userId,
@@ -363,7 +376,7 @@ export class AuthService {
           });
           throw err;
         }
-        this.credential = nextCredential;
+        this.replaceCredential(nextCredential);
         this.profile = nextProfile;
       });
     } catch (err: unknown) {
@@ -375,13 +388,49 @@ export class AuthService {
     }
   }
 
+  async listRuntimeComputers(): Promise<MatrixComputerList> {
+    this.expireCredentialIfNeeded();
+    const currentCredential = this.credential;
+    if (!currentCredential) throw new Error("Runtime computers unavailable");
+
+    const endpoint = new URL("/api/auth/computers", this.deps.runtimeSelectionOrigin);
+    const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
+    try {
+      const response = await fetchFn(endpoint.toString(), {
+        method: "GET",
+        headers: { authorization: `Bearer ${currentCredential.accessToken}` },
+        signal: AbortSignal.timeout(RUNTIME_SELECTION_TIMEOUT_MS),
+      });
+      // A 401 means the token was revoked or rotated server-side before the
+      // local expiry: drop the session so the renderer returns to sign-in
+      // instead of retrying against a dead credential forever.
+      if (response.status === 401 && this.credential === currentCredential) {
+        await this.expireSession();
+        throw new Error("computer inventory unauthorized");
+      }
+      if (!response.ok) throw new Error("computer inventory rejected");
+      const contentLength = Number(response.headers.get("content-length"));
+      if (Number.isFinite(contentLength) && contentLength > RUNTIME_SELECTION_RESPONSE_LIMIT) {
+        throw new Error("computer inventory response too large");
+      }
+      const text = await readBoundedResponseText(response);
+      return MatrixComputerListSchema.parse(JSON.parse(text));
+    } catch (err: unknown) {
+      console.warn(
+        "[auth] computer inventory unavailable:",
+        err instanceof Error ? err.name : typeof err,
+      );
+      throw new Error("Runtime computers unavailable");
+    }
+  }
+
   // The session token expired or the gateway rejected it (401). Drop the
   // credential but KEEP the profile so platformHost/runtime survive for a
   // one-click re-auth, then notify the renderer to show sign-in. Idempotent.
   async expireSession(): Promise<void> {
     if (!this.credential) return;
     this.flowNonce += 1;
-    this.credential = null;
+    this.replaceCredential(null);
     this.flowState = "idle";
     try {
       await this.runPersistence(() => this.deps.credentialStore.clear());
@@ -398,7 +447,7 @@ export class AuthService {
   async signOut(): Promise<void> {
     this.flowNonce += 1;
     this.pendingDeviceCode = null;
-    this.credential = null;
+    this.replaceCredential(null);
     this.profile = null;
     this.flowState = "idle";
     this.deps.onAuthChanged(this.getStatus());
@@ -450,7 +499,7 @@ export class AuthService {
     if (!this.isExpired()) return;
     this.flowNonce += 1;
     this.pendingDeviceCode = null;
-    this.credential = null;
+    this.replaceCredential(null);
     this.flowState = "idle";
     this.deps.onAuthChanged(this.currentStatus());
     void this.runPersistence(() => this.deps.credentialStore.clear()).catch((err: unknown) => {

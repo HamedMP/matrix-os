@@ -56,6 +56,16 @@ export function getKernelSocket(): KernelSocket | null {
   return socket;
 }
 
+export function resetKernel(): void {
+  if (cleanupKernel) {
+    cleanupKernel();
+    cleanupKernel = null;
+  } else if (socket) {
+    socket.dispose();
+    socket = null;
+  }
+}
+
 export function sendKernelMessage(msg: {
   text: string;
   sessionId?: string;

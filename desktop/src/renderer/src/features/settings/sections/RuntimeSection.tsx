@@ -1,14 +1,12 @@
 import { Check, LoaderCircle, Monitor, RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import {
-  MatrixComputerListSchema,
   type MatrixComputer,
 } from "@matrix-os/contracts";
 import { Button } from "../../../design/primitives";
 import { useConnection } from "../../../stores/connection";
+import { useRuntimeComputers } from "../../../stores/runtime-computers";
 import { Card, Empty, SectionHeader } from "./section-kit";
-
-type LoadState = "loading" | "ready" | "error";
 
 const STATUS_LABEL: Record<MatrixComputer["availability"], string> = {
   available: "Available",
@@ -81,56 +79,29 @@ function ComputerCard({
 }
 
 export default function RuntimeSection() {
-  const api = useConnection((state) => state.api);
+  const connectionStatus = useConnection((state) => state.status);
+  const handle = useConnection((state) => state.handle);
+  const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
-  const selectRuntime = useConnection((state) => state.selectRuntime);
-  const [loadState, setLoadState] = useState<LoadState>("loading");
-  const [computers, setComputers] = useState<MatrixComputer[]>([]);
-  const [selectedSlot, setSelectedSlot] = useState<string | null>(runtimeSlot);
-  const [switchingSlot, setSwitchingSlot] = useState<string | null>(null);
-  const [switchError, setSwitchError] = useState(false);
-  const [reloadKey, setReloadKey] = useState(0);
+  const authGeneration = useConnection((state) => state.authGeneration);
+  const loadState = useRuntimeComputers((state) => state.status);
+  const computers = useRuntimeComputers((state) => state.computers);
+  const serverSelectedSlot = useRuntimeComputers((state) => state.runtimeSlot);
+  const switchingSlot = useRuntimeComputers((state) => state.switchingSlot);
+  const switchError = useRuntimeComputers((state) => state.switchError);
+  const refresh = useRuntimeComputers((state) => state.refresh);
+  const selectComputer = useRuntimeComputers((state) => state.select);
+  // The inventory response's selectedSlot reflects the credential in use; the
+  // persisted profile slot is only a fallback until the first refresh lands.
+  const selectedSlot = serverSelectedSlot ?? runtimeSlot;
 
   useEffect(() => {
-    let active = true;
-    if (!api) {
-      setComputers([]);
-      setLoadState("error");
-      return () => {
-        active = false;
-      };
-    }
-    setLoadState("loading");
-    setSwitchError(false);
-    void api.get("/api/auth/computers")
-      .then((response) => MatrixComputerListSchema.parse(response))
-      .then((response) => {
-        if (!active) return;
-        setComputers(response.items);
-        setSelectedSlot(response.selectedSlot);
-        setLoadState("ready");
-      })
-      .catch(() => {
-        if (!active) return;
-        setComputers([]);
-        setLoadState("error");
-      });
-    return () => {
-      active = false;
-    };
-  }, [api, reloadKey, runtimeSlot]);
+    void refresh();
+  }, [authGeneration, connectionStatus, handle, platformHost, refresh, runtimeSlot]);
 
   async function switchComputer(computer: MatrixComputer): Promise<void> {
     if (computer.runtimeSlot === selectedSlot || computer.availability !== "available" || switchingSlot) return;
-    setSwitchError(false);
-    setSwitchingSlot(computer.runtimeSlot);
-    try {
-      await selectRuntime(computer.runtimeSlot);
-    } catch {
-      setSwitchError(true);
-    } finally {
-      setSwitchingSlot(null);
-    }
+    await selectComputer(computer.runtimeSlot);
   }
 
   return (
@@ -151,7 +122,7 @@ export default function RuntimeSection() {
             variant="ghost"
             aria-label="Refresh computers"
             disabled={loadState === "loading"}
-            onClick={() => setReloadKey((value) => value + 1)}
+            onClick={() => void refresh({ force: true })}
           >
             <RefreshCw size={14} className={loadState === "loading" ? "animate-spin" : ""} aria-hidden="true" />
             Refresh

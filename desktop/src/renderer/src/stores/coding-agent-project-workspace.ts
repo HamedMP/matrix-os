@@ -35,6 +35,21 @@ interface CodingAgentProjectWorkspaceState extends ProjectWorkspaceSelection {
 
 let hydrationGeneration = 0;
 
+export function clearCodingAgentProjectRuntime(): void {
+  hydrationGeneration += 1;
+  useCodingAgentProjectWorkspace.setState({
+    status: "idle",
+    runtimeId: null,
+    runtimeScope: null,
+    summary: null,
+    workspace: null,
+    error: null,
+    selectedProjectId: null,
+    selectedTaskId: null,
+    selectedThreadId: null,
+  });
+}
+
 function currentSelection(
   state: Pick<CodingAgentProjectWorkspaceState, keyof ProjectWorkspaceSelection>,
 ): ProjectWorkspaceSelection {

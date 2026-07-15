@@ -27,6 +27,7 @@ export interface AgentProjectNavigatorProps {
   onSelectTask: (taskId: string) => void;
   onSelectThread: (threadId: string) => void;
   onNewChat: (projectId: string, taskId?: string) => void;
+  onNewProject?: () => void;
 }
 
 function CountBadge({ children }: { children: number }) {
@@ -110,6 +111,7 @@ export function AgentProjectNavigator({
   onSelectTask,
   onSelectThread,
   onNewChat,
+  onNewProject,
 }: AgentProjectNavigatorProps) {
   const grouped = workspace ? groupProjectWorkspaceThreads(workspace) : null;
   const projects = workspace
@@ -137,7 +139,21 @@ export function AgentProjectNavigator({
         <span className="text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>
           Projects
         </span>
-        <CountBadge>{projects.length}</CountBadge>
+        <div className="flex items-center gap-1.5">
+          {onNewProject ? (
+            <button
+              type="button"
+              aria-label="New project"
+              title="New project"
+              onClick={onNewProject}
+              className="rounded p-1 outline-none hover:bg-[var(--bg-tertiary)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              style={{ color: "var(--text-tertiary)" }}
+            >
+              <Plus size={13} />
+            </button>
+          ) : null}
+          <CountBadge>{projects.length}</CountBadge>
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">

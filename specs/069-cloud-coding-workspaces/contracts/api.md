@@ -35,7 +35,26 @@ Returns GitHub CLI/auth availability for the current container.
 
 ### `POST /api/projects`
 
-Request:
+Create a managed folder:
+
+```json
+{
+  "mode": "scratch",
+  "name": "Customer app"
+}
+```
+
+Connect an existing folder within the owner's Matrix home without moving it:
+
+```json
+{
+  "mode": "folder",
+  "name": "Customer app",
+  "path": "workspaces/customer-app"
+}
+```
+
+Clone an optional GitHub repository:
 
 ```json
 {
@@ -57,7 +76,9 @@ Response: `201`
 }
 ```
 
-Errors: `github_auth_required`, `invalid_repository_url`, `clone_too_large`, `clone_timeout`, `slug_conflict`.
+Git and GitHub are optional project capabilities. Tasks and shell/agent sessions run in the project folder when no explicit worktree is selected. Removing a folder-linked project removes Matrix metadata only; it does not delete the connected owner folder.
+
+Errors: `github_auth_required`, `invalid_repository_url`, `invalid_project_path`, `clone_too_large`, `clone_timeout`, `slug_conflict`.
 
 ### `GET /api/workspace/projects`
 
@@ -73,6 +94,8 @@ Response:
 ```
 
 ### `GET /api/projects/:slug/prs`
+
+Non-GitHub projects return an empty `prs` array rather than an error.
 
 Response:
 

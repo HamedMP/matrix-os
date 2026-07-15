@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { lstat, mkdir, mkdtemp, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, realpath, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,7 +33,7 @@ describe("agent-sandbox", () => {
       sandbox: {
         enabled: true,
         writableRoots: [
-          worktreePath,
+          await realpath(worktreePath),
           join(homePath, "system", "agent-scratch", "sess_abc123"),
         ],
       },
@@ -65,7 +65,7 @@ describe("agent-sandbox", () => {
         enabled: true,
         mode: "workspace-write",
         writableRoots: [
-          worktreePath,
+          await realpath(worktreePath),
           join(homePath, "system", "agent-scratch", "sess_abc123"),
         ],
       },
@@ -77,7 +77,7 @@ describe("agent-sandbox", () => {
       },
     });
     expect(verifyClaudeSandbox).toHaveBeenCalledWith(expect.objectContaining({
-      cwd: worktreePath,
+      cwd: await realpath(worktreePath),
       runtimeHome: homePath,
       approvalPolicy: "on-request",
       sandbox: expect.objectContaining({ mode: "workspace-write" }),
@@ -243,7 +243,7 @@ describe("agent-sandbox", () => {
       worktreePath,
     })).resolves.toMatchObject({
       ok: true,
-      sandbox: { writableRoots: [worktreePath, scratchPath] },
+      sandbox: { writableRoots: [await realpath(worktreePath), scratchPath] },
     });
     await expect(stat(scratchPath)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
 
@@ -319,10 +319,41 @@ describe("agent-sandbox", () => {
       sandbox: expect.objectContaining({
         mode: "read-only",
         writableRoots: [],
-        denyWriteRoots: [worktreePath, gitCommonDir],
+        denyWriteRoots: [await realpath(worktreePath), await realpath(gitCommonDir)],
       }),
     }));
-    expect(resolveGitCommonDir).toHaveBeenCalledWith(worktreePath);
+    expect(resolveGitCommonDir).toHaveBeenCalledWith(await realpath(worktreePath));
+  });
+
+  it("lets Claude review non-Git folder projects start with a workspace-only deny root", async () => {
+    const verifyClaudeSandbox = vi.fn(async () => undefined);
+    // A null resolution means the workspace is not inside a Git repository:
+    // there is no Git metadata to protect, so review stays read-only over the
+    // workspace root alone instead of failing sandbox_unavailable.
+    const resolveGitCommonDir = vi.fn(async () => null);
+    const sandbox = createAgentSandbox({
+      homePath,
+      getUid: () => 1000,
+      verifyClaudeSandbox,
+      resolveGitCommonDir,
+    });
+
+    await expect(sandbox.preflight({
+      agent: "claude",
+      sessionId: "sess_review_plain",
+      worktreePath,
+      mode: "review",
+      approvalPolicy: "on-request",
+      sandboxMode: "full_access",
+    })).resolves.toMatchObject({ ok: true });
+    expect(verifyClaudeSandbox).toHaveBeenCalledWith(expect.objectContaining({
+      mode: "review",
+      sandbox: expect.objectContaining({
+        mode: "read-only",
+        // The sandbox canonicalizes paths (macOS tmpdir is a /var symlink).
+        denyWriteRoots: [await realpath(worktreePath)],
+      }),
+    }));
   });
 
   it("fails closed when running as root unless an explicit admin override is configured", async () => {

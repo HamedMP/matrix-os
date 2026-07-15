@@ -631,6 +631,7 @@ describe("AuthService device flow", () => {
         displayName: "Thomas Anderson",
         runtimeSlot: "primary",
         platformHost: "https://app.matrix-os.com",
+        authGeneration: 1,
       });
       expect(auth.poll()).toEqual({ status: "authorized", profile: { handle: "neo", userId: "user-1" } });
       expect(changes.at(-1)).toMatchObject({
@@ -759,5 +760,179 @@ describe("AuthService expireSession", () => {
     expect(peekCredential()).toBeNull();
     expect(getProfile()).toBeNull();
     expect(store.save).not.toHaveBeenCalled();
+  });
+
+  it("lists the canonical bounded computer inventory through trusted main", async () => {
+    const inventory = {
+      items: [{
+        handle: "neo",
+        runtimeSlot: "primary",
+        label: "Main Computer",
+        availability: "available",
+        kind: "customer",
+        gatewayPath: "/vm/neo",
+        capabilities: [],
+      }],
+      selectedSlot: "primary",
+      hasMore: false,
+      limit: 20,
+    };
+    const fetchFn = vi.fn(async () => jsonResponse(inventory));
+    const { auth } = makeService({
+      now: 10_000,
+      credential: {
+        accessToken: "opaque-runtime-token",
+        expiresAt: HOUR_MS,
+        userId: "user-1",
+        handle: "neo",
+      },
+      profile: {
+        handle: "neo",
+        userId: "user-1",
+        platformHost: "https://app.matrix-os.com",
+        runtimeSlot: "primary",
+      },
+      fetchFn,
+    });
+    await auth.init();
+
+    await expect(auth.listRuntimeComputers()).resolves.toEqual(inventory);
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://api.matrix-os.com/api/auth/computers",
+      expect.objectContaining({
+        method: "GET",
+        headers: { authorization: "Bearer opaque-runtime-token" },
+      }),
+    );
+  });
+
+  it("contains malformed computer inventory responses behind a generic error", async () => {
+    const { auth } = makeService({
+      now: 10_000,
+      credential: {
+        accessToken: "opaque-runtime-token",
+        expiresAt: HOUR_MS,
+        userId: "user-1",
+        handle: "neo",
+      },
+      profile: {
+        handle: "neo",
+        userId: "user-1",
+        platformHost: "https://app.matrix-os.com",
+        runtimeSlot: "primary",
+      },
+      fetchFn: async () => jsonResponse({ accessToken: "leaked", items: [] }),
+    });
+    await auth.init();
+
+    await expect(auth.listRuntimeComputers()).rejects.toThrow("Runtime computers unavailable");
+  });
+
+  it("expires the session when the computer inventory returns 401", async () => {
+    const fetchFn = vi.fn(async () => new Response("unauthorized", { status: 401 }));
+    const { auth, changes, peekCredential } = makeService({
+      now: 10_000,
+      credential: VALID,
+      profile: PROFILE,
+      fetchFn,
+    });
+    await auth.init();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await expect(auth.listRuntimeComputers()).rejects.toThrow("Runtime computers unavailable");
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(auth.getStatus().signedIn).toBe(false);
+    expect(peekCredential()).toBeNull();
+    expect(changes.at(-1)?.signedIn).toBe(false);
+  });
+
+  it("keeps the session when the computer inventory fails without an auth error", async () => {
+    const fetchFn = vi.fn(async () => new Response("upstream down", { status: 503 }));
+    const { auth, peekCredential } = makeService({
+      now: 10_000,
+      credential: VALID,
+      profile: PROFILE,
+      fetchFn,
+    });
+    await auth.init();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await expect(auth.listRuntimeComputers()).rejects.toThrow("Runtime computers unavailable");
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(auth.getStatus().signedIn).toBe(true);
+    expect(peekCredential()).not.toBeNull();
+  });
+});
+
+describe("AuthService auth generation", () => {
+  it("advances the auth generation whenever the credential is replaced or dropped", async () => {
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/auth/device/code")) {
+        return jsonResponse({
+          deviceCode: "device-1",
+          userCode: "ABCD",
+          verificationUri: "https://app.matrix-os.com/device",
+          expiresIn: 600,
+          interval: 5,
+        });
+      }
+      return jsonResponse({
+        accessToken: "fresh-device-token",
+        expiresAt: 1_800_000_000_000,
+        userId: "user-1",
+        handle: "neo",
+      });
+    });
+    const { auth } = makeService({ profile: PROFILE, now: 10_000, fetchFn });
+    await auth.init();
+    const initialGeneration = auth.getStatus().authGeneration;
+
+    await auth.startDeviceFlow();
+    await flushAuthFlow();
+    expect(auth.getStatus().signedIn).toBe(true);
+    const firstSessionGeneration = auth.getStatus().authGeneration;
+    expect(firstSessionGeneration).not.toBe(initialGeneration);
+
+    await auth.expireSession();
+    const expiredGeneration = auth.getStatus().authGeneration;
+    expect(expiredGeneration).not.toBe(firstSessionGeneration);
+
+    // A replacement session with an identical handle/host/slot must still get
+    // a distinct generation so renderer caches keyed on it cannot leak.
+    await auth.startDeviceFlow();
+    await flushAuthFlow();
+    expect(auth.getStatus().signedIn).toBe(true);
+    expect(auth.getStatus().authGeneration).not.toBe(firstSessionGeneration);
+    expect(auth.getStatus().authGeneration).not.toBe(expiredGeneration);
+  });
+
+  it("advances the auth generation on runtime credential exchange and sign-out", async () => {
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url === "https://api.matrix-os.com/api/auth/runtime-selection") {
+        return jsonResponse({
+          accessToken: "s".repeat(64),
+          expiresAt: 1_800_000_000_000,
+          handle: "neo-review",
+          slot: "review",
+        });
+      }
+      return jsonResponse({});
+    });
+    const { auth } = makeService({ credential: VALID, profile: PROFILE, now: 10_000, fetchFn });
+    await auth.init();
+    const beforeSwitch = auth.getStatus().authGeneration;
+
+    await auth.selectRuntime("review");
+    const afterSwitch = auth.getStatus().authGeneration;
+    expect(afterSwitch).not.toBe(beforeSwitch);
+
+    await auth.signOut();
+    expect(auth.getStatus().authGeneration).not.toBe(afterSwitch);
   });
 });

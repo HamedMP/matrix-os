@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+
+import React from "react";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   groupLayoutForPanels,
+  PanelErrorBoundary,
   panelSizesFromGroupLayout,
 } from "@desktop/renderer/src/features/workspace/PanelStrip";
 import type { PanelKind } from "@desktop/renderer/src/stores/workspace";
@@ -15,6 +20,8 @@ const baseSizes: Record<PanelKind, number> = {
 };
 
 describe("PanelStrip layout adapters", () => {
+  afterEach(cleanup);
+
   it("passes react-resizable-panels a keyed layout", () => {
     expect(groupLayoutForPanels(["terminal", "editor"], baseSizes)).toEqual({
       terminal: 70,
@@ -42,5 +49,28 @@ describe("PanelStrip layout adapters", () => {
       ...baseSizes,
       terminal: 64,
     });
+  });
+
+  it("contains a failing legacy panel without hiding the rest of the task", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    function BrokenPanel(): React.ReactNode {
+      throw new Error("private file path");
+    }
+
+    render(React.createElement(
+      "div",
+      null,
+      React.createElement(
+        PanelErrorBoundary,
+        { panel: "terminal" },
+        React.createElement(BrokenPanel),
+      ),
+      React.createElement("p", null, "Files panel remains available"),
+    ));
+
+    expect(screen.getByText("Terminal panel couldn't open.")).toBeTruthy();
+    expect(screen.getByText("Files panel remains available")).toBeTruthy();
+    expect(screen.queryByText(/private file path/i)).toBeNull();
+    warn.mockRestore();
   });
 });

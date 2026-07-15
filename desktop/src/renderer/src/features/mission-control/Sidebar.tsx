@@ -21,6 +21,7 @@ import { useConnection } from "../../stores/connection";
 import { AGENTS_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
+import RuntimeComputerMenu from "../runtime/RuntimeComputerMenu";
 
 function NavRow({
   icon,
@@ -215,6 +216,7 @@ export default function Sidebar() {
       </div>
 
       <div className="flex flex-col border-t" style={{ borderColor: "var(--border-subtle)" }}>
+        <RuntimeComputerMenu collapsed={collapsed} />
         <div className={`flex items-center ${collapsed ? "justify-center" : "justify-between"} px-2 pt-1`}>
           <NavRow icon={<Settings size={15} />} label="Settings" collapsed={collapsed} active={activeTab?.kind === "settings"} onClick={() => openTab({ kind: "settings", title: "Settings" })} />
         </div>

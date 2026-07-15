@@ -22,6 +22,7 @@ import {
 } from "@matrix-os/contracts";
 import { create } from "zustand";
 import { invoke, onEvent } from "../lib/operator";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
 
 type WorkspaceStatus = "idle" | "loading" | "ready" | "error";
 type ReviewStatus = "idle" | "loading" | "ready" | "error";
@@ -364,9 +365,23 @@ export function clearCodingAgentThreadSelection(): void {
 
 export function clearCodingAgentRuntimeSelection(): void {
   clearCodingAgentThreadSelection();
+  refreshSeq += 1;
   reviewsSeq += 1;
+  reviewSnapshotSeq += 1;
+  fileReadSeq += 1;
+  threadSnapshotSeq += 1;
+  notificationPreferencesSeq += 1;
+  createRequestSeq += 1;
+  actionRequestSeq += 1;
   useCodingAgentWorkspace.setState({
+    status: "idle",
+    summary: null,
+    error: null,
     createdThreadHandles: [],
+    // A create abandoned mid-flight by the switch must not leave the new
+    // runtime's composer blocked on a phantom "submitting" state.
+    createStatus: "idle",
+    createError: null,
     reviewsStatus: "idle",
     reviews: null,
     reviewsError: null,
@@ -1051,9 +1066,14 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
       return null;
     }
 
+    // A computer switch advances the runtime generation and clears this store;
+    // a create that settles afterwards must not install the old runtime's
+    // thread into the new runtime's state.
+    const runtimeGeneration = captureRuntimeGeneration();
     set({ createStatus: "submitting", createError: null });
     try {
       const snapshot = await invoke("runtime:create-thread", built.request);
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
       const thread = snapshot.thread;
       set((state) => {
         const createdThreadHandles = [
@@ -1097,6 +1117,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
       });
       return thread.id;
     } catch {
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
       console.warn("[coding-agents] thread create failed");
       set({ createStatus: "idle", createError: "Agent run could not be started. Try again." });
       return null;

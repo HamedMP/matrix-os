@@ -45,7 +45,9 @@ type ClaudeSandboxVerifier = (input: {
   sandbox: AgentLaunchSandbox;
   approvalPolicy?: "untrusted" | "on-request" | "on-failure" | "never";
 }) => Promise<void>;
-type GitCommonDirResolver = (worktreePath: string) => Promise<string>;
+// Resolves the Git common dir for a workspace, or null when the workspace is
+// not inside a Git repository (no Git metadata exists to protect).
+type GitCommonDirResolver = (worktreePath: string) => Promise<string | null>;
 
 const execFileAsync = promisify(execFile);
 const CLAUDE_PREFLIGHT_TIMEOUT_MS = 5_000;
@@ -78,17 +80,26 @@ const defaultClaudeSandboxVerifier: ClaudeSandboxVerifier = async (input) => {
 };
 
 const defaultGitCommonDirResolver: GitCommonDirResolver = async (worktreePath) => {
-  const { stdout } = await execFileAsync(
-    "git",
-    ["-C", worktreePath, "rev-parse", "--path-format=absolute", "--git-common-dir"],
-    {
-      cwd: worktreePath,
-      timeout: GIT_METADATA_TIMEOUT_MS,
-      encoding: "utf-8",
-      maxBuffer: 8 * 1024,
-    },
-  );
-  return z.string().trim().min(1).max(4096).parse(stdout);
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["-C", worktreePath, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+      {
+        cwd: worktreePath,
+        timeout: GIT_METADATA_TIMEOUT_MS,
+        encoding: "utf-8",
+        maxBuffer: 8 * 1024,
+      },
+    );
+    return z.string().trim().min(1).max(4096).parse(stdout);
+  } catch (err: unknown) {
+    const stderr = err instanceof Error && "stderr" in err && typeof (err as { stderr?: unknown }).stderr === "string"
+      ? (err as { stderr: string }).stderr
+      : "";
+    // Scratch and folder projects are not required to be Git repositories.
+    if (/not a git repository/i.test(stderr)) return null;
+    throw err;
+  }
 };
 
 function failure(status: number, code: string, message: string, sandboxStatus?: AgentSandboxStatus): Failure {
@@ -330,15 +341,20 @@ export function createAgentSandbox(options: {
       let denyWriteRoots: string[] | undefined;
       if (effectiveReadOnly && request.agent === "claude") {
         try {
-          const gitCommonPath = resolve(
-            canonicalWorktree.path,
-            await resolveGitCommonDir(canonicalWorktree.path),
-          );
-          const canonicalGitCommon = await canonicalDirectoryWithinHome(homePath, gitCommonPath);
-          if (canonicalGitCommon.kind !== "ok") {
-            return failure(503, "sandbox_unavailable", "Agent sandbox is unavailable", uidStatus);
+          const commonDirRaw = await resolveGitCommonDir(canonicalWorktree.path);
+          if (commonDirRaw === null) {
+            // Non-Git workspaces (scratch/folder projects) have no Git
+            // metadata to protect; review stays read-only over the workspace
+            // root alone instead of failing closed.
+            denyWriteRoots = [canonicalWorktree.path];
+          } else {
+            const gitCommonPath = resolve(canonicalWorktree.path, commonDirRaw);
+            const canonicalGitCommon = await canonicalDirectoryWithinHome(homePath, gitCommonPath);
+            if (canonicalGitCommon.kind !== "ok") {
+              return failure(503, "sandbox_unavailable", "Agent sandbox is unavailable", uidStatus);
+            }
+            denyWriteRoots = [...new Set([canonicalWorktree.path, canonicalGitCommon.path])];
           }
-          denyWriteRoots = [...new Set([canonicalWorktree.path, canonicalGitCommon.path])];
         } catch (err: unknown) {
           console.warn(
             "[agent-sandbox] Claude read-only Git metadata preflight failed:",

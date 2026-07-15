@@ -1,4 +1,4 @@
-import { FolderPlus, Github } from "lucide-react";
+import { FolderOpen, FolderPlus, Github } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Dialog } from "../../design/primitives";
 import { toUserMessage } from "../../lib/errors";
@@ -6,7 +6,7 @@ import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 
-type Mode = "scratch" | "github";
+type Mode = "scratch" | "folder" | "github";
 
 // Inner form mounts only while open, so its state is fresh per open (no
 // reset-on-prop effect). autoFocus replaces a focus setTimeout.
@@ -18,12 +18,17 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState("");
   const [mode, setMode] = useState<Mode>("scratch");
   const [url, setUrl] = useState("");
+  const [path, setPath] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dialogClosedRef = useRef(false);
   const dialogGenerationRef = useRef(0);
 
-  const canSubmit = name.trim().length > 0 && (mode === "scratch" || url.trim().length > 0);
+  const canSubmit = name.trim().length > 0 && (
+    mode === "scratch" ||
+    (mode === "folder" && path.trim().length > 0) ||
+    (mode === "github" && url.trim().length > 0)
+  );
 
   useEffect(() => {
     dialogGenerationRef.current += 1;
@@ -50,10 +55,17 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
         name: name.trim(),
         mode,
         ...(mode === "github" ? { url: url.trim() } : {}),
+        ...(mode === "folder" ? { path: path.trim() } : {}),
       });
       if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
       if (!project) {
-        setError("Couldn't create the project. Check the name" + (mode === "github" ? " and the GitHub URL." : "."));
+        setError(
+          mode === "github"
+            ? "Couldn't create the project. Check the name and GitHub URL."
+            : mode === "folder"
+              ? "Couldn't connect that folder. Check that it exists on this computer."
+              : "Couldn't create the project. Check the name.",
+        );
         return;
       }
       await selectProject(api, project.slug);
@@ -101,8 +113,9 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
         <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>How do you want to start?</span>
         <div className="flex rounded-lg border p-0.5" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}>
           {([
-            { key: "scratch" as const, label: "Start from scratch", icon: <FolderPlus size={13} /> },
-            { key: "github" as const, label: "Import from GitHub", icon: <Github size={13} /> },
+            { key: "scratch" as const, label: "New folder", icon: <FolderPlus size={13} /> },
+            { key: "folder" as const, label: "Use existing folder", icon: <FolderOpen size={13} /> },
+            { key: "github" as const, label: "Clone GitHub", icon: <Github size={13} /> },
           ]).map((opt) => {
             const activeMode = mode === opt.key;
             return (
@@ -126,9 +139,17 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
           <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>GitHub repository URL</span>
           <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://github.com/owner/repo" style={field} />
         </label>
+      ) : mode === "folder" ? (
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Folder on this computer</span>
+          <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="workspaces/customer-app" style={field} />
+          <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+            Enter a folder relative to your Matrix home. The folder stays in place and remains yours.
+          </span>
+        </label>
       ) : (
         <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-          A fresh repository is created on your cloud computer. Connect it to GitHub later from the board.
+          A new project folder is created on your Matrix computer. Git and GitHub are optional.
         </p>
       )}
 
