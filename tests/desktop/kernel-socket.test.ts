@@ -103,6 +103,9 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  // restoreAllMocks does not undo vi.stubGlobal; a leaked setTimeout stub
+  // never schedules callbacks and can hang later tests in the same worker.
+  vi.unstubAllGlobals();
 });
 
 describe("buildKernelWsUrl", () => {
