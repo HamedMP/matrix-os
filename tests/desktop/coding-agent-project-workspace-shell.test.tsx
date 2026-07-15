@@ -205,6 +205,50 @@ describe("AgentProjectWorkspaceShell", () => {
     }
   });
 
+  it("renders a same-scope retained-error board when the workspace remounts", () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const hydrate = vi.fn().mockResolvedValue(undefined);
+    const originalRefresh = useCodingAgentProjectWorkspace.getState().refresh;
+    const originalHydrate = useCodingAgentProjectWorkspace.getState().hydrate;
+    try {
+      useConnection.setState({
+        handle: "operator",
+        platformHost: "https://app.matrix-os.com",
+        runtimeSlot: "primary",
+      });
+      // The store already holds the retained-error state (a refresh failed
+      // earlier); the user closes and reopens the Agents workspace.
+      useCodingAgentProjectWorkspace.setState({
+        status: "error",
+        runtimeId: "rt_primary",
+        runtimeScope: "operator|https://app.matrix-os.com|primary",
+        summary: summary(),
+        workspace: workspace(),
+        selectedProjectId: "matrix-os",
+        selectedTaskId: null,
+        selectedThreadId: null,
+        error: "Project workspace unavailable",
+        refresh,
+        hydrate,
+      });
+
+      render(
+        <AgentProjectWorkspaceShell summary={summary()} onNewChat={vi.fn()}>
+          <div>Kanban board content</div>
+        </AgentProjectWorkspaceShell>,
+      );
+
+      expect(screen.getByText("Kanban board content")).toBeTruthy();
+      expect(screen.getByRole("alert").textContent).toContain("Project workspace unavailable");
+      expect(screen.getByRole("button", { name: "Retry loading the project workspace" })).toBeTruthy();
+    } finally {
+      useCodingAgentProjectWorkspace.setState({
+        refresh: originalRefresh,
+        hydrate: originalHydrate,
+      });
+    }
+  });
+
   it("withholds stale project and conversation content on the first render of a new scope", () => {
     useCodingAgentProjectWorkspace.setState({
       status: "ready",

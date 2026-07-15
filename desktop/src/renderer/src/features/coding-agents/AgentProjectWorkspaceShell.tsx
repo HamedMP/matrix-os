@@ -56,8 +56,12 @@ export function AgentProjectWorkspaceShell({
   const previousHydratedRuntimeScope = useRef<string | null>(hydratedRuntimeScope);
   const previousSelectedThreadId = useRef<string | null>(selectedThreadId);
   const attemptedExternalThreadId = useRef<string | null>(null);
+  // A retained-error workspace (a same-scope refresh failed after content was
+  // shown) counts as displayable: hiding it behind the generic placeholder on
+  // remount would bury the stale board and its retry strip.
+  const displayableStatus = status === "ready" || (status === "error" && workspace !== null);
   const lastReadyRuntimeScope = useRef<string | null>(
-    status === "ready" ? hydratedRuntimeScope : null,
+    displayableStatus ? hydratedRuntimeScope : null,
   );
   const projectSignature = [
     ...summary.projects.items.map((project) => [
@@ -70,7 +74,7 @@ export function AgentProjectWorkspaceShell({
   ].join("|");
   const enabled = capabilityEnabled(summary, "codingAgentsProjectWorkspace");
   const scopeMatches = hydratedRuntimeScope === runtimeScope;
-  if (scopeMatches && status === "ready") {
+  if (scopeMatches && displayableStatus) {
     lastReadyRuntimeScope.current = runtimeScope;
   }
   const scopeReady = scopeMatches && lastReadyRuntimeScope.current === runtimeScope;
