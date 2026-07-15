@@ -37,6 +37,20 @@ describe("redactCredentialsForDisplay", () => {
     expect(output).toContain("in the env file");
   });
 
+  it("masks quoted password assignments", () => {
+    const cases = [
+      'password="hunter2" in .env',
+      "password: 'hunter2' in yaml",
+      "password: `hunter2` in a template",
+      'DB_PASSWORD = "hunter2"',
+    ];
+    for (const input of cases) {
+      const output = redactCredentialsForDisplay(input);
+      expect(output, input).toContain("[redacted]");
+      expect(output, input).not.toContain("hunter2");
+    }
+  });
+
   it("leaves ordinary coding vocabulary untouched", () => {
     const prose = [
       "The token count exceeded the limit, so I trimmed the prompt.",

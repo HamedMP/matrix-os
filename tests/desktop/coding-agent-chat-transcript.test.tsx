@@ -194,6 +194,48 @@ describe("AgentConversationView transcript", () => {
     expect(screen.getByRole("status", { name: "Agent is working" })).toBeTruthy();
   });
 
+  it("clears an unsent draft when switching threads", () => {
+    const view = render(
+      <AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />,
+    );
+    const input = screen.getByLabelText("Message conversation") as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "draft for thread alpha" } });
+    expect(input.value).toBe("draft for thread alpha");
+
+    view.rerender(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot([], { id: "thread_beta", title: "Other thread" })}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    expect((screen.getByLabelText("Message conversation") as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("resets the transcript scroller when switching threads", () => {
+    const view = render(
+      <AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />,
+    );
+    const scroller = () => document.querySelector(".relative.min-h-0.flex-1 > .h-full");
+    const before = scroller();
+    expect(before).not.toBeNull();
+
+    view.rerender(
+      <AgentConversationView
+        status="ready"
+        snapshot={snapshot([], { id: "thread_beta", title: "Other thread" })}
+        error={null}
+        canSendTurns
+      />,
+    );
+
+    // A keyed remount replaces the scroll container so thread B starts pinned
+    // to the latest message instead of inheriting thread A's offset.
+    expect(scroller()).not.toBe(before);
+  });
+
   it("invites the first message on an idle empty thread", () => {
     render(
       <AgentConversationView

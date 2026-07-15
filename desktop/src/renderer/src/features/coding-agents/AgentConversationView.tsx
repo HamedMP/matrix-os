@@ -431,7 +431,6 @@ function ConversationComposer({ threadId, waitingForAction }: { threadId: string
           <p className="mb-1 px-1 text-xs" style={{ color: "var(--danger)" }}>{turnError}</p>
         ) : null}
         <PromptInput
-          key={threadId}
           value={message}
           onChange={setMessage}
           onSubmit={() => void submit()}
@@ -489,7 +488,7 @@ export function AgentConversationView({
         </div>
         {snapshot.thread.attention !== "none" ? <span className="rounded-full px-2 py-1 text-[10px] font-semibold capitalize" style={{ background: "var(--warning-muted)", color: "var(--warning)" }}>{snapshot.thread.attention.replaceAll("_", " ")}</span> : null}
       </header>
-      <Conversation>
+      <Conversation key={`transcript:${snapshot.thread.id}`}>
         <ConversationContent>
           {items.map((item) =>
             item.kind === "assistant" ? <AssistantRow key={item.key} events={item.events} />
@@ -509,6 +508,7 @@ export function AgentConversationView({
         // input answer, so the composer is disabled rather than offering a
         // doomed send.
         <ConversationComposer
+          key={`composer:${snapshot.thread.id}`}
           threadId={snapshot.thread.id}
           waitingForAction={snapshot.thread.status === "waiting_for_approval" || snapshot.thread.status === "waiting_for_input"}
         />
