@@ -76,8 +76,10 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
     fitRef.current = fit;
     serializeRef.current = serialize;
 
-    // Restyle live terminals when the unified theme changes.
-    const unsubscribeAppearance = useAppearance.subscribe((state) => {
+    // Restyle live terminals when the unified theme changes; unrelated store
+    // writes (hydration) must not reassign the palette.
+    const unsubscribeAppearance = useAppearance.subscribe((state, previous) => {
+      if (state.themeId === previous.themeId && state.mode === previous.mode) return;
       terminal.options.theme = getThemeTerminalColors(state.themeId, resolveThemeMode(state.mode));
     });
 

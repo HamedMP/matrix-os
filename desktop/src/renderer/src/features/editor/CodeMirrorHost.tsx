@@ -99,6 +99,11 @@ export default function CodeMirrorHost({ taskId, path }: { taskId: string; path:
     const host = hostRef.current;
     const key = cacheKey(taskId, path);
     let disposed = false;
+    const resolvedThemeMode = resolveThemeMode(themeMode);
+    const editorThemeExtensions = buildEditorTheme(
+      getThemeEditorColors(themeId, resolvedThemeMode),
+      resolvedThemeMode === "dark",
+    );
 
     void openFile(files, path)
       .then((file) => {
@@ -118,10 +123,7 @@ export default function CodeMirrorHost({ taskId, path }: { taskId: string; path:
             history(),
             keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
             languageExtension(path),
-            ...buildEditorTheme(
-              getThemeEditorColors(themeId, resolveThemeMode(themeMode)),
-              resolveThemeMode(themeMode) === "dark",
-            ),
+            ...editorThemeExtensions,
             EditorView.updateListener.of((update) => {
               if (update.docChanged) {
                 const content = update.state.doc.toString();

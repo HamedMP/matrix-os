@@ -5,11 +5,12 @@ import { resolveThemeMode, type ThemeMode } from "../../../design/themes/apply";
 import { useAppearance } from "../../../stores/appearance";
 import { Card, SectionHeader } from "./section-kit";
 
-function ThemeSwatch({ themeId, mode, selected, onSelect }: {
+function ThemeSwatch({ themeId, mode, selected, onSelect, onArrowKey }: {
   themeId: string;
   mode: ThemeMode;
   selected: boolean;
   onSelect: (themeId: string) => void;
+  onArrowKey: (fromThemeId: string, direction: 1 | -1) => void;
 }) {
   const theme = unifiedThemes.find((candidate) => candidate.id === themeId);
   if (!theme) return null;
@@ -24,12 +25,23 @@ function ThemeSwatch({ themeId, mode, selected, onSelect }: {
       role="radio"
       aria-checked={selected}
       aria-label={`Use ${theme.name} theme`}
+      // Roving tabindex: the group is one tab stop; arrows move within it.
+      tabIndex={selected ? 0 : -1}
       className="flex flex-col gap-2 rounded-lg border p-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
       style={{
         borderColor: selected ? "var(--accent)" : "var(--border-subtle)",
         background: "var(--bg-surface)",
       }}
       onClick={() => onSelect(themeId)}
+      onKeyDown={(event) => {
+        if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+          event.preventDefault();
+          onArrowKey(themeId, 1);
+        } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+          event.preventDefault();
+          onArrowKey(themeId, -1);
+        }
+      }}
     >
       <span
         aria-hidden="true"
@@ -59,6 +71,18 @@ export default function AppearanceSection() {
   const setMode = useAppearance((s) => s.setMode);
   const setThemeId = useAppearance((s) => s.setThemeId);
 
+  // WAI-ARIA radio group: arrows select the adjacent swatch (wrapping) and
+  // move focus to it.
+  const moveSelection = (fromThemeId: string, direction: 1 | -1) => {
+    const index = unifiedThemes.findIndex((theme) => theme.id === fromThemeId);
+    if (index === -1) return;
+    const next = unifiedThemes[(index + direction + unifiedThemes.length) % unifiedThemes.length];
+    if (!next) return;
+    setThemeId(next.id);
+    const target = document.querySelector<HTMLButtonElement>(`[role="radio"][aria-label="Use ${next.name} theme"]`);
+    target?.focus();
+  };
+
   return (
     <>
       <SectionHeader title="Appearance" description="How Matrix OS looks on this machine." />
@@ -82,6 +106,7 @@ export default function AppearanceSection() {
               mode={mode}
               selected={theme.id === themeId}
               onSelect={setThemeId}
+              onArrowKey={moveSelection}
             />
           ))}
         </div>
