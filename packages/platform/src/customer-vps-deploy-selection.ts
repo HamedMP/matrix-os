@@ -1,14 +1,11 @@
 import type { UserMachineRecord } from './db.js';
-
-interface DeploySelectionTarget {
-  handle?: string;
-}
+import type { DeployTarget } from './customer-vps.js';
 
 export function selectCustomerVpsDeployMachines<
   T extends Pick<UserMachineRecord, 'handle' | 'provisioningClass'>,
 >(
   runningMachines: readonly T[],
-  target?: DeploySelectionTarget,
+  target?: DeployTarget,
 ): T[] {
   if (target?.handle) {
     return runningMachines.filter((machine) => machine.handle === target.handle);
