@@ -4,6 +4,9 @@ import type { ApiClient } from "@desktop/renderer/src/lib/api";
 import { useBoard, type Card } from "@desktop/renderer/src/stores/board";
 import { useSessions } from "@desktop/renderer/src/stores/sessions";
 
+const TWO_WORD_SESSION_NAME_PATTERN = /^[a-z]+-[a-z]+$/;
+const TWO_WORD_FALLBACK_SESSION_NAME_PATTERN = /^[a-z]+-[a-z]+-[a-z0-9]{5}$/;
+
 function makeApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
     baseUrl: "https://x.test",
@@ -77,6 +80,34 @@ describe("useSessions.load", () => {
 });
 
 describe("useSessions.create", () => {
+  it("creates normal terminal sessions with two-word names and a suffixed collision fallback", async () => {
+    const post = vi
+      .fn()
+      .mockRejectedValueOnce(new AppError("server", { detail: "session_exists" }))
+      .mockRejectedValueOnce(new AppError("server", { detail: "session_exists" }))
+      .mockRejectedValueOnce(new AppError("server", { detail: "session_exists" }))
+      .mockResolvedValueOnce({ name: "fallback-created" });
+    const get = vi.fn(async (path: string) => {
+      if (path === "/api/terminal/sessions") {
+        return { sessions: [{ name: "fallback-created", status: "active" }] };
+      }
+      return { sessions: [], nextCursor: null };
+    });
+    const api = makeApi({ post, get });
+
+    const created = await useSessions.getState().create(api);
+
+    expect(created).toEqual({ sessionId: "fallback-created", attachName: "fallback-created" });
+    expect(post).toHaveBeenCalledTimes(4);
+    const names = post.mock.calls.map(([, body]) => (body as { name: string }).name);
+    expect(names.slice(0, 3)).toEqual([
+      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
+      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
+      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
+    ]);
+    expect(names[3]).toMatch(TWO_WORD_FALLBACK_SESSION_NAME_PATTERN);
+  });
+
   it("POSTs the session, reloads, and resolves the new attach name", async () => {
     const post = vi.fn().mockResolvedValue({ session: { id: "sess_new" } });
     // After creation, the reload returns the workspace session carrying its

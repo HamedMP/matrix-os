@@ -1970,7 +1970,6 @@ public final class AppModel: ObservableObject {
         openError = nil
         isCreatingWorkItem = true
         let existingSessionNames = Set(sessions.map(\.name))
-        let name = generatedShellSessionName()
         Task { [weak self] in
             defer { Task { @MainActor in self?.isCreatingWorkItem = false } }
             struct CreateSessionRequest: Encodable {
@@ -1980,27 +1979,32 @@ public final class AppModel: ObservableObject {
             struct CreateSessionResponse: Decodable {
                 let name: String?
             }
-            do {
-                let response: CreateSessionResponse = try await client.post(
-                    "/api/terminal/sessions",
-                    body: CreateSessionRequest(name: name, cwd: nil)
-                )
-                await self?.loadSessions()
-                let requestedName = response.name ?? name
-                if self?.sessions.contains(where: { $0.name == requestedName }) == true {
-                    await MainActor.run { self?.openSession(named: requestedName) }
-                } else if let created = self?.sessions.first(where: { !existingSessionNames.contains($0.name) }) {
-                    await MainActor.run { self?.openSession(named: created.name) }
+            let twoWordCollisionRetries = 3
+            let createAttempts = twoWordCollisionRetries + 1
+            for attempt in 0..<createAttempts {
+                let name = generatedShellSessionName(collisionFallback: attempt >= twoWordCollisionRetries)
+                do {
+                    let response: CreateSessionResponse = try await client.post(
+                        "/api/terminal/sessions",
+                        body: CreateSessionRequest(name: name, cwd: nil)
+                    )
+                    await self?.loadSessions()
+                    let requestedName = response.name ?? name
+                    if self?.sessions.contains(where: { $0.name == requestedName }) == true {
+                        await MainActor.run { self?.openSession(named: requestedName) }
+                    } else if let created = self?.sessions.first(where: { !existingSessionNames.contains($0.name) }) {
+                        await MainActor.run { self?.openSession(named: created.name) }
+                    }
+                    return
+                } catch GatewayError.conflict(let code) where code == "session_exists" && attempt < createAttempts - 1 {
+                    continue
+                } catch {
+                    await MainActor.run { self?.openError = .createSessionFailed }
+                    return
                 }
-            } catch {
-                await MainActor.run { self?.openError = .createSessionFailed }
             }
+            await MainActor.run { self?.openError = .createSessionFailed }
         }
-    }
-
-    private func generatedShellSessionName() -> String {
-        let suffix = UUID().uuidString.prefix(8).lowercased()
-        return "shell-\(suffix)"
     }
 
     private func displayName(for card: Card) -> String {

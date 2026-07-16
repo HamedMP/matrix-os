@@ -5,6 +5,7 @@
 import { create } from "zustand";
 import { AppError, type AppErrorCategory } from "../../../shared/app-error";
 import type { ApiClient } from "../lib/api";
+import { twoWordShellSessionName } from "../lib/shell-session-names";
 import {
   mergeAttachableSessions,
   type AttachableSession,
@@ -78,10 +79,15 @@ function asArray<T>(value: unknown): T[] {
 }
 
 let loadSequence = 0;
+const TWO_WORD_COLLISION_RETRIES = 3;
+const CREATE_ATTEMPTS = TWO_WORD_COLLISION_RETRIES + 1;
 
-function nextSessionName(): string {
-  const suffix = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
-  return `operator-${Date.now().toString(36)}-${suffix}`;
+function nextSessionName(attempt: number): string {
+  return twoWordShellSessionName({ collisionFallback: attempt >= TWO_WORD_COLLISION_RETRIES });
+}
+
+function isSessionExistsError(err: unknown): boolean {
+  return err instanceof AppError && err.detail === "session_exists";
 }
 
 async function deleteAttachableSession(api: ApiClient, attachName: string): Promise<void> {
@@ -168,8 +174,19 @@ export const useSessions = create<SessionsState>()((set, get) => ({
     set({ creating: true, error: null, createError: null });
     try {
       if (!input) {
-        const name = nextSessionName();
-        const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name });
+        let name = "";
+        let response: { name?: unknown } | null = null;
+        for (let attempt = 0; attempt < CREATE_ATTEMPTS; attempt += 1) {
+          name = nextSessionName(attempt);
+          try {
+            response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name });
+            break;
+          } catch (err: unknown) {
+            if (isSessionExistsError(err) && attempt < CREATE_ATTEMPTS - 1) continue;
+            throw err;
+          }
+        }
+        if (response === null) throw new AppError("server");
         if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
         const attachName = typeof response.name === "string" && response.name.trim() ? response.name.trim() : name;
         const refreshSequence = loadSequence + 1;

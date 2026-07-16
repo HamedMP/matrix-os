@@ -5,6 +5,8 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 
 const CANONICAL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
+const TWO_WORD_SESSION_NAME_PATTERN = /^[a-z]+-[a-z]+$/;
+const TWO_WORD_FALLBACK_SESSION_NAME_PATTERN = /^[a-z]+-[a-z]+-[a-z0-9]{5}$/;
 
 const paneGridSpy = vi.fn();
 const { saveThemeSpy, terminalSettingsState } = vi.hoisted(() => ({
@@ -113,6 +115,16 @@ function terminalSessionPostBodies(): string[] {
   return vi.mocked(fetch).mock.calls
     .filter(([input, init]) => String(input).includes("/api/terminal/sessions") && init?.method === "POST")
     .map(([, init]) => String(init?.body ?? ""));
+}
+
+function mockJsonResponse(body: unknown, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+    text: async () => JSON.stringify(body),
+    clone: () => mockJsonResponse(body, status),
+  } as Response;
 }
 
 function createDragDataTransfer(): DataTransfer {
@@ -1941,7 +1953,7 @@ describe("TerminalApp", () => {
     expect(menu.style.top).toBe("0px");
   });
 
-  it("opens Matrix-named shell sessions from the new-session menu", async () => {
+  it("opens two-word shell sessions from the new-session menu", async () => {
     render(<TerminalApp />);
 
     await act(async () => {
@@ -1965,11 +1977,69 @@ describe("TerminalApp", () => {
       ))
       .map(([, init]: [RequestInfo | URL, RequestInit]) => JSON.parse(String(init.body)) as { name: string });
 
-    const createdShell = createCalls.find((body) => CANONICAL_SESSION_NAME_PATTERN.test(body.name));
+    const createdShell = createCalls.find((body) => TWO_WORD_SESSION_NAME_PATTERN.test(body.name));
     expect(createdShell).toBeTruthy();
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
         sessionId: createdShell?.name,
+      },
+    });
+  });
+
+  it("retries two-word shell name collisions before using a suffixed fallback", async () => {
+    const postedNames: string[] = [];
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve(mockJsonResponse([]));
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve(mockJsonResponse({ ok: true }));
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve(mockJsonResponse({}));
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body ?? "{}")) as { name?: string };
+        if (body.name === "main") {
+          return Promise.resolve(mockJsonResponse({ name: "main", created: true }, 201));
+        }
+        if (typeof body.name === "string") postedNames.push(body.name);
+        if (postedNames.length <= 3) {
+          return Promise.resolve(mockJsonResponse({ error: { code: "session_exists", message: "Request failed" } }, 409));
+        }
+        return Promise.resolve(mockJsonResponse({ name: body.name, created: true }, 201));
+      }
+      if (url.endsWith("/api/terminal/sessions")) {
+        return Promise.resolve(mockJsonResponse({
+          sessions: postedNames.length >= 4 ? [{ name: postedNames[3], status: "active" }] : [],
+        }));
+      }
+      return Promise.resolve(mockJsonResponse({}));
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await chooseNewSessionMenuItem(/Shell/);
+    });
+
+    await vi.waitFor(() => expect(postedNames).toHaveLength(4));
+    expect(postedNames.slice(0, 3)).toEqual([
+      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
+      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
+      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
+    ]);
+    expect(postedNames[3]).toMatch(TWO_WORD_FALLBACK_SESSION_NAME_PATTERN);
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        sessionId: postedNames[3],
       },
     });
   });
@@ -2814,7 +2884,7 @@ describe("TerminalApp", () => {
     });
   });
 
-  it("creates toolbar shell launches as Matrix-named canonical shell sessions", async () => {
+  it("creates toolbar shell launches as two-word canonical shell sessions", async () => {
     render(<TerminalApp />);
 
     await act(async () => {
@@ -2834,12 +2904,12 @@ describe("TerminalApp", () => {
       String(input).includes("/api/terminal/sessions") &&
       init?.method === "POST" &&
       typeof init.body === "string" &&
-      CANONICAL_SESSION_NAME_PATTERN.test(JSON.parse(init.body).name)
+      TWO_WORD_SESSION_NAME_PATTERN.test(JSON.parse(init.body).name)
     ));
     expect(createCall).toBeTruthy();
     const body = JSON.parse(createCall?.[1]?.body as string) as { name: string; cwd: string };
     expect(body).toMatchObject({ cwd: "projects" });
-    expect(body.name).toMatch(CANONICAL_SESSION_NAME_PATTERN);
+    expect(body.name).toMatch(TWO_WORD_SESSION_NAME_PATTERN);
 
     const props = paneGridSpy.mock.lastCall?.[0] as {
       paneTree: { type: "pane"; sessionId?: string; startupCommand?: string };
