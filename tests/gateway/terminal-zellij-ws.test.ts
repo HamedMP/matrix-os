@@ -76,6 +76,14 @@ function socket(): ShellWsSocket & { sent: unknown[]; closed: boolean } {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 describe("zellij terminal WebSocket", () => {
   it("rewrites detected Codex TUI reverse-video output before send and replay persistence", async () => {
     const pty = new FakePty();
@@ -695,7 +703,7 @@ describe("zellij terminal WebSocket", () => {
       registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
       adapter: { attachSession: vi.fn(() => pty) },
       maxReplayBytes: 4096,
-      flowControl: { highWaterMark: 10, lowWaterMark: 5, drainIntervalMs: 5 },
+      flowControl: { highWaterMark: 10 },
     });
 
     await handler.open({ ws: fastWs, session: "main", fromSeq: 0 });
@@ -726,7 +734,7 @@ describe("zellij terminal WebSocket", () => {
       },
       maxReplayBytes: 4096,
       persistFlushIntervalMs: 0,
-      flowControl: { highWaterMark: 10, lowWaterMark: 5, drainIntervalMs: 5 },
+      flowControl: { highWaterMark: 10 },
     });
 
     const slowWs = Object.assign(socket(), { bufferedAmount: 1_000 });
@@ -824,6 +832,65 @@ describe("zellij terminal WebSocket", () => {
       message: "Too many active sessions",
     });
     expect(thirdWs.closed).toBe(true);
+    handler.dispose();
+  });
+
+  it("cancels an in-flight shared attach when its idle runtime is evicted", async () => {
+    const firstSeed = deferred<[]>();
+    const firstSeedStarted = deferred<void>();
+    const attachSession = vi.fn((name: string) => {
+      if (name === "first") {
+        throw new Error("evicted session must not attach");
+      }
+      return new FakePty();
+    });
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [
+          { name: "first", status: "active" },
+          { name: "second", status: "active" },
+        ]),
+      },
+      adapter: { attachSession },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => null),
+        readSince: vi.fn((name: string) => {
+          if (name === "first") {
+            firstSeedStarted.resolve();
+            return firstSeed.promise;
+          }
+          return Promise.resolve([]);
+        }),
+        append: vi.fn(async () => undefined),
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+      maxBuffers: 1,
+      idleAttachGraceMs: 0,
+    });
+
+    const firstWs = socket();
+    const firstOpen = handler.open({ ws: firstWs, session: "first", fromSeq: 0 });
+    await firstSeedStarted.promise;
+
+    const secondWs = socket();
+    await handler.open({ ws: secondWs, session: "second", fromSeq: 0 });
+
+    firstSeed.resolve([]);
+    await firstOpen;
+
+    expect(attachSession).toHaveBeenCalledTimes(1);
+    expect(attachSession).toHaveBeenCalledWith("second", expect.any(Object));
+    expect(firstWs.sent).toContainEqual({
+      type: "error",
+      code: "attach_failed",
+      message: "Shell attach failed",
+    });
+    expect(firstWs.closed).toBe(true);
+    expect(secondWs.sent).toContainEqual(
+      expect.objectContaining({ type: "attached", session: "second" }),
+    );
     handler.dispose();
   });
 

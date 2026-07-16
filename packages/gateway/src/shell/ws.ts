@@ -62,7 +62,9 @@ interface ShellWsAdapter {
 
 export interface ShellWsFlowControlOptions {
   highWaterMark?: number;
+  /** @deprecated Shared attach output is no longer paused; slow sockets skip frames instead. */
   lowWaterMark?: number;
+  /** @deprecated Shared attach output is no longer paused; slow sockets skip frames instead. */
   drainIntervalMs?: number;
 }
 
@@ -138,6 +140,7 @@ interface SessionRuntime {
   outputCompat: TerminalOutputCompatStream | null;
   attachPromise: Promise<boolean> | null;
   idleCloseTimer: NodeJS.Timeout | null;
+  disposed: boolean;
 }
 
 export function createShellWsHandler(options: ShellWsHandlerOptions) {
@@ -200,9 +203,18 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       outputCompat: null,
       attachPromise: null,
       idleCloseTimer: null,
+      disposed: false,
     };
     runtimes.set(name, runtime);
     return runtime;
+  }
+
+  function canUseRuntime(runtime: SessionRuntime): boolean {
+    return !runtime.disposed && runtimes.get(runtime.name) === runtime;
+  }
+
+  function canUseAttachPromise(runtime: SessionRuntime, attachPromise: Promise<boolean>): boolean {
+    return canUseRuntime(runtime) && runtime.attachPromise === attachPromise;
   }
 
   function cancelIdleClose(runtime: SessionRuntime): void {
@@ -223,6 +235,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     runtime.abortController = null;
     runtime.child = null;
     runtime.outputCompat = null;
+    runtime.attachPromise = null;
   }
 
   function deliver(conn: ConnState, msg: unknown): boolean {
@@ -334,6 +347,9 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     replayBuffer: ShellReplayBuffer,
   ): Promise<boolean> {
     cancelIdleClose(runtime);
+    if (!canUseRuntime(runtime)) {
+      return false;
+    }
     if (runtime.child) {
       return true;
     }
@@ -341,17 +357,29 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       return runtime.attachPromise;
     }
 
-    const attachPromise = (async () => {
+    let attachPromise!: Promise<boolean>;
+    attachPromise = (async () => {
       const abortController = new AbortController();
       let child: ShellAttachProcess;
-      runtime.outputCompat = await createSeededOutputCompat(safeName, replayBuffer);
+      const outputCompat = await createSeededOutputCompat(safeName, replayBuffer);
+      if (!canUseAttachPromise(runtime, attachPromise)) {
+        return false;
+      }
+      runtime.outputCompat = outputCompat;
       try {
         child = options.adapter.attachSession(safeName, {
           signal: abortController.signal,
         });
       } catch (err: unknown) {
-        runtime.outputCompat = null;
+        if (canUseAttachPromise(runtime, attachPromise)) {
+          runtime.outputCompat = null;
+        }
         console.warn("[shell] zellij attach process failed:", err instanceof Error ? err.message : String(err));
+        return false;
+      }
+
+      if (!canUseAttachPromise(runtime, attachPromise)) {
+        child.kill();
         return false;
       }
 
@@ -378,6 +406,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
   }
 
   async function disposeRuntime(runtime: SessionRuntime, warnContext: string): Promise<void> {
+    runtime.disposed = true;
     cancelIdleClose(runtime);
     for (const conn of runtime.conns) {
       conn.closed = true;

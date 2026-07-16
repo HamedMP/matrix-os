@@ -166,7 +166,7 @@ const AUTH_BANNER_ACTION_STYLE: CSSProperties = {
 };
 
 type TerminalServerMessage =
-  | { type: "attached"; sessionId: string; state: "running" | "exited"; exitCode: number | null }
+  | { type: "attached"; sessionId: string; state: "running" | "exited"; exitCode: number | null; fromSeq: number | null }
   | { type: "output"; data: string; seq: number | null }
   | { type: "block-mark"; seq: number | null; mark: { code: "A" | "B" | "C" | "D"; exitCode?: number } }
   | { type: "replay-start" }
@@ -210,6 +210,7 @@ function parseTerminalServerMessage(raw: string): TerminalServerMessage | null {
         sessionId,
         state: msg.state,
         exitCode: toFiniteNumber(msg.exitCode),
+        fromSeq: Number.isInteger(msg.fromSeq) && (msg.fromSeq as number) >= 0 ? (msg.fromSeq as number) : null,
       };
     }
     case "output":
@@ -1306,12 +1307,16 @@ export function TerminalPane({
                 attachedSessionId: msg.sessionId,
                 state: msg.state,
                 exitCode: msg.exitCode ?? null,
+                fromSeq: msg.fromSeq,
               });
               track("attached", {
                 state: msg.state,
                 hasExitCode: msg.exitCode != null,
               });
               sessionIdRef.current = msg.sessionId;
+              if (msg.fromSeq !== null) {
+                lastSeqRef.current = Math.max(lastSeqRef.current, msg.fromSeq);
+              }
               onSessionAttachedRef.current?.(paneId, msg.sessionId);
               if (msg.state === "exited") {
                 const exitCode = msg.exitCode ?? "unknown";
