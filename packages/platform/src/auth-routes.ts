@@ -4,6 +4,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { MatrixComputerRuntimeSlotSchema } from '@matrix-os/contracts';
 import {
   createDeviceFlow,
+  DeviceApprovalError,
   type DeviceFlow,
   type DeviceProfile,
   normalizeUserCode,
@@ -18,7 +19,7 @@ import type { PlatformDB } from './db.js';
 import {
   getActiveUserMachineByClerkId,
   getActiveUserMachineByHandle,
-  getRunningUserMachineByClerkId,
+  getRunningUserMachineByClerkIdForUpdate,
   getContainer,
   getContainerByClerkId,
 } from './db.js';
@@ -223,16 +224,22 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
     verificationBase: config.platformUrl,
     expiresInSec: DEVICE_EXPIRES_IN_SEC,
     now: config.now,
-    issueToken: async ({ clerkUserId, runtimeSlot }) => {
+    resolveApprovalTarget: async (transactionDb, { clerkUserId, runtimeSlot }) => {
+      const machine = await getRunningUserMachineByClerkIdForUpdate(
+        transactionDb,
+        clerkUserId,
+        runtimeSlot,
+      );
+      return machine ? { handle: machine.handle, runtimeSlot: machine.runtimeSlot } : null;
+    },
+    issueToken: async ({ clerkUserId, runtimeSlot, handle: approvedHandle }) => {
       const container = config.ignoreLegacyContainers || runtimeSlot
         ? undefined
         : await getContainerByClerkId(config.db, clerkUserId);
-      const machine = container
+      const machine = container || approvedHandle
         ? undefined
-        : runtimeSlot
-          ? await getRunningUserMachineByClerkId(config.db, clerkUserId, runtimeSlot)
-          : await getActiveUserMachineByClerkId(config.db, clerkUserId);
-      const handle = container?.handle ?? machine?.handle;
+        : await getActiveUserMachineByClerkId(config.db, clerkUserId);
+      const handle = approvedHandle ?? container?.handle ?? machine?.handle;
       if (!handle) {
         throw new Error('No runtime provisioned for this Clerk user');
       }
@@ -242,7 +249,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
         clerkUserId,
         handle,
         gatewayUrl,
-        runtimeSlot: machine?.runtimeSlot,
+        runtimeSlot: runtimeSlot ?? machine?.runtimeSlot,
       });
       // Best-effort display profile; never let it break sign-in.
       let profile: DeviceProfile | null = null;
@@ -477,21 +484,14 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       }
 
       try {
-        if (parsedRuntimeSlot.data) {
-          const selectedMachine = await getRunningUserMachineByClerkId(
-            config.db,
-            verifyResult.userId,
-            parsedRuntimeSlot.data,
-          );
-          if (!selectedMachine) {
-            return c.json({ error: 'computer_unavailable' }, 404);
-          }
-        }
         await flow.approveDeviceCode(userCode, verifyResult.userId, parsedRuntimeSlot.data);
         captureAuthEvent("cli_device_approved");
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'approval failed';
         console.error('[device/approve] failed:', msg);
+        if (err instanceof DeviceApprovalError) {
+          return c.json({ error: 'computer_unavailable' }, 404);
+        }
         if (/expired/i.test(msg)) return c.json({ error: 'expired_token' }, 410);
         if (/unknown/i.test(msg)) return c.json({ error: 'invalid_user_code' }, 404);
         return c.json({ error: 'server_error' }, 500);

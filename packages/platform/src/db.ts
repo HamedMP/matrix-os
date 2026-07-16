@@ -175,6 +175,7 @@ interface DeviceCodesTable {
   user_code: string;
   clerk_user_id: string | null;
   runtime_slot: string | null;
+  runtime_handle: string | null;
   expires_at: number;
   last_polled_at: number | null;
   created_at: number;
@@ -905,12 +906,14 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       user_code TEXT NOT NULL UNIQUE,
       clerk_user_id TEXT,
       runtime_slot TEXT,
+      runtime_handle TEXT,
       expires_at BIGINT NOT NULL,
       last_polled_at BIGINT,
       created_at BIGINT NOT NULL
     )
   `.execute(db);
   await sql`ALTER TABLE device_codes ADD COLUMN IF NOT EXISTS runtime_slot TEXT`.execute(db);
+  await sql`ALTER TABLE device_codes ADD COLUMN IF NOT EXISTS runtime_handle TEXT`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_device_codes_user_code ON device_codes(user_code)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_device_codes_expires_at ON device_codes(expires_at)`.execute(db);
 
@@ -1915,6 +1918,24 @@ export async function getRunningUserMachineByClerkId(
     .where('runtime_slot', '=', runtimeSlot)
     .where('status', '=', 'running')
     .where('deleted_at', 'is', null)
+    .executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
+export async function getRunningUserMachineByClerkIdForUpdate(
+  db: PlatformDB,
+  clerkUserId: string,
+  runtimeSlot: string,
+): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .where('runtime_slot', '=', runtimeSlot)
+    .where('status', '=', 'running')
+    .where('deleted_at', 'is', null)
+    .forUpdate()
     .executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
 }

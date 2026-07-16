@@ -183,12 +183,18 @@ export function approvalPage(
     }
 
     async function loadComputers(token) {
-      var response = await fetchWithTimeout('/api/auth/computers', {
-        headers: { Authorization: \`Bearer \${token}\` },
-        credentials: 'same-origin',
-      });
-      if (!response.ok) return false;
-      return renderComputers(await response.json());
+      try {
+        var response = await fetchWithTimeout('/api/auth/computers', {
+          headers: { Authorization: \`Bearer \${token}\` },
+          credentials: 'same-origin',
+        });
+        if (response.status === 401 || response.status === 403) return 'auth';
+        if (!response.ok) return 'error';
+        return renderComputers(await response.json()) ? 'ok' : 'empty';
+      } catch (err) {
+        console.error('[matrix] Computer inventory failed', err instanceof Error ? err.message : String(err));
+        return 'error';
+      }
     }
 
     function renderActionState(title, detail, primaryLabel, primaryHandler) {
@@ -319,8 +325,17 @@ export function approvalPage(
           credentials: 'same-origin',
         });
         if (res.ok) {
-          if (!await loadComputers(token)) {
+          var computerState = await loadComputers(token);
+          if (computerState === 'auth') {
+            showAuth();
+            return;
+          }
+          if (computerState === 'empty') {
             showRuntimeSetupState();
+            return;
+          }
+          if (computerState === 'error') {
+            showSignedInRecoveryState();
             return;
           }
           showConfirm();

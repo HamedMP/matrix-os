@@ -909,6 +909,10 @@ describe("device routes", () => {
       expect(html).toContain('id="computer-select"');
       expect(html).toContain("fetchWithTimeout('/api/auth/computers'");
       expect(html).toContain("body.set('runtimeSlot', selectedRuntimeSlot)");
+      expect(html).toContain("return 'auth';");
+      expect(html).toContain("return renderComputers(await response.json()) ? 'ok' : 'empty';");
+      expect(html).toContain("if (computerState === 'error') {");
+      expect(html).toContain("showSignedInRecoveryState();");
     });
 
     it("starts signed-out CLI approval on signup and sends runtime setup to the shell billing tab", async () => {

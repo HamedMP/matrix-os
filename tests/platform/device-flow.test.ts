@@ -124,11 +124,17 @@ describe("device flow: polling", () => {
   });
 
   it("binds the approved runtime slot to token issuance", async () => {
-    let issuedFor: { clerkUserId: string; runtimeSlot?: string } | undefined;
+    let issuedFor: { clerkUserId: string; runtimeSlot?: string; handle?: string } | undefined;
+    let approvalDb: PlatformDB | undefined;
     flow = createDeviceFlow({
       db,
       now: () => now,
       verificationBase: VERIFY_BASE,
+      resolveApprovalTarget: async (transactionDb, input) => {
+        approvalDb = transactionDb;
+        expect(input).toEqual({ clerkUserId: "user_alice", runtimeSlot: "pr-992" });
+        return { handle: "pr-992", runtimeSlot: "pr-992" };
+      },
       issueToken: async (input) => {
         issuedFor = input;
         return {
@@ -144,12 +150,41 @@ describe("device flow: polling", () => {
     now += 5_000;
     const result = await flow.pollDeviceCode(issued.deviceCode);
 
-    expect(issuedFor).toEqual({ clerkUserId: "user_alice", runtimeSlot: "pr-992" });
+    expect(approvalDb).toBeDefined();
+    expect(issuedFor).toEqual({
+      clerkUserId: "user_alice",
+      runtimeSlot: "pr-992",
+      handle: "pr-992",
+    });
     expect(result).toMatchObject({
       status: "approved",
       handle: "pr-992",
       runtimeSlot: "pr-992",
     });
+  });
+
+  it("leaves the device code pending when the selected computer is unavailable", async () => {
+    flow = createDeviceFlow({
+      db,
+      now: () => now,
+      verificationBase: VERIFY_BASE,
+      resolveApprovalTarget: async () => null,
+      issueToken: async () => {
+        throw new Error("must not issue");
+      },
+    });
+    const issued = await flow.createDeviceCode();
+
+    await expect(
+      flow.approveDeviceCode(issued.userCode, "user_alice", "missing"),
+    ).rejects.toMatchObject({ code: "computer_unavailable" });
+
+    const row = await db.executor
+      .selectFrom("device_codes")
+      .select(["clerk_user_id", "runtime_slot", "runtime_handle"])
+      .where("device_code", "=", issued.deviceCode)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ clerk_user_id: null, runtime_slot: null, runtime_handle: null });
   });
 
   it("passes through an optional display profile from issueToken", async () => {
