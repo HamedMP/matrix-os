@@ -52,6 +52,7 @@ const TERMINAL_PASTE_MIME_BY_EXTENSION = new Map([
 const TERMINAL_SCROLLBACK_LINES = 10_000;
 const TERMINAL_SCROLL_SENSITIVITY = 1;
 const TERMINAL_FAST_SCROLL_SENSITIVITY = 5;
+const TERMINAL_LIVE_TAIL_FROM_SEQ = Number.MAX_SAFE_INTEGER;
 const IMAGE_ADDON_OPTIONS: IImageAddonOptions = {
   enableSizeReports: false,
   pixelLimit: 4_194_304,
@@ -431,7 +432,7 @@ export function TerminalPane({
   const reconnectAttemptRef = useRef<number>(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingReconnectBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const reconnectLinesWrittenRef = useRef<number>(0);
+  const wsGenerationRef = useRef(0);
   const onSessionAttachedRef = useRef(onSessionAttached);
   const shouldCacheOnUnmountRef = useRef(shouldCacheOnUnmount);
   const shouldDestroyOnUnmountRef = useRef(shouldDestroyOnUnmount);
@@ -444,6 +445,7 @@ export function TerminalPane({
   const [searchOpen, setSearchOpen] = useState(false);
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   const [pasteError, setPasteError] = useState<string | null>(null);
+  const [connectionNotice, setConnectionNotice] = useState<"reconnecting" | "disconnected" | null>(null);
   const outputBufferRef = useRef("");
   const commandBlockBufferRef = useRef("");
   const activeCommandBlockRef = useRef(false);
@@ -470,7 +472,7 @@ export function TerminalPane({
   isFocusedRef.current = isFocused;
   // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see onSessionAttachedRef above.
   allowRemoteResizeRef.current = allowRemoteResize;
-  // react-doctor-disable-next-line react-hooks-js/refs -- latest-value ref consumed by the long-lived WebSocket output handler without reconnecting on metadata changes.
+  // react-doctor-disable-next-line react-hooks-js/refs, react-doctor/no-ref-current-in-render -- latest-value ref consumed by the long-lived WebSocket output handler without reconnecting on metadata changes.
   compatModeRef.current = compatMode;
 
   // Keep a stable ref to the current canvasZoom so the effect below can read
@@ -478,7 +480,7 @@ export function TerminalPane({
   // every zoom change.
   // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see onSessionAttachedRef above.
   const canvasZoomRef = useRef(canvasZoom);
-  // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see onSessionAttachedRef above.
+  // react-doctor-disable-next-line react-hooks-js/refs, react-doctor/no-ref-current-in-render -- intentional latest-value ref sync; see onSessionAttachedRef above.
   canvasZoomRef.current = canvasZoom;
 
   // Canvas-zoom pointer correction.
@@ -599,6 +601,7 @@ export function TerminalPane({
     }
   }, [initialSessionId]);
 
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this effect only registers paste/drop listeners; the fetch runs later from those user event handlers with an AbortSignal timeout.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -633,6 +636,7 @@ export function TerminalPane({
           continue;
         }
         const uploadTimeout = terminalPasteUploadTimeout();
+        // react-doctor-disable-next-line react-doctor/react-compiler-unsupported-syntax, react-hooks-js/todo -- try/finally guarantees each paste upload timeout is cleaned up after this user-triggered event handler finishes.
         try {
           const headers: Record<string, string> = {
             "Content-Type": mimeType,
@@ -643,6 +647,7 @@ export function TerminalPane({
           }
           const url = new URL(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionId)}/paste-assets`);
           url.searchParams.set("cwd", cwd || "projects");
+          // react-doctor-disable-next-line react-doctor/async-await-in-loop -- paste uploads are intentionally sequential to preserve terminal insertion order and avoid multiple simultaneous file bodies.
           const res = await fetch(url.toString(), {
             method: "POST",
             credentials: "same-origin",
@@ -1119,15 +1124,32 @@ export function TerminalPane({
         });
       }
 
-      function bindWs(ws: WebSocket, attachOnOpen: boolean) {
+      function bindWs(
+        ws: WebSocket,
+        attachOnOpen: boolean,
+        options: { alreadyAttached?: boolean; generation?: number } = {},
+      ) {
+        const generation = options.generation ?? wsGenerationRef.current + 1;
+        wsGenerationRef.current = generation;
         wsRef.current = ws;
+        const alreadyAttached = options.alreadyAttached === true;
+        const isCurrentWs = () => (
+          wsRef.current === ws
+          && wsGenerationRef.current === generation
+          && !disposed
+          && !isClosingRef.current
+        );
         log("bind-ws", {
           attachOnOpen,
+          alreadyAttached,
           boundWsState: describeReadyState(ws),
         });
-        track("bind", { attachOnOpen, boundWsState: describeReadyState(ws) });
+        track("bind", { attachOnOpen, alreadyAttached, boundWsState: describeReadyState(ws) });
 
         const sendAttach = () => {
+          if (!isCurrentWs() || ws.readyState !== WebSocket.OPEN) {
+            return;
+          }
           const currentSessionId = sessionIdRef.current;
           const isCanonicalShellSession = Boolean(currentSessionId && isCanonicalShellSessionId(currentSessionId));
           const attachMode = currentSessionId ? (isCanonicalShellSession ? "canonical" : "reattach") : "create";
@@ -1157,7 +1179,7 @@ export function TerminalPane({
             : initialStartupCommandRef.current?.trim() || (claudeMode ? "claude" : null);
           if (startup) {
             setTimeout(() => {
-              if (ws.readyState === WebSocket.OPEN) {
+              if (isCurrentWs() && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: "input", data: `${startup}\r` }));
               }
             }, 100);
@@ -1165,20 +1187,13 @@ export function TerminalPane({
         };
 
         ws.onopen = () => {
+          if (!isCurrentWs()) {
+            return;
+          }
           reconnectAttemptRef.current = 0;
           clearReconnectTimer();
           clearPendingReconnectBanner();
-          if (reconnectLinesWrittenRef.current > 0) {
-            // Erase the "[Reconnecting in Ns...]" lines we appended while
-            // disconnected so the scrollback stays clean after recovery.
-            // Each banner is `\r\n[text]\r\n` -- the leading \r\n moves onto
-            // a fresh line, so we only need to move up (lines - 1) to land
-            // on the first banner row without clobbering the content row
-            // that was there before the disconnect.
-            const lines = reconnectLinesWrittenRef.current;
-            term.write(`\x1b[${lines - 1}A\r\x1b[0J`);
-            reconnectLinesWrittenRef.current = 0;
-          }
+          setConnectionNotice(null);
           log("ws-open", { attachOnOpen });
           track("open", { attachOnOpen });
 
@@ -1188,10 +1203,12 @@ export function TerminalPane({
             pingIntervalMs: 30_000,
             pongTimeoutMs: 5_000,
             send: (data) => {
-              if (ws.readyState === WebSocket.OPEN) ws.send(data);
+              if (isCurrentWs() && ws.readyState === WebSocket.OPEN) ws.send(data);
             },
             onDead: () => {
-              ws.close(); // triggers onclose -> reconnect
+              if (isCurrentWs()) {
+                ws.close(); // triggers onclose -> reconnect
+              }
             },
           });
           heartbeatRef.current.start();
@@ -1202,6 +1219,9 @@ export function TerminalPane({
         };
 
         ws.onerror = () => {
+          if (!isCurrentWs()) {
+            return;
+          }
           log("ws-error");
           track("error");
           if (!sessionIdRef.current) {
@@ -1210,6 +1230,10 @@ export function TerminalPane({
         };
 
         ws.onclose = () => {
+          if (!isCurrentWs()) {
+            return;
+          }
+          wsRef.current = null;
           heartbeatRef.current?.stop();
           log("ws-close", {
             disposed,
@@ -1231,11 +1255,16 @@ export function TerminalPane({
             log("schedule-reconnect", { delayMs: delay, nextAttempt: reconnectAttemptRef.current });
             track("schedule-reconnect", { delayMs: delay, nextAttempt: reconnectAttemptRef.current });
             clearPendingReconnectBanner();
+            setConnectionNotice(null);
             pendingReconnectBannerTimerRef.current = setTimeout(() => {
               pendingReconnectBannerTimerRef.current = null;
-              if (!disposed && !isClosingRef.current && wsRef.current?.readyState !== WebSocket.OPEN) {
-                term.write(`\r\n\x1b[33m[Reconnecting in ${delay / 1000}s...]\x1b[0m\r\n`);
-                reconnectLinesWrittenRef.current += 2;
+              if (isCurrentWs() || (
+                wsGenerationRef.current === generation
+                && !disposed
+                && !isClosingRef.current
+                && wsRef.current === null
+              )) {
+                setConnectionNotice("reconnecting");
               }
             }, 750);
             reconnectTimerRef.current = setTimeout(() => {
@@ -1246,14 +1275,14 @@ export function TerminalPane({
               }
             }, delay);
           } else {
-            term.write("\r\n\x1b[90m[Disconnected]\x1b[0m\r\n");
-            // Give up cleaning the "[Reconnecting...]" banners - leave them
-            // as context for why we disconnected.
-            reconnectLinesWrittenRef.current = 0;
+            setConnectionNotice("disconnected");
           }
         };
 
         ws.onmessage = (evt) => {
+          if (!isCurrentWs()) {
+            return;
+          }
           const raw = typeof evt.data === "string" ? evt.data : "";
           // Fast pong handling (skip full parse)
           if (raw.includes('"pong"')) {
@@ -1297,7 +1326,7 @@ export function TerminalPane({
                 codexCompatTransformRef.current ?? createCodexTuiCompatTransform(buildXtermTheme(theme, terminalThemeId)),
               ));
               if (msg.seq !== null) {
-                lastSeqRef.current = msg.seq + 1;
+                lastSeqRef.current = Math.max(lastSeqRef.current, msg.seq + 1);
               }
               outputBufferRef.current += msg.data;
               if (outputBufferRef.current.length > 8192) {
@@ -1372,16 +1401,23 @@ export function TerminalPane({
           }
         };
 
-        if (!attachOnOpen && ws.readyState === WebSocket.OPEN && sessionIdRef.current) {
+        if (!attachOnOpen && ws.readyState === WebSocket.OPEN) {
+          if (alreadyAttached) {
+            sendTerminalResize(ws, term, allowRemoteResizeRef.current);
+            return;
+          }
           sendAttach();
         }
       }
 
       function connectWs() {
+        const generation = wsGenerationRef.current + 1;
+        wsGenerationRef.current = generation;
         const currentSessionId = sessionIdRef.current;
         const wsPath = terminalWebSocketPathForSession(currentSessionId);
+        const fromSeq = lastSeqRef.current > 0 ? lastSeqRef.current : TERMINAL_LIVE_TAIL_FROM_SEQ;
         const query = currentSessionId && isCanonicalShellSessionId(currentSessionId)
-          ? { session: currentSessionId, fromSeq: String(lastSeqRef.current) }
+          ? { session: currentSessionId, fromSeq: String(fromSeq) }
           : currentSessionId || !cwd
             ? undefined
             : { cwd };
@@ -1408,9 +1444,14 @@ export function TerminalPane({
             return url.toString();
           })
           .then((wsUrl) => {
-            if (disposed || isClosingRef.current) {
-              log("connect-ws-abort", { reason: disposed ? "disposed" : "closing" });
-              track("connect-abort", { reason: disposed ? "disposed" : "closing" });
+            if (generation !== wsGenerationRef.current || disposed || isClosingRef.current) {
+              const reason = generation !== wsGenerationRef.current
+                ? "stale"
+                : disposed
+                  ? "disposed"
+                  : "closing";
+              log("connect-ws-abort", { reason });
+              track("connect-abort", { reason });
               return;
             }
             log("connect-ws-url", {
@@ -1421,13 +1462,23 @@ export function TerminalPane({
               urlIncludesToken: wsUrl.includes("token="),
               hasCwdQuery: wsUrl.includes("cwd="),
             });
+            const previousWs = wsRef.current;
+            if (previousWs && previousWs.readyState !== WebSocket.CLOSED) {
+              previousWs.onopen = null;
+              previousWs.onclose = null;
+              previousWs.onerror = null;
+              previousWs.onmessage = null;
+              previousWs.close();
+            }
             const ws = new WebSocket(wsUrl);
-            bindWs(ws, true);
+            bindWs(ws, true, { generation });
           });
       }
 
       if (cached && canReuseCachedSocket) {
-        bindWs(cached.ws, cached.ws.readyState === WebSocket.CONNECTING);
+        bindWs(cached.ws, cached.ws.readyState === WebSocket.CONNECTING, {
+          alreadyAttached: cached.ws.readyState === WebSocket.OPEN,
+        });
       } else {
         if (cached && !canReuseCachedTerminal) {
           discardStaleCachedTerminal(cached);
@@ -1446,6 +1497,8 @@ export function TerminalPane({
             // Disconnected while hidden, reconnect now
             reconnectAttemptRef.current = 0;
             clearReconnectTimer();
+            clearPendingReconnectBanner();
+            setConnectionNotice(null);
             log("visibility-reconnect-now");
             connectWs();
           }
@@ -1760,6 +1813,26 @@ export function TerminalPane({
           >
             x
           </button>
+        </div>
+      )}
+      {connectionNotice && !pasteError && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            ...AUTH_BANNER_BASE_STYLE,
+            top: authUrl ? 76 : 8,
+            left: "50%",
+            right: "auto",
+            transform: "translateX(-50%)",
+            width: "max-content",
+            maxWidth: "calc(100% - 32px)",
+            background: connectionNotice === "reconnecting"
+              ? "rgba(146, 64, 14, 0.95)"
+              : "rgba(63, 63, 70, 0.95)",
+          }}
+        >
+          {connectionNotice === "reconnecting" ? "Reconnecting terminal..." : "Terminal disconnected"}
         </div>
       )}
       {authUrl && (

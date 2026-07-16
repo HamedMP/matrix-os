@@ -3,7 +3,6 @@ import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import {
   createShellWsHandler,
   SHELL_ATTACH_LIVE_TAIL_FROM_SEQ,
-  SHELL_ATTACH_RECENT_REPLAY_EVENTS,
   shellWsMessageDataToString,
   type ShellWsSocket,
 } from "../../packages/gateway/src/shell/ws.js";
@@ -216,6 +215,7 @@ describe("zellij terminal WebSocket", () => {
         attachSession: vi.fn(() => pty),
       },
       maxReplayBytes: 4096,
+      idleAttachGraceMs: 0,
     });
     const raw = "plain \x1b[7mselected\x1b[27m";
 
@@ -247,6 +247,7 @@ describe("zellij terminal WebSocket", () => {
         attachSession: vi.fn(() => pty),
       },
       maxReplayBytes: 4096,
+      idleAttachGraceMs: 0,
     });
 
     const session = await handler.open({ ws, session: "codex-main", fromSeq: 0 });
@@ -275,6 +276,7 @@ describe("zellij terminal WebSocket", () => {
         attachSession: vi.fn(() => pty),
       },
       maxReplayBytes: 4096,
+      idleAttachGraceMs: 0,
     });
 
     const session = await handler.open({
@@ -297,6 +299,78 @@ describe("zellij terminal WebSocket", () => {
     expect(pty.killed).toBe(true);
   });
 
+  it("shares one zellij attach process across overlapping clients", async () => {
+    const pty = new FakePty();
+    const firstWs = socket();
+    const secondWs = socket();
+    const append = vi.fn(async () => undefined);
+    const attachSession = vi.fn(() => pty);
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: { attachSession },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => null),
+        readSince: vi.fn(async () => []),
+        append,
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+      persistFlushIntervalMs: 0,
+      idleAttachGraceMs: 0,
+    });
+
+    const first = await handler.open({ ws: firstWs, session: "main", fromSeq: 0 });
+    const second = await handler.open({ ws: secondWs, session: "main", fromSeq: 0 });
+    pty.emitData("shared-output");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(attachSession).toHaveBeenCalledTimes(1);
+    expect(firstWs.sent).toContainEqual({ type: "output", seq: 0, data: "shared-output" });
+    expect(secondWs.sent).toContainEqual({ type: "output", seq: 0, data: "shared-output" });
+    expect(append).toHaveBeenCalledWith("main", [{ type: "output", seq: 0, data: "shared-output" }]);
+
+    second.onMessage(JSON.stringify({ type: "input", data: "pwd\r" }));
+    expect(pty.writes).toEqual(["pwd\r"]);
+
+    first.onClose();
+    expect(pty.killed).toBe(false);
+    second.onClose();
+    expect(pty.killed).toBe(true);
+  });
+
+  it("keeps the zellij attach process through a short reconnect gap", async () => {
+    vi.useFakeTimers();
+    const pty = new FakePty();
+    const attachSession = vi.fn(() => pty);
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: { attachSession },
+      maxReplayBytes: 4096,
+      idleAttachGraceMs: 50,
+    });
+
+    const first = await handler.open({ ws: socket(), session: "main", fromSeq: 0 });
+    first.onClose();
+    await vi.advanceTimersByTimeAsync(49);
+    expect(pty.killed).toBe(false);
+
+    const second = await handler.open({ ws: socket(), session: "main", fromSeq: 0 });
+    expect(attachSession).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(pty.killed).toBe(false);
+
+    second.onClose();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(pty.killed).toBe(true);
+    handler.dispose();
+    vi.useRealTimers();
+  });
+
   it("sends the existing exit frame when the PTY exits", async () => {
     const pty = new FakePty();
     const ws = socket();
@@ -307,6 +381,7 @@ describe("zellij terminal WebSocket", () => {
       adapter: {
         attachSession: vi.fn(() => pty),
       },
+      idleAttachGraceMs: 0,
     });
 
     await handler.open({ ws, session: "main", fromSeq: 0 });
@@ -326,6 +401,7 @@ describe("zellij terminal WebSocket", () => {
       adapter: {
         attachSession: vi.fn(() => pty),
       },
+      idleAttachGraceMs: 0,
     });
 
     const session = await handler.open({ ws, session: "main", fromSeq: 0 });
@@ -345,6 +421,7 @@ describe("zellij terminal WebSocket", () => {
       adapter: {
         attachSession: vi.fn(() => pty),
       },
+      idleAttachGraceMs: 0,
     });
 
     const session = await handler.open({ ws, session: "main", fromSeq: 0 });
@@ -389,7 +466,7 @@ describe("zellij terminal WebSocket", () => {
     expect(shellWsMessageDataToString({})).toBeNull();
   });
 
-  it("maps live-tail attach to a bounded recent replay window", async () => {
+  it("maps live-tail attach to the next live sequence without replaying old TUI frames", async () => {
     const pty = new FakePty();
     const secondPty = new FakePty();
     const ws = socket();
@@ -406,7 +483,7 @@ describe("zellij terminal WebSocket", () => {
     });
 
     const first = await handler.open({ ws, session: "main", fromSeq: 0 });
-    for (let index = 0; index < SHELL_ATTACH_RECENT_REPLAY_EVENTS + 10; index += 1) {
+    for (let index = 0; index < 60; index += 1) {
       pty.emitData(`frame-${index}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -424,10 +501,10 @@ describe("zellij terminal WebSocket", () => {
       type: "attached",
       session: "main",
       state: "running",
-      fromSeq: 10,
+      fromSeq: 60,
     });
     expect(secondWs.sent).not.toContainEqual({ type: "output", seq: 0, data: "frame-0" });
-    expect(secondWs.sent).toContainEqual({ type: "output", seq: 10, data: "frame-10" });
+    expect(secondWs.sent).not.toContainEqual({ type: "output", seq: 59, data: "frame-59" });
   });
 
   it("maps cold-start live-tail attach from persisted scrollback instead of replaying from zero", async () => {
@@ -463,9 +540,9 @@ describe("zellij terminal WebSocket", () => {
       type: "attached",
       session: "main",
       state: "running",
-      fromSeq: 50,
+      fromSeq: 100,
     });
-    expect(readSince).toHaveBeenCalledWith("main", 50);
+    expect(readSince).toHaveBeenCalledWith("main", 100);
   });
 
   it("returns a stable error frame if PTY attach throws before listeners are registered", async () => {
@@ -537,17 +614,13 @@ describe("zellij terminal WebSocket", () => {
     expect(appendStarted).toBeGreaterThanOrEqual(1);
   });
 
-  it("persists exactly one recorder stream when multiple clients attach", async () => {
-    const recorderPty = new FakePty();
-    const observerPty = new FakePty();
+  it("persists the shared attach stream exactly once when multiple clients attach", async () => {
+    const pty = new FakePty();
     const append = vi.fn(async () => undefined);
+    const attachSession = vi.fn(() => pty);
     const handler = createShellWsHandler({
       registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
-      adapter: {
-        attachSession: vi.fn()
-          .mockReturnValueOnce(recorderPty)
-          .mockReturnValueOnce(observerPty),
-      },
+      adapter: { attachSession },
       scrollbackStore: {
         latestSeq: vi.fn(async () => null),
         readSince: vi.fn(async () => []),
@@ -559,38 +632,30 @@ describe("zellij terminal WebSocket", () => {
       persistFlushIntervalMs: 0,
     });
 
-    const recorderWs = socket();
+    const firstWs = socket();
     const observerWs = socket();
-    await handler.open({ ws: recorderWs, session: "main", fromSeq: 0 });
+    await handler.open({ ws: firstWs, session: "main", fromSeq: 0 });
     await handler.open({ ws: observerWs, session: "main", fromSeq: 0 });
 
-    recorderPty.emitData("from-recorder");
-    observerPty.emitData("from-observer");
+    pty.emitData("from-shared");
     await new Promise((resolve) => setTimeout(resolve, 5));
 
-    // both clients see their own live stream
-    expect(recorderWs.sent).toContainEqual({ type: "output", seq: 0, data: "from-recorder" });
-    expect(observerWs.sent.some((m) => (m as { data?: string }).data === "from-observer")).toBe(true);
-    // but only the recorder stream is persisted
+    expect(attachSession).toHaveBeenCalledTimes(1);
+    expect(firstWs.sent).toContainEqual({ type: "output", seq: 0, data: "from-shared" });
+    expect(observerWs.sent).toContainEqual({ type: "output", seq: 0, data: "from-shared" });
     const persisted = append.mock.calls
       .flatMap((call) => call[1] as Array<{ type: string; data?: string }>)
       .filter((r) => r.type === "output")
       .map((r) => r.data);
-    expect(persisted).toContain("from-recorder");
-    expect(persisted).not.toContain("from-observer");
+    expect(persisted).toEqual(["from-shared"]);
   });
 
-  it("re-elects the oldest remaining client as recorder when the recorder detaches", async () => {
-    const firstPty = new FakePty();
-    const secondPty = new FakePty();
+  it("keeps the shared attach alive when one of multiple clients detaches", async () => {
+    const pty = new FakePty();
     const append = vi.fn(async () => undefined);
     const handler = createShellWsHandler({
       registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
-      adapter: {
-        attachSession: vi.fn()
-          .mockReturnValueOnce(firstPty)
-          .mockReturnValueOnce(secondPty),
-      },
+      adapter: { attachSession: vi.fn(() => pty) },
       scrollbackStore: {
         latestSeq: vi.fn(async () => null),
         readSince: vi.fn(async () => []),
@@ -600,55 +665,53 @@ describe("zellij terminal WebSocket", () => {
       },
       maxReplayBytes: 4096,
       persistFlushIntervalMs: 0,
+      idleAttachGraceMs: 0,
     });
 
     const firstConn = await handler.open({ ws: socket(), session: "main", fromSeq: 0 });
     const secondWs = socket();
-    await handler.open({ ws: secondWs, session: "main", fromSeq: 0 });
+    const secondConn = await handler.open({ ws: secondWs, session: "main", fromSeq: 0 });
 
     firstConn.onClose();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    secondPty.emitData("post-handoff");
+    pty.emitData("post-detach");
     await new Promise((resolve) => setTimeout(resolve, 5));
 
     const persisted = append.mock.calls
       .flatMap((call) => call[1] as Array<{ type: string; data?: string }>)
       .filter((r) => r.type === "output")
       .map((r) => r.data);
-    expect(persisted).toContain("post-handoff");
-    expect(secondWs.sent).toContainEqual({ type: "output", seq: 0, data: "post-handoff" });
+    expect(persisted).toContain("post-detach");
+    expect(secondWs.sent).toContainEqual({ type: "output", seq: 0, data: "post-detach" });
+    expect(pty.killed).toBe(false);
+    secondConn.onClose();
+    expect(pty.killed).toBe(true);
   });
 
-  it("pauses a slow non-recorder client's pty and resumes it after drain", async () => {
-    const recorderPty = new FakePty();
-    const slowPty = new FakePty();
+  it("skips delivery to a slow client without pausing the shared attach", async () => {
+    const pty = new FakePty();
+    const fastWs = socket();
     const handler = createShellWsHandler({
       registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
-      adapter: {
-        attachSession: vi.fn()
-          .mockReturnValueOnce(recorderPty)
-          .mockReturnValueOnce(slowPty),
-      },
+      adapter: { attachSession: vi.fn(() => pty) },
       maxReplayBytes: 4096,
       flowControl: { highWaterMark: 10, lowWaterMark: 5, drainIntervalMs: 5 },
     });
 
-    await handler.open({ ws: socket(), session: "main", fromSeq: 0 });
+    await handler.open({ ws: fastWs, session: "main", fromSeq: 0 });
     const slowWs = Object.assign(socket(), { bufferedAmount: 1_000 });
     await handler.open({ ws: slowWs, session: "main", fromSeq: 0 });
+    const slowSentBefore = slowWs.sent.length;
 
-    slowPty.emitData("burst");
-    expect(slowPty.pauseCount).toBe(1);
-    expect(slowPty.paused).toBe(true);
-
-    slowWs.bufferedAmount = 0;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    expect(slowPty.resumeCount).toBe(1);
-    expect(slowPty.paused).toBe(false);
+    pty.emitData("burst");
+    expect(fastWs.sent).toContainEqual({ type: "output", seq: 0, data: "burst" });
+    expect(slowWs.sent.length).toBe(slowSentBefore);
+    expect(pty.pauseCount).toBe(0);
+    expect(pty.resumeCount).toBe(0);
     handler.dispose();
   });
 
-  it("never pauses a sole recorder; delivery to its slow socket is skipped instead", async () => {
+  it("never pauses a shared attach for a slow sole socket; delivery is skipped instead", async () => {
     const pty = new FakePty();
     const append = vi.fn(async () => undefined);
     const handler = createShellWsHandler({
