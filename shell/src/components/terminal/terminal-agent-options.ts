@@ -10,7 +10,6 @@ export interface TerminalAgentOption {
   installPackage: string;
   installFlags?: string[];
   claudeMode?: boolean;
-  fallbackInstalled: boolean;
 }
 
 export interface TerminalAgentStatus {
@@ -27,7 +26,6 @@ export const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     shortcut: "⌘⇧C",
     installPackage: "@anthropic-ai/claude-code@latest",
     claudeMode: true,
-    fallbackInstalled: true,
   },
   {
     id: "codex",
@@ -37,7 +35,6 @@ export const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     shortcut: "⌘⇧X",
     launchCommand: "codex",
     installPackage: "@openai/codex@latest",
-    fallbackInstalled: true,
   },
   {
     id: "opencode",
@@ -46,7 +43,6 @@ export const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     logoSrc: "/agent-logos/opencode-white.png",
     launchCommand: "opencode",
     installPackage: "opencode-ai@latest",
-    fallbackInstalled: false,
   },
   {
     id: "pi",
@@ -56,7 +52,6 @@ export const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     launchCommand: "pi",
     installPackage: "@earendil-works/pi-coding-agent@latest",
     installFlags: ["--ignore-scripts"],
-    fallbackInstalled: false,
   },
 ];
 
@@ -83,6 +78,7 @@ export function terminalAgentInstallCommand(option: TerminalAgentOption): string
   const extraFlags = flags ? `${flags} ` : "";
   return [
     'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"',
+    'export PATH="$MATRIX_NODE_PREFIX/bin:$PATH"',
     `npm install -g ${extraFlags}--prefix "$MATRIX_NODE_PREFIX" ${option.installPackage}`,
   ].join("; ");
 }

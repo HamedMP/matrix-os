@@ -776,6 +776,7 @@ export function LocalTerminalSidebar() {
   const openNewSessionMenu = (anchor: NewSessionMenuAnchor) => {
     if (creatingShell) return;
     if (newSessionMenuAnchor !== anchor) {
+      setAgentStatuses(null);
       void fetchAgentStatuses();
     }
     setNewSessionMenuAnchor((current) => current === anchor ? null : anchor);
