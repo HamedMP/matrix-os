@@ -21,6 +21,7 @@ export interface DeviceTokenResponse {
   expiresAt: number;
   userId: string;
   handle: string;
+  runtimeSlot?: string;
   // Optional, non-secret display profile (sidebar avatar/name). The platform
   // fills these from Clerk; absent for older gateways or when the profile
   // lookup degraded, so every consumer must treat them as optional.
@@ -125,6 +126,7 @@ export async function pollForToken(options: {
         expiresAt,
         userId,
         handle,
+        ...(optionalString(data.runtimeSlot) ? { runtimeSlot: optionalString(data.runtimeSlot) } : {}),
         ...(optionalString(data.displayName) ? { displayName: optionalString(data.displayName) } : {}),
         ...(optionalString(data.imageUrl) ? { imageUrl: optionalString(data.imageUrl) } : {}),
         ...(optionalString(data.email) ? { email: optionalString(data.email) } : {}),

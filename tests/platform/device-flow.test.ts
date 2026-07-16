@@ -123,6 +123,35 @@ describe("device flow: polling", () => {
     expect(result.token).toBe("jwt-for-user_alice");
   });
 
+  it("binds the approved runtime slot to token issuance", async () => {
+    let issuedFor: { clerkUserId: string; runtimeSlot?: string } | undefined;
+    flow = createDeviceFlow({
+      db,
+      now: () => now,
+      verificationBase: VERIFY_BASE,
+      issueToken: async (input) => {
+        issuedFor = input;
+        return {
+          token: `jwt-for-${input.clerkUserId}-${input.runtimeSlot}`,
+          expiresAt: now + 24 * 3_600_000,
+          handle: "pr-992",
+        };
+      },
+    });
+    const issued = await flow.createDeviceCode();
+
+    await flow.approveDeviceCode(issued.userCode, "user_alice", "pr-992");
+    now += 5_000;
+    const result = await flow.pollDeviceCode(issued.deviceCode);
+
+    expect(issuedFor).toEqual({ clerkUserId: "user_alice", runtimeSlot: "pr-992" });
+    expect(result).toMatchObject({
+      status: "approved",
+      handle: "pr-992",
+      runtimeSlot: "pr-992",
+    });
+  });
+
   it("passes through an optional display profile from issueToken", async () => {
     flow = createDeviceFlow({
       db,

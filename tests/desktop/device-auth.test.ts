@@ -82,6 +82,7 @@ describe("pollForToken", () => {
         expiresAt: 1,
         userId: "u1",
         handle: "neo",
+        runtimeSlot: "review",
         displayName: "Thomas Anderson",
         imageUrl: "https://img.clerk.com/neo.png",
         email: "neo@matrix-os.com",
@@ -91,6 +92,7 @@ describe("pollForToken", () => {
     expect(result.displayName).toBe("Thomas Anderson");
     expect(result.imageUrl).toBe("https://img.clerk.com/neo.png");
     expect(result.email).toBe("neo@matrix-os.com");
+    expect(result.runtimeSlot).toBe("review");
   });
 
   it("ignores a non-string display profile and still returns the token", async () => {

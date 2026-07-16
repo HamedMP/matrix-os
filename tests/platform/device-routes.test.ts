@@ -471,6 +471,118 @@ describe("device routes", () => {
       expect(claims.handle).toBe("bob");
     });
 
+    it("issues a runtime-scoped token for the computer selected during approval", async () => {
+      await insertUserMachine(db, {
+        machineId: "machine_bob_primary",
+        clerkUserId: "user_bob",
+        handle: "bob",
+        runtimeSlot: "primary",
+        status: "running",
+        provisionedAt: new Date().toISOString(),
+      });
+      await insertUserMachine(db, {
+        machineId: "machine_bob_preview",
+        clerkUserId: "user_bob",
+        handle: "pr-992",
+        runtimeSlot: "pr-992",
+        provisioningClass: "preview",
+        status: "running",
+        provisionedAt: new Date().toISOString(),
+      });
+      const authApp = createAuthRoutes({
+        db,
+        clerkAuth: createClerkAuth({
+          verifyToken: vi.fn().mockResolvedValue({ sub: "user_bob" }),
+        }),
+        jwtSecret: JWT_SECRET,
+        platformUrl: "https://app.matrix-os.com",
+        gatewayUrlForHandle: (handle) => `https://app.matrix-os.com/vm/${handle}`,
+        ignoreLegacyContainers: true,
+      });
+      const code = await authApp.request("/api/auth/device/code", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ clientId: "matrixos-cli" }),
+      }).then((response) => response.json());
+      const approvalPage = await authApp.request(`/auth/device?user_code=${code.userCode}`);
+      const csrf = (approvalPage.headers.get("set-cookie") ?? "").match(/device_csrf=([^;]+)/)?.[1];
+
+      const approval = await authApp.request("/auth/device/approve", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          authorization: "Bearer clerk-bob",
+          cookie: `device_csrf=${csrf}`,
+        },
+        body: new URLSearchParams({
+          userCode: code.userCode,
+          csrf: csrf ?? "",
+          runtimeSlot: "pr-992",
+        }).toString(),
+      });
+      expect(approval.status).toBe(200);
+
+      const tokenResponse = await authApp.request("/api/auth/device/token", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ deviceCode: code.deviceCode, clientId: "matrixos-cli" }),
+      });
+      expect(tokenResponse.status).toBe(200);
+      const tokenBody = await tokenResponse.json();
+      expect(tokenBody).toMatchObject({ handle: "pr-992", runtimeSlot: "pr-992" });
+      await expect(verifySyncJwt(tokenBody.accessToken, { secret: JWT_SECRET })).resolves.toMatchObject({
+        sub: "user_bob",
+        handle: "pr-992",
+        runtime_slot: "pr-992",
+      });
+
+      const meResponse = await authApp.request("/api/me", {
+        headers: { authorization: `Bearer ${tokenBody.accessToken}` },
+      });
+      expect(meResponse.status).toBe(200);
+      await expect(meResponse.json()).resolves.toMatchObject({
+        handle: "pr-992",
+        runtimeSlot: "pr-992",
+        gatewayUrl: "https://app.matrix-os.com/vm/pr-992",
+      });
+    });
+
+    it("rejects a selected computer that is not owned by the approving user", async () => {
+      await insertUserMachine(db, {
+        machineId: "machine_bob_preview",
+        clerkUserId: "user_bob",
+        handle: "pr-992",
+        runtimeSlot: "pr-992",
+        provisioningClass: "preview",
+        status: "running",
+        provisionedAt: new Date().toISOString(),
+      });
+      const code = await app.request("/api/auth/device/code", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ clientId: "matrixos-cli" }),
+      }).then((response) => response.json());
+      const approvalPage = await app.request(`/auth/device?user_code=${code.userCode}`);
+      const csrf = (approvalPage.headers.get("set-cookie") ?? "").match(/device_csrf=([^;]+)/)?.[1];
+
+      const approval = await app.request("/auth/device/approve", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          authorization: "Bearer clerk-alice",
+          cookie: `device_csrf=${csrf}`,
+        },
+        body: new URLSearchParams({
+          userCode: code.userCode,
+          csrf: csrf ?? "",
+          runtimeSlot: "pr-992",
+        }).toString(),
+      });
+
+      expect(approval.status).toBe(404);
+      await expect(approval.json()).resolves.toEqual({ error: "computer_unavailable" });
+    });
+
     it("ignores stale legacy containers when issuing VPS-native device tokens", async () => {
       await insertContainer(db, {
         handle: "stale-bob",
@@ -789,6 +901,14 @@ describe("device routes", () => {
       expect(html).toContain("run -it -- claude");
       expect(html).toContain('<span class="prompt">matrix</span> doctor');
       expect(html).toContain('id="instance-line"');
+      expect(html).toContain('id="identity-card"');
+      expect(html).toContain('id="identity-avatar"');
+      expect(html).toContain('id="identity-name"');
+      expect(html).toContain('id="identity-username"');
+      expect(html).toContain('id="identity-email"');
+      expect(html).toContain('id="computer-select"');
+      expect(html).toContain("fetchWithTimeout('/api/auth/computers'");
+      expect(html).toContain("body.set('runtimeSlot', selectedRuntimeSlot)");
     });
 
     it("starts signed-out CLI approval on signup and sends runtime setup to the shell billing tab", async () => {
