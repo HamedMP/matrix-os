@@ -33,7 +33,9 @@ const MATRIX_TERMINAL_PATH_BOOTSTRAP = `matrix_prepend_terminal_path() {
 
 matrix_prepend_terminal_path "/opt/matrix/bin"
 matrix_prepend_terminal_path "\${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}/bin"
-matrix_prepend_terminal_path "$MATRIX_HOME/.local/bin"
+if [ -n "\${MATRIX_HOME:-}" ]; then
+  matrix_prepend_terminal_path "$MATRIX_HOME/.local/bin"
+fi
 `;
 
 export const MATRIX_TERMINAL_BASHRC = `# Matrix OS generated terminal rcfile.

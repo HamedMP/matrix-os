@@ -362,6 +362,8 @@ describe("zellij adapter", () => {
       expect(shell).not.toContain("/bin/bash");
       expect(shellMode & 0o700).toBe(0o700);
       expect(bashrc).toContain('matrix_prepend_terminal_path "${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}/bin"');
+      expect(bashrc).toContain('if [ -n "${MATRIX_HOME:-}" ]; then');
+      expect(bashrc).toContain('matrix_prepend_terminal_path "$MATRIX_HOME/.local/bin"');
       expect(bashrc).toContain('PS1="${MATRIX_TERMINAL_PROMPT}"');
       expect(bashrc).toContain("\\u:\\w\\$ ");
       expect(promptLabel).toContain("JSON.parse");
