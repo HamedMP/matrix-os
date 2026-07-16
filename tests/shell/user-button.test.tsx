@@ -89,6 +89,19 @@ describe("UserButton", () => {
     expect(screen.queryByText("Billing")).toBeNull();
   });
 
+  it("renders the account menu on the shared popover layer", async () => {
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+    const { SHELL_Z_INDEX } = await import("../../shell/src/lib/shell-layering.js");
+
+    render(<UserButton variant="settings" />);
+
+    const signOutItem = await openAccountMenu();
+    const menu = signOutItem.closest("[role='menu']");
+
+    expect(menu).toBeTruthy();
+    expect((menu as HTMLElement).style.zIndex).toBe(String(SHELL_Z_INDEX.popover));
+  });
+
   it("clears the Matrix app session before signing out through Clerk", async () => {
     const { UserButton } = await import("../../shell/src/components/UserButton.js");
 
