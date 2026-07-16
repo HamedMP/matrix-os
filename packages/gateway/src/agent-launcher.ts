@@ -79,11 +79,28 @@ function promptArgs(prompt?: string): string[] {
   return ["--", prompt];
 }
 
+function matrixNodePrefix(): string {
+  const configured = process.env.MATRIX_NODE_PREFIX?.trim();
+  return configured && configured.length > 0 ? configured : "/opt/matrix/runtime/node";
+}
+
+function pathWithMatrixAgentBins(runtimeHome: string, nodePrefix = matrixNodePrefix()): string {
+  const preferred = [`${runtimeHome}/.local/bin`, `${nodePrefix}/bin`];
+  const current = (process.env.PATH ?? "").split(":").filter(Boolean);
+  return [
+    ...preferred,
+    ...current.filter((entry) => !preferred.includes(entry)),
+  ].join(":");
+}
+
 function agentRuntimeEnv(runtimeHome?: string): Record<string, string> {
   if (!runtimeHome) return {};
+  const nodePrefix = matrixNodePrefix();
   return {
     HOME: runtimeHome,
     MATRIX_HOME: runtimeHome,
+    MATRIX_NODE_PREFIX: nodePrefix,
+    PATH: pathWithMatrixAgentBins(runtimeHome, nodePrefix),
   };
 }
 

@@ -93,9 +93,13 @@ async function chooseNewSessionMenuItem(name: RegExp | string) {
 
 async function chooseNewSessionMenuItemAfterStatus(name: RegExp | string) {
   await openNewSessionMenu();
-  const menu = screen.getByRole("menu", { name: "New session menu" });
-  const item = await vi.waitFor(() => within(menu).getByRole("menuitem", { name }));
-  fireEvent.click(item);
+  const item = await vi.waitFor(() => (
+    within(screen.getByRole("menu", { name: "New session menu" })).getByRole("menuitem", { name })
+  ));
+  await act(async () => {
+    fireEvent.click(item);
+    await Promise.resolve();
+  });
   await vi.waitFor(() => {
     expect(screen.queryByRole("menu", { name: "New session menu" })).toBeNull();
   });
@@ -1881,8 +1885,8 @@ describe("TerminalApp", () => {
     const menu = screen.getByRole("menu", { name: "New session menu" });
     expect(within(menu).getByText("NEW TAB")).toBeTruthy();
     expect(within(menu).getByRole("menuitem", { name: /^Shell(?:\s+⌘T)?$/i })).toBeTruthy();
-    expect(within(menu).getByRole("menuitem", { name: /^Claude Code(?:\s+⌘⇧C)?$/i })).toBeTruthy();
-    expect(within(menu).getByRole("menuitem", { name: /^Codex(?:\s+⌘⇧X)?$/i })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /Claude Code.*Install/i })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /Codex.*Install/i })).toBeTruthy();
     expect(fetchMock.mock.calls.some(([input, init]) => (
       String(input).endsWith("/api/terminal/sessions") &&
       init?.method === "POST"
@@ -3420,6 +3424,44 @@ describe("TerminalApp", () => {
     expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-pi"), "/agent-logos/pi-coding-agent.png");
   });
 
+  it("shows install actions while agent install status is unknown", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/agents")) {
+        return Promise.resolve({ ok: true, json: async () => ({ agents: [] }) });
+      }
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await openNewSessionMenu();
+    });
+
+    const menu = screen.getByRole("menu", { name: "New session menu" });
+    expect(within(menu).getByRole("menuitem", { name: /Claude Code.*Install/ })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /Codex.*Install/ })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /OpenCode.*Install/ })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /Pi.*Install/ })).toBeTruthy();
+    expect(within(menu).getAllByTestId("terminal-agent-install-pill")).toHaveLength(4);
+  });
+
   it("refreshes agent install state when opening the new-session menu", async () => {
     let agentStatusCalls = 0;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -3515,49 +3557,49 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    await act(async () => {
-      await chooseNewSessionMenuItem(/Claude Code/);
-    });
+    await chooseNewSessionMenuItemAfterStatus(/^Claude Code$/);
 
     expect(terminalSessionPostBodies().some((body) => /"name":"claude-[a-z0-9-]+".*"cmd":"claude"/.test(body))).toBe(true);
-    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
-      paneTree: {
-        sessionId: expect.stringMatching(/^claude-[a-z0-9-]+$/),
-      },
+    await vi.waitFor(() => {
+      expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+        paneTree: {
+          sessionId: expect.stringMatching(/^claude-[a-z0-9-]+$/),
+        },
+      });
     });
 
-    await act(async () => {
-      await chooseNewSessionMenuItem(/Codex/);
-    });
+    await chooseNewSessionMenuItemAfterStatus(/^Codex$/);
 
     expect(terminalSessionPostBodies().some((body) => /"name":"codex-[a-z0-9-]+".*"cmd":"codex"/.test(body))).toBe(true);
-    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
-      paneTree: {
-        sessionId: expect.stringMatching(/^codex-[a-z0-9-]+$/),
-        compatMode: "codex-tui",
-      },
+    await vi.waitFor(() => {
+      expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+        paneTree: {
+          sessionId: expect.stringMatching(/^codex-[a-z0-9-]+$/),
+          compatMode: "codex-tui",
+        },
+      });
     });
 
-    await act(async () => {
-      await chooseNewSessionMenuItemAfterStatus(/^OpenCode$/);
-    });
+    await chooseNewSessionMenuItemAfterStatus(/^OpenCode$/);
 
     expect(terminalSessionPostBodies().some((body) => /"name":"opencode-[a-z0-9-]+".*"cmd":"opencode"/.test(body))).toBe(true);
-    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
-      paneTree: {
-        sessionId: expect.stringMatching(/^opencode-[a-z0-9-]+$/),
-      },
+    await vi.waitFor(() => {
+      expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+        paneTree: {
+          sessionId: expect.stringMatching(/^opencode-[a-z0-9-]+$/),
+        },
+      });
     });
 
-    await act(async () => {
-      await chooseNewSessionMenuItemAfterStatus(/^Pi$/);
-    });
+    await chooseNewSessionMenuItemAfterStatus(/^Pi$/);
 
     expect(terminalSessionPostBodies().some((body) => /"name":"pi-[a-z0-9-]+".*"cmd":"pi"/.test(body))).toBe(true);
-    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
-      paneTree: {
-        sessionId: expect.stringMatching(/^pi-[a-z0-9-]+$/),
-      },
+    await vi.waitFor(() => {
+      expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+        paneTree: {
+          sessionId: expect.stringMatching(/^pi-[a-z0-9-]+$/),
+        },
+      });
     });
   });
 
@@ -3614,21 +3656,20 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    await act(async () => {
-      await chooseNewSessionMenuItem(/Claude Code/);
-    });
+    await chooseNewSessionMenuItemAfterStatus(/^Claude Code$/);
 
-    const claudeBodies = terminalSessionPostBodies()
-      .map((body) => JSON.parse(body) as { name: string; cwd: string; cmd?: string })
-      .filter((body) => body.name.startsWith("claude-"));
-
-    expect(claudeBodies.map((body) => body.cwd)).toEqual(["projects", "~"]);
-    expect(claudeBodies.every((body) => body.cmd === "claude")).toBe(true);
-    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
-      paneTree: {
-        cwd: "~",
-        sessionId: expect.stringMatching(/^claude-[a-z0-9-]+$/),
-      },
+    await vi.waitFor(() => {
+      const bodies = terminalSessionPostBodies()
+        .map((body) => JSON.parse(body) as { name: string; cwd: string; cmd?: string })
+        .filter((body) => body.name.startsWith("claude-"));
+      expect(bodies.map((body) => body.cwd)).toEqual(["projects", "~"]);
+      expect(bodies.every((body) => body.cmd === "claude")).toBe(true);
+      expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+        paneTree: {
+          cwd: "~",
+          sessionId: expect.stringMatching(/^claude-[a-z0-9-]+$/),
+        },
+      });
     });
   });
 

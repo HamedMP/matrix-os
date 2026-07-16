@@ -21,10 +21,29 @@ layout {
 }
 `;
 
+const MATRIX_TERMINAL_PATH_BOOTSTRAP = `matrix_prepend_terminal_path() {
+  local entry="$1"
+  [ -n "$entry" ] || return 0
+  case ":\${PATH:-}:" in
+    *":$entry:"*) ;;
+    *) PATH="$entry\${PATH:+:$PATH}" ;;
+  esac
+  export PATH
+}
+
+matrix_prepend_terminal_path "/opt/matrix/bin"
+matrix_prepend_terminal_path "\${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}/bin"
+if [ -n "\${MATRIX_HOME:-}" ]; then
+  matrix_prepend_terminal_path "$MATRIX_HOME/.local/bin"
+fi
+`;
+
 export const MATRIX_TERMINAL_BASHRC = `# Matrix OS generated terminal rcfile.
 if [ -r "$HOME/.bashrc" ]; then
   . "$HOME/.bashrc"
 fi
+
+${MATRIX_TERMINAL_PATH_BOOTSTRAP}
 
 if [ -n "\${MATRIX_TERMINAL_PROMPT:-}" ]; then
   PS1="\${MATRIX_TERMINAL_PROMPT}"
@@ -122,6 +141,8 @@ set -euo pipefail
 
 export MATRIX_HOME="\${MATRIX_HOME:-\${HOME:-/home/matrix/home}}"
 export HOME="\${HOME:-$MATRIX_HOME}"
+${MATRIX_TERMINAL_PATH_BOOTSTRAP}
+
 if [ -z "\${MATRIX_TERMINAL_PROMPT:-}" ]; then
   matrix_prompt_label=""
   if command -v node >/dev/null 2>&1; then

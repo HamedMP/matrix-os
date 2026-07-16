@@ -27,7 +27,7 @@ describe("terminal agent options", () => {
     expect(codex).toBeDefined();
 
     expect(terminalAgentInstallCommand(codex!)).toBe(
-      'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"; npm install -g --prefix "$MATRIX_NODE_PREFIX" @openai/codex@latest',
+      'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"; export PATH="$MATRIX_NODE_PREFIX/bin:$PATH"; npm install -g --prefix "$MATRIX_NODE_PREFIX" @openai/codex@latest',
     );
   });
 

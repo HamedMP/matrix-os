@@ -62,7 +62,10 @@ export function MobileTerminalActions({
   const toggleNewSessionMenu = () => {
     const shouldOpen = !newSessionMenuOpen;
     setNewSessionMenuOpen(shouldOpen);
-    if (shouldOpen) void fetchAgentStatuses();
+    if (shouldOpen) {
+      setAgentStatuses(null);
+      void fetchAgentStatuses();
+    }
   };
 
   const closeNewSessionMenu = () => {
