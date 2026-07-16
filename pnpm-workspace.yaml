@@ -7,6 +7,9 @@ packages:
   - "marketing"
   - "marketing/web"
 
+# Share the dependency-graph-addressed virtual store across Git worktrees.
+enableGlobalVirtualStore: true
+
 # Delay newly published package versions by 7 days (10,080 minutes) to reduce
 # exposure to short-lived compromised npm releases.
 minimumReleaseAge: 10080
