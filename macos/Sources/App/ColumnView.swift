@@ -18,6 +18,11 @@ struct ColumnView: View {
     let selectedCardID: Card.ID?
     let onOpenCard: (Card) -> Void
     var onAddCard: (TaskStatus) -> Void = { _ in }
+    var onEditCard: (Card) -> Void = { _ in }
+    var onArchiveCard: (Card) -> Void = { _ in }
+    var onDeleteCard: (Card) -> Void = { _ in }
+    var onSetCardStatus: (Card, TaskStatus) -> Void = { _, _ in }
+    var onSetCardPriority: (Card, TaskPriority) -> Void = { _, _ in }
     /// Called when a card is dropped onto this lane. The board wires this to
     /// `model.updateTaskStatus(cardId:to:order:)`.
     var onMoveCard: (String, TaskStatus) -> Void = { _, _ in }
@@ -40,7 +45,12 @@ struct ColumnView: View {
                             CardView(
                                 card: card,
                                 isSelected: card.id == selectedCardID,
-                                onOpen: { onOpenCard(card) }
+                                onOpen: { onOpenCard(card) },
+                                onEdit: { onEditCard(card) },
+                                onArchive: { onArchiveCard(card) },
+                                onDelete: { onDeleteCard(card) },
+                                onSetStatus: { onSetCardStatus(card, $0) },
+                                onSetPriority: { onSetCardPriority(card, $0) }
                             )
                         }
                     }

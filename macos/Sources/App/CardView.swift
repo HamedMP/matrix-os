@@ -17,6 +17,11 @@ struct CardView: View {
     let card: Card
     let isSelected: Bool
     let onOpen: () -> Void
+    var onEdit: () -> Void = {}
+    var onArchive: () -> Void = {}
+    var onDelete: () -> Void = {}
+    var onSetStatus: (TaskStatus) -> Void = { _ in }
+    var onSetPriority: (TaskPriority) -> Void = { _ in }
 
     @State private var isHovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -47,6 +52,21 @@ struct CardView: View {
         }
         .contextMenu {
             Button("Open Task", action: onOpen)
+            Button("Edit Task", action: onEdit)
+            Menu("Status") {
+                ForEach(TaskStatus.allCases, id: \.self) { status in
+                    Button(status.menuTitle) { onSetStatus(status) }
+                }
+            }
+            Menu("Priority") {
+                ForEach(TaskPriority.allCases, id: \.self) { priority in
+                    Button(priority.menuTitle) { onSetPriority(priority) }
+                }
+            }
+            Divider()
+            Button("Archive", action: onArchive)
+            Button("Delete", role: .destructive, action: onDelete)
+            Divider()
             Button("Copy Task ID") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(card.id, forType: .string)
@@ -346,6 +366,30 @@ private struct LiveEdgeGlow: View {
         .opacity(reduceMotion ? 0.20 : (bright ? 0.26 : 0.12))
         .animation(reduceMotion ? nil : Motion.liveBreathe, value: bright)
         .onAppear { if !reduceMotion { bright = true } }
+    }
+}
+
+private extension TaskStatus {
+    var menuTitle: String {
+        switch self {
+        case .todo: return "Backlog"
+        case .running: return "Running"
+        case .waiting: return "Waiting"
+        case .blocked: return "Blocked"
+        case .complete: return "Complete"
+        case .archived: return "Archived"
+        }
+    }
+}
+
+private extension TaskPriority {
+    var menuTitle: String {
+        switch self {
+        case .low: return "Low"
+        case .normal: return "Medium"
+        case .high: return "High"
+        case .urgent: return "Urgent"
+        }
     }
 }
 #endif

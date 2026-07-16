@@ -76,12 +76,23 @@ private final class MatrixOSAppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private static func bringAppForward() {
         NSApp.setActivationPolicy(.regular)
+        NSApp.windows.forEach(configureNativeChrome)
 
         if let window = NSApp.mainWindow ?? NSApp.keyWindow ?? NSApp.windows.first {
+            configureNativeChrome(window)
             recoverIfOffscreen(window)
             window.makeKeyAndOrderFront(nil)
         }
         NSApp.activate()
+    }
+
+    @MainActor
+    private static func configureNativeChrome(_ window: NSWindow) {
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.toolbarStyle = .unifiedCompact
+        window.isMovableByWindowBackground = true
+        window.backgroundColor = .windowBackgroundColor
     }
 
     @MainActor
@@ -122,10 +133,12 @@ private struct OperatorCommands: Commands {
         CommandMenu("Matrix") {
             Button("Command Palette…") { model.showCommandPalette.toggle() }
                 .keyboardShortcut("k", modifiers: .command)
+            Button("Open File…") { model.showFileOpenSearch() }
+                .keyboardShortcut("o", modifiers: .command)
             Divider()
             Button("New Task") { model.newCardPlaceholder() }
                 .keyboardShortcut("n", modifiers: .command)
-            Button("New Session") { model.createSession() }
+            Button("New Session") { model.beginTerminalSessionCreation() }
                 .keyboardShortcut("t", modifiers: .command)
             Divider()
             Button("Home") { model.openHome() }
@@ -150,12 +163,31 @@ private struct OperatorCommands: Commands {
             Button("Previous Tab") { model.focusPreviousTab() }
                 .keyboardShortcut("[", modifiers: .command)
             Divider()
-            Button("Terminal Panel") { model.switchPanel(.terminal) }
+            Button("Tab 1") { model.focusTab(at: 0) }
                 .keyboardShortcut("1", modifiers: .command)
-            Button("Editor Panel") { model.switchPanel(.app(slug: "editor")) }
+            Button("Tab 2") { model.focusTab(at: 1) }
                 .keyboardShortcut("2", modifiers: .command)
-            Button("Git Panel") { model.switchPanel(.app(slug: "git")) }
+            Button("Tab 3") { model.focusTab(at: 2) }
                 .keyboardShortcut("3", modifiers: .command)
+            Button("Tab 4") { model.focusTab(at: 3) }
+                .keyboardShortcut("4", modifiers: .command)
+            Button("Tab 5") { model.focusTab(at: 4) }
+                .keyboardShortcut("5", modifiers: .command)
+            Button("Tab 6") { model.focusTab(at: 5) }
+                .keyboardShortcut("6", modifiers: .command)
+            Button("Tab 7") { model.focusTab(at: 6) }
+                .keyboardShortcut("7", modifiers: .command)
+            Button("Tab 8") { model.focusTab(at: 7) }
+                .keyboardShortcut("8", modifiers: .command)
+            Button("Tab 9") { model.focusTab(at: 8) }
+                .keyboardShortcut("9", modifiers: .command)
+            Divider()
+            Button("Terminal Panel") { model.switchPanel(.terminal) }
+                .keyboardShortcut("1", modifiers: [.command, .option])
+            Button("Editor Panel") { model.switchPanel(.app(slug: "editor")) }
+                .keyboardShortcut("2", modifiers: [.command, .option])
+            Button("Git Panel") { model.switchPanel(.app(slug: "git")) }
+                .keyboardShortcut("4", modifiers: [.command, .option])
             Divider()
             Button("Close Card") { model.closeCard() }
                 .keyboardShortcut(.escape, modifiers: [])

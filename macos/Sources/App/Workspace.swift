@@ -12,60 +12,74 @@ struct RootShellView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        Group {
-            if model.phase == .needsProfile {
-                // Onboarding/sign-in takes the whole window (no rail yet).
-                BoardView(model: model)
-            } else {
-                HStack(spacing: 0) {
-                    Sidebar(model: model)
-                    Rectangle().fill(Color.hairlineDark).frame(width: 1)
-                    VStack(spacing: 0) {
-                        if !model.openTabs.isEmpty {
-                            HStack(spacing: Spacing.x2) {
-                                WorkspaceTabStrip(
-                                    tabs: model.filteredOpenTabs(matching: model.workspaceSearchQuery),
-                                    activeID: model.activeTabID,
-                                    isCreating: model.isCreatingWorkItem,
-                                    onSelect: model.focusTab,
-                                    onClose: model.closeTab,
-                                    onCreate: { model.createTask(status: .todo) }
-                                )
-                                .frame(maxWidth: .infinity)
-                                HStack(spacing: Spacing.x1) {
-                                    Image(systemName: "magnifyingglass")
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(Color.inkTertiary)
-                                    TextField("Filter", text: $model.workspaceSearchQuery)
-                                        .textFieldStyle(.plain)
-                                        .font(.plexSans(12))
-                                }
-                                .padding(.horizontal, Spacing.x2)
-                                .frame(width: 180, height: 34)
-                                .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                                        .strokeBorder(Color.hairlineDark.opacity(0.65), lineWidth: 1)
-                                )
-                            }
-                            .padding(.horizontal, Spacing.x3)
-                            .padding(.vertical, Spacing.x2)
-                            Divider().overlay(Color.hairlineDark)
-                        }
-                        sectionContent
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                }
-            }
-        }
+        rootContent
         .background(Color.canvasVoid)
         .overlay {
             if model.showCommandPalette {
                 CommandPalette(model: model)
                     .transition(.opacity)
             }
+            if model.showFileOpenPalette {
+                FileOpenPalette(model: model)
+                    .transition(.opacity)
+            }
         }
         .animation(Motion.hover, value: model.showCommandPalette)
+        .animation(Motion.hover, value: model.showFileOpenPalette)
+    }
+
+    @ViewBuilder
+    private var rootContent: some View {
+        if model.phase == .needsProfile {
+            // Onboarding/sign-in takes the whole window (no rail yet).
+            BoardView(model: model)
+        } else if model.section == .settings {
+            NativeSettingsPanel(model: model)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else {
+            HStack(spacing: 0) {
+                Sidebar(model: model)
+                Rectangle().fill(Color.hairlineDark).frame(width: 1)
+                VStack(spacing: 0) {
+                    if !model.openTabs.isEmpty {
+                        HStack(spacing: Spacing.x2) {
+                            WorkspaceTabStrip(
+                                tabs: model.filteredOpenTabs(matching: model.workspaceSearchQuery),
+                                activeID: model.activeTabID,
+                                isCreating: model.isCreatingWorkItem,
+                                pendingTerminalTabID: model.pendingTerminalSessionTabID,
+                                onSelect: model.focusTab,
+                                onClose: model.closeTab,
+                                onCreate: model.createWorkspaceTabFromCurrentContext,
+                                onCommitPendingTerminalName: model.commitPendingTerminalSessionName,
+                                onCancelPendingTerminalName: model.cancelPendingTerminalSessionCreation
+                            )
+                            .frame(maxWidth: .infinity)
+                            HStack(spacing: Spacing.x1) {
+                                Image(systemName: "magnifyingglass")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(Color.inkTertiary)
+                                TextField("Filter", text: $model.workspaceSearchQuery)
+                                    .textFieldStyle(.plain)
+                                    .font(.plexSans(12))
+                            }
+                            .padding(.horizontal, Spacing.x2)
+                            .frame(width: 180, height: 34)
+                            .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                                    .strokeBorder(Color.hairlineDark.opacity(0.65), lineWidth: 1)
+                            )
+                        }
+                        .padding(.horizontal, Spacing.x3)
+                        .padding(.vertical, Spacing.x2)
+                        Divider().overlay(Color.hairlineDark)
+                    }
+                    sectionContent
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -91,6 +105,10 @@ struct RootShellView: View {
 private struct Sidebar: View {
     @ObservedObject var model: AppModel
     @State private var collapsed = false
+    @State private var sessionsCollapsed = false
+    @State private var sidebarWidth: CGFloat = 320
+    @State private var showSessionSearch = false
+    @State private var sessionSearchQuery = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -105,11 +123,16 @@ private struct Sidebar: View {
                 expandedSidebar
             }
         }
-        .frame(width: collapsed ? 76 : 320)
+        .frame(width: collapsed ? 76 : sidebarWidth)
         .frame(maxHeight: .infinity)
         .background(Color.canvasVoid)
         .overlay(alignment: .trailing) {
             Rectangle().fill(Color.hairlineDark.opacity(0.65)).frame(width: 1)
+        }
+        .overlay(alignment: .trailing) {
+            if !collapsed {
+                SidebarResizeHandle(width: $sidebarWidth)
+            }
         }
         .animation(Motion.columnReflow, value: collapsed)
     }
@@ -187,12 +210,14 @@ private struct Sidebar: View {
             navigationBlock
             projectsBlock
             sessionsBlock
-            Spacer(minLength: Spacing.x4)
-            newTaskButton
-            Divider().overlay(Color.hairlineDark.opacity(0.7))
+                .frame(maxHeight: .infinity, alignment: .top)
+            Divider().overlay(Color.hairlineDark.opacity(0.55))
                 .padding(.horizontal, Spacing.x4)
-                .padding(.vertical, Spacing.x3)
+                .padding(.vertical, Spacing.x2)
             handleBadge
+                .padding(.horizontal, Spacing.x4)
+                .padding(.bottom, Spacing.x2)
+            commandPaletteCallout
                 .padding(.horizontal, Spacing.x4)
                 .padding(.bottom, Spacing.x4)
         }
@@ -304,7 +329,7 @@ private struct Sidebar: View {
 
     private func performPrimaryAction() {
         if model.section == .terminal {
-            model.createSession()
+            model.beginTerminalSessionCreation()
         } else if model.section == .board {
             model.createTask(status: .todo)
         } else {
@@ -338,8 +363,34 @@ private struct Sidebar: View {
 
     private var sessionsBlock: some View {
         VStack(alignment: .leading, spacing: Spacing.x2) {
-            sectionLabel("Sessions") {
-                Button { model.createSession() } label: {
+            HStack(spacing: Spacing.x1) {
+                Button { sessionsCollapsed.toggle() } label: {
+                    HStack(spacing: Spacing.x2) {
+                        Text("SESSIONS")
+                            .font(.plexMono(10, weight: .semibold))
+                            .foregroundStyle(Color.inkTertiary)
+                            .tracking(1.1)
+                        Image(systemName: sessionsCollapsed ? "chevron.right" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.inkTertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(sessionsCollapsed ? "Show sessions" : "Hide sessions")
+
+                Spacer()
+
+                Button { showSessionSearch.toggle() } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(showSessionSearch ? Color.inkPrimary : Color.inkTertiary)
+                        .iconHitTarget(28)
+                }
+                .buttonStyle(.plain)
+                .help("Search sessions")
+
+                Button { model.beginTerminalSessionCreation() } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Color.inkSecondary)
@@ -350,28 +401,57 @@ private struct Sidebar: View {
                 .help("New terminal tab")
             }
 
-            ScrollView {
-                LazyVStack(spacing: Spacing.x1) {
-                    let activeSessions = model.sessions.filter(\.isActive)
-                    if !activeSessions.isEmpty {
-                        sidebarSubhead("Active")
-                        ForEach(activeSessions) { session in
-                            sessionRow(session)
-                        }
+            if !sessionsCollapsed {
+                if showSessionSearch {
+                    HStack(spacing: Spacing.x2) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.inkTertiary)
+                        TextField("Search sessions", text: $sessionSearchQuery)
+                            .textFieldStyle(.plain)
+                            .font(.plexSans(12))
                     }
-                    let recentSessions = model.sessions.filter { !$0.isActive }
-                    if !recentSessions.isEmpty {
-                        sidebarSubhead("Recent")
-                            .padding(.top, Spacing.x3)
-                        ForEach(recentSessions) { session in
-                            sessionRow(session)
-                        }
-                    }
-                    if model.sessions.isEmpty {
-                        emptySessions
-                    }
+                    .padding(.horizontal, Spacing.x3)
+                    .frame(height: 30)
+                    .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                            .strokeBorder(Color.hairlineDark.opacity(0.65), lineWidth: 1)
+                    )
                 }
-                .padding(.bottom, Spacing.x2)
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        let sessionQuery = sessionSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        let filteredSessions = sessionQuery.isEmpty
+                            ? model.sessions
+                            : model.sessions.filter { $0.name.lowercased().contains(sessionQuery) || $0.status.lowercased().contains(sessionQuery) }
+                        let activeSessions = filteredSessions.filter(\.isActive)
+                        if !activeSessions.isEmpty {
+                            sidebarSubhead("Active")
+                            ForEach(activeSessions) { session in
+                                sessionRow(session)
+                            }
+                        }
+                        let recentSessions = filteredSessions.filter { !$0.isActive }
+                        if !recentSessions.isEmpty {
+                            sidebarSubhead("Recent")
+                                .padding(.top, Spacing.x2)
+                            ForEach(recentSessions) { session in
+                                sessionRow(session)
+                            }
+                        }
+                        if model.sessions.isEmpty {
+                            emptySessions
+                        } else if filteredSessions.isEmpty {
+                            Text("No matching sessions")
+                                .font(.plexSans(12, weight: .medium))
+                                .foregroundStyle(Color.inkTertiary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, Spacing.x2)
+                        }
+                    }
+                    .padding(.bottom, Spacing.x2)
+                }
             }
         }
         .padding(.horizontal, Spacing.x4)
@@ -411,26 +491,18 @@ private struct Sidebar: View {
                         .foregroundStyle(Color.inkPrimary)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    HStack(spacing: Spacing.x1) {
-                        Circle()
-                            .fill(session.isActive ? Color.signalDone : Color.inkDisabled)
-                            .frame(width: 5, height: 5)
-                        Text(session.status.capitalized)
-                            .font(.plexSans(11, weight: .medium))
-                            .foregroundStyle(session.isActive ? Color.signalDone : Color.inkTertiary)
-                    }
                 }
                 Spacer()
-                Text(selected ? "now" : "")
-                    .font(.plexSans(11, weight: .medium))
-                    .foregroundStyle(Color.inkTertiary)
+                Circle()
+                    .fill(session.isActive ? Color.signalDone : Color.inkDisabled)
+                    .frame(width: 7, height: 7)
+                    .help(session.status.capitalized)
             }
             .padding(.horizontal, Spacing.x3)
-            .padding(.vertical, Spacing.x2)
+            .frame(height: 32)
             .background(
-                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
-                    .fill(selected ? Color.surfaceCardRaised : Color.clear)
-                    .shadow(color: selected ? Color.black.opacity(0.06) : Color.clear, radius: 10, y: 4)
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                    .fill(selected ? Color.surfaceCardRaised.opacity(0.85) : Color.clear)
             )
             .overlay(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 1)
@@ -450,7 +522,7 @@ private struct Sidebar: View {
                 NSPasteboard.general.setString(session.name, forType: .string)
             }
             Divider()
-            Button("New Terminal") { model.createSession() }
+            Button("New Terminal") { model.beginTerminalSessionCreation() }
         }
     }
 
@@ -471,41 +543,36 @@ private struct Sidebar: View {
         .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
     }
 
-    private var newTaskButton: some View {
+    private var commandPaletteCallout: some View {
         Button {
-            performPrimaryAction()
+            model.showCommandPalette = true
         } label: {
             HStack(spacing: Spacing.x3) {
-                Image(systemName: "plus")
-                    .font(.system(size: 14, weight: .semibold))
-                Text(primaryActionTitle)
+                Image(systemName: "command")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("Command palette")
                     .font(.plexSans(14, weight: .semibold))
                 Spacer()
-                Text(primaryActionShortcut)
+                Text("⌘K")
                     .font(.plexMono(11, weight: .semibold))
-                    .padding(.horizontal, Spacing.x2)
-                    .padding(.vertical, 5)
-                    .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: Radius.badge, style: .continuous))
+                    .foregroundStyle(Color.inkSecondary)
+                    .frame(width: 42, height: 28)
+                    .background(Color.surfaceRail, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
             }
-            .foregroundStyle(Color.canvasVoid)
+            .foregroundStyle(Color.inkPrimary)
             .padding(.horizontal, Spacing.x4)
-            .frame(height: 52)
-            .background(
-                LinearGradient(
-                    colors: [Color.surfaceTerminal, Color.black.opacity(0.90)],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                ),
-                in: RoundedRectangle(cornerRadius: Radius.panel, style: .continuous)
+            .frame(height: 46)
+            .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.panel, style: .continuous)
+                    .strokeBorder(Color.hairlineDark.opacity(0.65), lineWidth: 1)
             )
-            .shadow(color: Color.black.opacity(0.16), radius: 16, y: 8)
+            .shadow(color: Color.black.opacity(0.06), radius: 10, y: 4)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, Spacing.x4)
-        .disabled(model.isCreatingWorkItem)
-        .help(primaryActionTitle)
-        .accessibilityLabel(primaryActionTitle)
+        .help("Command palette")
+        .accessibilityLabel("Command palette")
     }
 
     private var handleBadge: some View {
@@ -539,7 +606,7 @@ private struct Sidebar: View {
                             .font(.plexSans(12, weight: .semibold))
                             .foregroundStyle(Color.inkPrimary)
                             .lineLimit(1)
-                        Text("Matrix account")
+                        Text(profileSubtitle)
                             .font(.plexMono(9, weight: .medium))
                             .foregroundStyle(Color.inkTertiary)
                             .lineLimit(1)
@@ -563,20 +630,75 @@ private struct Sidebar: View {
         .help(handle)
         .accessibilityLabel("Connected as \(handle)")
     }
+
+    private var profileSubtitle: String {
+        guard let profile = model.profile else { return "Not signed in" }
+        if let slot = profile.runtimeSlot, !slot.isEmpty {
+            return "\(profile.gatewayHost) · \(slot)"
+        }
+        return profile.gatewayHost
+    }
 }
 
 private struct AppMark: View {
     let collapsed: Bool
 
     var body: some View {
-        Image(nsImage: NSImage(named: NSImage.applicationIconName) ?? NSImage())
-            .resizable()
-            .interpolation(.high)
-            .frame(width: collapsed ? 46 : 52, height: collapsed ? 46 : 52)
-            .clipShape(RoundedRectangle(cornerRadius: collapsed ? 10 : 12, style: .continuous))
-            .shadow(color: Color.black.opacity(0.12), radius: 6, y: 2)
-            .help("Matrix OS")
-            .accessibilityLabel("Matrix OS")
+        Group {
+            if let image = Self.appIcon {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+            } else {
+                Text("M")
+                    .font(.plexMono(collapsed ? 18 : 20, weight: .semibold))
+                    .foregroundStyle(Color.canvasVoid)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.signalLive)
+            }
+        }
+        .frame(width: collapsed ? 46 : 52, height: collapsed ? 46 : 52)
+        .clipShape(RoundedRectangle(cornerRadius: collapsed ? 10 : 12, style: .continuous))
+        .shadow(color: Color.black.opacity(0.12), radius: 6, y: 2)
+        .help("Matrix OS")
+        .accessibilityLabel("Matrix OS")
+    }
+
+    private static var appIcon: NSImage? {
+        if let resourceURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let image = NSImage(contentsOf: resourceURL) {
+            return image
+        }
+        return NSApp.applicationIconImage
+    }
+}
+
+private struct SidebarResizeHandle: View {
+    @Binding var width: CGFloat
+    @State private var startWidth: CGFloat?
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.clear)
+            .frame(width: 8)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        let base = startWidth ?? width
+                        startWidth = base
+                        width = min(460, max(240, base + value.translation.width))
+                    }
+                    .onEnded { _ in startWidth = nil }
+            )
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.resizeLeftRight.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .help("Resize sidebar")
     }
 }
 
@@ -591,89 +713,52 @@ private struct TerminalsView: View {
     }
 
     private var workbench: some View {
-        VStack(spacing: Spacing.x3) {
+        VStack(spacing: Spacing.x2) {
             workbenchHeader
-            TerminalSessionTabStrip(
-                sessions: model.sessions,
-                activeName: model.activeTerminalSessionName,
-                isCreating: model.isCreatingWorkItem,
-                onSelect: model.openSession,
-                onClose: model.closeSession,
-                onCreate: model.createSession
-            )
             terminalSurface
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(.horizontal, Spacing.x5)
-        .padding(.vertical, Spacing.x4)
+        .padding(.horizontal, Spacing.x4)
+        .padding(.top, Spacing.x3)
+        .padding(.bottom, Spacing.x4)
         .background(Color.canvasVoid)
     }
 
     private var workbenchHeader: some View {
-        VStack(spacing: Spacing.x3) {
-            HStack(spacing: Spacing.x2) {
-                Label("Terminal", systemImage: "terminal")
-                    .font(.plexSans(13, weight: .semibold))
-                    .foregroundStyle(Color.inkPrimary)
-                Spacer()
-                searchButton
-                Spacer()
-                headerIcon("clock") { Task { await model.loadSessions() } }
-                headerIcon("square.and.arrow.up") {
-                    if let url = model.shellURL() {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-                headerIcon("ellipsis") { model.showCommandPalette = true }
-            }
+        HStack(spacing: Spacing.x2) {
+            Label(model.terminal?.displayName ?? "Terminal", systemImage: "terminal")
+                .font(.plexSans(13, weight: .semibold))
+                .foregroundStyle(Color.inkPrimary)
+                .lineLimit(1)
+                .truncationMode(.middle)
 
-            HStack(alignment: .top, spacing: Spacing.x3) {
-                VStack(alignment: .leading, spacing: Spacing.x3) {
-                    Text(model.terminal?.displayName ?? "Terminal")
-                        .font(.plexSans(22, weight: .semibold))
-                        .foregroundStyle(Color.inkPrimary)
-                        .lineLimit(2)
-                    HStack(spacing: Spacing.x2) {
-                        statusChip(model.sessions.isEmpty ? "No sessions" : "\(model.sessions.count) sessions", icon: "terminal", tint: .signalDone)
-                        statusChip(model.terminal == nil ? "Detached" : "Attached", icon: "tray.and.arrow.up", tint: .inkSecondary)
-                    }
+            statusText
+
+            Spacer()
+
+            headerIcon("clock") { Task { await model.loadSessions() } }
+            headerIcon("square.and.arrow.up") {
+                if let url = model.shellURL() {
+                    NSWorkspace.shared.open(url)
                 }
-                Spacer()
-                Button { model.createSession() } label: {
-                    Label("New terminal", systemImage: "plus")
-                        .font(.plexSans(12, weight: .medium))
-                        .foregroundStyle(Color.inkPrimary)
-                }
-                .buttonStyle(.plain)
-                .disabled(model.isCreatingWorkItem)
             }
+            headerIcon("ellipsis") { model.showCommandPalette = true }
         }
+        .frame(height: 32)
     }
 
-    private var searchButton: some View {
-        Button { model.showCommandPalette = true } label: {
-            HStack(spacing: Spacing.x2) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12, weight: .semibold))
-                Text("Search Matrix")
-                    .font(.plexSans(12, weight: .medium))
-                Text("⌘K")
-                    .font(.plexMono(10, weight: .semibold))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.surfaceRail, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-            }
-            .foregroundStyle(Color.inkTertiary)
-            .frame(width: 230, height: 34)
-            .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 17, style: .continuous)
-                    .strokeBorder(Color.hairlineDark.opacity(0.7), lineWidth: 1)
-            )
-            .contentShape(Rectangle())
+    private var statusText: some View {
+        HStack(spacing: Spacing.x1) {
+            Circle()
+                .fill(model.terminal == nil ? Color.inkDisabled : Color.signalLive)
+                .frame(width: 5, height: 5)
+            Text(model.terminal == nil ? "detached" : "attached")
+            Text("·")
+            Text(model.sessions.isEmpty ? "0 sessions" : "\(model.sessions.count) sessions")
         }
-        .buttonStyle(.plain)
-        .help("Command palette (⌘K)")
+        .font(.plexMono(10, weight: .medium))
+        .foregroundStyle(Color.inkTertiary)
+        .lineLimit(1)
     }
 
     private func headerIcon(_ icon: String, action: @escaping () -> Void) -> some View {
@@ -689,24 +774,6 @@ private struct TerminalsView: View {
                 )
         }
         .buttonStyle(.plain)
-    }
-
-    private func statusChip(_ text: String, icon: String, tint: Color) -> some View {
-        HStack(spacing: Spacing.x1) {
-            Image(systemName: icon)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(tint)
-            Text(text)
-                .font(.plexSans(12, weight: .medium))
-                .foregroundStyle(Color.inkSecondary)
-        }
-        .padding(.horizontal, Spacing.x2)
-        .frame(height: 28)
-        .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                .strokeBorder(Color.hairlineDark.opacity(0.75), lineWidth: 1)
-        )
     }
 
     @ViewBuilder
@@ -962,14 +1029,12 @@ struct EditorPanel: View {
                 .background(Color.surfaceRail)
                 .overlay(alignment: .bottom) { Rectangle().fill(Color.hairlineDark).frame(height: 1) }
 
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(model.fileTree) { node in
-                            FileTreeNodeRow(model: model, node: node, depth: 0)
-                        }
-                    }
-                    .padding(.vertical, Spacing.x1)
-                }
+                FileNavigatorOutlineView(
+                    nodes: model.fileTree,
+                    selectedPath: model.selectedFilePath,
+                    onOpen: { model.openFileTreeNode($0) },
+                    onToggle: { model.toggleFileTreeNode($0) }
+                )
             }
             .frame(minWidth: 220, idealWidth: 280, maxWidth: 380)
 

@@ -37,7 +37,7 @@ type Result<T> = { ok: true; status?: number } & T;
 
 const TaskIdSchema = z.string().regex(/^task_[A-Za-z0-9_-]{1,128}$/);
 const ProjectSlugSchema = z.string().regex(PROJECT_SLUG_REGEX);
-const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
+const SessionIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const WorktreeIdSchema = z.string().regex(/^wt_[A-Za-z0-9_-]{1,128}$/);
 const PreviewIdSchema = z.string().regex(/^prev_[A-Za-z0-9_-]{1,128}$/);
 

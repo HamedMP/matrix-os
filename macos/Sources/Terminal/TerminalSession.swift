@@ -19,6 +19,13 @@ public enum TerminalConnectionState: Equatable, Sendable {
     case error(code: String)
 }
 
+enum TerminalStartupSettlePolicy {
+    static let steadyResizeDebounceNanoseconds: UInt64 = 90_000_000
+    static let startupResizeDebounceNanoseconds: UInt64 = 220_000_000
+    static let postStableAttachSettleNanoseconds: UInt64 = 300_000_000
+    static let attachWithoutResizeFallbackNanoseconds: UInt64 = 900_000_000
+}
+
 /// `@MainActor` view-model that owns a `ShellEventSource` (the shell-WS client),
 /// consumes its `AsyncStream<ServerEvent>`, and publishes UI-facing state for the
 /// SwiftTerm-backed `TerminalPanelView`.
@@ -53,11 +60,16 @@ public final class TerminalSession: ObservableObject {
     /// Count of output flushes received while scrolled up (for the "↓ N new" badge).
     @Published public private(set) var unseenLines: Int = 0
 
+    /// Keeps SwiftTerm covered during the attach replay/first-layout burst. This
+    /// prevents early clicks/focus and the visible fast cursor repaint until zellij
+    /// has attached and the terminal has sent one settled size.
+    @Published public private(set) var isStartupSettling: Bool = true
+
     private let client: ShellEventSource
     /// Sink for decoded PTY output text. The view installs this to feed SwiftTerm.
     /// Called on the main actor.
     private var outputSink: (@MainActor (String) -> Void)?
-    private var attachHandler: (@MainActor () -> Void)?
+    private var attachHandlers: [@MainActor () -> Void] = []
     /// Coalesced output waiting to be fed into SwiftTerm. Feeding SwiftTerm once
     /// per websocket frame can fall behind under zellij bursts, causing zellij to
     /// disconnect the client. Drain at UI cadence instead.
@@ -67,6 +79,12 @@ public final class TerminalSession: ObservableObject {
     private var started = false
     /// Latest requested terminal size, re-sent once after each successful attach.
     private var lastSize: (cols: Int, rows: Int)?
+    /// Coalesced pending resize and its debounce task (see `resize`).
+    private var pendingResize: (cols: Int, rows: Int)?
+    private var resizeDebounceTask: Task<Void, Never>?
+    private var hasAttachedSinceStartup = false
+    private var hasStableResizeSinceStartup = false
+    private var startupSettleTask: Task<Void, Never>?
 
     public init(displayName: String, client: ShellEventSource) {
         self.displayName = displayName
@@ -76,6 +94,8 @@ public final class TerminalSession: ObservableObject {
     deinit {
         consumeTask?.cancel()
         outputFlushTask?.cancel()
+        resizeDebounceTask?.cancel()
+        startupSettleTask?.cancel()
     }
 
     /// Installs the output sink (the SwiftTerm feed) before/while starting.
@@ -86,7 +106,7 @@ public final class TerminalSession: ObservableObject {
 
     /// Runs once when the terminal first reaches an attached/output state.
     public func onNextAttach(_ handler: @escaping @MainActor () -> Void) {
-        attachHandler = handler
+        attachHandlers.append(handler)
     }
 
     /// Connects the client and begins consuming its event stream. Idempotent.
@@ -116,10 +136,34 @@ public final class TerminalSession: ObservableObject {
     /// not spam the server (which made zellij thrash/rearrange panes).
     public func resize(cols: Int, rows: Int) {
         guard cols > 0, rows > 0 else { return }
-        if let last = lastSize, last.cols == cols, last.rows == rows { return }
-        lastSize = (cols, rows)
+        // Coalesce rapid size reports (initial layout, window drags, font changes).
+        // SwiftTerm emits many intermediate grid sizes before settling; forwarding each
+        // makes zellij thrash/rearrange panes and can leave it stuck at an early,
+        // smaller-than-the-view grid. Debounce so only the settled size reaches the
+        // server (the client re-sends it after each attach).
+        pendingResize = (cols, rows)
+        resizeDebounceTask?.cancel()
+        let debounce = hasStableResizeSinceStartup
+            ? TerminalStartupSettlePolicy.steadyResizeDebounceNanoseconds
+            : TerminalStartupSettlePolicy.startupResizeDebounceNanoseconds
+        resizeDebounceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: debounce)
+            guard !Task.isCancelled else { return }
+            self?.flushPendingResize()
+        }
+    }
+
+    private func flushPendingResize() {
+        guard let size = pendingResize else { return }
+        pendingResize = nil
+        if let last = lastSize, last.cols == size.cols, last.rows == size.rows {
+            markStableResize()
+            return
+        }
+        lastSize = size
+        markStableResize()
         let client = self.client
-        Task { await client.resize(cols: cols, rows: rows) }
+        Task { await client.resize(cols: size.cols, rows: size.rows) }
     }
 
     /// Detaches (leaves the session running) and stops consuming.
@@ -136,6 +180,10 @@ public final class TerminalSession: ObservableObject {
         flushPendingOutput()
         outputFlushTask?.cancel()
         outputFlushTask = nil
+        resizeDebounceTask?.cancel()
+        resizeDebounceTask = nil
+        startupSettleTask?.cancel()
+        startupSettleTask = nil
         let client = self.client
         Task { await client.shutdown() }
     }
@@ -149,6 +197,7 @@ public final class TerminalSession: ObservableObject {
             return // terminal states are not overridden by a transient drop
         default:
             connectionState = .reconnecting
+            resetStartupSettling(keepStableResize: lastSize != nil)
         }
     }
 
@@ -168,8 +217,7 @@ public final class TerminalSession: ObservableObject {
     private func apply(_ event: ServerEvent) {
         switch event {
         case .attached:
-            connectionState = .attached
-            notifyAttached()
+            markAttached()
             // Re-send the last known size once after attach (protocol requirement).
             if let size = lastSize {
                 let client = self.client
@@ -178,18 +226,21 @@ public final class TerminalSession: ObservableObject {
         case let .output(seq, data):
             lastSeq = max(lastSeq, seq)
             // A late output frame while still "connecting" implies we're attached.
-            if case .connecting = connectionState { connectionState = .attached }
-            if case .reconnecting = connectionState { connectionState = .attached }
-            notifyAttached()
+            if case .connecting = connectionState { markAttached() }
+            if case .reconnecting = connectionState { markAttached() }
             enqueueOutput(data)
             if !isPinnedToBottom {
                 unseenLines += 1
             }
         case let .exit(code):
             connectionState = .exited(code: code)
+            isStartupSettling = false
+            startupSettleTask?.cancel()
         case let .error(code, _):
             // Never surface raw `message`; keep only the internal code.
             connectionState = .error(code: code)
+            isStartupSettling = false
+            startupSettleTask?.cancel()
         case .reconnecting:
             markReconnecting()
         case .replayEvicted:
@@ -198,13 +249,61 @@ public final class TerminalSession: ObservableObject {
             lastSeq = 0
             unseenLines = 0
             connectionState = .connecting
+            resetStartupSettling(keepStableResize: lastSize != nil)
+        }
+    }
+
+    private func markAttached() {
+        connectionState = .attached
+        hasAttachedSinceStartup = true
+        notifyAttached()
+        scheduleStartupSettlingIfReady()
+        scheduleAttachFallbackIfNeeded()
+    }
+
+    private func markStableResize() {
+        hasStableResizeSinceStartup = true
+        scheduleStartupSettlingIfReady()
+    }
+
+    private func resetStartupSettling(keepStableResize: Bool) {
+        hasAttachedSinceStartup = false
+        hasStableResizeSinceStartup = keepStableResize
+        isStartupSettling = true
+        startupSettleTask?.cancel()
+        startupSettleTask = nil
+    }
+
+    private func scheduleStartupSettlingIfReady() {
+        guard isStartupSettling, hasAttachedSinceStartup, hasStableResizeSinceStartup else { return }
+        startupSettleTask?.cancel()
+        startupSettleTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: TerminalStartupSettlePolicy.postStableAttachSettleNanoseconds)
+            guard !Task.isCancelled else { return }
+            self?.isStartupSettling = false
+            self?.startupSettleTask = nil
+        }
+    }
+
+    private func scheduleAttachFallbackIfNeeded() {
+        guard isStartupSettling, !hasStableResizeSinceStartup else { return }
+        startupSettleTask?.cancel()
+        startupSettleTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: TerminalStartupSettlePolicy.attachWithoutResizeFallbackNanoseconds)
+            guard let self, !Task.isCancelled else { return }
+            guard self.isStartupSettling, self.hasAttachedSinceStartup else { return }
+            self.isStartupSettling = false
+            self.startupSettleTask = nil
         }
     }
 
     private func notifyAttached() {
-        guard let attachHandler else { return }
-        self.attachHandler = nil
-        attachHandler()
+        guard !attachHandlers.isEmpty else { return }
+        let handlers = attachHandlers
+        attachHandlers.removeAll(keepingCapacity: true)
+        for handler in handlers {
+            handler()
+        }
     }
 
     private func enqueueOutput(_ data: String) {

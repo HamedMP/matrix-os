@@ -410,8 +410,6 @@ export function createWorkspaceRoutes(options: {
   });
 
   app.delete("/api/projects/:slug/tasks/:taskId", limited, async (c) => {
-    const body = await parseJson(c, EmptyObjectSchema);
-    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
     const projectSlug = c.req.param("slug");
     const taskId = c.req.param("taskId");
     const result = await taskManager.deleteTask(projectSlug, taskId);

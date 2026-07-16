@@ -602,7 +602,7 @@ exit 1
     await expect((await app.request(patchJsonRequest("/api/projects/repo/tasks/task_abc123", { status: "running" }))).json()).resolves.toMatchObject({
       task: expect.objectContaining({ status: "running" }),
     });
-    await expect((await app.request(deleteJsonRequest("/api/projects/repo/tasks/task_abc123", {}))).json()).resolves.toEqual({ ok: true });
+    await expect((await app.request("/api/projects/repo/tasks/task_abc123", { method: "DELETE" })).json()).resolves.toEqual({ ok: true });
 
     const createdPreview = await app.request(jsonRequest("/api/projects/repo/previews", {
       taskId: "task_abc123",

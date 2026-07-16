@@ -21,6 +21,12 @@ let package = Package(
         // offline and this fails to resolve, temporarily comment this dependency and the
         // matching target dependency below — the rest of the package builds without it.
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.2.0"),
+        // Native Swift code editor powered by tree-sitter.
+        .package(url: "https://github.com/CodeEditApp/CodeEditSourceEditor", exact: "0.12.0"),
+        // CodeEditSourceEditor 0.12.0 declares CodeEditTextView from 0.10.1, but
+        // newer 0.12.x CodeEditTextView releases changed minimap APIs. Constrain
+        // the resolver to the compatible release used by this source-editor tag.
+        .package(url: "https://github.com/CodeEditApp/CodeEditTextView.git", exact: "0.10.1"),
     ],
     targets: [
         .target(
@@ -68,6 +74,8 @@ let package = Package(
                 "MatrixNet",
                 "MatrixTerminal",
                 "MatrixBoard",
+                .product(name: "CodeEditSourceEditor", package: "CodeEditSourceEditor"),
+                .product(name: "CodeEditTextView", package: "CodeEditTextView"),
             ],
             path: "Sources/App",
             swiftSettings: [

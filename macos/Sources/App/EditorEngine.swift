@@ -2,6 +2,7 @@ import Foundation
 
 enum EditorEngineKind: String, CaseIterable, Equatable, Sendable {
     case textKitNative = "textkit-native"
+    case codeEditSourceEditor = "codeedit-source-editor"
     case codeMirror = "codemirror"
     case monaco
 }
@@ -13,12 +14,14 @@ struct EditorEngineConfiguration: Equatable, Sendable {
         self.kind = kind
     }
 
-    static let `default` = EditorEngineConfiguration(kind: .textKitNative)
+    static let `default` = EditorEngineConfiguration(kind: .codeEditSourceEditor)
 
     var displayName: String {
         switch kind {
         case .textKitNative:
             return "Native TextKit"
+        case .codeEditSourceEditor:
+            return "CodeEditSourceEditor"
         case .codeMirror:
             return "CodeMirror"
         case .monaco:
@@ -28,7 +31,7 @@ struct EditorEngineConfiguration: Equatable, Sendable {
 
     var isLaunchSafe: Bool {
         switch kind {
-        case .textKitNative, .codeMirror:
+        case .textKitNative, .codeEditSourceEditor, .codeMirror:
             return true
         case .monaco:
             return false
@@ -39,7 +42,7 @@ struct EditorEngineConfiguration: Equatable, Sendable {
         switch kind {
         case .codeMirror:
             return true
-        case .textKitNative, .monaco:
+        case .textKitNative, .codeEditSourceEditor, .monaco:
             return false
         }
     }

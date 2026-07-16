@@ -9,6 +9,19 @@ import MatrixTerminal
 
 @MainActor
 final class AppModelAuthTests: XCTestCase {
+    private func eventuallyAsync(
+        _ predicate: @escaping () async -> Bool,
+        timeout: TimeInterval = 2.0,
+        _ message: String = "condition not met"
+    ) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if await predicate() { return }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTFail(message)
+    }
+
     func testWebShellAuthStateClearsPromptOnAutomaticValidTokenReload() {
         var state = WebShellAuthState()
 
@@ -18,6 +31,8 @@ final class AppModelAuthTests: XCTestCase {
 
         XCTAssertFalse(state.shouldShowSignInPrompt)
         XCTAssertEqual(state.token, "native-token")
+        XCTAssertFalse(state.markHostedAuthRequired())
+        XCTAssertTrue(state.shouldShowSignInPrompt)
     }
 
     func testWebShellAuthStateClearsPromptAfterExplicitSignInReload() {
@@ -42,18 +57,20 @@ final class AppModelAuthTests: XCTestCase {
 
         XCTAssertFalse(state.shouldShowSignInPrompt)
         XCTAssertEqual(state.token, "native-token")
-        XCTAssertTrue(state.markHostedAuthRequired())
+        XCTAssertFalse(state.markHostedAuthRequired())
+        XCTAssertTrue(state.shouldShowSignInPrompt)
     }
 
-    func testWebShellAuthStateClearsHostedPromptForFreshAutomaticReload() {
+    func testWebShellAuthStateClearsHostedPromptForExplicitReload() {
         var state = WebShellAuthState()
 
         state.resolveToken("native-token")
         _ = state.markHostedAuthRequired()
-        state.resolveToken("native-token")
+        state.resolveToken("native-token", resetHostedRetry: true)
 
         XCTAssertFalse(state.shouldShowSignInPrompt)
         XCTAssertEqual(state.token, "native-token")
+        XCTAssertTrue(state.markHostedAuthRequired())
     }
 
     func testHandleOpenURLAcceptsCanonicalAndLegacyAuthCallbacks() {
@@ -795,6 +812,161 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.selectedCard?.id, "matrix_session_alpha")
     }
 
+    func testCardsWithSameLinkedSessionShareOneTerminalClient() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        var terminalBuilds = 0
+        var sources: [RecordingShellEventSource] = []
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            makeTerminal: { _, _, _, name in
+                terminalBuilds += 1
+                let source = RecordingShellEventSource()
+                sources.append(source)
+                return TerminalSession(displayName: name, client: source)
+            },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        let firstCard = Card(id: "matrix_session_alpha", projectSlug: "main", title: "Alpha", status: .running, priority: .normal, order: 1, linkedSessionId: "shared-zellij", updatedAt: "now")
+        let secondCard = Card(id: "matrix_session_beta", projectSlug: "main", title: "Beta", status: .running, priority: .normal, order: 2, linkedSessionId: "shared-zellij", updatedAt: "now")
+
+        _ = try await model.openCard(firstCard)
+        _ = try await model.openCard(secondCard)
+
+        XCTAssertEqual(terminalBuilds, 1)
+        let firstSession = try XCTUnwrap(model.terminalSessions["session:main:matrix_session_alpha"])
+        let secondSession = try XCTUnwrap(model.terminalSessions["session:main:matrix_session_beta"])
+        XCTAssertTrue(firstSession === secondSession)
+
+        model.closeTab(id: "session:main:matrix_session_alpha")
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        let shutdownCountAfterFirstClose = await sources[0].shutdownCount
+        XCTAssertEqual(shutdownCountAfterFirstClose, 0)
+
+        model.closeTab(id: "session:main:matrix_session_beta")
+        await eventuallyAsync {
+            await sources[0].shutdownCount == 1
+        }
+    }
+
+    func testTaskTerminalAutoCreateUsesProjectCwd() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        var openedURL: URL?
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "matrix-os",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            makeTerminal: { url, _, _, name in
+                openedURL = url
+                return TerminalSession(displayName: name, client: IdleShellEventSource())
+            },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        let card = Card(id: "task_terminal", projectSlug: "matrix-os", title: "Terminal task", status: .todo, priority: .normal, order: 1, linkedSessionId: nil, updatedAt: "now")
+
+        _ = try await model.openCard(card)
+
+        let url = try XCTUnwrap(openedURL)
+        XCTAssertEqual(url.path, "/ws/terminal")
+        XCTAssertEqual(url.queryValue("cwd"), "projects/matrix-os")
+    }
+
+    func testCreateTaskProvisionsLinkedTerminalSessionBeforeTask() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        AppTestURLProtocol.setHandler { req in
+            switch (req.httpMethod, req.url?.path) {
+            case ("POST", "/api/terminal/sessions"):
+                let body = try XCTUnwrap(req.jsonBodyDictionary())
+                XCTAssertEqual(body["cwd"] as? String, "projects/matrix-os")
+                XCTAssertTrue((body["name"] as? String)?.hasPrefix("shell-") ?? false)
+                let json = #"{"name":"task-linked-session"}"#
+                return (appTestHTTPResponse(req.url!, 200), Data(json.utf8))
+            case ("POST", "/api/projects/matrix-os/tasks"):
+                let body = try XCTUnwrap(req.jsonBodyDictionary())
+                XCTAssertEqual(body["title"] as? String, "New task")
+                XCTAssertEqual(body["status"] as? String, "todo")
+                XCTAssertEqual(body["linkedSessionId"] as? String, "task-linked-session")
+                let json = """
+                {
+                  "task": {
+                    "id": "task_1",
+                    "projectSlug": "matrix-os",
+                    "title": "New task",
+                    "status": "todo",
+                    "priority": "normal",
+                    "order": 1,
+                    "linkedSessionId": "task-linked-session",
+                    "updatedAt": "2026-06-09T10:00:00.000Z"
+                  }
+                }
+                """
+                return (appTestHTTPResponse(req.url!, 200), Data(json.utf8))
+            default:
+                return (appTestHTTPResponse(req.url!, 200), Data(#"{"tasks":[]}"#.utf8))
+            }
+        }
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "matrix-os",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in
+                GatewayHTTPClient(baseURL: url, tokenProvider: provider, sessionConfiguration: .appTestMocked())
+            },
+            makeLoader: { _ in EmptyBoardLoader() },
+            makeTerminal: { _, _, _, name in TerminalSession(displayName: name, client: IdleShellEventSource()) },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.createTask()
+        await eventuallyAsync {
+            model.selectedCard?.linkedSessionId == "task-linked-session"
+        }
+
+        XCTAssertEqual(model.selectedCard?.id, "task_1")
+        XCTAssertEqual(model.activePanel, .terminal)
+        XCTAssertTrue(model.openTabs.contains(where: { $0.card?.linkedSessionId == "task-linked-session" }))
+    }
+
+    func testFocusTabByIndexUsesGlobalTabOrder() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        let first = Card(id: "task_one", projectSlug: "main", title: "One", status: .todo, priority: .normal, order: 1, linkedSessionId: nil, updatedAt: "now")
+        let second = Card(id: "task_two", projectSlug: "main", title: "Two", status: .todo, priority: .normal, order: 2, linkedSessionId: nil, updatedAt: "now")
+
+        model.openProject(slug: "main")
+        _ = try? await model.openCard(first)
+        _ = try? await model.openCard(second)
+
+        model.focusTab(at: 0)
+        XCTAssertEqual(model.activeTabID, "board:main")
+
+        model.focusTab(at: 1)
+        XCTAssertEqual(model.activeTabID, "task:main:task_one")
+
+        model.focusTab(at: 99)
+        XCTAssertEqual(model.activeTabID, "task:main:task_one")
+    }
+
     func testApprovedSignInOpensHomeWhenNoProjectIsSelected() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         let openedURL = OpenedURLRecorder()
@@ -911,6 +1083,73 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertNil(model.terminal)
         XCTAssertEqual(model.workspaceSearchQuery, "")
         XCTAssertEqual(cancelCount, 1)
+    }
+
+    func testHostedShellAuthRequiredKeepsNativeSessionAndDoesNotSignOut() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        model.openHome()
+        model.openProject(slug: "main")
+
+        // The hosted web shell reported it needs re-auth (server redirected to
+        // /login). The native device-auth principal + gateway session are still
+        // valid, so this must NOT sign the user out — doing so caused the redirect
+        // -> sign-out -> re-show login loop. It only flags the hosted shell.
+        model.markHostedShellAuthRequired()
+
+        let token = await principal.token()
+        XCTAssertEqual(token, "token")
+        XCTAssertNotNil(model.profile)
+        XCTAssertNotEqual(model.phase, .needsProfile)
+        XCTAssertFalse(model.openTabs.isEmpty)
+        XCTAssertTrue(model.hostedShellNeedsSignIn)
+    }
+
+    func testHostedShellAuthorizedClearsNeedsSignInFlag() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.markHostedShellAuthRequired()
+        XCTAssertTrue(model.hostedShellNeedsSignIn)
+
+        model.markHostedShellAuthorized()
+        XCTAssertFalse(model.hostedShellNeedsSignIn)
+    }
+
+    func testSignOutClearsHostedShellNeedsSignInFlag() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.markHostedShellAuthRequired()
+        await model.signOutNow()
+
+        XCTAssertFalse(model.hostedShellNeedsSignIn)
+        XCTAssertEqual(model.phase, .needsProfile)
     }
 
     func testTabKeyboardNavigationAndCloseActiveTab() async throws {
@@ -1078,6 +1317,27 @@ private struct IdleShellEventSource: ShellEventSource {
     func shutdown() async {}
 }
 
+private actor RecordingShellEventSource: ShellEventSource {
+    private let stream: AsyncStream<ServerEvent>
+    private(set) var shutdownCount = 0
+
+    init() {
+        self.stream = AsyncStream { _ in }
+    }
+
+    var events: AsyncStream<ServerEvent> {
+        get async { stream }
+    }
+
+    func connect() async {}
+    func sendInput(_ data: String) async {}
+    func resize(cols: Int, rows: Int) async {}
+    func detach() async {}
+    func shutdown() async {
+        shutdownCount += 1
+    }
+}
+
 private final class MockDeviceAuthorizer: DeviceAuthorizing, @unchecked Sendable {
     var start: DeviceAuthStart?
     var polls: [DevicePollResult]
@@ -1163,5 +1423,32 @@ private extension URLSessionConfiguration {
 
 private func appTestHTTPResponse(_ url: URL, _ status: Int) -> HTTPURLResponse {
     HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil)!
+}
+
+private extension URLRequest {
+    func jsonBodyDictionary() throws -> [String: Any] {
+        let data: Data?
+        if let httpBody {
+            data = httpBody
+        } else if let httpBodyStream {
+            httpBodyStream.open()
+            defer { httpBodyStream.close() }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            var chunks = Data()
+            while httpBodyStream.hasBytesAvailable {
+                let count = httpBodyStream.read(&buffer, maxLength: buffer.count)
+                if count <= 0 { break }
+                chunks.append(buffer, count: count)
+            }
+            data = chunks
+        } else {
+            data = nil
+        }
+        guard let data, !data.isEmpty else {
+            return [:]
+        }
+        let value = try JSONSerialization.jsonObject(with: data, options: [])
+        return value as? [String: Any] ?? [:]
+    }
 }
 #endif
