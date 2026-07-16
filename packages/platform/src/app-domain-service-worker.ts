@@ -2,8 +2,8 @@ const APP_DOMAIN_SAFE_SERVICE_WORKER = `
 const VERSION = "app-v1";
 const CACHE_STATIC = "matrix-os-static-" + VERSION;
 
-self.addEventListener("install", () => {
-  self.skipWaiting();
+self.addEventListener("install", (event) => {
+  event.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener("activate", (event) => {
@@ -28,6 +28,7 @@ function isBypassed(url) {
     p.startsWith("/__session") ||
     p.startsWith("/sign-in") ||
     p.startsWith("/sign-up") ||
+    p.startsWith("/vm/") ||
     p.startsWith("/files/apps/") ||
     p.includes("/__nextjs_") ||
     p.startsWith("/_next/data/")

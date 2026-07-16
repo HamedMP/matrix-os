@@ -349,6 +349,12 @@ write_files:
         }
 
         location /api/ {
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Forwarded-Proto https;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection "upgrade";
           proxy_pass http://127.0.0.1:4000;
         }
 
@@ -481,6 +487,10 @@ runcmd:
     apt_get_update
 
     DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip
+    native_app_packages="dbus-x11 x11-apps xauth xterm"
+    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y ${native_app_packages}; then
+      echo "matrix-host: optional Linux tools package bootstrap failed; matrix-linux-tools.service will retry" >&2
+    fi
     install -d -o root -g root -m 0755 /etc/apparmor.d
     cat >/etc/apparmor.d/bwrap <<'EOF'
     abi <abi/4.0>,
@@ -619,7 +629,8 @@ runcmd:
     systemctl daemon-reload
     loginctl enable-linger matrix
     systemctl start "user@$(id -u matrix).service"
-    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
+    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-developer-tools.service matrix-db-backup.timer nginx
+    systemctl enable matrix-linux-tools.service || echo "matrix-host: optional Linux tools enablement will retry via systemd" >&2
     systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service
     systemctl start --no-block matrix-code-server.service || echo "matrix-host: code-server runtime install will retry via systemd" >&2
     systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2

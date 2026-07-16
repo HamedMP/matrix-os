@@ -153,6 +153,11 @@ import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
 import { listApps } from "./apps.js";
+import {
+  NativeAppSessionService,
+  createDefaultNativeAppRegistry,
+  createNativeAppRoutes,
+} from "./native-apps/index.js";
 import { createAppDb, type AppDb } from "./app-db.js";
 import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
 import { createQueryEngine, type FilterValue, type QueryEngine } from "./app-db-query.js";
@@ -1713,6 +1718,13 @@ export async function createGateway(config: GatewayConfig) {
     readHistory: (query) => systemActivityHistory.list(query),
   }));
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
+  const nativeAppSessionService = new NativeAppSessionService({
+    registry: createDefaultNativeAppRegistry(),
+  });
+  app.route("/api/native-apps", createNativeAppRoutes({
+    service: nativeAppSessionService,
+    upgradeWebSocket,
+  }));
 
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an
@@ -4234,6 +4246,7 @@ export async function createGateway(config: GatewayConfig) {
       canvasSubscriptionHub?.close();
       systemActivityCandidates.clear();
       await channelManager.stop();
+      await nativeAppSessionService.shutdown();
       await processManager.shutdownAll();
       await forwardTunnelHub.close();
       shellSessionReaper.stop();

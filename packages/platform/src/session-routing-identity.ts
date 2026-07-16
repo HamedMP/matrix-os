@@ -8,7 +8,7 @@ import {
   getRunningUserMachineByHandle,
 } from './db.js';
 import { verifySyncJwt } from './sync-jwt.js';
-import { isAppDomainGatewayPath } from './request-routing.js';
+import { isAppDomainGatewayPath, readRuntimeSlotSelection } from './request-routing.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 import {
   APP_ROUTE_COOKIE,
@@ -113,15 +113,23 @@ export function buildShellRouteCookie(handle: string): string {
   ].join('; ');
 }
 
-export function buildShellRuntimeSlotCookie(runtimeSlot: string): string {
+function buildRuntimeSlotCookie(runtimeSlot: string, maxAgeSeconds: number): string {
   return [
     `${SHELL_RUNTIME_SLOT_COOKIE}=${encodeURIComponent(runtimeSlot)}`,
     'Path=/',
     'HttpOnly',
     'Secure',
-    'SameSite=Lax',
-    'Max-Age=600',
+    'SameSite=None',
+    `Max-Age=${maxAgeSeconds}`,
   ].join('; ');
+}
+
+export function buildShellRuntimeSlotCookie(runtimeSlot: string): string {
+  return buildRuntimeSlotCookie(runtimeSlot, 10 * 60);
+}
+
+export function buildNativeAppRuntimeSlotCookie(runtimeSlot: string): string {
+  return buildRuntimeSlotCookie(runtimeSlot, 30 * 60);
 }
 
 export function readShellRuntimeSlotCookie(path: string, cookieHeader: string | undefined): string | null {
@@ -177,6 +185,16 @@ export function hasExplicitVmNativeAppStreamCapability(
   // timing-safely validates the full random stream token against a live session.
   return (method === 'GET' || method === 'HEAD')
     && NATIVE_APP_STREAM_CAPABILITY_PATH.test(route.upstreamPath);
+}
+
+export function resolveExplicitVmRuntimeSlot(
+  rawUrl: string,
+  upstreamPath: string,
+  cookieHeader: string | undefined,
+): string | undefined {
+  const selection = readRuntimeSlotSelection(rawUrl);
+  if (selection.source === 'query') return selection.slot;
+  return readShellRuntimeSlotCookie(upstreamPath, cookieHeader) ?? undefined;
 }
 
 function readGatewayRouteCookie(path: string, cookieHeader: string | undefined): string | null {

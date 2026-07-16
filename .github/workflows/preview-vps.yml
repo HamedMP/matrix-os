@@ -4,7 +4,8 @@
 # running that PR's host bundle, reachable at app.matrix-os.com/vm/pr-<N>.
 #
 # Flow:
-#   deploy   — on label / push while labeled: build bundle v<date>-pr<N>-<sha7>,
+#   deploy   — on label / push while labeled: build bundle v<date>-pr<N>-<sha7>
+#              (with -r<attempt> on workflow reruns),
 #              publish register-only (--channel none, never promoted),
 #              provision pr-<N> if absent, deploy the exact version, comment.
 #   teardown — on PR close: delete the pr-<N> VPS.
@@ -137,6 +138,9 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}"
+          if [ "$GITHUB_RUN_ATTEMPT" != "1" ]; then
+            VERSION="${VERSION}-r${GITHUB_RUN_ATTEMPT}"
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Preview version: $VERSION"
 

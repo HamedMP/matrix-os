@@ -1,0 +1,22 @@
+[Unit]
+Description=Install Matrix OS optional Linux developer tools
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/matrix/bin/matrix-install-linux-tools
+
+[Service]
+Type=oneshot
+User=matrix
+Group=matrix
+Environment=MATRIX_HOME=/home/matrix/home
+Environment=HOME=/home/matrix/home
+Environment=XDG_CONFIG_HOME=/home/matrix/home/.config
+Environment=XDG_DATA_HOME=/home/matrix/home/.local/share
+Environment=XDG_CACHE_HOME=/home/matrix/home/.cache
+ExecStart=/opt/matrix/bin/matrix-install-linux-tools
+Restart=on-failure
+RestartSec=10m
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=multi-user.target

@@ -40,4 +40,50 @@ describe("preview platform workflow", () => {
     expect(deriveOrigin).toBeGreaterThan(bootstrap);
     expect(finalDeploy).toBeGreaterThan(deriveOrigin);
   });
+
+  it("bakes the preview Clerk key and app origin into the Next auth shell", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain(
+      'next_public_clerk_publishable_key="$(gcloud secrets versions access latest --secret next-public-clerk-publishable-key',
+    );
+    expect(workflow).toContain(
+      "next-public-clerk-publishable-key is required to build the preview auth shell.",
+    );
+    expect(workflow).toContain(
+      '_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$next_public_clerk_publishable_key',
+    );
+    expect(workflow).toContain('_NEXT_PUBLIC_MATRIX_APP_URL=$preview_public_url');
+  });
+
+  it("configures the public app origin for the auth shell server runtime", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain(
+      "NEXT_PUBLIC_MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}",
+    );
+  });
+
+  it("accepts the Cloud Run service host used by the preview Cloudflare origin", () => {
+    const workflow = readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain('local app_domain_hosts="$2"');
+    expect(workflow).toContain('MATRIX_APP_DOMAIN_HOSTS=${app_domain_hosts}');
+    expect(workflow).toContain('PREVIEW_SERVICE_DOMAIN="${service_base_url#https://}"');
+    expect(workflow).toContain('PREVIEW_TAGGED_DOMAIN="${PREVIEW_API_ORIGIN#https://}"');
+    expect(workflow).toContain(
+      'PREVIEW_APP_DOMAIN_HOSTS="${PREVIEW_DOMAIN},${PREVIEW_SERVICE_DOMAIN},${PREVIEW_TAGGED_DOMAIN}"',
+    );
+    expect(workflow).toContain('deploy_preview "$PREVIEW_API_ORIGIN" "$PREVIEW_APP_DOMAIN_HOSTS"');
+    expect(workflow).toContain('--set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|');
+  });
 });

@@ -138,6 +138,23 @@ describe("T133: Auth token middleware", () => {
     expect(nextCalled).toBe(true);
   });
 
+  it("rate limits native app stream bearer-auth bypass requests", async () => {
+    const mw = authMiddleware("secret-token");
+    const path = "/api/native-apps/sessions/session_rrrrrrrrrrrrrrrrrrrrrrrr/stream/websocket";
+    for (let i = 0; i < 240; i += 1) {
+      let nextCalled = false;
+      const result = await mw(mockContext(path, undefined, undefined, "203.0.113.240"), async () => { nextCalled = true; });
+      expect(result).toBeUndefined();
+      expect(nextCalled).toBe(true);
+    }
+
+    let nextCalled = false;
+    const result = await mw(mockContext(path, undefined, undefined, "203.0.113.240"), async () => { nextCalled = true; });
+
+    expect(nextCalled).toBe(false);
+    expect(result?.status).toBe(429);
+  });
+
   it("allows Hermes reply delivery only when a capability header is present", async () => {
     const mw = authMiddleware("secret-token");
     let nextCalled = false;
@@ -382,6 +399,25 @@ describe("T133: Auth token middleware", () => {
     );
 
     expect(nextCalled).toBe(false);
+  });
+
+  it("only exempts native app stream paths with validated session IDs", async () => {
+    const mw = authMiddleware("secret-token");
+    let validNextCalled = false;
+    let malformedNextCalled = false;
+
+    await mw(
+      mockContext("/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/"),
+      async () => { validNextCalled = true; },
+    );
+    const malformed = await mw(
+      mockContext("/api/native-apps/sessions/not-a-session/stream/", undefined, undefined, "203.0.113.201"),
+      async () => { malformedNextCalled = true; },
+    );
+
+    expect(validNextCalled).toBe(true);
+    expect(malformedNextCalled).toBe(false);
+    expect(malformed?.status).toBe(401);
   });
 });
 

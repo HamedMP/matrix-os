@@ -4,10 +4,11 @@
 //   - Static shell assets (/_next/static/*, /icons/*, manifest, app icons,
 //     wallpapers, textures, fonts): cache-first.
 //   - Skip everything authenticated/dynamic: /api/*, /v1/*, Clerk, gateway
-//     WebSocket upgrades, anything cross-origin we don't serve.
+//     WebSocket upgrades, explicit /vm/* runtime shells, anything cross-origin
+//     we don't serve.
 // On version bump, old caches are pruned during activate.
 
-const VERSION = "v2";
+const VERSION = "v3";
 const CACHE_STATIC = `matrix-os-static-${VERSION}`;
 const CACHE_HTML = `matrix-os-html-${VERSION}`;
 const PRECACHE = [
@@ -60,6 +61,7 @@ function isBypassed(url) {
     p.startsWith("/__session") ||
     p.startsWith("/sign-in") ||
     p.startsWith("/sign-up") ||
+    p.startsWith("/vm/") ||
     p.startsWith("/files/apps/") ||
     p.includes("/__nextjs_") ||
     p.startsWith("/_next/data/")
@@ -81,7 +83,7 @@ function isStaticAsset(url) {
 
 function isShellNavigation(url) {
   const p = url.pathname;
-  return p === "/" || p.startsWith("/vm/");
+  return p === "/";
 }
 
 self.addEventListener("fetch", (event) => {

@@ -10,6 +10,12 @@ import { useMobileViewport } from "../../shell/src/hooks/useMobileViewport.js";
 import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache.js";
 import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.js";
 
+const nativeAppFlag = vi.hoisted(() => ({ enabled: false }));
+
+vi.mock("../../shell/src/hooks/useNativeLinuxAppsEnabled.js", () => ({
+  useNativeLinuxAppsEnabled: () => nativeAppFlag.enabled,
+}));
+
 vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
   TerminalApp: ({ launchTargetId }: { launchTargetId?: string }) => (
     <div data-testid="terminal-app">
@@ -98,6 +104,7 @@ async function loadMobileShell() {
 
 describe("mobile shell", () => {
   beforeEach(() => {
+    nativeAppFlag.enabled = false;
     const storage = createMemoryStorage();
     Object.defineProperty(window, "localStorage", {
       value: storage,
@@ -294,6 +301,42 @@ describe("mobile shell", () => {
 
     expect(await screen.findByTestId("mobile-launcher-app-apps/notes/index.html")).toBeTruthy();
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/api/shell/bootstrap");
+  });
+
+  it("only discovers native apps when the rollout flag is enabled", async () => {
+    nativeAppFlag.enabled = true;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/native-apps")) {
+        return Promise.resolve(new Response(JSON.stringify({
+          apps: [{ id: "xcalc", name: "XCalc", runtime: "linux-native", enabled: true }],
+        }), { status: 200, headers: { "Content-Type": "application/json" } }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ layout: { windows: [] }, modules: [], apps: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const MobileShell = await loadMobileShell();
+
+    render(<MobileShell />);
+
+    expect(await screen.findByText("XCalc")).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/native-apps"))).toBe(true);
+  });
+
+  it("does not request the native app catalog when the rollout flag is disabled", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      layout: { windows: [] }, modules: [], apps: [],
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    vi.stubGlobal("fetch", fetchMock);
+    const MobileShell = await loadMobileShell();
+
+    render(<MobileShell />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/native-apps"))).toBe(false);
   });
 
   it("hydrates installed mobile apps from the scoped shell snapshot before network refresh", async () => {

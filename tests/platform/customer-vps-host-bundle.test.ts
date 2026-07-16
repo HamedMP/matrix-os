@@ -597,6 +597,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
     expect(workflow).toContain('VERSION="v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}"');
+    expect(workflow).toContain('if [ "$GITHUB_RUN_ATTEMPT" != "1" ]; then');
+    expect(workflow).toContain('VERSION="${VERSION}-r${GITHUB_RUN_ATTEMPT}"');
     expect(workflow).toContain('dist/host-bundle/incremental-manifest.json');
     expect(workflow).toContain('dist/host-bundle/objects/**');
     expect(workflow).toContain('./scripts/publish-release.sh "$VERSION" --channel none');

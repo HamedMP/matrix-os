@@ -32,6 +32,7 @@ readonly UPDATE_EXPANSION_FACTOR="${MATRIX_UPDATE_EXPANSION_FACTOR:-8}"
 readonly LEGACY_UPGRADE_DIR="/opt/matrix-upgrade"
 readonly LEGACY_UPGRADE_TTL_SECONDS="${MATRIX_LEGACY_UPGRADE_TTL_SECONDS:-86400}"
 readonly SYMPHONY_ENV_FILE="/opt/matrix/env/symphony.env"
+readonly LINUX_TOOLS_BOOTSTRAP_MARKER="/var/lib/matrix-sync-agent/linux-tools-bootstrap-v1"
 # Keys this agent owns and rewrites on every sync from platform-provided values.
 # Any other key in symphony.env (e.g. an operator-set SYMPHONY_LINEAR_PROJECT_SLUG)
 # is preserved across updates instead of being wiped.
@@ -318,6 +319,14 @@ apply_update() {
       sudo systemctl start --no-block matrix-symphony.service || true
       log "Symphony service enabled"
     fi
+    if [ -f "$extract_dir/systemd/matrix-linux-tools.service" ]; then
+      if sudo systemctl enable matrix-linux-tools.service \
+        && sudo systemctl restart --no-block matrix-linux-tools.service; then
+        log "Linux tools service enabled and restarted"
+      else
+        log "WARN: failed to enable Linux tools service; systemd will retry independently"
+      fi
+    fi
     if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then
       sudo systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service
       sudo systemctl start --no-block matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service || true
@@ -328,6 +337,7 @@ apply_update() {
   fi
 
   # Start services and health-check
+  configure_gateway_proxy || true
   log "Starting services..."
   sudo systemctl start matrix-gateway matrix-shell
   log "Running health check..."
@@ -523,6 +533,33 @@ maybe_clean_staging() {
   clean_staging || true
 }
 
+bootstrap_linux_tools_service() {
+  if [ -f "$LINUX_TOOLS_BOOTSTRAP_MARKER" ] || [ ! -f /etc/systemd/system/matrix-linux-tools.service ]; then
+    return 0
+  fi
+  sudo install -d -o root -g root -m 0755 "$(dirname "$LINUX_TOOLS_BOOTSTRAP_MARKER")"
+  if sudo systemctl enable matrix-linux-tools.service \
+    && sudo systemctl start --no-block matrix-linux-tools.service; then
+    sudo touch "$LINUX_TOOLS_BOOTSTRAP_MARKER"
+    log "Linux tools bootstrap service triggered"
+  else
+    log "WARN: failed to trigger Linux tools bootstrap service"
+    return 1
+  fi
+}
+
+configure_gateway_proxy() {
+  if [ ! -x /opt/matrix/bin/matrix-configure-gateway-proxy ]; then
+    return 0
+  fi
+  if sudo /opt/matrix/bin/matrix-configure-gateway-proxy; then
+    log "Customer nginx API proxy is current"
+  else
+    log "WARN: failed to update customer nginx API proxy"
+    return 1
+  fi
+}
+
 # ── Main loop ────────────────────────────────────────────────────────
 log "Started for ${MATRIX_MACHINE_ID} (version: $(current_version))"
 if [ -x "$BIN_DIR/matrix-ensure-swap" ]; then
@@ -532,6 +569,8 @@ mkdir -p "$STAGING_DIR"
 clean_staging
 clean_legacy_upgrade_artifacts || true
 last_staging_cleanup="$(date +%s)"
+bootstrap_linux_tools_service || true
+configure_gateway_proxy || true
 
 while true; do
   # React to trigger files and signals

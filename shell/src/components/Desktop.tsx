@@ -7,6 +7,7 @@ import { useCommandStore } from "@/stores/commands";
 import { useDesktopMode, type DesktopMode } from "@/stores/desktop-mode";
 import { useVocalStore } from "@/stores/vocal";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
+import { useNativeLinuxAppsEnabled } from "@/hooks/useNativeLinuxAppsEnabled";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { saveDesktopConfigPatch } from "@/hooks/useDesktopConfig";
 import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
@@ -46,6 +47,7 @@ import { iconUrlForSlug } from "@/lib/app-launch";
 import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
+import type { NativeAppSummary } from "@/lib/native-apps";
 import { enqueueTerminalLaunch, TERMINAL_SETUP_WINDOW_PATH } from "@/lib/terminal-launch";
 import {
   loadShellSnapshot,
@@ -158,6 +160,7 @@ interface DesktopProps {
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the state values here (interacting, settingsOpen, chatOpen, minimizingIds, firstRunStatus, manualSetupVisible, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
 export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope }: DesktopProps) {
   const cacheKey = cacheScope?.storageKey;
+  const nativeLinuxAppsEnabled = useNativeLinuxAppsEnabled();
   const windows = useWindowManager((s) => s.windows);
   const apps = useWindowManager((s) => s.apps);
   const wmCloseWindow = useWindowManager((s) => s.closeWindow);
@@ -219,7 +222,17 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
-    const timeout = window.setTimeout(() => controller.abort(), GATEWAY_FETCH_TIMEOUT_MS);
+    let settled = false;
+    const resolveFirstRunStatus = (nextStatus: DesktopFirstRunStatus) => {
+      if (cancelled || settled) return;
+      settled = true;
+      firstRunStatusRef.current = nextStatus;
+      setFirstRunStatus(nextStatus);
+    };
+    const timeout = window.setTimeout(() => {
+      controller.abort();
+      resolveFirstRunStatus("ready");
+    }, GATEWAY_FETCH_TIMEOUT_MS);
     void fetch("/api/settings/onboarding-status", {
       cache: "no-store",
       signal: controller.signal,
@@ -227,19 +240,13 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       .then(async (res) => {
         if (!res.ok) throw new Error("onboarding status unavailable");
         const nextStatus = parseDesktopFirstRunStatus(await res.json());
-        if (!cancelled) {
-          firstRunStatusRef.current = nextStatus;
-          setFirstRunStatus(nextStatus);
-        }
+        resolveFirstRunStatus(nextStatus);
       })
       .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
+        if (!controller.signal.aborted && !settled) {
           console.warn("[desktop] first-run status check failed:", err);
         }
-        if (!cancelled) {
-          firstRunStatusRef.current = "ready";
-          setFirstRunStatus("ready");
-        }
+        resolveFirstRunStatus("ready");
       })
       .finally(() => {
         window.clearTimeout(timeout);
@@ -532,6 +539,23 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       const data = await response.json() as T;
       return isLoadAborted() ? null : data;
     };
+    const queueSavedNativeLayouts = (
+      bootstrap: ShellBootstrap,
+      nativeApps: NativeAppSummary[],
+    ) => {
+      if (isLoadAborted() || isPreVpsBillingSetupRoute()) return;
+
+      const savedWindows = (bootstrap.layout?.windows ?? []).map(normalizeBuiltInLayoutWindow);
+      const layoutMap = new Map(savedWindows.map((window) => [window.path, window]));
+      const nativeLayouts = nativeApps
+        .filter((nativeApp) => nativeApp.enabled && nativeApp.runtime === "linux-native")
+        .map((nativeApp) => layoutMap.get(`native:${nativeApp.id}`))
+        .filter((window): window is LayoutWindow => window !== undefined);
+
+      if (nativeLayouts.length > 0) {
+        wmLoadLayout(nativeLayouts);
+      }
+    };
     const applyBootstrap = async (
       bootstrap: ShellBootstrap,
       options: { resolveModuleMetadata: boolean },
@@ -685,11 +709,32 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       if (bootstrap === null) return;
       if (bootstrapRes?.ok) saveShellSnapshot(cacheScope, { bootstrap });
       await applyBootstrap(bootstrap, { resolveModuleMetadata: true });
+      if (!nativeLinuxAppsEnabled) return;
+      const nativeLayoutBootstrap = bootstrapRes?.ok ? bootstrap : cachedBootstrap;
+      const nativeRes = await fetchForLoad(`${GATEWAY_URL}/api/native-apps`).catch((err) => {
+        if (isLoadAborted()) return null;
+        console.warn("[desktop] Failed to fetch native app registry:", err);
+        return undefined;
+      });
+      if (nativeRes === null) return;
+      if (nativeRes?.ok) {
+        const nativeRegistry = await readJsonForLoad<{ apps?: NativeAppSummary[] }>(nativeRes);
+        if (nativeRegistry?.apps) {
+          for (const nativeApp of nativeRegistry.apps) {
+            if (isLoadAborted()) return;
+            if (!nativeApp.enabled || nativeApp.runtime !== "linux-native") continue;
+            addApp(nativeApp.name, `native:${nativeApp.id}`, "terminal", iconUrlForSlug("terminal"));
+          }
+          if (nativeLayoutBootstrap) {
+            queueSavedNativeLayouts(nativeLayoutBootstrap, nativeRegistry.apps);
+          }
+        }
+      }
     } catch (err) {
       if (isLoadAborted()) return;
       console.warn("[desktop] Failed to load desktop modules:", err);
     }
-  }, [addApp, cacheScope, openWindow, wmLoadLayout]);
+  }, [addApp, cacheScope, nativeLinuxAppsEnabled, openWindow, wmLoadLayout]);
 
   useEffect(() => {
     const controller = new AbortController();

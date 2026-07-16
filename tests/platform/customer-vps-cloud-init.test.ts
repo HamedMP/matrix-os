@@ -297,7 +297,7 @@ exit 99
     expect(codeServerBlock).not.toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
     expect(cloudInit).toContain('TimeoutStartSec=1800');
     expect(cloudInit).toContain(
-      'systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
+      'systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-developer-tools.service matrix-db-backup.timer nginx',
     );
     expect(cloudInit).toContain(
       'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service',
@@ -309,6 +309,7 @@ exit 99
     expect(cloudInit).toContain('systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-hermes.service || echo "matrix-host: optional Hermes install will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-hermes-dashboard.service || echo "matrix-host: optional Hermes dashboard will retry via systemd" >&2');
+    expect(cloudInit).toContain('systemctl enable matrix-linux-tools.service || echo "matrix-host: optional Linux tools enablement will retry via systemd" >&2');
     expect(cloudInit.indexOf('systemctl start matrix-restore.service matrix-gateway.service')).toBeLessThan(
       cloudInit.indexOf('systemctl start --no-block matrix-hermes.service'),
     );
@@ -351,7 +352,7 @@ exit 99
     const cloudInit = await loadCustomerVpsCloudInitTemplate();
 
     expect(cloudInit).toContain('runcmd:');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-developer-tools.service matrix-db-backup.timer');
     expect(cloudInit).toContain('install -o root -g root -m 0644 /opt/matrix/systemd/*.service /etc/systemd/system/');
     expect(cloudInit).toContain('/opt/matrix/messaging /opt/matrix/messaging/bin');
     expect(cloudInit).toContain('if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then');
@@ -469,6 +470,8 @@ exit 99
     expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common');
     expect(cloudInit).toContain('add-apt-repository -y universe');
     expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip');
+    expect(cloudInit).toContain('if ! DEBIAN_FRONTEND=noninteractive apt-get install -y ${native_app_packages}; then');
+    expect(cloudInit).toContain('echo "matrix-host: optional Linux tools package bootstrap failed; matrix-linux-tools.service will retry" >&2');
     expect(cloudInit).toContain("cat >/etc/apparmor.d/bwrap <<'EOF'");
     expect(cloudInit).toContain('profile bwrap /usr/bin/bwrap flags=(unconfined) {');
     expect(cloudInit).toContain('      userns,');
@@ -542,6 +545,70 @@ exit 99
     expect(installer).toContain('sudo ln -sf "$BREW_PREFIX/bin/gh" /usr/local/bin/gh');
     expect(installer).not.toContain('sudo ln -sf "$BREW_PREFIX/bin/gt" /usr/local/bin/gt');
     expect(bundleScript).toContain('matrix-install-linux-tools');
+  });
+
+  it('provisions host packages required by native Linux apps', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-linux-tools'), 'utf8');
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    for (const pkg of ['dbus-x11', 'x11-apps', 'xauth', 'xterm']) {
+      expect(cloudInit).toContain(pkg);
+      expect(installer).toContain(pkg);
+    }
+    expect(cloudInit).not.toContain('native_app_packages="dbus-x11 x11-apps xauth xpra xterm"');
+    expect(installer).toContain('"xpra=${XPRA_VERSION}"');
+    expect(installer).toContain('XPRA_VERSION="5.1.6-r0-1"');
+    expect(installer).toContain('XPRA_HTML5_VERSION="17.2-r0-1"');
+    expect(installer).toContain('URIs: https://xpra.org/lts');
+    expect(installer).toContain('B4993B57323148E37977E5D873254CAD17978FAF');
+    expect(installer).toContain('xpra-x11=${XPRA_VERSION}');
+    expect(installer).toContain('xpra-html5=${XPRA_HTML5_VERSION}');
+    expect(installer).toContain('xpra_install_failed=0');
+    expect(installer).toContain('install_xpra_lts || xpra_install_failed=1');
+    expect(installer).toContain('if [ "$xpra_install_failed" -ne 0 ]; then');
+    expect(existsSync(join(root, 'distro/customer-vps/systemd/matrix-linux-tools.service'))).toBe(true);
+    expect(syncAgent).toContain('matrix-linux-tools.service');
+    expect(syncAgent).toContain('systemctl start --no-block matrix-linux-tools.service');
+    expect(syncAgent).toContain('systemctl restart --no-block matrix-linux-tools.service');
+    expect(syncAgent).toContain('if sudo systemctl enable matrix-linux-tools.service \\');
+    expect(syncAgent).not.toMatch(/^\s*sudo systemctl enable matrix-linux-tools\.service\s*$/m);
+    expect(syncAgent).toContain('Linux tools service enabled');
+    expect(syncAgent).toContain('LINUX_TOOLS_BOOTSTRAP_MARKER');
+    expect(syncAgent).toContain(
+      'bootstrap_linux_tools_service || true\nconfigure_gateway_proxy || true\n\nwhile true; do',
+    );
+  });
+
+  it('forwards native app websocket upgrades through the customer nginx API route', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const gatewayUnit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-gateway.service'), 'utf8');
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const configuratorPath = join(root, 'distro/customer-vps/host-bin/matrix-configure-gateway-proxy');
+    const configurator = readFileSync(configuratorPath, 'utf8');
+
+    const apiLocation = cloudInit.slice(
+      cloudInit.indexOf('        location /api/ {'),
+      cloudInit.indexOf('        location /files/ {'),
+    );
+    expect(apiLocation).toContain('proxy_http_version 1.1;');
+    expect(apiLocation).toContain('proxy_set_header Host $host;');
+    expect(apiLocation).toContain('proxy_set_header X-Forwarded-Proto https;');
+    expect(apiLocation).toContain('proxy_set_header X-Real-IP $remote_addr;');
+    expect(apiLocation).toContain('proxy_set_header Upgrade $http_upgrade;');
+    expect(apiLocation).toContain('proxy_set_header Connection "upgrade";');
+    expect(configurator).toContain('"proxy_set_header Host $host;",');
+    expect(configurator).toContain('"proxy_set_header X-Forwarded-Proto https;",');
+    expect(configurator).toContain('"proxy_set_header X-Real-IP $remote_addr;",');
+    expect(existsSync(configuratorPath)).toBe(true);
+    expect(cloudInit).not.toContain('ExecStartPre=+/opt/matrix/bin/matrix-configure-gateway-proxy');
+    expect(gatewayUnit).not.toContain('ExecStartPre=+/opt/matrix/bin/matrix-configure-gateway-proxy');
+    expect(syncAgent).toContain(
+      'configure_gateway_proxy || true\n  log "Starting services..."',
+    );
+    expect(syncAgent).toContain('configure_gateway_proxy || true\n\nwhile true; do');
   });
 
   it('installs a customer host code-server service behind restore completion', () => {
@@ -700,7 +767,7 @@ exit 99
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-developer-tools.service matrix-db-backup.timer');
   });
 
   it('includes a bounded matrixctl recovery wrapper', () => {

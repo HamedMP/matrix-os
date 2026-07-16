@@ -14,6 +14,7 @@ import {
   markAuthContextReady,
   requireRequestPrincipal,
 } from "./request-principal.js";
+import { SAFE_NATIVE_SESSION_ID } from "./native-apps/registry.js";
 
 export { AUTH_CONTEXT_READY_CONTEXT_KEY, JWT_CLAIMS_CONTEXT_KEY, markAuthContextReady };
 
@@ -76,6 +77,10 @@ const PUBLIC_PREFIXES = [
 // Single prefix -- no /files/apps/ entry because iframe navigation uses
 // /apps/:slug/* after spec 063.
 const APP_IFRAME_PREFIXES = ["/apps/"];
+const NATIVE_APP_SESSION_ID_SEGMENT = SAFE_NATIVE_SESSION_ID.source.replace(/^\^/, "").replace(/\$$/, "");
+const NATIVE_APP_STREAM_PATH = new RegExp(
+  `^/api/native-apps/sessions/${NATIVE_APP_SESSION_ID_SEGMENT}/stream(?:/|$)`,
+);
 // Paths that authenticate by HMAC signature rather than bearer token.
 // They bypass bearer auth but MUST still pass through a rate limiter --
 // HMAC verification is not cheap enough to absorb a flood, and invalid
@@ -137,6 +142,15 @@ const webhookRateLimiter = createRateLimiter({
   lockoutMs: 30_000,
 });
 
+// xpra stream paths serve the HTML5 client assets and WebSocket upgrades after
+// route-level cookie/token authentication, so they need a higher ceiling than
+// failed bearer auth while still avoiding an unbounded auth-bypass surface.
+const nativeAppStreamRateLimiter = createRateLimiter({
+  maxAttempts: 240,
+  windowMs: 60_000,
+  lockoutMs: 30_000,
+});
+
 function getClientIp(c: { req: { header: (name: string) => string | undefined } }): string {
   const forwardedFor = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
   return (
@@ -170,6 +184,14 @@ export function authMiddleware(
     // not by bearer token. Exempt them here so the session middleware
     // (mounted separately) is the single verifier.
     if (APP_IFRAME_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
+      return nextWithReady(c, next);
+    }
+
+    if (NATIVE_APP_STREAM_PATH.test(normalizedPath)) {
+      const ip = getClientIp(c);
+      if (!nativeAppStreamRateLimiter.check(ip)) {
+        return tooManyRequests(c);
+      }
       return nextWithReady(c, next);
     }
 
