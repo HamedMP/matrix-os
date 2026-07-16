@@ -807,6 +807,57 @@ describe("zellij terminal WebSocket", () => {
     handler.dispose();
   });
 
+  it("re-checks attach capacity after awaiting a shared attach startup", async () => {
+    const seed = deferred<[]>();
+    const seedStarted = deferred<void>();
+    const pty = new FakePty();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => null),
+        readSince: vi.fn(() => {
+          seedStarted.resolve();
+          return seed.promise;
+        }),
+        append: vi.fn(async () => undefined),
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+      maxAttachedClients: 1,
+      staleAttachTtlMs: 60_000,
+    });
+
+    const firstWs = socket();
+    const secondWs = socket();
+    const firstOpen = handler.open({ ws: firstWs, session: "main", fromSeq: 0 });
+    await seedStarted.promise;
+    const secondOpen = handler.open({ ws: secondWs, session: "main", fromSeq: 0 });
+    await Promise.resolve();
+
+    seed.resolve([]);
+    await Promise.all([firstOpen, secondOpen]);
+
+    const attached = [firstWs, secondWs].filter((ws) => (
+      ws.sent.some((msg) => (
+        typeof msg === "object" && msg !== null && (msg as { type?: unknown }).type === "attached"
+      ))
+    ));
+    const rejected = [firstWs, secondWs].filter((ws) => (
+      ws.sent.some((msg) => (
+        typeof msg === "object" &&
+        msg !== null &&
+        (msg as { type?: unknown; code?: unknown }).type === "error" &&
+        (msg as { code?: unknown }).code === "attach_limit"
+      ))
+    ));
+    expect(attached).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.closed).toBe(true);
+    handler.dispose();
+  });
+
   it("rejects new sessions at runtime capacity when every tracked session has live clients", async () => {
     const handler = createShellWsHandler({
       registry: {

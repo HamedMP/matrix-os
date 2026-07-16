@@ -488,6 +488,12 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       return { onMessage: () => undefined, onClose: () => undefined };
     }
 
+    // One or more concurrent opens may have filled the final client slot while
+    // this call awaited the shared attach startup.
+    if (runtime.conns.size >= maxAttachedClients && !evictStaleOrReject(runtime, ws)) {
+      return { onMessage: () => undefined, onClose: () => undefined };
+    }
+
     const conn: ConnState = {
       ws,
       openedAt: Date.now(),
