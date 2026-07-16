@@ -420,13 +420,13 @@ describe("shell REST client", () => {
     await vi.advanceTimersByTimeAsync(5);
 
     expect(ControlledWebSocket.instances).toHaveLength(2);
-    expect(errorOutput.write).toHaveBeenCalledWith("\r\nConnection lost. Reconnecting...\r\n");
-    expect(output.write).toHaveBeenCalledWith(expect.stringContaining("Matrix shell disconnected"));
+    expect(errorOutput.write).not.toHaveBeenCalledWith("\r\nConnection lost. Reconnecting...\r\n");
+    expect(output.write).not.toHaveBeenCalledWith(expect.stringContaining("Matrix shell disconnected"));
     ControlledWebSocket.last?.emit("open");
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     const second = ControlledWebSocket.last!;
-    expect(errorOutput.write).toHaveBeenCalledWith("\r\nConnection restored.\r\n");
-    expect(output.write).toHaveBeenCalledWith(expect.stringContaining("\u001b[1A"));
+    expect(errorOutput.write).not.toHaveBeenCalledWith("\r\nConnection restored.\r\n");
+    expect(output.write).not.toHaveBeenCalledWith(expect.stringContaining("\u001b[1A"));
     expect(output.write).not.toHaveBeenCalledWith(expect.stringContaining("connection restored"));
     await vi.advanceTimersByTimeAsync(80);
     expect(second.closed).toBe(false);
@@ -434,7 +434,7 @@ describe("shell REST client", () => {
     await expect(attached).resolves.toEqual({ detached: false });
   });
 
-  it("clears the reconnect banner from terminal output once attach is restored", async () => {
+  it("keeps reconnect lifecycle notices out of the terminal byte stream", async () => {
     vi.useFakeTimers();
     const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
     const input = new EventEmitter() as NodeJS.ReadStream;
@@ -454,12 +454,59 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("close");
     await vi.advanceTimersByTimeAsync(5);
 
-    expect(output.write).toHaveBeenCalledWith(expect.stringContaining("Matrix shell disconnected"));
+    expect(output.write).not.toHaveBeenCalledWith(expect.stringContaining("Matrix shell disconnected"));
+    expect(errorOutput.write).not.toHaveBeenCalledWith("\r\nConnection lost. Reconnecting...\r\n");
 
     ControlledWebSocket.last?.emit("open");
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
 
-    expect(output.write).toHaveBeenLastCalledWith("\r\u001b[2K\u001b[1A\r\u001b[2K\u001b[1A\r\u001b[2K");
+    expect(output.write).not.toHaveBeenCalledWith("\r\u001b[2K\u001b[1A\r\u001b[2K\u001b[1A\r\u001b[2K");
+    expect(errorOutput.write).not.toHaveBeenCalledWith("\r\nConnection restored.\r\n");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false });
+  });
+
+  it("ignores stale socket events after a reconnect owns the attach", async () => {
+    vi.useFakeTimers();
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+      reconnectBaseDelayMs: 5,
+      reconnectMaxDelayMs: 5,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "output", data: "ready", seq: 41 }));
+    const first = ControlledWebSocket.last!;
+    const staleMessage = first.listeners.get("message");
+    const staleError = first.listeners.get("error");
+
+    first.emit("close");
+    await vi.advanceTimersByTimeAsync(5);
+    const second = ControlledWebSocket.last!;
+    second.emit("open");
+    second.emit("message", JSON.stringify({ type: "attached" }));
+
+    staleMessage?.(JSON.stringify({ type: "output", data: "stale", seq: 0 }));
+    staleError?.(new Error("WebSocket was closed before the connection was established"));
+
+    expect(output.write).toHaveBeenCalledWith("ready");
+    expect(output.write).not.toHaveBeenCalledWith("stale");
+    expect(second.closed).toBe(false);
+
+    second.emit("close");
+    await vi.advanceTimersByTimeAsync(5);
+    expect(ControlledWebSocket.lastUrl).toBe("ws://gateway/ws/terminal/session?session=main&fromSeq=42");
+
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
     await expect(attached).resolves.toEqual({ detached: false });
   });

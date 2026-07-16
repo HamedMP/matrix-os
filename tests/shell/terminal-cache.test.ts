@@ -101,6 +101,9 @@ describe("Terminal Cache", () => {
 
     const cached = getCached("pane-1");
     expect(cached!.sessionId).toBe("session-2");
+    expect((entry1.ws as unknown as { send: ReturnType<typeof vi.fn> }).send).toHaveBeenCalledWith(JSON.stringify({ type: "detach" }));
+    expect((entry1.ws as unknown as { close: ReturnType<typeof vi.fn> }).close).toHaveBeenCalledOnce();
+    expect((entry1.terminal as unknown as { dispose: ReturnType<typeof vi.fn> }).dispose).toHaveBeenCalledOnce();
   });
 
   it("supports multiple panes cached simultaneously", () => {

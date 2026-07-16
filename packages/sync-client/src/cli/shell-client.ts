@@ -83,6 +83,7 @@ export interface ShellAttachOptions {
   heartbeatMissesBeforeReconnect?: number;
   reconnectBaseDelayMs?: number;
   reconnectMaxDelayMs?: number;
+  showReconnectStatus?: boolean;
   WebSocketImpl?: new (url: string, options?: { headers?: Record<string, string> }) => AttachWebSocket;
   richPaste?: {
     enabled?: boolean;
@@ -750,11 +751,19 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       return new Promise<{ detached: boolean }>((resolve, reject) => {
         let settled = false;
         let currentWs: AttachWebSocket | null = null;
+        let currentSocketListeners: {
+          ws: AttachWebSocket;
+          onOpen: () => void;
+          onMessage: (chunk: unknown) => void;
+          onClose: () => void;
+          onError: (err: unknown) => void;
+        } | null = null;
         let socketOpen = false;
         let everAttached = false;
         let rawModeEnabled = false;
         let reconnecting = false;
         let reconnectAttempt = 0;
+        let socketGeneration = 0;
         let lastSeq: number | undefined;
         const queuedFrames: string[] = [];
         let queuedFrameBytes = 0;
@@ -935,10 +944,13 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           }
           clearTimeout(attachTimeout);
           stopHeartbeat();
-          currentWs.off?.("open", onOpen);
-          currentWs.off?.("message", onMessage);
-          currentWs.off?.("close", onClose);
-          currentWs.off?.("error", onError);
+          if (currentSocketListeners) {
+            currentSocketListeners.ws.off?.("open", currentSocketListeners.onOpen);
+            currentSocketListeners.ws.off?.("message", currentSocketListeners.onMessage);
+            currentSocketListeners.ws.off?.("close", currentSocketListeners.onClose);
+            currentSocketListeners.ws.off?.("error", currentSocketListeners.onError);
+          }
+          currentSocketListeners = null;
           currentWs = null;
           socketOpen = false;
         };
@@ -947,10 +959,14 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             return;
           }
           cleanupSocket();
-          currentWs = new WebSocketImpl(createAttachUrl(name, {
+          const generation = socketGeneration + 1;
+          socketGeneration = generation;
+          const ws = new WebSocketImpl(createAttachUrl(name, {
             ...attachOptions,
             fromSeq: currentFromSeq(),
           }), { headers });
+          currentWs = ws;
+          const isCurrentSocket = () => currentWs === ws && socketGeneration === generation && !settled;
           attachTimeout = setTimeout(() => {
             const timedOutWs = currentWs;
             timedOutWs?.close();
@@ -964,10 +980,25 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             settle(() => reject(Object.assign(new Error("Request failed"), { code: "attach_timeout" })));
           }, timeoutMs);
           attachTimeout.unref?.();
-          currentWs.on("open", onOpen);
-          currentWs.on("message", onMessage);
-          currentWs.on("close", onClose);
-          currentWs.on("error", onError);
+          currentSocketListeners = {
+            ws,
+            onOpen: () => {
+              if (isCurrentSocket()) onOpen();
+            },
+            onMessage: (chunk: unknown) => {
+              if (isCurrentSocket()) onMessage(chunk);
+            },
+            onClose: () => {
+              if (isCurrentSocket()) onClose();
+            },
+            onError: (err: unknown) => {
+              if (isCurrentSocket()) onError(err);
+            },
+          };
+          ws.on("open", currentSocketListeners.onOpen);
+          ws.on("message", currentSocketListeners.onMessage);
+          ws.on("close", currentSocketListeners.onClose);
+          ws.on("error", currentSocketListeners.onError);
         };
         const scheduleReconnect = () => {
           if (settled) {
@@ -976,7 +1007,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           if (reconnectTimer) {
             return;
           }
-          if (!reconnecting) {
+          if (!reconnecting && attachOptions.showReconnectStatus === true) {
             writeError("\r\nConnection lost. Reconnecting...\r\n");
             writeOutput(SHELL_ATTACH_RECONNECT_NOTICE);
             reconnectNoticeVisible = true;
@@ -1273,18 +1304,20 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             startHeartbeat();
             if (reconnecting) {
               reconnecting = false;
-              writeError("\r\nConnection restored.\r\n");
-              if (reconnectNoticeVisible) {
-                writeOutput(SHELL_ATTACH_RECONNECT_NOTICE_CLEAR);
-                reconnectNoticeVisible = false;
+              if (attachOptions.showReconnectStatus === true) {
+                writeError("\r\nConnection restored.\r\n");
               }
+              if (reconnectNoticeVisible && attachOptions.showReconnectStatus === true) {
+                writeOutput(SHELL_ATTACH_RECONNECT_NOTICE_CLEAR);
+              }
+              reconnectNoticeVisible = false;
             }
             schedulePostAttachResizeFrames();
           } else if (msg.type === "output" && typeof msg.data === "string") {
             noteRemoteActivity();
             inputFilter.noteRemoteOutput();
             if (writeRemoteOutput(msg.data) && Number.isSafeInteger(msg.seq) && (msg.seq as number) >= 0) {
-              lastSeq = msg.seq as number;
+              lastSeq = Math.max(lastSeq ?? -1, msg.seq as number);
             }
           } else if (msg.type === "pong") {
             noteRemoteActivity();

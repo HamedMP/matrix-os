@@ -5,7 +5,10 @@ import { PendingPersistQueue } from "./output-pipeline.js";
 import type { ScrollbackStore } from "./scrollback-store.js";
 import { validateSessionName } from "./names.js";
 import type { ShellAttachProcess } from "./zellij.js";
-import { createTerminalOutputCompatStream } from "../terminal-output-compat.js";
+import {
+  createTerminalOutputCompatStream,
+  type TerminalOutputCompatStream,
+} from "../terminal-output-compat.js";
 
 const ShellWsInputSchema = z.object({
   type: z.literal("input"),
@@ -59,7 +62,9 @@ interface ShellWsAdapter {
 
 export interface ShellWsFlowControlOptions {
   highWaterMark?: number;
+  /** @deprecated Shared attach output is no longer paused; slow sockets skip frames instead. */
   lowWaterMark?: number;
+  /** @deprecated Shared attach output is no longer paused; slow sockets skip frames instead. */
   drainIntervalMs?: number;
 }
 
@@ -73,6 +78,7 @@ export interface ShellWsHandlerOptions {
   maxPendingPersistBytes?: number;
   maxAttachedClients?: number;
   staleAttachTtlMs?: number;
+  idleAttachGraceMs?: number;
   flowControl?: ShellWsFlowControlOptions;
 }
 
@@ -116,31 +122,46 @@ function socketBufferedAmount(ws: ShellWsSocket): number {
 
 interface ConnState {
   ws: ShellWsSocket;
-  child: ShellAttachProcess;
   openedAt: number;
   lastActivityAt: number;
-  paused: boolean;
   closed: boolean;
   close: () => void;
 }
 
 interface SessionRuntime {
+  name: string;
   buffer: ShellReplayBuffer;
   queue: PendingPersistQueue | null;
   conns: Set<ConnState>;
-  recorder: ConnState | null;
+  child: ShellAttachProcess | null;
+  abortController: AbortController | null;
+  dataDisposable: { dispose(): void } | null;
+  exitDisposable: { dispose(): void } | null;
+  outputCompat: TerminalOutputCompatStream | null;
+  attachPromise: Promise<boolean> | null;
+  idleCloseTimer: NodeJS.Timeout | null;
+  disposed: boolean;
 }
 
 export function createShellWsHandler(options: ShellWsHandlerOptions) {
   const maxBuffers = options.maxBuffers ?? 20;
   const maxAttachedClients = options.maxAttachedClients ?? 8;
   const staleAttachTtlMs = options.staleAttachTtlMs ?? 60_000;
+  const idleAttachGraceMs = options.idleAttachGraceMs ?? 2_000;
   const highWaterMark = options.flowControl?.highWaterMark ?? 1024 * 1024;
-  const lowWaterMark = options.flowControl?.lowWaterMark ?? 256 * 1024;
-  const drainIntervalMs = options.flowControl?.drainIntervalMs ?? 500;
 
   const runtimes = new Map<string, SessionRuntime>();
-  let drainTimer: NodeJS.Timeout | null = null;
+
+  function createQueue(name: string): PendingPersistQueue | null {
+    return options.scrollbackStore
+      ? new PendingPersistQueue({
+          store: options.scrollbackStore,
+          sessionName: name,
+          flushIntervalMs: options.persistFlushIntervalMs,
+          maxPendingBytes: options.maxPendingPersistBytes,
+        })
+      : null;
+  }
 
   function runtimeFor(name: string): SessionRuntime | null {
     const existing = runtimes.get(name);
@@ -154,9 +175,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       for (const [candidateName, candidate] of runtimes) {
         if (candidate.conns.size === 0) {
           runtimes.delete(candidateName);
-          void candidate.queue?.dispose().catch((err: unknown) => {
-            console.warn("[shell] evicted runtime flush failed:", err instanceof Error ? err.message : String(err));
-          });
+          void disposeRuntime(candidate, "evicted runtime flush failed");
           evicted = true;
           break;
         }
@@ -172,84 +191,232 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       scrollbackStore: options.scrollbackStore,
       sessionName: name,
     });
-    const queue = options.scrollbackStore
-      ? new PendingPersistQueue({
-          store: options.scrollbackStore,
-          sessionName: name,
-          flushIntervalMs: options.persistFlushIntervalMs,
-          maxPendingBytes: options.maxPendingPersistBytes,
-        })
-      : null;
-    const runtime: SessionRuntime = { buffer, queue, conns: new Set(), recorder: null };
+    const runtime: SessionRuntime = {
+      name,
+      buffer,
+      queue: createQueue(name),
+      conns: new Set(),
+      child: null,
+      abortController: null,
+      dataDisposable: null,
+      exitDisposable: null,
+      outputCompat: null,
+      attachPromise: null,
+      idleCloseTimer: null,
+      disposed: false,
+    };
     runtimes.set(name, runtime);
     return runtime;
   }
 
-  function electRecorder(runtime: SessionRuntime, exclude?: ConnState): void {
-    let oldest: ConnState | null = null;
-    for (const conn of runtime.conns) {
-      if (conn === exclude || conn.closed) {
-        continue;
-      }
-      if (!oldest || conn.openedAt < oldest.openedAt) {
-        oldest = conn;
-      }
-    }
-    runtime.recorder = oldest;
+  function canUseRuntime(runtime: SessionRuntime): boolean {
+    return !runtime.disposed && runtimes.get(runtime.name) === runtime;
   }
 
-  function ensureDrainTimer(): void {
-    if (drainTimer) {
+  function canUseAttachPromise(runtime: SessionRuntime, attachPromise: Promise<boolean>): boolean {
+    return canUseRuntime(runtime) && runtime.attachPromise === attachPromise;
+  }
+
+  function cancelIdleClose(runtime: SessionRuntime): void {
+    if (!runtime.idleCloseTimer) {
       return;
     }
-    drainTimer = setInterval(() => {
-      let anyPaused = false;
-      for (const runtime of runtimes.values()) {
-        for (const conn of runtime.conns) {
-          if (!conn.paused) {
-            continue;
-          }
-          if (socketBufferedAmount(conn.ws) <= lowWaterMark) {
-            conn.paused = false;
-            conn.child.resume?.();
-          } else {
-            anyPaused = true;
-          }
-        }
-      }
-      if (!anyPaused && drainTimer) {
-        clearInterval(drainTimer);
-        drainTimer = null;
-      }
-    }, drainIntervalMs);
-    drainTimer.unref?.();
+    clearTimeout(runtime.idleCloseTimer);
+    runtime.idleCloseTimer = null;
   }
 
-  /**
-   * Deliver a frame with backpressure. Returns false when the frame was
-   * skipped because the socket is over the high-water mark and the connection
-   * cannot be paused (a sole recorder must keep producing for persistence).
-   */
-  function deliver(runtime: SessionRuntime, conn: ConnState, msg: unknown): boolean {
+  function clearSharedAttach(runtime: SessionRuntime): void {
+    cancelIdleClose(runtime);
+    runtime.dataDisposable?.dispose();
+    runtime.exitDisposable?.dispose();
+    runtime.abortController?.abort();
+    runtime.dataDisposable = null;
+    runtime.exitDisposable = null;
+    runtime.abortController = null;
+    runtime.child = null;
+    runtime.outputCompat = null;
+    runtime.attachPromise = null;
+  }
+
+  function deliver(conn: ConnState, msg: unknown): boolean {
     if (socketBufferedAmount(conn.ws) > highWaterMark) {
-      if (runtime.recorder === conn && runtime.conns.size > 1) {
-        electRecorder(runtime, conn);
-      }
-      if (runtime.recorder !== conn) {
-        if (!conn.paused) {
-          conn.paused = true;
-          conn.child.pause?.();
-          ensureDrainTimer();
-        }
-        return false;
-      }
-      // Sole recorder: never pause the stream that feeds persistence; skip
-      // delivery to the saturated socket instead. The client recovers via
-      // seq-based replay on drain/reconnect.
       return false;
     }
     sendJson(conn.ws, msg);
     return true;
+  }
+
+  function emitOutput(runtime: SessionRuntime, data: string, finalConn?: ConnState): void {
+    if (data.length === 0) {
+      return;
+    }
+    const result = runtime.buffer.writeLive(data);
+    const frame = { type: "output", seq: result.seq, data };
+    for (const conn of runtime.conns) {
+      if (!conn.closed || conn === finalConn) {
+        deliver(conn, frame);
+      }
+    }
+    if (result.records.length > 0) {
+      runtime.queue?.enqueue(result.records);
+    }
+  }
+
+  async function flushAndRotateQueue(
+    runtime: SessionRuntime,
+    warnContext: string,
+    recreate: boolean,
+  ): Promise<void> {
+    const queue = runtime.queue;
+    runtime.queue = recreate ? createQueue(runtime.name) : null;
+    if (!queue) {
+      return;
+    }
+    await queue.dispose().catch((err: unknown) => {
+      console.warn(`[shell] ${warnContext}:`, err instanceof Error ? err.message : String(err));
+    });
+  }
+
+  async function closeSharedAttach(
+    runtime: SessionRuntime,
+    warnContext = "final scrollback flush failed",
+    recreateQueue = true,
+  ): Promise<void> {
+    const child = runtime.child;
+    if (runtime.outputCompat) {
+      emitOutput(runtime, runtime.outputCompat.flush());
+    }
+    clearSharedAttach(runtime);
+    child?.kill();
+    await flushAndRotateQueue(runtime, warnContext, recreateQueue);
+  }
+
+  function scheduleIdleClose(runtime: SessionRuntime): void {
+    if (runtime.conns.size > 0 || runtime.idleCloseTimer) {
+      return;
+    }
+    if (idleAttachGraceMs <= 0) {
+      void closeSharedAttach(runtime);
+      return;
+    }
+    runtime.idleCloseTimer = setTimeout(() => {
+      runtime.idleCloseTimer = null;
+      if (runtime.conns.size === 0) {
+        void closeSharedAttach(runtime);
+      }
+    }, idleAttachGraceMs);
+    runtime.idleCloseTimer.unref?.();
+  }
+
+  function handleSharedExit(runtime: SessionRuntime, event: { exitCode: number; signal?: number }): void {
+    if (runtime.outputCompat) {
+      emitOutput(runtime, runtime.outputCompat.flush());
+    }
+    clearSharedAttach(runtime);
+    for (const conn of runtime.conns) {
+      if (conn.closed) {
+        continue;
+      }
+      conn.closed = true;
+      sendJson(conn.ws, { type: "exit", code: event.exitCode });
+    }
+    runtime.conns.clear();
+    void flushAndRotateQueue(runtime, "final scrollback flush failed", true);
+  }
+
+  async function createSeededOutputCompat(
+    safeName: string,
+    replayBuffer: ShellReplayBuffer,
+  ): Promise<TerminalOutputCompatStream> {
+    const outputCompat = createTerminalOutputCompatStream({ sessionName: safeName });
+    const latestSeq = await replayBuffer.latestSeq();
+    const seedFromSeq = latestSeq === null || latestSeq === undefined
+      ? 0
+      : Math.max(0, latestSeq - SHELL_ATTACH_RECENT_REPLAY_EVENTS + 1);
+    for (const event of await replayBuffer.replayFromSeq(seedFromSeq)) {
+      if (event.type === "output") {
+        outputCompat.write(event.data);
+      }
+    }
+    return outputCompat;
+  }
+
+  async function ensureSharedAttach(
+    runtime: SessionRuntime,
+    safeName: string,
+    replayBuffer: ShellReplayBuffer,
+  ): Promise<boolean> {
+    cancelIdleClose(runtime);
+    if (!canUseRuntime(runtime)) {
+      return false;
+    }
+    if (runtime.child) {
+      return true;
+    }
+    if (runtime.attachPromise) {
+      return runtime.attachPromise;
+    }
+
+    let attachPromise!: Promise<boolean>;
+    attachPromise = (async () => {
+      const abortController = new AbortController();
+      let child: ShellAttachProcess;
+      const outputCompat = await createSeededOutputCompat(safeName, replayBuffer);
+      if (!canUseAttachPromise(runtime, attachPromise)) {
+        return false;
+      }
+      runtime.outputCompat = outputCompat;
+      try {
+        child = options.adapter.attachSession(safeName, {
+          signal: abortController.signal,
+        });
+      } catch (err: unknown) {
+        if (canUseAttachPromise(runtime, attachPromise)) {
+          runtime.outputCompat = null;
+        }
+        console.warn("[shell] zellij attach process failed:", err instanceof Error ? err.message : String(err));
+        return false;
+      }
+
+      if (!canUseAttachPromise(runtime, attachPromise)) {
+        child.kill();
+        return false;
+      }
+
+      runtime.abortController = abortController;
+      runtime.child = child;
+      runtime.dataDisposable = child.onData((data: string) => {
+        const transformed = runtime.outputCompat?.write(data) ?? data;
+        emitOutput(runtime, transformed);
+      });
+      runtime.exitDisposable = child.onExit((event: { exitCode: number; signal?: number }) => {
+        handleSharedExit(runtime, event);
+      });
+      return true;
+    })();
+
+    runtime.attachPromise = attachPromise;
+    try {
+      return await attachPromise;
+    } finally {
+      if (runtime.attachPromise === attachPromise) {
+        runtime.attachPromise = null;
+      }
+    }
+  }
+
+  async function disposeRuntime(runtime: SessionRuntime, warnContext: string): Promise<void> {
+    runtime.disposed = true;
+    cancelIdleClose(runtime);
+    for (const conn of runtime.conns) {
+      conn.closed = true;
+      conn.ws.close?.();
+    }
+    runtime.conns.clear();
+    await closeSharedAttach(runtime, warnContext, false);
+    if (runtime.queue) {
+      await flushAndRotateQueue(runtime, warnContext, false);
+    }
   }
 
   function evictStaleOrReject(runtime: SessionRuntime, ws: ShellWsSocket): boolean {
@@ -270,9 +437,6 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       // Free the slot synchronously so a concurrent open cannot observe the
       // evicted conn still occupying capacity while its close settles.
       runtime.conns.delete(stalest);
-      if (runtime.recorder === stalest) {
-        electRecorder(runtime, stalest);
-      }
       stalest.close();
       return true;
     }
@@ -305,16 +469,16 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       return { onMessage: () => undefined, onClose: () => undefined };
     }
 
-    const abortController = new AbortController();
     const replayBuffer = runtime.buffer;
     await replayBuffer.ensureSeeded();
-    let child: ShellAttachProcess;
-    try {
-      child = options.adapter.attachSession(safeName, {
-        signal: abortController.signal,
-      });
-    } catch (err: unknown) {
-      console.warn("[shell] zellij attach process failed:", err instanceof Error ? err.message : String(err));
+
+    // Re-check capacity: awaits since the first check (seeding, registry
+    // list) allow concurrent opens to race the same last slot.
+    if (runtime.conns.size >= maxAttachedClients && !evictStaleOrReject(runtime, ws)) {
+      return { onMessage: () => undefined, onClose: () => undefined };
+    }
+
+    if (!(await ensureSharedAttach(runtime, safeName, replayBuffer))) {
       sendJson(ws, {
         type: "error",
         code: "attach_failed",
@@ -323,28 +487,17 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       ws.close?.();
       return { onMessage: () => undefined, onClose: () => undefined };
     }
-    let dataDisposable: { dispose(): void } | null = null;
-    let exitDisposable: { dispose(): void } | null = null;
-    const cleanupProcessListeners = () => {
-      dataDisposable?.dispose();
-      exitDisposable?.dispose();
-      dataDisposable = null;
-      exitDisposable = null;
-    };
 
-    // Re-check capacity: awaits since the first check (seeding, registry
-    // list) allow concurrent opens to race the same last slot.
+    // One or more concurrent opens may have filled the final client slot while
+    // this call awaited the shared attach startup.
     if (runtime.conns.size >= maxAttachedClients && !evictStaleOrReject(runtime, ws)) {
-      child.kill();
       return { onMessage: () => undefined, onClose: () => undefined };
     }
 
     const conn: ConnState = {
       ws,
-      child,
       openedAt: Date.now(),
       lastActivityAt: Date.now(),
-      paused: false,
       closed: false,
       close: () => {
         void closeSession().finally(() => {
@@ -353,12 +506,10 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       },
     };
     runtime.conns.add(conn);
-    if (!runtime.recorder) {
-      runtime.recorder = conn;
-    }
+    cancelIdleClose(runtime);
 
     const effectiveFromSeq = fromSeq === SHELL_ATTACH_LIVE_TAIL_FROM_SEQ
-      ? Math.max(0, (await replayBuffer.latestSeq() ?? 0) - SHELL_ATTACH_RECENT_REPLAY_EVENTS + 1)
+      ? (await replayBuffer.latestSeq() ?? -1) + 1
       : fromSeq;
 
     sendJson(ws, {
@@ -368,13 +519,13 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       fromSeq: effectiveFromSeq,
     });
 
-    const outputCompat = createTerminalOutputCompatStream({ sessionName: safeName });
+    const replayOutputCompat = createTerminalOutputCompatStream({ sessionName: safeName });
     for (const event of await replayBuffer.replayFromSeq(effectiveFromSeq)) {
       if (event.type === "replay-evicted") {
         continue;
       }
       if (event.type === "output") {
-        const data = outputCompat.write(event.data);
+        const data = replayOutputCompat.write(event.data);
         if (data.length > 0) {
           sendJson(ws, { ...event, data });
         }
@@ -386,76 +537,38 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       sendJson(ws, event);
     }
 
-    // Send-first live output: the frame is delivered immediately with a
-    // synchronously assigned seq; only the elected recorder's stream feeds the
-    // replay buffer and the coalesced persistence queue (spec 107 FR-001/004).
-    const emitOutput = (data: string) => {
-      if (data.length === 0) {
-        return;
-      }
-      if (runtime.recorder === conn) {
-        const result = replayBuffer.writeLive(data);
-        deliver(runtime, conn, { type: "output", seq: result.seq, data });
-        if (result.records.length > 0) {
-          runtime.queue?.enqueue(result.records);
-        }
-        return;
-      }
-      deliver(runtime, conn, { type: "output", seq: replayBuffer.lastSeq, data });
-    };
-    const onData = (data: string) => {
-      emitOutput(outputCompat.write(data));
-    };
     const detachConn = () => {
       runtime.conns.delete(conn);
-      if (runtime.recorder === conn) {
-        electRecorder(runtime, conn);
-      }
-      if (runtime.conns.size === 0 && runtime.queue) {
-        // Nobody attached: persist promptly instead of waiting for the timer.
-        void runtime.queue.dispose().catch((err: unknown) => {
-          console.warn("[shell] final scrollback flush failed:", err instanceof Error ? err.message : String(err));
-        });
-        runtime.queue = options.scrollbackStore
-          ? new PendingPersistQueue({
-              store: options.scrollbackStore,
-              sessionName: safeName,
-              flushIntervalMs: options.persistFlushIntervalMs,
-              maxPendingBytes: options.maxPendingPersistBytes,
-            })
-          : null;
+      if (runtime.conns.size === 0) {
+        scheduleIdleClose(runtime);
       }
     };
-
-    const onExit = (event: { exitCode: number }) => {
-      if (conn.closed) {
-        return;
-      }
-      conn.closed = true;
-      cleanupProcessListeners();
-      // Flush while this conn still holds its recorder role so trailing
-      // output is persisted, then hand the role off.
-      emitOutput(outputCompat.flush());
-      sendJson(ws, { type: "exit", code: event.exitCode });
-      detachConn();
-    };
-    dataDisposable = child.onData(onData);
-    exitDisposable = child.onExit(onExit);
 
     const closeSession = async () => {
       if (conn.closed) {
         return;
       }
       conn.closed = true;
-      emitOutput(outputCompat.flush());
+      const isLastConn = runtime.conns.size === 1 && runtime.conns.has(conn);
+      if (isLastConn && idleAttachGraceMs <= 0) {
+        if (runtime.outputCompat) {
+          const pendingOutput = runtime.outputCompat.flush();
+          if (pendingOutput.length > 0) {
+            emitOutput(runtime, pendingOutput, conn);
+          }
+        }
+        runtime.conns.delete(conn);
+        await closeSharedAttach(runtime);
+        return;
+      }
       detachConn();
-      abortController.abort();
-      cleanupProcessListeners();
-      child.kill();
     };
 
     return {
       onMessage(raw: string) {
+        if (conn.closed) {
+          return;
+        }
         conn.lastActivityAt = Date.now();
         let parsed: unknown;
         try {
@@ -484,11 +597,11 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           return;
         }
         if (msg.type === "input") {
-          child.write(msg.data);
+          runtime.child?.write(msg.data);
           return;
         }
         if (msg.type === "resize") {
-          child.resize(msg.cols, msg.rows);
+          runtime.child?.resize(msg.cols, msg.rows);
         }
       },
       onClose() {
@@ -506,21 +619,12 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
   }
 
   async function dispose(): Promise<void> {
-    if (drainTimer) {
-      clearInterval(drainTimer);
-      drainTimer = null;
-    }
     const drains: Array<Promise<void>> = [];
     for (const runtime of runtimes.values()) {
-      if (runtime.queue) {
-        drains.push(
-          runtime.queue.dispose().catch((err: unknown) => {
-            console.warn("[shell] shutdown scrollback flush failed:", err instanceof Error ? err.message : String(err));
-          }),
-        );
-      }
+      drains.push(disposeRuntime(runtime, "shutdown scrollback flush failed"));
     }
     await Promise.all(drains);
+    runtimes.clear();
   }
 
   return { open, dispose, pendingPersistBytes };

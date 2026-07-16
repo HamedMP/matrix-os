@@ -9,6 +9,7 @@ export interface CachedTerminal {
   searchAddon: unknown | null;
   ws: WebSocket;
   lastSeq: number;
+  hasReplayCursor?: boolean;
   sessionId: string;
   socketRetained?: boolean;
 }
@@ -44,15 +45,29 @@ function detachAndCloseSocket(ws: WebSocket): void {
   }
 }
 
+function disposeCachedTerminal(entry: CachedTerminal): void {
+  detachAndCloseSocket(entry.ws);
+  try {
+    entry.terminal.dispose();
+  } catch (e: unknown) {
+    console.warn("Cache terminal dispose:", e instanceof Error ? e.message : e);
+  }
+}
+
 export function cacheTerminal(paneId: string, entry: CachedTerminal, options: CacheTerminalOptions = {}): void {
   terminalCacheDebug("cache-put", {
     paneId,
     sessionId: entry.sessionId,
     lastSeq: entry.lastSeq,
+    hasReplayCursor: entry.hasReplayCursor === true,
     cacheSizeBefore: cache.size,
     retainSocket: options.retainSocket !== false,
   });
+  const existing = cache.get(paneId);
   cache.delete(paneId);
+  if (existing && existing !== entry) {
+    disposeCachedTerminal(existing);
+  }
   if (options.retainSocket === false) {
     detachAndCloseSocket(entry.ws);
   }
@@ -66,8 +81,7 @@ export function cacheTerminal(paneId: string, entry: CachedTerminal, options: Ca
         paneId: oldest,
         sessionId: evicted.sessionId,
       });
-      detachAndCloseSocket(evicted.ws);
-      try { evicted.terminal.dispose(); } catch (e: unknown) { console.warn("Cache eviction dispose:", e instanceof Error ? e.message : e); }
+      disposeCachedTerminal(evicted);
     }
   }
   cache.set(paneId, entry);

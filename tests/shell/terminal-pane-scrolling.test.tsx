@@ -29,6 +29,19 @@ const stubWs = vi.hoisted(() => ({
   onerror: null as (() => void) | null,
 }));
 
+const buildAuthenticatedWebSocketUrl = vi.hoisted(() => vi.fn((
+  path: string,
+  query?: Record<string, string | undefined>,
+) => {
+  const url = new URL(`ws://localhost${path}`);
+  for (const [key, value] of Object.entries(query ?? {})) {
+    if (value) {
+      url.searchParams.set(key, value);
+    }
+  }
+  return Promise.resolve(url.toString());
+}));
+
 const restorePlan = vi.hoisted(() => ({
   current: {
     cached: null as null | {
@@ -52,12 +65,14 @@ const restorePlan = vi.hoisted(() => ({
       searchAddon: null;
       ws: typeof stubWs;
       lastSeq: number;
+      hasReplayCursor?: boolean;
       sessionId: string;
     },
     reuseTerminal: false,
     reuseSocket: false,
     sessionId: null as string | null,
     lastSeq: 0,
+    hasReplayCursor: false,
   },
 }));
 
@@ -151,7 +166,7 @@ vi.mock("../../shell/src/components/terminal/terminal-appearance.js", () => ({
 }));
 
 vi.mock("@/lib/websocket-auth", () => ({
-  buildAuthenticatedWebSocketUrl: vi.fn(() => Promise.resolve("ws://localhost/ws/terminal")),
+  buildAuthenticatedWebSocketUrl,
 }));
 
 vi.mock("@/lib/socket-health", () => ({
@@ -198,15 +213,28 @@ class ResizeObserverMock {
 }
 
 class WebSocketMock {
-  readyState = 1;
-  send = stubWs.send;
-  close = stubWs.close;
+  static instances: WebSocketMock[] = [];
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+
+  readyState = WebSocketMock.OPEN;
+  send = vi.fn((data: string) => {
+    stubWs.send(data);
+  });
+  close = vi.fn(() => {
+    this.readyState = WebSocketMock.CLOSED;
+    stubWs.close();
+  });
   onopen: (() => void) | null = null;
   onmessage: ((event: unknown) => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
 
-  constructor(_url: string) {}
+  constructor(public url: string) {
+    WebSocketMock.instances.push(this);
+  }
 }
 
 function installVisualViewportMock(input: { height: number; offsetTop: number }) {
@@ -269,6 +297,7 @@ describe("TerminalPane scrolling", () => {
       reuseSocket: false,
       sessionId: null,
       lastSeq: 0,
+      hasReplayCursor: false,
     };
     globalThis.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
     globalThis.WebSocket = WebSocketMock as unknown as typeof WebSocket;
@@ -276,6 +305,8 @@ describe("TerminalPane scrolling", () => {
       setTimeout(() => cb(0), 0)) as typeof requestAnimationFrame;
     stubWs.send.mockReset();
     stubWs.close.mockReset();
+    WebSocketMock.instances.length = 0;
+    buildAuthenticatedWebSocketUrl.mockClear();
     Reflect.deleteProperty(window, "visualViewport");
   });
 
@@ -327,12 +358,14 @@ describe("TerminalPane scrolling", () => {
         searchAddon: null,
         ws: stubWs,
         lastSeq: 0,
+        hasReplayCursor: false,
         sessionId: "cached-terminal",
       },
       reuseTerminal: true,
       reuseSocket: true,
       sessionId: "cached-terminal",
       lastSeq: 0,
+      hasReplayCursor: false,
     };
 
     const { container } = render(
@@ -492,5 +525,43 @@ describe("TerminalPane scrolling", () => {
 
     await waitFor(() => expect(createdWebglAddons).toHaveLength(1));
     expect(createdTerminals[0].loadAddon).toHaveBeenCalledWith(createdWebglAddons[0]);
+  });
+
+  it.each([0, 60])("uses attached fromSeq %i as the reconnect cursor before output arrives", async (fromSeq) => {
+    render(
+      <TerminalPane
+        paneId="pane-attached-cursor-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        sessionId="main"
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const firstSocket = WebSocketMock.instances[0]!;
+
+    await act(async () => {
+      firstSocket.onmessage?.({
+        data: JSON.stringify({
+          type: "attached",
+          session: "main",
+          state: "running",
+          fromSeq,
+        }),
+      });
+      firstSocket.onclose?.();
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+    const reconnectUrl = new URL(WebSocketMock.instances[1]!.url);
+    expect(reconnectUrl.pathname).toBe("/ws/terminal/session");
+    expect(reconnectUrl.searchParams.get("session")).toBe("main");
+    expect(reconnectUrl.searchParams.get("fromSeq")).toBe(String(fromSeq));
   });
 });
