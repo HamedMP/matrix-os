@@ -6,6 +6,7 @@ export interface CachedTerminalRestorePlan {
   reuseSocket: boolean;
   sessionId: string | null;
   lastSeq: number;
+  hasReplayCursor: boolean;
 }
 
 export function getCachedTerminalRestorePlan(cached: CachedTerminal | null): CachedTerminalRestorePlan {
@@ -16,6 +17,7 @@ export function getCachedTerminalRestorePlan(cached: CachedTerminal | null): Cac
       reuseSocket: false,
       sessionId: null,
       lastSeq: 0,
+      hasReplayCursor: false,
     };
   }
 
@@ -30,6 +32,7 @@ export function getCachedTerminalRestorePlan(cached: CachedTerminal | null): Cac
     reuseSocket,
     sessionId: cached.sessionId || null,
     lastSeq: reuseTerminal ? cached.lastSeq : 0,
+    hasReplayCursor: reuseTerminal ? (cached.hasReplayCursor ?? cached.lastSeq > 0) : false,
   };
 }
 

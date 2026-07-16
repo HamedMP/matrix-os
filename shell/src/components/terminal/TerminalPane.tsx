@@ -430,6 +430,7 @@ export function TerminalPane({
   const searchAddonRef = useRef<unknown>(null);
   const sessionIdRef = useRef<string | null>(initialSessionId ?? null);
   const lastSeqRef = useRef<number>(0);
+  const hasReplayCursorRef = useRef(false);
   const reconnectAttemptRef = useRef<number>(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingReconnectBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -597,8 +598,10 @@ export function TerminalPane({
 
   useEffect(() => {
     // react-doctor-disable-next-line react-doctor/no-event-handler -- syncs the initialSessionId prop into a mutable ref consumed by the imperative WebSocket/PTY layer; this is prop->ref mirroring, not a DOM event handler, and has no parent handler to hoist into
-    if (initialSessionId) {
+    if (initialSessionId && initialSessionId !== sessionIdRef.current) {
       sessionIdRef.current = initialSessionId;
+      lastSeqRef.current = 0;
+      hasReplayCursorRef.current = false;
     }
   }, [initialSessionId]);
 
@@ -768,6 +771,7 @@ export function TerminalPane({
           cwd,
           sessionId: sessionIdRef.current,
           lastSeq: lastSeqRef.current,
+          hasReplayCursor: hasReplayCursorRef.current,
           wsState: describeReadyState(wsRef.current),
           ...details,
         });
@@ -843,6 +847,7 @@ export function TerminalPane({
       if (cached && !canReuseCachedTerminal) {
         sessionIdRef.current = cachedRestore.sessionId;
         lastSeqRef.current = cachedRestore.lastSeq;
+        hasReplayCursorRef.current = cachedRestore.hasReplayCursor;
       }
       log("init", {
         cached: !!cached,
@@ -850,6 +855,7 @@ export function TerminalPane({
         reuseSocket: canReuseCachedSocket,
         cachedSessionId: cachedRestore.sessionId,
         cachedLastSeq: cachedRestore.lastSeq,
+        cachedHasReplayCursor: cachedRestore.hasReplayCursor,
       });
 
       let term: Terminal;
@@ -974,6 +980,7 @@ export function TerminalPane({
         wsRef.current = cached.ws;
         sessionIdRef.current = cachedRestore.sessionId;
         lastSeqRef.current = cachedRestore.lastSeq;
+        hasReplayCursorRef.current = cachedRestore.hasReplayCursor;
         scheduleStableFit();
       } else {
         // Cache miss — create fresh terminal
@@ -1316,6 +1323,7 @@ export function TerminalPane({
               sessionIdRef.current = msg.sessionId;
               if (msg.fromSeq !== null) {
                 lastSeqRef.current = Math.max(lastSeqRef.current, msg.fromSeq);
+                hasReplayCursorRef.current = true;
               }
               onSessionAttachedRef.current?.(paneId, msg.sessionId);
               if (msg.state === "exited") {
@@ -1332,6 +1340,7 @@ export function TerminalPane({
               ));
               if (msg.seq !== null) {
                 lastSeqRef.current = Math.max(lastSeqRef.current, msg.seq + 1);
+                hasReplayCursorRef.current = true;
               }
               outputBufferRef.current += msg.data;
               if (outputBufferRef.current.length > 8192) {
@@ -1363,6 +1372,7 @@ export function TerminalPane({
             case "block-mark":
               if (msg.seq !== null) {
                 lastSeqRef.current = Math.max(lastSeqRef.current, msg.seq + 1);
+                hasReplayCursorRef.current = true;
               }
               if (msg.mark.code === "B" || msg.mark.code === "C") {
                 activeCommandBlockRef.current = true;
@@ -1395,6 +1405,7 @@ export function TerminalPane({
                 log("session-not-found-reset");
                 sessionIdRef.current = null;
                 lastSeqRef.current = 0;
+                hasReplayCursorRef.current = false;
                 term.write("\r\n\x1b[33m[Session expired, starting new session...]\x1b[0m\r\n");
                 log("fallback-create-after-session-not-found");
                 ws.send(JSON.stringify({ type: "attach", cwd }));
@@ -1420,7 +1431,7 @@ export function TerminalPane({
         wsGenerationRef.current = generation;
         const currentSessionId = sessionIdRef.current;
         const wsPath = terminalWebSocketPathForSession(currentSessionId);
-        const fromSeq = lastSeqRef.current > 0 ? lastSeqRef.current : TERMINAL_LIVE_TAIL_FROM_SEQ;
+        const fromSeq = hasReplayCursorRef.current ? lastSeqRef.current : TERMINAL_LIVE_TAIL_FROM_SEQ;
         const query = currentSessionId && isCanonicalShellSessionId(currentSessionId)
           ? { session: currentSessionId, fromSeq: String(fromSeq) }
           : currentSessionId || !cwd
@@ -1672,6 +1683,7 @@ export function TerminalPane({
             searchAddon,
             ws: wsRef.current,
             lastSeq: lastSeqRef.current,
+            hasReplayCursor: hasReplayCursorRef.current,
             sessionId: cachedSessionId,
           }, { retainSocket });
         } else {

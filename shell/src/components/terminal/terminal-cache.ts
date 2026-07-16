@@ -9,6 +9,7 @@ export interface CachedTerminal {
   searchAddon: unknown | null;
   ws: WebSocket;
   lastSeq: number;
+  hasReplayCursor?: boolean;
   sessionId: string;
   socketRetained?: boolean;
 }
@@ -58,6 +59,7 @@ export function cacheTerminal(paneId: string, entry: CachedTerminal, options: Ca
     paneId,
     sessionId: entry.sessionId,
     lastSeq: entry.lastSeq,
+    hasReplayCursor: entry.hasReplayCursor === true,
     cacheSizeBefore: cache.size,
     retainSocket: options.retainSocket !== false,
   });

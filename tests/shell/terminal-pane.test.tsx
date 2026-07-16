@@ -45,6 +45,28 @@ describe("getCachedTerminalRestorePlan", () => {
     expect(plan.lastSeq).toBe(42);
   });
 
+  it("preserves an explicit zero replay cursor when a cached shell was detached", () => {
+    const cached = {
+      terminal: { element: {} as HTMLElement } as CachedTerminal["terminal"],
+      fitAddon: {} as CachedTerminal["fitAddon"],
+      webglAddon: null,
+      searchAddon: null,
+      ws: { readyState: WebSocket.CLOSED } as WebSocket,
+      lastSeq: 0,
+      hasReplayCursor: true,
+      sessionId: "main",
+      socketRetained: false,
+    } satisfies CachedTerminal;
+
+    const plan = getCachedTerminalRestorePlan(cached);
+
+    expect(plan.reuseTerminal).toBe(true);
+    expect(plan.reuseSocket).toBe(false);
+    expect(plan.sessionId).toBe("main");
+    expect(plan.lastSeq).toBe(0);
+    expect(plan.hasReplayCursor).toBe(true);
+  });
+
   it("closes and disposes a stale cached terminal before reconnecting", () => {
     const close = vi.fn();
     const dispose = vi.fn();

@@ -65,12 +65,14 @@ const restorePlan = vi.hoisted(() => ({
       searchAddon: null;
       ws: typeof stubWs;
       lastSeq: number;
+      hasReplayCursor?: boolean;
       sessionId: string;
     },
     reuseTerminal: false,
     reuseSocket: false,
     sessionId: null as string | null,
     lastSeq: 0,
+    hasReplayCursor: false,
   },
 }));
 
@@ -295,6 +297,7 @@ describe("TerminalPane scrolling", () => {
       reuseSocket: false,
       sessionId: null,
       lastSeq: 0,
+      hasReplayCursor: false,
     };
     globalThis.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
     globalThis.WebSocket = WebSocketMock as unknown as typeof WebSocket;
@@ -355,12 +358,14 @@ describe("TerminalPane scrolling", () => {
         searchAddon: null,
         ws: stubWs,
         lastSeq: 0,
+        hasReplayCursor: false,
         sessionId: "cached-terminal",
       },
       reuseTerminal: true,
       reuseSocket: true,
       sessionId: "cached-terminal",
       lastSeq: 0,
+      hasReplayCursor: false,
     };
 
     const { container } = render(
@@ -522,7 +527,7 @@ describe("TerminalPane scrolling", () => {
     expect(createdTerminals[0].loadAddon).toHaveBeenCalledWith(createdWebglAddons[0]);
   });
 
-  it("uses the attached fromSeq as the reconnect cursor before output arrives", async () => {
+  it.each([0, 60])("uses attached fromSeq %i as the reconnect cursor before output arrives", async (fromSeq) => {
     render(
       <TerminalPane
         paneId="pane-attached-cursor-test"
@@ -546,7 +551,7 @@ describe("TerminalPane scrolling", () => {
           type: "attached",
           session: "main",
           state: "running",
-          fromSeq: 60,
+          fromSeq,
         }),
       });
       firstSocket.onclose?.();
@@ -557,6 +562,6 @@ describe("TerminalPane scrolling", () => {
     const reconnectUrl = new URL(WebSocketMock.instances[1]!.url);
     expect(reconnectUrl.pathname).toBe("/ws/terminal/session");
     expect(reconnectUrl.searchParams.get("session")).toBe("main");
-    expect(reconnectUrl.searchParams.get("fromSeq")).toBe("60");
+    expect(reconnectUrl.searchParams.get("fromSeq")).toBe(String(fromSeq));
   });
 });
