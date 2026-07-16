@@ -81,6 +81,38 @@ export const ReviewIdSchema = referenceId(128);
 export const WorktreeIdSchema = z.string().regex(/^wt_[a-z0-9]{12,40}$/, "Invalid worktree id");
 export const CursorSchema = referenceId(160);
 export const IsoTimestampSchema = z.string().regex(ISO_DATETIME, "Invalid ISO timestamp");
+
+export const SHELL_SESSION_ADJECTIVES = [
+  "swift", "calm", "bright", "bold", "brave", "clever", "cosmic", "crisp",
+  "amber", "azure", "lunar", "solar", "misty", "quiet", "rapid", "shiny",
+  "still", "vivid", "warm", "wild", "noble", "lucid", "fresh", "keen",
+  "neat", "prime", "spry", "deft", "mellow", "nimble", "sleek", "stark",
+] as const;
+
+export const SHELL_SESSION_NOUNS = [
+  "falcon", "otter", "cedar", "river", "comet", "harbor", "meadow", "summit",
+  "willow", "pine", "lynx", "heron", "maple", "delta", "ember", "quartz",
+  "raven", "sparrow", "tide", "vale", "wren", "birch", "cobalt", "drift",
+  "fern", "grove", "isle", "moss", "reef", "dune", "fjord", "atlas",
+] as const;
+
+export interface ShellSessionNameOptions {
+  collisionFallback?: boolean;
+}
+
+function pickShellSessionWord<T>(list: readonly T[]): T {
+  return list[Math.floor(Math.random() * list.length)]!;
+}
+
+function shellSessionEntropySuffix(): string {
+  return Math.floor(Math.random() * 36 ** 5).toString(36).padStart(5, "0");
+}
+
+export function createShellSessionName(options: ShellSessionNameOptions = {}): string {
+  const base = `${pickShellSessionWord(SHELL_SESSION_ADJECTIVES)}-${pickShellSessionWord(SHELL_SESSION_NOUNS)}`;
+  return options.collisionFallback ? `${base}-${shellSessionEntropySuffix()}` : base;
+}
+
 export const SafeDisplayStringSchema = boundedDisplayText(120, 512);
 export const SafeAssistantPreviewSourceTextSchema = boundedText(16_000, 64 * 1024)
   .refine((value) => !UNSAFE_ASSISTANT_PREVIEW_TEXT.test(value), { message: "Text is not safe for assistant preview display" });

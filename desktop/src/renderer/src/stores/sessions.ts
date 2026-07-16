@@ -90,6 +90,19 @@ function isSessionExistsError(err: unknown): boolean {
   return err instanceof AppError && err.detail === "session_exists";
 }
 
+async function createTerminalSessionWithRetries(api: ApiClient): Promise<{ name: string; response: { name?: unknown } }> {
+  for (let attempt = 0; ; attempt += 1) {
+    const name = nextSessionName(attempt);
+    try {
+      const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name });
+      return { name, response };
+    } catch (err: unknown) {
+      if (isSessionExistsError(err) && attempt < CREATE_ATTEMPTS - 1) continue;
+      throw err;
+    }
+  }
+}
+
 async function deleteAttachableSession(api: ApiClient, attachName: string): Promise<void> {
   await api.delete(`/api/terminal/sessions/${encodeURIComponent(attachName)}?force=1`);
 }
@@ -174,19 +187,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
     set({ creating: true, error: null, createError: null });
     try {
       if (!input) {
-        let name = "";
-        let response: { name?: unknown } | null = null;
-        for (let attempt = 0; attempt < CREATE_ATTEMPTS; attempt += 1) {
-          name = nextSessionName(attempt);
-          try {
-            response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name });
-            break;
-          } catch (err: unknown) {
-            if (isSessionExistsError(err) && attempt < CREATE_ATTEMPTS - 1) continue;
-            throw err;
-          }
-        }
-        if (response === null) throw new AppError("server");
+        const { name, response } = await createTerminalSessionWithRetries(api);
         if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
         const attachName = typeof response.name === "string" && response.name.trim() ? response.name.trim() : name;
         const refreshSequence = loadSequence + 1;
