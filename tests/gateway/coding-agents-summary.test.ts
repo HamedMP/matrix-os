@@ -168,6 +168,33 @@ describe("coding agent runtime summary", () => {
     expect(summary.providers.map((provider) => provider.id)).toEqual(["codex"]);
   });
 
+  it("hydrates provider summaries through the owner-scoped provider registry", async () => {
+    const listProviders = vi.fn(async () => [{
+      id: "codex",
+      displayName: "Codex",
+      kind: "codex" as const,
+      availability: "available" as const,
+      installStatus: "installed" as const,
+      authStatus: "authenticated" as const,
+      supportedModes: ["default" as const],
+      defaultMode: "default" as const,
+      setupActions: [],
+      lastCheckedAt: now.toISOString(),
+    }]);
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      providerRegistry: { listProviders },
+      now: () => now,
+    });
+
+    const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
+
+    expect(listProviders).toHaveBeenCalledWith(testPrincipal);
+    expect(summary.providers).toEqual([
+      expect.objectContaining({ id: "codex", availability: "available" }),
+    ]);
+  });
+
   it("withholds owner-local terminal sessions from other principals", async () => {
     const service = createCodingAgentRuntimeSummaryService({
       homePath: "/home/matrix/home",
@@ -290,9 +317,16 @@ describe("coding agent runtime summary", () => {
       threads: {
         listThreads: async () => ({ items: [], hasMore: false, limit: 50 }),
       },
+      projects: {
+        listProjectSummaries: async () => ({ items: [], hasMore: false, limit: 50 }),
+      },
       capabilities: {
+        projectWorkspace: true,
+        conversationView: true,
+        kanbanView: true,
         workspace: true,
         approvals: true,
+        sameThreadTurns: true,
       },
       now: () => now,
       runtime: { id: "rt_primary", label: "Primary Matrix computer" },
@@ -305,6 +339,10 @@ describe("coding agent runtime summary", () => {
       expect.objectContaining({ id: "codingAgentsDesktopWorkspace", enabled: true }),
       expect.objectContaining({ id: "codingAgentsMobileWorkspace", enabled: true }),
       expect.objectContaining({ id: "codingAgentsThreadCreate", enabled: true }),
+      expect.objectContaining({ id: "codingAgentsSameThreadTurns", enabled: true }),
+      expect.objectContaining({ id: "codingAgentsProjectWorkspace", enabled: true }),
+      expect.objectContaining({ id: "codingAgentsConversationView", enabled: true }),
+      expect.objectContaining({ id: "codingAgentsKanbanView", enabled: true }),
       expect.objectContaining({ id: "codingAgentsApprovals", enabled: true }),
       expect.objectContaining({ id: "codingAgentsNativeMobileTerminal", enabled: true }),
     ]));
@@ -323,6 +361,7 @@ describe("coding agent runtime summary", () => {
     const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
 
     expect(capability(summary, "codingAgentsThreadCreate")).toMatchObject({ enabled: true });
+    expect(capability(summary, "codingAgentsSameThreadTurns")).toMatchObject({ enabled: false });
     expect(capability(summary, "codingAgentsDesktopWorkspace")).toMatchObject({ enabled: false });
     expect(capability(summary, "codingAgentsMobileWorkspace")).toMatchObject({ enabled: false });
     expect(capability(summary, "codingAgentsApprovals")).toMatchObject({ enabled: false });

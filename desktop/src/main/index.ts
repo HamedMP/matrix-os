@@ -7,10 +7,12 @@ import { EmbedService } from "./embeds/embed-service";
 import {
   createCodingAgentSourcePullRequest,
   createCodingAgentThread,
+  createCodingAgentTurn,
   fetchCodingAgentFileBrowse,
   fetchCodingAgentFileContent,
   fetchCodingAgentFileSearch,
   fetchCodingAgentNotificationPreferences,
+  fetchCodingAgentProjectWorkspace,
   fetchCodingAgentThreadSnapshot,
   fetchCodingAgentReviewSnapshot,
   fetchCodingAgentReviewSummaries,
@@ -168,10 +170,13 @@ if (!gotLock) {
       const credentialStore = createCredentialStore({ dir: userData, safeStorage });
 
       const platformHost = process.env.OPERATOR_GATEWAY_URL ?? DEFAULT_PLATFORM_HOST;
+      const runtimeSelectionOrigin = process.env.MATRIX_API_ORIGIN
+        ?? (platformHost === DEFAULT_PLATFORM_HOST ? "https://api.matrix-os.com" : platformHost);
 
       const auth = new AuthService({
         credentialStore,
         platformHost,
+        runtimeSelectionOrigin,
         loadProfile: () => store.get("profile"),
         saveProfile: (profile) => store.set("profile", profile),
         clearProfile: () => store.delete("profile"),
@@ -252,6 +257,7 @@ if (!gotLock) {
         },
         getUpdateStatus: () => updater.status(),
         fetchRuntimeSummary: () => fetchCodingAgentRuntimeSummary(auth),
+        fetchProjectWorkspace: (request) => fetchCodingAgentProjectWorkspace(auth, request),
         fetchNotificationPreferences: () => fetchCodingAgentNotificationPreferences(auth),
         updateNotificationPreferences: (request) => updateCodingAgentNotificationPreferences(auth, request),
         fetchReviewSummaries: (options) => fetchCodingAgentReviewSummaries(auth, options),
@@ -276,8 +282,9 @@ if (!gotLock) {
             threadId,
             inputRequestId,
             request: { answer, clientRequestId, correlationId },
-          }),
+        }),
         createAgentThread: (request) => createCodingAgentThread(auth, request),
+        createAgentTurn: (request) => createCodingAgentTurn(auth, request),
       });
 
       let boundsSaveTimer: ReturnType<typeof setTimeout> | null = null;

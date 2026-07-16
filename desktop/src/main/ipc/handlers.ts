@@ -6,7 +6,8 @@ import type { AuthService } from "../auth/auth-service";
 import type { EmbedService } from "../embeds/embed-service";
 import type { LocalStore, LocalStoreKey } from "../persistence/local-store";
 import type { UpdateStatus } from "../updates";
-import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, CreateAgentThreadRequest, FileBrowseRequest, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileWriteRequest, FileWriteResponse, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse } from "@matrix-os/contracts";
+import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, CreateAgentThreadRequest, FileBrowseRequest, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileWriteRequest, FileWriteResponse, ProjectAgentWorkspace, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse } from "@matrix-os/contracts";
+import type { CodingAgentProjectWorkspaceRequest } from "../../shared/coding-agent-project-workspace";
 import type { z } from "zod/v4";
 import { AgentThreadSnapshotSchema } from "@matrix-os/contracts";
 
@@ -27,6 +28,9 @@ export interface HandlerContext {
   onRuntimeChanged: (slot: string) => void;
   getUpdateStatus: () => UpdateStatus;
   fetchRuntimeSummary: () => Promise<RuntimeSummary>;
+  fetchProjectWorkspace: (
+    request: CodingAgentProjectWorkspaceRequest,
+  ) => Promise<ProjectAgentWorkspace>;
   fetchNotificationPreferences: () => Promise<CodingAgentNotificationPreferences>;
   updateNotificationPreferences: (
     request: CodingAgentNotificationPreferencesUpdate,
@@ -57,6 +61,9 @@ export interface HandlerContext {
   createAgentThread: (
     request: CreateAgentThreadRequest,
   ) => Promise<z.infer<typeof AgentThreadSnapshotSchema>>;
+  createAgentTurn: (
+    request: InvokeRequest<"runtime:create-turn">,
+  ) => Promise<InvokeResponse<"runtime:create-turn">>;
   subscribeThreadEvents: (
     request: InvokeRequest<"runtime:subscribe-thread-events">,
   ) => Promise<void>;
@@ -113,12 +120,14 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     return { ok: true };
   });
 
+  handle("runtime:list-computers", () => ctx.auth.listRuntimeComputers());
   handle("runtime:select", async ({ slot }) => {
     await ctx.auth.selectRuntime(slot);
     ctx.onRuntimeChanged(slot);
     return { ok: true };
   });
   handle("runtime:get-summary", () => ctx.fetchRuntimeSummary());
+  handle("runtime:get-project-workspace", (request) => ctx.fetchProjectWorkspace(request));
   handle("runtime:get-notification-preferences", () => ctx.fetchNotificationPreferences());
   handle("runtime:update-notification-preferences", (request) => ctx.updateNotificationPreferences(request));
   handle("runtime:get-reviews", (request) => ctx.fetchReviewSummaries(request));
@@ -141,6 +150,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("runtime:submit-approval-decision", (request) => ctx.submitApprovalDecision(request));
   handle("runtime:submit-input-answer", (request) => ctx.submitInputAnswer(request));
   handle("runtime:create-thread", (request) => ctx.createAgentThread(request));
+  handle("runtime:create-turn", (request) => ctx.createAgentTurn(request));
 
   handle("state:get", async ({ key }) => ({
     value: await ctx.store.get(key as LocalStoreKey),

@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createCodingAgentThread,
+  createCodingAgentTurn,
   createCodingAgentSourcePullRequest,
+  fetchCodingAgentProjectWorkspace,
   fetchCodingAgentFileBrowse,
   fetchCodingAgentFileContent,
   fetchCodingAgentFileSearch,
@@ -127,6 +129,23 @@ function fileSearchBody() {
       hasMore: false,
       limit: 20,
     },
+  };
+}
+
+function projectWorkspaceBody() {
+  return {
+    project: {
+      id: "matrix-os",
+      label: "Matrix OS",
+      status: "available",
+      taskCount: 1,
+      threadCount: 0,
+      attentionCount: 0,
+    },
+    tasks: { items: [], hasMore: false, limit: 100 },
+    projectThreads: { items: [], hasMore: false, limit: 100 },
+    taskThreads: { items: [], hasMore: false, limit: 100 },
+    updatedAt: "2026-07-10T12:00:00.000Z",
   };
 }
 
@@ -261,6 +280,85 @@ describe("coding agent desktop runtime client", () => {
       "https://runtime.test/api/coding-agents/threads?runtime=secondary",
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  it("creates same-thread turns against the selected runtime without exposing credentials", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      threadId: "thread_desktop_1",
+      turnId: "turn_desktop_1",
+      status: "accepted",
+      acceptedAt: "2026-07-06T00:01:00.000Z",
+    }), { status: 202 }));
+
+    await expect(createCodingAgentTurn(auth("secondary"), {
+      threadId: "thread_desktop_1",
+      message: "Continue with the focused tests.",
+      clientRequestId: "req_desktop_turn_1",
+    }, fetchFn)).resolves.toEqual({
+      ok: true,
+      response: expect.objectContaining({
+        threadId: "thread_desktop_1",
+        turnId: "turn_desktop_1",
+        status: "accepted",
+      }),
+    });
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://runtime.test/api/coding-agents/threads/thread_desktop_1/turns?runtime=secondary",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ Authorization: "Bearer desktop-token" }),
+        body: JSON.stringify({
+          message: "Continue with the focused tests.",
+          clientRequestId: "req_desktop_turn_1",
+        }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("maps expected turn conflicts to bounded local recovery copy", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: {
+        code: "thread_busy",
+        safeMessage: "Please retry this provider operation.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    }), { status: 409 }));
+
+    const result = await createCodingAgentTurn(auth(), {
+      threadId: "thread_desktop_1",
+      message: "Continue with the focused tests.",
+      clientRequestId: "req_desktop_turn_1",
+    }, fetchFn);
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "thread_busy",
+        safeMessage: "This conversation is already running. Wait for it to finish and try again.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/home\/matrix|provider/i);
+  });
+
+  it("rejects unsafe turn conflict envelopes with generic local copy", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: {
+        code: "thread_busy",
+        safeMessage: "Provider failed in /home/matrix/private.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    }), { status: 409 }));
+
+    await expect(createCodingAgentTurn(auth(), {
+      threadId: "thread_desktop_1",
+      message: "Continue with the focused tests.",
+      clientRequestId: "req_desktop_turn_1",
+    }, fetchFn)).rejects.toThrow("conversation turn unavailable");
   });
 
   it("rejects unsafe or malformed thread snapshot responses with a generic error", async () => {
@@ -814,5 +912,58 @@ describe("coding agent desktop runtime client", () => {
       body: "Review updates are ready.",
       clientRequestId: "req_desktop_create_pr",
     }, fetchFn)).rejects.toThrow("pull request unavailable");
+  });
+
+  it("DT-001 fetches and validates a bounded project workspace in the trusted core", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(projectWorkspaceBody()), { status: 200 }),
+    );
+
+    await expect(fetchCodingAgentProjectWorkspace(auth("secondary"), {
+      projectId: "matrix-os",
+    }, fetchFn)).resolves.toEqual(projectWorkspaceBody());
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://runtime.test/api/coding-agents/projects/matrix-os/workspace?runtime=secondary",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({ Authorization: "Bearer desktop-token" }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("SEC-003 keeps project workspace failures and unsafe responses generic", async () => {
+    const failedFetch = vi.fn().mockResolvedValue(
+      new Response("filesystem failed at /home/matrix/private", { status: 500 }),
+    );
+    await expect(fetchCodingAgentProjectWorkspace(auth(), {
+      projectId: "matrix-os",
+    }, failedFetch)).rejects.toThrow("project workspace unavailable");
+    await expect(fetchCodingAgentProjectWorkspace(auth(), {
+      projectId: "matrix-os",
+    }, failedFetch)).rejects.not.toThrow("/home/matrix");
+
+    const unsafeFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...projectWorkspaceBody(),
+      bearerToken: "secret",
+    }), { status: 200 }));
+    await expect(fetchCodingAgentProjectWorkspace(auth(), {
+      projectId: "matrix-os",
+    }, unsafeFetch)).rejects.toThrow("project workspace unavailable");
+
+    const mismatchedFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...projectWorkspaceBody(),
+      project: {
+        ...projectWorkspaceBody().project,
+        id: "website",
+      },
+      tasks: { items: [], hasMore: false, limit: 100 },
+      projectThreads: { items: [], hasMore: false, limit: 100 },
+      taskThreads: { items: [], hasMore: false, limit: 100 },
+    }), { status: 200 }));
+    await expect(fetchCodingAgentProjectWorkspace(auth(), {
+      projectId: "matrix-os",
+    }, mismatchedFetch)).rejects.toThrow("project workspace unavailable");
   });
 });

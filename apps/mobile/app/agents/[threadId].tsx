@@ -3,7 +3,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ActivityIndicator, AppState, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ReviewIdSchema, type AgentThreadEvent, type AgentThreadSnapshot, type AgentThreadSummary, type ApprovalDecisionRequest } from "@matrix-os/contracts";
+import { ReviewIdSchema, SafeAssistantPreviewSourceTextSchema, SafeAssistantPreviewTextSchema, type AgentThreadEvent, type AgentThreadSnapshot, type AgentThreadSummary, type ApprovalDecisionRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { useAgentThreadActions, type AgentThreadRouteState, type ThreadActionError } from "@/lib/agent-thread-actions";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
@@ -16,6 +16,8 @@ type TimelineItem =
   | { kind: "assistant"; key: string; events: AssistantTimelineEvent[]; order: number }
   | { kind: "event"; event: AgentThreadEvent; order: number }
   | { kind: "tool"; key: string; events: ToolTimelineEvent[]; order: number };
+
+const ASSISTANT_PREVIEW_MAX_CHARS = 240;
 
 export default function AgentThreadRoute() {
   const { theme } = useUnistyles();
@@ -160,6 +162,7 @@ export default function AgentThreadRoute() {
         ...savedState,
         mode: "terminal",
         lastActiveTerminalSessionId: boundTerminalSessionId,
+        terminalHandoffSessionId: boundTerminalSessionId,
         updatedAt: new Date().toISOString(),
       });
     } catch {
@@ -178,6 +181,8 @@ export default function AgentThreadRoute() {
         sourceThreadId: state.snapshot.thread.id,
         sourceThreadTitle: state.snapshot.thread.title,
         sourceProviderId: state.snapshot.thread.providerId,
+        ...(state.snapshot.thread.projectId ? { projectId: state.snapshot.thread.projectId } : {}),
+        ...(state.snapshot.thread.taskId ? { taskId: state.snapshot.thread.taskId } : {}),
       },
     });
   }, [router, state]);
@@ -786,15 +791,35 @@ function AssistantTimelineItem({ events }: { events: AssistantTimelineEvent[] })
 function describeAssistantTimeline(events: AssistantTimelineEvent[]): { icon: keyof typeof Ionicons.glyphMap; title: string; detail: string } {
   const deltas = events.filter((event): event is Extract<AssistantTimelineEvent, { type: "assistant.text.delta" }> => event.type === "assistant.text.delta");
   const completed = events.some((event) => event.type === "assistant.text.completed");
+  const preview = formatAssistantPreview(deltas);
   if (deltas.length === 1 && !completed) {
-    return { icon: "chatbubble-ellipses-outline", title: "Assistant update", detail: "Text update received" };
+    return { icon: "chatbubble-ellipses-outline", title: "Assistant update", detail: preview ?? "Text update received" };
   }
   const updates = `${deltas.length} ${deltas.length === 1 ? "text update" : "text updates"} received`;
+  const statusDetail = completed ? `${updates}, complete` : updates;
   return {
     icon: completed ? "checkmark-circle-outline" : "chatbubble-ellipses-outline",
     title: completed ? "Assistant message" : "Assistant updates",
-    detail: completed ? `${updates}, complete` : updates,
+    detail: preview ? completed ? `${statusDetail}. ${preview}` : preview : statusDetail,
   };
+}
+
+function formatAssistantPreview(deltas: Extract<AssistantTimelineEvent, { type: "assistant.text.delta" }>[]): string | null {
+  const preview = deltas
+    .map((event) => event.delta)
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!preview) {
+    return null;
+  }
+  if (!SafeAssistantPreviewSourceTextSchema.safeParse(preview).success) {
+    return null;
+  }
+  const cappedPreview = preview.length <= ASSISTANT_PREVIEW_MAX_CHARS
+    ? preview
+    : `${preview.slice(0, ASSISTANT_PREVIEW_MAX_CHARS).trimEnd()}...`;
+  return SafeAssistantPreviewTextSchema.safeParse(cappedPreview).success ? cappedPreview : null;
 }
 
 function ToolTimelineItem({ events }: { events: ToolTimelineEvent[] }) {
@@ -884,6 +909,10 @@ function describeToolTimeline(events: ToolTimelineEvent[]): { icon: keyof typeof
 
 function describeThreadEvent(event: AgentThreadEvent): { icon: keyof typeof Ionicons.glyphMap; title: string; detail: string } {
   switch (event.type) {
+    case "turn.accepted":
+      return { icon: "send-outline", title: "Message accepted", detail: "Waiting for the agent run" };
+    case "turn.status":
+      return { icon: "pulse-outline", title: "Message status", detail: event.status };
     case "thread.created":
       return { icon: "sparkles-outline", title: "Thread created", detail: event.thread.title };
     case "thread.status":
@@ -891,7 +920,7 @@ function describeThreadEvent(event: AgentThreadEvent): { icon: keyof typeof Ioni
     case "assistant.text.delta":
       return { icon: "chatbubble-ellipses-outline", title: "Assistant update", detail: "Text update received" };
     case "assistant.text.completed":
-      return { icon: "checkmark-circle-outline", title: "Assistant message complete", detail: event.messageId };
+      return { icon: "checkmark-circle-outline", title: "Assistant message complete", detail: "Text complete" };
     case "tool.started":
       return { icon: "hammer-outline", title: "Tool started", detail: event.displayName };
     case "tool.output":

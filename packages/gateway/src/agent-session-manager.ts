@@ -72,6 +72,13 @@ type Failure = {
   holderId?: string;
 };
 
+export type AgentSessionStartupReconciliation = {
+  checked: number;
+  degraded: number;
+  releasedLeases: number;
+  stoppedSessions: WorkspaceSessionView[];
+};
+
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
 const TaskIdSchema = z.string().regex(/^task_[A-Za-z0-9_-]{1,128}$/);
 const SlugSchema = z.string().regex(PROJECT_SLUG_REGEX);
@@ -80,6 +87,7 @@ const AgentSandboxSchema = z.object({
   enabled: z.boolean(),
   mode: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
   writableRoots: z.array(z.string().trim().min(1).max(4096)).max(20).optional(),
+  denyWriteRoots: z.array(z.string().trim().min(1).max(4096)).max(20).optional(),
   adminOverride: z.boolean().optional(),
 }).strict();
 const StartSessionSchema = z.object({
@@ -273,7 +281,7 @@ export function createAgentSessionManager(options: {
   worktreeManager: WorktreeManager;
   agentLauncher: AgentLauncher;
   zellijRuntime: ZellijRuntime;
-  inputWriter?: (sessionId: string, input: string) => Promise<void>;
+  inputWriter?: (sessionId: string, input: string, signal?: AbortSignal) => Promise<void>;
   now?: () => string;
   idGenerator?: () => string;
 }) {
@@ -421,7 +429,11 @@ export function createAgentSessionManager(options: {
       return { ok: true, sessions, nextCursor: null };
     },
 
-    async sendInput(sessionId: string, input: string): Promise<{ ok: true; session: WorkspaceSessionView } | Failure> {
+    async sendInput(
+      sessionId: string,
+      input: string,
+      signal?: AbortSignal,
+    ): Promise<{ ok: true; session: WorkspaceSessionView } | Failure> {
       if (!SessionIdSchema.safeParse(sessionId).success || !SessionInputSchema.safeParse(input).success) {
         return failure(400, "invalid_session_input", "Session input is invalid");
       }
@@ -434,7 +446,7 @@ export function createAgentSessionManager(options: {
         return failure(503, "runtime_unavailable", "Session runtime is unavailable");
       }
       try {
-        await options.inputWriter(sessionId, input);
+        await options.inputWriter(sessionId, input, signal);
       } catch (err: unknown) {
         if (err instanceof Error) {
           console.warn("[agent-session-manager] Failed to send session input:", err.message);
@@ -482,17 +494,18 @@ export function createAgentSessionManager(options: {
       return { ok: true, session: decorateSession(updated, options.zellijRuntime) };
     },
 
-    async reconcileStartup(): Promise<{ checked: number; degraded: number; releasedLeases: number }> {
+    async reconcileStartup(): Promise<AgentSessionStartupReconciliation> {
       const sessions = await readAllSessions(homePath);
       let degraded = 0;
       let releasedLeases = 0;
+      const stoppedSessions: WorkspaceSessionView[] = [];
       for (const session of sessions) {
         if (!isActive(session) || session.runtime.type !== "zellij") continue;
         const health = await options.zellijRuntime.health();
         if (health.status !== "degraded") continue;
         degraded += 1;
         if (session.projectSlug && session.worktreeId && await releaseSessionLease(options.worktreeManager, session)) releasedLeases += 1;
-        await writeSession(homePath, {
+        const stoppedSession: WorkspaceSession = {
           ...session,
           runtime: {
             ...session.runtime,
@@ -501,9 +514,11 @@ export function createAgentSessionManager(options: {
           },
           writeMode: "closed",
           lastActivityAt: nowIso(options.now),
-        });
+        };
+        await writeSession(homePath, stoppedSession);
+        stoppedSessions.push(decorateSession(stoppedSession, options.zellijRuntime));
       }
-      return { checked: sessions.length, degraded, releasedLeases };
+      return { checked: sessions.length, degraded, releasedLeases, stoppedSessions };
     },
   };
 }

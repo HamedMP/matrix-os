@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { AppError, type AppErrorCategory } from "../../../shared/app-error";
 import type { ApiClient } from "../lib/api";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
 
 export type ShellSessionPlacement = "active" | "background";
 export type ShellVisualStatus = "running" | "waiting" | "finished" | "idle";
@@ -221,11 +222,16 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
 
   create: async (api) => {
     if (get().creating) return null;
+    // A computer switch advances the runtime generation and clears this store;
+    // a create that settles afterwards belongs to the previous computer and
+    // must not repopulate the new one (the transition already reset `creating`).
+    const generation = captureRuntimeGeneration();
     set({ creating: true, error: null });
     for (let attempt = 0; attempt < CREATE_ATTEMPTS; attempt += 1) {
       const name = nextShellName();
       try {
         const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name, cwd: DEFAULT_CWD });
+        if (!isCurrentRuntimeGeneration(generation)) return null;
         const createdName = typeof response.name === "string" && isValidShellSessionName(response.name) ? response.name : name;
         let created: ShellSessionSummary = {
           name: createdName,
@@ -237,6 +243,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
         set({ loadSequence: refreshSequence });
         try {
           const sessions = await fetchShellSessions(api);
+          if (!isCurrentRuntimeGeneration(generation)) return null;
           if (refreshSequence !== get().loadSequence) {
             set({ creating: false, error: null });
             return created;
@@ -249,6 +256,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
             error: null,
           }));
         } catch (refreshErr: unknown) {
+          if (!isCurrentRuntimeGeneration(generation)) return null;
           if (refreshSequence !== get().loadSequence) {
             set({ creating: false, error: null });
             return created;
@@ -263,6 +271,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
         }
         return created;
       } catch (err: unknown) {
+        if (!isCurrentRuntimeGeneration(generation)) return null;
         if (isSessionExistsError(err) && attempt < CREATE_ATTEMPTS - 1) continue;
         console.error("[shell-sessions] Failed to create shell session:", err);
         set({ creating: false, error: errorCategory(err) });
@@ -274,6 +283,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
   },
 
   deleteSession: async (api, name) => {
+    const generation = captureRuntimeGeneration();
     const previous = get().sessions;
     const deletedIndex = previous.findIndex((session) => session.name === name);
     const deleted = deletedIndex >= 0 ? previous[deletedIndex] : undefined;
@@ -282,6 +292,9 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
       await api.delete(`/api/terminal/sessions/${encodeURIComponent(name)}?force=1`);
       return true;
     } catch (err: unknown) {
+      // After a computer switch the cleared list must not get the old
+      // computer's session restored into it.
+      if (!isCurrentRuntimeGeneration(generation)) return false;
       console.error("[shell-sessions] Failed to delete shell session:", err);
       set((state) => ({
         sessions: deleted ? insertSessionAt(state.sessions, deleted, deletedIndex) : state.sessions,
@@ -298,6 +311,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
       set({ error: "server" });
       return false;
     }
+    const generation = captureRuntimeGeneration();
     const previous = get().sessions;
     const originalIndex = previous.findIndex((session) => session.name === name);
     const original = originalIndex >= 0 ? previous[originalIndex] : undefined;
@@ -307,6 +321,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
     });
     try {
       const response = await api.put<{ session?: unknown }>(`/api/terminal/sessions/${encodeURIComponent(name)}/rename`, { name: nextName });
+      if (!isCurrentRuntimeGeneration(generation)) return false;
       const renamed = asShellSession(response.session) ?? null;
       if (renamed) {
         set((state) => ({
@@ -316,6 +331,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
       }
       return true;
     } catch (err: unknown) {
+      if (!isCurrentRuntimeGeneration(generation)) return false;
       console.error("[shell-sessions] Failed to rename shell session:", err);
       set((state) => ({
         sessions: original ? rollbackRename(state.sessions, original, originalIndex, nextName) : state.sessions,
@@ -329,16 +345,21 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
     const previous = get().sessions;
     const next = moveSession(previous, fromName, toName);
     if (!next) return true;
+    // A runtime switch clears this store while the PUT is in flight; the old
+    // computer's response must not repopulate the new computer's list.
+    const runtimeGeneration = captureRuntimeGeneration();
     set({ sessions: next, error: null });
     try {
       const response = await api.put<{ sessions?: unknown }>("/api/terminal/sessions/order", {
         order: next.map((session) => session.name),
       });
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return true;
       if (Array.isArray(response.sessions)) {
         set({ sessions: parseShellSessions(response.sessions), error: null });
       }
       return true;
     } catch (err: unknown) {
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
       console.error("[shell-sessions] Failed to reorder shell sessions:", err);
       set((state) => ({ sessions: rollbackOrder(state.sessions, previous), error: errorCategory(err) }));
       return false;

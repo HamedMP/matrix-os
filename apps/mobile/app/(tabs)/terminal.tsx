@@ -5,30 +5,53 @@ import {
   Animated,
   Easing,
   Keyboard,
+  Linking,
   Text,
   useWindowDimensions,
   View,
   type KeyboardEvent,
 } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useGateway } from "@/app/_layout";
 import { TerminalControlBar } from "@/components/TerminalControlBar";
 import { TerminalSurface, type TerminalSurfaceHandle } from "@/components/TerminalSurface";
+import { TerminalUrlBanner } from "@/components/TerminalUrlBanner";
 import { WindowHeader, WindowHeaderAction } from "@/components/WindowHeader";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
+import {
+  appendScrollback,
+  clearScrollback,
+  getScrollback,
+  resetScrollback,
+} from "@/lib/terminal-scrollback";
 import {
   MobileTerminalClient,
   type MobileTerminalConnection,
   type TerminalServerFrame,
 } from "@/lib/terminal-client";
 import {
+  computeCursorKeyboardLift,
   formatTerminalCwd,
   initialTerminalState,
+  stripTerminalControlSequences,
   terminalReducer,
 } from "@/lib/terminal-state";
+import {
+  extractHttpUrls,
+  isOpenableUrl,
+  pickBannerUrl,
+  pushRecentUrls,
+} from "@/lib/terminal-urls";
+
+// URL detection: scan a rolling tail of stripped output so a link split across
+// output frames is still matched, keep a small recent list, and cap dismissals.
+const URL_WINDOW_CHARS = 8192;
+const RECENT_URL_CAP = 10;
+const DISMISSED_URL_CAP = 20;
 export default function TerminalScreen() {
   const { theme } = useUnistyles();
   const router = useRouter();
@@ -47,7 +70,69 @@ export default function TerminalScreen() {
   const connectAttemptRef = useRef(0);
   const connectingRef = useRef(false);
   const surfaceRef = useRef<TerminalSurfaceHandle | null>(null);
+  // The session whose live output is currently streaming, so output frames land
+  // in the right scrollback cache bucket (state.activeSessionId lags in closures).
+  const attachedSessionIdRef = useRef<string | null>(null);
   const keyboardLift = useRef(new Animated.Value(0)).current;
+  // Cursor-aware keyboard lift: the emulator reports the cursor's bottom edge
+  // (surface-local px); combined with the surface's window offset we lift only
+  // enough to keep typing visible — a fresh prompt at the top needs no lift.
+  const cursorBottomRef = useRef<number | null>(null);
+  const surfaceWindowTopRef = useRef(0);
+  const surfaceWrapRef = useRef<View | null>(null);
+  const keyboardFrameRef = useRef<{ keyboardTopY: number; maxLift: number } | null>(null);
+
+  // Detected-URL banner state. Refs hold the rolling scan window + recent list;
+  // only the surfaced URL drives a render.
+  const [bannerUrl, setBannerUrl] = useState<string | null>(null);
+  const urlWindowRef = useRef("");
+  const recentUrlsRef = useRef<string[]>([]);
+  const dismissedUrlsRef = useRef<Set<string>>(new Set());
+
+  const resetUrlDetection = useCallback(() => {
+    urlWindowRef.current = "";
+    recentUrlsRef.current = [];
+    dismissedUrlsRef.current = new Set();
+    setBannerUrl(null);
+  }, []);
+
+  const scanForUrls = useCallback((text: string) => {
+    if (!text) return;
+    urlWindowRef.current = (urlWindowRef.current + stripTerminalControlSequences(text)).slice(
+      -URL_WINDOW_CHARS,
+    );
+    const found = extractHttpUrls(urlWindowRef.current);
+    if (found.length === 0) return;
+    recentUrlsRef.current = pushRecentUrls(recentUrlsRef.current, found, RECENT_URL_CAP);
+    const next = pickBannerUrl(recentUrlsRef.current, dismissedUrlsRef.current);
+    setBannerUrl((prev) => (prev === next ? prev : next));
+  }, []);
+
+  const openBannerUrl = useCallback(() => {
+    if (!bannerUrl || !isOpenableUrl(bannerUrl)) return;
+    Linking.openURL(bannerUrl).catch((err: unknown) => {
+      console.warn("[mobile] failed to open terminal url", err instanceof Error ? err.message : String(err));
+    });
+  }, [bannerUrl]);
+
+  const copyBannerUrl = useCallback(() => {
+    if (!bannerUrl) return;
+    Clipboard.setStringAsync(bannerUrl).catch((err: unknown) => {
+      console.warn("[mobile] failed to copy terminal url", err instanceof Error ? err.message : String(err));
+    });
+  }, [bannerUrl]);
+
+  const dismissBannerUrl = useCallback(() => {
+    if (!bannerUrl) return;
+    const dismissed = dismissedUrlsRef.current;
+    dismissed.add(bannerUrl);
+    while (dismissed.size > DISMISSED_URL_CAP) {
+      const oldest = dismissed.values().next().value;
+      if (oldest === undefined) break;
+      dismissed.delete(oldest);
+    }
+    setBannerUrl(pickBannerUrl(recentUrlsRef.current, dismissed));
+  }, [bannerUrl]);
 
   // Initial grid; the embedded emulator reports its fitted size via onResize.
   const gridRef = useRef({ cols: 80, rows: 24 });
@@ -99,6 +184,11 @@ export default function TerminalScreen() {
     if (frame.type === "attached") {
       surfaceRef.current?.clear();
       if (frame.replay) surfaceRef.current?.write(frame.replay);
+      // The gateway replay is authoritative and just repainted the cleared
+      // surface, so any cached preview is now superseded — reset the cache to it.
+      attachedSessionIdRef.current = frame.sessionId;
+      resetScrollback(frame.sessionId, frame.replay ?? "");
+      if (frame.replay) scanForUrls(frame.replay);
       dispatch({
         type: "terminal.attached",
         sessionId: frame.sessionId,
@@ -123,10 +213,14 @@ export default function TerminalScreen() {
     }
     if (frame.type === "output") {
       surfaceRef.current?.write(frame.data);
+      if (attachedSessionIdRef.current) appendScrollback(attachedSessionIdRef.current, frame.data);
+      scanForUrls(frame.data);
       dispatch({ type: "terminal.output", data: frame.data });
       return;
     }
     if (frame.type === "exit") {
+      if (attachedSessionIdRef.current) clearScrollback(attachedSessionIdRef.current);
+      attachedSessionIdRef.current = null;
       dispatch({ type: "terminal.ended", exitCode: frame.exitCode });
       setLastTerminalSessionId(null);
       loadSessions();
@@ -135,7 +229,7 @@ export default function TerminalScreen() {
     if (frame.type === "error") {
       dispatch({ type: "terminal.error", message: frame.message ?? "Terminal unavailable" });
     }
-  }, [loadSessions]);
+  }, [loadSessions, scanForUrls]);
 
   const clearTerminalHandoff = useCallback(() => {
     setTerminalHandoffSessionId(null);
@@ -179,6 +273,15 @@ export default function TerminalScreen() {
         }
       }
       if (connectAttemptRef.current !== attemptId) return;
+      // New session view: drop the previous session's detected-URL banner; the
+      // attach replay below re-scans this session's history.
+      resetUrlDetection();
+      // Paint the cached scrollback immediately so a reattach shows the previous
+      // buffer during the token+WS round-trip instead of a blank surface. The
+      // `attached` frame then clears and repaints from the authoritative replay.
+      surfaceRef.current?.clear();
+      const cachedScrollback = getScrollback(targetName);
+      if (cachedScrollback) surfaceRef.current?.write(cachedScrollback);
       nextConnection = await terminalClient.connect({
         sessionId: targetName,
         cols: gridRef.current.cols,
@@ -214,7 +317,7 @@ export default function TerminalScreen() {
         connectingRef.current = false;
       }
     }
-  }, [handleFrame, terminalClient]);
+  }, [handleFrame, resetUrlDetection, terminalClient]);
 
   const sendData = useCallback((data: string) => {
     if (!data) return;
@@ -231,25 +334,55 @@ export default function TerminalScreen() {
     }).start();
   }, [keyboardLift]);
 
+  const applyCursorLift = useCallback((event: KeyboardEvent | null) => {
+    const frame = keyboardFrameRef.current;
+    if (!frame) return;
+    const cursorBottom = cursorBottomRef.current;
+    const lift = computeCursorKeyboardLift({
+      cursorBottomY: cursorBottom === null ? null : surfaceWindowTopRef.current + cursorBottom,
+      keyboardTopY: frame.keyboardTopY,
+      maxLift: frame.maxLift,
+    });
+    animateKeyboardLift(event, lift);
+  }, [animateKeyboardLift]);
+
+  const handleCursor = useCallback((bottomPx: number) => {
+    cursorBottomRef.current = bottomPx;
+    // Re-fit the lift while typing so a prompt that grows past the keyboard
+    // edge (or a TUI that repositions its input) stays visible.
+    if (keyboardFrameRef.current) applyCursorLift(null);
+  }, [applyCursorLift]);
+
   useEffect(() => {
-    const liftForEvent = (event: KeyboardEvent) => {
+    const frameForEvent = (event: KeyboardEvent) => {
       const keyboardTop = event.endCoordinates.screenY;
       const keyboardHeight = Math.max(0, windowHeight - keyboardTop);
-      return Math.max(0, keyboardHeight - insets.bottom);
+      return { keyboardTopY: keyboardTop, maxLift: Math.max(0, keyboardHeight - insets.bottom) };
     };
     const show = Keyboard.addListener(
       process.env.EXPO_OS === "ios" ? "keyboardWillChangeFrame" : "keyboardDidShow",
-      (event) => animateKeyboardLift(event, liftForEvent(event)),
+      (event) => {
+        keyboardFrameRef.current = frameForEvent(event);
+        // Measure while unlifted; the keyboard event fires before the animation.
+        surfaceWrapRef.current?.measureInWindow((x, y) => {
+          surfaceWindowTopRef.current = y;
+        });
+        surfaceRef.current?.reportCursor();
+        applyCursorLift(event);
+      },
     );
     const hide = Keyboard.addListener(
       process.env.EXPO_OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
-      (event) => animateKeyboardLift(event, 0),
+      (event) => {
+        keyboardFrameRef.current = null;
+        animateKeyboardLift(event, 0);
+      },
     );
     return () => {
       show.remove();
       hide.remove();
     };
-  }, [animateKeyboardLift, insets.bottom, windowHeight]);
+  }, [animateKeyboardLift, applyCursorLift, insets.bottom, windowHeight]);
 
 
   const destroySession = useCallback(async () => {
@@ -261,7 +394,10 @@ export default function TerminalScreen() {
         loadSessions();
         return;
       }
+      clearScrollback(sessionId);
     }
+    attachedSessionIdRef.current = null;
+    resetUrlDetection();
     connectAttemptRef.current += 1;
     connectingRef.current = false;
     connectionRef.current?.destroy();
@@ -282,7 +418,7 @@ export default function TerminalScreen() {
     dispatch({ type: "reset.output" });
     dispatch({ type: "connection.changed", status: "idle" });
     loadSessions();
-  }, [loadSessions, state.activeSessionId, terminalClient]);
+  }, [loadSessions, resetUrlDetection, state.activeSessionId, terminalClient]);
 
   const confirmEnd = useCallback(() => {
     Alert.alert("End session?", "This stops the session and its processes. This can't be undone.", [
@@ -333,13 +469,26 @@ export default function TerminalScreen() {
     terminalResumeLoaded,
   ]);
 
+  // The terminal is a dark console inside a light app: mount a light status
+  // bar only while this tab is focused. Tab screens stay mounted, so an
+  // unconditioned <StatusBar> here would leak light style onto every other
+  // tab; declarative mount/unmount hands control back to the root's dark bar
+  // (imperative setStatusBarStyle gets overridden by later component updates).
+  const [statusBarFocused, setStatusBarFocused] = useState(false);
+  useFocusEffect(
+    useCallback(() => {
+      setStatusBarFocused(true);
+      return () => setStatusBarFocused(false);
+    }, []),
+  );
+
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
+      {statusBarFocused ? <StatusBar style="light" /> : null}
       <WindowHeader
         tone="terminal"
         paddingTop={insets.top + (chromeExpanded ? 8 : 3)}
-        title={chromeExpanded ? "Terminal" : cwd}
+        title={state.activeSessionId ?? "Terminal"}
         subtitle={chromeExpanded ? cwd : undefined}
         titleAffordance
         onTitlePress={() => setChromeExpanded((value) => !value)}
@@ -362,12 +511,13 @@ export default function TerminalScreen() {
       />
 
       <Animated.View style={[styles.terminalStack, { transform: [{ translateY: Animated.multiply(keyboardLift, -1) }] }]}>
-        <View style={styles.terminalSurface}>
+        <View ref={surfaceWrapRef} style={styles.terminalSurface}>
           <TerminalSurface
             ref={surfaceRef}
             fontScale={state.fontScale}
             onInput={sendData}
             onResize={handleResize}
+            onCursor={handleCursor}
           />
           {state.status === "idle" ? (
             <View style={styles.emptyOverlay} pointerEvents="none">
@@ -382,6 +532,16 @@ export default function TerminalScreen() {
             <Text style={styles.errorText}>{state.error}</Text>
           </View>
         )}
+
+        {bannerUrl ? (
+          <TerminalUrlBanner
+            url={bannerUrl}
+            openable={isOpenableUrl(bannerUrl)}
+            onOpen={openBannerUrl}
+            onCopy={copyBannerUrl}
+            onDismiss={dismissBannerUrl}
+          />
+        ) : null}
 
         <View style={[styles.controlFooter, { paddingBottom: Math.max(insets.bottom, 8) }]}>
           <TerminalControlBar

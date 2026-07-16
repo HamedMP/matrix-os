@@ -155,7 +155,10 @@ function previewOrigin(origin?: string): string {
   if (!origin) return "Preview unavailable";
   try {
     return new URL(origin).origin;
-  } catch {
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) {
+      console.warn("Preview origin unavailable");
+    }
     return "Preview unavailable";
   }
 }
@@ -165,7 +168,10 @@ function previewHref(preview: PreviewSessionSummary): string | undefined {
   try {
     const url = new URL(preview.origin);
     return url.protocol === "https:" ? url.origin : undefined;
-  } catch {
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) {
+      console.warn("Preview link unavailable");
+    }
     return undefined;
   }
 }
@@ -262,8 +268,8 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
         fetchJson<{ worktrees: WorkspaceWorktree[] }>(`/api/projects/${encodedSlug}/worktrees`),
         fetchJson<{ previews: WorkspacePreview[] }>(`/api/projects/${encodedSlug}/previews?limit=20`),
         fetchJson<{ events: WorkspaceEvent[] }>(`/api/workspace/events?projectSlug=${encodedSlug}&limit=20`),
-        fetchCodingAgentWorkspaceState(projectSlug).catch(() => {
-          console.warn("Coding agent workspace summary unavailable");
+        fetchCodingAgentWorkspaceState(projectSlug).catch((err: unknown) => {
+          console.warn(err instanceof TypeError ? "Coding agent workspace summary timed out" : "Coding agent workspace summary unavailable");
           return { previews: [], threads: [] };
         }),
       ]);
@@ -468,6 +474,21 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     } finally {
       setStartingAgent(false);
     }
+  };
+
+  const openPullRequestWorkspace = (worktree: WorkspaceWorktree) => {
+    const pullRequestNumber = worktreePrNumber(worktree);
+    if (!activeSlug || !worktree.id || !pullRequestNumber) return;
+    window.dispatchEvent(new CustomEvent("matrix:open-pr-canvas", {
+      detail: {
+        title: `PR ${pullRequestNumber} Workspace`,
+        scopeRef: {
+          projectSlug: activeSlug,
+          worktreeId: worktree.id,
+          pullRequestNumber,
+        },
+      },
+    }));
   };
 
   const visibleProjects = projects.slice(0, PROJECT_RENDER_LIMIT);
@@ -717,12 +738,29 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
               </button>
             </form>
             {worktreeMessage && <p className="pb-2 text-xs text-muted-foreground">{worktreeMessage}</p>}
-            {worktrees.map((worktree) => (
-              <div key={worktree.id} className="py-2 text-xs">
-                <div className="font-medium">{worktree.currentBranch ?? worktree.id}</div>
-                <div className="text-muted-foreground">{worktree.dirtyState ?? "unknown"}</div>
-              </div>
-            ))}
+            {worktrees.map((worktree) => {
+              const pullRequestNumber = worktreePrNumber(worktree);
+              return (
+                <div key={worktree.id} className="py-2 text-xs">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate font-medium">{worktree.currentBranch ?? worktree.id}</div>
+                      <div className="text-muted-foreground">{worktree.dirtyState ?? "unknown"}</div>
+                    </div>
+                    {pullRequestNumber ? (
+                      <button
+                        type="button"
+                        aria-label={`Open PR workspace for PR ${pullRequestNumber}`}
+                        onClick={() => openPullRequestWorkspace(worktree)}
+                        className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded border border-border px-2 hover:bg-accent"
+                      >
+                        PR {pullRequestNumber}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
           </WorkspacePanel>
 
           <WorkspacePanel title="Reviews" icon={<BotIcon className="size-3.5" />}>

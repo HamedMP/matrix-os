@@ -11,6 +11,9 @@ import {
   CodingAgentNotificationPreferencesSchema,
   CodingAgentNotificationPreferencesUpdateSchema,
   CreateAgentThreadRequestSchema,
+  CreateAgentTurnErrorSchema,
+  CreateAgentTurnRequestSchema,
+  CreateAgentTurnResponseSchema,
   CursorSchema,
   FileBrowseRequestSchema,
   FileBrowseResponseSchema,
@@ -20,8 +23,11 @@ import {
   FileSearchResponseSchema,
   FileWriteRequestSchema,
   FileWriteResponseSchema,
+  ProjectAgentWorkspaceSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
+  MatrixComputerListSchema,
+  RuntimeSelectionRequestSchema,
   RuntimeSummarySchema,
   SafeClientErrorSchema,
   SourceControlCreatePullRequestRequestSchema,
@@ -33,10 +39,18 @@ import {
   UserInputAnswerRequestSchema,
   boundedListSchema,
 } from "@matrix-os/contracts";
+import { CodingAgentProjectWorkspaceRequestSchema } from "./coding-agent-project-workspace";
 
 const Empty = z.object({}).strict();
 
 const Ok = z.object({ ok: z.boolean() }).strict();
+const CodingAgentCreateTurnRequestSchema = CreateAgentTurnRequestSchema.extend({
+  threadId: ThreadIdSchema,
+}).strict();
+const CodingAgentCreateTurnResultSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), response: CreateAgentTurnResponseSchema }).strict(),
+  z.object({ ok: z.literal(false), error: CreateAgentTurnErrorSchema }).strict(),
+]);
 const EmbedStateSchema = z.enum(["loading", "ready", "auth-required", "failed"]);
 const ReviewIdSchema = z.string().regex(/^rev_[A-Za-z0-9_-]{1,128}$/);
 
@@ -71,6 +85,7 @@ const STATE_KEYS = [
   "panelLayouts",
   "appearance",
   "recents",
+  "codingAgentWorkspace",
 ] as const;
 
 const MAX_STATE_VALUE_BYTES = 64 * 1024;
@@ -116,18 +131,27 @@ export const INVOKE_CHANNELS = {
         imageUrl: z.string().url().max(2048).optional(),
         runtimeSlot: z.string().max(64),
         platformHost: z.string().max(256),
+        authGeneration: z.number().int().nonnegative(),
       })
       .strict(),
   },
   "auth:sign-out": { request: Empty, response: Ok },
   "auth:session-expired": { request: Empty, response: Ok },
+  "runtime:list-computers": {
+    request: Empty,
+    response: MatrixComputerListSchema,
+  },
   "runtime:select": {
-    request: z.object({ slot: z.string().min(1).max(64) }).strict(),
+    request: RuntimeSelectionRequestSchema,
     response: Ok,
   },
   "runtime:get-summary": {
     request: Empty,
     response: RuntimeSummarySchema,
+  },
+  "runtime:get-project-workspace": {
+    request: CodingAgentProjectWorkspaceRequestSchema,
+    response: ProjectAgentWorkspaceSchema,
   },
   "runtime:get-notification-preferences": {
     request: Empty,
@@ -204,6 +228,10 @@ export const INVOKE_CHANNELS = {
   "runtime:create-thread": {
     request: CreateAgentThreadRequestSchema,
     response: AgentThreadSnapshotSchema,
+  },
+  "runtime:create-turn": {
+    request: CodingAgentCreateTurnRequestSchema,
+    response: CodingAgentCreateTurnResultSchema,
   },
   "state:get": {
     request: z.object({ key: z.enum(STATE_KEYS) }).strict(),

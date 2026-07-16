@@ -33,7 +33,14 @@
     },
     "production": {
       "extends": "base",
-      "autoIncrement": true
+      "autoIncrement": true,
+      // EXPO_PUBLIC_POSTHOG_API_KEY is intentionally NOT set here — provide it as
+      // an EAS secret/env var so the key is never committed. When it is absent the
+      // app runs analytics-free (see apps/mobile/lib/analytics.ts).
+      "env": {
+        "EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE": "1",
+        "EXPO_PUBLIC_POSTHOG_HOST": "https://eu.i.posthog.com"
+      }
     }
   },
   "submit": {
@@ -44,7 +51,9 @@
         // derives the team from your authenticated session) during submit.
         // After the first successful submit, paste the real values here to skip
         // lookups: "ascAppId": "1234567890", "appleTeamId": "ABCDE12345".
-        "appleId": "thehamedmp@gmail.com"
+        "appleId": "thehamedmp@gmail.com",
+        "ascAppId": "6785629815",
+        "appleTeamId": "PX4JL74Y2K"
         // Alternative (fully non-interactive CI): use an App Store Connect API key:
         //   "ascApiKeyPath": "./asc-api-key.p8",
         //   "ascApiKeyId": "XXXXXXXXXX",

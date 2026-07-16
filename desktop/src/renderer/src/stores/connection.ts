@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { invoke, onEvent } from "../lib/operator";
 import { createApiClient, type ApiClient } from "../lib/api";
+import { reconcileDesktopRuntimeChange } from "./runtime-transition";
 
 export type ConnectionStatus = "loading" | "signed-out" | "signed-in";
 
@@ -13,6 +14,9 @@ interface ConnectionState {
   imageUrl: string | null;
   platformHost: string;
   runtimeSlot: string;
+  // Trusted-core credential generation; advances on every credential
+  // replacement so caches keyed on visible identity cannot cross sessions.
+  authGeneration: number;
   api: ApiClient | null;
   refresh: () => Promise<void>;
   selectRuntime: (slot: string) => Promise<void>;
@@ -26,6 +30,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
   imageUrl: null,
   platformHost: "",
   runtimeSlot: "primary",
+  authGeneration: 0,
   api: null,
 
   refresh: async () => {
@@ -49,6 +54,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
         imageUrl: status.imageUrl ?? null,
         platformHost: status.platformHost,
         runtimeSlot: status.runtimeSlot,
+        authGeneration: status.authGeneration,
         api,
       });
     } catch (err: unknown) {
@@ -58,8 +64,28 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
   },
 
   selectRuntime: async (slot) => {
-    await invoke("runtime:select", { slot });
-    set({ runtimeSlot: slot });
+    // The trusted core emits runtime:changed before the runtime:select invoke
+    // resolves. If the wired listener refreshed immediately, the new slot and
+    // API would become observable before reconciliation, letting surfaces load
+    // the new computer under the old runtime generation only to be wiped.
+    runtimeSwitchesInFlight += 1;
+    try {
+      await invoke("runtime:select", { slot });
+      // Clear previous-computer state only after the trusted core confirms the
+      // switch, and before the new slot becomes observable to the UI.
+      reconcileDesktopRuntimeChange();
+      set({ runtimeSlot: slot });
+    } catch (err: unknown) {
+      // The switch never happened: keep every surface on the still-selected
+      // computer and refresh the auth snapshot so the API client stays valid.
+      await get().refresh();
+      throw err;
+    } finally {
+      runtimeSwitchesInFlight -= 1;
+    }
+    // Publish the post-switch snapshot (handle, authGeneration, API) now that
+    // the previous computer's state is gone.
+    await get().refresh();
   },
 
   signOut: async () => {
@@ -70,6 +96,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
 
 let wired = false;
 let connectionEventCleanups: Array<() => void> = [];
+let runtimeSwitchesInFlight = 0;
 
 function refreshFromConnectionEvent(): void {
   void useConnection
@@ -80,12 +107,19 @@ function refreshFromConnectionEvent(): void {
     });
 }
 
+function refreshFromRuntimeChangedEvent(): void {
+  // selectRuntime reconciles and refreshes itself; refreshing here would
+  // publish the new slot before the previous computer's state is cleared.
+  if (runtimeSwitchesInFlight > 0) return;
+  refreshFromConnectionEvent();
+}
+
 export function wireConnectionEvents(): void {
   if (wired) return;
   wired = true;
   connectionEventCleanups = [
     onEvent("auth:changed", refreshFromConnectionEvent),
-    onEvent("runtime:changed", refreshFromConnectionEvent),
+    onEvent("runtime:changed", refreshFromRuntimeChangedEvent),
   ];
 }
 

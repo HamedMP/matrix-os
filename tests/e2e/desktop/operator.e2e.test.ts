@@ -86,21 +86,76 @@ suite("operator desktop e2e", () => {
     await page.screenshot({ path: join(SCREENSHOT_DIR, "03-task-tab.png") });
   }, 30_000);
 
-  it("starts an agent thread from the composer and streams it in the Agents tab", async () => {
-    await page.keyboard.press(process.platform === "darwin" ? "Meta+j" : "Control+j");
-    await page.getByPlaceholder(/ask hermes/i).fill("fix the failing auth tests");
-    await page.keyboard.press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
-    await page.getByText("Done — all tests pass.").waitFor({ timeout: 10_000 });
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "04-agents.png") });
+  it("opens the Agents workspace from the command palette", async () => {
+    await page.locator("aside button", { hasText: "Home" }).first().click();
+    await page.keyboard.press("Control+K");
+    await page.getByLabel("Command palette").waitFor({ timeout: 10_000 });
+    await page.getByText("Open Agents").click();
+    await page.getByRole("button", { name: "New chat in selected project" }).waitFor({ timeout: 10_000 });
+    await page.getByRole("navigation", { name: "Projects and conversations" }).waitFor();
+    await page.getByRole("group", { name: "Project chats" }).waitFor();
+    await page.getByRole("group", { name: "Task Fix the failing auth tests" }).waitFor();
+    await page.getByRole("button", { name: "Chat Investigate auth callback" }).waitFor();
+    await page.getByRole("button", { name: "Chat Verify token refresh" }).waitFor();
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "04-agents-project-navigator.png") });
+
+    await page.getByRole("button", { name: "Kanban" }).click();
+    await page.getByRole("region", { name: "Matrix OS Kanban" }).waitFor();
+    await page.getByRole("button", { name: "Open chat Investigate auth callback" }).waitFor();
+    await page.getByRole("button", { name: "Open chat Verify token refresh" }).waitFor();
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "04b-agents-kanban.png") });
+
+    await page.setViewportSize({ width: 820, height: 720 });
+    await page.getByRole("region", { name: "Matrix OS Kanban" }).waitFor();
+    await page.getByRole("button", { name: "Open chat Investigate auth callback" }).waitFor();
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "04c-agents-kanban-narrow.png") });
+    await page.setViewportSize({ width: 1280, height: 720 });
+
+    await page.getByLabel("Move Fix the failing auth tests").selectOption("blocked");
+    await expect.poll(() => gateway.state.taskUpdates.length).toBe(1);
+    expect(gateway.state.taskUpdates[0]).toMatchObject({ taskId: "task_auth", status: "blocked" });
+
+    await page.getByRole("button", { name: "Conversation" }).click();
+    await page.getByRole("region", { name: "Conversation Fix the failing auth tests" }).waitFor();
+    await page.getByRole("tablist", { name: "Conversation tools" }).waitFor();
+    await page.getByRole("button", { name: "Open review PR #917" }).click();
+    await page.getByText("PR #917 review details").waitFor();
+    await page.getByRole("button", { name: "Prepare commit for review PR #917" }).waitFor();
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "04d-agents-changes-inspector.png") });
+    await page.setViewportSize({ width: 820, height: 720 });
+    await page.getByRole("complementary", { name: "Conversation tools" }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "04e-agents-changes-inspector-narrow.png") });
+    await page.setViewportSize({ width: 1280, height: 720 });
+
+    await page.getByRole("tab", { name: /^Terminal\b/ }).click();
+    await page.getByText("Matrix shell").waitFor();
+    await page.getByRole("tab", { name: /^Preview\b/ }).click();
+    await page.getByRole("button", { name: "Inspect preview Matrix OS web" }).waitFor();
+    await page.getByRole("tab", { name: /^Activity\b/ }).click();
+    await page.getByRole("heading", { name: "Codex" }).waitFor();
+    await page.getByRole("tab", { name: /^Changes\b/ }).click();
+  }, 30_000);
+
+  it("starts an agent thread from the Agents workspace composer", async () => {
+    await page.locator("aside button", { hasText: "Agents" }).first().click({ timeout: 5_000 });
+    await page.getByRole("button", { name: "New chat in Matrix OS" }).click();
+    await page.getByLabel("Agent run prompt").fill("fix the failing auth tests", { timeout: 5_000 });
+    await page.getByRole("button", { name: "Start run" }).focus();
+    await page.keyboard.press("Enter");
+    await expect.poll(() => gateway.state.codingAgentCreates.length, { timeout: 5_000 }).toBe(1);
+    expect(gateway.state.codingAgentCreates[0]).toMatchObject({ projectId: "matrix-os" });
+    await page.getByText("fix the failing auth tests").first().waitFor({ timeout: 10_000 });
+    await page.getByText("Completed").first().waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "05-agents.png") });
   }, 30_000);
 
   it("opens the Terminal workspace with a session sidebar", async () => {
     await page.locator("aside button", { hasText: "Terminal" }).first().click();
     // Inner sessions sidebar lists the VPS session as a clickable button
     // (the hidden task-tab chip with the same name is a span, not matched here).
-    await page.getByText("Sessions").first().waitFor({ timeout: 10_000 });
+    await page.getByText("Shells").first().waitFor({ timeout: 10_000 });
     await page.locator("button", { hasText: "matrix-task-1" }).first().waitFor({ state: "visible", timeout: 10_000 });
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "05-terminal-workspace.png") });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "06-terminal-workspace.png") });
   }, 30_000);
 
   it("lists apps and opens one as a tab", async () => {
@@ -110,31 +165,104 @@ suite("operator desktop e2e", () => {
     await page.getByText("Notes").first().click();
     // The app opens in its own tab (tab chip with the app name).
     await page.locator('[role="tab"]', { hasText: "Notes" }).first().waitFor({ timeout: 10_000 });
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "06-apps.png") });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "07-apps.png") });
   }, 30_000);
 
   it("detaches the hosted shell while non-Home tabs are active", async () => {
     await page.locator("aside button", { hasText: "Home" }).first().click();
     await expect.poll(attachedNativeViewCount).toBe(1);
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "07-home-shell-active.png") });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "08-home-shell-active.png") });
 
     await page.locator("aside button", { hasText: "Settings" }).first().click();
     await page.getByRole("heading", { name: "Settings" }).waitFor({ timeout: 10_000 });
     await expect.poll(attachedNativeViewCount).toBe(0);
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "08-settings-no-shell-overlay.png") });
+    await page.getByRole("button", { name: "Computers" }).click();
+    await page.getByText("Additional Computer").waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "09-settings-no-shell-overlay.png") });
+    await page.getByRole("button", { name: "Use Additional Computer" }).click();
+    await expect.poll(() => gateway.state.runtimeSelections).toEqual(["review"]);
+    // A successful switch tears down the previous computer's desktop (all tabs
+    // close), so the persistent sidebar computer menu is the post-switch
+    // assertion surface: it must report the server-selected computer.
+    await page.getByRole("button", { name: "Change computer, currently Additional Computer" }).waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "09b-computer-switched.png") });
+
+    // Reopening Settings must mark the server-reported slot as current and
+    // leave the other computer selectable.
+    await page.locator("aside button", { hasText: "Settings" }).first().click();
+    await page.getByRole("heading", { name: "Settings" }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Computers" }).click();
+    await page.getByRole("button", { name: "Current computer" }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Use Main Computer" }).waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "09c-settings-current-computer.png") });
+
+    // Sidebar computer menu evidence: expanded rail, then the collapsed rail
+    // popup that must keep a readable fixed width.
+    await page.getByRole("button", { name: /Change computer, currently/ }).click();
+    await page.getByRole("listbox", { name: "Choose computer" }).waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "09d-computer-menu.png") });
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Collapse sidebar (⌘B)" }).click();
+    await page.getByRole("button", { name: /Change computer, currently/ }).click();
+    await page.getByRole("listbox", { name: "Choose computer" }).waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "09e-computer-menu-collapsed.png") });
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Expand sidebar (⌘B)" }).click();
 
     await page.locator("aside button", { hasText: "Chat" }).first().click();
     await page.getByRole("heading", { name: /What should we build/i }).waitFor({ timeout: 10_000 });
     await expect.poll(attachedNativeViewCount).toBe(0);
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "09-chat-no-shell-overlay.png") });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "10-chat-no-shell-overlay.png") });
 
     await page.locator("aside button", { hasText: "Apps" }).first().click();
     await page.getByText("Notes").first().waitFor({ timeout: 10_000 });
     await expect.poll(attachedNativeViewCount).toBe(0);
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "10-apps-no-shell-overlay.png") });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "11-apps-no-shell-overlay.png") });
 
     await page.locator("aside button", { hasText: "Home" }).first().click();
     await expect.poll(attachedNativeViewCount).toBe(1);
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "11-home-shell-restored.png") });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "12-home-shell-restored.png") });
   }, 40_000);
+
+  it("switches unified themes from Appearance settings", async () => {
+    await page.locator("aside button", { hasText: "Settings" }).first().click();
+    await page.getByRole("heading", { name: "Settings" }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Appearance" }).click();
+    await page.getByRole("radiogroup", { name: "Theme" }).waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "13-appearance-theme-picker.png") });
+
+    await page.getByRole("radio", { name: "Use Dracula theme" }).click();
+    await page.waitForFunction(() => document.documentElement.getAttribute("data-theme-id") === "dracula");
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "14-theme-dracula.png") });
+
+    // The terminal palette follows the unified theme.
+    await page.locator("aside button", { hasText: "Terminal" }).first().click();
+    await page.getByText("Shells").first().waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "15-theme-dracula-terminal.png") });
+
+    // Restore the default so later suites see the stock palette.
+    await page.locator("aside button", { hasText: "Settings" }).first().click();
+    await page.getByRole("button", { name: "Appearance" }).click();
+    await page.getByRole("radio", { name: "Use Operator theme" }).click();
+    await page.waitForFunction(() => document.documentElement.getAttribute("data-theme-id") === "operator");
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "16-theme-operator-default.png") });
+  }, 40_000);
+
+  it("lists coding-agent threads in the unified chat rail and routes selection to Agents", async () => {
+    // The earlier computer switch cleared the workspace summary; opening the
+    // Agents workspace refreshes it before the rail is inspected.
+    await page.locator("aside button", { hasText: "Agents" }).first().click();
+    await page.getByRole("button", { name: "New chat in Matrix OS" }).waitFor({ timeout: 10_000 });
+    await page.locator("aside button", { hasText: "Chat" }).first().click();
+    // The rail lists the server-backed run alongside Hermes under "Agent runs".
+    await page.getByText("Agent runs").waitFor({ timeout: 10_000 });
+    const railItem = page.getByRole("button", { name: "fix the failing auth tests" }).first();
+    await railItem.waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "17-chat-unified-rail.png") });
+
+    // Selecting a coding-agent thread routes to its canonical workspace surface.
+    await railItem.click();
+    await page.getByRole("button", { name: "New chat in Matrix OS" }).waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "18-chat-rail-routes-to-agents.png") });
+  }, 30_000);
 });

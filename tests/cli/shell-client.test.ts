@@ -720,7 +720,7 @@ describe("shell REST client", () => {
         expect(init?.headers).toEqual(expect.objectContaining({
           Authorization: "Bearer tok",
           "Content-Type": "image/png",
-          "X-Matrix-Filename": "Screenshot 2026-07-07 at 6.50.39 PM.png",
+          "X-Matrix-Filename": "Screenshot-2026-07-07-at-6.50.39-PM.png",
         }));
         expect(Buffer.from(init?.body as BodyInit as ArrayBuffer)).toEqual(PNG_BYTES);
         return new Response(JSON.stringify({
@@ -748,12 +748,18 @@ describe("shell REST client", () => {
       output,
       errorOutput,
       cwd: "projects/app",
+      richPaste: { statusMinVisibleMs: 0 },
     });
     ControlledWebSocket.last?.emit("open");
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     input.emit("data", `"${imagePath}"`);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toContainEqual({
+        type: "input",
+        data: "\"/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/upload.png\"",
+      });
+    });
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
 
     await expect(attached).resolves.toEqual({ detached: false });
@@ -1137,5 +1143,76 @@ describe("shell REST client", () => {
       { type: "input", data: "a" },
       { type: "input", data: "bc" },
     ]);
+  });
+
+  it("detaches cleanly when attach output hits EPIPE", async () => {
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const epipe = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+    const output = {
+      write: vi.fn(() => {
+        throw epipe;
+      }),
+    } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "output", data: "ready", seq: 0 }));
+
+    await expect(attached).resolves.toEqual({ detached: true });
+    expect(ControlledWebSocket.last?.closed).toBe(true);
+    expect(errorOutput.write).not.toHaveBeenCalledWith("Shell attach failed\n");
+  });
+
+  it("writes local terminal input reset when attach exits", async () => {
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;
+    const output = { write: vi.fn(), columns: 80, rows: 24 } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+
+    await expect(attached).resolves.toEqual({ detached: false });
+    const resetWrites = vi.mocked(output.write).mock.calls.filter(([data]) => data === LOCAL_TERMINAL_INPUT_RESET);
+    expect(resetWrites).toHaveLength(2);
+  });
+
+  it("fails attach when local output hits a non-EPIPE stream error", async () => {
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = {
+      write: vi.fn(() => {
+        throw Object.assign(new Error("stream failed"), { code: "ERR_STREAM_DESTROYED" });
+      }),
+    } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "output", data: "ready", seq: 0 }));
+
+    await expect(attached).rejects.toMatchObject({ code: "attach_failed" });
+    expect(ControlledWebSocket.last?.closed).toBe(true);
   });
 });

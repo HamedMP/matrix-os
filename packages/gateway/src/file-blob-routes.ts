@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { basename, dirname, extname } from "node:path";
+import { basename, dirname, extname, posix } from "node:path";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
@@ -19,6 +19,12 @@ const BoolQuerySchema = z
 
 const BlobQuerySchema = z.object({
   path: z.string().trim().min(1).max(4096),
+  filename: z.string()
+    .min(1)
+    .max(255)
+    .regex(/^[^/\0]+$/)
+    .refine((value) => value !== "." && value !== "..")
+    .optional(),
   force: BoolQuerySchema,
   secret: BoolQuerySchema,
 });
@@ -56,6 +62,7 @@ export function createFileBlobRoutes(deps: FileBlobRouteDeps): Hono {
   function parseQuery(c: Context) {
     const parsed = BlobQuerySchema.safeParse({
       path: c.req.query("path"),
+      filename: c.req.query("filename"),
       force: c.req.query("force"),
       secret: c.req.query("secret"),
     });
@@ -84,11 +91,37 @@ export function createFileBlobRoutes(deps: FileBlobRouteDeps): Hono {
     const parsed = parseQuery(c);
     if (!parsed) return invalidPath(c);
 
-    const resolved = resolveWritableFileApiPath(deps.homePath, parsed.path);
+    let destinationPath = parsed.path;
+    let resolved = resolveWritableFileApiPath(deps.homePath, destinationPath);
     if (!resolved) return invalidPath(c);
 
     try {
       const existing = await lstat(resolved);
+      if (existing.isDirectory()) {
+        if (!parsed.filename) return c.json({ error: "not_file" }, 400);
+        destinationPath = posix.join(destinationPath, parsed.filename);
+        resolved = resolveWritableFileApiPath(deps.homePath, destinationPath);
+        if (!resolved) return invalidPath(c);
+      }
+    } catch (err: unknown) {
+      if (
+        !(err instanceof Error) ||
+        !("code" in err) ||
+        (err as NodeJS.ErrnoException).code !== "ENOENT"
+      ) {
+        throw err;
+      }
+      if (parsed.path.endsWith("/") && parsed.filename) {
+        destinationPath = posix.join(parsed.path, parsed.filename);
+        resolved = resolveWritableFileApiPath(deps.homePath, destinationPath);
+        if (!resolved) return invalidPath(c);
+      }
+    }
+
+    if (!resolved) return invalidPath(c);
+    const uploadPath = resolved;
+    try {
+      const existing = await lstat(uploadPath);
       if (existing.isDirectory()) return c.json({ error: "not_file" }, 400);
       if (!parsed.force) return c.json({ error: "file_exists" }, 409);
     } catch (err: unknown) {
@@ -102,15 +135,15 @@ export function createFileBlobRoutes(deps: FileBlobRouteDeps): Hono {
     }
 
     const body = Buffer.from(await c.req.arrayBuffer());
-    const parent = dirname(resolved);
-    const tmpPath = `${resolved}.matrix-upload-${randomUUID()}.tmp`;
+    const parent = dirname(uploadPath);
+    const tmpPath = `${uploadPath}.matrix-upload-${randomUUID()}.tmp`;
     const mode = parsed.secret ? 0o600 : 0o644;
 
     try {
       await mkdir(parent, { recursive: true, mode: 0o700 });
       await writeFile(tmpPath, body, { flag: "wx", mode });
-      await rename(tmpPath, resolved);
-      return c.json({ ok: true, path: parsed.path, size: body.byteLength });
+      await rename(tmpPath, uploadPath);
+      return c.json({ ok: true, path: destinationPath, size: body.byteLength });
     } catch (err: unknown) {
       await safeUnlink(tmpPath);
       if (

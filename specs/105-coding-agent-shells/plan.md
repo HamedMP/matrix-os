@@ -1,6 +1,6 @@
 # Implementation Plan: Coding Agent Shells
 
-**Status**: Draft
+**Status**: Original product model confirmed; Full Workspace Gate B0 awaiting confirmation
 **Created**: 2026-07-06
 **Planning horizon**: Incremental PR series, not a single mega-branch.
 
@@ -8,7 +8,7 @@
 
 This plan upgrades Matrix OS desktop and mobile into first-class coding-agent interfaces while preserving current behavior. The sequence intentionally starts with contracts and read-only projections, then adds agent thread creation, streaming, approvals, terminal binding, review, preview, and notification polish.
 
-The guiding rule is simple: build shared runtime primitives first, then render them differently per shell.
+The guiding rule is simple: build shared runtime primitives first, then render them differently per shell. The clarified final experience is project-first: one visible chat/session is one resumable `AgentThread`, each message is one server-side `AgentTurn`, and one task may own several independent threads. Desktop and mobile expose Conversation and Kanban views over that same runtime model.
 
 ## Strategic Choices
 
@@ -133,7 +133,60 @@ Pattern:
 - Add native renderer as optional capability after spike.
 - Keep fallback until native is proven across required devices.
 
+### Choice 7 - One Chat Is One Resumable Thread
+
+Do not model each prompt as a new thread.
+
+Why:
+
+- Users reason about a visible chat/session as one agent conversation.
+- Provider resume state, approvals, transcript, terminal binding, and review context must remain isolated per chat.
+- Creating a replacement thread for a follow-up breaks navigation and cross-shell continuity.
+
+Pattern:
+
+- Thread create accepts the first message and creates the provider conversation.
+- `POST /api/coding-agents/threads/:threadId/turns` accepts later messages idempotently.
+- The runtime stores provider resume identity; shells receive only safe thread/turn/event projections.
+- One normal turn runs at a time per thread. Busy submissions fail safely rather than entering an invisible client queue.
+
+### Choice 8 - Canonical Tasks Own Many Threads
+
+Reuse existing Matrix projects/tasks and Kanban status instead of creating an agent-only board.
+
+Why:
+
+- The desktop already has canonical project task routes and `todo`, `running`, `waiting`, `blocked`, `complete`, `archived` states.
+- A task can need separate planning, implementation, review, and repair conversations.
+- A singular task-session link cannot represent multi-agent work.
+
+Pattern:
+
+- New threads require `projectId` and optionally reference one task in that project.
+- Project workspace read models join canonical task summaries with bounded coding-thread aggregates.
+- Task writes remain on canonical task routes.
+- Thread status renders as task-card badges/attention and never silently moves the task.
+
+### Choice 9 - Conversation And Kanban Are Views, Not Stores
+
+Both modes consume the same project/task/thread projections.
+
+Why:
+
+- Switching modes must preserve identity and avoid state drift.
+- Desktop needs dense project/session navigation while mobile needs route-based phone ergonomics.
+- Runtime ownership stays independent of either renderer.
+
+Pattern:
+
+- Persist only selected runtime/project/task/thread and view mode as bounded safe references.
+- Reconcile those references on hydration and runtime switch.
+- Conversation view focuses one thread and contextual tools.
+- Kanban view focuses canonical tasks and bounded thread aggregates; opening a thread returns to the same conversation identity.
+
 ## Phase Roadmap
+
+Phases A-H describe the landed/checkpoint foundation and remain required regression context. Phases I-M began after Gate 0 received explicit product-owner confirmation. The later Full Workspace expansion remains separately gated by Gate B0.
 
 ### Phase A - Foundation
 
@@ -321,6 +374,108 @@ Primary PRs:
 3. `feat(notifications): route coding-agent attention`
 4. `feat(mobile): add native terminal capability`
 
+### Phase I - Product Model And Project Read Models
+
+Scope:
+
+- Product-owner confirmation of the hierarchy and interaction rules.
+- Project/task/thread/turn contracts and schema tests.
+- Real canonical project summary adapter.
+- Bounded project workspace projection with task/thread aggregates.
+- Owner/project/task relation validation.
+
+Exit criteria:
+
+- Confirmation gate is recorded before implementation starts.
+- Runtime summary returns actual projects when they exist.
+- One task can project several threads without nested unbounded arrays.
+- Cross-project task bindings are rejected.
+
+Primary PRs:
+
+1. `docs(agent-shells): define project conversation model`
+2. `contracts(agent-shells): add project task and turn schemas`
+3. `feat(gateway): hydrate project agent workspaces`
+
+### Phase J - Same-Thread Conversation Turns
+
+Scope:
+
+- Idempotent turn mutation and event contracts.
+- Atomic active-turn ownership.
+- Provider resume support through normalized adapters.
+- Desktop/mobile trusted clients.
+
+Exit criteria:
+
+- Two sequential messages remain in one thread/provider conversation.
+- Duplicate turn retries return the original accepted turn.
+- Concurrent normal turns fail with a safe busy state.
+- Abort/failure releases active-turn ownership without affecting other threads.
+
+Primary PRs:
+
+1. `feat(agents): add resumable conversation turns`
+2. `feat(desktop): send same-thread follow-ups`
+3. `feat(mobile): send same-thread follow-ups`
+
+### Phase K - Desktop Project Conversation And Kanban
+
+Scope:
+
+- Persistent project/task/thread navigator.
+- Conversation/Kanban segmented mode.
+- Task cards with bounded multi-thread aggregates.
+- Same-thread composer and contextual inspector.
+- Selection reconciliation and keyboard paths.
+
+Exit criteria:
+
+- Project-level and task-bound chats are visible in the navigator.
+- A task with multiple threads exposes every thread independently.
+- Mode switching preserves valid project/task/thread selection.
+- Existing Board, Terminal, Chat, Apps, Settings, auth, embeds, updater, and menus regressions pass.
+
+Primary PRs:
+
+1. `feat(desktop): add project conversation navigator`
+2. `feat(desktop): integrate agent Kanban mode`
+
+### Phase L - Mobile Project Conversation And Kanban
+
+Scope:
+
+- Project-first route hierarchy.
+- Task groups with multiple thread rows.
+- Phone/tablet Conversation/Kanban mode.
+- Same-thread composer and safe resume-state reconciliation.
+
+Exit criteria:
+
+- Mobile can select every thread attached to a task.
+- Kanban uses canonical task columns and preserves selected context.
+- Background/resume rehydrates project/task/thread state before navigation.
+- Existing SDK 57 mobile regression and device-smoke gates pass.
+
+Primary PRs:
+
+1. `feat(mobile): add project conversation routes`
+2. `feat(mobile): add agent Kanban mode`
+
+### Phase M - Final Cross-Shell Acceptance
+
+Scope:
+
+- Desktop/mobile real-runtime scenario with two projects, one multi-thread task, and sequential turns.
+- Conversation/Kanban identity continuity.
+- Security/error audit, performance caps, public/internal docs.
+
+Exit criteria:
+
+- Every acceptance case in `acceptance-tests.md` has current evidence.
+- No clarified requirement remains represented only by a placeholder adapter or checkpoint dashboard.
+- Product owner confirms the final shell behavior after real-device testing.
+
 ## Workstream Ownership
 
 ### Gateway/Core Workstream
@@ -336,6 +491,8 @@ Owns:
 - File/review/preview APIs.
 - Safe errors.
 - Auth/resource limits.
+- Canonical project/task adapters and bounded workspace projections.
+- Same-thread turn ownership, idempotency, and provider resume state.
 
 Must coordinate with:
 
@@ -356,6 +513,7 @@ Owns:
 - Terminal/review/preview panels.
 - Notifications/deep links.
 - Runtime switch behavior.
+- Project/task/thread navigator and Conversation/Kanban modes.
 
 Must preserve:
 
@@ -379,6 +537,7 @@ Owns:
 - Review/files/preview screens.
 - Mobile resume state.
 - Native terminal spike.
+- Project-first routes, multi-thread task groups, and Conversation/Kanban modes.
 
 Must preserve:
 
@@ -406,6 +565,50 @@ Must preserve:
 - App launcher/app runtime behavior.
 
 ## Decision Gates
+
+### Gate 0 - Product Model Confirmation
+
+**Status**: Passed on 2026-07-10 after explicit product-owner confirmation.
+
+Do not begin Phase I implementation until:
+
+Product decisions:
+
+1. New chats require a project; task binding is optional, and legacy unassigned chats remain bounded read-compatible records.
+2. Task status remains explicit canonical board state while thread state is an aggregate badge/attention projection.
+3. A busy thread rejects another normal turn with a recoverable state instead of silently queueing it.
+4. Conversation and Kanban are the two primary agent-workspace views on desktop and mobile.
+
+Already-established model constraints:
+
+- One visible chat/session equals one resumable thread.
+- One task may own several independent threads.
+
+Mechanical readiness checks:
+
+- Product-owner confirmation of all four decisions is recorded in `tasks.md`.
+- `SPEC.md`, `ARCHITECTURE.md`, `plan.md`, `tasks.md`, and `acceptance-tests.md` use the same terminology/cardinality and all acceptance IDs are mapped.
+
+### Gate B0 - Full Workspace Confirmation
+
+**Status**: Awaiting product-owner confirmation.
+
+Confirm `FULL-WORKSPACE-BACKEND.md`, explicit non-goals, owner-Postgres migration,
+personal/org/shared export-delete model, canonical computer contract, isolated
+preview authority, backend Graphite stack, and gate-specific shell handoffs.
+
+### Gate B0.5 - Canonical Computer And Preview Acceptance
+
+Proceed with current shell computer-selection layers only when:
+
+- Clerk and native/sync principals consume one bounded computer schema and route.
+- Selected slot is server-derived only from a principal that carries it.
+- Desktop bearer rotation remains native/sync-authenticated and main-process-only;
+  mobile persists validated same-origin routing only.
+- Native Linux app HTTP/WebSocket streaming passes unchanged.
+- One isolated PR/head-SHA preview environment owns platform plus disposable VPS,
+  fails closed without preview credentials, and tears down completely.
+- Desktop and physical mobile list/select the same non-primary computer.
 
 ### Gate 1 - Contract Acceptance
 
@@ -461,6 +664,16 @@ Proceed only when:
 - Error-path audit passes.
 - Public docs are updated or explicitly deferred.
 - Deployment path is documented for platform/app-shell/host-bundle/native mobile impacts.
+
+### Gate 7 - Project Conversation Acceptance
+
+Proceed to final rollout only when:
+
+- Runtime hydration returns canonical projects and bounded task/thread projections.
+- Same-thread follow-up resumes one provider conversation and passes idempotency/busy tests.
+- A task with several threads is navigable from both shells.
+- Conversation/Kanban mode switching preserves valid identity across desktop/mobile.
+- Existing project board and task mutations remain canonical and regression tests pass.
 
 ## Risk Register
 
@@ -552,6 +765,37 @@ Mitigation:
 - Device validation.
 - No removal of existing terminal until native is proven.
 
+### Risk: Singular Task Session Assumptions
+
+Existing task UI has a singular `linkedSessionId` and may treat a live session as the only agent for a task.
+
+Mitigation:
+
+- Keep canonical terminal linkage for compatibility, but add a separate one-to-many task/thread projection.
+- Never infer coding-thread cardinality from `linkedSessionId`.
+- Add tests with at least two threads on one task in contracts, gateway, desktop, mobile, and E2E.
+
+### Risk: Follow-Up Creates Replacement Threads
+
+Current checkpoint follow-up behavior can seed a new thread with a structured reference instead of resuming the selected conversation.
+
+Mitigation:
+
+- Add a dedicated idempotent turn route and provider resume contract.
+- Make selected-thread composer call the turn route.
+- Keep "new chat from this context" as a separate explicit command.
+- Assert thread ID and provider conversation identity remain stable across sequential turns.
+
+### Risk: Task Status Drift From Agent Status
+
+Several threads on one task may be running, blocked, failed, and complete simultaneously.
+
+Mitigation:
+
+- Keep task status canonical and explicitly mutated.
+- Compute bounded thread aggregates for display only.
+- Never auto-move cards from a renderer effect or thread reducer.
+
 ## Implementation Patterns
 
 ### Pattern: Additive Route
@@ -624,6 +868,8 @@ Support:
 
 ## Recommended First Three PRs
 
+The original first three PRs below are historical and have landed. The Full Workspace implementation stack begins only after Gate B0 confirmation.
+
 ### PR 1 - Contracts
 
 Deliver:
@@ -661,6 +907,149 @@ Deliver:
 Why third:
 
 - Verifies cross-client shape early and gives product feedback before mutating runtime.
+
+## Recommended Next PR Stack
+
+1. **`contracts(agent-shells): add project task and turn schemas`**
+   - Project/task aggregates, workspace projection, same-thread turn request/response.
+   - Schema tests only.
+
+2. **`feat(gateway): hydrate project agent workspaces`**
+   - Real project adapter, task/thread grouping, relation validation, caps, safe errors.
+   - Read-only gateway tests.
+
+3. **`feat(agents): add resumable conversation turns`**
+   - Idempotent turn route, atomic active-turn ownership, provider resume, fake-provider tests.
+
+4. **`feat(desktop): add project conversation navigator`**
+   - Project/task/thread left navigator and same-thread Conversation view behind capability.
+
+5. **`feat(desktop): integrate agent Kanban mode`**
+   - Canonical task board projection with multi-thread badges and view identity continuity.
+
+6. **`feat(mobile): add project conversation routes`**
+   - Project/task/thread hierarchy and same-thread follow-up on SDK 57.
+
+7. **`feat(mobile): add agent Kanban mode`**
+   - Phone/tablet board and cross-view selection continuity.
+
+## Full Workspace Backend Roadmap
+
+The complete backend expansion follows
+[FULL-WORKSPACE-BACKEND.md](./FULL-WORKSPACE-BACKEND.md) and does not stack on a
+desktop or mobile branch.
+
+### Phase N - Durable Workspace Store
+
+- Add Zod V2 contracts and Kysely schema/repository tests first.
+- Add owner-Postgres tables for conversations, turns, transcript, queue, runs,
+  bindings, attachments, attention, review comments, participants, and
+  idempotency.
+- Import the legacy owner file idempotently and preserve a rollback export.
+- Cut writes over once; avoid indefinite dual-write state.
+
+### Phase M0 - Canonical Computer And Preview Foundation
+
+- Reconcile the independently proposed desktop/mobile computer schemas into one
+  bounded `GET /api/auth/computers` projection.
+- Keep selected slot server-derived only for principals that carry one; desktop
+  bearer rotation stays behind verified native/sync auth and trusted IPC, while
+  mobile persists only validated same-origin routing.
+- Preserve current native Linux app HTTP/WebSocket streaming behavior.
+- Replace split preview authority with one isolated PR/head-SHA environment,
+  exact bundle, fail-closed credentials, TTL/reaper, and teardown.
+- Prove desktop and physical mobile can list/select the same disposable computer
+  before either current shell stack merges its computer-selection layer.
+
+### Phase O - Complete Transcript And Session Lifecycle
+
+- Add stable latest/backward/forward transcript pages and explicit replay gaps.
+- Add rename/archive/unarchive/fork and complete replay after restart.
+- Add safe provider-session discovery/import.
+- Run fake-provider and first real-provider continuity smoke.
+
+Desktop/mobile may begin final transcript and session-list work only after this
+phase publishes the versioned shell handoff.
+
+### Phase P - Busy Work And Execution Graph
+
+- Add explicit pending-message queue with edit/reorder/remove and atomic claims.
+- Add steering and active-turn interruption behind provider capabilities.
+- Add bounded parent/child execution graph and normalized run events.
+- Add durable attention inbox and acknowledgement.
+- Add the first-release provider conformance harness and normalized adapters for
+  Claude Code, Codex, Pi, OpenCode, custom ACP-compatible backends, Kiro,
+  GitHub Copilot CLI, Qwen Code, Kimi CLI, Kilo Code, and Auggie.
+- Keep Gemini CLI outside this release and publish granular capabilities from
+  real-process evidence rather than binary detection.
+
+### Phase Q - Complete Project Tooling
+
+- Add many-terminal bindings over canonical Matrix sessions.
+- Add repository status and bounded branch/stash/pull/push/worktree operations.
+- Add durable structured review comments and bounded attachments.
+- Keep file/review/preview/source-control roots owner-validated.
+
+### Phase R - Handoff And Collaboration
+
+- Add persisted runtime compatibility and handoff saga.
+- Add owner/editor/viewer participants aligned with owner/org/shared access.
+- Add audit events for grants, decisions, handoffs, terminal/file/repository
+  mutations, and revocations.
+
+### Phase S - Shared Preview Acceptance
+
+- Deploy the exact backend top to a disposable preview computer.
+- Point desktop and mobile clients at the same preview runtime.
+- Use one project fixture with two task conversations, imported history, queued
+  work, child runs, two terminals, repository changes, review comments,
+  attachment, preview, approval, attention, reconnect, restart, and handoff.
+- Keep the current shell preview computer available as a visual baseline only;
+  do not make backend persistence or contracts depend on that shell PR.
+
+## Full Workspace Graphite Stack
+
+1. Spec confirmation.
+2. Canonical computer inventory/native identity.
+3. Isolated end-to-end preview authority and native-stream preservation.
+4. Workspace V2 contracts.
+5. Postgres schema/repository/import/export/delete.
+6. Transcript and lifecycle.
+7. Queue and steering.
+8. Execution graph, provider profiles/assets, and attention.
+9. First-class provider adapters and conformance harness.
+10. Compatibility provider adapters.
+11. Terminal/repository/review/attachment bindings.
+12. Handoff and collaboration.
+13. Memory, automation, voice-action, policy, retention, and recovery integration.
+14. Non-visual desktop/mobile client plumbing.
+15. Preview smoke, security, performance, docs, and rollback evidence.
+
+Each layer opens ready for review, targets fewer than 1,000 additions and 20
+files where practical, and receives current-head CI plus Greptile 5/5 before
+merge. Lower layers may merge while higher layers continue only when their
+published contracts are stable and their rollback boundary is independently
+valid.
+
+## Shell Coordination During Backend Work
+
+- Desktop freezes backend field/route invention at its current preview
+  checkpoint and may continue Matrix-native visual work against deterministic
+  fixtures.
+- Mobile freezes backend field/route invention at its current stack top and may
+  continue responsive navigation/composer work against the same fixtures.
+- At Gate B0.5, the existing desktop and mobile stacks reconcile only their
+  overlapping computer-contract layers, preserving each stack's current parent
+  lineage. Once that backend layer merges, restack each stack bottom-up rather
+  than rebasing an isolated top directly onto `main`.
+- Current computer/navigation layers may finish after B0.5; complete transcript,
+  lifecycle, queue, run, terminal/repository, and attention UI waits for the
+  corresponding B2/B3/B4 handoff.
+- At Backend Gate B2, both agents consume `backend-v2-shell-handoff.md` and
+  target the backend preview computer. Non-visual trusted-core/mobile client
+  plumbing is delivered by the backend workstream before final screen work.
+- Each shell PR records the exact backend SHA, preview bundle, capabilities, and
+  focused/manual acceptance exercised.
 
 ## Stop Conditions
 

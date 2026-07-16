@@ -1,3 +1,9 @@
+import {
+  MatrixComputerListSchema,
+  RuntimeSelectionRequestSchema,
+  RuntimeSelectionResponseSchema,
+  type MatrixComputerList,
+} from "@matrix-os/contracts";
 // Trusted-core auth orchestration: owns the device flow, the credential, and
 // the connection profile. The renderer only ever sees status snapshots.
 import type { CredentialStore, StoredCredential } from "./credential-store";
@@ -25,6 +31,10 @@ export interface AuthStatus {
   platformHost: string;
   displayName?: string;
   imageUrl?: string;
+  // Monotonic credential generation. Advances on every credential replacement
+  // or drop so renderer caches keyed on identity cannot survive a session swap
+  // that keeps the same handle/host/slot.
+  authGeneration: number;
 }
 
 export type PollResult = {
@@ -37,10 +47,37 @@ type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 // Re-authenticate slightly before the token's real expiry so an in-flight
 // request doesn't race the cutoff.
 const EXPIRY_SKEW_MS = 30_000;
+const RUNTIME_SELECTION_TIMEOUT_MS = 10_000;
+const RUNTIME_SELECTION_RESPONSE_LIMIT = 16 * 1024;
+const RUNTIME_SELECTION_ERROR = "Computer switch failed. Try again.";
+
+async function readBoundedResponseText(response: Response): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let totalBytes = 0;
+  let text = "";
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      totalBytes += chunk.value.byteLength;
+      if (totalBytes > RUNTIME_SELECTION_RESPONSE_LIMIT) {
+        await reader.cancel();
+        throw new Error("runtime selection response too large");
+      }
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+    return text + decoder.decode();
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 interface AuthServiceDeps {
   credentialStore: CredentialStore;
   platformHost: string;
+  runtimeSelectionOrigin: string;
   fetchFn?: FetchFn;
   now?: () => number;
   loadProfile: () => Promise<ConnectionProfile | null>;
@@ -51,9 +88,11 @@ interface AuthServiceDeps {
 
 export class AuthService {
   private credential: StoredCredential | null = null;
+  private authGeneration = 0;
   private profile: ConnectionProfile | null = null;
   private flowState: "idle" | "pending" | "authorized" | "expired" = "idle";
   private flowNonce = 0;
+  private persistenceTail: Promise<void> = Promise.resolve();
   private pendingDeviceCode: Pick<DeviceCodeResponse, "userCode" | "verificationUri" | "expiresIn"> | null = null;
   private readonly deps: AuthServiceDeps;
 
@@ -79,6 +118,12 @@ export class AuthService {
 
   private now(): number {
     return this.deps.now ? this.deps.now() : Date.now();
+  }
+
+  private runPersistence<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.persistenceTail.then(operation, operation);
+    this.persistenceTail = result.then(() => undefined, () => undefined);
+    return result;
   }
 
   // A credential past (or within the skew window of) its expiry is unusable;
@@ -111,7 +156,13 @@ export class AuthService {
       ...(signedIn && this.profile?.imageUrl ? { imageUrl: this.profile.imageUrl } : {}),
       runtimeSlot: this.profile?.runtimeSlot ?? "primary",
       platformHost: this.getGatewayOrigin(),
+      authGeneration: this.authGeneration,
     };
+  }
+
+  private replaceCredential(credential: StoredCredential | null): void {
+    this.credential = credential;
+    this.authGeneration += 1;
   }
 
   async startDeviceFlow(): Promise<Pick<DeviceCodeResponse, "userCode" | "verificationUri" | "expiresIn">> {
@@ -150,18 +201,32 @@ export class AuthService {
         if (nonce !== this.flowNonce) return;
         // The encrypted credential holds only the secret token + identity; the
         // non-secret display profile lives in the plain profile store.
-        const credential: StoredCredential = {
+        let credential: StoredCredential = {
           accessToken: token.accessToken,
           expiresAt: token.expiresAt,
           userId: token.userId,
           handle: token.handle,
         };
-        this.credential = credential;
+        let runtimeSlot = this.profile?.runtimeSlot ?? "primary";
+        if (runtimeSlot !== "primary") {
+          try {
+            credential = await this.exchangeRuntimeCredential(credential, runtimeSlot);
+          } catch (err: unknown) {
+            if (nonce !== this.flowNonce) return;
+            runtimeSlot = "primary";
+            console.warn(
+              "[auth] runtime restore failed; using primary:",
+              err instanceof Error ? err.name : typeof err,
+            );
+          }
+        }
+        if (nonce !== this.flowNonce) return;
+        this.replaceCredential(credential);
         const profile: ConnectionProfile = {
-          handle: token.handle,
+          handle: credential.handle,
           userId: token.userId,
           platformHost: baseUrl,
-          runtimeSlot: this.profile?.runtimeSlot ?? "primary",
+          runtimeSlot,
           ...(token.displayName ? { displayName: token.displayName } : {}),
           ...(token.imageUrl ? { imageUrl: token.imageUrl } : {}),
           ...(token.email ? { email: token.email } : {}),
@@ -234,10 +299,129 @@ export class AuthService {
     return { status: "pending" };
   }
 
+  private async exchangeRuntimeCredential(
+    currentCredential: StoredCredential,
+    slot: string,
+  ): Promise<StoredCredential> {
+    const request = RuntimeSelectionRequestSchema.parse({ slot });
+    const endpoint = new URL("/api/auth/runtime-selection", this.deps.runtimeSelectionOrigin);
+    const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
+    const response = await fetchFn(endpoint.toString(), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${currentCredential.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(RUNTIME_SELECTION_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new Error("runtime selection rejected");
+    const contentLength = Number(response.headers.get("content-length"));
+    if (Number.isFinite(contentLength) && contentLength > RUNTIME_SELECTION_RESPONSE_LIMIT) {
+      throw new Error("runtime selection response too large");
+    }
+    const text = await readBoundedResponseText(response);
+    const replacement = RuntimeSelectionResponseSchema.parse(JSON.parse(text));
+    if (replacement.slot !== request.slot) throw new Error("runtime selection mismatch");
+    return {
+      accessToken: replacement.accessToken,
+      expiresAt: replacement.expiresAt,
+      userId: currentCredential.userId,
+      handle: replacement.handle,
+    };
+  }
+
   async selectRuntime(slot: string): Promise<void> {
-    if (!this.profile) return;
-    this.profile = { ...this.profile, runtimeSlot: slot };
-    await this.deps.saveProfile(this.profile);
+    this.expireCredentialIfNeeded();
+    const currentCredential = this.credential;
+    const currentProfile = this.profile;
+    if (!currentCredential || !currentProfile) {
+      throw new Error(RUNTIME_SELECTION_ERROR);
+    }
+    const nonce = ++this.flowNonce;
+    const isCurrentSelection = () => (
+      nonce === this.flowNonce
+      && this.credential === currentCredential
+      && this.profile === currentProfile
+    );
+
+    try {
+      const nextCredential = await this.exchangeRuntimeCredential(currentCredential, slot);
+      if (!isCurrentSelection()) throw new Error("stale runtime selection");
+      const nextProfile: ConnectionProfile = {
+        ...currentProfile,
+        handle: nextCredential.handle,
+        runtimeSlot: slot,
+      };
+      await this.runPersistence(async () => {
+        if (!isCurrentSelection()) throw new Error("stale runtime selection");
+        await this.deps.credentialStore.save(nextCredential);
+        if (!isCurrentSelection()) {
+          await this.deps.credentialStore.save(currentCredential);
+          throw new Error("stale runtime selection");
+        }
+        try {
+          await this.deps.saveProfile(nextProfile);
+          if (!isCurrentSelection()) {
+            await this.deps.credentialStore.save(currentCredential);
+            await this.deps.saveProfile(currentProfile);
+            throw new Error("stale runtime selection");
+          }
+        } catch (err: unknown) {
+          await this.deps.credentialStore.save(currentCredential).catch((rollbackErr: unknown) => {
+            console.warn(
+              "[auth] failed to restore credential after runtime switch:",
+              rollbackErr instanceof Error ? rollbackErr.name : typeof rollbackErr,
+            );
+          });
+          throw err;
+        }
+        this.replaceCredential(nextCredential);
+        this.profile = nextProfile;
+      });
+    } catch (err: unknown) {
+      console.warn(
+        "[auth] runtime switch failed:",
+        err instanceof Error ? err.name : typeof err,
+      );
+      throw new Error(RUNTIME_SELECTION_ERROR);
+    }
+  }
+
+  async listRuntimeComputers(): Promise<MatrixComputerList> {
+    this.expireCredentialIfNeeded();
+    const currentCredential = this.credential;
+    if (!currentCredential) throw new Error("Runtime computers unavailable");
+
+    const endpoint = new URL("/api/auth/computers", this.deps.runtimeSelectionOrigin);
+    const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
+    try {
+      const response = await fetchFn(endpoint.toString(), {
+        method: "GET",
+        headers: { authorization: `Bearer ${currentCredential.accessToken}` },
+        signal: AbortSignal.timeout(RUNTIME_SELECTION_TIMEOUT_MS),
+      });
+      // A 401 means the token was revoked or rotated server-side before the
+      // local expiry: drop the session so the renderer returns to sign-in
+      // instead of retrying against a dead credential forever.
+      if (response.status === 401 && this.credential === currentCredential) {
+        await this.expireSession();
+        throw new Error("computer inventory unauthorized");
+      }
+      if (!response.ok) throw new Error("computer inventory rejected");
+      const contentLength = Number(response.headers.get("content-length"));
+      if (Number.isFinite(contentLength) && contentLength > RUNTIME_SELECTION_RESPONSE_LIMIT) {
+        throw new Error("computer inventory response too large");
+      }
+      const text = await readBoundedResponseText(response);
+      return MatrixComputerListSchema.parse(JSON.parse(text));
+    } catch (err: unknown) {
+      console.warn(
+        "[auth] computer inventory unavailable:",
+        err instanceof Error ? err.name : typeof err,
+      );
+      throw new Error("Runtime computers unavailable");
+    }
   }
 
   // The session token expired or the gateway rejected it (401). Drop the
@@ -245,10 +429,11 @@ export class AuthService {
   // one-click re-auth, then notify the renderer to show sign-in. Idempotent.
   async expireSession(): Promise<void> {
     if (!this.credential) return;
-    this.credential = null;
+    this.flowNonce += 1;
+    this.replaceCredential(null);
     this.flowState = "idle";
     try {
-      await this.deps.credentialStore.clear();
+      await this.runPersistence(() => this.deps.credentialStore.clear());
     } catch (err: unknown) {
       console.warn(
         "[auth] failed to clear expired credential:",
@@ -262,30 +447,32 @@ export class AuthService {
   async signOut(): Promise<void> {
     this.flowNonce += 1;
     this.pendingDeviceCode = null;
-    this.credential = null;
+    this.replaceCredential(null);
     this.profile = null;
     this.flowState = "idle";
     this.deps.onAuthChanged(this.getStatus());
 
     let cleanupError: unknown = null;
-    try {
-      await this.deps.credentialStore.clear();
-    } catch (err: unknown) {
-      cleanupError = err;
-      console.warn(
-        "[auth] failed to clear credential store:",
-        err instanceof Error ? err.message : String(err),
-      );
-    }
-    try {
-      await this.deps.clearProfile();
-    } catch (err: unknown) {
-      cleanupError ??= err;
-      console.warn(
-        "[auth] failed to clear connection profile:",
-        err instanceof Error ? err.message : String(err),
-      );
-    }
+    await this.runPersistence(async () => {
+      try {
+        await this.deps.credentialStore.clear();
+      } catch (err: unknown) {
+        cleanupError = err;
+        console.warn(
+          "[auth] failed to clear credential store:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      try {
+        await this.deps.clearProfile();
+      } catch (err: unknown) {
+        cleanupError ??= err;
+        console.warn(
+          "[auth] failed to clear connection profile:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    });
     if (cleanupError) throw cleanupError;
   }
 
@@ -312,10 +499,10 @@ export class AuthService {
     if (!this.isExpired()) return;
     this.flowNonce += 1;
     this.pendingDeviceCode = null;
-    this.credential = null;
+    this.replaceCredential(null);
     this.flowState = "idle";
     this.deps.onAuthChanged(this.currentStatus());
-    void this.deps.credentialStore.clear().catch((err: unknown) => {
+    void this.runPersistence(() => this.deps.credentialStore.clear()).catch((err: unknown) => {
       console.warn(
         "[auth] failed to clear expired credential:",
         err instanceof Error ? err.message : String(err),

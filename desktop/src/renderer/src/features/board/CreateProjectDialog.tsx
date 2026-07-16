@@ -1,12 +1,17 @@
-import { FolderPlus, Github } from "lucide-react";
+import { FolderOpen, FolderPlus, Github } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Dialog } from "../../design/primitives";
 import { toUserMessage } from "../../lib/errors";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
+import { useUi } from "../../stores/ui";
+import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { useCodingAgentProjectWorkspace } from "../../stores/coding-agent-project-workspace";
+import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
+import ComputerFileBrowser from "../files/ComputerFileBrowser";
 
-type Mode = "scratch" | "github";
+type Mode = "scratch" | "folder" | "github";
 
 // Inner form mounts only while open, so its state is fresh per open (no
 // reset-on-prop effect). autoFocus replaces a focus setTimeout.
@@ -15,15 +20,46 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   const createProject = useBoard((s) => s.createProject);
   const selectProject = useBoard((s) => s.selectProject);
   const openTab = useTabs((s) => s.openTab);
+  const destination = useUi((s) => s.createProjectDestination);
+  const refreshAgentWorkspace = useCodingAgentWorkspace((s) => s.refresh);
+  const openCreatedProject = useCodingAgentProjectWorkspace((s) => s.openCreatedProject);
+  const runtimeScope = useConnection(codingAgentRuntimeScope);
+  const runtimeSlot = useConnection((s) => s.runtimeSlot);
+  const authGeneration = useConnection((s) => s.authGeneration);
   const [name, setName] = useState("");
   const [mode, setMode] = useState<Mode>("scratch");
   const [url, setUrl] = useState("");
+  // A folder chosen under one computer/session must not stay submittable under
+  // another, so the selection carries its scope and resolves to "" as soon as
+  // the slot or credential generation changes (synchronously, like the Files
+  // workspace selection).
+  const [folderSelection, setFolderSelection] = useState<{ slot: string; authGeneration: number; path: string } | null>(null);
+  const path = folderSelection && folderSelection.slot === runtimeSlot && folderSelection.authGeneration === authGeneration
+    ? folderSelection.path
+    : "";
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dialogClosedRef = useRef(false);
   const dialogGenerationRef = useRef(0);
 
-  const canSubmit = name.trim().length > 0 && (mode === "scratch" || url.trim().length > 0);
+  useEffect(() => {
+    setFolderSelection((current) =>
+      current && (current.slot !== runtimeSlot || current.authGeneration !== authGeneration)
+        ? null
+        : current,
+    );
+  }, [authGeneration, runtimeSlot]);
+
+  const chooseFolder = useCallback(
+    (chosen: string) => setFolderSelection({ slot: runtimeSlot, authGeneration, path: chosen }),
+    [authGeneration, runtimeSlot],
+  );
+
+  const canSubmit = name.trim().length > 0 && (
+    mode === "scratch" ||
+    (mode === "folder" && path.trim().length > 0) ||
+    (mode === "github" && url.trim().length > 0)
+  );
 
   useEffect(() => {
     dialogGenerationRef.current += 1;
@@ -50,16 +86,46 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
         name: name.trim(),
         mode,
         ...(mode === "github" ? { url: url.trim() } : {}),
+        ...(mode === "folder" ? { path: path.trim() } : {}),
       });
       if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
       if (!project) {
-        setError("Couldn't create the project. Check the name" + (mode === "github" ? " and the GitHub URL." : "."));
+        setError(
+          mode === "github"
+            ? "Couldn't create the project. Check the name and GitHub URL."
+            : mode === "folder"
+              ? "Couldn't connect that folder. Check that it exists on this computer."
+              : "Couldn't create the project. Check the name.",
+        );
         return;
       }
-      await selectProject(api, project.slug);
+      if (destination === "agents") {
+        await refreshAgentWorkspace();
+        if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
+        // The workspace store catches refresh failures internally: it clears
+        // the summary when nothing was loaded yet, but keeps a previously
+        // loaded summary with status "error". Both are failed refreshes, and
+        // selecting against the stale summary would miss the new project. The
+        // project already exists at this point, so keep the dialog open with a
+        // recoverable message instead of closing silently with nothing
+        // selected.
+        const agentWorkspace = useCodingAgentWorkspace.getState();
+        const agentSummary = agentWorkspace.status === "error" ? null : agentWorkspace.summary;
+        if (!agentSummary) {
+          setError("The project was created, but the workspace didn't refresh. Close this dialog and open it from Agents.");
+          return;
+        }
+        // Land the navigator on the new project; a failed workspace load surfaces
+        // through the project-workspace store's own error state.
+        await openCreatedProject(agentSummary, project.slug, runtimeScope);
+      } else {
+        await selectProject(api, project.slug);
+      }
       if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
       closeFromUser();
-      openTab({ kind: "board", projectSlug: project.slug, title: project.name || project.slug });
+      if (destination === "board") {
+        openTab({ kind: "board", projectSlug: project.slug, title: project.name || project.slug });
+      }
     } catch (err: unknown) {
       if (!dialogClosedRef.current && dialogGenerationRef.current === submitGeneration) {
         setError(toUserMessage(err));
@@ -101,8 +167,9 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
         <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>How do you want to start?</span>
         <div className="flex rounded-lg border p-0.5" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}>
           {([
-            { key: "scratch" as const, label: "Start from scratch", icon: <FolderPlus size={13} /> },
-            { key: "github" as const, label: "Import from GitHub", icon: <Github size={13} /> },
+            { key: "scratch" as const, label: "New folder", icon: <FolderPlus size={13} /> },
+            { key: "folder" as const, label: "Use existing folder", icon: <FolderOpen size={13} /> },
+            { key: "github" as const, label: "Clone GitHub", icon: <Github size={13} /> },
           ]).map((opt) => {
             const activeMode = mode === opt.key;
             return (
@@ -126,9 +193,17 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
           <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>GitHub repository URL</span>
           <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://github.com/owner/repo" style={field} />
         </label>
+      ) : mode === "folder" ? (
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Choose a folder on this computer</span>
+          <ComputerFileBrowser compact onChooseFolder={chooseFolder} />
+          <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+            {path ? `Selected: ${path}` : "Select a folder. It stays in place and remains yours."}
+          </span>
+        </div>
       ) : (
         <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-          A fresh repository is created on your cloud computer. Connect it to GitHub later from the board.
+          A new project folder is created on your Matrix computer. Git and GitHub are optional.
         </p>
       )}
 
@@ -146,7 +221,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
 
 export default function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
-    <Dialog open={open} onClose={onClose} width={520}>
+    <Dialog open={open} onClose={onClose} width={620}>
       <CreateProjectForm onClose={onClose} />
     </Dialog>
   );

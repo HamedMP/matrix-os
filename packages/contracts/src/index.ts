@@ -5,6 +5,8 @@ const SAFE_SLUG = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const SAFE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const UNSAFE_DISPLAY_TEXT = /(stack trace|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+)/i;
+const UNSAFE_ASSISTANT_PREVIEW_TEXT =
+  /(postgres(?:ql)?:\/\/|mysql:\/\/|sqlite:|pipedream|twilio|openai|anthropic|constraint|stack trace|zod|issues|\/home\/|\/tmp\/|\/var\/|\/opt\/|\/etc\/|\/root\/|\/Users\/|[A-Za-z]:[\\/]|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+|password\s*[=:]|eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}|ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{12,}|xox[baprs]-[A-Za-z0-9-]{10,}|sk_(?:live|test)_[A-Za-z0-9]{12,}|AKIA[0-9A-Z]{16}|token|secret|private key|db\.internal|localhost|127\.0\.0\.1)/i;
 const UNSAFE_ERROR_TEXT =
   /(postgres|sqlite|mysql|pipedream|twilio|openai|anthropic|constraint|stack trace|zod|issues|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+)/i;
 
@@ -12,6 +14,12 @@ const textEncoder = new TextEncoder();
 
 function byteLength(value: string): number {
   return textEncoder.encode(value).byteLength;
+}
+
+function hasIpv4AddressInVersionSuffix(value: string): boolean {
+  const suffixStart = value.indexOf("-");
+  if (suffixStart === -1) return false;
+  return /(?:^|[^0-9])(?:\d{1,3}\.){3}\d{1,3}(?:$|[^0-9])/.test(value.slice(suffixStart + 1));
 }
 
 function boundedText(maxChars: number, maxBytes = maxChars * 4) {
@@ -63,6 +71,7 @@ export const ProviderIdSchema = z.string().min(1).max(80).regex(SAFE_SLUG, "Inva
 export const ProjectIdSchema = referenceId(160);
 export const TaskIdSchema = prefixedId("task_");
 export const ThreadIdSchema = prefixedId("thread_");
+export const AgentTurnIdSchema = prefixedId("turn_");
 export const EventIdSchema = prefixedId("evt_");
 export const ApprovalIdSchema = prefixedId("appr_");
 export const RequestIdSchema = prefixedId("req_");
@@ -73,7 +82,148 @@ export const WorktreeIdSchema = z.string().regex(/^wt_[a-z0-9]{12,40}$/, "Invali
 export const CursorSchema = referenceId(160);
 export const IsoTimestampSchema = z.string().regex(ISO_DATETIME, "Invalid ISO timestamp");
 export const SafeDisplayStringSchema = boundedDisplayText(120, 512);
+export const SafeAssistantPreviewSourceTextSchema = boundedText(16_000, 64 * 1024)
+  .refine((value) => !UNSAFE_ASSISTANT_PREVIEW_TEXT.test(value), { message: "Text is not safe for assistant preview display" });
+export const SafeAssistantPreviewTextSchema = boundedText(243, 1024)
+  .refine((value) => !UNSAFE_ASSISTANT_PREVIEW_TEXT.test(value), { message: "Text is not safe for assistant preview display" });
 export const BoundedTextSchema = (maxChars = 4000, maxBytes = 16 * 1024) => boundedText(maxChars, maxBytes);
+// Everything in this package lives inline in index.ts by design: the file is
+// consumed as raw TS source by plain Node (type stripping) on customer VPSes,
+// where nodenext-style "./module.js" relative specifiers do NOT resolve to
+// .ts files. A relative re-export here took down gateway startup fleet-wide
+// (rolled back by the sync agent) -- do not add relative imports/re-exports.
+const UNSAFE_AGENT_PROFILE_TEXT =
+  /(postgres(?:ql)?:\/\/|mysql:\/\/|sqlite:|\/home\/|\/tmp\/|\/var\/|\/opt\/|\/etc\/|\/root\/|\/Users\/|[A-Za-z]:[\\/]|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+|password\s*[=:]|eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}|ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{12,}|xox[baprs]-[A-Za-z0-9-]{10,}|sk_(?:live|test)_[A-Za-z0-9]{12,}|AKIA[0-9A-Z]{16})/i;
+
+function agentProfileDisplayText(maxChars: number, maxBytes: number) {
+  return z.string()
+    .min(1)
+    .max(maxChars)
+    .refine((value) => value.trim().length > 0, { message: "Text cannot be blank" })
+    .refine((value) => textEncoder.encode(value).byteLength <= maxBytes, {
+      message: "Text exceeds byte limit",
+    })
+    .refine((value) => !UNSAFE_AGENT_PROFILE_TEXT.test(value), {
+      message: "Text is not safe for agent profile display",
+    });
+}
+
+export const AgentProfileSummarySchema = z.object({
+  identity: z.object({
+    name: agentProfileDisplayText(80, 320).optional(),
+    tagline: agentProfileDisplayText(180, 720).optional(),
+  }).strict(),
+  kernel: z.object({
+    model: z.string().min(1).max(80).regex(SAFE_REFERENCE, "Invalid kernel model"),
+    modelLabel: agentProfileDisplayText(120, 512),
+    effort: z.enum(["low", "medium", "high", "max"]),
+  }).strict(),
+  credentials: z.object({
+    mode: z.enum(["platform", "api_key", "claude_login"]),
+  }).strict(),
+  soulPreview: agentProfileDisplayText(280, 1_120),
+}).strict();
+
+export type AgentProfileSummary = z.infer<typeof AgentProfileSummarySchema>;
+
+export const MatrixComputerHandleSchema = z.string()
+  .min(2)
+  .max(63)
+  .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, "Invalid Matrix computer handle");
+export const MatrixComputerRuntimeSlotSchema = z.string()
+  .min(1)
+  .max(32)
+  .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/, "Invalid Matrix computer runtime slot");
+export const MatrixComputerAvailabilitySchema = z.enum(["available", "starting", "unavailable"]);
+export const MatrixComputerKindSchema = z.enum(["customer", "preview"]);
+export const MatrixComputerLabelSchema = z.enum(["Main Computer", "Preview Computer", "Additional Computer"]);
+export const MatrixComputerVersionLabelSchema = z.preprocess((value) => {
+  if (typeof value !== "string" || value.length > 128) return value;
+  const legacyChannel = value.match(/^matrix-os-host-(stable|dev|canary|beta)$/)?.[1];
+  if (legacyChannel) return legacyChannel;
+  const legacyRelease = value.match(/^matrix-os-host-(\d{4}\.\d{2}\.\d{2})(?:$|-)/)?.[1];
+  return legacyRelease ? `v${legacyRelease}` : value;
+}, z.union([
+  z.literal("Version pending"),
+  z.enum(["stable", "dev", "canary", "beta"]),
+  z.string()
+    .max(64)
+    .regex(
+      /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/,
+      "Invalid Matrix computer version label",
+    )
+    .refine(
+      (value) =>
+        !UNSAFE_ASSISTANT_PREVIEW_TEXT.test(value) &&
+        !/(?:machine|server)[._-]?id/i.test(value) &&
+        !hasIpv4AddressInVersionSuffix(value),
+      { message: "Matrix computer version label is not safe for display" },
+    ),
+]));
+export const MatrixComputerCapabilityIdSchema = z.string()
+  .min(1)
+  .max(80)
+  .regex(/^[a-z][A-Za-z0-9]{0,79}$/, "Invalid Matrix computer capability id");
+export const MatrixComputerSchema = z.object({
+  handle: MatrixComputerHandleSchema,
+  runtimeSlot: MatrixComputerRuntimeSlotSchema,
+  label: MatrixComputerLabelSchema,
+  availability: MatrixComputerAvailabilitySchema,
+  kind: MatrixComputerKindSchema,
+  versionLabel: MatrixComputerVersionLabelSchema.optional(),
+  gatewayPath: z.string().min(6).max(108),
+  capabilities: z.array(MatrixComputerCapabilityIdSchema).max(64),
+}).strict().superRefine((computer, ctx) => {
+  const expectedGatewayPath = computer.runtimeSlot === "primary"
+    ? `/vm/${computer.handle}`
+    : `/vm/${computer.handle}?runtime=${computer.runtimeSlot}`;
+  if (computer.gatewayPath !== expectedGatewayPath) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Gateway path must match the Matrix computer handle and runtime slot",
+      path: ["gatewayPath"],
+    });
+  }
+});
+
+export const MatrixComputerListSchema = z.object({
+  items: z.array(MatrixComputerSchema).max(20),
+  hasMore: z.boolean(),
+  limit: z.number().int().min(1).max(20),
+  selectedSlot: MatrixComputerRuntimeSlotSchema.nullable(),
+}).strict().refine((list) => list.items.length <= list.limit, {
+  message: "Items cannot exceed the requested limit",
+  path: ["items"],
+}).refine((list) => new Set(list.items.map((item) => item.runtimeSlot)).size === list.items.length, {
+  message: "Runtime slots must be unique within the computer inventory",
+  path: ["items"],
+}).refine((list) => list.selectedSlot === null || list.items.some((item) => item.runtimeSlot === list.selectedSlot), {
+  message: "Selected slot must be present in the computer inventory",
+  path: ["selectedSlot"],
+});
+
+export type MatrixComputerHandle = z.infer<typeof MatrixComputerHandleSchema>;
+export type MatrixComputerRuntimeSlot = z.infer<typeof MatrixComputerRuntimeSlotSchema>;
+export type MatrixComputerAvailability = z.infer<typeof MatrixComputerAvailabilitySchema>;
+export type MatrixComputerKind = z.infer<typeof MatrixComputerKindSchema>;
+export type MatrixComputerLabel = z.infer<typeof MatrixComputerLabelSchema>;
+export type MatrixComputerVersionLabel = z.infer<typeof MatrixComputerVersionLabelSchema>;
+export type MatrixComputerCapabilityId = z.infer<typeof MatrixComputerCapabilityIdSchema>;
+export type MatrixComputer = z.infer<typeof MatrixComputerSchema>;
+export type MatrixComputerList = z.infer<typeof MatrixComputerListSchema>;
+
+export const RuntimeSelectionRequestSchema = z.object({
+  slot: MatrixComputerRuntimeSlotSchema,
+}).strict();
+export const RuntimeSelectionResponseSchema = z.object({
+  accessToken: z.string().min(32).max(8192),
+  expiresAt: z.number().int().min(1_000_000_000_000).max(Number.MAX_SAFE_INTEGER),
+  handle: MatrixComputerHandleSchema,
+  slot: MatrixComputerRuntimeSlotSchema,
+}).strict();
+
+export type RuntimeSelectionRequest = z.infer<typeof RuntimeSelectionRequestSchema>;
+export type RuntimeSelectionResponse = z.infer<typeof RuntimeSelectionResponseSchema>;
 
 export const RecoveryActionSchema = z.enum([
   "retry",
@@ -115,6 +265,10 @@ export const RuntimeCapabilityIdSchema = z.enum([
   "codingAgentsFiles",
   "codingAgentsSourceControl",
   "codingAgentsNativeMobileTerminal",
+  "codingAgentsProjectWorkspace",
+  "codingAgentsSameThreadTurns",
+  "codingAgentsConversationView",
+  "codingAgentsKanbanView",
 ]);
 
 export const RuntimeTargetSchema = z.object({
@@ -251,6 +405,44 @@ export const CreateAgentThreadRequestSchema = z.object({
 
 export type CreateAgentThreadRequest = z.infer<typeof CreateAgentThreadRequestSchema>;
 
+export const AdoptAgentThreadRequestSchema = z.object({
+  projectId: ProjectIdSchema,
+  taskId: TaskIdSchema.optional(),
+  clientRequestId: RequestIdSchema,
+}).strict();
+
+export type AdoptAgentThreadRequest = z.infer<typeof AdoptAgentThreadRequestSchema>;
+
+export const CreateAgentTurnRequestSchema = z.object({
+  message: boundedText(24_000, 96 * 1024),
+  attachments: z.array(AgentAttachmentSchema).max(8).optional(),
+  clientRequestId: RequestIdSchema,
+}).strict();
+
+export type CreateAgentTurnRequest = z.infer<typeof CreateAgentTurnRequestSchema>;
+
+export const AgentTurnStatusSchema = z.enum(["accepted", "running", "completed", "failed", "aborted"]);
+
+export const CreateAgentTurnResponseSchema = z.object({
+  threadId: ThreadIdSchema,
+  turnId: AgentTurnIdSchema,
+  status: z.enum(["accepted", "already_accepted"]),
+  acceptedAt: IsoTimestampSchema,
+}).strict();
+
+export const CreateAgentTurnErrorCodeSchema = z.enum([
+  "thread_busy",
+  "thread_not_found",
+  "turn_unavailable",
+]);
+
+export const CreateAgentTurnErrorSchema = SafeClientErrorSchema.extend({
+  code: CreateAgentTurnErrorCodeSchema,
+}).strict();
+
+export type CreateAgentTurnResponse = z.infer<typeof CreateAgentTurnResponseSchema>;
+export type CreateAgentTurnError = z.infer<typeof CreateAgentTurnErrorSchema>;
+
 export const AgentThreadComposerDraftSchema = z.object({
   providerId: ProviderIdSchema.optional(),
   prompt: z.string()
@@ -304,6 +496,13 @@ export const AgentThreadSummarySchema = z.object({
 }).strict();
 
 export type AgentThreadSummary = z.infer<typeof AgentThreadSummarySchema>;
+
+export const AdoptAgentThreadResponseSchema = z.object({
+  thread: AgentThreadSummarySchema,
+  status: z.enum(["adopted", "already_adopted"]),
+}).strict();
+
+export type AdoptAgentThreadResponse = z.infer<typeof AdoptAgentThreadResponseSchema>;
 
 export const ApprovalDecisionSchema = z.enum(["approve", "approve_for_session", "decline", "cancel"]);
 export const ApprovalRiskSchema = z.enum(["low", "medium", "high"]);
@@ -361,7 +560,23 @@ const BaseThreadEventSchema = z.object({
   occurredAt: IsoTimestampSchema,
 });
 
-export const AgentThreadEventSchema = z.discriminatedUnion("type", [
+export const AgentTurnLifecycleEventSchema = z.discriminatedUnion("type", [
+  BaseThreadEventSchema.extend({
+    type: z.literal("turn.accepted"),
+    turnId: AgentTurnIdSchema,
+    clientRequestId: RequestIdSchema,
+    acceptedAt: IsoTimestampSchema,
+  }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("turn.status"),
+    turnId: AgentTurnIdSchema,
+    status: AgentTurnStatusSchema,
+  }).strict(),
+]);
+
+export type AgentTurnLifecycleEvent = z.infer<typeof AgentTurnLifecycleEventSchema>;
+
+const CoreAgentThreadEventSchema = z.discriminatedUnion("type", [
   BaseThreadEventSchema.extend({
     type: z.literal("thread.created"),
     thread: AgentThreadSummarySchema,
@@ -369,6 +584,14 @@ export const AgentThreadEventSchema = z.discriminatedUnion("type", [
   BaseThreadEventSchema.extend({
     type: z.literal("thread.status"),
     status: AgentThreadStatusSchema,
+  }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("user.message"),
+    messageId: referenceId(128),
+    text: boundedText(24_000, 96 * 1024),
+    clientRequestId: RequestIdSchema,
+    turnId: AgentTurnIdSchema.optional(),
+    attachments: z.array(AgentAttachmentSchema).max(8).optional(),
   }).strict(),
   BaseThreadEventSchema.extend({
     type: z.literal("assistant.text.delta"),
@@ -441,6 +664,11 @@ export const AgentThreadEventSchema = z.discriminatedUnion("type", [
     type: z.literal("thread.completed"),
     outcome: z.enum(["completed", "failed", "aborted"]),
   }).strict(),
+]);
+
+export const AgentThreadEventSchema = z.discriminatedUnion("type", [
+  ...AgentTurnLifecycleEventSchema.options,
+  ...CoreAgentThreadEventSchema.options,
 ]);
 
 export type AgentThreadEvent = z.infer<typeof AgentThreadEventSchema>;
@@ -542,12 +770,115 @@ export const TerminalServerFrameSchema = z.discriminatedUnion("type", [
   }).strict(),
 ]);
 
+export const BoundedAggregateCountSchema = z.number().int().min(0).max(1_000_000);
+
 export const ProjectSummarySchema = z.object({
   id: ProjectIdSchema,
   label: SafeDisplayStringSchema,
   status: z.enum(["available", "missing", "stale", "unknown"]).default("unknown"),
+  taskCount: BoundedAggregateCountSchema,
+  threadCount: BoundedAggregateCountSchema,
+  attentionCount: BoundedAggregateCountSchema,
   updatedAt: IsoTimestampSchema.optional(),
 }).strict();
+
+export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
+
+const CodingAgentProjectSlugSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/);
+export const CodingAgentProjectCreateRequestSchema = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.literal("scratch"),
+    name: SafeDisplayStringSchema,
+    slug: CodingAgentProjectSlugSchema.optional(),
+    clientRequestId: RequestIdSchema,
+  }).strict(),
+  z.object({
+    mode: z.literal("github"),
+    repositoryUrl: z.string().trim().min(1).max(512),
+    slug: CodingAgentProjectSlugSchema.optional(),
+    clientRequestId: RequestIdSchema,
+  }).strict(),
+]);
+export const CodingAgentProjectCreateResponseSchema = z.object({
+  project: ProjectSummarySchema,
+  existing: z.boolean(),
+}).strict();
+export type CodingAgentProjectCreateRequest = z.infer<typeof CodingAgentProjectCreateRequestSchema>;
+export type CodingAgentProjectCreateResponse = z.infer<typeof CodingAgentProjectCreateResponseSchema>;
+
+export const CanonicalTaskStatusSchema = z.enum([
+  "todo",
+  "running",
+  "waiting",
+  "blocked",
+  "complete",
+  "archived",
+]);
+export const CanonicalTaskPrioritySchema = z.enum(["low", "normal", "high", "urgent"]);
+
+export const TaskAgentSummarySchema = z.object({
+  id: TaskIdSchema,
+  projectId: ProjectIdSchema,
+  title: SafeDisplayStringSchema,
+  status: CanonicalTaskStatusSchema,
+  priority: CanonicalTaskPrioritySchema,
+  order: z.number().int().min(0).max(1_000_000),
+  threadCount: BoundedAggregateCountSchema,
+  activeThreadCount: BoundedAggregateCountSchema,
+  attentionCount: BoundedAggregateCountSchema,
+  latestThreadAt: IsoTimestampSchema.optional(),
+  revision: z.number().int().min(0).max(1_000_000_000).optional(),
+}).strict();
+
+export type TaskAgentSummary = z.infer<typeof TaskAgentSummarySchema>;
+
+const ProjectTaskSummaryListSchema = boundedListSchema(TaskAgentSummarySchema, 100);
+const ProjectThreadSummaryListSchema = boundedListSchema(AgentThreadSummarySchema, 100);
+
+export const ProjectAgentWorkspaceSchema = z.object({
+  project: ProjectSummarySchema,
+  tasks: ProjectTaskSummaryListSchema,
+  projectThreads: ProjectThreadSummaryListSchema,
+  taskThreads: ProjectThreadSummaryListSchema,
+  updatedAt: IsoTimestampSchema,
+}).strict().superRefine((workspace, ctx) => {
+  for (const [index, task] of workspace.tasks.items.entries()) {
+    if (task.projectId !== workspace.project.id) {
+      ctx.addIssue({ code: "custom", message: "Task project does not match workspace", path: ["tasks", "items", index, "projectId"] });
+    }
+  }
+  for (const [index, thread] of workspace.projectThreads.items.entries()) {
+    if (thread.projectId !== workspace.project.id || thread.taskId !== undefined) {
+      ctx.addIssue({ code: "custom", message: "Project thread relation is invalid", path: ["projectThreads", "items", index] });
+    }
+  }
+  for (const [index, thread] of workspace.taskThreads.items.entries()) {
+    if (thread.projectId !== workspace.project.id || thread.taskId === undefined) {
+      ctx.addIssue({ code: "custom", message: "Task thread relation is invalid", path: ["taskThreads", "items", index] });
+    }
+  }
+});
+
+export type ProjectAgentWorkspace = z.infer<typeof ProjectAgentWorkspaceSchema>;
+
+const AgentThreadListLimitSchema = z.number().int().min(1).max(100).default(50);
+
+export const AgentThreadListFilterSchema = z.discriminatedUnion("scope", [
+  z.object({
+    scope: z.literal("project"),
+    projectId: ProjectIdSchema,
+    taskId: TaskIdSchema.optional(),
+    cursor: CursorSchema.optional(),
+    limit: AgentThreadListLimitSchema,
+  }).strict(),
+  z.object({
+    scope: z.literal("legacy_unassigned"),
+    cursor: CursorSchema.optional(),
+    limit: AgentThreadListLimitSchema,
+  }).strict(),
+]);
+
+export type AgentThreadListFilter = z.infer<typeof AgentThreadListFilterSchema>;
 
 export const PreviewSessionSummarySchema = z.object({
   id: referenceId(128),
@@ -693,11 +1024,12 @@ export const FileMetadataSchema = z.object({
   updatedAt: IsoTimestampSchema.optional(),
 }).strict();
 export type FileMetadata = z.infer<typeof FileMetadataSchema>;
+const FileProjectSlugSchema = ProjectIdSchema.refine((value) => /^[a-z0-9][a-z0-9-]{0,62}$/.test(value), {
+  message: "Invalid project slug",
+});
 export const FileReadRequestSchema = z.object({
-  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
-    message: "Invalid project id",
-  }),
-  worktreeId: WorktreeIdSchema,
+  projectId: FileProjectSlugSchema,
+  worktreeId: WorktreeIdSchema.optional(),
   path: FilePathSchema,
 }).strict();
 export const FileReadResponseSchema = z.object({
@@ -720,10 +1052,8 @@ export type FileReadResponse = z.infer<typeof FileReadResponseSchema>;
 const FileListLimitSchema = z.coerce.number().int().min(1).max(100).default(50);
 
 export const FileBrowseRequestSchema = z.object({
-  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
-    message: "Invalid project id",
-  }),
-  worktreeId: WorktreeIdSchema,
+  projectId: FileProjectSlugSchema,
+  worktreeId: WorktreeIdSchema.optional(),
   path: FilePathSchema.optional(),
   limit: FileListLimitSchema,
 }).strict();
@@ -738,10 +1068,8 @@ export type FileBrowseRequest = z.infer<typeof FileBrowseRequestSchema>;
 export type FileBrowseResponse = z.infer<typeof FileBrowseResponseSchema>;
 
 export const FileSearchRequestSchema = z.object({
-  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
-    message: "Invalid project id",
-  }),
-  worktreeId: WorktreeIdSchema,
+  projectId: FileProjectSlugSchema,
+  worktreeId: WorktreeIdSchema.optional(),
   path: FilePathSchema.optional(),
   query: boundedText(80, 256),
   limit: FileListLimitSchema,

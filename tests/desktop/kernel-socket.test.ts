@@ -103,6 +103,9 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  // restoreAllMocks does not undo vi.stubGlobal; a leaked setTimeout stub
+  // never schedules callbacks and can hang later tests in the same worker.
+  vi.unstubAllGlobals();
 });
 
 describe("buildKernelWsUrl", () => {
@@ -127,6 +130,29 @@ describe("buildKernelWsUrl", () => {
 });
 
 describe("KernelSocket: connection and routing", () => {
+  it("does not invoke browser timers with the socket as their receiver", () => {
+    const sockets: FakeWebSocket[] = [];
+    const strictTimer = vi.fn(function (this: unknown, fn: () => void) {
+      if (this !== globalThis) throw new TypeError("Illegal invocation");
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    });
+    vi.stubGlobal("setTimeout", strictTimer);
+    const socket = new KernelSocket({
+      baseUrl: "https://app.matrix-os.com",
+      runtimeSlot: "primary",
+      createWebSocket: () => {
+        const next = new FakeWebSocket();
+        sockets.push(next);
+        return next;
+      },
+    });
+
+    socket.connect();
+    expect(() => sockets[0]!.fail()).not.toThrow();
+    expect(strictTimer).toHaveBeenCalledOnce();
+    socket.dispose();
+  });
+
   it("connects to the built URL", () => {
     const h = createHarness({ runtimeSlot: "vm-2" });
     h.socket.connect();

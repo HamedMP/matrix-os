@@ -170,10 +170,11 @@ describe('customer VPS host bundle', () => {
     const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-developer-tools'), 'utf8');
 
     expect(unit).toContain('Description=Matrix OS optional developer tools');
+    expect(gatewayUnit).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1');
     expect(unit).toContain('After=network-online.target matrix-restore.service');
     expect(unit).toContain('Before=matrix-gateway.service');
     expect(unit).toContain('EnvironmentFile=/opt/matrix/env/host.env');
-    expect(unit).toContain('ExecStart=/opt/matrix/bin/matrix-install-developer-tools');
+    expect(unit).toContain('ExecStart=/opt/matrix/bin/matrix-install-developer-tools --tools-only');
     expect(unit).toContain('RemainAfterExit=yes');
     expect(unit).toContain('TimeoutStartSec=7200');
     expect(unit).not.toContain('Restart=on-failure');
@@ -185,6 +186,22 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('optional developer tool ${tool} already installed; skipping');
     expect(installer).toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"');
     expect(installer).not.toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS:-codex claude-code opencode pi}"');
+    expect(installer).toContain('ensure_agent_sandbox_runtime()');
+    expect(installer).toContain('apt-get install -y software-properties-common');
+    expect(installer).toContain('add-apt-repository -y universe');
+    expect(installer).toContain('apt-get install -y bubblewrap socat');
+    expect(installer).toContain("cat >/etc/apparmor.d/bwrap <<'EOF'");
+    expect(installer).toContain('systemctl reload apparmor');
+    expect(installer).toContain('ensure_agent_sandbox_runtime');
+    expect(installer.match(/\|\| return 1/g)?.length).toBeGreaterThanOrEqual(7);
+    expect(installer).toContain('command -v bwrap >/dev/null 2>&1 && command -v socat >/dev/null 2>&1');
+    expect(installer).toContain('if ! ensure_agent_sandbox_runtime; then');
+    expect(installer).toContain('coding-agent sandbox provisioning failed');
+    expect(installer).toContain('MODE="${1:-}"');
+    expect(installer).toContain('if [ "$MODE" != "--tools-only" ]; then');
+    expect(installer).toContain('if [ "$MODE" = "--sandbox-only" ]; then');
+    expect(gatewayUnit).toContain('ExecStartPre=+/opt/matrix/bin/matrix-install-developer-tools --sandbox-only');
+    expect(gatewayUnit).toContain('TimeoutStartSec=720');
     expect(codeServerUnit).toContain('Description=Install Matrix OS code-server runtime');
     expect(codeServerUnit).toContain('ConditionPathExists=!/opt/matrix/runtime/code-server/bin/code-server');
     expect(codeServerUnit).toContain('ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server');
@@ -787,12 +804,18 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('sudo systemctl daemon-reload');
     expect(syncAgent).toContain('sudo systemctl enable matrix-code-server.service');
     expect(syncAgent).toContain('sudo systemctl start --no-block matrix-code-server.service || true');
+    expect(syncAgent).toContain('sudo systemctl enable matrix-developer-tools.service');
+    expect(syncAgent).toContain('sudo systemctl start --no-block matrix-developer-tools.service || true');
     expect(syncAgent).toContain('Code-server runtime service enabled');
     expect(syncAgent).toContain('sudo systemctl enable matrix-code.service');
     expect(syncAgent).toContain('sudo systemctl start --no-block matrix-code.service || true');
     expect(syncAgent).toContain('Code editor service enabled');
     expect(syncAgent).toContain('Messaging runtimes missing; units installed but not enabled');
     expect(syncAgent).toContain('sudo systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service');
+    const daemonReload = syncAgent.indexOf('sudo systemctl daemon-reload');
+    const gatewayStart = syncAgent.indexOf('sudo systemctl start matrix-gateway matrix-shell', daemonReload);
+    expect(daemonReload).toBeGreaterThan(-1);
+    expect(gatewayStart).toBeGreaterThan(daemonReload);
   });
 
   it('sync agent periodically cleans stale local bundle artifacts', () => {

@@ -8,7 +8,7 @@ describe("cloud workspace runtime gates", () => {
   it("ships required coding workspace tools in the final container", () => {
     const dockerfile = readFileSync(join(root, "Dockerfile"), "utf-8");
 
-    for (const tool of ["zellij", "tmux", "gh", "openssh-client", "bubblewrap", "git", "sudo", "code-server"]) {
+    for (const tool of ["zellij", "tmux", "gh", "openssh-client", "bubblewrap", "socat", "git", "sudo", "code-server"]) {
       expect(dockerfile).toContain(tool);
     }
     for (const agentCli of [

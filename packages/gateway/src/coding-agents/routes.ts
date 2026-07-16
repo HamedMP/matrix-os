@@ -3,9 +3,14 @@ import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod/v4";
 import {
+  AdoptAgentThreadRequestSchema,
+  AdoptAgentThreadResponseSchema,
   ApprovalDecisionRequestSchema,
   ApprovalIdSchema,
   CreateAgentThreadRequestSchema,
+  CreateAgentTurnErrorSchema,
+  CreateAgentTurnRequestSchema,
+  CreateAgentTurnResponseSchema,
   CursorSchema,
   FileBrowseRequestSchema,
   FileBrowseResponseSchema,
@@ -16,8 +21,10 @@ import {
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   ProjectIdSchema,
+  ProjectAgentWorkspaceSchema,
   RequestIdSchema,
   ThreadIdSchema,
+  TaskIdSchema,
   SafeClientErrorSchema,
   UserInputAnswerRequestSchema,
   boundedListSchema,
@@ -31,6 +38,7 @@ import {
   SourceControlPrepareCommitResponseSchema,
   CodingAgentNotificationPreferencesSchema,
   CodingAgentNotificationPreferencesUpdateSchema,
+  CodingAgentProjectCreateRequestSchema,
 } from "@matrix-os/contracts";
 import {
   isRequestPrincipalError,
@@ -40,9 +48,11 @@ import {
 } from "../request-principal.js";
 import type { CodingAgentRuntimeSummaryService } from "./runtime-summary.js";
 import {
+  CodingAgentTurnError,
   CodingAgentThreadError,
   safeThreadError,
   type CodingAgentThreadStore,
+  type CodingAgentTurnStore,
 } from "./thread-store.js";
 import {
   CodingAgentReviewSnapshotError,
@@ -58,10 +68,26 @@ import {
   type CodingAgentSourceControlStore,
 } from "./source-control.js";
 import type { CodingAgentNotificationPreferenceStore } from "./notification-preferences.js";
+import { logCodingAgentWarning } from "./diagnostics.js";
+import { CodingAgentProjectWorkspaceError } from "./project-workspace.js";
+import { CodingAgentThreadRelationError } from "./thread-relations.js";
+import {
+  CodingAgentProjectMutationError,
+  type CodingAgentProjectMutationService,
+} from "./project-mutations.js";
 
 export interface CodingAgentRouteDeps {
   service: CodingAgentRuntimeSummaryService;
+  projectWorkspaces?: {
+    getProjectWorkspace(
+      principal: RequestPrincipal,
+      projectId: string,
+      query: ProjectWorkspaceQuery,
+    ): Promise<unknown>;
+  };
+  projectMutations?: CodingAgentProjectMutationService;
   threads?: CodingAgentThreadStore;
+  turns?: CodingAgentTurnStore;
   reviews?: CodingAgentReviewSummaryStore;
   files?: CodingAgentFileStore;
   sourceControl?: CodingAgentSourceControlStore;
@@ -70,12 +96,15 @@ export interface CodingAgentRouteDeps {
 }
 
 const THREAD_MUTATION_BODY_LIMIT = 128 * 1024;
+const THREAD_ADOPTION_BODY_LIMIT = 4 * 1024;
+const THREAD_TURN_BODY_LIMIT = 128 * 1024;
 const THREAD_ABORT_BODY_LIMIT = 1024;
 const THREAD_APPROVAL_BODY_LIMIT = 8 * 1024;
 const THREAD_INPUT_BODY_LIMIT = 40 * 1024;
 const FILE_WRITE_BODY_LIMIT = 512 * 1024;
 const SOURCE_CONTROL_BODY_LIMIT = 256 * 1024;
 const NOTIFICATION_PREFERENCES_BODY_LIMIT = 4 * 1024;
+const PROJECT_MUTATION_BODY_LIMIT = 4 * 1024;
 
 const AbortThreadBodySchema = z.object({
   clientRequestId: RequestIdSchema,
@@ -88,6 +117,29 @@ const SummaryQuerySchema = z.object({
     message: "Invalid project id",
   }).optional(),
 }).strict();
+const ProjectWorkspaceProjectIdSchema = ProjectIdSchema.refine(
+  (value) => /^[a-z0-9][a-z0-9-]{0,62}$/.test(value),
+  { message: "Invalid project id" },
+);
+const ProjectWorkspaceQuerySchema = z.object({
+  taskCursor: TaskIdSchema.optional(),
+  taskLimit: z.coerce.number().int().min(1).max(100).default(50),
+  projectThreadCursor: ThreadIdSchema.optional(),
+  projectThreadLimit: z.coerce.number().int().min(1).max(100).default(50),
+  taskThreadCursor: ThreadIdSchema.optional(),
+  taskThreadLimit: z.coerce.number().int().min(1).max(100).default(50),
+}).strict();
+const SingleProjectWorkspaceQueryValueSchema = z.array(z.string()).length(1).transform((values) => values[0]!);
+const ProjectWorkspaceRawQuerySchema = z.object({
+  taskCursor: SingleProjectWorkspaceQueryValueSchema.optional(),
+  taskLimit: SingleProjectWorkspaceQueryValueSchema.optional(),
+  projectThreadCursor: SingleProjectWorkspaceQueryValueSchema.optional(),
+  projectThreadLimit: SingleProjectWorkspaceQueryValueSchema.optional(),
+  taskThreadCursor: SingleProjectWorkspaceQueryValueSchema.optional(),
+  taskThreadLimit: SingleProjectWorkspaceQueryValueSchema.optional(),
+}).strict();
+
+type ProjectWorkspaceQuery = z.infer<typeof ProjectWorkspaceQuerySchema>;
 
 function summaryUnavailable() {
   return SafeClientErrorSchema.parse({
@@ -102,6 +154,43 @@ function threadsUnavailable() {
   return SafeClientErrorSchema.parse({
     code: "thread_store_unavailable",
     safeMessage: "Agent thread state is temporarily unavailable. Try again.",
+    retryable: true,
+    recoveryActions: ["retry"],
+  });
+}
+
+function projectWorkspaceUnavailable() {
+  return SafeClientErrorSchema.parse({
+    code: "project_workspace_unavailable",
+    safeMessage: "Project workspace is temporarily unavailable. Refresh and try again.",
+    retryable: true,
+    recoveryActions: ["retry"],
+  });
+}
+
+function projectWorkspaceNotFound() {
+  return SafeClientErrorSchema.parse({
+    code: "project_not_found",
+    safeMessage: "Project workspace is unavailable. Refresh and try again.",
+    retryable: false,
+  });
+}
+
+function projectCreateError(code: "project_invalid" | "project_conflict" | "project_create_unavailable") {
+  if (code === "project_invalid") {
+    return SafeClientErrorSchema.parse({
+      code,
+      safeMessage: "Project details are invalid or unavailable. Check them and try again.",
+      retryable: false,
+    });
+  }
+  return SafeClientErrorSchema.parse(code === "project_conflict" ? {
+    code,
+    safeMessage: "A project with that name already exists. Choose another name and try again.",
+    retryable: false,
+  } : {
+    code,
+    safeMessage: "Project could not be created. Check the project details and try again.",
     retryable: true,
     recoveryActions: ["retry"],
   });
@@ -205,6 +294,9 @@ function validationFailed() {
 }
 
 function mapThreadRouteError(c: Context, err: unknown) {
+  if (isBodyLimitError(err)) {
+    return c.json({ error: bodyTooLarge() }, 413);
+  }
   if (isRequestPrincipalError(err)) {
     const mapped = mapRequestPrincipalError(err);
     return c.json(mapped.body, mapped.status as ContentfulStatusCode);
@@ -213,17 +305,67 @@ function mapThreadRouteError(c: Context, err: unknown) {
     const status = err.code === "thread_not_found" ? 404 : err.code === "provider_unavailable" ? 400 : 503;
     return c.json({ error: safeThreadError(err.code) }, status);
   }
-  if (err instanceof z.ZodError) {
+  if (err instanceof CodingAgentThreadRelationError) {
+    if (err.code === "invalid_relation") {
+      return c.json({
+        error: SafeClientErrorSchema.parse({
+          code: "thread_relation_invalid",
+          safeMessage: "Choose an available project and task, then try again.",
+          retryable: false,
+        }),
+      }, 400);
+    }
+    logCodingAgentWarning("thread relation validation unavailable", err);
+    return c.json({ error: threadsUnavailable() }, 503);
+  }
+  if (err instanceof z.ZodError || err instanceof SyntaxError) {
     return c.json({ error: validationFailed() }, 400);
   }
-  console.warn("[coding-agents] thread route failed:", err instanceof Error ? err.message : String(err));
+  logCodingAgentWarning("thread route failed", err);
   return c.json({ error: threadsUnavailable() }, 503);
+}
+
+function turnError(code: "thread_busy" | "thread_not_found" | "turn_unavailable") {
+  if (code === "thread_busy") {
+    return CreateAgentTurnErrorSchema.parse({
+      code,
+      safeMessage: "This conversation is already running. Wait for it to finish and try again.",
+      retryable: true,
+      recoveryActions: ["retry"],
+    });
+  }
+  if (code === "thread_not_found") {
+    return CreateAgentTurnErrorSchema.parse({
+      code,
+      safeMessage: "Conversation is unavailable. Refresh and try again.",
+      retryable: true,
+      recoveryActions: ["retry"],
+    });
+  }
+  return CreateAgentTurnErrorSchema.parse({
+    code,
+    safeMessage: "This conversation cannot accept a message right now. Refresh and try again.",
+    retryable: true,
+    recoveryActions: ["retry"],
+  });
 }
 
 export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
   const app = new Hono();
   const principalFor = (c: Context) => deps.getPrincipal?.(c) ?? requireRequestPrincipal(c);
-  const threadMutationBodyLimit = bodyLimit({ maxSize: THREAD_MUTATION_BODY_LIMIT });
+  const threadMutationBodyLimit = bodyLimit({
+    maxSize: THREAD_MUTATION_BODY_LIMIT,
+    onError: (c) => c.json({ error: bodyTooLarge() }, 413),
+  });
+  const projectMutationBodyLimit = bodyLimit({
+    maxSize: PROJECT_MUTATION_BODY_LIMIT,
+    onError: (c) => c.json({ error: bodyTooLarge() }, 413),
+  });
+  const threadAdoptionBodyLimit = bodyLimit({
+    maxSize: THREAD_ADOPTION_BODY_LIMIT,
+    onError: (c) => c.json({ error: bodyTooLarge() }, 413),
+  });
+  const threadTurnBodyLimit = bodyLimit({ maxSize: THREAD_TURN_BODY_LIMIT });
   const threadAbortBodyLimit = bodyLimit({ maxSize: THREAD_ABORT_BODY_LIMIT });
   const threadApprovalBodyLimit = bodyLimit({ maxSize: THREAD_APPROVAL_BODY_LIMIT });
   const threadInputBodyLimit = bodyLimit({ maxSize: THREAD_INPUT_BODY_LIMIT });
@@ -253,18 +395,130 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
       if (err instanceof z.ZodError) {
         return c.json({ error: validationFailed() }, 400);
       }
-      console.warn("[coding-agents] summary route failed:", err instanceof Error ? err.message : String(err));
+      logCodingAgentWarning("summary route failed", err);
       return c.json({ error: summaryUnavailable() }, 503);
     }
   });
+
+  if (deps.projectWorkspaces) {
+    app.get("/projects/:projectId/workspace", async (c) => {
+      try {
+        const principal = principalFor(c);
+        const projectId = ProjectWorkspaceProjectIdSchema.parse(c.req.param("projectId"));
+        const query = ProjectWorkspaceQuerySchema.parse(
+          ProjectWorkspaceRawQuerySchema.parse(c.req.queries()),
+        );
+        return c.json(ProjectAgentWorkspaceSchema.parse(
+          await deps.projectWorkspaces!.getProjectWorkspace(principal, projectId, query),
+        ));
+      } catch (err: unknown) {
+        if (isRequestPrincipalError(err)) {
+          const mapped = mapRequestPrincipalError(err);
+          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+        }
+        if (err instanceof z.ZodError) {
+          return c.json({ error: validationFailed() }, 400);
+        }
+        if (err instanceof CodingAgentProjectWorkspaceError) {
+          if (err.code === "project_not_found") {
+            return c.json({ error: projectWorkspaceNotFound() }, 404);
+          }
+          if (err.code === "invalid_cursor") {
+            return c.json({ error: validationFailed() }, 400);
+          }
+          return c.json({ error: projectWorkspaceUnavailable() }, 503);
+        }
+        logCodingAgentWarning("project workspace route failed", err);
+        return c.json({ error: projectWorkspaceUnavailable() }, 503);
+      }
+    });
+  }
+
+  if (deps.projectMutations) {
+    app.post("/projects", projectMutationBodyLimit, async (c) => {
+      try {
+        const principal = principalFor(c);
+        const request = CodingAgentProjectCreateRequestSchema.parse(await c.req.json());
+        const result = await deps.projectMutations!.createProject(principal, request);
+        return c.json(result.response, result.status);
+      } catch (err: unknown) {
+        if (isBodyLimitError(err)) {
+          return c.json({ error: bodyTooLarge() }, 413);
+        }
+        if (isRequestPrincipalError(err)) {
+          const mapped = mapRequestPrincipalError(err);
+          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+        }
+        if (err instanceof z.ZodError || err instanceof SyntaxError) {
+          return c.json({ error: validationFailed() }, 400);
+        }
+        if (err instanceof CodingAgentProjectMutationError) {
+          return c.json({ error: projectCreateError(err.code) }, err.status);
+        }
+        logCodingAgentWarning("project mutation route failed", err);
+        return c.json({ error: projectCreateError("project_create_unavailable") }, 503);
+      }
+    });
+  }
+
+  if (deps.turns) {
+    app.post("/threads/:threadId/turns", threadTurnBodyLimit, async (c) => {
+      try {
+        const principal = principalFor(c);
+        const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
+        const request = CreateAgentTurnRequestSchema.parse(await c.req.json());
+        const response = await deps.turns!.acceptTurn(principal, threadId, request);
+        return c.json(
+          CreateAgentTurnResponseSchema.parse(response),
+          response.status === "already_accepted" ? 200 : 202,
+        );
+      } catch (err: unknown) {
+        if (isRequestPrincipalError(err)) {
+          const mapped = mapRequestPrincipalError(err);
+          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+        }
+        if (err instanceof z.ZodError) {
+          return c.json({ error: validationFailed() }, 400);
+        }
+        if (err instanceof CodingAgentTurnError) {
+          const status = err.code === "thread_not_found" ? 404 : 409;
+          return c.json({ error: turnError(err.code) }, status);
+        }
+        if (err instanceof CodingAgentThreadRelationError) {
+          if (err.code === "invalid_relation") {
+            return c.json({ error: turnError("turn_unavailable") }, 409);
+          }
+          logCodingAgentWarning("turn relation validation unavailable", err);
+          return c.json({ error: turnError("turn_unavailable") }, 503);
+        }
+        logCodingAgentWarning("thread turn route failed", err);
+        return c.json({ error: turnError("turn_unavailable") }, 503);
+      }
+    });
+  }
 
   if (deps.threads) {
     app.post("/threads", threadMutationBodyLimit, async (c) => {
       try {
         const principal = principalFor(c);
         const request = CreateAgentThreadRequestSchema.parse(await c.req.json());
-        const result = await deps.threads!.createThread(principal, request);
+        const result = await deps.threads!.createShellThread(principal, request);
         return c.json(result.snapshot, result.existing ? 200 : 202);
+      } catch (err: unknown) {
+        return mapThreadRouteError(c, err);
+      }
+    });
+
+    app.post("/threads/:threadId/adopt", threadAdoptionBodyLimit, async (c) => {
+      try {
+        const principal = principalFor(c);
+        const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
+        const request = AdoptAgentThreadRequestSchema.parse(await c.req.json());
+        const response = await deps.threads!.adoptLegacyThread(principal, threadId, request);
+        return c.json(
+          AdoptAgentThreadResponseSchema.parse(response),
+          response.status === "already_adopted" ? 200 : 202,
+        );
       } catch (err: unknown) {
         return mapThreadRouteError(c, err);
       }
@@ -352,7 +606,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         if (err instanceof z.ZodError) {
           return c.json({ error: validationFailed() }, 400);
         }
-        console.warn("[coding-agents] review route failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("review route failed", err);
         return c.json({ error: reviewsUnavailable() }, 503);
       }
     });
@@ -377,7 +631,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           const status = err.code === "review_not_found" ? 404 : 503;
           return c.json({ error: err.code === "review_not_found" ? reviewNotFound() : reviewsUnavailable() }, status);
         }
-        console.warn("[coding-agents] review snapshot route failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("review snapshot route failed", err);
         return c.json({ error: reviewsUnavailable() }, 503);
       }
     });
@@ -407,7 +661,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           if (err.code === "not_file") return c.json({ error: validationFailed() }, 400);
           return c.json({ error: filesUnavailable() }, 503);
         }
-        console.warn("[coding-agents] file browse route failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("file browse route failed", err);
         return c.json({ error: filesUnavailable() }, 503);
       }
     });
@@ -434,7 +688,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           if (err.code === "not_file") return c.json({ error: validationFailed() }, 400);
           return c.json({ error: filesUnavailable() }, 503);
         }
-        console.warn("[coding-agents] file read route failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("file read route failed", err);
         return c.json({ error: filesUnavailable() }, 503);
       }
     });
@@ -463,7 +717,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           if (err.code === "not_file") return c.json({ error: validationFailed() }, 400);
           return c.json({ error: filesUnavailable() }, 503);
         }
-        console.warn("[coding-agents] file search route failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("file search route failed", err);
         return c.json({ error: filesUnavailable() }, 503);
       }
     });
@@ -491,7 +745,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           if (err.code === "not_file" || err.code === "invalid_request") return c.json({ error: validationFailed() }, 400);
           return c.json({ error: filesUnavailable() }, 503);
         }
-        console.warn("[coding-agents] file write route failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("file write route failed", err);
         return c.json({ error: filesUnavailable() }, 503);
       }
     });
@@ -523,7 +777,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           if (err.code === "invalid_request") return c.json({ error: validationFailed() }, 400);
           return c.json({ error: sourceControlUnavailable() }, 503);
         }
-        console.warn("[coding-agents] source-control route failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("source-control route failed", err);
         return c.json({ error: sourceControlUnavailable() }, 503);
       }
     });
@@ -553,7 +807,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           if (err.code === "invalid_request") return c.json({ error: validationFailed() }, 400);
           return c.json({ error: sourceControlUnavailable() }, 503);
         }
-        console.warn("[coding-agents] source-control pull request route failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("source-control pull request route failed", err);
         return c.json({ error: sourceControlUnavailable() }, 503);
       }
     });
@@ -572,7 +826,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           const mapped = mapRequestPrincipalError(err);
           return c.json(mapped.body, mapped.status as ContentfulStatusCode);
         }
-        console.warn("[coding-agents] notification preferences route failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("notification preferences route failed", err);
         return c.json({ error: notificationPreferencesUnavailable() }, 503);
       }
     });
@@ -596,7 +850,7 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         if (err instanceof z.ZodError || err instanceof SyntaxError) {
           return c.json({ error: validationFailed() }, 400);
         }
-        console.warn("[coding-agents] notification preferences update failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("notification preferences update failed", err);
         return c.json({ error: notificationPreferencesUnavailable() }, 503);
       }
     });

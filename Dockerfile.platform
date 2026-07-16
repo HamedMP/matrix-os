@@ -7,6 +7,7 @@ WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 COPY packages/clerk-sync/package.json packages/clerk-sync/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/gateway/package.json packages/gateway/package.json
 COPY packages/kernel/package.json packages/kernel/package.json
 COPY packages/mcp-browser/package.json packages/mcp-browser/package.json
@@ -64,6 +65,7 @@ RUN adduser -D -u 1001 -h /home/matrix-platform -s /sbin/nologin matrix-platform
 
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/node_modules ./node_modules
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/clerk-sync/package.json ./packages/clerk-sync/package.json
+COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/contracts/package.json ./packages/contracts/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/gateway/package.json ./packages/gateway/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/kernel/package.json ./packages/kernel/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/mcp-browser/package.json ./packages/mcp-browser/package.json
@@ -73,6 +75,7 @@ COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/plat
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/sync-client/package.json ./packages/sync-client/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/shell/package.json ./shell/package.json
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/clerk-sync/src ./packages/clerk-sync/src
+COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/contracts/src ./packages/contracts/src
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/gateway/dist ./packages/gateway/dist
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/kernel/dist ./packages/kernel/dist
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/observability/dist ./packages/observability/dist

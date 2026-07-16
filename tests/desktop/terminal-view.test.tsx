@@ -4,13 +4,23 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ShellSocketEvents } from "@desktop/renderer/src/lib/shell-socket";
 import TerminalView from "@desktop/renderer/src/features/terminal/TerminalView";
+import { getThemeTerminalColors } from "@desktop/renderer/src/design/themes";
+import { useAppearance } from "@desktop/renderer/src/stores/appearance";
 
 const attachMock = vi.fn();
+const { createdTerminals } = vi.hoisted(() => ({
+  createdTerminals: [] as Array<{ options: { theme?: unknown } }>,
+}));
 
 vi.mock("@xterm/xterm", () => ({
   Terminal: class FakeTerminal {
     cols = 80;
     rows = 24;
+    options: { theme?: unknown } = {};
+
+    constructor() {
+      createdTerminals.push(this);
+    }
 
     loadAddon(): void {}
     open(): void {}
@@ -102,5 +112,25 @@ describe("TerminalView session switching", () => {
     expect(screen.getByText("Session exited (code 7).")).toBeTruthy();
     expect(screen.queryByText(/Connecting/)).toBeNull();
     expect(attachMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-themes live terminals only when the theme actually changes", () => {
+    useAppearance.setState({ mode: "dark", themeId: "operator", hydrated: false });
+    render(<TerminalView sessionName="alpha" />);
+    const terminal = createdTerminals.at(-1)!;
+    expect(terminal.options.theme).toBeUndefined();
+
+    // Hydration writes unrelated state; the palette must not be reassigned.
+    act(() => {
+      useAppearance.setState({ hydrated: true });
+    });
+    expect(terminal.options.theme).toBeUndefined();
+
+    act(() => {
+      useAppearance.setState({ themeId: "dracula" });
+    });
+    expect(terminal.options.theme).toMatchObject({
+      background: getThemeTerminalColors("dracula", "dark").background,
+    });
   });
 });

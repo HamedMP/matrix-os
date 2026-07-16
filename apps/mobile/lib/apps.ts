@@ -13,6 +13,7 @@ export type NativeAppRoute =
   | "/(tabs)/settings"
   | "/canvas"
   | "/agents"
+  | "/files"
   | "/terminal";
 
 const NATIVE_ROUTE_BY_SLUG: Record<string, NativeAppRoute> = {
@@ -23,6 +24,7 @@ const NATIVE_ROUTE_BY_SLUG: Record<string, NativeAppRoute> = {
   "task-manager": "/(tabs)/mission-control",
   "mission-control": "/(tabs)/mission-control",
   apps: "/(tabs)/apps",
+  files: "/files",
   ...(CODING_AGENTS_MOBILE_WORKSPACE ? { agents: "/agents" as const } : {}),
   settings: "/(tabs)/settings",
   canvas: "/canvas",
@@ -71,6 +73,15 @@ const NATIVE_MATRIX_APPS: MatrixAppEntry[] = [
         },
       ]
     : []),
+  {
+    name: "Files",
+    description: "Browse your Matrix home files and projects.",
+    icon: "files",
+    category: "System",
+    slug: "files",
+    file: "files/index.html",
+    path: "/files/apps/files/index.html",
+  },
   {
     name: "Canvas",
     description: "Open your workspace canvas when spatial context helps.",

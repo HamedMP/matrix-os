@@ -144,7 +144,7 @@ When you paste local image paths into `matrix shell attach`, the CLI copies thos
 
 The attached session receives the same prompt with a Matrix-owned path under `~/projects/.matrix-terminal-pastes/` instead of the local macOS path. Up to five PNG, JPEG, GIF, or WebP images can be handled in one paste transaction, with a 10 MB limit per image.
 
-Image-only clipboard paste is best-effort on macOS when the terminal exposes a bracketed paste event and `pngpaste` is available. If the terminal sends no text and no paste boundary, the CLI cannot observe the paste and will not claim an image was sent. Missing, unreadable, unsupported, oversized, or failed uploads show a local retryable message and do not forward detected local image paths to the remote session.
+Image-only clipboard paste is best-effort on macOS when the terminal exposes a bracketed paste event and `pngpaste` is available. If `Cmd-V` sends no text and no paste boundary, press `Ctrl-\` then `v` while attached to explicitly ask the local CLI to read the current clipboard image. Missing, unreadable, unsupported, oversized, or failed uploads show a local retryable message and do not forward detected local image paths to the remote session.
 
 ## File sync
 
@@ -181,13 +181,27 @@ matrix sync resume
 
 Use `matrix upload` and `matrix download` for one-off file transfers without starting or touching the sync daemon.
 
-```bash
-matrix upload ./README.md projects/demo/README.md
-matrix upload --force ./config.json system/config.json
-matrix upload --secret ./api-key.txt system/secrets/api-key.txt
+```text
+matrix upload <local-file> <matrix-destination>
+matrix download <matrix-file> <local-destination>
+```
 
-matrix download projects/demo/README.md ./README.remote.md
-matrix download --force projects/demo/README.md ./README.remote.md
+Only the Matrix-side argument uses Matrix-home paths. `~/` means the home directory on your Matrix computer, not the home directory on your local computer.
+
+When an upload destination is an existing Matrix folder, the local filename is preserved. Specify a complete Matrix file path when you want to rename it.
+
+```bash
+# Keep the local filename: ~/dev/matrix-os/report.csv
+matrix upload ./report.csv ~/dev/matrix-os
+
+# Rename while uploading: ~/dev/matrix-os/security-findings.csv
+matrix upload ./report.csv ~/dev/matrix-os/security-findings.csv
+
+matrix upload --force ./config.json ~/system/config.json
+matrix upload --secret ./api-key.txt ~/system/secrets/api-key.txt
+
+matrix download ~/dev/matrix-os/report.csv ./report.csv
+matrix download --force ~/dev/matrix-os/report.csv ./report.csv
 ```
 
 **Flags (both commands)**
@@ -196,6 +210,8 @@ matrix download --force projects/demo/README.md ./README.remote.md
 |------|-------------|
 | `--force` | Overwrite the destination if it already exists |
 | `--secret` | Mark the file as secret on upload (affects storage handling) |
+
+Installed shell completions suggest Matrix files and folders for the upload destination and download source. Regenerate your completion script after upgrading the CLI.
 
 ## Port forwarding
 

@@ -1,5 +1,6 @@
 import {
   PreviewSessionSummarySchema,
+  ProjectSummarySchema,
   RuntimeSummarySchema,
   SafeDisplayStringSchema,
   TerminalSessionIdSchema,
@@ -16,9 +17,16 @@ import type {
   AgentId,
 } from "../onboarding/activation-contracts.js";
 import type { AgentCredentialStatusService } from "../onboarding/agent-credential-status.js";
+import { logCodingAgentWarning } from "./diagnostics.js";
+import type { CodingAgentProviderRegistry } from "./provider-registry.js";
 
 const TERMINAL_SUMMARY_LIMIT = 20;
 const PREVIEW_SUMMARY_LIMIT = 50;
+export const CODING_AGENT_PROJECT_SUMMARY_LIMIT = 50;
+const DEFAULT_PROJECT_SUMMARY_TIMEOUT_MS = 2_000;
+const MAX_PROJECT_SUMMARY_TIMEOUT_MS = 10_000;
+
+type ProjectSummary = ReturnType<typeof ProjectSummarySchema.parse>;
 
 export interface CodingAgentTerminalSession {
   name: string;
@@ -54,20 +62,34 @@ export interface CodingAgentPreviewSummaryStore {
   ): Promise<{ items: PreviewSessionSummary[]; hasMore: boolean; limit: number }>;
 }
 
+export interface CodingAgentProjectSummaryStore {
+  listProjectSummaries(
+    principal: RequestPrincipal,
+    signal: AbortSignal,
+  ): Promise<{ items: ProjectSummary[]; hasMore: boolean; limit: number }>;
+}
+
 export interface CodingAgentRuntimeSummaryOptions {
   homePath: string;
   terminalRegistry?: CodingAgentTerminalSessionRegistry;
+  providerRegistry?: Pick<CodingAgentProviderRegistry, "listProviders">;
   agentCredentials?: Pick<AgentCredentialStatusService, "getStatus">;
   threads?: CodingAgentThreadSummaryStore;
   previews?: CodingAgentPreviewSummaryStore;
+  projects?: CodingAgentProjectSummaryStore;
   capabilities?: {
+    projectWorkspace?: boolean;
+    conversationView?: boolean;
+    kanbanView?: boolean;
     workspace?: boolean;
+    sameThreadTurns?: boolean;
     approvals?: boolean;
     review?: boolean;
     preview?: boolean;
     files?: boolean;
     sourceControl?: boolean;
   };
+  projectSummaryTimeoutMs?: number;
   providerIds?: readonly string[];
   terminalOwnerId?: string;
   filesOwnerId?: string;
@@ -133,10 +155,14 @@ function terminalSummaryFromSession(
   };
 }
 
-function capability(input: { id: RuntimeSummary["capabilities"][number]["id"]; enabled: boolean }) {
+function capability(input: {
+  id: RuntimeSummary["capabilities"][number]["id"];
+  enabled: boolean;
+  reason?: string;
+}) {
   return input.enabled
     ? { id: input.id, enabled: true }
-    : { id: input.id, enabled: false, reason: "Not enabled yet" };
+    : { id: input.id, enabled: false, reason: input.reason ?? "Not enabled yet" };
 }
 
 function statusToProviderSummary(agent: AgentCredentialSummary): AgentProviderSummary {
@@ -193,7 +219,19 @@ async function readProviders(
       .filter((agent) => !registeredProviderIds || registeredProviderIds.has(agent.agent))
       .map(statusToProviderSummary);
   } catch (err: unknown) {
-    console.warn("[coding-agents] provider summary unavailable:", err instanceof Error ? err.message : String(err));
+    logCodingAgentWarning("provider summary unavailable", err);
+    return [];
+  }
+}
+
+async function readRegisteredProviders(
+  registry: Pick<CodingAgentProviderRegistry, "listProviders">,
+  principal: RequestPrincipal,
+): Promise<AgentProviderSummary[]> {
+  try {
+    return await registry.listProviders(principal);
+  } catch (err: unknown) {
+    logCodingAgentWarning("provider registry unavailable", err);
     return [];
   }
 }
@@ -206,7 +244,7 @@ async function readActiveThreads(
   try {
     return await store.listThreads(principal);
   } catch (err: unknown) {
-    console.warn("[coding-agents] thread summary unavailable:", err instanceof Error ? err.message : String(err));
+    logCodingAgentWarning("thread summary unavailable", err);
     return { items: [], hasMore: false, limit: 20 };
   }
 }
@@ -219,7 +257,7 @@ async function readAttentionThreads(
   try {
     return await store.listAttentionThreads(principal);
   } catch (err: unknown) {
-    console.warn("[coding-agents] attention summary unavailable:", err instanceof Error ? err.message : String(err));
+    logCodingAgentWarning("attention summary unavailable", err);
     return { items: [], hasMore: false, limit: 20 };
   }
 }
@@ -243,8 +281,39 @@ async function readPreviewSessions(
       limit: PREVIEW_SUMMARY_LIMIT,
     };
   } catch (err: unknown) {
-    console.warn("[coding-agents] preview summary unavailable:", err instanceof Error ? err.message : String(err));
+    logCodingAgentWarning("preview summary unavailable", err);
     return { items: [], hasMore: false, limit: PREVIEW_SUMMARY_LIMIT };
+  }
+}
+
+async function readProjects(
+  store: CodingAgentProjectSummaryStore | undefined,
+  principal: RequestPrincipal,
+  timeoutMs: number,
+): Promise<{
+  page: { items: ProjectSummary[]; hasMore: boolean; limit: number };
+  available: boolean;
+}> {
+  const empty = { items: [], hasMore: false, limit: CODING_AGENT_PROJECT_SUMMARY_LIMIT };
+  if (!store) return { page: empty, available: false };
+  try {
+    const result = await store.listProjectSummaries(principal, AbortSignal.timeout(timeoutMs));
+    const items: ProjectSummary[] = [];
+    for (const item of result.items.slice(0, CODING_AGENT_PROJECT_SUMMARY_LIMIT + 1)) {
+      const parsed = ProjectSummarySchema.safeParse(item);
+      if (parsed.success) items.push(parsed.data);
+    }
+    return {
+      page: {
+        items: items.slice(0, CODING_AGENT_PROJECT_SUMMARY_LIMIT),
+        hasMore: result.hasMore || result.items.length > CODING_AGENT_PROJECT_SUMMARY_LIMIT,
+        limit: CODING_AGENT_PROJECT_SUMMARY_LIMIT,
+      },
+      available: true,
+    };
+  } catch (err: unknown) {
+    logCodingAgentWarning("project summary unavailable", err);
+    return { page: empty, available: false };
   }
 }
 
@@ -271,7 +340,7 @@ async function readTerminalSessions(
       limit: TERMINAL_SUMMARY_LIMIT,
     };
   } catch (err: unknown) {
-    console.warn("[coding-agents] terminal summary unavailable:", err instanceof Error ? err.message : String(err));
+    logCodingAgentWarning("terminal summary unavailable", err);
     return { items: [], hasMore: false, limit: TERMINAL_SUMMARY_LIMIT };
   }
 }
@@ -294,9 +363,16 @@ export function createCodingAgentRuntimeSummaryService(
         principal,
         options.terminalOwnerId,
       );
-      const providers = await readProviders(options.agentCredentials, principal, options.providerIds);
+      const providers = options.providerRegistry
+        ? await readRegisteredProviders(options.providerRegistry, principal)
+        : await readProviders(options.agentCredentials, principal, options.providerIds);
       const activeThreads = await readActiveThreads(options.threads, principal);
       const attentionThreads = await readAttentionThreads(options.threads, principal);
+      const projectSummaryTimeoutMs = Math.min(
+        Math.max(options.projectSummaryTimeoutMs ?? DEFAULT_PROJECT_SUMMARY_TIMEOUT_MS, 10),
+        MAX_PROJECT_SUMMARY_TIMEOUT_MS,
+      );
+      const projectRead = await readProjects(options.projects, principal, projectSummaryTimeoutMs);
       const previewSessions = readPreviewSessions(options.previews, principal, summaryOptions);
       const threadsEnabled = Boolean(options.threads);
       const workspaceEnabled = threadsEnabled && options.capabilities?.workspace === true;
@@ -307,6 +383,11 @@ export function createCodingAgentRuntimeSummaryService(
       const sourceControlEnabled = options.capabilities?.sourceControl === true;
       const terminalEnabled = Boolean(options.terminalRegistry) &&
         canReadTerminalSessions(principal, options.terminalOwnerId);
+      const projectWorkspaceConfigured = options.capabilities?.projectWorkspace === true;
+      const projectWorkspaceEnabled = projectWorkspaceConfigured && projectRead.available;
+      const projectWorkspaceReason = !projectRead.available
+        ? "Project workspace is temporarily unavailable"
+        : undefined;
 
       return RuntimeSummarySchema.parse({
         runtime: {
@@ -321,15 +402,40 @@ export function createCodingAgentRuntimeSummaryService(
           capability({ id: "codingAgentsDesktopWorkspace", enabled: workspaceEnabled }),
           capability({ id: "codingAgentsMobileWorkspace", enabled: workspaceEnabled }),
           capability({ id: "codingAgentsThreadCreate", enabled: threadsEnabled }),
+          capability({
+            id: "codingAgentsSameThreadTurns",
+            enabled: options.capabilities?.sameThreadTurns === true,
+          }),
           capability({ id: "codingAgentsApprovals", enabled: approvalsEnabled }),
           capability({ id: "codingAgentsReview", enabled: reviewEnabled }),
           capability({ id: "codingAgentsPreview", enabled: previewEnabled }),
           capability({ id: "codingAgentsFiles", enabled: filesEnabled }),
           capability({ id: "codingAgentsSourceControl", enabled: sourceControlEnabled }),
           capability({ id: "codingAgentsNativeMobileTerminal", enabled: terminalEnabled }),
+          ...(projectWorkspaceConfigured
+            ? [
+                capability({
+                  id: "codingAgentsProjectWorkspace",
+                  enabled: projectWorkspaceEnabled,
+                  reason: projectWorkspaceReason,
+                }),
+                capability({
+                  id: "codingAgentsConversationView",
+                  enabled: projectWorkspaceEnabled
+                    && options.capabilities?.conversationView === true,
+                  reason: projectWorkspaceReason,
+                }),
+                capability({
+                  id: "codingAgentsKanbanView",
+                  enabled: projectWorkspaceEnabled
+                    && options.capabilities?.kanbanView === true,
+                  reason: projectWorkspaceReason,
+                }),
+              ]
+            : []),
         ],
         providers,
-        projects: { items: [], hasMore: false, limit: 20 },
+        projects: projectRead.page,
         activeThreads,
         attentionThreads,
         terminalSessions: await terminalSessions,

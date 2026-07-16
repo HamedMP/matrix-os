@@ -78,6 +78,7 @@ import { createLaunchReadinessRoutes } from './launch-readiness-routes.js';
 import { createHostBundleRoutes } from './host-bundle-routes.js';
 import { createLegacyContainerRoutes } from './legacy-container-routes.js';
 import { createAppSessionRoutes } from './app-session-routes.js';
+import { createComputerRoutes } from './computer-routes.js';
 import {
   HANDLE_PATTERN,
   describeError,
@@ -470,6 +471,17 @@ export function createApp(deps: {
       }),
     );
   }
+
+  app.route('/', createComputerRoutes({
+    db,
+    clerkAuth,
+    appEnv,
+    platformJwtSecret,
+    legacyContainerRoutingEnabled,
+    applyNoStoreHeaders,
+    logRouteError: logPlatformRouteError,
+    getGatewayUrlForHandle,
+  }));
 
   app.route('/', createAppSessionRoutes({
     db,

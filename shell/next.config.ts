@@ -25,6 +25,19 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: resolve(__dirname, ".."),
   },
+  // Workspace packages (e.g. @matrix-os/contracts) are consumed as TS source
+  // and use nodenext module resolution, so their relative imports carry .js
+  // extensions ("./agent-profile.js" -> agent-profile.ts). Turbopack maps
+  // that natively; webpack needs extensionAlias or the production build
+  // fails with "Module not found: Can't resolve './agent-profile.js'".
+  webpack: (config) => {
+    config.resolve.extensionAlias = {
+      ...config.resolve.extensionAlias,
+      ".js": [".ts", ".tsx", ".js"],
+      ".jsx": [".tsx", ".jsx"],
+    };
+    return config;
+  },
   async rewrites() {
     return [
       // Same-origin PostHog proxy. Ad blockers blocklist *.posthog.com and

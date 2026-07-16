@@ -21,7 +21,18 @@ describe("workspace session orchestrator", () => {
   };
 
   function deps(overrides: Record<string, unknown> = {}) {
+    const projectManager = {
+      getProject: vi.fn(async () => ({
+        ok: true,
+        project: {
+          slug: "repo",
+          localPath: join(homePath, "projects", "repo", "repo"),
+          ownerScope: { type: "user", id: "user_workspace" },
+        },
+      })),
+    };
     const worktreeManager = {
+      createWorktree: vi.fn(async () => ({ ok: true, status: 201 as const, worktree })),
       listWorktrees: vi.fn(async () => ({ ok: true, worktrees: [worktree] })),
     };
     const agentSandbox = {
@@ -30,6 +41,7 @@ describe("workspace session orchestrator", () => {
         sandbox: { enabled: true, writableRoots: [worktree.path] },
         sandboxStatus: { available: true },
       })),
+      cleanup: vi.fn(async () => undefined),
     };
     const agentSessionManager = {
       startSession: vi.fn(async () => ({ ok: true, status: 201, session })),
@@ -46,6 +58,7 @@ describe("workspace session orchestrator", () => {
       publishSessionStopped: vi.fn(async () => undefined),
     };
     return {
+      projectManager,
       worktreeManager,
       agentSandbox,
       agentSessionManager,
@@ -81,6 +94,9 @@ describe("workspace session orchestrator", () => {
       sessionId: "sess_fixed",
       worktreePath: worktree.path,
       adminOverride: undefined,
+      approvalPolicy: "never",
+      sandboxMode: "workspace_write",
+      mode: undefined,
     });
     expect(d.agentSessionManager.startSession).toHaveBeenCalledWith(expect.objectContaining({
       agent: "codex",
@@ -88,7 +104,152 @@ describe("workspace session orchestrator", () => {
       sandbox: { enabled: true, mode: "workspace-write", writableRoots: [worktree.path] },
       sessionId: "sess_fixed",
     }));
+    expect(d.agentSessionManager.startSession.mock.calls[0]?.[0].approvalPolicy).toBeUndefined();
     expect(d.eventPublisher.publishSessionStarted).toHaveBeenCalledWith(session);
+  });
+
+  it("runs an agent in the canonical project folder when no worktree is requested", async () => {
+    const projectRoot = join(homePath, "projects", "repo", "repo");
+    const d = deps();
+    const orchestrator = createWorkspaceSessionOrchestrator({
+      ...d,
+      idGenerator: () => "sess_fixed",
+    });
+
+    const result = await orchestrator.startSession({
+      ownerScope: { type: "user", id: "user_workspace" },
+      request: {
+        projectSlug: "repo",
+        taskId: "task_abc123",
+        kind: "agent",
+        agent: "codex",
+        prompt: "fix tests",
+      },
+    });
+
+    expect(result).toMatchObject({ ok: true, status: 201 });
+    expect(d.projectManager.getProject).toHaveBeenCalledWith("repo");
+    expect(d.worktreeManager.createWorktree).not.toHaveBeenCalled();
+    expect(d.worktreeManager.listWorktrees).not.toHaveBeenCalled();
+    expect(d.agentSandbox.preflight).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "sess_fixed",
+      worktreePath: projectRoot,
+    }));
+    expect(d.agentSessionManager.startSession).toHaveBeenCalledWith(expect.objectContaining({
+      projectSlug: "repo",
+      ownerId: "user_workspace",
+    }));
+    expect(d.agentSessionManager.startSession.mock.calls[0]?.[0].worktreeId).toBeUndefined();
+  });
+
+  it("rejects legacy local primary checkouts when the authenticated owner does not match", async () => {
+    const d = deps({
+      projectManager: {
+        getProject: vi.fn(async () => ({
+          ok: true,
+          project: {
+            slug: "repo",
+            localPath: join(homePath, "projects", "repo", "repo"),
+            ownerScope: { type: "user", id: "local" },
+          },
+        })),
+      },
+    });
+    const orchestrator = createWorkspaceSessionOrchestrator({ ...d });
+
+    const result = await orchestrator.startSession({
+      ownerScope: { type: "user", id: "user_workspace" },
+      request: { projectSlug: "repo", kind: "agent", agent: "codex" },
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 404 });
+    expect(d.agentSandbox.preflight).not.toHaveBeenCalled();
+    expect(d.agentSessionManager.startSession).not.toHaveBeenCalled();
+  });
+
+  it("requires the persisted primary project owner type to match", async () => {
+    const d = deps({
+      projectManager: {
+        getProject: vi.fn(async () => ({
+          ok: true,
+          project: {
+            slug: "repo",
+            localPath: join(homePath, "projects", "repo", "repo"),
+            ownerScope: { type: "org", id: "user_workspace" },
+          },
+        })),
+      },
+    });
+    const orchestrator = createWorkspaceSessionOrchestrator({ ...d });
+
+    const result = await orchestrator.startSession({
+      ownerScope: { type: "user", id: "user_workspace" },
+      request: { projectSlug: "repo", kind: "agent", agent: "codex" },
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 404 });
+    expect(d.agentSandbox.preflight).not.toHaveBeenCalled();
+  });
+
+  it("starts Claude sessions only after provider-specific sandbox preflight", async () => {
+    const d = deps();
+    const orchestrator = createWorkspaceSessionOrchestrator({
+      ...d,
+      idGenerator: () => "sess_fixed",
+    });
+
+    const result = await orchestrator.startSession({
+      ownerScope: { type: "user", id: "user_workspace" },
+      request: {
+        projectSlug: "repo",
+        worktreeId: "wt_abc123def456",
+        kind: "agent",
+        agent: "claude",
+        prompt: "fix tests",
+        approvalPolicy: "on_request",
+        sandboxMode: "workspace_write",
+      },
+    });
+
+    expect(result).toMatchObject({ ok: true, status: 201 });
+    expect(d.agentSandbox.preflight).toHaveBeenCalledWith({
+      agent: "claude",
+      sessionId: "sess_fixed",
+      worktreePath: worktree.path,
+      adminOverride: undefined,
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace_write",
+      mode: undefined,
+    });
+    expect(d.agentSessionManager.startSession).toHaveBeenCalledWith(expect.objectContaining({
+      agent: "claude",
+      sandbox: { enabled: true, mode: "workspace-write", writableRoots: [worktree.path] },
+    }));
+  });
+
+  it("uses one effective default approval policy for Claude preflight and launch", async () => {
+    const d = deps();
+    const orchestrator = createWorkspaceSessionOrchestrator({
+      ...d,
+      idGenerator: () => "sess_fixed",
+    });
+
+    await expect(orchestrator.startSession({
+      ownerScope: { type: "user", id: "user_workspace" },
+      request: {
+        projectSlug: "repo",
+        worktreeId: "wt_abc123def456",
+        kind: "agent",
+        agent: "claude",
+      },
+    })).resolves.toMatchObject({ ok: true, status: 201 });
+
+    expect(d.agentSandbox.preflight).toHaveBeenCalledWith(expect.objectContaining({
+      approvalPolicy: "on-request",
+    }));
+    expect(d.agentSessionManager.startSession).toHaveBeenCalledWith(expect.objectContaining({
+      approvalPolicy: "on_request",
+    }));
   });
 
   it("does not fail a started session when session event publication throws", async () => {
@@ -144,6 +305,46 @@ describe("workspace session orchestrator", () => {
     }));
   });
 
+  it("keeps Claude review mode read-only when full access is also requested", async () => {
+    const gitCommonDir = "/matrix/home/projects/repo/repo/.git";
+    const readOnlySandbox = {
+      enabled: true,
+      mode: "read-only" as const,
+      writableRoots: [],
+      denyWriteRoots: [worktree.path, gitCommonDir],
+    };
+    const d = deps({
+      agentSandbox: {
+        preflight: vi.fn(async () => ({
+          ok: true,
+          sandbox: readOnlySandbox,
+          sandboxStatus: { available: true },
+        })),
+        cleanup: vi.fn(async () => undefined),
+      },
+    });
+    const orchestrator = createWorkspaceSessionOrchestrator({
+      ...d,
+      idGenerator: () => "sess_fixed",
+    });
+
+    await expect(orchestrator.startSession({
+      ownerScope: { type: "user", id: "user_workspace" },
+      request: {
+        projectSlug: "repo",
+        worktreeId: "wt_abc123def456",
+        kind: "agent",
+        agent: "claude",
+        mode: "review",
+        sandboxMode: "full_access",
+      },
+    })).resolves.toMatchObject({ ok: true, status: 201 });
+
+    expect(d.agentSessionManager.startSession).toHaveBeenCalledWith(expect.objectContaining({
+      sandbox: readOnlySandbox,
+    }));
+  });
+
   it("returns a safe sandbox failure before launching a session", async () => {
     const d = deps({
       agentSandbox: {
@@ -153,6 +354,7 @@ describe("workspace session orchestrator", () => {
           error: { code: "sandbox_unavailable", message: "Agent sandbox is unavailable" },
           sandboxStatus: { available: false },
         })),
+        cleanup: vi.fn(async () => undefined),
       },
     });
     const orchestrator = createWorkspaceSessionOrchestrator({
@@ -178,6 +380,35 @@ describe("workspace session orchestrator", () => {
     });
     expect(d.agentSessionManager.startSession).not.toHaveBeenCalled();
     expect(d.eventPublisher.publishSessionStarted).not.toHaveBeenCalled();
+  });
+
+  it("cleans prepared scratch state when session startup fails", async () => {
+    const d = deps({
+      agentSessionManager: {
+        ...deps().agentSessionManager,
+        startSession: vi.fn(async () => ({
+          ok: false,
+          status: 503,
+          error: { code: "runtime_unavailable", message: "Session runtime is unavailable" },
+        })),
+      },
+    });
+    const orchestrator = createWorkspaceSessionOrchestrator({
+      ...d,
+      idGenerator: () => "sess_fixed",
+    });
+
+    await expect(orchestrator.startSession({
+      ownerScope: { type: "user", id: "user_workspace" },
+      request: {
+        projectSlug: "repo",
+        worktreeId: "wt_abc123def456",
+        kind: "agent",
+        agent: "claude",
+      },
+    })).resolves.toMatchObject({ ok: false, status: 503 });
+
+    expect(d.agentSandbox.cleanup).toHaveBeenCalledWith({ sessionId: "sess_fixed" });
   });
 
   it("returns not found when the requested worktree is missing", async () => {
@@ -232,6 +463,7 @@ describe("workspace session orchestrator", () => {
     });
     expect(d.sessionRuntimeBridge.registerSession).toHaveBeenCalledWith(session, { mode: "observe" });
     expect(d.eventPublisher.publishSessionStopped).toHaveBeenCalledWith(expect.objectContaining({ id: "sess_fixed" }));
+    expect(d.agentSandbox.cleanup).toHaveBeenCalledWith({ sessionId: "sess_fixed" });
   });
 
   it("recovers active sessions without relying on object method this binding", async () => {

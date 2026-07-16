@@ -19,7 +19,7 @@ import ChannelsSection from "./sections/ChannelsSection";
 import IntegrationsSection from "./sections/IntegrationsSection";
 import CronSection from "./sections/CronSection";
 import SystemSection from "./sections/SystemSection";
-import { invoke } from "../../lib/operator";
+import { useUi } from "../../stores/ui";
 
 type SectionId =
   | "account"
@@ -37,41 +37,29 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode; group: st
   { id: "billing", label: "Billing", icon: <CreditCard size={15} />, group: "You" },
   { id: "appearance", label: "Appearance", icon: <Palette size={15} />, group: "You" },
   { id: "agent", label: "Agent (Hermes)", icon: <Sparkles size={15} />, group: "Machine" },
-  { id: "runtime", label: "Runtime", icon: <Server size={15} />, group: "Machine" },
+  { id: "runtime", label: "Computers", icon: <Server size={15} />, group: "Machine" },
   { id: "channels", label: "Channels", icon: <MonitorCog size={15} />, group: "Machine" },
   { id: "integrations", label: "Integrations", icon: <Blocks size={15} />, group: "Machine" },
   { id: "cron", label: "Schedules", icon: <Clock size={15} />, group: "Machine" },
   { id: "system", label: "System", icon: <Cpu size={15} />, group: "Machine" },
 ];
 
-function applyDocumentTheme(next: "dark" | "light" | "system") {
-  const resolved =
-    next === "system"
-      ? window.matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light"
-      : next;
-  document.documentElement.setAttribute("data-theme", resolved);
+function isSectionId(value: string): value is SectionId {
+  return SECTIONS.some((candidate) => candidate.id === value);
 }
 
 export default function SettingsView() {
   const [section, setSection] = useState<SectionId>("account");
+  const requestedSection = useUi((s) => s.requestedSettingsSection);
 
+  // Deep links (for example the provider recovery CTA) request a section
+  // before opening or focusing the Settings tab; consume it once.
   useEffect(() => {
-    void invoke("state:get", { key: "appearance" })
-      .then((result) => {
-        const value = result.value as { theme?: string } | null;
-        if (value?.theme === "light" || value?.theme === "system" || value?.theme === "dark") {
-          applyDocumentTheme(value.theme);
-        }
-      })
-      .catch((err: unknown) => {
-        console.warn(
-          "[settings] load appearance failed:",
-          err instanceof Error ? err.message : String(err),
-        );
-      });
-  }, []);
+    if (!requestedSection) return;
+    if (isSectionId(requestedSection)) setSection(requestedSection);
+    useUi.getState().clearRequestedSettingsSection();
+  }, [requestedSection]);
+
   const groups = Array.from(new Set(SECTIONS.map((s) => s.group)));
 
   return (

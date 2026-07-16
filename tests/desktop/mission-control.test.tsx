@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MissionControl from "../../desktop/src/renderer/src/features/mission-control/MissionControl";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -118,5 +118,43 @@ describe("MissionControl", () => {
       "[mission-control] restore last project failed:",
       "project refresh failed",
     );
+  });
+
+  it("selects a valid project from the new runtime instead of restoring a stale slug", async () => {
+    const api = { get: vi.fn() };
+    const loadProjects = vi.fn(async () => {
+      const runtimeSlot = useConnection.getState().runtimeSlot;
+      useBoard.setState({
+        projects: runtimeSlot === "preview"
+          ? [{ slug: "preview-project", name: "Preview Project" }]
+          : [{ slug: "main-project", name: "Main Project" }],
+      });
+    });
+    const selectProject = vi.fn(async (_api, slug: string) => {
+      useBoard.setState({ activeProjectSlug: slug });
+    });
+    vi.stubGlobal("operator", {
+      invoke: vi.fn(async () => ({ value: "main-project" })),
+      on: vi.fn(),
+    });
+    useConnection.setState({
+      status: "signed-in",
+      handle: "operator",
+      platformHost: "https://platform.test",
+      runtimeSlot: "primary",
+      api: api as never,
+    });
+    useBoard.setState({ loadProjects, selectProject, projects: [], activeProjectSlug: null });
+
+    render(<MissionControl />);
+    await waitFor(() => expect(selectProject).toHaveBeenCalledWith(api, "main-project"));
+
+    act(() => {
+      useBoard.setState({ projects: [], activeProjectSlug: null });
+      useConnection.setState({ runtimeSlot: "preview" });
+    });
+
+    await waitFor(() => expect(selectProject).toHaveBeenCalledWith(api, "preview-project"));
+    expect(useBoard.getState().activeProjectSlug).toBe("preview-project");
   });
 });

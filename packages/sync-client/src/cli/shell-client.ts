@@ -89,6 +89,7 @@ export interface ShellAttachOptions {
     rewriter?: RichPasteRewriter;
     uploadClient?: RichPasteUploadClient;
     clipboardReader?: ClipboardImageReader;
+    statusMinVisibleMs?: number;
   };
   noRichPaste?: boolean;
   cwd?: string;
@@ -98,6 +99,7 @@ export const SHELL_ATTACH_MAX_QUEUED_BYTES = 65_536;
 export { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ };
 const BRACKETED_PASTE_OPEN = "\u001b[200~";
 const BRACKETED_PASTE_CLOSE = "\u001b[201~";
+const LOCAL_CLIPBOARD_IMAGE_PASTE_SUFFIX = "v";
 const SHELL_ATTACH_MAX_PENDING_BRACKETED_PASTE_CHARS = 1024 * 1024;
 const BRACKETED_PASTE_INCOMPLETE_TIMEOUT_MS = 250;
 const SHELL_INPUT_FRAME_MAX_BYTES = 60_000;
@@ -131,6 +133,9 @@ const SAFE_SHELL_SERVER_ERROR_CODES = new Set([
 ]);
 const RICH_PASTE_UPLOAD_FAILED_MESSAGE = "Image paste failed: upload did not complete.";
 const INCOMPLETE_BRACKETED_PASTE_MESSAGE = "Image paste failed: paste did not complete.";
+const RICH_PASTE_PROGRESS_MESSAGE = "Image paste: reading/uploading...";
+const RICH_PASTE_INSERTED_MESSAGE = "Image paste: inserted.";
+const RICH_PASTE_STATUS_MIN_VISIBLE_MS = 1_200;
 
 type MaybeTtyStream = NodeJS.ReadStream & {
   isTTY?: boolean;
@@ -140,6 +145,12 @@ type MaybeTtyStream = NodeJS.ReadStream & {
   resume?: () => unknown;
   pause?: () => unknown;
 };
+
+type AttachWriter = (data: string, options?: { allowAfterSettled?: boolean }) => boolean;
+
+function isEpipeError(err: unknown): boolean {
+  return err instanceof Error && "code" in err && (err as { code?: unknown }).code === "EPIPE";
+}
 
 function terminalSize(input: MaybeTtyStream, output: NodeJS.WriteStream): {
   cols: number;
@@ -671,9 +682,33 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       const errorOutput = attachOptions.errorOutput ?? process.stderr;
       const input = (attachOptions.input ?? process.stdin) as MaybeTtyStream;
       const detachSequence = attachOptions.detachSequence ?? "\u001c\u001c";
+      const localCommandPrefix = detachSequence[0] ?? "\u001c";
+      const clipboardPasteSequence = `${localCommandPrefix}${LOCAL_CLIPBOARD_IMAGE_PASTE_SUFFIX}`;
       const dropMouse = attachOptions.mouse === false;
+      let writeAttachOutput: AttachWriter = (data: string) => {
+        try {
+          output.write(data);
+          return true;
+        } catch (err: unknown) {
+          if (!isEpipeError(err)) {
+            console.warn("[shell] failed to write attach output:", err instanceof Error ? err.message : String(err));
+          }
+          return false;
+        }
+      };
+      let writeAttachError: AttachWriter = (data: string) => {
+        try {
+          errorOutput.write(data);
+          return true;
+        } catch (err: unknown) {
+          if (!isEpipeError(err)) {
+            console.warn("[shell] failed to write attach error output:", err instanceof Error ? err.message : String(err));
+          }
+          return false;
+        }
+      };
       const resetLocalInputModes = () => {
-        output.write(LOCAL_TERMINAL_INPUT_RESET);
+        writeAttachOutput(LOCAL_TERMINAL_INPUT_RESET, { allowAfterSettled: true });
       };
       const inputFilter = createTerminalInputFilter({
         dropMouse,
@@ -682,7 +717,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       const controlDropper = createUnsupportedTerminalControlDropper();
       const bracketedPasteParser = createBracketedPasteStreamParser({
         onIncompletePaste: () => {
-          errorOutput.write(`\r\n${INCOMPLETE_BRACKETED_PASTE_MESSAGE}\r\n`);
+          writeAttachError(`\r\n${INCOMPLETE_BRACKETED_PASTE_MESSAGE}\r\n`);
         },
       });
       const richPasteEnabled = attachOptions.noRichPaste !== true && attachOptions.richPaste?.enabled !== false;
@@ -697,6 +732,11 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           clipboardReader: attachOptions.richPaste?.clipboardReader ?? createMacOsClipboardImageReader(),
         })
         : undefined;
+      const configuredRichPasteStatusMinVisibleMs = attachOptions.richPaste?.statusMinVisibleMs;
+      const richPasteStatusMinVisibleMs = typeof configuredRichPasteStatusMinVisibleMs === "number" &&
+        Number.isFinite(configuredRichPasteStatusMinVisibleMs)
+        ? Math.max(0, configuredRichPasteStatusMinVisibleMs)
+        : RICH_PASTE_STATUS_MIN_VISIBLE_MS;
       const heartbeatIntervalMs = attachOptions.heartbeatIntervalMs ?? SHELL_ATTACH_HEARTBEAT_INTERVAL_MS;
       const heartbeatTimeoutMs = attachOptions.heartbeatTimeoutMs ?? SHELL_ATTACH_HEARTBEAT_TIMEOUT_MS;
       const heartbeatMissesBeforeReconnect =
@@ -725,6 +765,84 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         let heartbeatPending = false;
         let missedHeartbeats = 0;
         let reconnectNoticeVisible = false;
+        let localOutputBackpressured = false;
+        const detachForClosedLocalPipe = () => {
+          if (settled) {
+            return;
+          }
+          const wsToClose = currentWs;
+          if (socketOpen) {
+            try {
+              wsToClose?.send(JSON.stringify({ type: "detach" }));
+            } catch (err: unknown) {
+              console.warn("[shell] failed to send detach after local pipe closed:", err instanceof Error ? err.message : String(err));
+            }
+          }
+          settle(() => resolve({ detached: true }));
+          wsToClose?.close();
+        };
+        const handleLocalStreamError = (err: unknown) => {
+          if (isEpipeError(err)) {
+            detachForClosedLocalPipe();
+            return;
+          }
+          const wsToClose = currentWs;
+          settle(() => reject(Object.assign(new Error("Request failed"), { code: "attach_failed" })));
+          wsToClose?.close();
+        };
+        const writeOutput: AttachWriter = (data, writeOptions = {}) => {
+          if (settled && !writeOptions.allowAfterSettled) {
+            return false;
+          }
+          try {
+            output.write(data);
+            return true;
+          } catch (err: unknown) {
+            handleLocalStreamError(err);
+            return false;
+          }
+        };
+        const writeError: AttachWriter = (data, writeOptions = {}) => {
+          if (settled && !writeOptions.allowAfterSettled) {
+            return false;
+          }
+          try {
+            errorOutput.write(data);
+            return true;
+          } catch (err: unknown) {
+            handleLocalStreamError(err);
+            return false;
+          }
+        };
+        writeAttachOutput = writeOutput;
+        writeAttachError = writeError;
+        const onLocalStreamError = (err: unknown) => {
+          handleLocalStreamError(err);
+        };
+        const onLocalOutputDrain = () => {
+          if (settled || !localOutputBackpressured) {
+            return;
+          }
+          localOutputBackpressured = false;
+          scheduleReconnect();
+        };
+        const writeRemoteOutput = (data: string): boolean => {
+          if (settled || localOutputBackpressured) {
+            return false;
+          }
+          try {
+            const canContinue = output.write(data);
+            if (canContinue === false) {
+              localOutputBackpressured = true;
+              output.once?.("drain", onLocalOutputDrain);
+              currentWs?.close();
+            }
+            return true;
+          } catch (err: unknown) {
+            handleLocalStreamError(err);
+            return false;
+          }
+        };
         const cleanup = () => {
           clearTimeout(attachTimeout);
           clearTimeout(reconnectTimer);
@@ -735,6 +853,9 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           process.off("SIGINT", onSignal);
           process.off("SIGTERM", onSignal);
           process.off("exit", onProcessExit);
+          output.off?.("error", onLocalStreamError);
+          output.off?.("drain", onLocalOutputDrain);
+          errorOutput.off?.("error", onLocalStreamError);
           pendingInput = "";
           inputFilter.reset();
           controlDropper.reset();
@@ -856,8 +977,8 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             return;
           }
           if (!reconnecting) {
-            errorOutput.write("\r\nConnection lost. Reconnecting...\r\n");
-            output.write(SHELL_ATTACH_RECONNECT_NOTICE);
+            writeError("\r\nConnection lost. Reconnecting...\r\n");
+            writeOutput(SHELL_ATTACH_RECONNECT_NOTICE);
             reconnectNoticeVisible = true;
           }
           reconnecting = true;
@@ -889,7 +1010,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           if (!socketOpen) {
             const nextQueuedBytes = queuedFrameBytes + Buffer.byteLength(frame, "utf8");
             if (nextQueuedBytes > SHELL_ATTACH_MAX_QUEUED_BYTES) {
-              errorOutput.write("Shell attach failed\n");
+              writeError("Shell attach failed\n");
               currentWs?.close();
               settle(() => reject(Object.assign(new Error("Request failed"), {
                 code: "attach_failed",
@@ -907,7 +1028,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
               currentWs?.close();
               return;
             }
-            errorOutput.write("Shell attach failed\n");
+            writeError("Shell attach failed\n");
             settle(() => reject(Object.assign(new Error("Request failed"), {
               code: err instanceof Error ? "attach_failed" : "request_failed",
             })));
@@ -925,70 +1046,113 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           wsToClose?.close();
         };
         const handleInputFailure = (err: unknown) => {
-          errorOutput.write("Shell attach failed\n");
+          writeError("Shell attach failed\n");
           settle(() => reject(Object.assign(new Error("Request failed"), {
             code: err instanceof Error && "code" in err ? (err as { code?: string }).code ?? "attach_failed" : "attach_failed",
           })));
         };
-        const sendInputFrame = (data: string, observablePaste: boolean): Promise<void> | void => {
-          const shouldRewrite = observablePaste
+        const waitForRichPasteStatusVisibility = (shownAt: number): Promise<void> => {
+          const remainingMs = richPasteStatusMinVisibleMs - (Date.now() - shownAt);
+          if (remainingMs <= 0) {
+            return Promise.resolve();
+          }
+          return new Promise((resolveDelay) => {
+            const timer = setTimeout(resolveDelay, remainingMs);
+            timer.unref?.();
+          });
+        };
+        const sendInputFrame = (
+          data: string,
+          observablePaste: boolean,
+          options: { manualClipboardPaste?: boolean } = {},
+        ): Promise<void> | void => {
+          const shouldRewrite = options.manualClipboardPaste || (observablePaste
             ? data.length === 0 || shouldProcessRichPasteText(data)
-            : shouldProcessRichPasteText(data);
+            : shouldProcessRichPasteText(data));
           if (!richPasteRewriter || !shouldRewrite) {
             sendInputData(data);
             return;
           }
+          const progressShownAt = Date.now();
+          writeError(`\r\n${RICH_PASTE_PROGRESS_MESSAGE}\r\n`);
           return richPasteRewriter.rewrite({
             sessionName: name,
-            text: data,
-            observablePaste,
-          }).then((result) => {
+            text: options.manualClipboardPaste ? "" : data,
+            observablePaste: options.manualClipboardPaste ? true : observablePaste,
+          }).then(async (result) => {
+            await waitForRichPasteStatusVisibility(progressShownAt);
             if (settled) {
               return;
             }
             if (result.status === "failed") {
-              errorOutput.write(`\r\n${result.localMessage}\r\n`);
+              writeError(`\r\n${result.localMessage}\r\n`);
               return;
             }
+            if (result.status === "rewritten") {
+              writeError(`\r\n${RICH_PASTE_INSERTED_MESSAGE}\r\n`);
+            }
             sendInputData(result.outgoingText);
-          }).catch((err: unknown) => {
+          }).catch(async (err: unknown) => {
+            await waitForRichPasteStatusVisibility(progressShownAt);
             if (!settled) {
-              errorOutput.write(`\r\n${RICH_PASTE_UPLOAD_FAILED_MESSAGE}\r\n`);
-              errorOutput.write(`[debug] rich paste rewrite failed: ${err instanceof Error ? err.name : typeof err}\r\n`);
+              writeError(`\r\n${RICH_PASTE_UPLOAD_FAILED_MESSAGE}\r\n`);
+              writeError(`[debug] rich paste rewrite failed: ${err instanceof Error ? err.name : typeof err}\r\n`);
             }
           });
         };
         const processInputData = (data: string, observablePaste: boolean): Promise<void> | void => {
           let outbound = "";
-          const writes: Array<Promise<void>> = [];
-          const enqueueInputFrame = (frameData: string, frameObservablePaste: boolean) => {
-            const maybeWrite = sendInputFrame(frameData, frameObservablePaste);
+          let sequence: Promise<void> | undefined;
+          const enqueueInputFrame = (
+            frameData: string,
+            frameObservablePaste: boolean,
+            frameOptions: { manualClipboardPaste?: boolean } = {},
+          ) => {
+            const run = () => Promise.resolve(sendInputFrame(frameData, frameObservablePaste, frameOptions));
+            if (sequence) {
+              sequence = sequence.then(run);
+              return;
+            }
+            const maybeWrite = sendInputFrame(frameData, frameObservablePaste, frameOptions);
             if (maybeWrite) {
-              writes.push(maybeWrite);
+              sequence = Promise.resolve(maybeWrite);
             }
           };
           for (const char of data) {
             pendingInput += char;
+            if (!observablePaste && pendingInput === clipboardPasteSequence) {
+              pendingInput = "";
+              if (outbound.length > 0) {
+                enqueueInputFrame(outbound, false);
+                outbound = "";
+              }
+              enqueueInputFrame("", false, { manualClipboardPaste: true });
+              continue;
+            }
+            if (!observablePaste && clipboardPasteSequence.startsWith(pendingInput)) {
+              continue;
+            }
             if (pendingInput === detachSequence) {
               pendingInput = "";
               if (outbound.length > 0) {
                 enqueueInputFrame(outbound, false);
               }
               detachLocal();
-              return writes.length > 0 ? Promise.all(writes).then(() => undefined) : undefined;
+              return sequence;
             }
             if (detachSequence.startsWith(pendingInput)) {
               continue;
             }
             while (pendingInput.length > 0 && !detachSequence.startsWith(pendingInput)) {
-              outbound += pendingInput[0];
+              const nextChar = pendingInput[0] ?? "";
               pendingInput = pendingInput.slice(1);
+              outbound += nextChar;
             }
           }
           if (outbound.length > 0 || observablePaste) {
             enqueueInputFrame(outbound, observablePaste);
           }
-          return writes.length > 0 ? Promise.all(writes).then(() => undefined) : undefined;
+          return sequence;
         };
         const processInput = (chunk: Buffer | string): Promise<void> | void => {
           const rawData = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
@@ -1109,20 +1273,19 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             startHeartbeat();
             if (reconnecting) {
               reconnecting = false;
-              errorOutput.write("\r\nConnection restored.\r\n");
+              writeError("\r\nConnection restored.\r\n");
               if (reconnectNoticeVisible) {
-                output.write(SHELL_ATTACH_RECONNECT_NOTICE_CLEAR);
+                writeOutput(SHELL_ATTACH_RECONNECT_NOTICE_CLEAR);
                 reconnectNoticeVisible = false;
               }
             }
             schedulePostAttachResizeFrames();
           } else if (msg.type === "output" && typeof msg.data === "string") {
-            if (Number.isSafeInteger(msg.seq) && (msg.seq as number) >= 0) {
-              lastSeq = msg.seq as number;
-            }
             noteRemoteActivity();
             inputFilter.noteRemoteOutput();
-            output.write(msg.data);
+            if (writeRemoteOutput(msg.data) && Number.isSafeInteger(msg.seq) && (msg.seq as number) >= 0) {
+              lastSeq = msg.seq as number;
+            }
           } else if (msg.type === "pong") {
             noteRemoteActivity();
           } else if (msg.type === "error") {
@@ -1145,6 +1308,9 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             settle(() => reject(Object.assign(new Error("Request failed"), { code: "attach_failed" })));
             return;
           }
+          if (localOutputBackpressured) {
+            return;
+          }
           scheduleReconnect();
         };
         const onError = (err: unknown) => {
@@ -1152,7 +1318,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             currentWs?.close();
             return;
           }
-          errorOutput.write("Shell attach failed\n");
+          writeError("Shell attach failed\n");
           settle(() => reject(Object.assign(new Error("Request failed"), {
             code: err instanceof Error ? "attach_failed" : "request_failed",
           })));
@@ -1168,6 +1334,8 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         process.once("SIGINT", onSignal);
         process.once("SIGTERM", onSignal);
         process.once("exit", onProcessExit);
+        output.on?.("error", onLocalStreamError);
+        errorOutput.on?.("error", onLocalStreamError);
         input.on?.("data", onInput);
         connect();
       });

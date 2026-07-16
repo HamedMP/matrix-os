@@ -35,6 +35,8 @@ import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
 import { createPreviewManager } from "./preview-manager.js";
+import { createProjectManager } from "./project-manager.js";
+import { createTaskManager } from "./task-manager.js";
 import { createReviewStore } from "./review-store.js";
 import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
 import { createSymphonyRunner } from "./symphony-runner.js";
@@ -99,16 +101,23 @@ import { createAgentCredentialStatusService } from "./onboarding/agent-credentia
 import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
 import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-summary.js";
 import { createCodingAgentRoutes } from "./coding-agents/routes.js";
-import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type CodingAgentProviderAdapter, type CodingAgentThreadStore } from "./coding-agents/thread-store.js";
+import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type CodingAgentProviderAdapter, type CodingAgentThreadStore, type CodingAgentTurnStore } from "./coding-agents/thread-store.js";
 import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./coding-agents/thread-stream.js";
-import { createWorkspaceCodingAgentProvider } from "./coding-agents/workspace-provider.js";
+import { createWorkspaceCodingAgentProviderSet } from "./coding-agents/workspace-provider.js";
+import { configuredWorkspaceProviderAgents } from "./coding-agents/workspace-provider-config.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
+import { createCodingAgentTurnLifecycle } from "./coding-agents/turn-lifecycle.js";
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
 import { createCodingAgentPreviewSummaryStore } from "./coding-agents/preview-summary.js";
+import { createOwnerCodingAgentProjectSummaryStore } from "./coding-agents/project-summary.js";
+import { createOwnerCodingAgentProjectWorkspaceStore } from "./coding-agents/project-workspace.js";
+import { createCodingAgentThreadRelationValidator } from "./coding-agents/thread-relations.js";
+import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
 import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
+import { createCodingAgentProjectMutationService } from "./coding-agents/project-mutations.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -230,6 +239,7 @@ import {
   ShellPreferencesStore,
   createPendingTerminalInputQueue,
   createShellCommandRunner,
+  createShellSessionReaper,
   createShellWsHandler,
   createZellijAdapter,
   ShellRegistry as ZellijShellRegistry,
@@ -359,6 +369,8 @@ export async function createGateway(config: GatewayConfig) {
     adapter: zellijAdapter,
     scrollbackStore: shellScrollbackStore,
   });
+  const shellSessionReaper = createShellSessionReaper({ registry: zellijShellRegistry });
+  shellSessionReaper.start();
   const forwardTunnelHub = createForwardTunnelHub();
   // One distinct id for every gateway telemetry event so all events on a
   // dev gateway without owner env vars land under the same person.
@@ -489,7 +501,7 @@ export async function createGateway(config: GatewayConfig) {
       };
     },
   });
-  let codingAgentThreadStore: CodingAgentThreadStore | undefined;
+  let codingAgentThreadStore: (CodingAgentThreadStore & CodingAgentTurnStore) | undefined;
   const codingAgentSessionStopReconciler = createCodingAgentSessionStopReconciler();
   const workspaceEventStore = createWorkspaceEventStore({ homePath });
   const reviewStore = createReviewStore({ homePath });
@@ -503,10 +515,14 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentOwnerIds = [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(
     (id): id is string => Boolean(id),
   );
+  const codingAgentProjectManager = createProjectManager({ homePath });
   const codingAgentFileStore = createCodingAgentFileStore({
     homePath,
     ownerId: process.env.MATRIX_USER_ID,
     principalOwnerIds: codingAgentOwnerIds,
+    projects: {
+      getProjectBySlug: (projectSlug) => codingAgentProjectManager.getProject(projectSlug),
+    },
   });
   const codingAgentSourceControlStore = createCodingAgentSourceControlStore({
     homePath,
@@ -519,7 +535,10 @@ export async function createGateway(config: GatewayConfig) {
     onSessionStopped: (session) => codingAgentSessionStopReconciler.handleSessionStopped(session),
   });
   const codingAgentProviders: CodingAgentProviderAdapter[] = [];
-  if (process.env.MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER === "1") {
+  const codingAgentRegistryProviders: CodingAgentProviderAdapter[] = [];
+  const codingAgentWorkspaceAgents = configuredWorkspaceProviderAgents(process.env);
+  if (codingAgentWorkspaceAgents.length > 0) {
+    const codingAgentProjectManager = createProjectManager({ homePath });
     const codingAgentWorktreeManager = createWorktreeManager({ homePath });
     const codingAgentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
     const codingAgentSessionManager = createAgentSessionManager({
@@ -527,29 +546,52 @@ export async function createGateway(config: GatewayConfig) {
       worktreeManager: codingAgentWorktreeManager,
       agentLauncher: codingAgentLauncher,
       zellijRuntime: workspaceZellijRuntime,
+      inputWriter: (sessionId, input, signal) =>
+        workspaceZellijRuntime.sendInput(sessionId, input, signal),
     });
     const codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
+      projectManager: codingAgentProjectManager,
       worktreeManager: codingAgentWorktreeManager,
       agentSessionManager: codingAgentSessionManager,
       agentSandbox: createAgentSandbox({ homePath }),
       sessionRuntimeBridge: workspaceSessionRuntimeBridge,
       eventPublisher: workspaceEventPublisher,
     });
-    codingAgentProviders.push(createWorkspaceCodingAgentProvider({
-      providerId: "codex",
-      agent: "codex",
+    const providerSet = createWorkspaceCodingAgentProviderSet({
+      agents: codingAgentWorkspaceAgents,
       runtime: codingAgentWorkspaceRuntime,
-    }));
+    });
+    codingAgentProviders.push(...providerSet.executionProviders);
+    codingAgentRegistryProviders.push(...providerSet.registryProviders);
   } else if (process.env.MATRIX_CODING_AGENTS_FAKE_PROVIDER === "1") {
-    codingAgentProviders.push(createFakeCodingAgentProvider({ providerId: "codex" }));
+    const fakeProvider = createFakeCodingAgentProvider({ providerId: "codex" });
+    codingAgentProviders.push(fakeProvider);
+    codingAgentRegistryProviders.push(fakeProvider);
   }
   codingAgentThreadStore = codingAgentProviders.length > 0
     ? createCodingAgentThreadStore({
       homePath,
       providers: codingAgentProviders,
+      relationValidator: createCodingAgentThreadRelationValidator({
+        projectManager: codingAgentProjectManager,
+        taskManager: createTaskManager({ homePath }),
+        principalOwnerIds: codingAgentOwnerIds,
+      }),
+      projectionPublisher: (change) =>
+        workspaceEventPublisher.publishCodingAgentThreadProjection(change),
     })
     : undefined;
+  const codingAgentProviderRegistry = createCodingAgentProviderRegistry({
+    providers: codingAgentRegistryProviders,
+    agentCredentials: agentCredentialService,
+  });
   const codingAgentWorkspaceEnabled = Boolean(codingAgentThreadStore);
+  const codingAgentTurnLifecycle = await createCodingAgentTurnLifecycle({
+    store: codingAgentThreadStore,
+    providers: codingAgentProviders,
+    logFailure: logBestEffortFailure,
+  });
+  const codingAgentTurnsEnabled = codingAgentTurnLifecycle.turnsEnabled;
   if (codingAgentThreadStore) {
     void codingAgentSessionStopReconciler.attachThreadStore(codingAgentThreadStore).catch((err: unknown) => {
       console.warn("[coding-agents] Failed to flush pending session stops:", err instanceof Error ? err.message : String(err));
@@ -558,23 +600,35 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentThreadStream = codingAgentThreadStore
     ? createCodingAgentThreadStream({ threads: codingAgentThreadStore })
     : undefined;
+  const codingAgentProjectSummaryStore = createOwnerCodingAgentProjectSummaryStore({
+    homePath,
+    threads: codingAgentThreadStore,
+    principalOwnerIds: codingAgentOwnerIds,
+  });
+  const codingAgentProjectWorkspaceStore = createOwnerCodingAgentProjectWorkspaceStore({
+    homePath,
+    threads: codingAgentThreadStore,
+    principalOwnerIds: codingAgentOwnerIds,
+  });
   const codingAgentPreviewSummaryStore = createCodingAgentPreviewSummaryStore({
     homePath,
     previewManager: createPreviewManager({ homePath }),
     ownerId: process.env.MATRIX_USER_ID,
-    principalOwnerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(
-      (id): id is string => typeof id === "string" && id.length > 0,
-    ),
+    principalOwnerIds: codingAgentOwnerIds,
   });
   const codingAgentRuntimeSummaryService = createCodingAgentRuntimeSummaryService({
     homePath,
     terminalRegistry: zellijShellRegistry,
-    agentCredentials: agentCredentialService,
-    providerIds: codingAgentProviders.map((provider) => provider.providerId),
+    providerRegistry: codingAgentProviderRegistry,
     threads: codingAgentThreadStore,
+    projects: codingAgentProjectSummaryStore,
     previews: codingAgentPreviewSummaryStore,
     capabilities: {
+      projectWorkspace: true,
+      conversationView: true,
+      kanbanView: true,
       workspace: codingAgentWorkspaceEnabled,
+      sameThreadTurns: codingAgentTurnsEnabled,
       approvals: false,
       review: true,
       preview: true,
@@ -1607,7 +1661,10 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
   app.route("/api/coding-agents", createCodingAgentRoutes({
     service: codingAgentRuntimeSummaryService,
+    projectWorkspaces: codingAgentProjectWorkspaceStore,
+    projectMutations: createCodingAgentProjectMutationService({ projects: codingAgentProjectManager }),
     threads: codingAgentThreadStore,
+    turns: codingAgentTurnsEnabled ? codingAgentThreadStore : undefined,
     reviews: codingAgentReviewSummaryStore,
     files: codingAgentFileStore,
     sourceControl: codingAgentSourceControlStore,
@@ -1656,7 +1713,6 @@ export async function createGateway(config: GatewayConfig) {
     readHistory: (query) => systemActivityHistory.list(query),
   }));
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
-  app.route("/api", createShellRoutes(shellRouteDeps));
 
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an
@@ -2753,10 +2809,16 @@ export async function createGateway(config: GatewayConfig) {
     reviewStore,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   }));
+  // Workspace sessions own /api/sessions. Keep the legacy shell mount after
+  // that authoritative route so old terminal subroutes remain reachable.
+  app.route("/api", createShellRoutes(shellRouteDeps));
   app.route("/api/symphony", createElixirSymphonyProxyRoutes({
     upstreamOrigin: symphonyUpstreamOriginForPort(initialSymphonyPort),
   }));
-  const workspaceStartupRecovery = await createWorkspaceStartupRecovery({ homePath }).run();
+  const workspaceStartupRecovery = await createWorkspaceStartupRecovery({
+    homePath,
+    eventPublisher: workspaceEventPublisher,
+  }).run();
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");
   }
@@ -3643,13 +3705,13 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.get("/api/system/info", (c) => {
-    const info = getSystemInfo(homePath);
+    const info = getSystemInfo(homePath, { model: config.model });
     const today = new Date().toISOString().slice(0, 10);
     return c.json({ ...info, todayCost: interactionLogger.totalCost(today) });
   });
 
   app.get("/api/system/update", async (c) => {
-    const info = getSystemInfo(homePath);
+    const info = getSystemInfo(homePath, { model: config.model });
     const channel = resolveSystemUpdateChannel(c.req.query("channel"), {
       envChannel: process.env.MATRIX_UPDATE_CHANNEL,
       installedChannel: info.release?.channel,
@@ -3670,7 +3732,7 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.get("/api/system/releases", async (c) => {
-    const info = getSystemInfo(homePath);
+    const info = getSystemInfo(homePath, { model: config.model });
     const channel = resolveSystemUpdateChannel(c.req.query("channel"), {
       envChannel: process.env.MATRIX_UPDATE_CHANNEL,
       installedChannel: info.release?.channel,
@@ -3705,7 +3767,7 @@ export async function createGateway(config: GatewayConfig) {
         console.warn("[system-update] Failed to parse update request:", err);
       }
     }
-    const info = getSystemInfo(homePath);
+    const info = getSystemInfo(homePath, { model: config.model });
     const parsedTarget = resolveInternalUpgradeStartTarget(body, {
       envChannel: process.env.MATRIX_UPDATE_CHANNEL,
       installedChannel: info.release?.channel,
@@ -4054,6 +4116,10 @@ export async function createGateway(config: GatewayConfig) {
     sandbox: {
       status: typeof process.getuid === "function" && process.getuid() === 0 ? "degraded" : "ok",
     },
+    memory: {
+      rssBytes: process.memoryUsage.rss(),
+      pendingPersistBytes: zellijShellWs.pendingPersistBytes(),
+    },
     browserIde: {
       status: process.env.MATRIX_CODE_SERVER_PORT ? "configured" : "disabled",
     },
@@ -4159,6 +4225,7 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
+      await codingAgentTurnLifecycle.shutdown();
       codingAgentThreadStream?.shutdown();
       codingAgentAttentionNotifications?.dispose();
       codingAgentSessionStopReconciler.dispose();
@@ -4169,6 +4236,8 @@ export async function createGateway(config: GatewayConfig) {
       await channelManager.stop();
       await processManager.shutdownAll();
       await forwardTunnelHub.close();
+      shellSessionReaper.stop();
+      await zellijShellWs.dispose();
       await sessionRegistry.shutdown();
       await watcher.close();
       await homeMirror?.stop();

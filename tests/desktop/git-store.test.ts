@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "@desktop/shared/app-error";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
 import { useGit, type Worktree } from "@desktop/renderer/src/stores/git";
+import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 
 const T1 = "2026-06-13T00:00:00.000Z";
 const T2 = "2026-06-13T01:00:00.000Z";
@@ -473,6 +474,21 @@ describe("createWorktree", () => {
     expect(created?.id).toBe("wt_abc123def456");
     expect(useGit.getState().worktrees.map((w: Worktree) => w.id)).toEqual(["wt_abc123def456"]);
     expect(useGit.getState().error).toBeNull();
+  });
+
+  it("drops a worktree created for a previous runtime", async () => {
+    let resolvePost: (value: unknown) => void = () => undefined;
+    const post = vi.fn(() => new Promise((resolve) => { resolvePost = resolve; }));
+    const api = makeApi({ post: post as never });
+
+    const pending = useGit.getState().createWorktree(api, "proj", { branch: "fix/things" });
+    advanceRuntimeGeneration();
+    useGit.setState({ worktrees: [] });
+    resolvePost({ worktree: wireWorktree() });
+    const created = await pending;
+
+    expect(created).toBeNull();
+    expect(useGit.getState().worktrees).toEqual([]);
   });
 
   it("posts a pr payload", async () => {

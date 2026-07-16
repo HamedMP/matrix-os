@@ -79,6 +79,7 @@ describe("coding agent thread stream", () => {
       "thread.event",
       "thread.event",
       "thread.event",
+      "thread.event",
       "thread.replay.end",
       "thread.event",
       "thread.event",
@@ -179,6 +180,7 @@ describe("coding agent thread stream", () => {
     await stream.open({ ws: stale, principal: testPrincipal, threadId, cursor: "evt_missing" });
 
     expect(afterCursor.sent.map((frame) => (frame as { event?: { type?: string } }).event?.type).filter(Boolean)).toEqual([
+      "user.message",
       "thread.status",
       "assistant.text.delta",
     ]);

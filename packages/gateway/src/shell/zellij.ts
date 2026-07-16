@@ -28,6 +28,9 @@ export interface ShellAttachProcess {
   kill(): void;
   onData(listener: (data: string) => void): Disposable;
   onExit(listener: (event: PtyExitEvent) => void): Disposable;
+  /** node-pty flow control; used by WS backpressure to pause a slow client. */
+  pause?(): void;
+  resume?(): void;
 }
 type PtySpawn = (
   command: string,
@@ -412,7 +415,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         if (options.cmd) {
           tempLayoutDir = await mkdtemp(join(tmpdir(), "matrix-zellij-layout-"));
           const layoutPath = join(tempLayoutDir, "layout.kdl");
-          await writeFile(layoutPath, initialCommandLayout(options.cmd, options.cwd), { mode: 0o600 });
+          await writeFile(layoutPath, initialCommandLayout(options.cmd, options.cwd, zellijConfigPaths?.shellFile), { mode: 0o600 });
           args.push("--new-session-with-layout", layoutPath);
         } else if (options.layout) {
           args.push("--layout", options.layout);
@@ -590,8 +593,9 @@ function splitCommand(command: string): string[] {
   return parts;
 }
 
-function initialCommandLayout(command: string, cwd?: string): string {
-  const [binary, ...args] = splitCommand(command);
+function initialCommandLayout(command: string, cwd?: string, shellFile?: string): string {
+  const commandArgs = splitCommand(command);
+  const [binary, ...args] = shellFile ? [shellFile, ...commandArgs] : commandArgs;
   const paneAttrs = [
     cwd ? `cwd=${kdlString(cwd)}` : null,
     `command=${kdlString(binary)}`,

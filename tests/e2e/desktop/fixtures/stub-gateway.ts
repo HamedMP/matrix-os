@@ -4,6 +4,14 @@
 // session with sequence-numbered output; scripted kernel stream.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
+import {
+  AgentThreadSnapshotSchema,
+  ProjectAgentWorkspaceSchema,
+  RuntimeSummarySchema,
+  type AgentThreadSnapshot,
+  type ProjectAgentWorkspace,
+  type RuntimeSummary,
+} from "@matrix-os/contracts";
 
 export interface StubGateway {
   url: string;
@@ -14,10 +22,15 @@ export interface StubGateway {
     tokenRequests: number;
     terminalInputs: string[];
     kernelMessages: Array<Record<string, unknown>>;
+    codingAgentCreates: Array<Record<string, unknown>>;
+    taskUpdates: Array<Record<string, unknown>>;
+    runtimeSelections: string[];
   };
 }
 
 const TOKEN = "stub-token-1";
+const REVIEW_TOKEN = "stub-review-token-with-enough-entropy-1";
+const NOW = "2026-07-08T00:00:00.000Z";
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json" });
@@ -44,7 +57,7 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
 
 const TASKS = [
   {
-    id: "task-1",
+    id: "task_auth",
     projectSlug: "matrix-os",
     title: "Fix the failing auth tests",
     description: "",
@@ -60,7 +73,7 @@ const TASKS = [
     revision: 1,
   },
   {
-    id: "task-2",
+    id: "task_polish",
     projectSlug: "matrix-os",
     title: "Polish the board design",
     description: "",
@@ -77,13 +90,281 @@ const TASKS = [
   },
 ];
 
+function codingAgentThread(prompt = "Fix the failing auth tests"): AgentThreadSnapshot["thread"] {
+  return {
+    id: "thread_operator_1",
+    providerId: "codex",
+    title: prompt.slice(0, 120),
+    status: "completed",
+    attention: "completed",
+    projectId: "matrix-os",
+    terminalSessionId: "matrix-task-1",
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+}
+
+function codingAgentTaskThread(
+  id: string,
+  taskId: string,
+  title: string,
+  status: AgentThreadSnapshot["thread"]["status"],
+): AgentThreadSnapshot["thread"] {
+  return {
+    id,
+    providerId: "codex",
+    title,
+    status,
+    attention: status === "completed" ? "completed" : "none",
+    projectId: "matrix-os",
+    taskId,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+}
+
+export function codingAgentProjectWorkspace(tasks = TASKS): ProjectAgentWorkspace {
+  const authTask = tasks.find((task) => task.id === "task_auth") ?? TASKS[0];
+  const polishTask = tasks.find((task) => task.id === "task_polish") ?? TASKS[1];
+  return ProjectAgentWorkspaceSchema.parse({
+    project: {
+      id: "matrix-os",
+      label: "Matrix OS",
+      status: "available",
+      taskCount: 2,
+      threadCount: 3,
+      attentionCount: 0,
+      updatedAt: NOW,
+    },
+    tasks: {
+      items: [
+        {
+          id: "task_auth",
+          projectId: "matrix-os",
+          title: "Fix the failing auth tests",
+          status: authTask.status,
+          priority: "high",
+          order: 0,
+          threadCount: 2,
+          activeThreadCount: 1,
+          attentionCount: 0,
+          latestThreadAt: NOW,
+          revision: authTask.revision,
+        },
+        {
+          id: "task_polish",
+          projectId: "matrix-os",
+          title: "Polish the board design",
+          status: polishTask.status,
+          priority: "normal",
+          order: 1,
+          threadCount: 0,
+          activeThreadCount: 0,
+          attentionCount: 0,
+          revision: polishTask.revision,
+        },
+      ],
+      hasMore: false,
+      limit: 50,
+    },
+    projectThreads: {
+      items: [codingAgentThread()],
+      hasMore: false,
+      limit: 50,
+    },
+    taskThreads: {
+      items: [
+        codingAgentTaskThread(
+          "thread_task_auth_1",
+          "task_auth",
+          "Investigate auth callback",
+          "running",
+        ),
+        codingAgentTaskThread(
+          "thread_task_auth_2",
+          "task_auth",
+          "Verify token refresh",
+          "completed",
+        ),
+      ],
+      hasMore: false,
+      limit: 50,
+    },
+    updatedAt: NOW,
+  });
+}
+
+export function codingAgentSnapshot(prompt = "Fix the failing auth tests"): AgentThreadSnapshot {
+  const thread = codingAgentThread(prompt);
+  return AgentThreadSnapshotSchema.parse({
+    thread,
+    events: {
+      items: [
+        {
+          type: "thread.created",
+          eventId: "evt_operator_created",
+          threadId: thread.id,
+          occurredAt: NOW,
+          thread,
+        },
+        {
+          type: "user.message",
+          eventId: "evt_operator_user_message",
+          threadId: thread.id,
+          occurredAt: NOW,
+          messageId: "msg_operator_user_1",
+          text: prompt,
+          clientRequestId: "req_operator_user_1",
+        },
+        {
+          type: "assistant.text.delta",
+          eventId: "evt_operator_text",
+          threadId: thread.id,
+          occurredAt: NOW,
+          messageId: "msg_operator_1",
+          delta: "Done - all tests pass.",
+        },
+        {
+          type: "assistant.text.completed",
+          eventId: "evt_operator_text_done",
+          threadId: thread.id,
+          occurredAt: NOW,
+          messageId: "msg_operator_1",
+        },
+        {
+          type: "terminal.bound",
+          eventId: "evt_operator_terminal",
+          threadId: thread.id,
+          occurredAt: NOW,
+          terminalSessionId: "matrix-task-1",
+        },
+        {
+          type: "thread.completed",
+          eventId: "evt_operator_completed",
+          threadId: thread.id,
+          occurredAt: NOW,
+          outcome: "completed",
+        },
+      ],
+      hasMore: false,
+      limit: 200,
+    },
+  });
+}
+
+export function codingAgentSummary(): RuntimeSummary {
+  return RuntimeSummarySchema.parse({
+    runtime: {
+      id: "rt_operator",
+      label: "Operator stub",
+      status: "available",
+      channel: "dev",
+      ownerHandle: "neo",
+    },
+    capabilities: [
+      { id: "codingAgentsRuntimeSummary", enabled: true },
+      { id: "codingAgentsDesktopWorkspace", enabled: true },
+      { id: "codingAgentsProjectWorkspace", enabled: true },
+      { id: "codingAgentsConversationView", enabled: true },
+      { id: "codingAgentsKanbanView", enabled: true },
+      { id: "codingAgentsSameThreadTurns", enabled: true },
+      { id: "codingAgentsThreadCreate", enabled: true },
+      { id: "codingAgentsReview", enabled: true },
+      { id: "codingAgentsFiles", enabled: true },
+      { id: "codingAgentsSourceControl", enabled: true },
+      { id: "codingAgentsPreview", enabled: true },
+      { id: "codingAgentsNativeMobileTerminal", enabled: true },
+    ],
+    providers: [
+      {
+        id: "codex",
+        displayName: "Codex",
+        kind: "codex",
+        availability: "available",
+        installStatus: "installed",
+        authStatus: "authenticated",
+        supportedModes: ["default", "plan"],
+        defaultMode: "default",
+        setupActions: [],
+        lastCheckedAt: NOW,
+      },
+    ],
+    projects: {
+      items: [{
+        id: "matrix-os",
+        label: "Matrix OS",
+        status: "available",
+        taskCount: 2,
+        threadCount: 3,
+        attentionCount: 0,
+        updatedAt: NOW,
+      }],
+      hasMore: false,
+      limit: 50,
+    },
+    activeThreads: {
+      items: [codingAgentThread()],
+      hasMore: false,
+      limit: 50,
+    },
+    attentionThreads: {
+      items: [],
+      hasMore: false,
+      limit: 50,
+    },
+    terminalSessions: {
+      items: [
+        {
+          id: "matrix-task-1",
+          name: "Matrix shell",
+          status: "running",
+          attachable: true,
+          cwdLabel: "matrix-os",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      hasMore: false,
+      limit: 50,
+    },
+    previewSessions: {
+      items: [{
+        id: "preview-operator-1",
+        label: "Matrix OS web",
+        status: "running",
+        origin: "https://preview.matrix-os.test",
+        updatedAt: NOW,
+      }],
+      hasMore: false,
+      limit: 50,
+    },
+    recentActivity: {
+      items: [],
+      hasMore: false,
+      limit: 100,
+    },
+    limits: {
+      maxPromptBytes: 96 * 1024,
+      maxAttachmentCount: 8,
+      maxTerminalInputBytes: 64 * 1024,
+      maxListItems: 50,
+    },
+    serverTime: NOW,
+  });
+}
+
 export async function startStubGateway(): Promise<StubGateway> {
+  const tasks = TASKS.map((task) => ({ ...task, tags: [...task.tags] }));
   const state: StubGateway["state"] = {
     deviceCodeRequests: 0,
     tokenRequests: 0,
     terminalInputs: [],
     kernelMessages: [],
+    codingAgentCreates: [],
+    taskUpdates: [],
+    runtimeSelections: [],
   };
+  let currentToken = TOKEN;
 
   const server: Server = createServer((req, res) => {
     void handle(req, res);
@@ -137,8 +418,54 @@ export async function startStubGateway(): Promise<StubGateway> {
     }
 
     // Everything below requires the bearer header (verifies header injection).
-    if (req.headers.authorization !== `Bearer ${TOKEN}`) {
+    if (req.headers.authorization !== `Bearer ${currentToken}`) {
       json(res, 401, { error: "unauthorized" });
+      return;
+    }
+
+    if (req.method === "GET" && path === "/api/auth/computers") {
+      json(res, 200, {
+        items: [
+          {
+            handle: "neo",
+            runtimeSlot: "primary",
+            label: "Main Computer",
+            availability: "available",
+            kind: "customer",
+            gatewayPath: "/vm/neo",
+            capabilities: [],
+          },
+          {
+            handle: "neo-review",
+            runtimeSlot: "review",
+            label: "Additional Computer",
+            availability: "available",
+            kind: "preview",
+            gatewayPath: "/vm/neo-review?runtime=review",
+            capabilities: [],
+          },
+        ],
+        selectedSlot: currentToken === REVIEW_TOKEN ? "review" : "primary",
+        hasMore: false,
+        limit: 20,
+      });
+      return;
+    }
+
+    if (req.method === "POST" && path === "/api/auth/runtime-selection") {
+      const body = await readBody(req);
+      if (body.slot !== "review") {
+        json(res, 404, { error: "Computer unavailable" });
+        return;
+      }
+      state.runtimeSelections.push("review");
+      currentToken = REVIEW_TOKEN;
+      json(res, 200, {
+        accessToken: REVIEW_TOKEN,
+        expiresAt: Date.now() + 3_600_000,
+        handle: "neo-review",
+        slot: "review",
+      });
       return;
     }
 
@@ -160,21 +487,29 @@ export async function startStubGateway(): Promise<StubGateway> {
       return;
     }
     if (path === "/api/projects/matrix-os/tasks" && req.method === "GET") {
-      json(res, 200, { tasks: TASKS, nextCursor: null });
+      json(res, 200, { tasks, nextCursor: null });
       return;
     }
     if (path.startsWith("/api/projects/matrix-os/tasks/") && req.method === "PATCH") {
       const id = path.split("/").pop();
       const body = await readBody(req);
-      const task = TASKS.find((t) => t.id === id);
-      json(res, 200, { task: { ...(task ?? TASKS[0]), ...body } });
+      const task = tasks.find((candidate) => candidate.id === id);
+      if (!task) {
+        json(res, 404, { error: "not found" });
+        return;
+      }
+      const status = typeof body.status === "string" ? body.status : task.status;
+      const order = typeof body.order === "number" ? body.order : task.order;
+      Object.assign(task, { status, order, revision: task.revision + 1 });
+      state.taskUpdates.push({ taskId: task.id, ...body });
+      json(res, 200, { task });
       return;
     }
     if (path === "/api/projects/matrix-os/tasks" && req.method === "POST") {
       const body = await readBody(req);
       json(res, 201, {
         task: {
-          ...TASKS[0],
+          ...tasks[0],
           id: `task-${Date.now()}`,
           title: typeof body.title === "string" ? body.title : "New task",
           status: typeof body.status === "string" ? body.status : "todo",
@@ -186,6 +521,118 @@ export async function startStubGateway(): Promise<StubGateway> {
     }
     if (path === "/api/terminal/sessions") {
       json(res, 200, { sessions: [{ name: "matrix-task-1", status: "active" }] });
+      return;
+    }
+    if (req.method === "GET" && path === "/api/auth/ws-token") {
+      json(res, 200, {
+        token: "stub-ws-token",
+        expiresAt: Date.now() + 60_000,
+      });
+      return;
+    }
+    if (req.method === "GET" && path === "/api/coding-agents/summary") {
+      json(res, 200, codingAgentSummary());
+      return;
+    }
+    if (
+      req.method === "GET"
+      && path === "/api/coding-agents/projects/matrix-os/workspace"
+    ) {
+      json(res, 200, codingAgentProjectWorkspace(tasks));
+      return;
+    }
+    if (req.method === "GET" && path === "/api/coding-agents/notification-preferences") {
+      json(res, 200, {
+        preferences: {
+          attentionPush: {
+            approval: true,
+            input: true,
+            failed: true,
+            completed: true,
+          },
+        },
+      });
+      return;
+    }
+    if (req.method === "GET" && path === "/api/coding-agents/reviews") {
+      json(res, 200, {
+        items: [{
+          id: "rev_operator_1",
+          projectId: "matrix-os",
+          worktreeId: "wt_abcdef123456",
+          status: "reviewing",
+          pullRequestNumber: 917,
+          round: 2,
+          maxRounds: 3,
+          reviewer: "matrix-reviewer",
+          implementer: "matrix-implementer",
+          findings: { total: 2, high: 0, medium: 1, low: 1 },
+          updatedAt: NOW,
+        }],
+        hasMore: false,
+        limit: 50,
+      });
+      return;
+    }
+    if (req.method === "GET" && path === "/api/coding-agents/reviews/rev_operator_1") {
+      json(res, 200, {
+        review: {
+          id: "rev_operator_1",
+          projectId: "matrix-os",
+          worktreeId: "wt_abcdef123456",
+          status: "reviewing",
+          pullRequestNumber: 917,
+          round: 2,
+          maxRounds: 3,
+          reviewer: "matrix-reviewer",
+          implementer: "matrix-implementer",
+          findings: { total: 2, high: 0, medium: 1, low: 1 },
+          updatedAt: NOW,
+        },
+        files: {
+          items: [{
+            path: "desktop/src/renderer/src/features/coding-agents/AgentWorkspace.tsx",
+            status: "modified",
+            additions: 48,
+            deletions: 22,
+            partial: false,
+            hunks: [{
+              id: "hunk_operator_1",
+              oldStart: 1548,
+              oldLines: 3,
+              newStart: 1548,
+              newLines: 5,
+              heading: "Contextual inspector",
+              partial: false,
+              lines: [
+                { kind: "context", oldLine: 1548, newLine: 1548, content: "<aside aria-label=\"Conversation tools\">" },
+                { kind: "remove", oldLine: 1549, content: "<AgentWorkspaceStack>" },
+                { kind: "add", newLine: 1549, content: "<AgentConversationInspector" },
+              ],
+            }],
+            findings: [{
+              id: "MEDIUM-1",
+              severity: "medium",
+              line: 1549,
+              summary: "Keep contextual tools keyboard accessible.",
+            }],
+          }],
+          hasMore: false,
+          limit: 100,
+        },
+        partial: false,
+        updatedAt: NOW,
+      });
+      return;
+    }
+    if (req.method === "POST" && path === "/api/coding-agents/threads") {
+      const body = await readBody(req);
+      state.codingAgentCreates.push(body);
+      json(res, 201, codingAgentSnapshot(typeof body.prompt === "string" ? body.prompt : undefined));
+      return;
+    }
+    if (req.method === "GET" && path === "/api/coding-agents/threads/thread_operator_1") {
+      json(res, 200, codingAgentSnapshot());
       return;
     }
     if (path === "/api/sessions") {
@@ -225,7 +672,7 @@ export async function startStubGateway(): Promise<StubGateway> {
   server.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     // WS upgrades carry the bearer header via the app's header injection.
-    if (req.headers.authorization !== `Bearer ${TOKEN}`) {
+    if (req.headers.authorization !== `Bearer ${currentToken}`) {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
       return;

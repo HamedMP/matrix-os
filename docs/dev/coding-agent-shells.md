@@ -11,22 +11,55 @@ This guide documents the Matrix OS coding-agent shell architecture for gateway, 
 - Browser shell surfaces call authenticated gateway routes and validate shared contracts before rendering. Shell-only filtering is defensive; project and owner scoping must happen in the gateway before list bounds are applied.
 - Canonical terminals remain the existing Matrix terminal/session primitives under `/api/terminal/sessions`, `/ws/terminal`, and related compatibility routes. Do not create a separate coding-agent terminal model.
 
+## Browser Shell
+
+Browser Workspace remains Canvas-first and does not own coding-agent runtime state. It may render active-project thread and preview summaries from `RuntimeSummarySchema`, and it may open an existing Canvas PR workspace from bounded worktree metadata that already includes a pull request number. Browser Workspace must not create source-control commits or pull requests, store transcripts, store file contents, store diffs, or execute provider setup actions. Those write paths stay in gateway-owned routes and trusted desktop/mobile clients.
+
+## Mobile Agent Cockpit
+
+The mobile Agents landing screen is a thin projection of the bounded gateway runtime summary:
+
+- Needs attention contains approval-required, input-required, and failed threads.
+- Working contains queued, starting, and running threads.
+- Recent keeps every completed, aborted, recoverable stale, or archived thread from the contract-bounded runtime lists reachable through the canonical thread-detail route. A `completed` attention value also belongs here.
+- Duplicate ids across `activeThreads` and `attentionThreads` render once. Gateway timestamps determine ordering; mobile does not infer task status from thread status.
+- Working rows use static status marks. Pull-to-refresh reconciles the summary, so a row must not show a perpetual live spinner unless a future implementation adds an actual bounded stream or polling lifecycle.
+
+Use `contentInsetAdjustmentBehavior="automatic"` on the route scroll view and plain content padding. Do not add `react-native-unistyles` runtime safe-area values to the same top or bottom padding, because iOS already applies those insets.
+
+Cockpit projection state remains in memory. Mobile storage may contain validated bounded selection references or drafts only, never runtime summaries, transcripts, terminal output, files, diffs, credentials, or approval payloads.
+
+The mobile new-run composer must bind every newly created chat to one available
+`RuntimeSummarySchema.projects` item. It may carry a validated optional task id
+from a canonical task route, but switching projects clears that task relation.
+When no available project exists, including summaries with only stale or
+missing rows, the empty state creates a scratch project or imports a GitHub
+repository through canonical `POST /api/coding-agents/projects`, validates the
+returned project id, then refreshes the runtime summary before enabling thread
+submission. The thread request uses that canonical project id and optional task id; it must
+not create a new unassigned thread. Explicit stale project links remain
+unselected and require recovery instead of being silently remapped. Project
+form values and mutation results remain transient and never enter AsyncStorage.
+
 ## Gateway Routes
 
 The coding-agent route module is `packages/gateway/src/coding-agents/routes.ts`, mounted under `/api/coding-agents`.
 
 - `GET /summary` returns `RuntimeSummarySchema` and accepts an optional validated `projectId` query for project-scoped preview summaries.
+- `POST /projects` creates a scratch project or imports a GitHub project idempotently and returns only a bounded project summary.
 - `POST /threads` creates or returns an idempotent thread by `clientRequestId`.
 - `GET /threads`, `GET /threads/:threadId`, and `GET /threads/:threadId/events` return bounded summaries or snapshots.
 - `POST /threads/:threadId/abort` aborts idempotently.
 - `POST /threads/:threadId/approvals/:approvalId/decision` records an idempotent approval decision.
 - `POST /threads/:threadId/inputs/:inputRequestId/answer` records a bounded user-input answer.
 - `GET /reviews` and `GET /reviews/:reviewId` expose bounded review summaries and snapshots.
-- `GET /files/read` exposes bounded owner-worktree text snapshots.
+- `GET /files/read` exposes bounded owner-checkout text snapshots. Omitting `worktreeId` reads the project's primary checkout; providing it scopes the read to that worktree.
 - `GET /notification-preferences` returns coding-agent notification preferences for the authenticated owner.
 - `PUT /notification-preferences` updates coding-agent notification preferences for the authenticated owner with a small body limit and atomic per-owner file persistence.
 
 Every mutating route needs auth, `bodyLimit`, Zod validation, an ownership check, safe error mapping, and focused tests.
+
+An agent thread may omit `worktreeId` to run in the validated owner project's primary checkout. Supplying `worktreeId` keeps the existing isolated worktree behavior. Both paths pass through the same gateway-owned sandbox preflight and terminal binding.
 
 ## Event Model
 
@@ -52,8 +85,18 @@ Provider-specific behavior belongs behind the gateway provider adapter interface
 - Normalize start, abort, status, tool activity, approvals, input requests, and completion into shared thread events.
 - Enforce timeouts or `AbortSignal` on external calls.
 - Return generic client errors while logging provider details server-side only.
+- Log coding-agent gateway failures through `logCodingAgentWarning()` from
+  `packages/gateway/src/coding-agents/diagnostics.ts` so server diagnostics keep
+  coarse scope and error type while redacting tokens, owner paths, URLs, private
+  hosts, and database details.
 - Use foreground terminal setup actions when user interaction is required.
 - Avoid provider-specific branches in shell components unless the shared contract explicitly exposes safe metadata.
+
+The gateway provider registry owns shell-facing provider projections. It validates the bounded configured adapter set at startup, validates and bounds owner-scoped credential responses, combines adapter metadata with that credential state, and keeps credential-known non-system providers visible even before an execution adapter is registered. Credential-only projections preserve coarse install/auth state but remain unavailable for runs until an adapter exists. Credential-source failures fail closed to unavailable/unknown adapter projections without running setup or health reads. Adapter reads receive timeout signals, and only coarse health booleans enter a capped owner/provider TTL cache with LRU eviction. Invalid summaries or setup actions degrade to generic safe state; raw health output and credentials never enter the runtime summary.
+
+Workspace provider projections are configured with the bounded, comma-separated `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` setting. The supported rollout values are `claude` and `codex`; duplicates, unknown values, empty entries, and more than two entries fail startup with a generic configuration error. Customer host bundles enable the executable Codex adapter through the legacy `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1` setting so thread routes are present on a fresh runtime; provider readiness still fails closed until Codex is installed and connected. Claude remains registry-visible but unavailable for thread creation until its launcher passes the required sandbox smoke gate. Registry-only adapters also reject direct execution so later wiring changes fail closed. An explicitly empty provider list disables workspace providers even when the legacy setting is present.
+
+Claude and Codex workspace adapters expose only fixed server-owned foreground setup actions. Every setup action defaults `MATRIX_NODE_PREFIX` to the canonical `/opt/matrix/runtime/node` prefix and prepends `$MATRIX_NODE_PREFIX/bin` to `PATH` before invoking a provider command. Install actions run the existing npm package install in a visible terminal, connect actions launch the provider's interactive local login flow, and both leave an interactive shell open afterward. Commands are bounded by `SafeSetupActionSchema`; clients must not render command text, persist it, or accept client-supplied replacements.
 
 When adding a provider:
 
@@ -66,6 +109,8 @@ When adding a provider:
 ## Terminal Binding
 
 Coding-agent threads may point at a canonical terminal session using bounded terminal identifiers. The binding rules are:
+
+- Workspace orchestration owns `/api/sessions`; canonical named terminal sessions use `/api/terminal/sessions`. The assembled gateway mounts the legacy terminal compatibility routes after workspace routes so task-session requests cannot be parsed as legacy terminal creates.
 
 - Thread snapshots can expose attachable terminal references, not raw PTY output.
 - Desktop should open the existing Terminal tab/model for a bound session.
@@ -92,9 +137,9 @@ Mobile thread detail should rehydrate its current bounded thread snapshot when t
 
 Mobile approval and input action handling lives in `apps/mobile/lib/agent-thread-actions.ts`. Keep the route responsible for hydration, streaming, navigation, and render composition; keep transient pending action ids, bounded action errors, input drafts, idempotency request ids, and accepted-snapshot haptic guards inside that hook. The hook must only act on the current route thread id, and success haptics must wait until the gateway-returned bounded snapshot has been accepted by the route.
 
-Desktop thread timelines may group `assistant.text.delta` and `assistant.text.completed` events by bounded `messageId`, plus `tool.started`, `tool.output`, and `tool.completed` events by bounded `toolCallId`, for readability. Grouped rows must render only safe counts, display metadata, output presence/truncation, and completion state; never render raw assistant text, raw tool output, message ids, or tool call ids.
+Desktop thread timelines may group `assistant.text.delta` and `assistant.text.completed` events by bounded `messageId`, plus `tool.started`, `tool.output`, and `tool.completed` events by bounded `toolCallId`, for readability. Grouped assistant rows may render a capped assistant text preview only when the joined deltas pass local safe-display filtering; otherwise they must fall back to update counts and completion state. Grouped tool rows must render only safe display metadata, output presence/truncation, and completion state. Never render message ids, tool call ids, sensitive-looking assistant text, or raw tool output.
 
-Mobile thread timelines may group `assistant.text.delta` and `assistant.text.completed` events by bounded `messageId` for readability. Grouped rows must render only update counts and completion state; never render raw assistant text or message ids.
+Mobile thread timelines may group `assistant.text.delta` and `assistant.text.completed` events by bounded `messageId` for readability. Grouped rows may render a capped assistant text preview only when the joined deltas pass local safe-display filtering; otherwise they must fall back to update counts and completion state. Never render message ids or sensitive-looking assistant text.
 
 Mobile thread timelines may group `tool.started`, `tool.output`, and `tool.completed` events by `toolCallId` for readability. Grouped rows must render only safe tool display metadata, coarse output presence/truncation, and completion outcome; never render raw tool output text.
 
@@ -137,6 +182,14 @@ Use this checklist for every coding-agent shell PR:
 - WebSocket auth completes before success frames, frame size is capped, subscribers are capped, stale subscribers are swept, and shutdown drains subscribers.
 - Lists are bounded before response.
 - Errors sent to clients are generic and safe.
+- Server diagnostics for coding-agent routes, summary adapters, streams,
+  provider lifecycle, and notification bridges use the bounded redacted
+  diagnostic helper instead of raw `err.message` logging.
+- Mobile coding-agent gateway client diagnostics use
+  `apps/mobile/lib/coding-agent-diagnostics.ts` for bounded warning scope and
+  redacted metadata. Do not log raw gateway response bodies, filesystem paths,
+  private hosts, bearer tokens, provider errors, or database details from mobile
+  gateway clients.
 - Desktop renderer never receives bearer credentials or provider credentials.
 - Mobile AsyncStorage contains only bounded safe references.
 - Terminal/session behavior reuses canonical Matrix terminal primitives.

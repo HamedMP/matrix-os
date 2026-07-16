@@ -25,14 +25,23 @@ export interface CustomerVpsConfig {
   reconciliationBatchSize: number;
   reconciliationStaleAfterMs: number;
   maxProvisionAttempts: number;
+  previewProvisioningLimit: number;
 }
 
 const DEFAULT_POSTHOG_PUBLIC_HOST = 'https://eu.posthog.com';
+const DEFAULT_PREVIEW_PROVISIONING_LIMIT = 8;
+const MAX_PREVIEW_PROVISIONING_LIMIT = 16;
 
 function numberFromEnv(value: string | undefined, fallback: number): number {
   if (value === undefined || value === '') return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function boundedIntegerFromEnv(value: string | undefined, fallback: number, maximum: number): number {
+  if (value === undefined || value === '') return fallback;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= maximum ? parsed : fallback;
 }
 
 export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): CustomerVpsConfig {
@@ -73,5 +82,10 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
     reconciliationBatchSize: numberFromEnv(env.CUSTOMER_VPS_RECONCILIATION_BATCH_SIZE, 50),
     reconciliationStaleAfterMs: numberFromEnv(env.CUSTOMER_VPS_RECONCILIATION_STALE_AFTER_MS, 10 * 60 * 1000),
     maxProvisionAttempts: numberFromEnv(env.CUSTOMER_VPS_MAX_PROVISION_ATTEMPTS, 3),
+    previewProvisioningLimit: boundedIntegerFromEnv(
+      env.CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT,
+      DEFAULT_PREVIEW_PROVISIONING_LIMIT,
+      MAX_PREVIEW_PROVISIONING_LIMIT,
+    ),
   };
 }

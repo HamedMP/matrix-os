@@ -291,3 +291,27 @@ function safeTerminalError(message: string): string {
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
+
+/**
+ * Keyboard lift that keeps the cursor visible instead of always lifting by
+ * the full keyboard height. A fresh session with the prompt on the first row
+ * needs no lift at all; a full-screen TUI with the cursor at the bottom needs
+ * the whole keyboard height. Unknown cursor position falls back to the full
+ * lift so text entry is never hidden.
+ */
+export function computeCursorKeyboardLift(options: {
+  /** Cursor bottom edge in window coordinates (unlifted), or null if unknown. */
+  cursorBottomY: number | null;
+  /** Top edge of the keyboard (plus any bars above it) in window coordinates. */
+  keyboardTopY: number;
+  /** The full lift (keyboard height minus safe-area inset). */
+  maxLift: number;
+  /** Breathing room kept between cursor and keyboard. */
+  padding?: number;
+}): number {
+  const { cursorBottomY, keyboardTopY, maxLift } = options;
+  const padding = options.padding ?? 16;
+  if (maxLift <= 0) return 0;
+  if (cursorBottomY === null || !Number.isFinite(cursorBottomY)) return maxLift;
+  return clamp(cursorBottomY + padding - keyboardTopY, 0, maxLift);
+}

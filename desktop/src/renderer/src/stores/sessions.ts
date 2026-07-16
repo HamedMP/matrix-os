@@ -12,6 +12,7 @@ import {
   type ZellijSessionDTO,
 } from "../lib/session-merge";
 import { useBoard } from "./board";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
 
 export interface SessionCreateInput {
   kind: "shell" | "agent";
@@ -137,11 +138,12 @@ export const useSessions = create<SessionsState>()((set, get) => ({
   createError: null,
 
   load: async (api) => {
+    const runtimeGeneration = captureRuntimeGeneration();
     const sequence = ++loadSequence;
     set({ loading: true, error: null });
     try {
       const merged = await fetchMergedSessions(api);
-      if (sequence !== loadSequence) return;
+      if (sequence !== loadSequence || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
       set({
         sessions: merged.sessions,
         aliasMap: merged.aliasMap,
@@ -149,7 +151,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
         error: null,
       });
     } catch (err: unknown) {
-      if (sequence !== loadSequence) return;
+      if (sequence !== loadSequence || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
       console.error("[sessions] Failed to load sessions:", err);
       set({
         loading: false,
@@ -159,14 +161,20 @@ export const useSessions = create<SessionsState>()((set, get) => ({
   },
 
   create: async (api, input) => {
+    // A computer switch advances the runtime generation; a create that settles
+    // afterwards belongs to the previous computer and must not commit results
+    // (the transition already reset creating/error state).
+    const runtimeGeneration = captureRuntimeGeneration();
     set({ creating: true, error: null, createError: null });
     try {
       if (!input) {
         const name = nextSessionName();
         const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name });
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
         const attachName = typeof response.name === "string" && response.name.trim() ? response.name.trim() : name;
         const refreshSequence = loadSequence + 1;
         await get().load(api);
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
         const refreshError = get().error;
         const created = get().sessions.find((session) => session.attachName === attachName) ?? {
           name: attachName,
@@ -186,6 +194,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
       const res = await api.post<{
         session?: { id?: unknown; runtime?: { zellijSession?: unknown } | null };
       }>("/api/sessions", input);
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
       const sessionId = typeof res.session?.id === "string" ? res.session.id : null;
       const directAttachName =
         typeof res.session?.runtime?.zellijSession === "string"
@@ -199,6 +208,9 @@ export const useSessions = create<SessionsState>()((set, get) => ({
       try {
         merged = await fetchMergedSessions(api);
       } catch (err: unknown) {
+        // The cleanup delete would target the newly selected computer with the
+        // old computer's session id; skip it and the error commit entirely.
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
         if (sessionId) {
           await api.delete(`/api/sessions/${encodeURIComponent(sessionId)}`).catch((cleanupErr: unknown) => {
             console.warn(
@@ -211,6 +223,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
         set({ creating: false, error: err instanceof AppError ? err.category : "server" });
         return null;
       }
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
       if (sequence === loadSequence) {
         set({
           sessions: merged.sessions,
@@ -241,6 +254,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
         attachName: merged.aliasMap[sessionId] ?? directAttachName,
       };
     } catch (err: unknown) {
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
       console.error("[sessions] Failed to create session:", err);
       set({
         creating: false,
@@ -252,18 +266,22 @@ export const useSessions = create<SessionsState>()((set, get) => ({
   },
 
   kill: async (api, attachName) => {
+    const runtimeGeneration = captureRuntimeGeneration();
     try {
       await deleteAttachableSession(api, attachName);
     } catch (err: unknown) {
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
       if (!(err instanceof AppError && err.category === "notFound")) {
         console.error("[sessions] Failed to kill session:", err);
         set({ error: err instanceof AppError ? err.category : "server" });
         return false;
       }
     }
+    if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
     try {
       await get().load(api);
     } catch (err: unknown) {
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
       console.error("[sessions] Failed to reload after kill:", err);
       set({ error: err instanceof AppError ? err.category : "server" });
     }
@@ -271,6 +289,9 @@ export const useSessions = create<SessionsState>()((set, get) => ({
   },
 
   restart: async (api, attachName) => {
+    // Same invariant as create: a restart that settles after a computer switch
+    // must not commit sessions or issue follow-up requests on the new runtime.
+    const runtimeGeneration = captureRuntimeGeneration();
     set({ creating: true });
     try {
       const existing = get().sessions.find((session) => session.attachName === attachName) ?? null;
@@ -279,6 +300,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
       } catch (err: unknown) {
         if (!(err instanceof AppError && err.category === "notFound")) throw err;
       }
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
       if (existing?.source === "workspace" && existing.kind) {
         const input: SessionCreateInput = { kind: existing.kind };
         const agent = existing.kind === "agent" ? sessionAgent(existing.agent) : undefined;
@@ -289,6 +311,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
         const res = await api.post<{
           session?: { id?: unknown; runtime?: { zellijSession?: unknown } | null };
         }>("/api/sessions", input);
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
         const sessionId = typeof res.session?.id === "string" ? res.session.id : null;
         const directAttachName =
           typeof res.session?.runtime?.zellijSession === "string"
@@ -303,6 +326,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
         try {
           merged = await fetchMergedSessions(api);
         } catch (err: unknown) {
+          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
           await api.delete(`/api/sessions/${encodeURIComponent(sessionId)}`).catch((cleanupErr: unknown) => {
             console.warn(
               "[sessions] Failed to clean up restarted session after refresh failure:",
@@ -313,6 +337,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
           set({ creating: false, error: err instanceof AppError ? err.category : "server" });
           return null;
         }
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
         let nextAttachName = merged.aliasMap[sessionId] ?? directAttachName;
         if (sequence === loadSequence) {
           set({
@@ -343,6 +368,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
             console.error("[sessions] Failed to relink restarted session:", err);
             linkError = err;
           }
+          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
         }
         if (linkError) {
           if (nextAttachName) {
@@ -367,11 +393,14 @@ export const useSessions = create<SessionsState>()((set, get) => ({
         return { sessionId, attachName: nextAttachName };
       }
       const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name: attachName });
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
       const restarted = typeof response.name === "string" && response.name.trim() ? response.name.trim() : attachName;
       await get().load(api);
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
       set({ creating: false, error: null });
       return { sessionId: restarted, attachName: restarted };
     } catch (err: unknown) {
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
       console.error("[sessions] Failed to restart session:", err);
       set({ creating: false, error: err instanceof AppError ? err.category : "server" });
       return null;

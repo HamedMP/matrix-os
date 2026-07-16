@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EmbedHost from "../../desktop/src/renderer/src/features/embeds/EmbedHost";
 import { invoke } from "../../desktop/src/renderer/src/lib/operator";
+import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 
 vi.mock("../../desktop/src/renderer/src/lib/operator", () => ({
   invoke: vi.fn(),
@@ -16,6 +17,8 @@ describe("EmbedHost", () => {
   let rect = { left: 10, top: 20, width: 300, height: 200 };
 
   beforeEach(() => {
+    useConnection.setState(useConnection.getInitialState(), true);
+    useConnection.setState({ runtimeSlot: "primary" });
     openResolve = null;
     rect = { left: 10, top: 20, width: 300, height: 200 };
     vi.mocked(invoke).mockImplementation((channel: string) => {
@@ -118,6 +121,35 @@ describe("EmbedHost", () => {
         embedId: "embed-1",
         bounds: { x: 90, y: 100, width: 700, height: 500 },
       });
+    });
+  });
+
+  it("reopens the hosted surface after the trusted runtime changes", async () => {
+    let nextEmbedId = 0;
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        nextEmbedId += 1;
+        return Promise.resolve({ embedId: `embed-${nextEmbedId}`, state: "ready" }) as ReturnType<typeof invoke>;
+      }
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+
+    render(<EmbedHost kind="hosted-shell" />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "embed:set-active",
+      { embedId: "embed-1", active: true },
+    ));
+
+    act(() => {
+      useConnection.setState({ runtimeSlot: "review" });
+    });
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("embed:close", { embedId: "embed-1" });
+      expect(invoke).toHaveBeenCalledWith(
+        "embed:set-active",
+        { embedId: "embed-2", active: true },
+      );
     });
   });
 });

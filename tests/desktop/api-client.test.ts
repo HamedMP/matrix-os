@@ -126,4 +126,64 @@ describe("createApiClient", () => {
     });
     await expect(client.get("/api/apps")).rejects.toMatchObject({ category: "server" });
   });
+
+  it("fetches binary blobs through the authenticated client with a timeout signal", async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValue(new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "image/png" } }));
+    const client = createApiClient({
+      baseUrl: "https://app.matrix-os.com",
+      getRuntimeSlot: () => "vm-2",
+      fetchFn,
+    });
+    const blob = await client.getBlob("/api/files/blob?path=hero.png");
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.size).toBe(3);
+    const [url, init] = fetchFn.mock.calls[0]!;
+    expect(url).toBe("https://app.matrix-os.com/api/files/blob?path=hero.png&runtime=vm-2");
+    expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("maps blob 401s to unauthorized without leaking bytes", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(401, {}));
+    const client = createApiClient({
+      baseUrl: "https://x.test",
+      getRuntimeSlot: () => "primary",
+      fetchFn,
+    });
+    await expect(client.getBlob("/api/files/blob?path=hero.png")).rejects.toMatchObject({
+      category: "unauthorized",
+    });
+  });
+
+  it("fails closed when a bounded blob response exceeds the byte cap", async () => {
+    // The stat that sized the file can be stale by the time the blob is read;
+    // the cap must apply to the bytes actually fetched.
+    const fetchFn = vi.fn().mockResolvedValue(new Response(new Uint8Array(64), { status: 200 }));
+    const client = createApiClient({
+      baseUrl: "https://x.test",
+      getRuntimeSlot: () => "primary",
+      fetchFn,
+    });
+    await expect(
+      client.getBlob("/api/files/blob?path=hero.png", { maxBytes: 16 }),
+    ).rejects.toMatchObject({ message: "file_too_large" });
+  });
+
+  it("returns bounded text within the byte cap and rejects beyond it", async () => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(new Response("small body", { status: 200 }))
+      .mockResolvedValueOnce(new Response("x".repeat(64), { status: 200 }));
+    const client = createApiClient({
+      baseUrl: "https://x.test",
+      getRuntimeSlot: () => "primary",
+      fetchFn,
+    });
+    await expect(
+      client.getText("/api/files/blob?path=notes.md", { maxBytes: 1024 }),
+    ).resolves.toBe("small body");
+    await expect(
+      client.getText("/api/files/blob?path=notes.md", { maxBytes: 16 }),
+    ).rejects.toMatchObject({ message: "file_too_large" });
+  });
 });

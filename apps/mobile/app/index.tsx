@@ -6,9 +6,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useAuth } from "@clerk/clerk-expo";
 import { useEffect, useState } from "react";
-import { HOSTED_GATEWAY_URL, getSelectedGatewayConnection, isHostedGatewayUrl } from "@/lib/storage";
+import { HOSTED_GATEWAY_URL, getMobileJourneyGatewayUrl, getSelectedGatewayConnection, isHostedGatewayUrl } from "@/lib/storage";
 import { JourneyGate } from "@/components/JourneyGate";
 import { fetchMobileJourney, isConnectablePhase, type JourneyFetchResult } from "@/lib/journey";
+import { clearAllScrollback } from "@/lib/terminal-scrollback";
+import { resetAnalytics } from "@/lib/analytics";
 
 // Re-poll cadence while the machine is building / payment is settling, so the
 // user isn't stranded on a static spinner waiting for a phase transition.
@@ -35,7 +37,7 @@ function SignedInJourneyGate() {
           return;
         }
         const token = await getToken();
-        const next = await fetchMobileJourney(gateway.url, token);
+        const next = await fetchMobileJourney(getMobileJourneyGatewayUrl(gateway.url), token);
         if (!active) return;
         if (next.status === "ok" && isConnectablePhase(next.journey.phase)) {
           router.replace("/(tabs)/apps" as any);
@@ -68,6 +70,8 @@ function SignedInJourneyGate() {
   async function handleSignOut() {
     // Clearing the Clerk session flips isSignedIn → false, so Index re-renders
     // the landing screen where the user can sign in again.
+    clearAllScrollback();
+    resetAnalytics();
     try {
       await signOut();
     } catch (err: unknown) {

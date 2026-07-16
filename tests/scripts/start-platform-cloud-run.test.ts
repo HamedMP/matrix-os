@@ -51,6 +51,17 @@ describe('start-platform-cloud-run.sh', () => {
     expect(dockerfile).toContain("/app/packages/sync-client/package.json ./packages/sync-client/package.json");
   });
 
+  it('packages shared contracts imported by the compiled platform server', () => {
+    const root = process.cwd();
+    const dockerfile = readFileSync(join(root, 'Dockerfile.platform'), 'utf8');
+    const platformPackage = readFileSync(join(root, 'packages/platform/package.json'), 'utf8');
+
+    expect(platformPackage).toContain('"@matrix-os/contracts": "workspace:*"');
+    expect(dockerfile).toContain('COPY packages/contracts/package.json packages/contracts/package.json');
+    expect(dockerfile).toContain('/app/packages/contracts/package.json ./packages/contracts/package.json');
+    expect(dockerfile).toContain('/app/packages/contracts/src ./packages/contracts/src');
+  });
+
   it('exits nonzero when the auth shell never becomes ready', () => {
     const root = process.cwd();
     const script = readFileSync(join(root, 'scripts/start-platform-cloud-run.sh'), 'utf8');

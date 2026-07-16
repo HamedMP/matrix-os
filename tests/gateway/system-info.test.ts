@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -99,10 +99,143 @@ describe("T135: System info", () => {
         buildTime: "2026-05-06T20:15:00.000Z",
         installedAt: "2026-05-06T20:20:00.000Z",
       });
+      expect(info.version).toBe("v2026.05.06-1");
+      expect(info.channel).toBe("stable");
       expect(info.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     } finally {
       if (previousReleasePath === undefined) delete process.env.MATRIX_RELEASE_FILE;
       else process.env.MATRIX_RELEASE_FILE = previousReleasePath;
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the installed bundle version when release metadata has no version", () => {
+    const homePath = tmpHome();
+    const releasePath = join(homePath, "release.json");
+    const bundleVersionPath = join(homePath, "BUNDLE_VERSION");
+    const previousReleasePath = process.env.MATRIX_RELEASE_FILE;
+    const previousBundleVersionPath = process.env.MATRIX_BUNDLE_VERSION_FILE;
+    process.env.MATRIX_RELEASE_FILE = releasePath;
+    process.env.MATRIX_BUNDLE_VERSION_FILE = bundleVersionPath;
+    writeFileSync(releasePath, "{}");
+    writeFileSync(bundleVersionPath, "main-ea2f91510b\n");
+
+    try {
+      const info = getSystemInfo(homePath);
+      expect(info.version).toBe("main-ea2f91510b");
+      expect(info.release).toBeUndefined();
+    } finally {
+      if (previousReleasePath === undefined) delete process.env.MATRIX_RELEASE_FILE;
+      else process.env.MATRIX_RELEASE_FILE = previousReleasePath;
+      if (previousBundleVersionPath === undefined) delete process.env.MATRIX_BUNDLE_VERSION_FILE;
+      else process.env.MATRIX_BUNDLE_VERSION_FILE = previousBundleVersionPath;
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores oversized release metadata and uses the bounded bundle-version fallback", () => {
+    const homePath = tmpHome();
+    const releasePath = join(homePath, "release.json");
+    const bundleVersionPath = join(homePath, "BUNDLE_VERSION");
+    const previousReleasePath = process.env.MATRIX_RELEASE_FILE;
+    const previousBundleVersionPath = process.env.MATRIX_BUNDLE_VERSION_FILE;
+    process.env.MATRIX_RELEASE_FILE = releasePath;
+    process.env.MATRIX_BUNDLE_VERSION_FILE = bundleVersionPath;
+    writeFileSync(
+      releasePath,
+      JSON.stringify({ version: "v999.0.0", padding: "x".repeat(70 * 1024) }),
+    );
+    writeFileSync(bundleVersionPath, "v2026.07.13-1\n");
+
+    try {
+      expect(getSystemInfo(homePath).version).toBe("v2026.07.13-1");
+    } finally {
+      if (previousReleasePath === undefined) delete process.env.MATRIX_RELEASE_FILE;
+      else process.env.MATRIX_RELEASE_FILE = previousReleasePath;
+      if (previousBundleVersionPath === undefined) delete process.env.MATRIX_BUNDLE_VERSION_FILE;
+      else process.env.MATRIX_BUNDLE_VERSION_FILE = previousBundleVersionPath;
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("caches installed release metadata between nearby system-info requests", () => {
+    const homePath = tmpHome();
+    const releasePath = join(homePath, "release.json");
+    const previousReleasePath = process.env.MATRIX_RELEASE_FILE;
+    process.env.MATRIX_RELEASE_FILE = releasePath;
+    writeFileSync(releasePath, JSON.stringify({ version: "v2026.07.13-1", channel: "dev" }));
+
+    try {
+      expect(getSystemInfo(homePath).version).toBe("v2026.07.13-1");
+      writeFileSync(releasePath, JSON.stringify({ version: "v2026.07.13-2", channel: "canary" }));
+      const cached = getSystemInfo(homePath);
+      expect(cached.version).toBe("v2026.07.13-1");
+      expect(cached.channel).toBe("dev");
+    } finally {
+      if (previousReleasePath === undefined) delete process.env.MATRIX_RELEASE_FILE;
+      else process.env.MATRIX_RELEASE_FILE = previousReleasePath;
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a refreshed release entry at the newest end of the LRU cache", () => {
+    const homePath = tmpHome();
+    const releasePaths = Array.from(
+      { length: 9 },
+      (_, index) => join(homePath, `release-${index}.json`),
+    );
+    const previousReleasePath = process.env.MATRIX_RELEASE_FILE;
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-13T18:00:00.000Z"));
+
+    try {
+      for (const [index, releasePath] of releasePaths.slice(0, 8).entries()) {
+        writeFileSync(releasePath, JSON.stringify({ version: `v2026.07.13-${index}` }));
+        process.env.MATRIX_RELEASE_FILE = releasePath;
+        expect(getSystemInfo(homePath).version).toBe(`v2026.07.13-${index}`);
+      }
+
+      vi.advanceTimersByTime(5_001);
+      writeFileSync(releasePaths[0], JSON.stringify({ version: "v2026.07.13-refreshed" }));
+      process.env.MATRIX_RELEASE_FILE = releasePaths[0];
+      expect(getSystemInfo(homePath).version).toBe("v2026.07.13-refreshed");
+
+      writeFileSync(releasePaths[8], JSON.stringify({ version: "v2026.07.13-newest" }));
+      process.env.MATRIX_RELEASE_FILE = releasePaths[8];
+      expect(getSystemInfo(homePath).version).toBe("v2026.07.13-newest");
+
+      writeFileSync(releasePaths[0], JSON.stringify({ version: "v2026.07.13-after-eviction" }));
+      process.env.MATRIX_RELEASE_FILE = releasePaths[0];
+      expect(getSystemInfo(homePath).version).toBe("v2026.07.13-refreshed");
+    } finally {
+      vi.useRealTimers();
+      if (previousReleasePath === undefined) delete process.env.MATRIX_RELEASE_FILE;
+      else process.env.MATRIX_RELEASE_FILE = previousReleasePath;
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("does not surface unsafe release version or channel strings", () => {
+    const homePath = tmpHome();
+    const releasePath = join(homePath, "release.json");
+    const bundleVersionPath = join(homePath, "BUNDLE_VERSION");
+    const previousReleasePath = process.env.MATRIX_RELEASE_FILE;
+    const previousBundleVersionPath = process.env.MATRIX_BUNDLE_VERSION_FILE;
+    process.env.MATRIX_RELEASE_FILE = releasePath;
+    process.env.MATRIX_BUNDLE_VERSION_FILE = bundleVersionPath;
+    writeFileSync(releasePath, JSON.stringify({ version: "/opt/matrix/private", channel: "../../stable" }));
+    writeFileSync(bundleVersionPath, "v2026.07.13-3\n");
+
+    try {
+      const info = getSystemInfo(homePath);
+      expect(info.version).toBe("v2026.07.13-3");
+      expect(info.channel).toBeUndefined();
+      expect(info.release).toBeUndefined();
+    } finally {
+      if (previousReleasePath === undefined) delete process.env.MATRIX_RELEASE_FILE;
+      else process.env.MATRIX_RELEASE_FILE = previousReleasePath;
+      if (previousBundleVersionPath === undefined) delete process.env.MATRIX_BUNDLE_VERSION_FILE;
+      else process.env.MATRIX_BUNDLE_VERSION_FILE = previousBundleVersionPath;
       rmSync(homePath, { recursive: true, force: true });
     }
   });
@@ -158,6 +291,55 @@ describe("T135: System info", () => {
     const info = getSystemInfo(homePath);
     expect(info.channels.telegram).toBe(true);
     expect(info.channels.discord).toBe(false);
+    rmSync(homePath, { recursive: true, force: true });
+  });
+
+  it("reports the active kernel model and effort from owner config", () => {
+    const homePath = tmpHome();
+    writeFileSync(
+      join(homePath, "system", "config.json"),
+      JSON.stringify({ kernel: { model: "claude-sonnet-4-5", effort: "max" } }),
+    );
+
+    const info = getSystemInfo(homePath);
+
+    expect(info.model).toBe("claude-sonnet-4-5");
+    expect(info.effort).toBe("max");
+    rmSync(homePath, { recursive: true, force: true });
+  });
+
+  it("prefers the gateway model override used by kernel dispatch", () => {
+    const homePath = tmpHome();
+    writeFileSync(
+      join(homePath, "system", "config.json"),
+      JSON.stringify({ kernel: { model: "claude-sonnet-4-5", effort: "max" } }),
+    );
+
+    const info = getSystemInfo(homePath, { model: "claude-haiku-4-5" });
+
+    expect(info.model).toBe("claude-haiku-4-5");
+    expect(info.effort).toBe("max");
+    rmSync(homePath, { recursive: true, force: true });
+  });
+
+  it("reports the kernel defaults when owner config is absent", () => {
+    const homePath = tmpHome();
+
+    const info = getSystemInfo(homePath);
+
+    expect(info.model).toBe("claude-opus-4-6");
+    expect(info.effort).toBe("high");
+    rmSync(homePath, { recursive: true, force: true });
+  });
+
+  it("reports the kernel defaults when owner config is malformed", () => {
+    const homePath = tmpHome();
+    writeFileSync(join(homePath, "system", "config.json"), "{not json");
+
+    const info = getSystemInfo(homePath);
+
+    expect(info.model).toBe("claude-opus-4-6");
+    expect(info.effort).toBe("high");
     rmSync(homePath, { recursive: true, force: true });
   });
 

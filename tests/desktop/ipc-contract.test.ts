@@ -14,6 +14,7 @@ describe("IPC contract", () => {
       "auth:status",
       "auth:sign-out",
       "runtime:create-thread",
+      "runtime:create-turn",
       "runtime:subscribe-thread-events",
       "runtime:unsubscribe-thread-events",
       "runtime:get-notification-preferences",
@@ -29,6 +30,8 @@ describe("IPC contract", () => {
       "runtime:get-review-snapshot",
       "runtime:get-reviews",
       "runtime:get-summary",
+      "runtime:get-project-workspace",
+      "runtime:list-computers",
       "runtime:select",
       "state:get",
       "state:set",
@@ -124,6 +127,44 @@ describe("IPC contract", () => {
         },
       }).success,
     ).toBe(true);
+  });
+
+  it("validates runtime:create-turn success and safe conflict results", () => {
+    const request = {
+      threadId: "thread_desktop_1",
+      message: "Continue with the focused tests.",
+      clientRequestId: "req_desktop_turn_1",
+    };
+    const channel = INVOKE_CHANNELS["runtime:create-turn"];
+
+    expect(channel.request.safeParse(request).success).toBe(true);
+    expect(channel.request.safeParse({ ...request, bearerToken: "secret" }).success).toBe(false);
+    expect(channel.response.safeParse({
+      ok: true,
+      response: {
+        threadId: "thread_desktop_1",
+        turnId: "turn_desktop_1",
+        status: "accepted",
+        acceptedAt: "2026-07-06T00:01:00.000Z",
+      },
+    }).success).toBe(true);
+    expect(channel.response.safeParse({
+      ok: false,
+      error: {
+        code: "thread_busy",
+        safeMessage: "This conversation is already running.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    }).success).toBe(true);
+    expect(channel.response.safeParse({
+      ok: false,
+      error: {
+        code: "provider_error",
+        safeMessage: "/home/matrix/secret",
+        retryable: true,
+      },
+    }).success).toBe(false);
   });
 
   it("validates runtime:get-thread-snapshot requests and rejects credential leakage shapes", () => {
@@ -301,6 +342,32 @@ describe("IPC contract", () => {
 
     expect(schema.safeParse(valid).success).toBe(true);
     expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
+  });
+
+  it("SEC-003 validates project workspace IPC without credential or transcript fields", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:get-project-workspace"].request;
+    const responseSchema = INVOKE_CHANNELS["runtime:get-project-workspace"].response;
+    const valid = {
+      project: {
+        id: "matrix-os",
+        label: "Matrix OS",
+        status: "available",
+        taskCount: 1,
+        threadCount: 1,
+        attentionCount: 0,
+      },
+      tasks: { items: [], hasMore: false, limit: 100 },
+      projectThreads: { items: [], hasMore: false, limit: 100 },
+      taskThreads: { items: [], hasMore: false, limit: 100 },
+      updatedAt: "2026-07-10T12:00:00.000Z",
+    };
+
+    expect(requestSchema.safeParse({ projectId: "matrix-os" }).success).toBe(true);
+    expect(requestSchema.safeParse({ projectId: "../matrix-os" }).success).toBe(false);
+    expect(requestSchema.safeParse({ projectId: "matrix-os", bearerToken: "secret" }).success).toBe(false);
+    expect(responseSchema.safeParse(valid).success).toBe(true);
+    expect(responseSchema.safeParse({ ...valid, transcript: ["private"] }).success).toBe(false);
+    expect(responseSchema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
   });
 
   it("validates notification preference IPC without credential fields", () => {
@@ -638,7 +705,45 @@ describe("IPC contract", () => {
     expect(schema.safeParse({ slot: "primary" }).success).toBe(true);
     expect(schema.safeParse({ slot: "" }).success).toBe(false);
     expect(schema.safeParse({ slot: "x".repeat(65) }).success).toBe(false);
+    expect(schema.safeParse({ slot: "../private" }).success).toBe(false);
+    expect(schema.safeParse({ slot: "review computer" }).success).toBe(false);
     expect(schema.safeParse({}).success).toBe(false);
+  });
+
+  it("returns only bounded safe computer summaries", () => {
+    const request = INVOKE_CHANNELS["runtime:list-computers"].request;
+    const response = INVOKE_CHANNELS["runtime:list-computers"].response;
+    expect(request.safeParse({}).success).toBe(true);
+    expect(request.safeParse({ accessToken: "secret" }).success).toBe(false);
+    expect(response.safeParse({
+      items: [{
+        handle: "operator",
+        runtimeSlot: "primary",
+        label: "Main Computer",
+        availability: "available",
+        kind: "customer",
+        gatewayPath: "/vm/operator",
+        capabilities: [],
+      }],
+      selectedSlot: "primary",
+      hasMore: false,
+      limit: 20,
+    }).success).toBe(true);
+    expect(response.safeParse({
+      items: [{
+        handle: "operator",
+        runtimeSlot: "primary",
+        label: "Main Computer",
+        availability: "available",
+        kind: "customer",
+        gatewayPath: "/vm/operator",
+        capabilities: [],
+        accessToken: "secret",
+      }],
+      selectedSlot: "primary",
+      hasMore: false,
+      limit: 20,
+    }).success).toBe(false);
   });
 
   it("bounds notify payloads", () => {
@@ -678,6 +783,16 @@ describe("IPC contract", () => {
   it("caps state:set values at 64KB and only allows known keys", () => {
     const schema = INVOKE_CHANNELS["state:set"].request;
     expect(schema.safeParse({ key: "appearance", value: { theme: "dark" } }).success).toBe(true);
+    expect(schema.safeParse({
+      key: "codingAgentWorkspace",
+      value: {
+        selectedProjectId: "matrix-os",
+        selectedTaskId: "task_auth",
+        selectedThreadId: "thread_plan",
+        viewMode: "conversation",
+        updatedAt: "2026-07-10T12:00:00.000Z",
+      },
+    }).success).toBe(true);
     expect(schema.safeParse({ key: "nope", value: 1 }).success).toBe(false);
     const big = { blob: "x".repeat(70_000) };
     expect(schema.safeParse({ key: "panelLayouts", value: big }).success).toBe(false);

@@ -10,6 +10,7 @@ const MarkdownPreview = lazy(() => import("./MarkdownPreview"));
 // Stable empty reference: a selector returning a fresh [] every render would
 // fail the Object.is check and loop forever (React #185, CLAUDE.md rule).
 const EMPTY_TABS: string[] = [];
+const EMPTY_DIRTY_PATHS: string[] = [];
 
 const isMarkdown = (path: string): boolean => /\.mdx?$/i.test(path);
 
@@ -19,7 +20,7 @@ export default function EditorPanel({ taskId }: { taskId: string }) {
   const activePath = useEditorTabs((s) => s.activePathByTask[taskId] ?? null);
   const setActive = useEditorTabs((s) => s.setActive);
   const closeTab = useEditorTabs((s) => s.closeTab);
-  const dirtyPaths = useEditorTabs((s) => s.dirtyPathsByTask[taskId] ?? []);
+  const dirtyPaths = useEditorTabs((s) => s.dirtyPathsByTask[taskId] ?? EMPTY_DIRTY_PATHS);
   // Per-path "edit this markdown as code" overrides; markdown previews by default.
   const [editPaths, setEditPaths] = useState<Record<string, boolean>>({});
 

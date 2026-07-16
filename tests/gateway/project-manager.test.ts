@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdir, mkdtemp, readdir, readFile, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -94,6 +94,259 @@ describe("project-manager", () => {
     expect(config.localPath).toBe(join(homePath, "projects", "empty-workspace", "repo"));
   });
 
+  it("returns the same project for an idempotent create request", async () => {
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+    const input = {
+      mode: "scratch" as const,
+      name: "Mobile Workspace",
+      slug: "mobile-workspace",
+      ownerScope: { type: "user" as const, id: "user_123" },
+      clientRequestId: "req_mobile_workspace_1",
+    };
+
+    const first = await manager.createProject(input);
+    const repeated = await manager.createProject(input);
+    const changedPayload = await manager.createProject({ ...input, name: "Different Workspace" });
+
+    expect(first).toMatchObject({ ok: true, status: 201 });
+    expect(repeated).toMatchObject({
+      ok: true,
+      status: 200,
+      project: { slug: "mobile-workspace", createRequestId: "req_mobile_workspace_1" },
+    });
+    expect(changedPayload).toMatchObject({ ok: false, status: 409 });
+  });
+
+  it("treats Git and GitHub as optional capabilities for folder projects", async () => {
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === "git" && args[0] === "rev-parse") {
+        const err = new Error("fatal: not a git repository") as Error & { stderr: string };
+        err.stderr = "fatal: not a git repository (or any of the parent directories): .git";
+        throw err;
+      }
+      return { stdout: "", stderr: "" };
+    });
+    const manager = createProjectManager({ homePath, runCommand, now: () => "2026-04-26T00:00:00.000Z" });
+    const created = await manager.createProject({
+      mode: "scratch",
+      name: "Plain folder",
+      slug: "plain-folder",
+      ownerScope: { type: "user", id: "user_123" },
+    });
+    expect(created.ok).toBe(true);
+
+    await expect(manager.listPullRequests("plain-folder")).resolves.toEqual({
+      ok: true,
+      prs: [],
+      refreshedAt: "2026-04-26T00:00:00.000Z",
+    });
+    await expect(manager.listBranches("plain-folder")).resolves.toEqual({
+      ok: true,
+      branches: [],
+      refreshedAt: "2026-04-26T00:00:00.000Z",
+    });
+    expect(runCommand).not.toHaveBeenCalledWith("git", expect.arrayContaining(["branch"]), expect.any(Object));
+  });
+
+  it("lists branches for a folder project nested inside a repository", async () => {
+    const repoRoot = join(homePath, "workspaces", "monorepo");
+    await mkdir(join(repoRoot, "packages", "app"), { recursive: true });
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === "git" && args[0] === "rev-parse") return { stdout: `${repoRoot}\n`, stderr: "" };
+      if (command === "git" && args[0] === "branch") return { stdout: "main\nfeature\n", stderr: "" };
+      return { stdout: "", stderr: "" };
+    });
+    const manager = createProjectManager({ homePath, runCommand, now: () => "2026-04-26T00:00:00.000Z" });
+    await manager.createProject({
+      mode: "folder",
+      name: "Monorepo app",
+      slug: "monorepo-app",
+      path: "workspaces/monorepo/packages/app",
+    });
+
+    await expect(manager.listBranches("monorepo-app")).resolves.toMatchObject({
+      ok: true,
+      branches: [{ name: "main" }, { name: "feature" }],
+    });
+  });
+
+  it("does not show home-versioning branches for plain folders", async () => {
+    await mkdir(join(homePath, "workspaces", "notes"), { recursive: true });
+    // The Matrix home itself is a versioned Git repo: a folder that resolves
+    // to it as its repository toplevel has no project branches to show.
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === "git" && args[0] === "rev-parse") return { stdout: `${homePath}\n`, stderr: "" };
+      return { stdout: "main\n", stderr: "" };
+    });
+    const manager = createProjectManager({ homePath, runCommand, now: () => "2026-04-26T00:00:00.000Z" });
+    await manager.createProject({
+      mode: "folder",
+      name: "Notes",
+      slug: "notes-folder",
+      path: "workspaces/notes",
+    });
+
+    await expect(manager.listBranches("notes-folder")).resolves.toEqual({
+      ok: true,
+      branches: [],
+      refreshedAt: "2026-04-26T00:00:00.000Z",
+    });
+    expect(runCommand).not.toHaveBeenCalledWith("git", expect.arrayContaining(["branch"]), expect.any(Object));
+  });
+
+  it("connects a project to an existing owner folder without moving or deleting it", async () => {
+    const existing = join(homePath, "workspaces", "customer-app");
+    await mkdir(existing, { recursive: true });
+    await writeFile(join(existing, "README.md"), "owner data");
+    const manager = createProjectManager({ homePath, runCommand: vi.fn(), now: () => "2026-04-26T00:00:00.000Z" });
+
+    const created = await manager.createProject({
+      mode: "folder",
+      name: "Customer app",
+      slug: "customer-app",
+      path: "workspaces/customer-app",
+      ownerScope: { type: "user", id: "user_123" },
+    });
+
+    // The stored localPath is the fully resolved path so later symlink
+    // repoints cannot bypass the create-time validation.
+    expect(created).toMatchObject({
+      ok: true,
+      project: { localPath: await realpath(existing) },
+    });
+    if (created.ok) expect(created.project.github).toBeUndefined();
+    await expect(manager.deleteProject("customer-app")).resolves.toEqual({ ok: true });
+    await expect(readFile(join(existing, "README.md"), "utf-8")).resolves.toBe("owner data");
+  });
+
+  it("rejects project folders outside the Matrix home", async () => {
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+    await expect(manager.createProject({
+      mode: "folder",
+      name: "Outside",
+      path: "../../outside",
+    })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
+  });
+
+  it("rejects the home root and protected OS subtrees as folder projects", async () => {
+    await mkdir(join(homePath, "system", "wallpapers"), { recursive: true });
+    await mkdir(join(homePath, "agents", "custom"), { recursive: true });
+    await mkdir(join(homePath, ".trash"), { recursive: true });
+    await mkdir(join(homePath, ".hermes"), { recursive: true });
+    await mkdir(join(homePath, ".claude"), { recursive: true });
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    for (const path of [".", "system", "system/wallpapers", "agents", "agents/custom", ".trash", ".hermes", ".claude"]) {
+      await expect(manager.createProject({
+        mode: "folder",
+        name: "Protected",
+        slug: `protected-${path.replace(/[^a-z0-9]+/g, "-")}`,
+        path,
+      })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
+    }
+  });
+
+  it("rejects symlinked aliases of protected subtrees as folder projects", async () => {
+    await mkdir(join(homePath, "system", "wallpapers"), { recursive: true });
+    await symlink(join(homePath, "system"), join(homePath, "alias"));
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    await expect(manager.createProject({
+      mode: "folder",
+      name: "Alias",
+      slug: "alias-project",
+      path: "alias/wallpapers",
+    })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
+  });
+
+  it("rejects the Matrix project registry as a folder project root", async () => {
+    await mkdir(join(homePath, "projects"), { recursive: true });
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    await expect(manager.createProject({
+      mode: "folder",
+      name: "Registry",
+      slug: "registry",
+      path: "projects",
+    })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
+  });
+
+  it("rejects other managed project roots as folder projects", async () => {
+    await mkdir(join(homePath, "projects", "other"), { recursive: true });
+    await writeFile(join(homePath, "projects", "other", "config.json"), "{}");
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    await expect(manager.createProject({
+      mode: "folder",
+      name: "Other copy",
+      slug: "other-copy",
+      path: "projects/other",
+    })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
+
+    // A repo checkout nested inside a managed project stays connectable: it
+    // contains no registry metadata.
+    await mkdir(join(homePath, "projects", "other", "repo", "src"), { recursive: true });
+    await expect(manager.createProject({
+      mode: "folder",
+      name: "Other repo",
+      slug: "other-repo",
+      path: "projects/other/repo",
+    })).resolves.toMatchObject({ ok: true, status: 201 });
+    await expect(manager.createProject({
+      mode: "folder",
+      name: "Other repo src",
+      slug: "other-repo-src",
+      path: "projects/other/repo/src",
+    })).resolves.toMatchObject({ ok: true, status: 201 });
+  });
+
+  it("rejects ancestors of denied subtrees while allowing sibling folders", async () => {
+    await mkdir(join(homePath, "data", "browser-profiles"), { recursive: true });
+    await mkdir(join(homePath, "data", "exports"), { recursive: true });
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    // data contains data/browser-profiles (persistent browser login state).
+    await expect(manager.createProject({
+      mode: "folder",
+      name: "Data",
+      slug: "data-root",
+      path: "data",
+    })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
+
+    await expect(manager.createProject({
+      mode: "folder",
+      name: "Exports",
+      slug: "data-exports",
+      path: "data/exports",
+    })).resolves.toMatchObject({ ok: true, status: 201 });
+  });
+
+  it("rejects managed worktree and metadata areas as folder project roots", async () => {
+    await mkdir(join(homePath, "projects", "other", "worktrees", "wt-1"), { recursive: true });
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    for (const path of ["projects/other/worktrees", "projects/other/worktrees/wt-1"]) {
+      await expect(manager.createProject({
+        mode: "folder",
+        name: "Worktree",
+        slug: `worktree-${path.split("/").length}`,
+        path,
+      })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
+    }
+  });
+
+  it("requires existing folder project paths to be directories", async () => {
+    await writeFile(join(homePath, "notes.txt"), "owner notes");
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+
+    await expect(manager.createProject({
+      mode: "folder",
+      name: "Notes",
+      slug: "notes",
+      path: "notes.txt",
+    })).resolves.toMatchObject({ ok: false, status: 400, error: { code: "invalid_project_path" } });
+  });
+
   it("rejects slug conflicts before cloning", async () => {
     await mkdir(join(homePath, "projects", "repo"), { recursive: true });
     const runCommand = vi.fn();
@@ -144,6 +397,9 @@ describe("project-manager", () => {
     const runCommand = vi.fn(async (command: string, args: string[]) => {
       if (command === "gh" && args[0] === "pr") {
         return { stdout: JSON.stringify([{ number: 7, title: "Fix", author: { login: "octo" }, headRefName: "fix", baseRefName: "main", state: "OPEN" }]), stderr: "" };
+      }
+      if (command === "git" && args[0] === "rev-parse") {
+        return { stdout: `${join(homePath, "projects", "repo", "repo")}\n`, stderr: "" };
       }
       if (command === "git" && args[0] === "branch") {
         return { stdout: "main\nfeature\n", stderr: "" };

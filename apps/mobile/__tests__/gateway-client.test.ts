@@ -175,6 +175,134 @@ describe("GatewayClient", () => {
     expect(client.httpUrl).toBe("http://localhost:4000");
   });
 
+  it("keeps path joins valid for a routed computer URL with a runtime query", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse({ ok: true }));
+    const client = new GatewayClient("https://app.matrix-os.com/vm/pr-919?runtime=pr-919");
+
+    expect(client.httpUrl).toBe("https://app.matrix-os.com/vm/pr-919");
+
+    await client.healthCheck();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/vm/pr-919/health?runtime=pr-919",
+      expect.anything(),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("keeps primary computer URLs without a runtime query untouched", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse({ ok: true }));
+    const client = new GatewayClient("https://app.matrix-os.com/vm/neo");
+
+    expect(client.httpUrl).toBe("https://app.matrix-os.com/vm/neo");
+
+    await client.healthCheck();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/vm/neo/health",
+      expect.anything(),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("routes websockets for hosted computers through the canonical platform origin", () => {
+    const routed = new GatewayClient("https://app.matrix-os.com/vm/pr-919?runtime=pr-919");
+    expect(routed.wsUrl).toBe("wss://app.matrix-os.com/ws?runtime=pr-919");
+    expect(routed.terminalWsUrl).toBe("wss://app.matrix-os.com/ws/terminal/session?runtime=pr-919");
+
+    const primary = new GatewayClient("https://app.matrix-os.com/vm/neo");
+    expect(primary.wsUrl).toBe("wss://app.matrix-os.com/ws");
+
+    const selfHosted = new GatewayClient("https://matrix.example.test");
+    expect(selfHosted.wsUrl).toBe("wss://matrix.example.test/ws");
+  });
+
+  it("parses conversation lists and tolerates invalid payloads", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse([
+      { id: "conv-1", preview: "Fix the tests", messageCount: 4, createdAt: 1, updatedAt: 2 },
+    ]));
+    const client = new GatewayClient("http://localhost:4000");
+
+    await expect(client.getConversations()).resolves.toEqual([
+      expect.objectContaining({ id: "conv-1", preview: "Fix the tests", messageCount: 4 }),
+    ]);
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: { code: "misconfigured" } }));
+    await expect(client.getConversations()).resolves.toEqual([]);
+
+    fetchMock.mockRejectedValueOnce(new Error("ECONNREFUSED /var/secret"));
+    await expect(client.getConversations()).resolves.toEqual([]);
+
+    fetchMock.mockRestore();
+  });
+
+  it("truncates oversized conversation lists to the first 50 entries", async () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({
+      id: `conv-${i}`,
+      preview: `Conversation ${i}`,
+      messageCount: i,
+      createdAt: i,
+      updatedAt: i,
+    }));
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(many));
+    const client = new GatewayClient("http://localhost:4000");
+
+    const result = await client.getConversations();
+    expect(result).toHaveLength(50);
+    expect(result[0]).toEqual(expect.objectContaining({ id: "conv-0" }));
+    expect(result[49]).toEqual(expect.objectContaining({ id: "conv-49" }));
+
+    fetchMock.mockRestore();
+  });
+
+  it("drops malformed conversation entries but keeps the valid ones", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse([
+      { id: "conv-1", preview: "ok", messageCount: 1, createdAt: 1, updatedAt: 2 },
+      { id: "", preview: "empty id", messageCount: 1, createdAt: 1, updatedAt: 2 },
+      { preview: "missing id", messageCount: 1, createdAt: 1, updatedAt: 2 },
+      { id: "conv-2", preview: "ok too", messageCount: 2, createdAt: 3, updatedAt: 4 },
+    ]));
+    const client = new GatewayClient("http://localhost:4000");
+
+    await expect(client.getConversations()).resolves.toEqual([
+      expect.objectContaining({ id: "conv-1" }),
+      expect.objectContaining({ id: "conv-2" }),
+    ]);
+
+    fetchMock.mockRestore();
+  });
+
+  it("creates a conversation and returns its id", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({ id: "conv-new" }));
+    const client = new GatewayClient("http://localhost:4000");
+
+    await expect(client.createConversation()).resolves.toBe("conv-new");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/conversations",
+      expect.objectContaining({ method: "POST" }),
+    );
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ nope: true }));
+    await expect(client.createConversation()).resolves.toBeNull();
+
+    fetchMock.mockRestore();
+  });
+
+  it("fetches the websocket token from the platform origin for hosted computers", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(
+      jsonResponse({ token: "jwt-token", expiresAt: Date.now() + 60_000 }),
+    );
+    const client = new GatewayClient("https://app.matrix-os.com/vm/pr-919?runtime=pr-919");
+
+    await client.getWsToken();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/api/auth/ws-token?runtime=pr-919",
+      expect.anything(),
+    );
+
+    fetchMock.mockRestore();
+  });
+
   it("allows only local self-hosted token transport over HTTP and keeps Matrix OS Cloud HTTPS-only", () => {
     expect(() => new GatewayClient("https://app.matrix-os.com", "token")).not.toThrow();
     expect(() => new GatewayClient("http://localhost:4000", "token")).not.toThrow();
@@ -491,6 +619,91 @@ describe("GatewayClient", () => {
       signal: expect.any(Object),
     }));
 
+    fetchMock.mockRestore();
+  });
+
+  it("creates scratch and imported projects through the canonical project route", async () => {
+    const fetchMock = jest.spyOn(global, "fetch")
+      .mockResolvedValueOnce(jsonResponse({
+        project: {
+          id: "mobile-scratch",
+          label: "Mobile Scratch",
+          status: "available",
+          taskCount: 0,
+          threadCount: 0,
+          attentionCount: 0,
+        },
+        existing: false,
+      }, { status: 201 }))
+      .mockResolvedValueOnce(jsonResponse({
+        project: {
+          id: "matrix-mobile",
+          label: "matrix-mobile",
+          status: "available",
+          taskCount: 0,
+          threadCount: 0,
+          attentionCount: 0,
+        },
+        existing: true,
+      }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.createProject({
+      mode: "scratch",
+      name: "Mobile Scratch",
+      clientRequestId: "req_mobile_project_scratch",
+    })).resolves.toEqual({
+      ok: true,
+      project: expect.objectContaining({ id: "mobile-scratch" }),
+      existing: false,
+    });
+    await expect(client.createProject({
+      mode: "github",
+      repositoryUrl: "https://github.com/acme/matrix-mobile",
+      clientRequestId: "req_mobile_project_import",
+    })).resolves.toEqual({
+      ok: true,
+      project: expect.objectContaining({ id: "matrix-mobile" }),
+      existing: true,
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "http://localhost:4000/api/coding-agents/projects", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        mode: "scratch",
+        name: "Mobile Scratch",
+        clientRequestId: "req_mobile_project_scratch",
+      }),
+      signal: expect.any(Object),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "http://localhost:4000/api/coding-agents/projects", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        mode: "github",
+        repositoryUrl: "https://github.com/acme/matrix-mobile",
+        clientRequestId: "req_mobile_project_import",
+      }),
+      signal: expect.any(Object),
+    }));
+
+    fetchMock.mockRestore();
+  });
+
+  it("fails closed when project creation does not return a valid canonical slug", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      project: { slug: "../../unsafe" },
+    }, { status: 201 }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+
+    await expect(client.createProject({
+      mode: "scratch",
+      name: "Mobile Scratch",
+      clientRequestId: "req_mobile_project_invalid",
+    })).resolves.toEqual({
+      ok: false,
+      error: "Project could not be created. Try again.",
+    });
     fetchMock.mockRestore();
   });
 
@@ -1007,6 +1220,35 @@ describe("GatewayClient", () => {
       }),
     );
 
+    fetchMock.mockRestore();
+  });
+
+  it("browses primary project files without serializing an absent worktree", async () => {
+    const fetchMock = jest.spyOn(global, "fetch")
+      .mockResolvedValueOnce(jsonResponse(fileReadPayload()))
+      .mockResolvedValueOnce(jsonResponse(fileBrowsePayload()))
+      .mockResolvedValueOnce(jsonResponse(fileSearchPayload()));
+    const client = new GatewayClient("http://localhost:4000", "token");
+
+    await expect(client.getCodingAgentFileContent({
+      projectId: "matrix-os",
+      path: "README.md",
+    })).resolves.toMatchObject({ ok: true });
+    await expect(client.browseCodingAgentFiles({
+      projectId: "matrix-os",
+      limit: 20,
+    })).resolves.toMatchObject({ ok: true });
+    await expect(client.searchCodingAgentFiles({
+      projectId: "matrix-os",
+      query: "readme",
+      limit: 20,
+    })).resolves.toMatchObject({ ok: true });
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "http://localhost:4000/api/coding-agents/files/read?projectId=matrix-os&path=README.md",
+      "http://localhost:4000/api/coding-agents/files/browse?projectId=matrix-os&limit=20",
+      "http://localhost:4000/api/coding-agents/files/search?projectId=matrix-os&query=readme&limit=20",
+    ]);
     fetchMock.mockRestore();
   });
 
@@ -1536,6 +1778,7 @@ describe("GatewayClient", () => {
 
   it("refreshes expired websocket tokens before reconnecting", async () => {
     jest.useFakeTimers();
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     const OriginalWebSocket = global.WebSocket;
     const sockets: Array<{
       readyState: number;
@@ -1573,9 +1816,18 @@ describe("GatewayClient", () => {
     const client = new GatewayClient("https://app.matrix-os.com", "clerk-token");
     client.setWebSocketToken("expired-ws-token", Date.now() - 1000);
     client.connect();
-    sockets[0]?.onclose?.({ code: 1006, reason: "" });
+    sockets[0]?.onclose?.({ code: 1006, reason: "/home/matrix/home token=ghp_privatevalue1234567890" });
 
     await jest.runOnlyPendingTimersAsync();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[mobile] websocket closed",
+      expect.objectContaining({
+        name: "Unknown",
+        message: expect.stringContaining("[path]"),
+      }),
+    );
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toMatch(/\/home\/matrix|ghp_privatevalue/i);
 
     expect(fetchMock).toHaveBeenCalledWith("https://app.matrix-os.com/api/auth/ws-token", expect.objectContaining({
       headers: expect.objectContaining({ Authorization: "Bearer clerk-token" }),
@@ -1587,6 +1839,7 @@ describe("GatewayClient", () => {
     );
 
     fetchMock.mockRestore();
+    warnSpy.mockRestore();
     global.WebSocket = OriginalWebSocket;
     jest.useRealTimers();
   });
@@ -1610,13 +1863,44 @@ describe("GatewayClient", () => {
   it("returns a safe fallback when app inventory fetch fails", async () => {
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     const fetchMock = jest.spyOn(global, "fetch").mockRejectedValueOnce(
-      new Error("network unavailable"),
+      new Error("network unavailable /var/run/provider.sock token=sk_live_private"),
     );
 
     const client = new GatewayClient("http://localhost:4000");
     await expect(client.getApps()).resolves.toEqual([]);
 
-    expect(warnSpy).toHaveBeenCalledWith("[mobile] /api/apps unavailable", "network unavailable");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[mobile] /api/apps unavailable",
+      expect.objectContaining({
+        name: "Error",
+        message: expect.stringContaining("[path]"),
+      }),
+    );
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toMatch(/\/var\/run|sk_live_private/i);
+
+    fetchMock.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it("does not log raw app inventory error bodies", async () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      text: jest.fn().mockResolvedValueOnce("raw /home/matrix/home token=ghp_privatevalue1234567890"),
+    } as unknown as Response);
+
+    const client = new GatewayClient("http://localhost:4000");
+    await expect(client.getApps()).resolves.toEqual([]);
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[mobile] /api/apps unavailable",
+      expect.objectContaining({
+        name: "Unknown",
+        message: "status 503",
+      }),
+    );
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toMatch(/\/home\/matrix|ghp_privatevalue|raw/i);
 
     fetchMock.mockRestore();
     warnSpy.mockRestore();
@@ -1634,7 +1918,13 @@ describe("GatewayClient", () => {
       error: "Gateway unavailable",
     });
 
-    expect(warnSpy).toHaveBeenCalledWith("[mobile] gateway health check unavailable");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[mobile] gateway health check unavailable",
+      expect.objectContaining({
+        name: "Unknown",
+        message: "unavailable",
+      }),
+    );
 
     fetchMock.mockRestore();
     warnSpy.mockRestore();

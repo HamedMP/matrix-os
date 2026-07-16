@@ -2,6 +2,9 @@ import {
   AgentThreadSnapshotSchema,
   CodingAgentNotificationPreferencesSchema,
   CodingAgentNotificationPreferencesUpdateSchema,
+  CreateAgentTurnErrorSchema,
+  CreateAgentTurnRequestSchema,
+  CreateAgentTurnResponseSchema,
   FileBrowseRequestSchema,
   FileBrowseResponseSchema,
   FileReadRequestSchema,
@@ -10,6 +13,7 @@ import {
   FileSearchResponseSchema,
   FileWriteRequestSchema,
   FileWriteResponseSchema,
+  ProjectAgentWorkspaceSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
@@ -21,6 +25,9 @@ import {
   type CodingAgentNotificationPreferences,
   type CodingAgentNotificationPreferencesUpdate,
   type CreateAgentThreadRequest,
+  type CreateAgentTurnError,
+  type CreateAgentTurnRequest,
+  type CreateAgentTurnResponse,
   type FileBrowseRequest,
   type FileBrowseResponse,
   type FileReadRequest,
@@ -29,6 +36,7 @@ import {
   type FileSearchResponse,
   type FileWriteRequest,
   type FileWriteResponse,
+  type ProjectAgentWorkspace,
   type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
@@ -37,12 +45,18 @@ import {
   type SourceControlPrepareCommitRequest,
   type SourceControlPrepareCommitResponse,
   type UserInputAnswerRequest,
+  ThreadIdSchema,
   boundedListSchema,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { AuthService } from "../auth/auth-service";
+import {
+  CodingAgentProjectWorkspaceRequestSchema,
+  type CodingAgentProjectWorkspaceRequest,
+} from "../../shared/coding-agent-project-workspace";
 
 const RUNTIME_SUMMARY_TIMEOUT_MS = 10_000;
+const PROJECT_WORKSPACE_TIMEOUT_MS = 10_000;
 const NOTIFICATION_PREFERENCES_TIMEOUT_MS = 10_000;
 const REVIEW_SUMMARY_TIMEOUT_MS = 10_000;
 const REVIEW_SNAPSHOT_TIMEOUT_MS = 10_000;
@@ -52,6 +66,7 @@ const FILE_READ_TIMEOUT_MS = 10_000;
 const FILE_WRITE_TIMEOUT_MS = 10_000;
 const SOURCE_CONTROL_TIMEOUT_MS = 10_000;
 const THREAD_CREATE_TIMEOUT_MS = 15_000;
+const THREAD_TURN_TIMEOUT_MS = 15_000;
 const THREAD_SNAPSHOT_TIMEOUT_MS = 10_000;
 const APPROVAL_DECISION_TIMEOUT_MS = 10_000;
 const INPUT_ANSWER_TIMEOUT_MS = 10_000;
@@ -63,6 +78,38 @@ type ReviewSummaryList = z.infer<typeof ReviewSummaryListSchema>;
 const NotificationPreferencesResponseSchema = z.object({
   preferences: CodingAgentNotificationPreferencesSchema,
 }).strict();
+const CreateAgentTurnErrorEnvelopeSchema = z.object({
+  error: CreateAgentTurnErrorSchema,
+}).strict();
+
+export type CodingAgentCreateTurnResult =
+  | { ok: true; response: CreateAgentTurnResponse }
+  | { ok: false; error: CreateAgentTurnError };
+
+function localTurnError(code: CreateAgentTurnError["code"]): CreateAgentTurnError {
+  if (code === "thread_busy") {
+    return CreateAgentTurnErrorSchema.parse({
+      code,
+      safeMessage: "This conversation is already running. Wait for it to finish and try again.",
+      retryable: true,
+      recoveryActions: ["retry"],
+    });
+  }
+  if (code === "thread_not_found") {
+    return CreateAgentTurnErrorSchema.parse({
+      code,
+      safeMessage: "Conversation is unavailable. Refresh and try again.",
+      retryable: true,
+      recoveryActions: ["retry"],
+    });
+  }
+  return CreateAgentTurnErrorSchema.parse({
+    code,
+    safeMessage: "This conversation cannot accept a message right now. Refresh and try again.",
+    retryable: true,
+    recoveryActions: ["retry"],
+  });
+}
 
 function buildSummaryUrl(origin: string, runtimeSlot: string): string {
   const url = new URL("/api/coding-agents/summary", origin);
@@ -108,6 +155,45 @@ export async function fetchCodingAgentRuntimeSummary(
   const parsed = RuntimeSummarySchema.safeParse(body);
   if (!parsed.success) {
     throw new Error("runtime summary unavailable");
+  }
+  return parsed.data;
+}
+
+export async function fetchCodingAgentProjectWorkspace(
+  auth: AuthService,
+  request: CodingAgentProjectWorkspaceRequest,
+  fetchFn: FetchFn = fetch,
+): Promise<ProjectAgentWorkspace> {
+  const token = auth.getToken();
+  const parsedRequest = CodingAgentProjectWorkspaceRequestSchema.safeParse(request);
+  if (!token || !parsedRequest.success) {
+    throw new Error("project workspace unavailable");
+  }
+
+  const { projectId, ...query } = parsedRequest.data;
+  const url = buildRuntimeUrl(
+    auth,
+    `/api/coding-agents/projects/${encodeURIComponent(projectId)}/workspace`,
+  );
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined) url.searchParams.set(key, String(value));
+  }
+  const res = await fetchFn(url.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+    signal: AbortSignal.timeout(PROJECT_WORKSPACE_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error("project workspace unavailable");
+  }
+
+  const body = await res.json();
+  const parsed = ProjectAgentWorkspaceSchema.safeParse(body);
+  if (!parsed.success || parsed.data.project.id !== projectId) {
+    throw new Error("project workspace unavailable");
   }
   return parsed.data;
 }
@@ -211,6 +297,49 @@ export async function createCodingAgentThread(
     throw new Error("agent thread unavailable");
   }
   return parsed.data;
+}
+
+export async function createCodingAgentTurn(
+  auth: AuthService,
+  request: CreateAgentTurnRequest & { threadId: string },
+  fetchFn: FetchFn = fetch,
+): Promise<CodingAgentCreateTurnResult> {
+  const token = auth.getToken();
+  const { threadId, ...turnRequest } = request;
+  const parsedThreadId = ThreadIdSchema.safeParse(threadId);
+  const parsedRequest = CreateAgentTurnRequestSchema.safeParse(turnRequest);
+  if (!token || !parsedThreadId.success || !parsedRequest.success) {
+    throw new Error("conversation turn unavailable");
+  }
+
+  const url = buildRuntimeUrl(
+    auth,
+    `/api/coding-agents/threads/${encodeURIComponent(parsedThreadId.data)}/turns`,
+  );
+  const res = await fetchFn(url.toString(), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(parsedRequest.data),
+    signal: AbortSignal.timeout(THREAD_TURN_TIMEOUT_MS),
+  });
+  const body = await res.json();
+  if (res.status === 200 || res.status === 202) {
+    const parsed = CreateAgentTurnResponseSchema.safeParse(body);
+    if (!parsed.success || parsed.data.threadId !== parsedThreadId.data) {
+      throw new Error("conversation turn unavailable");
+    }
+    return { ok: true, response: parsed.data };
+  }
+  if (res.status === 404 || res.status === 409) {
+    const parsed = CreateAgentTurnErrorEnvelopeSchema.safeParse(body);
+    if (!parsed.success) throw new Error("conversation turn unavailable");
+    return { ok: false, error: localTurnError(parsed.data.error.code) };
+  }
+  throw new Error("conversation turn unavailable");
 }
 
 export async function fetchCodingAgentThreadSnapshot(
@@ -398,7 +527,9 @@ export async function fetchCodingAgentFileBrowse(
 
   const url = buildRuntimeUrl(auth, "/api/coding-agents/files/browse");
   url.searchParams.set("projectId", parsedRequest.data.projectId);
-  url.searchParams.set("worktreeId", parsedRequest.data.worktreeId);
+  if (parsedRequest.data.worktreeId) {
+    url.searchParams.set("worktreeId", parsedRequest.data.worktreeId);
+  }
   if (parsedRequest.data.path) {
     url.searchParams.set("path", parsedRequest.data.path);
   }
@@ -440,7 +571,9 @@ export async function fetchCodingAgentFileSearch(
 
   const url = buildRuntimeUrl(auth, "/api/coding-agents/files/search");
   url.searchParams.set("projectId", parsedRequest.data.projectId);
-  url.searchParams.set("worktreeId", parsedRequest.data.worktreeId);
+  if (parsedRequest.data.worktreeId) {
+    url.searchParams.set("worktreeId", parsedRequest.data.worktreeId);
+  }
   if (parsedRequest.data.path) {
     url.searchParams.set("path", parsedRequest.data.path);
   }
@@ -483,7 +616,9 @@ export async function fetchCodingAgentFileContent(
 
   const url = buildRuntimeUrl(auth, "/api/coding-agents/files/read");
   url.searchParams.set("projectId", parsedRequest.data.projectId);
-  url.searchParams.set("worktreeId", parsedRequest.data.worktreeId);
+  if (parsedRequest.data.worktreeId) {
+    url.searchParams.set("worktreeId", parsedRequest.data.worktreeId);
+  }
   url.searchParams.set("path", parsedRequest.data.path);
   const res = await fetchFn(url.toString(), {
     method: "GET",

@@ -254,7 +254,7 @@ describe("agent-session-manager", () => {
     expect(started.ok).toBe(true);
 
     await expect(manager.sendInput("sess_abc123", "pnpm test\n")).resolves.toMatchObject({ ok: true });
-    expect(inputWriter).toHaveBeenCalledWith("sess_abc123", "pnpm test\n");
+    expect(inputWriter).toHaveBeenCalledWith("sess_abc123", "pnpm test\n", undefined);
 
     await expect(manager.killSession("sess_abc123")).resolves.toMatchObject({
       ok: true,
@@ -357,6 +357,19 @@ describe("agent-session-manager", () => {
       checked: 1,
       degraded: 1,
       releasedLeases: 1,
+      stoppedSessions: [
+        expect.objectContaining({
+          id: "sess_abc123",
+          kind: "agent",
+          ownerId: "user_a",
+          runtime: expect.objectContaining({
+            status: "degraded",
+            fallbackReason: "zellij_unavailable",
+          }),
+          terminalSessionId: "term_sess_abc123",
+          writeMode: "closed",
+        }),
+      ],
     });
     await expect(manager.getSession("sess_abc123")).resolves.toMatchObject({
       ok: true,

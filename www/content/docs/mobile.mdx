@@ -7,7 +7,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 import { Card, Cards } from 'fumadocs-ui/components/card';
 import { Step, Steps } from 'fumadocs-ui/components/steps';
 
-The Matrix OS mobile app gives you a terminal and session browser that connect directly to your Matrix Matrix computer. You can run commands, pick up sessions you left open on the web shell or CLI, and switch between them — all from your phone.
+The Matrix OS mobile app gives you a terminal, coding-agent cockpit, and app launcher that connect directly to your Matrix computer. You can run commands, check agent work that needs attention, pick up sessions you left open on the web shell or CLI, and switch between them — all from your phone.
 
 <Callout type="info" title="Early access">
   The native mobile app is in active development. The terminal and session browser are functional. Some features available in the web shell and CLI are not yet exposed in the native app.
@@ -15,9 +15,20 @@ The Matrix OS mobile app gives you a terminal and session browser that connect d
 
 ## Overview
 
-The app uses four tabs: Chat, Apps, Terminal, and Settings. The Apps launcher is the home screen — it shows your installed Matrix apps. The Terminal tab connects to your Matrix computer and gives you a full terminal.
+The app uses three primary tabs: Apps, Terminal, and Settings. The Apps launcher is the home screen — it shows your installed Matrix apps, including the coding-agent workspace when that capability is enabled. The Terminal tab connects to your Matrix computer and gives you a full terminal.
 
 Because sessions live on your Matrix computer, not on your phone, everything you start or leave running in the terminal is also visible from the web shell and the CLI. No SSH keys or separate credentials are needed.
+
+## Coding agents on mobile
+
+Open **Agents** from the Apps launcher to see the work running on your Matrix computer. The first screen is organized for quick phone check-ins:
+
+- **Needs attention** shows approval requests, questions, and failed runs first.
+- **Working** shows queued, starting, and running agent threads with live activity indicators.
+- Each thread appears once even when the gateway reports it in both active and attention summaries.
+- **What do you want Matrix to build?** opens the new-run composer without making you navigate through provider or notification settings first.
+
+Provider status, notification preferences, terminals, previews, and review tools remain available lower in the workspace. Open a thread to answer its current request, scan the safe activity timeline, or reconnect to its bound terminal.
 
 ## Terminal on mobile
 

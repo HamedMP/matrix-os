@@ -1,5 +1,6 @@
 import {
   FileCode2,
+  FolderTree,
   Home,
   Kanban,
   LayoutGrid,
@@ -21,6 +22,7 @@ const TAB_ICON: Record<TabKind, LucideIcon> = {
   terminal: SquareTerminal,
   terminals: SquareTerminal,
   agents: MessageSquare,
+  files: FolderTree,
   thread: MessageSquare,
   apps: LayoutGrid,
   app: LayoutGrid,

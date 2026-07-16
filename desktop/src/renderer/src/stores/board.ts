@@ -10,6 +10,7 @@ import { create } from "zustand";
 import { z } from "zod/v4";
 import { AppError, type AppErrorCategory } from "../../../shared/app-error";
 import type { ApiClient } from "../lib/api";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
 
 export type CardStatus = "todo" | "running" | "waiting" | "blocked" | "complete" | "archived";
 export type CardPriority = "low" | "normal" | "high" | "urgent";
@@ -34,6 +35,8 @@ export interface Card {
 export interface Project {
   slug: string;
   name: string;
+  localPath?: string;
+  githubBacked?: boolean;
 }
 
 export const BOARD_COLUMNS: readonly CardStatus[] = [
@@ -66,7 +69,21 @@ const WireTaskSchema = z.object({
 const WireProjectSchema = z.object({
   slug: z.string().min(1),
   name: z.string().min(1),
+  localPath: z.string().min(1).optional(),
+  github: z.object({ owner: z.string(), repo: z.string() }).passthrough().optional(),
 });
+
+function toProject(raw: unknown): Project | null {
+  const parsed = WireProjectSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  return {
+    slug: parsed.data.slug,
+    name: parsed.data.name,
+    ...(parsed.data.localPath
+      ? { localPath: parsed.data.localPath, githubBacked: parsed.data.github !== undefined }
+      : {}),
+  };
+}
 
 function toCard(raw: unknown): Card | null {
   const parsed = WireTaskSchema.safeParse(raw);
@@ -195,7 +212,12 @@ interface BoardState {
   refreshing: boolean;
   error: AppErrorCategory | null;
   loadProjects(api: ApiClient): Promise<boolean>;
-  createProject(api: ApiClient, input: { name: string; mode: "scratch" | "github"; url?: string }): Promise<Project | null>;
+  createProject(api: ApiClient, input: {
+    name: string;
+    mode: "scratch" | "github" | "folder";
+    url?: string;
+    path?: string;
+  }): Promise<Project | null>;
   selectProject(api: ApiClient, slug: string): Promise<void>;
   refreshTasks(api: ApiClient, slug: string): Promise<void>;
   createTask(api: ApiClient, slug: string, input: CreateTaskInput): Promise<Card | null>;
@@ -231,12 +253,15 @@ export const useBoard = create<BoardState>()((set, get) => {
   }
 
   async function refreshInto(api: ApiClient, slug: string): Promise<void> {
+    const runtimeGeneration = captureRuntimeGeneration();
     set({ refreshing: true });
     try {
       const cards = await fetchAllTasks(api, slug);
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
       replaceProjectCards(slug, cards);
       set({ refreshing: false, error: null });
     } catch (err: unknown) {
+      if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
       console.error("[board] Failed to load tasks:", err);
       set({ refreshing: false, error: categoryOf(err) });
     }
@@ -254,14 +279,17 @@ export const useBoard = create<BoardState>()((set, get) => {
       set({ error: "server" });
       return Promise.resolve();
     }
+    const runtimeGeneration = captureRuntimeGeneration();
     patchCard(slug, taskId, (card) => ({ ...card, ...patch }));
     return enqueueTaskMutation(taskId, async () => {
       try {
         const response = await api.patch<{ task: unknown }>(taskPath(slug, taskId), patch);
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
         const card = toCard(response.task);
         if (card) patchCard(slug, taskId, () => card);
         set({ error: null });
       } catch (err: unknown) {
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
         console.error("[board] Task update failed:", err);
         patchCard(slug, taskId, () => before);
         // FR-011: a rejected write may mean our base was stale — converge on
@@ -282,16 +310,19 @@ export const useBoard = create<BoardState>()((set, get) => {
     error: null,
 
     loadProjects: async (api) => {
+      const runtimeGeneration = captureRuntimeGeneration();
       try {
         const response = await api.get<{ projects: unknown[] }>("/api/workspace/projects");
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
         const projects: Project[] = [];
         for (const raw of response.projects ?? []) {
-          const parsed = WireProjectSchema.safeParse(raw);
-          if (parsed.success) projects.push({ slug: parsed.data.slug, name: parsed.data.name });
+          const project = toProject(raw);
+          if (project) projects.push(project);
         }
         set({ projects, error: null });
         return true;
       } catch (err: unknown) {
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
         console.error("[board] Failed to load projects:", err);
         set({ error: categoryOf(err) });
         return false;
@@ -299,21 +330,29 @@ export const useBoard = create<BoardState>()((set, get) => {
     },
 
     createProject: async (api, input) => {
+      // A create that settles after a computer switch must not repopulate the
+      // new computer's board with the previous runtime's projects.
+      const runtimeGeneration = captureRuntimeGeneration();
       try {
-        const body = input.mode === "github" ? { name: input.name, mode: "github", url: input.url } : { name: input.name, mode: "scratch" };
+        const body = input.mode === "github"
+          ? { name: input.name, mode: "github" as const, url: input.url }
+          : input.mode === "folder"
+            ? { name: input.name, mode: "folder" as const, path: input.path }
+            : { name: input.name, mode: "scratch" as const };
         const res = await api.post<{ project: unknown }>("/api/projects", body);
-        const parsed = WireProjectSchema.safeParse(res.project);
-        if (!parsed.success) {
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
+        const project = toProject(res.project);
+        if (!project) {
           const refreshed = await get().loadProjects(api);
           set({ error: refreshed ? "server" : get().error });
           return null;
         }
-        const project: Project = { slug: parsed.data.slug, name: parsed.data.name };
         // Refresh the list so the sidebar shows it immediately.
         const refreshed = await get().loadProjects(api);
         if (refreshed) set({ error: null });
         return project;
       } catch (err: unknown) {
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
         console.error("[board] Create project failed:", err);
         set({ error: categoryOf(err) });
         return null;
@@ -340,8 +379,10 @@ export const useBoard = create<BoardState>()((set, get) => {
     },
 
     createTask: async (api, slug, input) => {
+      const runtimeGeneration = captureRuntimeGeneration();
       try {
         const response = await api.post<{ task: unknown }>(taskPath(slug), input);
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
         const card = toCard(response.task);
         if (!card) {
           set({ error: "server" });
@@ -358,6 +399,7 @@ export const useBoard = create<BoardState>()((set, get) => {
         }));
         return card;
       } catch (err: unknown) {
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
         console.error("[board] Task create failed:", err);
         set({ error: categoryOf(err) });
         return null;
@@ -379,13 +421,16 @@ export const useBoard = create<BoardState>()((set, get) => {
         ...(fields.linkedWorktreeId !== undefined ? { linkedWorktreeId: fields.linkedWorktreeId } : {}),
         ...(fields.status !== undefined ? { status: fields.status } : {}),
       }));
+      const runtimeGeneration = captureRuntimeGeneration();
       return enqueueTaskMutation(taskId, async () => {
         try {
           const response = await api.patch<{ task: unknown }>(taskPath(slug, taskId), fields);
+          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
           const card = toCard(response.task);
           if (card) patchCard(slug, taskId, () => card);
           set({ error: null });
         } catch (err: unknown) {
+          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
           console.error("[board] Link session failed:", err);
           patchCard(slug, taskId, () => before);
           await refreshInto(api, slug);
@@ -405,15 +450,18 @@ export const useBoard = create<BoardState>()((set, get) => {
         set({ error: "server" });
         return Promise.resolve();
       }
+      const runtimeGeneration = captureRuntimeGeneration();
       return enqueueTaskMutation(taskId, async () => {
         try {
           const response = await api.patch<{ task: unknown }>(taskPath(slug, taskId), {
             status: "archived",
           });
+          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
           const card = toCard(response.task);
           if (card) patchCard(slug, taskId, () => card);
           set({ error: null });
         } catch (err: unknown) {
+          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
           console.error("[board] Task archive failed:", err);
           set({ error: categoryOf(err) });
         }
@@ -427,9 +475,11 @@ export const useBoard = create<BoardState>()((set, get) => {
         set({ error: "server" });
         return Promise.resolve();
       }
+      const runtimeGeneration = captureRuntimeGeneration();
       return enqueueTaskMutation(taskId, async () => {
         try {
           await api.delete<{ ok: boolean }>(taskPath(slug, taskId));
+          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
           set((state) => {
             const current = state.cardsByProject[slug] ?? [];
             return {
@@ -441,6 +491,7 @@ export const useBoard = create<BoardState>()((set, get) => {
             };
           });
         } catch (err: unknown) {
+          if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
           console.error("[board] Task delete failed:", err);
           set({ error: categoryOf(err) });
         }

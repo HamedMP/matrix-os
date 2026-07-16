@@ -37,6 +37,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     onRuntimeChanged: vi.fn(),
     getUpdateStatus: vi.fn(() => "disabled"),
     fetchRuntimeSummary: vi.fn(),
+    fetchProjectWorkspace: vi.fn(),
     fetchReviewSummaries: vi.fn(),
     fetchReviewSnapshot: vi.fn(),
     fetchFileBrowse: vi.fn(),
@@ -51,6 +52,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     submitApprovalDecision: vi.fn(),
     submitInputAnswer: vi.fn(),
     createAgentThread: vi.fn(),
+    createAgentTurn: vi.fn(),
     ...overrides,
   } as unknown as HandlerContext;
 
@@ -184,6 +186,48 @@ describe("registerIpcHandlers", () => {
 
     await expect(harness.invoke("runtime:get-summary")).rejects.toThrow("internal error");
     await expect(harness.invoke("runtime:get-summary")).rejects.not.toThrow("10.0.0.5");
+  });
+
+  it("DT-001 returns a project workspace through strict trusted-core IPC", async () => {
+    const workspace = {
+      project: {
+        id: "matrix-os",
+        label: "Matrix OS",
+        status: "available",
+        taskCount: 1,
+        threadCount: 0,
+        attentionCount: 0,
+      },
+      tasks: { items: [], hasMore: false, limit: 100 },
+      projectThreads: { items: [], hasMore: false, limit: 100 },
+      taskThreads: { items: [], hasMore: false, limit: 100 },
+      updatedAt: "2026-07-10T12:00:00.000Z",
+    };
+    const fetchProjectWorkspace = vi.fn().mockResolvedValue(workspace);
+    const harness = makeHarness({ fetchProjectWorkspace } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:get-project-workspace", {
+      projectId: "matrix-os",
+    })).resolves.toEqual(workspace);
+    expect(fetchProjectWorkspace).toHaveBeenCalledWith({ projectId: "matrix-os" });
+    await expect(harness.invoke("runtime:get-project-workspace", {
+      projectId: "matrix-os",
+      bearerToken: "secret",
+    })).rejects.toThrow("invalid request");
+  });
+
+  it("SEC-003 maps project workspace failures to a generic IPC error", async () => {
+    const fetchProjectWorkspace = vi
+      .fn()
+      .mockRejectedValue(new Error("read failed at /home/matrix/private with token secret"));
+    const harness = makeHarness({ fetchProjectWorkspace } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:get-project-workspace", {
+      projectId: "matrix-os",
+    })).rejects.toThrow("internal error");
+    await expect(harness.invoke("runtime:get-project-workspace", {
+      projectId: "matrix-os",
+    })).rejects.not.toThrow("/home/matrix");
   });
 
   it("returns coding agent review summaries through a strict trusted-core IPC channel", async () => {
@@ -848,5 +892,31 @@ describe("registerIpcHandlers", () => {
         clientRequestId: "req_desktop_1",
       }),
     ).rejects.not.toThrow("/home/matrix");
+  });
+
+  it("creates same-thread turns through trusted-core IPC without exposing credentials", async () => {
+    const result = {
+      ok: false as const,
+      error: {
+        code: "thread_busy" as const,
+        safeMessage: "This conversation is already running. Wait for it to finish and try again.",
+        retryable: true,
+        recoveryActions: ["retry" as const],
+      },
+    };
+    const createAgentTurn = vi.fn().mockResolvedValue(result);
+    const harness = makeHarness({ createAgentTurn } as Partial<HandlerContext>);
+    const request = {
+      threadId: "thread_desktop_1",
+      message: "Continue with the focused tests.",
+      clientRequestId: "req_desktop_turn_1",
+    };
+
+    await expect(harness.invoke("runtime:create-turn", request)).resolves.toEqual(result);
+    expect(createAgentTurn).toHaveBeenCalledWith(request);
+    await expect(harness.invoke("runtime:create-turn", {
+      ...request,
+      providerToken: "secret",
+    })).rejects.toThrow("invalid request");
   });
 });

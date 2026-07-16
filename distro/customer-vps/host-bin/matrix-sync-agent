@@ -303,6 +303,11 @@ apply_update() {
       sudo systemctl start --no-block matrix-code-server.service || true
       log "Code-server runtime service enabled"
     fi
+    if [ -f "$extract_dir/systemd/matrix-developer-tools.service" ]; then
+      sudo systemctl enable matrix-developer-tools.service
+      sudo systemctl start --no-block matrix-developer-tools.service || true
+      log "Developer tools runtime service enabled"
+    fi
     if [ -f "$extract_dir/systemd/matrix-code.service" ]; then
       sudo systemctl enable matrix-code.service
       sudo systemctl start --no-block matrix-code.service || true
@@ -520,6 +525,9 @@ maybe_clean_staging() {
 
 # ── Main loop ────────────────────────────────────────────────────────
 log "Started for ${MATRIX_MACHINE_ID} (version: $(current_version))"
+if [ -x "$BIN_DIR/matrix-ensure-swap" ]; then
+  sudo "$BIN_DIR/matrix-ensure-swap" || log "WARN: swap ensure failed (non-fatal)"
+fi
 mkdir -p "$STAGING_DIR"
 clean_staging
 clean_legacy_upgrade_artifacts || true

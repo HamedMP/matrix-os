@@ -1,7 +1,8 @@
 import "@/lib/hermes-polyfills";
 import "@/lib/unistyles";
 import { use, useEffect, useMemo, useState, createContext, useCallback, useRef } from "react";
-import { Stack, useRouter } from "expo-router";
+import { Stack, useRouter, usePathname } from "expo-router";
+import { PostHogProvider } from "posthog-react-native";
 import { StatusBar } from "expo-status-bar";
 import { View, Text, ActivityIndicator } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -28,6 +29,12 @@ import { GatewayClient, type ConnectionState } from "@/lib/gateway-client";
 import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
 import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
+import {
+  captureScreen,
+  getAnalyticsClient,
+  identifyUser,
+  sanitizeScreenName,
+} from "@/lib/analytics";
 
 let nativeSplashRegistered = false;
 const nativeSplashRegistration = SplashScreen.preventAutoHideAsync()
@@ -147,9 +154,35 @@ export default function RootLayout() {
 
   return (
     <ClerkProvider publishableKey={clerkPublishableKey} tokenCache={tokenCache}>
-      <GatewayShell />
+      <AnalyticsProvider>
+        <GatewayShell />
+      </AnalyticsProvider>
     </ClerkProvider>
   );
+}
+
+// Wraps the app in PostHog's provider when analytics is enabled (key present).
+// Screen autocapture is disabled because expo-router does not expose a
+// react-navigation ref; screens are tracked manually via <AnalyticsScreenTracker />.
+function AnalyticsProvider({ children }: { children: React.ReactNode }) {
+  const analyticsClient = useMemo(() => getAnalyticsClient(), []);
+  if (!analyticsClient) return <>{children}</>;
+  return (
+    <PostHogProvider client={analyticsClient} autocapture={{ captureScreens: false, captureTouches: false }}>
+      {children}
+    </PostHogProvider>
+  );
+}
+
+// Manual expo-router screen tracking: capture a sanitized route name on every
+// navigation. Params/ids are stripped in sanitizeScreenName so no handles,
+// thread ids, or slugs reach analytics.
+function AnalyticsScreenTracker() {
+  const pathname = usePathname();
+  useEffect(() => {
+    captureScreen(sanitizeScreenName(pathname));
+  }, [pathname]);
+  return null;
 }
 
 function MissingClerkConfigScreen() {
@@ -166,7 +199,7 @@ function MissingClerkConfigScreen() {
 
 function GatewayShell() {
   const { theme } = useUnistyles();
-  const { isLoaded, isSignedIn, getToken } = useAuth();
+  const { isLoaded, isSignedIn, getToken, userId } = useAuth();
   const [client, setClient] = useState<GatewayClient | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
   const [gateway, setGatewayState] = useState<GatewayConnection | null>(null);
@@ -178,6 +211,11 @@ function GatewayShell() {
   useEffect(() => {
     getTokenRef.current = getToken;
   }, [getToken]);
+
+  // Associate analytics with the Clerk user id (id only) once signed in.
+  useEffect(() => {
+    if (isSignedIn && userId) identifyUser(userId);
+  }, [isSignedIn, userId]);
 
   const incrementUnread = useCallback(() => {
     setUnreadCount((c) => c + 1);
@@ -192,12 +230,30 @@ function GatewayShell() {
     if (connectionKeyRef.current === nextKey) return;
     connectionKeyRef.current = nextKey;
     clientRef.current?.disconnect();
-    const newClient = new GatewayClient(gw.url, gw.token);
+    // Hosted computers carry no stored credential: authenticate with the live
+    // Clerk token provider and a fresh WS upgrade token, mirroring the mount
+    // path. Self-hosted gateways keep their session credential.
+    const newClient = gw.token
+      ? new GatewayClient(gw.url, gw.token)
+      : new GatewayClient(gw.url, () => getTokenRef.current());
     newClient.onStateChange(setConnectionState);
-    newClient.connect();
     clientRef.current = newClient;
     setClient(newClient);
     setGatewayState(gw);
+    setConnectionState("connecting");
+    void (async () => {
+      // A failed token fetch must not strand the switch at "connecting":
+      // fall back to connecting with header auth, mirroring the mount path.
+      try {
+        const wsToken = await newClient.getWsToken();
+        if (clientRef.current !== newClient) return;
+        if (wsToken) newClient.setWebSocketToken(wsToken);
+      } catch (err: unknown) {
+        console.warn("[mobile] ws-token unavailable during switch", err instanceof Error ? err.name : typeof err);
+        if (clientRef.current !== newClient) return;
+      }
+      newClient.connect();
+    })();
   }, []);
 
   useEffect(() => {
@@ -320,6 +376,22 @@ function GatewayShell() {
           <Stack.Screen name="agents" options={{ headerShown: false }} />
           <Stack.Screen name="sessions" options={{ headerShown: false, presentation: "modal" }} />
           <Stack.Screen
+            name="computers"
+            options={{
+              title: "Computers",
+              headerBackButtonDisplayMode: "minimal",
+              headerStyle: { backgroundColor: theme.colors.background },
+            }}
+          />
+          <Stack.Screen
+            name="files"
+            options={{
+              title: "Files",
+              headerBackButtonDisplayMode: "minimal",
+              headerStyle: { backgroundColor: theme.colors.background },
+            }}
+          />
+          <Stack.Screen
             name="connect"
             options={{
               title: "Gateway",
@@ -337,6 +409,7 @@ function GatewayShell() {
           />
         </Stack>
         <NotificationRouter />
+        <AnalyticsScreenTracker />
         <StatusBar style="dark" />
       </GatewayContext.Provider>
     </GestureHandlerRootView>

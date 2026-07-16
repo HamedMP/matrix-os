@@ -142,7 +142,7 @@ Attached CLI sessions rewrite pasted local screenshots before the prompt reaches
 
 the CLI uploads the image to `~/projects/.matrix-terminal-pastes/` on your Matrix computer and replaces the local path with the remote path. Repeated references in the same paste are uploaded once, and surrounding text and line breaks are preserved.
 
-Pure image clipboard paste is supported only when the terminal provides an observable paste event. On macOS, install `pngpaste` for image-only clipboard capture. When the terminal emits no bytes or paste boundary, there is nothing for the CLI to read, so no stale clipboard image is inserted.
+Pure image clipboard paste is supported when the terminal provides an observable paste event. On macOS, install `pngpaste` for image-only clipboard capture. If `Cmd-V` emits no bytes for an image-only clipboard, press `Ctrl-\` then `v` while attached to explicitly ask the local CLI to read the current clipboard image. When neither path is observable, the CLI will not insert stale clipboard data.
 
 ### Tabs
 
@@ -229,11 +229,19 @@ matrix sync ~/work-projects --folder projects
 
 Use `matrix upload` and `matrix download` for one-off files that should not start the sync daemon or touch R2 sync state.
 
+```text
+matrix upload <local-file> <matrix-destination>
+matrix download <matrix-file> <local-destination>
+```
+
+`~/` in a Matrix-side argument refers to the home directory on your Matrix computer. Uploading to an existing Matrix folder preserves the local filename; provide a complete destination file path to rename it.
+
 ```bash
-matrix upload ./README.md projects/demo/README.md
-matrix upload --force ./config.json system/config.json
-matrix download projects/demo/README.md ./README.remote.md
-matrix download --force projects/demo/README.md ./README.remote.md
+matrix upload ./report.csv ~/dev/matrix-os
+matrix upload ./report.csv ~/dev/matrix-os/security-findings.csv
+matrix upload --force ./config.json ~/system/config.json
+matrix download ~/dev/matrix-os/report.csv ./report.csv
+matrix download --force ~/dev/matrix-os/report.csv ./report.csv
 ```
 
 Regular downloads are written with standard user-readable file permissions.
@@ -314,6 +322,8 @@ matrix completion zsh > ~/.zfunc/_matrix
 matrix completion bash > ~/.local/share/bash-completion/completions/matrix
 matrix completion fish > ~/.config/fish/completions/matrix.fish
 ```
+
+Completions suggest Matrix files and folders for the upload destination and download source. Regenerate the script after upgrading the CLI.
 
 ## Troubleshooting
 

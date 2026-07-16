@@ -4,6 +4,7 @@ import {
   parseShellSessions,
   type MobileTerminalSession,
 } from "@/lib/terminal-state";
+import { logMobileCodingAgentWarning } from "@/lib/coding-agent-diagnostics";
 import {
   AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
@@ -11,6 +12,8 @@ import {
   ApprovalIdSchema,
   CodingAgentNotificationPreferencesSchema,
   CodingAgentNotificationPreferencesUpdateSchema,
+  CodingAgentProjectCreateRequestSchema,
+  CodingAgentProjectCreateResponseSchema,
   CursorSchema,
   FileBrowseRequestSchema,
   FileBrowseResponseSchema,
@@ -35,6 +38,8 @@ import {
   type AgentThreadEvent,
   type CodingAgentNotificationPreferences,
   type CodingAgentNotificationPreferencesUpdate,
+  type CodingAgentProjectCreateRequest,
+  type CodingAgentProjectCreateResponse,
   type FileBrowseRequest,
   type FileBrowseResponse,
   type FileReadRequest,
@@ -62,6 +67,26 @@ function randomShellSuffix(): string {
 }
 
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
+
+/** Canonical hosted platform origin; `/vm/<handle>` computer routes share it. */
+const HOSTED_PLATFORM_ORIGIN = "https://app.matrix-os.com";
+
+const ConversationMetaSchema = z.object({
+  id: z.string().min(1).max(128),
+  preview: z.string().max(2_000),
+  messageCount: z.number().int().min(0),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+}).loose();
+
+// Accept any array shape here; oversized or partially-malformed lists are
+// truncated and validated per-entry in getConversations rather than rejected
+// wholesale, so a single bad entry (or >50 entries) does not blank the list.
+const CONVERSATION_LIST_LIMIT = 50;
+const ConversationListSchema = z.array(z.unknown()).catch([]);
+const ConversationCreateResponseSchema = z.object({ id: z.string().min(1).max(128) }).loose();
+
+export type ConversationMeta = z.infer<typeof ConversationMetaSchema>;
 
 export type ServerMessage =
   | { type: "kernel:init"; sessionId: string }
@@ -118,6 +143,10 @@ export interface MatrixAppManifestResponse {
 export type CodingAgentRuntimeSummaryResult =
   | { ok: true; summary: RuntimeSummary }
   | { ok: false; error: "Runtime summary unavailable" };
+
+export type ProjectCreateResult =
+  | ({ ok: true } & CodingAgentProjectCreateResponse)
+  | { ok: false; error: "Project could not be created. Try again." };
 
 const CodingAgentNotificationPreferencesRouteResponseSchema = z.object({
   preferences: CodingAgentNotificationPreferencesSchema,
@@ -245,9 +274,37 @@ const ThreadStreamServerFrameSchema = z.discriminatedUnion("type", [
 
 const WS_OPEN = 1;
 
+function logCodingAgentStatusWarning(scope: string, status: number): void {
+  logMobileCodingAgentWarning(scope, `status ${status}`);
+}
+
+function logCodingAgentParseWarning(scope: string): void {
+  logMobileCodingAgentWarning(scope, "invalid payload");
+}
+
+function logCodingAgentCatchWarning(scope: string, err: unknown): void {
+  const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : err;
+  logMobileCodingAgentWarning(scope, reason);
+}
+
+function logGatewayStatusWarning(scope: string, status: number): void {
+  logMobileCodingAgentWarning(scope, `status ${status}`);
+}
+
+function logGatewayCatchWarning(scope: string, err: unknown): void {
+  const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : err;
+  logMobileCodingAgentWarning(scope, reason);
+}
+
+function logGatewayWarning(scope: string, detail: unknown): void {
+  logMobileCodingAgentWarning(scope, detail);
+}
+
 export class GatewayClient {
   private ws: WebSocket | null = null;
   private baseUrl: string;
+  /** Routing query (without `?`) carried by the base URL, e.g. `runtime=<slot>`. */
+  private baseQuery: string;
   private token: string | undefined;
   private tokenProvider: TokenProvider | undefined;
   private wsToken: string | undefined;
@@ -260,7 +317,12 @@ export class GatewayClient {
   private shouldReconnect = false;
 
   constructor(baseUrl: string, token?: TokenSource, wsToken?: string) {
-    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    // A routed computer URL may carry a routing query (e.g. `/vm/<handle>?runtime=<slot>`).
+    // Split it off so path joins stay valid, and re-apply it to every request URL.
+    const trimmed = baseUrl.replace(/\/+$/, "");
+    const queryIndex = trimmed.indexOf("?");
+    this.baseUrl = queryIndex === -1 ? trimmed : trimmed.slice(0, queryIndex).replace(/\/+$/, "");
+    this.baseQuery = queryIndex === -1 ? "" : trimmed.slice(queryIndex + 1);
     if (token || wsToken) {
       assertSecureTokenTransport(this.baseUrl);
     }
@@ -294,15 +356,33 @@ export class GatewayClient {
     return formatAuthorizationHeader(token);
   }
 
+  /** Re-applies the base routing query (e.g. `runtime=<slot>`) to a joined URL. */
+  private withBaseQuery(url: string): string {
+    if (!this.baseQuery) return url;
+    return `${url}${url.includes("?") ? "&" : "?"}${this.baseQuery}`;
+  }
+
+  /**
+   * Hosted computers route HTTP through `/vm/<handle>` path prefixes, but the
+   * platform terminates WebSocket upgrades (and issues ws tokens) on the
+   * canonical origin, resolving the machine from identity + `runtime` query.
+   * Returns the platform origin for hosted routed bases, null otherwise.
+   */
+  private get hostedPlatformOrigin(): string | null {
+    return this.baseUrl.startsWith(`${HOSTED_PLATFORM_ORIGIN}/vm/`) ? HOSTED_PLATFORM_ORIGIN : null;
+  }
+
+  private get wsBaseUrl(): string {
+    return (this.hostedPlatformOrigin ?? this.baseUrl).replace(/^http/, "ws");
+  }
+
   get wsUrl(): string {
-    const url = this.baseUrl.replace(/^http/, "ws");
-    return `${url}/ws`;
+    return this.withBaseQuery(`${this.wsBaseUrl}/ws`);
   }
 
   get terminalWsUrl(): string {
-    const url = this.baseUrl.replace(/^http/, "ws");
     // Shell-sessions endpoint: attach by session name passed in the query.
-    return `${url}/ws/terminal/session`;
+    return this.withBaseQuery(`${this.wsBaseUrl}/ws/terminal/session`);
   }
 
   setWebSocketToken(token: string | null, expiresAt?: number): void {
@@ -351,7 +431,7 @@ export class GatewayClient {
     const upgradeToken = this.wsToken;
     const authorization = formatAuthorizationHeader(this.token);
     const wsUrl = upgradeToken
-      ? `${this.wsUrl}?token=${encodeURIComponent(upgradeToken)}`
+      ? appendQuery(this.wsUrl, `token=${encodeURIComponent(upgradeToken)}`)
       : this.wsUrl;
 
     const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
@@ -381,7 +461,7 @@ export class GatewayClient {
 
     this.ws.onclose = (evt) => {
       const closeEvent = evt as CloseEvent;
-      console.warn("[mobile] websocket closed", closeEvent.code, closeEvent.reason || "");
+      logGatewayWarning("websocket closed", `code ${closeEvent.code}${closeEvent.reason ? ` ${closeEvent.reason}` : ""}`);
       this.ws = null;
       this.setState("disconnected");
       this.scheduleReconnect();
@@ -441,7 +521,7 @@ export class GatewayClient {
       this.reconnectTimer = null;
       this.refreshWebSocketTokenForReconnect()
         .catch((err: unknown) => {
-          console.warn("[mobile] websocket token refresh before reconnect failed", err instanceof Error ? err.message : String(err));
+          logGatewayCatchWarning("websocket token refresh before reconnect failed", err);
         })
         .finally(() => this.connect());
     }, delay);
@@ -453,7 +533,7 @@ export class GatewayClient {
       const nextToken = await this.tokenProvider();
       this.token = nextToken ?? undefined;
     } catch (err: unknown) {
-      console.warn("[mobile] Clerk session token refresh failed", err instanceof Error ? err.message : String(err));
+      logGatewayCatchWarning("Clerk session token refresh failed", err);
       this.token = undefined;
     }
     return this.token;
@@ -472,7 +552,17 @@ export class GatewayClient {
   }
 
   private async fetchGateway(path: string, init: RequestInit = {}): Promise<Response> {
-    return fetch(`${this.httpUrl}${path}`, {
+    return this.fetchAbsolute(this.withBaseQuery(`${this.httpUrl}${path}`), init);
+  }
+
+  /** Platform-owned routes (e.g. ws-token) live on the canonical origin, not the `/vm/` prefix. */
+  private async fetchPlatform(path: string, init: RequestInit = {}): Promise<Response> {
+    const base = this.hostedPlatformOrigin ?? this.httpUrl;
+    return this.fetchAbsolute(this.withBaseQuery(`${base}${path}`), init);
+  }
+
+  private async fetchAbsolute(url: string, init: RequestInit = {}): Promise<Response> {
+    return fetch(url, {
       ...init,
       headers: {
         ...(await this.authHeaders()),
@@ -500,7 +590,7 @@ export class GatewayClient {
     if (typeof fromSeq === "number" && Number.isFinite(fromSeq)) params.set("fromSeq", String(fromSeq));
     if (token) params.set("token", token);
     const query = params.toString();
-    const wsUrl = query ? `${this.terminalWsUrl}?${query}` : this.terminalWsUrl;
+    const wsUrl = query ? appendQuery(this.terminalWsUrl, query) : this.terminalWsUrl;
     const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
     const authorization = formatAuthorizationHeader(this.token);
     return new WebSocketWithOptions(
@@ -527,7 +617,9 @@ export class GatewayClient {
     if (token) params.set("token", token);
     if (parsedCursor?.success) params.set("cursor", parsedCursor.data);
     const query = params.toString();
-    const wsUrl = `${this.baseUrl.replace(/^http/, "ws")}/ws/coding-agents/thread/${encodeURIComponent(parsedThreadId.data)}${query ? `?${query}` : ""}`;
+    const wsUrl = this.withBaseQuery(
+      `${this.wsBaseUrl}/ws/coding-agents/thread/${encodeURIComponent(parsedThreadId.data)}${query ? `?${query}` : ""}`,
+    );
     const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
     const authorization = formatAuthorizationHeader(this.token);
     const ws = new WebSocketWithOptions(
@@ -550,12 +642,12 @@ export class GatewayClient {
       try {
         parsedJson = JSON.parse(event.data);
       } catch {
-        console.warn("[mobile] coding-agent thread stream sent invalid JSON");
+        logMobileCodingAgentWarning("coding-agent thread stream sent invalid JSON", "invalid json");
         return;
       }
       const frame = ThreadStreamServerFrameSchema.safeParse(parsedJson);
       if (!frame.success) {
-        console.warn("[mobile] coding-agent thread stream sent invalid frame");
+        logCodingAgentParseWarning("coding-agent thread stream sent invalid frame");
         return;
       }
       if (frame.data.type === "thread.event") {
@@ -583,14 +675,14 @@ export class GatewayClient {
         if (ws.readyState === WS_OPEN) {
           try {
             ws.send(JSON.stringify({ type: "detach" }));
-          } catch {
-            console.warn("[mobile] coding-agent thread stream detach failed");
+          } catch (err: unknown) {
+            logCodingAgentCatchWarning("coding-agent thread stream detach failed", err);
           }
         }
         try {
           ws.close();
-        } catch {
-          console.warn("[mobile] coding-agent thread stream close failed");
+        } catch (err: unknown) {
+          logCodingAgentCatchWarning("coding-agent thread stream close failed", err);
         }
       },
     };
@@ -603,28 +695,28 @@ export class GatewayClient {
       const data = await res.json();
       return { ok: true, data };
     } catch {
-      console.warn("[mobile] gateway health check unavailable");
+      logGatewayWarning("gateway health check unavailable", "unavailable");
       return { ok: false, error: "Gateway unavailable" };
     }
   }
 
   async getWsToken(): Promise<string | null> {
     try {
-      const res = await this.fetchGateway("/api/auth/ws-token");
+      const res = await this.fetchPlatform("/api/auth/ws-token");
       if (!res.ok) {
-        console.warn("[mobile] /api/auth/ws-token unavailable", res.status);
+        logGatewayStatusWarning("/api/auth/ws-token unavailable", res.status);
         return null;
       }
       const data = (await res.json()) as { token?: unknown; expiresAt?: unknown };
       if (data.token == null) return null;
       if (typeof data.token !== "string") {
-        console.warn("[mobile] /api/auth/ws-token returned invalid token");
+        logGatewayWarning("/api/auth/ws-token returned invalid token", "invalid payload");
         return null;
       }
       this.setWebSocketToken(data.token, typeof data.expiresAt === "number" ? data.expiresAt : undefined);
       return data.token;
     } catch {
-      console.warn("[mobile] /api/auth/ws-token network error");
+      logGatewayWarning("/api/auth/ws-token network error", "unavailable");
       return null;
     }
   }
@@ -691,28 +783,70 @@ export class GatewayClient {
     params.set("limit", String(limit));
     const res = await this.fetchGateway(`/api/messages?${params}`);
     if (!res.ok) return [];
-    return res.json();
+    // `/api/messages` is owned by the messaging bridge on newer gateways and
+    // no longer returns a chat-history array; treat any non-array body as
+    // "no older history" instead of crashing history pagination.
+    const body: unknown = await res.json();
+    return Array.isArray(body) ? body : [];
   }
 
-  async getConversations(): Promise<unknown[]> {
-    const res = await this.fetchGateway("/api/conversations");
-    return res.json();
+  async getConversations(): Promise<ConversationMeta[]> {
+    try {
+      const res = await this.fetchGateway("/api/conversations");
+      if (!res.ok) {
+        logGatewayStatusWarning("/api/conversations unavailable", res.status);
+        return [];
+      }
+      const raw = ConversationListSchema.parse(await res.json());
+      const conversations: ConversationMeta[] = [];
+      for (const item of raw.slice(0, CONVERSATION_LIST_LIMIT)) {
+        const parsed = ConversationMetaSchema.safeParse(item);
+        if (parsed.success) conversations.push(parsed.data);
+      }
+      return conversations;
+    } catch (err: unknown) {
+      logGatewayCatchWarning("/api/conversations unavailable", err);
+      return [];
+    }
+  }
+
+  async createConversation(): Promise<string | null> {
+    try {
+      const res = await this.fetchGateway("/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      if (!res.ok) {
+        logGatewayStatusWarning("/api/conversations create unavailable", res.status);
+        return null;
+      }
+      const parsed = ConversationCreateResponseSchema.safeParse(await res.json());
+      if (!parsed.success) {
+        logGatewayWarning("/api/conversations create returned invalid payload", "invalid payload");
+        return null;
+      }
+      return parsed.data.id;
+    } catch (err: unknown) {
+      logGatewayCatchWarning("/api/conversations create unavailable", err);
+      return null;
+    }
   }
 
   async getApps(): Promise<MatrixAppEntry[]> {
     try {
       const res = await this.fetchGateway("/api/apps");
       if (!res.ok) {
-        const body = await res.text().catch((err: unknown) => {
-          console.warn("[mobile] failed to read /api/apps error body", err instanceof Error ? err.message : String(err));
+        await res.text().catch((err: unknown) => {
+          logGatewayCatchWarning("failed to read /api/apps error body", err);
           return "";
         });
-        console.warn("[mobile] /api/apps unavailable", res.status, body.slice(0, 160));
+        logGatewayStatusWarning("/api/apps unavailable", res.status);
         return [];
       }
       return res.json();
     } catch (err: unknown) {
-      console.warn("[mobile] /api/apps unavailable", err instanceof Error ? err.message : String(err));
+      logGatewayCatchWarning("/api/apps unavailable", err);
       return [];
     }
   }
@@ -721,14 +855,17 @@ export class GatewayClient {
     try {
       const res = await this.fetchGateway("/api/terminal/sessions");
       if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        console.warn("[mobile] /api/terminal/sessions unavailable", res.status, body.slice(0, 160));
+        await res.text().catch((err: unknown) => {
+          logGatewayCatchWarning("failed to read /api/terminal/sessions error body", err);
+          return "";
+        });
+        logGatewayStatusWarning("/api/terminal/sessions unavailable", res.status);
         return [];
       }
       const body = (await res.json()) as { sessions?: unknown };
       return parseShellSessions(body?.sessions ?? body);
     } catch (err: unknown) {
-      console.warn("[mobile] /api/terminal/sessions unavailable", err instanceof Error ? err.message : String(err));
+      logGatewayCatchWarning("/api/terminal/sessions unavailable", err);
       return [];
     }
   }
@@ -737,19 +874,46 @@ export class GatewayClient {
     try {
       const res = await this.fetchGateway("/api/coding-agents/summary");
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/summary unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/summary unavailable", res.status);
         return { ok: false, error: "Runtime summary unavailable" };
       }
       const body = await res.json();
       const parsed = RuntimeSummarySchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/summary returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/summary returned invalid payload");
         return { ok: false, error: "Runtime summary unavailable" };
       }
       return { ok: true, summary: parsed.data };
-    } catch {
-      console.warn("[mobile] /api/coding-agents/summary unavailable");
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/summary unavailable", err);
       return { ok: false, error: "Runtime summary unavailable" };
+    }
+  }
+
+  async createProject(request: CodingAgentProjectCreateRequest): Promise<ProjectCreateResult> {
+    try {
+      const parsedRequest = CodingAgentProjectCreateRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "Project could not be created. Try again." };
+      }
+      const res = await this.fetchGateway("/api/coding-agents/projects", {
+        method: "POST",
+        body: JSON.stringify(parsedRequest.data),
+      });
+      if (!res.ok) {
+        logGatewayStatusWarning("/api/coding-agents/projects unavailable", res.status);
+        return { ok: false, error: "Project could not be created. Try again." };
+      }
+      const body = await res.json();
+      const parsed = CodingAgentProjectCreateResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        logGatewayWarning("/api/coding-agents/projects returned invalid payload", "invalid payload");
+        return { ok: false, error: "Project could not be created. Try again." };
+      }
+      return { ok: true, ...parsed.data };
+    } catch (err: unknown) {
+      logGatewayCatchWarning("/api/coding-agents/projects unavailable", err);
+      return { ok: false, error: "Project could not be created. Try again." };
     }
   }
 
@@ -757,18 +921,18 @@ export class GatewayClient {
     try {
       const res = await this.fetchGateway("/api/coding-agents/notification-preferences");
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/notification-preferences unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/notification-preferences unavailable", res.status);
         return { ok: false, error: "Notification settings unavailable" };
       }
       const body = await res.json();
       const parsed = CodingAgentNotificationPreferencesRouteResponseSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/notification-preferences returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/notification-preferences returned invalid payload");
         return { ok: false, error: "Notification settings unavailable" };
       }
       return { ok: true, preferences: parsed.data.preferences };
-    } catch {
-      console.warn("[mobile] /api/coding-agents/notification-preferences unavailable");
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/notification-preferences unavailable", err);
       return { ok: false, error: "Notification settings unavailable" };
     }
   }
@@ -786,18 +950,18 @@ export class GatewayClient {
         body: JSON.stringify(parsedRequest.data),
       });
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/notification-preferences update unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/notification-preferences update unavailable", res.status);
         return { ok: false, error: "Notification settings could not be saved. Try again." };
       }
       const body = await res.json();
       const parsed = CodingAgentNotificationPreferencesRouteResponseSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/notification-preferences update returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/notification-preferences update returned invalid payload");
         return { ok: false, error: "Notification settings could not be saved. Try again." };
       }
       return { ok: true, preferences: parsed.data.preferences };
-    } catch {
-      console.warn("[mobile] /api/coding-agents/notification-preferences update unavailable");
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/notification-preferences update unavailable", err);
       return { ok: false, error: "Notification settings could not be saved. Try again." };
     }
   }
@@ -811,18 +975,18 @@ export class GatewayClient {
         body: JSON.stringify(request),
       });
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/threads unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/threads unavailable", res.status);
         return { ok: false, error: "Agent run could not be started. Try again." };
       }
       const body = await res.json();
       const parsed = AgentThreadSnapshotSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/threads returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/threads returned invalid payload");
         return { ok: false, error: "Agent run could not be started. Try again." };
       }
       return { ok: true, snapshot: parsed.data };
-    } catch {
-      console.warn("[mobile] /api/coding-agents/threads unavailable");
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/threads unavailable", err);
       return { ok: false, error: "Agent run could not be started. Try again." };
     }
   }
@@ -837,18 +1001,18 @@ export class GatewayClient {
       }
       const res = await this.fetchGateway(`/api/coding-agents/threads/${encodeURIComponent(parsedThreadId.data)}`);
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/threads/:threadId unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/threads/:threadId unavailable", res.status);
         return { ok: false, error: "Thread state unavailable" };
       }
       const body = await res.json();
       const parsed = AgentThreadSnapshotSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/threads/:threadId returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/threads/:threadId returned invalid payload");
         return { ok: false, error: "Thread state unavailable" };
       }
       return { ok: true, snapshot: parsed.data };
-    } catch {
-      console.warn("[mobile] /api/coding-agents/threads/:threadId unavailable");
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/threads/:threadId unavailable", err);
       return { ok: false, error: "Thread state unavailable" };
     }
   }
@@ -879,18 +1043,18 @@ export class GatewayClient {
         },
       );
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/threads/:threadId/approvals/:approvalId/decision unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/threads/:threadId/approvals/:approvalId/decision unavailable", res.status);
         return { ok: false, error: "Approval could not be sent. Try again." };
       }
       const body = await res.json();
       const parsed = AgentThreadSnapshotSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/threads/:threadId/approvals/:approvalId/decision returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/threads/:threadId/approvals/:approvalId/decision returned invalid payload");
         return { ok: false, error: "Approval could not be sent. Try again." };
       }
       return { ok: true, snapshot: parsed.data };
-    } catch {
-      console.warn("[mobile] /api/coding-agents/threads/:threadId/approvals/:approvalId/decision unavailable");
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/threads/:threadId/approvals/:approvalId/decision unavailable", err);
       return { ok: false, error: "Approval could not be sent. Try again." };
     }
   }
@@ -921,18 +1085,18 @@ export class GatewayClient {
         },
       );
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer unavailable", res.status);
         return { ok: false, error: "Input could not be sent. Try again." };
       }
       const body = await res.json();
       const parsed = AgentThreadSnapshotSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer returned invalid payload");
         return { ok: false, error: "Input could not be sent. Try again." };
       }
       return { ok: true, snapshot: parsed.data };
-    } catch {
-      console.warn("[mobile] /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer unavailable");
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer unavailable", err);
       return { ok: false, error: "Input could not be sent. Try again." };
     }
   }
@@ -949,18 +1113,18 @@ export class GatewayClient {
       }
       const res = await this.fetchGateway(path);
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/reviews unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/reviews unavailable", res.status);
         return { ok: false, error: "Review state unavailable" };
       }
       const body = await res.json();
       const parsed = CodingAgentReviewListSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/reviews returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/reviews returned invalid payload");
         return { ok: false, error: "Review state unavailable" };
       }
       return { ok: true, reviews: parsed.data };
-    } catch {
-      console.warn("[mobile] /api/coding-agents/reviews unavailable");
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/reviews unavailable", err);
       return { ok: false, error: "Review state unavailable" };
     }
   }
@@ -974,19 +1138,18 @@ export class GatewayClient {
       }
       const res = await this.fetchGateway(`/api/coding-agents/reviews/${encodeURIComponent(options.reviewId)}`);
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/reviews/:reviewId unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/reviews/:reviewId unavailable", res.status);
         return { ok: false, error: "Review details unavailable" };
       }
       const body = await res.json();
       const parsed = ReviewSnapshotSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/reviews/:reviewId returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/reviews/:reviewId returned invalid payload");
         return { ok: false, error: "Review details unavailable" };
       }
       return { ok: true, snapshot: parsed.data };
     } catch (err: unknown) {
-      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
-      console.warn(`[mobile] /api/coding-agents/reviews/:reviewId ${reason}`);
+      logCodingAgentCatchWarning("/api/coding-agents/reviews/:reviewId unavailable", err);
       return { ok: false, error: "Review details unavailable" };
     }
   }
@@ -999,26 +1162,25 @@ export class GatewayClient {
       if (!parsedRequest.success) {
         return { ok: false, error: "File content unavailable" };
       }
-      const query = new URLSearchParams({
-        projectId: parsedRequest.data.projectId,
-        worktreeId: parsedRequest.data.worktreeId,
-        path: parsedRequest.data.path,
-      });
+      const query = new URLSearchParams({ projectId: parsedRequest.data.projectId });
+      if (parsedRequest.data.worktreeId) {
+        query.set("worktreeId", parsedRequest.data.worktreeId);
+      }
+      query.set("path", parsedRequest.data.path);
       const res = await this.fetchGateway(`/api/coding-agents/files/read?${query.toString()}`);
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/files/read unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/files/read unavailable", res.status);
         return { ok: false, error: "File content unavailable" };
       }
       const body = await res.json();
       const parsed = FileReadResponseSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/files/read returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/files/read returned invalid payload");
         return { ok: false, error: "File content unavailable" };
       }
       return { ok: true, file: parsed.data };
     } catch (err: unknown) {
-      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
-      console.warn(`[mobile] /api/coding-agents/files/read ${reason}`);
+      logCodingAgentCatchWarning("/api/coding-agents/files/read unavailable", err);
       return { ok: false, error: "File content unavailable" };
     }
   }
@@ -1031,29 +1193,28 @@ export class GatewayClient {
       if (!parsedRequest.success) {
         return { ok: false, error: "File list unavailable" };
       }
-      const query = new URLSearchParams({
-        projectId: parsedRequest.data.projectId,
-        worktreeId: parsedRequest.data.worktreeId,
-      });
+      const query = new URLSearchParams({ projectId: parsedRequest.data.projectId });
+      if (parsedRequest.data.worktreeId) {
+        query.set("worktreeId", parsedRequest.data.worktreeId);
+      }
       if (parsedRequest.data.path) {
         query.set("path", parsedRequest.data.path);
       }
       query.set("limit", String(parsedRequest.data.limit));
       const res = await this.fetchGateway(`/api/coding-agents/files/browse?${query.toString()}`);
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/files/browse unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/files/browse unavailable", res.status);
         return { ok: false, error: "File list unavailable" };
       }
       const body = await res.json();
       const parsed = FileBrowseResponseSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/files/browse returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/files/browse returned invalid payload");
         return { ok: false, error: "File list unavailable" };
       }
       return { ok: true, browse: parsed.data };
     } catch (err: unknown) {
-      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
-      console.warn(`[mobile] /api/coding-agents/files/browse ${reason}`);
+      logCodingAgentCatchWarning("/api/coding-agents/files/browse unavailable", err);
       return { ok: false, error: "File list unavailable" };
     }
   }
@@ -1066,10 +1227,10 @@ export class GatewayClient {
       if (!parsedRequest.success) {
         return { ok: false, error: "File search unavailable" };
       }
-      const query = new URLSearchParams({
-        projectId: parsedRequest.data.projectId,
-        worktreeId: parsedRequest.data.worktreeId,
-      });
+      const query = new URLSearchParams({ projectId: parsedRequest.data.projectId });
+      if (parsedRequest.data.worktreeId) {
+        query.set("worktreeId", parsedRequest.data.worktreeId);
+      }
       if (parsedRequest.data.path) {
         query.set("path", parsedRequest.data.path);
       }
@@ -1077,19 +1238,18 @@ export class GatewayClient {
       query.set("limit", String(parsedRequest.data.limit));
       const res = await this.fetchGateway(`/api/coding-agents/files/search?${query.toString()}`);
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/files/search unavailable", res.status);
+        logCodingAgentStatusWarning("/api/coding-agents/files/search unavailable", res.status);
         return { ok: false, error: "File search unavailable" };
       }
       const body = await res.json();
       const parsed = FileSearchResponseSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/files/search returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/files/search returned invalid payload");
         return { ok: false, error: "File search unavailable" };
       }
       return { ok: true, search: parsed.data };
     } catch (err: unknown) {
-      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
-      console.warn(`[mobile] /api/coding-agents/files/search ${reason}`);
+      logCodingAgentCatchWarning("/api/coding-agents/files/search unavailable", err);
       return { ok: false, error: "File search unavailable" };
     }
   }
@@ -1107,19 +1267,18 @@ export class GatewayClient {
         body: JSON.stringify(parsedRequest.data),
       });
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/files/write unavailable");
+        logCodingAgentStatusWarning("/api/coding-agents/files/write unavailable", res.status);
         return { ok: false, error: "File could not be saved. Refresh and try again." };
       }
       const body = await res.json();
       const parsed = FileWriteResponseSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/files/write returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/files/write returned invalid payload");
         return { ok: false, error: "File could not be saved. Refresh and try again." };
       }
       return { ok: true, file: parsed.data };
     } catch (err: unknown) {
-      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
-      console.warn(`[mobile] /api/coding-agents/files/write ${reason}`);
+      logCodingAgentCatchWarning("/api/coding-agents/files/write unavailable", err);
       return { ok: false, error: "File could not be saved. Refresh and try again." };
     }
   }
@@ -1137,19 +1296,18 @@ export class GatewayClient {
         body: JSON.stringify(parsedRequest.data),
       });
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/source-control/prepare-commit unavailable");
+        logCodingAgentStatusWarning("/api/coding-agents/source-control/prepare-commit unavailable", res.status);
         return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
       }
       const body = await res.json();
       const parsed = SourceControlPrepareCommitResponseSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/source-control/prepare-commit returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/source-control/prepare-commit returned invalid payload");
         return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
       }
       return { ok: true, commit: parsed.data };
     } catch (err: unknown) {
-      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
-      console.warn(`[mobile] /api/coding-agents/source-control/prepare-commit ${reason}`);
+      logCodingAgentCatchWarning("/api/coding-agents/source-control/prepare-commit unavailable", err);
       return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
     }
   }
@@ -1167,19 +1325,18 @@ export class GatewayClient {
         body: JSON.stringify(parsedRequest.data),
       });
       if (!res.ok) {
-        console.warn("[mobile] /api/coding-agents/source-control/pull-requests unavailable");
+        logCodingAgentStatusWarning("/api/coding-agents/source-control/pull-requests unavailable", res.status);
         return { ok: false, error: "Pull request could not be created. Refresh and try again." };
       }
       const body = await res.json();
       const parsed = SourceControlCreatePullRequestResponseSchema.safeParse(body);
       if (!parsed.success) {
-        console.warn("[mobile] /api/coding-agents/source-control/pull-requests returned invalid payload");
+        logCodingAgentParseWarning("/api/coding-agents/source-control/pull-requests returned invalid payload");
         return { ok: false, error: "Pull request could not be created. Refresh and try again." };
       }
       return { ok: true, pullRequest: parsed.data };
     } catch (err: unknown) {
-      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
-      console.warn(`[mobile] /api/coding-agents/source-control/pull-requests ${reason}`);
+      logCodingAgentCatchWarning("/api/coding-agents/source-control/pull-requests unavailable", err);
       return { ok: false, error: "Pull request could not be created. Refresh and try again." };
     }
   }
@@ -1194,15 +1351,51 @@ export class GatewayClient {
         headers: { "Content-Type": "application/json" },
       });
       if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        console.warn("[mobile] terminal session create failed", res.status, body.slice(0, 160));
+        await res.text().catch((err: unknown) => {
+          logGatewayCatchWarning("failed to read terminal session create error body", err);
+          return "";
+        });
+        logGatewayStatusWarning("terminal session create failed", res.status);
         return null;
       }
       const body = (await res.json().catch(() => null)) as { name?: unknown } | null;
       const created = typeof body?.name === "string" ? body.name : name;
       return isSafeShellSessionName(created) ? created : null;
     } catch {
-      console.warn("[mobile] terminal session create unavailable");
+      logGatewayWarning("terminal session create unavailable", "unavailable");
+      return null;
+    }
+  }
+
+  /**
+   * Create a shell session that runs a provider setup command and return its
+   * zellij name for terminal handoff, or null on failure. The command is sent to
+   * the gateway inside the bounded foreground session and is never stored in
+   * shell state or rendered in the UI (CLAUDE.md: provider setup stays
+   * terminal-backed and command-hidden).
+   */
+  async createProviderSetupSession(command: string): Promise<string | null> {
+    if (typeof command !== "string" || command.length === 0) return null;
+    const name = `matrix-setup-${randomShellSuffix()}`;
+    try {
+      const res = await this.fetchGateway("/api/terminal/sessions", {
+        method: "POST",
+        body: JSON.stringify({ name, cwd: "projects", cmd: command }),
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        await res.text().catch((err: unknown) => {
+          logGatewayCatchWarning("failed to read provider setup session create error body", err);
+          return "";
+        });
+        logGatewayStatusWarning("provider setup session create failed", res.status);
+        return null;
+      }
+      const body = (await res.json().catch(() => null)) as { name?: unknown } | null;
+      const created = typeof body?.name === "string" ? body.name : name;
+      return isSafeShellSessionName(created) ? created : null;
+    } catch {
+      logGatewayWarning("provider setup session create unavailable", "unavailable");
       return null;
     }
   }
@@ -1215,10 +1408,10 @@ export class GatewayClient {
         { method: "DELETE" },
       );
       if (res.ok || res.status === 404) return true;
-      console.warn("[mobile] terminal session delete unavailable", res.status);
+      logGatewayStatusWarning("terminal session delete unavailable", res.status);
       return false;
     } catch {
-      console.warn("[mobile] terminal session delete unavailable");
+      logGatewayWarning("terminal session delete unavailable", "unavailable");
       return false;
     }
   }
@@ -1229,7 +1422,7 @@ export class GatewayClient {
       if (!res.ok) return null;
       return res.json();
     } catch {
-      console.warn("[mobile] /api/apps/:slug/manifest unavailable", slug);
+      logGatewayWarning("/api/apps/:slug/manifest unavailable", `slug ${slug}`);
       return null;
     }
   }
@@ -1241,24 +1434,21 @@ export class GatewayClient {
         body: "{}",
       });
       if (!res.ok) {
-        const body = await res.text().catch((err: unknown) => {
-          console.warn(
-            "[mobile] failed to read /api/apps/:slug/session-token error body",
-            err instanceof Error ? err.message : String(err),
-          );
+        await res.text().catch((err: unknown) => {
+          logGatewayCatchWarning("failed to read /api/apps/:slug/session-token error body", err);
           return "";
         });
-        console.warn("[mobile] /api/apps/:slug/session-token unavailable", slug, res.status, body.slice(0, 160));
+        logGatewayWarning("/api/apps/:slug/session-token unavailable", `slug ${slug} status ${res.status}`);
         return null;
       }
       const data = (await res.json()) as { launchUrl?: unknown; expiresAt?: unknown };
       if (typeof data.launchUrl !== "string" || typeof data.expiresAt !== "number") {
-        console.warn("[mobile] /api/apps/:slug/session-token returned invalid payload", slug);
+        logGatewayWarning("/api/apps/:slug/session-token returned invalid payload", `slug ${slug}`);
         return null;
       }
       return { launchUrl: data.launchUrl, expiresAt: data.expiresAt };
     } catch {
-      console.warn("[mobile] /api/apps/:slug/session-token network error", slug);
+      logGatewayWarning("/api/apps/:slug/session-token network error", `slug ${slug}`);
       return null;
     }
   }
@@ -1286,9 +1476,49 @@ export class GatewayClient {
       body: JSON.stringify({ token, platform }),
     });
   }
+
+  /**
+   * Authenticated GET against an owner file-browser API path (`/api/files/*`,
+   * `/api/projects`). The caller builds the full path + query; auth headers, the
+   * base routing query, and the default timeout are applied here. Parsing lives
+   * in `lib/matrix-files.ts` so this only exposes a bounded read surface.
+   */
+  async fetchOwnerFilesApi(path: string): Promise<Response> {
+    return this.fetchGateway(path);
+  }
+
+  /**
+   * Authenticated GET of a raw owner home file (`/files/<rel-path>`). Path
+   * segments are URL-encoded while directory separators are preserved.
+   */
+  async fetchOwnerHomeFile(relPath: string, init: RequestInit = {}): Promise<Response> {
+    return this.fetchGateway(`/files/${encodeHomeFilePath(relPath)}`, init);
+  }
+
+  /**
+   * Absolute, base-query-aware URL for a raw owner home file. Used for
+   * authenticated `<Image>` loads that carry the Authorization header via
+   * `getAuthorizationHeader()` and cannot go through the fetch wrapper.
+   */
+  homeFileUrl(relPath: string): string {
+    return this.withBaseQuery(`${this.httpUrl}/files/${encodeHomeFilePath(relPath)}`);
+  }
 }
 
-function createTimeoutSignal(timeoutMs: number): AbortSignal | undefined {
+/** Encodes each path segment while preserving `/` separators. */
+export function encodeHomeFilePath(relPath: string): string {
+  return relPath
+    .split("/")
+    .filter((segment) => segment.length > 0)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+function appendQuery(url: string, query: string): string {
+  return `${url}${url.includes("?") ? "&" : "?"}${query}`;
+}
+
+export function createTimeoutSignal(timeoutMs: number): AbortSignal | undefined {
   const timeout = (AbortSignal as { timeout?: (milliseconds: number) => AbortSignal }).timeout;
   if (typeof timeout === "function") {
     return timeout(timeoutMs);

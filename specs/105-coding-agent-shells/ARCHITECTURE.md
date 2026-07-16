@@ -1,7 +1,7 @@
 # Architecture: Coding Agent Shells
 
-**Status**: Draft
-**Last Updated**: 2026-07-06
+**Status**: Gate 0 confirmed; Phase 18 implementation active
+**Last Updated**: 2026-07-10
 **Audience**: Agents implementing gateway, desktop, mobile, shell, and runtime changes.
 
 ## Design Thesis
@@ -43,6 +43,63 @@ Desktop Trusted Core -----> Matrix Gateway HTTP/WS <-------------+
 - **Desktop trust boundary**: Electron main/preload are trusted; renderer is not trusted.
 - **Mobile trust boundary**: mobile app JS can hold short-lived session material according to existing auth design, but never provider credentials or raw privileged tokens.
 - **Failure model**: reconnect and resume by cursor/reference; distinguish runtime process state from client attachment state.
+
+## Canonical Domain Model
+
+The shells use one hierarchy and must not reinterpret a provider process, terminal process, task, and conversation as the same object.
+
+```text
+Project 1 ── * Task
+Project 1 ── * AgentThread
+Task    1 ── * AgentThread
+AgentThread 1 ── * AgentTurn
+AgentThread * ── 0..1 TerminalSession (reference only)
+```
+
+Rules:
+
+- `Project` and `Task` remain the existing Matrix workspace records and APIs.
+- `AgentThread` is the visible chat/session and stable provider conversation identity.
+- `AgentTurn` is one idempotent user message/provider execution inside a thread.
+- New threads require a valid owner project. `taskId` is optional, but when present its canonical `projectSlug` must equal `thread.projectId`.
+- A task owns an unbounded logical history but every API projection is capped/paginated. Multiple threads per task are normal.
+- A thread has at most one active normal turn. Approval and requested-input responses are correlated actions within that active turn, not new turns.
+- A provider resume token/session ID is encrypted or owner-local runtime state and never appears in shell contracts.
+- Task status and thread status are independent. Kanban cards aggregate thread status for display but only explicit task mutations change task columns.
+
+### Read Models
+
+First hydration stays small:
+
+```ts
+type RuntimeSummary = {
+  runtime: RuntimeTarget;
+  capabilities: RuntimeCapability[];
+  providers: AgentProviderSummary[];
+  projects: BoundedList<ProjectSummary>;
+  activeThreads: BoundedList<AgentThreadSummary>;
+  attentionThreads: BoundedList<AgentThreadSummary>;
+  terminalSessions: BoundedList<TerminalSessionSummary>;
+  previewSessions: BoundedList<PreviewSessionSummary>;
+  recentActivity: BoundedList<ActivityEventSummary>;
+  limits: RuntimeLimits;
+  serverTime: string;
+};
+```
+
+Selecting a project loads a separate bounded projection:
+
+```ts
+type ProjectAgentWorkspace = {
+  project: ProjectSummary;
+  tasks: BoundedList<TaskAgentSummary>;
+  projectThreads: BoundedList<AgentThreadSummary>;
+  taskThreads: BoundedList<AgentThreadSummary>;
+  updatedAt: string;
+};
+```
+
+`TaskAgentSummary` contains canonical task metadata plus bounded aggregates (`threadCount`, status counts, attention count, latest activity), not nested full transcripts or an unbounded thread array. Thread rows are fetched/filterable by `projectId` and optional `taskId`.
 
 ## Package And Module Plan
 
@@ -90,8 +147,10 @@ packages/gateway/src/coding-agents/
   routes.ts                 # HTTP route registration
   ws.ts                     # Thread/runtime WebSocket handlers
   runtime-summary.ts        # Hydration projection
+  project-workspace.ts      # Canonical project/task/thread read projection
   provider-registry.ts      # Configured providers and health
   thread-store.ts           # Thread CRUD/projections
+  turn-service.ts           # Same-thread turn idempotency and active-turn lock
   thread-events.ts          # Append/read/replay event model
   approval-service.ts       # Approval lifecycle and idempotency
   terminal-binding.ts       # Thread/session relationships
@@ -119,6 +178,11 @@ desktop/src/main/
 
 desktop/src/renderer/src/features/agents/
   AgentMissionControl.tsx
+  AgentNavigator.tsx
+  AgentViewModeControl.tsx
+  AgentConversationView.tsx
+  AgentKanbanView.tsx
+  TaskThreadList.tsx
   AgentProviderPicker.tsx
   AgentComposer.tsx
   AgentThreadList.tsx
@@ -165,8 +229,10 @@ apps/mobile/components/agents/
   ToolActivity.tsx
 
 apps/mobile/app/agents/
-  index.tsx                  # Recent work / active threads
-  new.tsx                    # New agent run
+  index.tsx                  # Project-first workspace entry
+  projects/[projectId]/index.tsx  # Project conversation/task list
+  projects/[projectId]/board.tsx  # Phone/tablet Kanban projection
+  new.tsx                    # New project-bound conversation
   [threadId].tsx             # Thread detail
   [threadId]/review.tsx
   [threadId]/files.tsx
@@ -184,6 +250,7 @@ Rules:
 - Use reducers for thread/terminal state transitions; unit-test reducers.
 - Use phone-first layouts: list -> detail -> sheet, not dense desktop panels.
 - Treat app backgrounding as expected. Reconnect from runtime summary and stream cursors.
+- Keep all task/thread collections capped. AsyncStorage stores only selected project/task/thread/view references.
 
 ### Browser Shell Modules
 
@@ -217,6 +284,7 @@ Use branded or schema-validated string aliases:
 - `projectId`: existing project slug/ID contract.
 - `taskId`: `task_[A-Za-z0-9_-]{1,128}` or existing task ID.
 - `threadId`: `thread_[A-Za-z0-9_-]{1,128}`.
+- `turnId`: `turn_[A-Za-z0-9_-]{1,128}`.
 - `eventId`: `evt_[A-Za-z0-9_-]{1,128}`.
 - `approvalId`: `appr_[A-Za-z0-9_-]{1,128}`.
 - `terminalSessionId`: existing named session/UUID schema; do not invent a second ID if canonical names already exist.
@@ -228,10 +296,12 @@ type RuntimeSummary = {
   runtime: RuntimeTarget;
   capabilities: RuntimeCapability[];
   providers: AgentProviderSummary[];
-  projects: ProjectSummary[];
-  activeThreads: AgentThreadSummary[];
-  terminalSessions: TerminalSessionSummary[];
-  recentActivity: ActivityEventSummary[];
+  projects: BoundedList<ProjectSummary>;
+  activeThreads: BoundedList<AgentThreadSummary>;
+  attentionThreads: BoundedList<AgentThreadSummary>;
+  terminalSessions: BoundedList<TerminalSessionSummary>;
+  previewSessions: BoundedList<PreviewSessionSummary>;
+  recentActivity: BoundedList<ActivityEventSummary>;
   serverTime: string;
   limits: RuntimeLimits;
 };
@@ -244,16 +314,63 @@ Rules:
 - Include capability flags so clients do not assume unavailable features.
 - Include `serverTime` so clients can reason about expiry without trusting local clock.
 
+### Project And Task Projection
+
+```ts
+type ProjectSummary = {
+  id: string;
+  label: string;
+  status: "available" | "missing" | "stale" | "unknown";
+  taskCount: number;
+  threadCount: number;
+  attentionCount: number;
+  updatedAt?: string;
+};
+
+type TaskAgentSummary = {
+  id: string;
+  projectId: string;
+  title: string;
+  status: "todo" | "running" | "waiting" | "blocked" | "complete" | "archived";
+  priority: "low" | "normal" | "high" | "urgent";
+  order: number;
+  threadCount: number;
+  activeThreadCount: number;
+  attentionCount: number;
+  latestThreadAt?: string;
+  revision?: number;
+};
+
+type ProjectAgentWorkspace = {
+  project: ProjectSummary;
+  tasks: BoundedList<TaskAgentSummary>;
+  projectThreads: BoundedList<AgentThreadSummary>;
+  taskThreads: BoundedList<AgentThreadSummary>;
+  updatedAt: string;
+};
+```
+
+Rules:
+
+- Project/task values come from canonical workspace services, not renderer stores.
+- Counts are bounded non-negative integers and may carry a `hasMore`/truncated signal when exact aggregation is intentionally capped.
+- Project workspace lists sort deterministically by canonical task order, then stable ID.
+- Task mutation remains on the existing validated project task route; coding-agent routes provide relations/read projections and thread actions.
+
 ### Agent Provider
 
 ```ts
 type AgentProviderSummary = {
   id: string;
   displayName: string;
-  kind: "claude" | "codex" | "opencode" | "cursor" | "custom";
+  adapterFamily: "built_in" | "custom_acp";
+  protocol: "native_cli" | "app_server" | "acp" | "mcp" | "shell_bridge";
+  supportTier: "first_class" | "compatibility";
   availability: "available" | "setup_required" | "auth_required" | "installing" | "unavailable" | "unknown";
   installStatus: "installed" | "missing" | "installing" | "failed" | "unknown";
   authStatus: "authenticated" | "missing" | "expired" | "unknown";
+  executionReady: boolean;
+  capabilities: AgentProviderCapabilities;
   supportedModes: Array<"default" | "plan" | "review" | "full_access">;
   defaultMode: "default" | "plan" | "review" | "full_access";
   defaultModel?: string;
@@ -265,6 +382,12 @@ type AgentProviderSummary = {
 Guidance:
 
 - `displayName` is safe UI text controlled by the server.
+- Provider IDs are stable registry IDs. Protocol, release tier, readiness, and
+  operation capabilities are separate validated fields; no closed brand union
+  or executable detection implies support.
+- Custom ACP-compatible profiles complete a bounded handshake/version and
+  capability negotiation. A user-controlled label cannot grant a built-in
+  provider identity or capabilities.
 - `setupActions` should contain safe action IDs and labels, not raw arbitrary commands unless explicitly marked as foreground terminal actions.
 - Health checks must be timeout-bound.
 
@@ -274,7 +397,7 @@ Guidance:
 type CreateAgentThreadRequest = {
   providerId: string;
   prompt: string;
-  projectId?: string;
+  projectId: string;
   taskId?: string;
   terminalSessionId?: string;
   worktreeId?: string;
@@ -292,6 +415,41 @@ Rules:
 - Prompt and attachments are bounded.
 - Provider/mode/sandbox/approval combinations are validated server-side.
 - Create should return accepted thread snapshot quickly; streaming happens separately.
+- New shell requests require `projectId`; compatibility parsing may accept legacy unassigned records on reads only.
+- If `taskId` is present, the gateway resolves the task and enforces project ownership/match before inserting the thread and first event.
+
+### Same-Thread Turn
+
+```ts
+type CreateAgentTurnRequest = {
+  message: string;
+  attachments?: AgentAttachment[];
+  clientRequestId: string;
+};
+
+type CreateAgentTurnResponse = {
+  threadId: string;
+  turnId: string;
+  status: "accepted" | "already_accepted";
+  acceptedAt: string;
+};
+
+type CreateAgentTurnErrorCode =
+  | "thread_busy"
+  | "thread_not_found"
+  | "turn_unavailable";
+```
+
+Route: `POST /api/coding-agents/threads/:threadId/turns`.
+
+Rules:
+
+- Authenticate, validate body under the same prompt/attachment limits, check ownership, and apply `bodyLimit` before parsing.
+- Enforce idempotency on `(ownerId, threadId, clientRequestId)` in the same persistence transaction as the user-turn event.
+- Enforce one active normal turn through an atomic compare/update or owner/thread lock. Return HTTP 409 with `SafeClientErrorSchema.code = "thread_busy"` and generic recovery copy when another turn is active; do not queue silently.
+- Return `thread_not_found` only through the existing owner-safe not-found mapping, and `turn_unavailable` for a generic non-busy state that cannot accept a turn. No turn error includes provider, path, database, token, or resume details.
+- Resume the thread's server-owned provider identity. Provider credentials and resume tokens never cross HTTP/WS/IPC contracts.
+- Publish accepted/status events only after persistence succeeds.
 
 ### Thread Events
 
@@ -402,6 +560,15 @@ Implementation pattern:
 5. Append lifecycle events as runtime progresses.
 6. Publish events after persistence succeeds.
 
+Same-thread follow-up pattern:
+
+1. Validate owner/thread/project/task references and `clientRequestId`.
+2. Atomically claim the idle thread for one new turn and append the user-turn event.
+3. Return the prior accepted turn for an idempotent retry.
+4. Start the normalized provider adapter with the server-owned resume identity and an `AbortSignal`.
+5. Persist provider resume identity changes before exposing a completed/idle status.
+6. Release active-turn ownership on completion, failure, or abort and publish the new projection.
+
 ### Event Stream Pattern
 
 Thread streams use cursor replay and live subscription.
@@ -436,12 +603,22 @@ Summary is a safe hydration projection, not a dump.
 
 Implementation pattern:
 
-1. Gather bounded provider/project/thread/session/activity summaries.
+1. Gather bounded provider/project/thread/session/activity summaries from canonical services.
 2. Include limits and capability flags.
 3. Return coarse runtime health.
 4. Omit secrets, raw logs, file contents, terminal content, and provider output.
 5. Make every list stable sorted.
 6. Include `serverTime`.
+7. Never ship a permanent placeholder project list when canonical projects exist; adapter failures produce a safe degraded capability/state.
+
+### Project Workspace Projection Pattern
+
+1. Validate project ID and owner access at the route boundary.
+2. Read canonical tasks through the existing task manager and coding threads through the thread store.
+3. Reject or quarantine stale cross-project task references; never repair them in a read path.
+4. Compute bounded task aggregates with deterministic sorting and explicit truncation.
+5. Keep task writes on canonical task routes and publish workspace events after successful mutations.
+6. Support independent cursors for tasks and threads so a project with many chats cannot create an oversized response.
 
 ## Client State Patterns
 
@@ -555,19 +732,19 @@ Renderer must call trusted core for:
 Add grouped channels or a typed method object:
 
 - `runtime:get-summary`
+- `runtime:get-project-workspace`
 - `runtime:select`
-- `agents:create-thread`
-- `agents:abort-thread`
-- `agents:submit-approval`
-- `agents:submit-input`
-- `agents:subscribe-thread`
-- `terminal:list-sessions`
-- `terminal:create-session`
-- `terminal:terminate-session`
-- `workspace:get-review`
-- `workspace:read-file`
-- `workspace:write-file`
-- `preview:open`
+- `runtime:create-thread`
+- `runtime:create-turn`
+- `runtime:abort-thread`
+- `runtime:get-thread-snapshot`
+- `runtime:subscribe-thread-events`
+- `runtime:unsubscribe-thread-events`
+- `runtime:submit-approval-decision`
+- `runtime:submit-input-answer`
+- Existing `runtime:get-reviews`, `runtime:get-review-snapshot`, and `runtime:*file*` channels remain canonical.
+
+Do not introduce a parallel `agents:*` IPC namespace. Extend the existing `runtime:*` coding-agent bridge and keep terminal, workspace task, preview, and external-open operations on their existing typed operator/IPC paths.
 
 Every channel:
 
@@ -579,24 +756,43 @@ Every channel:
 
 ### Desktop UI Layout
 
-Recommended first screen after sign-in:
+Required first-class Agents workspace after sign-in:
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│ Top bar: runtime, project switcher, global composer, status │
+│ Top bar: runtime, Conversation | Kanban, new chat, status    │
 ├──────────────┬──────────────────────────────┬──────────────┤
-│ Projects /   │ Active thread or task         │ Inspector    │
-│ threads      │ transcript / terminal / files │ review/info  │
-│              │                              │              │
+│ Projects     │ Conversation transcript or    │ Context      │
+│  Task        │ project Kanban board           │ terminal /   │
+│   Chat A     │                                │ files/review │
+│   Chat B     │                                │ preview      │
+│  Chat C      │                                │              │
 └──────────────┴──────────────────────────────┴──────────────┘
 ```
 
 Use dense operational UI, not a marketing layout:
 
-- Sidebar for projects/tasks/threads.
-- Main panel for selected thread/workspace.
+- Persistent sidebar for projects, task groups, and every task-bound/project-level thread.
+- Segmented Conversation/Kanban control; both modes retain selected project and reconcile selected task/thread.
+- Conversation main panel for selected thread transcript and same-thread composer.
+- Kanban main panel reuses canonical task statuses and renders thread counts/attention without nesting cards inside cards.
 - Inspector for approvals, review, preview, metadata.
 - Keyboard shortcuts for new thread, command palette, terminal focus, review toggle, file search.
+
+Navigator behavior:
+
+- Project rows expand/collapse and show safe activity/attention counts.
+- An expanded project has a `Project chats` group for unbound threads and task rows ordered by canonical task order.
+- Each task row shows its thread count and expands to every attached thread. Thread rows show title, provider display label, execution/attention status, and latest bounded activity only.
+- Selecting a project with no selected thread opens its last valid mode. Selecting a task without a thread opens a task overview/list of chats. Selecting a thread opens Conversation mode for that exact thread.
+- `New chat` inherits the active project and optional selected task, then asks for provider and first message. `New chat from context` creates a distinct thread; normal composer send always creates a turn in the selected thread.
+
+Kanban behavior:
+
+- The board is scoped to one selected project and uses the existing canonical task columns and ordering.
+- A task card shows task title/priority plus bounded thread count, active count, attention count, and latest activity. It does not render full nested chat cards.
+- Opening a task card reveals its thread list in the contextual inspector or task detail surface. Choosing one thread switches to Conversation mode and preserves project/task identity.
+- Drag/drop or menu movement uses the existing task mutation and optimistic-concurrency behavior. Thread reducers never dispatch a task move.
 
 ### Desktop Regression Checklist
 
@@ -638,7 +834,9 @@ Add agent routes without breaking current tabs:
   settings
 
 /agents
-  index
+  index                         # Projects/recent attention
+  projects/[projectId]          # Conversation hierarchy
+  projects/[projectId]/board    # Kanban
   new
   [threadId]
   [threadId]/review
@@ -648,11 +846,20 @@ Add agent routes without breaking current tabs:
 
 Phone-first hierarchy:
 
-1. Recent work/inbox.
-2. Thread list.
-3. Thread detail.
-4. Sheets for approvals, provider picker, file actions.
-5. Separate full-screen routes for terminal, review, files, preview.
+1. Project/recent attention list.
+2. Selected project with Conversation/Kanban control.
+3. Task groups and all attached threads, or Kanban columns/cards.
+4. Thread detail with same-thread composer.
+5. Sheets for approvals, provider picker, file actions.
+6. Separate full-screen routes for terminal, review, files, preview.
+
+Mobile interaction behavior:
+
+- `/agents` lists projects plus bounded global attention/recent work; it does not flatten every transcript into one unbounded feed.
+- `/agents/projects/:projectId` provides a segmented Conversation/Kanban control. Conversation mode lists project-level chats and expandable task groups before navigating to the existing thread detail route.
+- Kanban mode uses horizontally scrollable fixed-width columns or vertically grouped sections on narrow phones. Tablet may use a split board/task-thread detail layout.
+- Opening a task exposes every attached chat; opening a chat navigates by validated `threadId` and the detail composer posts a same-thread turn.
+- Back navigation returns to the prior project/mode/task selection after live-state reconciliation.
 
 Tablet/foldable:
 
@@ -739,26 +946,37 @@ Before merging each mobile phase:
 
 ### Route Design
 
-Prefer routes under `/api/coding-agents` or an equivalent clear namespace:
+Current canonical routes under `/api/coding-agents`:
 
 - `GET /api/coding-agents/summary`
-- `GET /api/coding-agents/providers`
 - `POST /api/coding-agents/threads`
+- `POST /api/coding-agents/threads/:threadId/adopt`
 - `GET /api/coding-agents/threads`
 - `GET /api/coding-agents/threads/:threadId`
-- `POST /api/coding-agents/threads/:threadId/abort`
-- `POST /api/coding-agents/approvals/:approvalId/decision`
-- `POST /api/coding-agents/input/:requestId/answer`
 - `GET /api/coding-agents/threads/:threadId/events`
-- `GET /api/coding-agents/threads/:threadId/review`
-- `GET /api/coding-agents/projects/:projectId/files`
-- `GET /api/coding-agents/projects/:projectId/files/read`
-- `PUT /api/coding-agents/projects/:projectId/files/write`
+- `POST /api/coding-agents/threads/:threadId/abort`
+- `POST /api/coding-agents/threads/:threadId/approvals/:approvalId/decision`
+- `POST /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer`
+- `POST /api/coding-agents/threads/:threadId/turns`
+- `GET /api/coding-agents/projects/:projectId/workspace`
+- `GET /api/coding-agents/reviews`
+- `GET /api/coding-agents/reviews/:reviewId`
+- `GET /api/coding-agents/files/browse`
+- `GET /api/coding-agents/files/search`
+- `GET /api/coding-agents/files/read`
+- `POST /api/coding-agents/files/write`
+- `POST /api/coding-agents/source-control/prepare-commit`
+- `POST /api/coding-agents/source-control/pull-requests`
+- `GET /api/coding-agents/notification-preferences`
+- `PUT /api/coding-agents/notification-preferences`
 
-WebSocket:
+The project workspace route returns `ProjectAgentWorkspaceSchema` after validating the owner-scoped project path plus independent bounded task/thread cursors and limits. The turns route accepts `CreateAgentTurnRequestSchema` and applies auth, `bodyLimit`, path/body validation, ownership/project/task checks, persisted idempotency, atomic active-turn ownership, and safe error mapping. The adoption route is compatibility-only: it can attach a fully unassigned legacy thread to one validated project/task relation but cannot move an assigned thread.
 
-- `/ws/coding-agents/runtime`
-- `/ws/coding-agents/threads/:threadId`
+Current canonical coding-agent WebSocket:
+
+- `/ws/coding-agents/thread/:threadId`
+
+Project/task/thread summary changes publish bounded events through the existing authenticated workspace event path after owner-file persistence succeeds. Do not add `/ws/coding-agents/runtime` without its own schemas, auth registration, subscriber caps, stale cleanup, shutdown drain, and tests.
 
 Compatibility:
 
@@ -797,7 +1015,10 @@ For every new WS:
 
 Canonical persistence:
 
-- Thread metadata/history: owner Postgres or existing kernel conversation store, depending on current architecture.
+- Project/task metadata: existing canonical workspace project/task services and their current owner-controlled persistence.
+- Phase 18-20 thread/turn metadata and bounded event history: the existing owner coding-thread store (`system/coding-agents/threads.json`). Persist idempotency and active-turn ownership with the thread record through the store's atomic single-writer mutation path; do not rely on renderer/mobile state or an in-memory-only lock.
+- Full Workspace V2 durable state: the separately reviewed owner-Postgres migration defined in `FULL-WORKSPACE-BACKEND.md`. After its cutover marker, Postgres is authoritative and the owner file remains bounded import/export/rollback compatibility only.
+- Provider conversation resume identity: server-only field in the existing owner thread/provider persistence, excluded from every shell projection, export intended for UI, diagnostic, and notification payload.
 - Runtime/provider config: owner files and/or Postgres according to existing Matrix ownership rules.
 - App/project files: owner filesystem under scoped project/app directories.
 - App/user data: owner Postgres.
@@ -817,6 +1038,8 @@ Do not add new SQLite/better-sqlite/drizzle persistence for this feature. Existi
 - Terminal frames reject invalid sizes/input.
 - File paths reject traversal.
 - Diff snapshots enforce size limits.
+- Project/task/thread cardinality schemas reject cross-project and oversized projections.
+- Same-thread turn requests bound message/attachments/idempotency IDs.
 
 ### Gateway Unit Tests
 
@@ -827,6 +1050,10 @@ Do not add new SQLite/better-sqlite/drizzle persistence for this feature. Existi
 - Approval lifecycle.
 - Runtime summary caps and stable sort.
 - Route auth/validation/body limits.
+- Real project adapter populates summary when canonical projects exist.
+- Project workspace groups project-level and task-bound threads, including several threads on one task.
+- Cross-project task/thread binding is rejected.
+- Same-thread turns resume one provider conversation, are idempotent, and reject concurrent active turns.
 
 ### Desktop Tests
 
@@ -837,6 +1064,10 @@ Do not add new SQLite/better-sqlite/drizzle persistence for this feature. Existi
 - Thread list rendering.
 - Approval action handling.
 - Existing desktop typecheck.
+- Project navigator renders multiple threads under one task.
+- Conversation/Kanban switching preserves valid selection.
+- Kanban task cards show bounded thread aggregates without changing canonical task status.
+- Follow-up sends a turn to the selected thread rather than creating another thread.
 
 ### Mobile Tests
 
@@ -847,6 +1078,9 @@ Do not add new SQLite/better-sqlite/drizzle persistence for this feature. Existi
 - Terminal client frame parser.
 - New agent route smoke tests.
 - Existing mobile Jest suite.
+- Project/task/thread route params and resume references reconcile against live state.
+- Multiple threads on one task remain independently selectable.
+- Conversation/Kanban switching and same-thread follow-up work on phone layouts.
 
 ### End-To-End Tests
 
@@ -856,6 +1090,9 @@ Do not add new SQLite/better-sqlite/drizzle persistence for this feature. Existi
 - Approval opened on desktop, resolved on mobile.
 - Runtime switch recovery.
 - Network loss replay.
+- One task with two independent chats is navigable from desktop and mobile.
+- One chat accepts two sequential user turns and preserves one provider conversation identity.
+- Conversation/Kanban switching opens the same task/thread records across shells.
 
 ## Migration And Rollout
 
@@ -870,6 +1107,9 @@ Use flags/capabilities for:
 - Preview automation.
 - Native mobile terminal.
 - Push notifications for agent attention.
+- Project workspace projections.
+- Same-thread turns.
+- Conversation/Kanban workspace UI.
 
 ### Compatibility Stages
 
@@ -883,8 +1123,124 @@ Use flags/capabilities for:
 8. Terminal binding.
 9. Files/review/preview.
 10. Native terminal improvement.
+11. Real project/task/thread projection.
+12. Same-thread turns.
+13. Desktop project navigator and Conversation/Kanban modes.
+14. Mobile project/task/thread navigation and Kanban mode.
+15. Owner-Postgres coding-workspace repository and legacy import.
+16. Stable transcript pages and complete lifecycle operations.
+17. Pending queue, steering/interrupt, execution graph, and attention inbox.
+18. Many-terminal bindings, repository operations, review comments, and attachments.
+19. Runtime handoff and role-based collaboration.
+20. Shared preview-computer acceptance by desktop and mobile.
 
 Each stage must be revertible without losing user data.
+
+## Full Workspace V2 Architecture
+
+The detailed capability, data, route, migration, and delivery contract is
+authoritative in [FULL-WORKSPACE-BACKEND.md](./FULL-WORKSPACE-BACKEND.md).
+
+### Computer And Preview Control Plane
+
+Platform owns one bounded computer inventory projection for verified Clerk and
+native/sync principals. A nullable selected slot is derived only from the
+verified principal; individual computer rows never infer client-local selection.
+Electron main may exchange its native/sync principal for a runtime-scoped bearer
+and stores it in the native credential store. Mobile selects a server-derived
+same-origin route: `/vm/{handle}` for primary or the same path with a validated
+`runtime` query for non-primary slots, then continues using Clerk/platform
+session routing. No renderer/mobile state receives a runtime bearer.
+
+Preview environments use a dedicated platform authority keyed by repository,
+PR, and exact head SHA. One generation owns isolated database/JWT/edge/provider/
+object resources, platform revision, disposable VPS, expiry, cleanup state, and
+compare-and-swap generation. Production credentials are unavailable to the
+preview service. Native app HTTP/WebSocket routes remain ordinary runtime routes
+through explicit `/vm/{handle}` forwarding with an optional validated runtime
+slot selector and retain current owner/session proofs, limits, TTL, and shutdown
+cleanup.
+
+### Durable Store Boundary
+
+`system/coding-agents/threads.json` remains a bounded compatibility
+import/export projection. Complete conversation history, turns, pending
+messages, execution graphs, runtime/terminal bindings, attachments, attention,
+review comments, participants, and idempotency records move to additive tables
+in the existing owner-controlled Postgres through the gateway's owned Kysely
+lifecycle.
+
+The repository owns transaction boundaries and accepts an executor for nested
+transactions. Only the gateway bootstrap that creates the shared Kysely/pool may
+destroy it. Required atomic groups include:
+
+- thread plus initial turn/transcript/idempotency
+- pending-message reorder with optimistic queue revision
+- queue claim plus accepted turn
+- transcript append plus thread sequence/status projection
+- attention transition plus approval/input/lifecycle transition
+- terminal binding plus projection event
+- handoff source/destination state transition plus audit event
+- participant grant/revoke plus audit event
+
+Every optimistic update includes its base revision in the write predicate.
+Every retryable create uses a unique key and `ON CONFLICT` rather than a
+check-then-insert flow.
+
+### Transcript And Stream Boundary
+
+The durable transcript is optimized for display and replay; provider execution
+state remains opaque and server-only. Stream reducers receive normalized
+entries with one monotonic conversation sequence. HTTP pages are authoritative
+for hydration and gap recovery. WebSocket delivery is an invalidation/live-tail
+optimization and never the only copy of a transcript record.
+
+Streaming assistant/tool updates may replace one aggregation key while a turn is
+active. Finalization persists one bounded normalized entry representation and
+advances the conversation sequence atomically. Raw provider errors are logged
+only after redaction and map to safe lifecycle entries.
+
+### Session Discovery And Handoff Boundary
+
+Provider discovery adapters inspect only server-side owner runtime state and
+return expiring opaque import handles. Import validates project/worktree/provider
+compatibility, then creates or links canonical Matrix conversation records
+without revealing provider resume identity.
+
+Cross-computer handoff is a saga with persisted phases. Destination preflight
+must complete before source detachment. A destination failure keeps the source
+active when possible; otherwise it records a recoverable detached state. Clients
+never transfer credentials, process IDs, paths, or provider state directly.
+
+### Queue And Steering Boundary
+
+Normal turns preserve the one-active-turn safe conflict. Pending messages are a
+separate explicit durable queue. Dispatch claims one pending record through an
+atomic state transition. Steering and interruption target the active turn and
+are never emulated as queued messages when the adapter lacks support.
+
+### Execution Graph Boundary
+
+Parent/child runs use stable IDs and a bounded acyclic relation. Provider-native
+subagents and Matrix-spawned delegated runs normalize into the same read model,
+but adapters retain provider-specific execution identity. Runtime limits cap
+depth, children, active runs, event rate, and transcript expansion.
+
+### Terminal And Repository Boundary
+
+Terminal bindings reference canonical `/api/terminal/sessions` records and
+`/ws/terminal` process streams. They do not persist terminal bytes. Repository,
+file, review, preview, and source-control services resolve a validated owner
+project/worktree root on every operation and return only bounded structured
+metadata/content allowed by their contract.
+
+### Preview Integration Boundary
+
+The backend Graphite stack is based on `main`, not a shell branch. Once a backend
+gate is green, its exact top SHA is deployed to a disposable preview computer.
+Desktop and mobile development branches point to that same preview runtime.
+Temporary integration branches may combine shell and backend heads for visual
+testing but are not merged and do not become a source of truth.
 
 ## Implementation Invariants
 
@@ -896,5 +1252,8 @@ Each stage must be revertible without losing user data.
 - Every long-lived stream has caps, stale cleanup, and shutdown drain.
 - Every user-visible error is safe.
 - Existing desktop/mobile behavior remains intact unless replaced by a tested superset.
+- One visible chat/session always maps to one `AgentThread`; one user message maps to one `AgentTurn` in that thread.
+- Tasks may own multiple threads; no singular task-session field may be treated as the coding conversation source of truth.
+- Task status is never silently derived into a mutation from thread status.
 - Mobile SDK 57 remains the target for native mobile work.
 - New plans, comments, code, docs, and tests must use Matrix-native terminology only.

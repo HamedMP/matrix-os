@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useHeaderHeight } from "@react-navigation/elements";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { z } from "zod/v4";
 import {
@@ -10,12 +10,15 @@ import {
   defaultAgentThreadComposerDraft,
   type AgentProviderSummary,
   type AgentThreadComposerDraft,
+  ProjectIdSchema,
   ProviderIdSchema,
   type RuntimeSummary,
   SafeDisplayStringSchema,
+  TaskIdSchema,
   ThreadIdSchema,
 } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
+import { AgentProjectPicker } from "@/components/agent-project-picker";
 import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 
 type ScreenState =
@@ -98,6 +101,19 @@ function providerReady(provider: AgentProviderSummary): boolean {
   return provider.availability === "available" &&
     provider.installStatus === "installed" &&
     provider.authStatus === "authenticated";
+}
+
+function availableProject(summary: RuntimeSummary, projectId: string | undefined) {
+  if (!projectId) return undefined;
+  return summary.projects.items.find((project) => project.id === projectId && project.status === "available");
+}
+
+function defaultProjectId(summary: RuntimeSummary, requestedProjectId: string | undefined): string | undefined {
+  if (requestedProjectId !== undefined) {
+    return availableProject(summary, requestedProjectId)?.id;
+  }
+  const available = summary.projects.items.filter((project) => project.status === "available");
+  return available.length === 1 ? available[0]?.id : undefined;
 }
 
 function parseReviewHunkSeedParams(params: Record<string, unknown>): ReviewHunkSeedParams | null {
@@ -216,10 +232,10 @@ function mergeSeededDraft(
 
 export default function AgentComposerScreen() {
   const { theme } = useUnistyles();
-  const headerHeight = useHeaderHeight();
   const router = useRouter();
   const routeParams = useLocalSearchParams();
   const { client } = useGateway();
+  const insets = useSafeAreaInsets();
   const reviewIdParam = firstRouteParam(routeParams.reviewId);
   const projectIdParam = firstRouteParam(routeParams.projectId);
   const pullRequestNumberParam = firstRouteParam(routeParams.pullRequestNumber);
@@ -235,6 +251,10 @@ export default function AgentComposerScreen() {
   const sourceThreadIdParam = firstRouteParam(routeParams.sourceThreadId);
   const sourceThreadTitleParam = firstRouteParam(routeParams.sourceThreadTitle);
   const sourceProviderIdParam = firstRouteParam(routeParams.sourceProviderId);
+  const requestedProjectIdResult = ProjectIdSchema.safeParse(projectIdParam);
+  const requestedTaskIdResult = TaskIdSchema.safeParse(firstRouteParam(routeParams.taskId));
+  const requestedProjectId = requestedProjectIdResult.success ? requestedProjectIdResult.data : undefined;
+  const requestedTaskId = requestedTaskIdResult.success ? requestedTaskIdResult.data : undefined;
   const reviewHunkSeed = useMemo(() => parseReviewHunkSeedParams({
     reviewId: reviewIdParam,
     projectId: projectIdParam,
@@ -274,10 +294,16 @@ export default function AgentComposerScreen() {
   const [state, setState] = useState<ScreenState>(INITIAL_STATE);
   const [draft, setDraft] = useState<AgentThreadComposerDraft | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const [projectMode, setProjectMode] = useState<"scratch" | "github">("scratch");
+  const [projectInput, setProjectInput] = useState("");
+  const [projectCreateStatus, setProjectCreateStatus] = useState<"idle" | "submitting">("idle");
+  const [projectCreateError, setProjectCreateError] = useState<string | null>(null);
   const [submitStatus, setSubmitStatus] = useState<"idle" | "submitting">("idle");
   const [createError, setCreateError] = useState<string | null>(null);
   const generation = useRef(0);
   const submitInFlight = useRef(false);
+  const projectCreateRequest = useRef<{ key: string; clientRequestId: string } | null>(null);
 
   const loadSummary = useCallback(async () => {
     const nextGeneration = generation.current + 1;
@@ -295,14 +321,26 @@ export default function AgentComposerScreen() {
     }
     const summary = result.summary;
     setState({ status: "ready", summary, error: null });
-    const defaultDraft = defaultAgentThreadComposerDraft(summary);
-    const seededDraft = reviewHunkSeed
+    const baseDraft = defaultAgentThreadComposerDraft(summary);
+    const selectedProjectId = defaultProjectId(summary, requestedProjectId);
+    const defaultDraft: AgentThreadComposerDraft = {
+      ...baseDraft,
+      projectId: selectedProjectId,
+      taskId: selectedProjectId === requestedProjectId ? requestedTaskId : undefined,
+    };
+    const seededDraftCandidate = reviewHunkSeed
       ? reviewHunkFollowUpDraft(summary, reviewHunkSeed)
       : threadFollowUpSeed
         ? threadFollowUpDraft(summary, threadFollowUpSeed)
         : null;
+    const seededProjectId = defaultProjectId(summary, seededDraftCandidate?.projectId ?? requestedProjectId);
+    const seededDraft = seededDraftCandidate ? {
+      ...seededDraftCandidate,
+      projectId: seededProjectId,
+      taskId: seededProjectId === requestedProjectId ? requestedTaskId : undefined,
+    } : null;
     setDraft((current) => mergeSeededDraft(current, defaultDraft, seededDraft));
-  }, [client, reviewHunkSeed, threadFollowUpSeed]);
+  }, [client, requestedProjectId, requestedTaskId, reviewHunkSeed, threadFollowUpSeed]);
 
   useEffect(() => {
     void loadSummary();
@@ -310,6 +348,7 @@ export default function AgentComposerScreen() {
 
   const summary = state.summary;
   const selectedProvider = summary?.providers.find((provider) => provider.id === draft?.providerId);
+  const selectedProject = summary && draft ? availableProject(summary, draft.projectId) : undefined;
   const modes = selectedProvider?.supportedModes ?? [];
   const canCreate = Boolean(summary && capabilityEnabled(summary, "codingAgentsThreadCreate"));
 
@@ -323,10 +362,75 @@ export default function AgentComposerScreen() {
     setPickerOpen(false);
   }, [summary]);
 
+  const chooseProject = useCallback((projectId: string) => {
+    if (!summary || !availableProject(summary, projectId)) return;
+    setDraft((current) => ({
+      ...(current ?? defaultAgentThreadComposerDraft(summary)),
+      projectId,
+      taskId: current?.projectId === projectId ? current.taskId : undefined,
+    }));
+    setProjectPickerOpen(false);
+    setCreateError(null);
+  }, [summary]);
+
+  const createProject = useCallback(async () => {
+    if (!client || projectCreateStatus === "submitting") return;
+    const value = projectInput.trim();
+    if (!value) {
+      setProjectCreateError(projectMode === "scratch"
+        ? "Enter a project name."
+        : "Enter a GitHub repository URL.");
+      return;
+    }
+    setProjectCreateStatus("submitting");
+    setProjectCreateError(null);
+    const requestKey = `${projectMode}:${value}`;
+    if (projectCreateRequest.current?.key !== requestKey) {
+      projectCreateRequest.current = {
+        key: requestKey,
+        clientRequestId: nextClientRequestId(),
+      };
+    }
+    const clientRequestId = projectCreateRequest.current.clientRequestId;
+    try {
+      const result = await client.createProject(projectMode === "scratch"
+        ? { mode: "scratch", name: value, clientRequestId }
+        : { mode: "github", repositoryUrl: value, clientRequestId });
+      if (!result.ok) {
+        setProjectCreateError(result.error);
+        return;
+      }
+      const refreshed = await client.getCodingAgentRuntimeSummary();
+      if (!refreshed.ok) {
+        setProjectCreateError("Project was created, but the project list could not be refreshed.");
+        return;
+      }
+      const project = availableProject(refreshed.summary, result.project.id);
+      if (!project) {
+        setProjectCreateError("Project was created, but it is not ready yet. Reopen the composer to retry.");
+        return;
+      }
+      projectCreateRequest.current = null;
+      setState({ status: "ready", summary: refreshed.summary, error: null });
+      setDraft((current) => ({
+        ...(current ?? defaultAgentThreadComposerDraft(refreshed.summary)),
+        projectId: project.id,
+        taskId: undefined,
+      }));
+      setProjectInput("");
+    } finally {
+      setProjectCreateStatus("idle");
+    }
+  }, [client, projectCreateStatus, projectInput, projectMode]);
+
   const submit = useCallback(async () => {
     if (submitInFlight.current) return;
     if (!client || !summary || !draft) {
       setCreateError("Agent run could not be started. Try again.");
+      return;
+    }
+    if (!selectedProject) {
+      setCreateError("Choose a project before starting an agent run.");
       return;
     }
     const built = buildCreateAgentThreadRequestFromComposer({
@@ -356,7 +460,7 @@ export default function AgentComposerScreen() {
       submitInFlight.current = false;
       setSubmitStatus("idle");
     }
-  }, [client, draft, router, summary]);
+  }, [client, draft, router, selectedProject, summary]);
 
   if (state.status === "loading") {
     return (
@@ -381,7 +485,7 @@ export default function AgentComposerScreen() {
     <KeyboardAvoidingView
       accessibilityLabel="Agent composer keyboard area"
       behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={Math.max(0, headerHeight)}
+      keyboardVerticalOffset={Platform.OS === "ios" ? Math.max(0, insets.top) : 0}
       style={styles.keyboardArea}
     >
       <ScrollView
@@ -399,6 +503,25 @@ export default function AgentComposerScreen() {
             <Text style={styles.subtitle}>{summary.runtime.label}</Text>
           </View>
         </View>
+
+        <AgentProjectPicker
+          projects={summary.projects.items}
+          selectedProjectId={selectedProject?.id}
+          taskId={draft.taskId}
+          pickerOpen={projectPickerOpen}
+          mode={projectMode}
+          input={projectInput}
+          createStatus={projectCreateStatus}
+          createError={projectCreateError}
+          onTogglePicker={() => setProjectPickerOpen((open) => !open)}
+          onChooseProject={chooseProject}
+          onModeChange={(mode) => {
+            setProjectMode(mode);
+            setProjectCreateError(null);
+          }}
+          onInputChange={setProjectInput}
+          onCreate={() => void createProject()}
+        />
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Provider</Text>

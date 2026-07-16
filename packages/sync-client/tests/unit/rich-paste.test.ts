@@ -1,9 +1,11 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   RICH_PASTE_MAX_IMAGE_BYTES,
+  createRichPasteUploadClient,
   processRichPasteTransaction,
   type RichPasteUploadClient,
 } from "../../src/cli/rich-paste.js";
@@ -36,6 +38,94 @@ describe("cli/rich-paste", () => {
       }))),
     };
   }
+
+  it("sanitizes non-ASCII upload filenames before sending headers", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      terminalPath: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-10/paste.png",
+      path: "projects/.matrix-terminal-pastes/2026-07-10/paste.png",
+      mimeType: "image/png",
+      size: pngBytes.byteLength,
+    }), {
+      status: 201,
+      headers: { "Content-Type": "application/json" },
+    }));
+    const client = createRichPasteUploadClient({
+      gatewayUrl: "https://matrix.example",
+      fetch: fetchMock as typeof fetch,
+    });
+
+    await expect(client.uploadPasteAssets({
+      sessionName: "codex-c",
+      transactionId: "tx-1",
+      assets: [{
+        name: "Screenshot 2026-07-09 at 5.13.48\u202fPM.png",
+        mimeType: "image/png",
+        bytes: pngBytes,
+      }],
+    })).resolves.toHaveLength(1);
+
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers["X-Matrix-Filename"]).toBe("Screenshot-2026-07-09-at-5.13.48-PM.png");
+    expect(() => new Headers({ "X-Matrix-Filename": headers["X-Matrix-Filename"] })).not.toThrow();
+  });
+
+  it("uses MIME-specific fallback upload filenames when sanitizing removes the basename", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      terminalPath: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-10/paste.webp",
+      path: "projects/.matrix-terminal-pastes/2026-07-10/paste.webp",
+      mimeType: "image/webp",
+      size: 12,
+    }), {
+      status: 201,
+      headers: { "Content-Type": "application/json" },
+    }));
+    const client = createRichPasteUploadClient({
+      gatewayUrl: "https://matrix.example",
+      fetch: fetchMock as typeof fetch,
+    });
+
+    await client.uploadPasteAssets({
+      sessionName: "codex-c",
+      transactionId: "tx-1",
+      assets: [{
+        name: "\u202f.webp",
+        mimeType: "image/webp",
+        bytes: Buffer.from([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]),
+      }],
+    });
+
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers["X-Matrix-Filename"]).toBe("paste.webp");
+  });
+
+  it("trims separators after truncating long upload filenames", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      terminalPath: "/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-10/paste.png",
+      path: "projects/.matrix-terminal-pastes/2026-07-10/paste.png",
+      mimeType: "image/png",
+      size: pngBytes.byteLength,
+    }), {
+      status: 201,
+      headers: { "Content-Type": "application/json" },
+    }));
+    const client = createRichPasteUploadClient({
+      gatewayUrl: "https://matrix.example",
+      fetch: fetchMock as typeof fetch,
+    });
+
+    await client.uploadPasteAssets({
+      sessionName: "codex-c",
+      transactionId: "tx-1",
+      assets: [{
+        name: `${"a".repeat(250)} ${"b".repeat(10)}.png`,
+        mimeType: "image/png",
+        bytes: pngBytes,
+      }],
+    });
+
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers["X-Matrix-Filename"]).toBe(`${"a".repeat(250)}.png`);
+  });
 
   it("rewrites quoted image paths with spaces while preserving surrounding prompt text", async () => {
     const localPath = join(tempDir, "Screenshot 2026-07-08 at 10.31.00.png");
@@ -159,6 +249,232 @@ describe("cli/rich-paste", () => {
     expect(client.uploadPasteAssets).not.toHaveBeenCalled();
   });
 
+  it("falls back to the clipboard image for a single unreadable observable pasted image path", async () => {
+    const localPath = join(tempDir, "missing.png");
+    const client = uploadClient(["/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/clipboard.png"]);
+    const clipboardReader = {
+      readImage: vi.fn(async () => ({
+        status: "available" as const,
+        candidate: {
+          kind: "clipboard" as const,
+          capturedAt: new Date("2026-07-08T10:31:00Z"),
+          sizeBytes: pngBytes.byteLength,
+          mimeType: "image/png" as const,
+          bytes: new Uint8Array(pngBytes),
+        },
+      })),
+    };
+
+    const result = await processRichPasteTransaction({
+      sessionName: "main",
+      text: localPath,
+      observablePaste: true,
+      uploadClient: client,
+      clipboardReader,
+      localReadRetryDelaysMs: [],
+    });
+
+    expect(result.status).toBe("rewritten");
+    expect(result.outgoingText).toBe("/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/clipboard.png");
+    expect(result.outgoingText).not.toContain(localPath);
+    expect(clipboardReader.readImage).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(client.uploadPasteAssets).mock.calls[0]?.[0].assets).toEqual([{
+      name: "clipboard.png",
+      mimeType: "image/png",
+      bytes: new Uint8Array(pngBytes),
+    }]);
+  });
+
+  it("falls back to the clipboard image for a single unreadable non-bracketed dropped image path", async () => {
+    const localPath = join(tempDir, "missing.png");
+    const client = uploadClient(["/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/clipboard.png"]);
+    const clipboardReader = {
+      readImage: vi.fn(async () => ({
+        status: "available" as const,
+        candidate: {
+          kind: "clipboard" as const,
+          capturedAt: new Date("2026-07-08T10:31:00Z"),
+          sizeBytes: pngBytes.byteLength,
+          mimeType: "image/png" as const,
+          bytes: new Uint8Array(pngBytes),
+        },
+      })),
+    };
+
+    const result = await processRichPasteTransaction({
+      sessionName: "main",
+      text: `"${localPath}" `,
+      observablePaste: false,
+      uploadClient: client,
+      clipboardReader,
+      localReadRetryDelaysMs: [],
+    });
+
+    expect(result.status).toBe("rewritten");
+    expect(result.outgoingText).toBe('"/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/clipboard.png" ');
+    expect(clipboardReader.readImage).toHaveBeenCalledTimes(1);
+  });
+
+  it("decodes terminal-emitted unicode escapes in quoted dropped image paths", async () => {
+    const actualPath = join(tempDir, "Screenshot 2026-07-09 at 5.13.48\u202fPM.png");
+    await writeFile(actualPath, pngBytes);
+    const client = uploadClient(["/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/screenshot.png"]);
+    const terminalPath = actualPath.replace("\u202f", "\\u202f");
+
+    const result = await processRichPasteTransaction({
+      sessionName: "main",
+      text: `"${terminalPath}" `,
+      observablePaste: false,
+      uploadClient: client,
+    });
+
+    expect(result.status).toBe("rewritten");
+    expect(result.outgoingText).toBe('"/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/screenshot.png" ');
+    expect(client.uploadPasteAssets).toHaveBeenCalledTimes(1);
+  });
+
+  it("rewrites single whole-input unquoted image paths with spaces", async () => {
+    const localPath = join(tempDir, "Screenshot with spaces.png");
+    await writeFile(localPath, pngBytes);
+    const client = uploadClient(["/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/spaces.png"]);
+
+    const result = await processRichPasteTransaction({
+      sessionName: "main",
+      text: `${localPath} `,
+      observablePaste: false,
+      uploadClient: client,
+    });
+
+    expect(result.status).toBe("rewritten");
+    expect(result.outgoingText).toBe("/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/spaces.png ");
+  });
+
+  it("decodes backslash-escaped spaces in dropped image paths", async () => {
+    const localPath = join(tempDir, "Screenshot escaped spaces.png");
+    await writeFile(localPath, pngBytes);
+    const client = uploadClient(["/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/escaped.png"]);
+    const escapedPath = localPath.replaceAll(" ", "\\ ");
+
+    const result = await processRichPasteTransaction({
+      sessionName: "main",
+      text: escapedPath,
+      observablePaste: false,
+      uploadClient: client,
+    });
+
+    expect(result.status).toBe("rewritten");
+    expect(result.outgoingText).toBe("/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/escaped.png");
+  });
+
+  it("rewrites file url image paths with percent encoding", async () => {
+    const localPath = join(tempDir, "Screenshot file url.png");
+    await writeFile(localPath, pngBytes);
+    const client = uploadClient(["/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/file-url.png"]);
+
+    const result = await processRichPasteTransaction({
+      sessionName: "main",
+      text: pathToFileURL(localPath).href,
+      observablePaste: false,
+      uploadClient: client,
+    });
+
+    expect(result.status).toBe("rewritten");
+    expect(result.outgoingText).toBe("/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/file-url.png");
+  });
+
+  it("retries transient single-path dropped images until the file becomes readable", async () => {
+    const localPath = join(tempDir, "transient.png");
+    const client = uploadClient(["/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/transient.png"]);
+    const writeLater = setTimeout(() => {
+      void writeFile(localPath, pngBytes);
+    }, 10);
+
+    try {
+      const result = await processRichPasteTransaction({
+        sessionName: "main",
+        text: localPath,
+        observablePaste: false,
+        uploadClient: client,
+        localReadRetryDelaysMs: [25, 25],
+      });
+
+      expect(result.status).toBe("rewritten");
+      expect(result.outgoingText).toBe("/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/transient.png");
+    } finally {
+      clearTimeout(writeLater);
+    }
+  });
+
+  it("does not use clipboard fallback for prose with an unreadable image path", async () => {
+    const localPath = join(tempDir, "missing.png");
+    const client = uploadClient([]);
+    const clipboardReader = {
+      readImage: vi.fn(async () => ({
+        status: "available" as const,
+        candidate: {
+          kind: "clipboard" as const,
+          capturedAt: new Date("2026-07-08T10:31:00Z"),
+          sizeBytes: pngBytes.byteLength,
+          mimeType: "image/png" as const,
+          bytes: new Uint8Array(pngBytes),
+        },
+      })),
+    };
+
+    const result = await processRichPasteTransaction({
+      sessionName: "main",
+      text: `inspect ${localPath}`,
+      observablePaste: true,
+      uploadClient: client,
+      clipboardReader,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureCode).toBe("local_read_failed");
+    expect(clipboardReader.readImage).not.toHaveBeenCalled();
+    expect(client.uploadPasteAssets).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the clipboard without retry delay for a single permission-denied image path", async () => {
+    const lockedDir = join(tempDir, "locked");
+    await mkdir(lockedDir);
+    const localPath = join(lockedDir, "screen.png");
+    await writeFile(localPath, pngBytes);
+    await chmod(lockedDir, 0o000);
+    const client = uploadClient(["/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/clipboard.png"]);
+    const clipboardReader = {
+      readImage: vi.fn(async () => ({
+        status: "available" as const,
+        candidate: {
+          kind: "clipboard" as const,
+          capturedAt: new Date("2026-07-08T10:31:00Z"),
+          sizeBytes: pngBytes.byteLength,
+          mimeType: "image/png" as const,
+          bytes: new Uint8Array(pngBytes),
+        },
+      })),
+    };
+
+    try {
+      const startedAt = Date.now();
+      const result = await processRichPasteTransaction({
+        sessionName: "main",
+        text: localPath,
+        observablePaste: false,
+        uploadClient: client,
+        clipboardReader,
+        localReadRetryDelaysMs: [1_000],
+      });
+
+      expect(result.status).toBe("rewritten");
+      expect(result.outgoingText).toBe("/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/clipboard.png");
+      expect(clipboardReader.readImage).toHaveBeenCalledTimes(1);
+      expect(Date.now() - startedAt).toBeLessThan(500);
+    } finally {
+      await chmod(lockedDir, 0o700);
+    }
+  });
+
   it("fails locally for unreadable non-file image paths", async () => {
     const localPath = join(tempDir, "directory.png");
     await mkdir(localPath);
@@ -213,22 +529,36 @@ describe("cli/rich-paste", () => {
     expect(client.uploadPasteAssets).not.toHaveBeenCalled();
   });
 
-  it("rejects symlinked image paths", async () => {
+  it("rejects symlinked image paths without clipboard fallback", async () => {
     const target = join(tempDir, "target.png");
     const link = join(tempDir, "link.png");
     await writeFile(target, pngBytes);
     await symlink(target, link);
     const client = uploadClient([]);
+    const clipboardReader = {
+      readImage: vi.fn(async () => ({
+        status: "available" as const,
+        candidate: {
+          kind: "clipboard" as const,
+          capturedAt: new Date("2026-07-08T10:31:00Z"),
+          sizeBytes: pngBytes.byteLength,
+          mimeType: "image/png" as const,
+          bytes: new Uint8Array(pngBytes),
+        },
+      })),
+    };
 
     const result = await processRichPasteTransaction({
       sessionName: "main",
-      text: `inspect ${link}`,
+      text: link,
       observablePaste: true,
       uploadClient: client,
+      clipboardReader,
     });
 
     expect(result.status).toBe("failed");
     expect(result.localMessage).toBe("Image paste failed: local image could not be read.");
+    expect(clipboardReader.readImage).not.toHaveBeenCalled();
     expect(client.uploadPasteAssets).not.toHaveBeenCalled();
   });
 

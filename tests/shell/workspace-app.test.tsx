@@ -43,7 +43,7 @@ describe("WorkspaceApp", () => {
       if (url.includes("/api/projects/repo/worktrees")) {
         return json({
           worktrees: [
-            { id: "wt_abc123", currentBranch: "feature/workspace", dirtyState: "dirty" },
+            { id: "wt_abc123", currentBranch: "feature/workspace", dirtyState: "dirty", pr: 77 },
             ...(createdWorktree ? [createdWorktree] : []),
           ],
         });
@@ -498,6 +498,39 @@ describe("WorkspaceApp", () => {
       }),
     );
     expect(await screen.findByText("Started sess_agent123")).toBeTruthy();
+  });
+
+  it("opens existing worktree pull requests through the Canvas PR workspace entry", async () => {
+    const openPrCanvas = vi.fn();
+    window.addEventListener("matrix:open-pr-canvas", openPrCanvas);
+
+    try {
+      render(<WorkspaceApp initialProjectSlug="repo" />);
+
+      await waitFor(() => expect(screen.getAllByText("feature/workspace").length).toBeGreaterThan(0));
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Open PR workspace for PR 77" }));
+      });
+
+      expect(openPrCanvas).toHaveBeenCalledTimes(1);
+      expect(openPrCanvas.mock.calls[0]?.[0]).toMatchObject({
+        detail: {
+          title: "PR 77 Workspace",
+          scopeRef: {
+            projectSlug: "repo",
+            worktreeId: "wt_abc123",
+            pullRequestNumber: 77,
+          },
+        },
+      });
+      expect(global.fetch).not.toHaveBeenCalledWith(
+        expect.stringContaining("/api/coding-agents/source-control"),
+        expect.anything(),
+      );
+    } finally {
+      window.removeEventListener("matrix:open-pr-canvas", openPrCanvas);
+    }
   });
 
   it("clears pending project action spinners when switching projects", async () => {

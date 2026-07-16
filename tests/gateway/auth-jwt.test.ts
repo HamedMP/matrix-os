@@ -56,12 +56,14 @@ function mockContext(path: string, authHeader?: string, ip?: string, url?: strin
 beforeEach(() => {
   process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
   process.env.MATRIX_HANDLE = HANDLE;
+  process.env.MATRIX_RUNTIME_SLOT = "primary";
 });
 
 afterEach(() => {
   delete process.env.PLATFORM_JWT_SECRET;
   delete process.env.PLATFORM_JWT_PUBLIC_KEY;
   delete process.env.MATRIX_HANDLE;
+  delete process.env.MATRIX_RUNTIME_SLOT;
 });
 
 describe("validateSyncJwt", () => {
@@ -91,6 +93,43 @@ describe("validateSyncJwt", () => {
     await expect(
       validateSyncJwt(issued.token, { ...keyConfig, expectedHandle: HANDLE }),
     ).rejects.toThrow();
+  });
+
+  it("binds runtime-scoped JWTs to one gateway slot with primary-only legacy compatibility", async () => {
+    const review = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: HANDLE,
+      gatewayUrl: "https://app.matrix-os.com/vm/alice?runtime=review",
+      runtimeSlot: "review",
+    });
+    const legacy = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: HANDLE,
+      gatewayUrl: "https://app.matrix-os.com/vm/alice",
+    });
+
+    await expect(validateSyncJwt(review.token, {
+      ...keyConfig,
+      expectedHandle: HANDLE,
+      expectedRuntimeSlot: "review",
+    })).resolves.toMatchObject({ runtime_slot: "review" });
+    await expect(validateSyncJwt(review.token, {
+      ...keyConfig,
+      expectedHandle: HANDLE,
+      expectedRuntimeSlot: "primary",
+    })).rejects.toThrow();
+    await expect(validateSyncJwt(legacy.token, {
+      ...keyConfig,
+      expectedHandle: HANDLE,
+      expectedRuntimeSlot: "primary",
+    })).resolves.toMatchObject({ handle: HANDLE });
+    await expect(validateSyncJwt(legacy.token, {
+      ...keyConfig,
+      expectedHandle: HANDLE,
+      expectedRuntimeSlot: "review",
+    })).rejects.toThrow();
   });
 
   it("rejects an expired JWT", async () => {
@@ -172,6 +211,29 @@ describe("validateSyncJwt", () => {
 });
 
 describe("authMiddleware: hybrid bearer + JWT acceptance", () => {
+  it("rejects a same-handle JWT issued for another runtime slot", async () => {
+    process.env.MATRIX_RUNTIME_SLOT = "review";
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: HANDLE,
+      gatewayUrl: "https://app.matrix-os.com/vm/alice",
+      runtimeSlot: "primary",
+    });
+    const mw = authMiddleware("legacy-shared-secret");
+    let nextCalled = false;
+
+    const response = await mw(
+      mockContext("/api/message", `Bearer ${issued.token}`),
+      async () => {
+        nextCalled = true;
+      },
+    );
+
+    expect(nextCalled).toBe(false);
+    expect(response).toMatchObject({ status: 401 });
+  });
+
   it("accepts a valid sync JWT issued for this handle", async () => {
     const issued = await issueSyncJwt({
       secret: JWT_SECRET,

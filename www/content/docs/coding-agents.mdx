@@ -23,11 +23,33 @@ The workspace can show:
 - file snapshots selected from a review;
 - running app or dev-server previews.
 
-In the browser shell, Canvas remains the primary workspace. The built-in Workspace view shows current-project coding-agent thread and preview summaries from the same gateway runtime summary. It is read-only: use desktop or mobile for thread details, approvals, review editing, and source-control actions.
+In the browser shell, Canvas remains the primary workspace. The built-in Workspace view shows current-project coding-agent thread and preview summaries from the same gateway runtime summary, and existing worktree pull requests can open a Canvas PR workspace. It is read-only for coding-agent state: use desktop or mobile for thread details, approvals, review editing, and source-control actions.
 
 <Callout type="info" title="One source of truth">
   Desktop, mobile, browser shell, and CLI sessions all reconnect to the same Matrix computer. If an agent keeps running after you close one shell, another shell can reopen the same thread, terminal, review, or preview from the gateway state.
 </Callout>
+
+### Project conversations on desktop
+
+The desktop workspace groups coding chats by project. A project can have its
+own chats, and each task can contain several independent chats. Selecting a
+chat opens its durable gateway timeline in the center while terminal, review,
+files, diff, and preview tools stay available beside it.
+
+Use the composer at the bottom of an open conversation to continue that same
+thread. Use a project's or task's **New chat** action when you want a separate
+conversation. Matrix records accepted user messages on the gateway, so a
+refresh or another desktop session replays the same conversation instead of
+reconstructing it from local UI state.
+
+Switch the selected project between **Conversation** and **Kanban** without
+changing the selected task or chat. Kanban uses the same Matrix task records as
+the rest of the desktop app: Todo, Running, Waiting, Blocked, and Complete.
+Archived tasks stay out of the normal board. Each card shows bounded chat,
+active-run, and attention counts and lists every attached chat in the current
+project projection. Opening one of those chats returns to its exact
+conversation. Moving a task updates its canonical task status; agent thread
+status never moves a card automatically.
 
 ## Supported agents
 
@@ -181,15 +203,17 @@ Running app previews and local dev servers can appear in the coding workspace wh
 
 ## Mobile workflow
 
-On mobile, use the coding-agent workspace to check recent work, answer approvals, inspect safe review details, and jump into a bound terminal session. The Recent Work section promotes approval or input requests before normal running work, then shows attachable terminal sessions from the same runtime summary. The Terminals section can also open running attachable sessions in the existing Terminal tab. Thread timelines group assistant and tool activity for scanning, with tool details collapsed until you expand them, and the timeline can jump back to the latest activity without persisting thread contents locally. Thread details can also pull to refresh the current gateway snapshot. Successful approval and input submissions provide local haptic confirmation after Matrix accepts the updated thread state. Review-ready timeline entries can jump back to the matching review through a bounded review reference, and the review details are reloaded from your Matrix computer. If the connection drops, the workspace shows a reconnecting or offline banner while keeping the last hydrated summary visible. Provider setup warnings use safe status and action labels only; setup commands and credentials stay out of the mobile view. The mobile app stores only small UI references such as selected thread, terminal, or preview ids; thread snapshots, file contents, diffs, and terminal output are reloaded from your Matrix computer when needed.
+On mobile, use the coding-agent workspace to check active work, answer approvals, inspect safe review details, and jump into a bound terminal session. The primary cockpit deduplicates the gateway's active and attention summaries, promotes approval, input, and failed runs into **Needs attention**, and groups queued, starting, and running threads under **Working**. A quick-start card opens the existing bounded new-run composer, while provider status and notification preferences stay below active work. The Terminals section can open running attachable sessions in the existing Terminal tab.
+
+Thread timelines group assistant and tool activity for scanning, show capped assistant previews only when they pass safe-display filtering, keep tool details collapsed until you expand them, and can jump back to the latest activity without persisting thread contents locally. Thread details can also pull to refresh the current gateway snapshot. Successful approval and input submissions provide local haptic confirmation after Matrix accepts the updated thread state. Review-ready timeline entries can jump back to the matching review through a bounded review reference, and the review details are reloaded from your Matrix computer. If the connection drops, the workspace shows a reconnecting or offline banner while keeping the last hydrated summary visible. Provider setup warnings use safe status and action labels only; setup commands and credentials stay out of the mobile view. The mobile app stores only small UI references such as selected thread, terminal, or preview ids; thread snapshots, file contents, diffs, and terminal output are reloaded from your Matrix computer when needed.
 
 ## Desktop workflow
 
-On desktop, the coding-agent workspace is the mission-control view for multiple threads. Open it from the sidebar, command palette, or app menu, then use it to compare active work, open bound terminals, inspect reviews, answer approvals, and open safe previews without exposing provider credentials to the renderer. Thread timelines group assistant and tool activity for scanning, with tool details collapsed until you expand them, and review-ready entries can open the matching review through the trusted desktop runtime bridge. The command palette can also jump to loaded thread or review summaries, foreground setup terminal actions, and the desktop app menu includes a Terminal action that focuses an existing terminal tab or opens the Terminal workspace.
+On desktop, the coding-agent workspace is the mission-control view for multiple threads. Open it from the sidebar, command palette, or app menu, then use it to compare active work, open bound terminals, inspect reviews, answer approvals, and open safe previews without exposing provider credentials to the renderer. Thread timelines group assistant and tool activity for scanning, show capped assistant previews only when they pass safe-display filtering, keep tool details collapsed until you expand them, and review-ready entries can open the matching review through the trusted desktop runtime bridge. The command palette can also jump to loaded thread or review summaries, foreground setup terminal actions, and the desktop app menu includes a Terminal action that focuses an existing terminal tab or opens the Terminal workspace.
 
 ## Browser workflow
 
-In the browser shell, open Workspace from Canvas to see coding-agent activity for the selected project. Workspace shows bounded thread status, attention labels, terminal references, and safe preview origins from the runtime summary. It does not store transcripts, terminal output, file contents, diffs, provider credentials, or raw errors in browser shell state.
+In the browser shell, open Workspace from Canvas to see coding-agent activity for the selected project. Workspace shows bounded thread status, attention labels, terminal references, and safe preview origins from the runtime summary. Worktrees that already have a pull request can open the existing Canvas PR workspace without creating commits or pull requests from the browser. It does not store transcripts, terminal output, file contents, diffs, provider credentials, or raw errors in browser shell state.
 
 ## Related
 

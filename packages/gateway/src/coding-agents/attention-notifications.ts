@@ -5,6 +5,7 @@ import {
   type CodingAgentAttentionNotificationKind,
 } from "@matrix-os/contracts";
 import type { ChannelReply } from "../channels/types.js";
+import { logCodingAgentWarning } from "./diagnostics.js";
 import type { CodingAgentThreadStore } from "./thread-store.js";
 
 const PUSH_CHAT_ID = "coding-agents";
@@ -117,7 +118,7 @@ export function registerCodingAgentAttentionNotifications(options: CodingAgentAt
     function sendIfEligible(): void {
       if (!remember(dedupeKey, now())) return;
       void options.send(safeNotification).catch((err: unknown) => {
-        console.warn("[coding-agents] attention notification failed:", err instanceof Error ? err.message : String(err));
+        logCodingAgentWarning("attention notification failed", err);
       });
     }
 
@@ -128,7 +129,7 @@ export function registerCodingAgentAttentionNotifications(options: CodingAgentAt
           sendIfEligible();
         })
         .catch((err: unknown) => {
-          console.warn("[coding-agents] attention notification preference check failed:", err instanceof Error ? err.message : String(err));
+          logCodingAgentWarning("attention notification preference check failed", err);
         });
       return;
     }

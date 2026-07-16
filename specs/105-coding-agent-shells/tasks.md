@@ -1,8 +1,41 @@
 # Tasks: Coding Agent Shells
 
-**Status**: Draft
-**Branch**: `chore/mobile-expo-sdk-57`
+**Status**: Backend Phases 18-20 and desktop Phase 21 implemented; mobile Phase 22, cross-shell Phase 23, and real-process Gate 3 smoke remain pending
+**Lineage**: foundation merged through the recorded implementation checkpoint; clarified follow-up is specified against current `main`
 **Rule**: Preserve all existing desktop and mobile functionality. Add coding-agent capabilities incrementally behind contracts, tests, and feature flags.
+
+## Implementation Checkpoint
+
+The phase checklist below is the original implementation plan. The authoritative
+landed-state inventory is now `current-state.md`, and the requirement/evidence
+matrix is `completion-audit.md`.
+
+As of the `056b3da668ed6d1753712120316d2d5accfafdcf` main checkpoint:
+
+- Shared contracts, gateway summary/routes, provider/thread/review/file/preview/source-control contracts, desktop shell surfaces, mobile SDK 57 surfaces, browser Workspace handoff, notification preferences, and public/internal docs are implemented and inventoried in `current-state.md`.
+- Startup/runtime degradation recovery now routes closed coding-agent sessions through the same workspace `session.stopped` publisher path used by live session completion reconciliation.
+- GitHub CI for the `87bc72d0fdd9067fcec395c479de80fcaccfe641` implementation checkpoint completed successfully, including pattern scan, React Doctor, typecheck, shell production build, sync-client package checks, all four unit shards, and E2E.
+- Docker Tests and Host Bundle Release completed successfully for the `87bc72d0fdd9067fcec395c479de80fcaccfe641` implementation checkpoint; Host Bundle Release built the bundle, published the release, and triggered exact-version VPS deploy.
+- Platform Cloud Run completed successfully for the browser Workspace implementation checkpoint commit `87ce9e8cc2a6357a122ea0fd9120487702ea9323`; the later `87bc72d0fdd9067fcec395c479de80fcaccfe641` checkpoint changed gateway/spec state and did not require a platform app-shell deploy.
+- PR #866 desktop operator e2e smoke validation now covers the stubbed sign-in/device-auth flow, project board hydration, canonical terminal attach and echo, the current Agents workspace summary/create path, Terminal Shells, Apps, Settings, Chat, and hosted-shell detach behavior.
+- PR #868 mobile validation now confirms thread detail terminal handoff persists the bounded canonical terminal session reference needed by the mobile Terminal route without persisting terminal output or transcript data.
+- PR #869 desktop validation now confirms the command-palette Agents entry still opens after terminal interaction, and menu-template tests cover the native Agents accelerator used to focus the same workspace.
+- Remaining work is validation and rollout hardening: real-runtime desktop smoke, mobile SDK 57 device smoke, and continued docs sync as later provider/runtime behavior changes.
+
+That checkpoint is not the clarified final product. The active backlog now requires a project-first hierarchy, same-thread conversation turns, tasks with multiple threads, and Conversation/Kanban views. `acceptance-tests.md` is the authoritative test matrix for this follow-up work.
+
+## Active Confirmation Plan
+
+- [x] Record one visible chat/session as one resumable `AgentThread`.
+- [x] Record each accepted user message as one server-side `AgentTurn` in that thread.
+- [x] Record `Project -> Task -> many AgentThreads` cardinality and project-level threads.
+- [x] Keep canonical Matrix task statuses separate from aggregated thread execution state.
+- [x] Define Conversation and Kanban as two views over one gateway-owned model.
+- [x] Add aligned architecture, phased plan, implementation tasks, and acceptance-test IDs.
+- [x] Product owner confirmed all four product decisions in Gate 0 on 2026-07-10; the two mechanical readiness checks also pass.
+- [x] Begin implementation only after confirmation.
+
+Gate 0 is closed. Phase 18+ work must follow the acceptance IDs and completion gates below.
 
 ## Agent Instructions
 
@@ -137,6 +170,7 @@ Acceptance:
 - [ ] Add `AgentProviderSummary`.
 - [ ] Add `SafeSetupAction`.
 - [ ] Add provider availability/auth/install enums.
+- [ ] Add provider protocol, support-tier, execution-readiness, and granular capability schemas without a closed brand-kind union.
 - [ ] Add supported modes and sandbox/approval policy enums.
 - [ ] Add tests rejecting raw command setup actions unless explicitly marked foreground terminal and bounded.
 
@@ -144,6 +178,7 @@ Acceptance:
 
 - [ ] Unknown providers can be represented only through validated custom provider shape.
 - [ ] Provider display metadata is safe.
+- [ ] Exact first-release registry fixtures parse; Gemini CLI is absent as a built-in while arbitrary custom ACP labels cannot acquire built-in identity/capabilities.
 
 ### 1.5 Agent Thread Schemas
 
@@ -158,7 +193,7 @@ Acceptance:
 Acceptance:
 
 - [ ] Create request requires provider and prompt.
-- [ ] Optional project/task/session/worktree references validate independently.
+- [ ] Legacy optional project/task/session/worktree references validate independently; Phase 18 supersedes new shell-created threads by requiring `projectId`.
 
 ### 1.6 Thread Event Schemas
 
@@ -381,8 +416,8 @@ Tests:
 
 ### 4.2 First Provider Path
 
-- [ ] Select the first existing provider path already most integrated with Matrix.
-- [ ] Implement adapter through existing kernel/dispatcher/session manager.
+- [ ] Stabilize Claude Code and Codex first through existing kernel/dispatcher/session manager paths.
+- [ ] Implement Pi and OpenCode plus bounded custom ACP-compatible adapters against the same normalized lifecycle.
 - [ ] Bind provider run to project/task/session when supplied.
 - [ ] Stream assistant text, tool activity, status, approval/input requests, and completion.
 
@@ -395,7 +430,7 @@ Tests:
 
 ### 4.3 Multi-Provider Registry
 
-- [ ] Add additional configured providers after first path is stable.
+- [ ] Add capability-gated Kiro, GitHub Copilot CLI, Qwen Code, Kimi CLI, Kilo Code, and Auggie adapters after the first-class paths are stable; keep Gemini CLI out of this release.
 - [ ] Add provider-specific setup actions that open foreground terminal sessions.
 - [ ] Add provider auth status refresh.
 - [ ] Add provider model/mode options as safe metadata.
@@ -405,6 +440,7 @@ Tests:
 - [ ] Multiple providers can be listed.
 - [ ] Thread create picks provider by ID.
 - [ ] Missing provider does not crash dashboard.
+- [ ] Registry order, stable IDs, protocol, tier, setup state, execution readiness, and disabled capabilities match the exact release matrix.
 
 ### 4.4 Approvals And Input
 
@@ -1031,6 +1067,434 @@ Goal: prove cross-shell coding-agent workflows before broad rollout.
 - [ ] Mobile SDK 57 native build impact documented.
 - [ ] Rollback path documented.
 
+## Phase 18 - Project, Task, Thread, And Turn Contracts
+
+Goal: make the clarified hierarchy explicit and independently testable before runtime/UI changes.
+
+### 18.1 Shared Project Workspace Contracts
+
+- [x] Add bounded project summary counts for tasks, threads, and attention.
+- [x] Add canonical `TaskAgentSummarySchema` using existing Matrix task status/priority values.
+- [x] Add bounded `ProjectAgentWorkspaceSchema` with independent task/thread caps and truncation metadata.
+- [x] Add thread list filters for required `projectId` and optional `taskId`.
+- [x] Keep legacy unassigned thread read filters explicit and bounded.
+- [x] Enforce no new shell-created unassigned threads in Phase 19 (`GW-009`) after real project hydration exists.
+
+Tests: `CT-001`, `CT-002`, `CT-003`, `CT-004`.
+
+### 18.2 Same-Thread Turn Contracts
+
+- [x] Add `AgentTurnIdSchema`, `CreateAgentTurnRequestSchema`, and `CreateAgentTurnResponseSchema`.
+- [x] Bound message, attachments, idempotency key, and safe errors.
+- [x] Add turn lifecycle event contracts without exposing provider resume identity.
+- [x] Add capability IDs for project workspace projection, same-thread turns, and Conversation/Kanban shells.
+
+Tests: `CT-005`, `CT-006`, `CT-007`.
+
+Gate:
+
+- [x] Gate 1 rerun passes for the additive contracts (`CT-001` through `CT-007`).
+
+Maintenance boundary: `packages/contracts/src/index.ts` is now a 1,000+ line schema-only barrel. Before adding another coding-agent contract family, extract the coding-agent schemas into focused domain modules while preserving the package's existing root exports.
+
+## Phase 19 - Gateway Project Workspace Read Model
+
+Goal: replace placeholder project hydration with canonical owner project/task/thread projections.
+
+### 19.1 Real Project Summary Adapter
+
+- [x] Read canonical owner projects through the existing workspace project service.
+- [x] Return stable bounded project summaries from runtime summary.
+- [x] Expose safe degraded state when project discovery fails; never return raw errors.
+- [x] Add timeout/abort handling for project summary dependencies.
+
+Tests: `GW-001`, `GW-002`, `GW-003`.
+
+### 19.2 Project Workspace Projection
+
+- [x] Add authenticated `GET /api/coding-agents/projects/:projectId/workspace`.
+- [x] Validate project path param and independent task/thread cursors/limits with Zod 4.
+- [x] Enforce owner access before reading tasks or threads.
+- [x] Join canonical tasks with bounded project-level/task-bound thread aggregates.
+- [x] Support several threads on one task without nested unbounded arrays.
+- [x] Reject/quarantine stale cross-project relations without mutating during a read.
+
+Tests: `GW-004`, `GW-005`, `GW-006`, `GW-007`, `GW-008`.
+
+### 19.3 Task/Thread Relation Mutations
+
+- [x] Require valid project for new shell-created threads.
+- [x] Validate optional task exists in the same project before thread insert.
+- [x] Add explicit idempotent thread reassignment only if required for legacy adoption.
+- [x] Publish project/task/thread projection updates after successful persistence.
+
+Tests: `GW-009`, `GW-010`, `GW-011`.
+
+Gate:
+
+- [x] Gate 2 rerun proves real project hydration, caps, auth, validation, and safe errors.
+
+## Phase 20 - Same-Thread Provider Turns
+
+Goal: sending a message in an existing chat resumes that chat's provider conversation.
+
+### 20.1 Turn Store And Route
+
+- [x] Add authenticated `POST /api/coding-agents/threads/:threadId/turns`.
+- [x] Apply body limit before JSON parsing and validate all params/body with Zod 4.
+- [x] Check thread ownership, project/task integrity, and terminal thread state.
+- [x] Insert user turn/event and idempotency record atomically.
+- [x] Atomically claim one active normal turn per thread; return safe busy conflict otherwise.
+- [x] Persist idempotency and active-turn ownership in the existing owner thread store's atomic mutation path; no client or in-memory-only source of truth.
+- [x] Cap/evict any in-memory idempotency or dispatch registry and drain it on shutdown.
+
+Tests: `GW-012`, `GW-013`, `GW-014`, `GW-015`, `SEC-001`, `SEC-002`.
+
+Maintenance boundary: `thread-store.ts` is already over 1,000 lines. Phase 20.2 must extract the normalized provider adapter boundary and bounded turn-dispatch registry into focused modules; provider dispatch behavior must not be added inline to this store.
+
+### 20.2 Provider Resume
+
+- [x] Extend normalized provider adapter with a bounded `resumeTurn` operation and `AbortSignal`.
+- [x] Keep provider credentials/resume identity on the runtime.
+- [x] Persist resume identity/state before publishing idle/completed state.
+- [x] Release active-turn ownership on completion, failure, abort, and startup reconciliation.
+- [x] Verify one thread receives two sequential turns without creating a second provider conversation.
+
+Tests: `GW-016`, `GW-017`, `GW-018`, `SEC-005`, `E2E-001`.
+
+Gate:
+
+- [ ] Gate 3 rerun passes with fake provider and first flagged real provider.
+
+## Phase 21 - Desktop Project Conversation And Kanban
+
+Goal: replace the checkpoint dashboard with the confirmed project-first desktop workspace.
+
+### 21.1 Project/Task/Thread Navigator
+
+- [x] Add persistent project groups in the left navigator.
+- [x] Render project-level threads and task groups.
+- [x] Render every thread under a task; do not infer cardinality from singular `linkedSessionId`.
+- [x] Add new-chat action with required project and optional task/provider.
+- [x] Reconcile persisted selected project/task/thread against live projections.
+- [x] Keep renderer bearer/provider credentials absent through trusted IPC.
+
+Tests: `DT-001`, `DT-002`, `DT-003`, `DT-004`, `SEC-003`.
+
+Evidence: focused renderer/model/store tests, strict main/preload IPC contract
+tests, trusted-core project-workspace client tests, local resume-state
+validation, external thread-focus/runtime-switch reconciliation, desktop
+typecheck/build, and the built-app operator flow are recorded in
+`acceptance-tests.md`. Conversation and Kanban work remains open in 21.2 and
+21.3.
+
+### 21.2 Conversation View
+
+- [x] Render selected same-thread transcript, attention, approvals, terminal, files, review, and preview context.
+- [x] Send follow-up through the turn IPC, not thread create.
+- [x] Keep explicit "new chat from context" separate from same-thread send.
+- [x] Handle busy/idempotent/offline states with generic recovery copy.
+
+Tests: `DT-005`, `DT-006`, `DT-007`.
+
+Evidence: strict turn IPC/client/handler tests, server-authoritative
+`user.message` replay coverage, retry/idempotency and selection-race store tests,
+durable chat-bubble/component tests, workspace-provider auto-provisioning tests,
+the full focused desktop workspace regression, and desktop typecheck are recorded
+in `acceptance-tests.md`. Kanban evidence is recorded separately in 21.3.
+
+### 21.3 Kanban View
+
+- [x] Add segmented Conversation/Kanban control.
+- [x] Reuse canonical task columns/order/mutations.
+- [x] Show bounded thread count, active count, and attention count on task cards.
+- [x] Open all task threads from a card and preserve selected identity when switching modes.
+- [x] Never auto-move task status from thread reducer/effects.
+
+Tests: `DT-008`, `DT-009`, `DT-010`, `DT-011`.
+
+Evidence: focused Kanban component, project-workspace store, integrated desktop
+workspace, and canonical board-store coverage prove the five visible task
+columns, hidden archived tasks, bounded thread aggregates, explicit task PATCH
+path, multi-chat selection, cross-view identity continuity, and the absence of
+thread-driven task movement. Surface validation is recorded in
+`acceptance-tests.md`.
+
+### 21.4 Native Computer Selection
+
+- [x] Replace free-text runtime entry with an owner-scoped computer list.
+- [x] Exchange and persist a runtime-scoped credential only in Electron main.
+- [x] Reuse the trusted computer list in a persistent sidebar dropdown above Settings.
+- [x] Keep platform-control-plane auth traffic separate from selected-runtime traffic.
+- [x] Rehydrate project/task/thread state after the selected computer changes.
+- [x] Keep machine identifiers, network details, credentials, and raw failures out of the renderer.
+
+Tests: runtime computer contracts, platform owner/auth route coverage, trusted
+auth and credential-store tests, IPC boundary tests, renderer switching/error
+tests, sidebar dropdown coverage, and desktop settings coverage.
+
+Evidence: the platform returns a capped safe projection and rejects invalid,
+unauthenticated, or cross-owner selection; the trusted core rotates the bearer
+before broadcasting `runtime:changed`; the desktop renders only available,
+starting, and unavailable states with generic failure copy. Surface validation
+is recorded in `acceptance-tests.md`.
+
+Gate:
+
+- [x] Desktop typecheck, focused Vitest, operator E2E, Canvas/Desktop regression, pattern scan, and screenshot checks pass.
+
+### 21.5 Contextual Conversation Inspector
+
+- [x] Replace the mixed tool stack with Changes, Terminal, Preview, and Activity tabs.
+- [x] Keep review files, bounded content editing, diffs, commit, and pull-request actions together under Changes.
+- [x] Keep canonical Matrix shell sessions under Terminal and safe preview summaries under Preview.
+- [x] Preserve attention, active/created chat handles, provider state, and notification preferences under Activity.
+- [x] Show bounded server-derived counts and keep exactly one inspector surface visible at a time.
+- [x] Bring externally opened reviews into Changes while preserving unsaved file drafts across tab switches.
+- [x] Support arrow, Home, and End keyboard navigation with a single responsive narrow/desktop layout.
+
+Tests: `DT-012` plus the existing file, review, source-control, terminal,
+preview, activity, and credential-boundary desktop regressions.
+
+Evidence: the focused inspector component tests prove selection, counts,
+single-pane rendering, persistent new-chat controls, and keyboard behavior. The
+integrated workspace suite proves existing trusted IPC actions continue through
+their original gateway-owned contracts. Surface validation is recorded in
+`acceptance-tests.md`.
+
+### 21.6 Matrix Computer Files
+
+- [x] Add a first-class Files destination to the desktop navigator.
+- [x] Browse the selected computer's Matrix home with gateway-owned directory listings and breadcrumbs.
+- [x] Preview bounded text/code, rendered Markdown, and images without exposing credentials.
+- [x] Reuse the same browser as the existing-folder chooser when creating a project.
+- [x] Clear the active file and reload folder state when the selected computer changes.
+
+Tests: `tests/desktop/files-workspace.test.tsx`,
+`tests/desktop/create-project-dialog.test.tsx`, and the existing file-panel and
+Markdown-preview regressions.
+
+## Phase 22 - Mobile Project Conversation And Kanban
+
+Goal: expose the same hierarchy and conversations with SDK 57 phone/tablet ergonomics.
+
+### 22.1 Project-First Routes And Resume
+
+- [ ] Add project route/selector and project workspace hydration.
+- [ ] Render task groups with all attached threads plus project-level threads.
+- [ ] Persist only bounded project/task/thread/view references.
+- [ ] Reconcile stale references on app resume/runtime switch.
+
+Tests: `MB-001`, `MB-002`, `MB-003`, `MB-004`, `SEC-004`.
+
+### 22.2 Conversation View
+
+- [ ] Send follow-ups to the selected thread turn route.
+- [ ] Preserve keyboard avoidance, safe areas, app suspension, streaming, and approval/input behavior.
+- [ ] Keep terminal handoff on canonical named sessions.
+
+Tests: `MB-005`, `MB-006`, `MB-007`.
+
+### 22.3 Kanban View
+
+- [ ] Add Conversation/Kanban control for the selected project.
+- [ ] Render canonical task columns as phone-appropriate sections/horizontal board and tablet split view.
+- [ ] Show bounded multi-thread aggregates and open any thread on a task.
+- [ ] Preserve selected context when returning to Conversation.
+
+Tests: `MB-008`, `MB-009`, `MB-010`.
+
+Gate:
+
+- [ ] Mobile Jest, lint, `tsc --noEmit`, SDK 57 dev-client device smoke, and existing tab/terminal/app/auth regressions pass.
+
+## Phase 23 - Final Cross-Shell Acceptance
+
+- [ ] Desktop creates a project task and two independent chats on it; mobile sees both (`E2E-002`).
+- [ ] Mobile sends a second turn in one chat; desktop sees the same thread/provider conversation (`E2E-003`).
+- [ ] Conversation/Kanban switching preserves project/task/thread identity on both shells (`E2E-004`).
+- [ ] Task status mutations propagate without being overwritten by mixed thread states (`E2E-005`).
+- [ ] Cross-shell terminal, review, preview, approval, notification, offline/reconnect, and runtime-switch paths pass (`E2E-006`).
+- [ ] Security and unsafe-error audit passes (`SEC-001` through `SEC-006`).
+- [ ] Public/internal docs update only after behavior is implemented and verified; until then public docs are explicitly deferred to avoid advertising unshipped behavior.
+- [ ] `completion-audit.md` has current evidence for every clarified requirement.
+- [ ] Product owner performs final desktop/mobile checkpoint test and confirms release readiness.
+
+## Phase 24 - Full Workspace Confirmation, Computer Contract, And Preview Authority
+
+Goal: freeze the complete backend capability and migration boundary before shell
+agents depend on new fields.
+
+- [x] B24-001 Product owner confirms the scope/non-goals in `FULL-WORKSPACE-BACKEND.md`.
+- [x] B24-002 Write failing shared contract tests for bounded `MatrixComputerListSchema`, authoritative selection, derived gateway paths, and forbidden machine/operator fields in `tests/contracts/runtime-computers.test.ts`.
+- [x] B24-003 Implement one canonical `GET /api/auth/computers` contract/route for server-verified Clerk and native/sync principals; remove duplicate desktop read shape or document a bounded expiring alias.
+- [x] B24-004 Preserve trusted-main-only `POST /api/auth/runtime-selection` bearer replacement while mobile continues authenticated same-origin platform/session routing.
+- [ ] B24-005 Write failing auth tests, then add a bounded server-verified native identity projection for shell display fallback without trusting client headers.
+- [ ] B24-006 Rebase/preserve current native Linux app streaming and capability routing when composing the canonical platform candidate.
+- [ ] B24-007 Write failing preview authority tests for isolated DB/JWT/edge/provisioning/Hetzner state, fixed owner, bounded handle/slot, exact bundle, TTL, reaper, and teardown.
+- [ ] B24-008 Implement preview-scoped provisioning that fails closed when preview credentials are absent and never falls back to production authority.
+- [ ] B24-009 Add workflow tests and gating so Preview Platform and Preview VPS label events/concurrency groups cannot cancel each other.
+- [ ] B24-010 Deploy a non-promoted combined candidate and prove desktop plus physical mobile list/select the same non-primary disposable computer while native streams still pass.
+- [ ] B24-011 [P] Add failing Zod 4 tests for transcript pages, lifecycle mutations, provider roster/tier/protocol/capabilities, provider-session imports, pending messages, steering/interrupt, execution graphs, terminal bindings, repository state, attachments, attention, handoff, and participants in `tests/contracts/coding-agent-workspace-v2.test.ts`.
+- [ ] B24-012 Implement schema-only V2 contracts in `packages/contracts/src/coding-agents-v2.ts` and export them from `packages/contracts/src/index.ts`.
+- [ ] B24-013 Add forbidden-key/size/cap compatibility tests proving credentials, provider resume identity, private runtime data, and unbounded payloads reject.
+- [ ] B24-014 Publish capability IDs and contract version negotiation without enabling runtime behavior.
+- [ ] B24-015 Run contract/platform/preview tests, `bun run check:patterns`, and `bun run typecheck`.
+
+Gate B0.5/B1A: both shells share one authenticated computer contract and isolated
+preview authority; additive workspace contracts parse, reject unsafe data, and
+do not alter current shell behavior.
+
+## Phase 25 - Owner Postgres Workspace Repository
+
+Goal: replace the bounded owner-file write source with durable owner-controlled
+Postgres while preserving IDs and rollback.
+
+- [ ] B25-001 Write failing Kysely migration/repository tests for all V2 tables in `tests/gateway/coding-agents-v2-repository.test.ts`.
+- [ ] B25-002 Add typed tables and idempotent migrations in `packages/gateway/src/coding-agents-v2/database.ts` using the gateway-owned Kysely instance.
+- [ ] B25-003 Implement focused repositories for conversations/turns/transcript, queue/runs, bindings/attention, and collaboration; keep each module under the large-file thresholds.
+- [ ] B25-004 Prove transactions for multi-write operations, conditional optimistic updates, `ON CONFLICT` idempotency, stable sequence allocation, and owner scoping.
+- [ ] B25-005 Add failing import tests, then implement one-time idempotent import from `system/coding-agents/threads.json` with migration ledger and rollback export.
+- [ ] B25-006 Wire repository startup reconciliation and shutdown cleanup without allowing injected repositories to destroy shared pools.
+- [ ] B25-007 Run focused repository/migration tests, gateway typecheck, root typecheck, pattern scan, restart, and rollback tests.
+- [ ] B25-008 Add failing personal/org/shared scope separation and canonical export/delete adapter tests, then implement scope keys, tombstones, export jobs, attachment/index cleanup, retry state, and audit.
+- [ ] B25-009 Prove migration cutover mutex/advisory lock, mutation quiescing, checksum transaction, pre/post-commit crash recovery, compatibility expiry, and forward-compatible rollback.
+- [ ] B25-010 Add a scoped append-only `coding_agent_audit_events` repository with retention/export/delete integration; prove local privileged mutations append their audit row in the same transaction and external outcomes reconcile before audit finalization.
+
+Gate B1: durable persistence and migration evidence pass before any V2 mutation
+route is enabled.
+
+## Phase 26 - Transcript And Conversation Lifecycle
+
+Goal: provide complete resumable history and lifecycle APIs required by final
+desktop/mobile conversation surfaces.
+
+- [ ] B26-001 Write failing route/service tests for latest/backward/forward transcript pages, gaps, auth, validation, caps, restart replay, and safe errors.
+- [ ] B26-002 Implement `GET /api/coding-agents/threads/:threadId/transcript` with monotonic sequences and bounded encoded responses.
+- [ ] B26-003 Write failing tests, then implement rename, archive, unarchive, and fork-at-turn mutations with body limits, ownership, idempotency, and projection events.
+- [ ] B26-004 Write failing adapter/route tests, then implement safe provider-session discovery/import using expiring opaque import handles.
+- [ ] B26-005 Normalize complete assistant/tool/reasoning/lifecycle records into durable transcript entries without persisting raw provider errors.
+- [ ] B26-006 Run fake-provider two-turn/import/fork/restart tests and first flagged real-provider transcript continuity smoke.
+- [ ] B26-007 Publish `backend-v2-shell-handoff.md` with exact schemas, routes, capability versions, fixtures, preview configuration, and safe error handling.
+
+Gate B2: desktop/mobile may consume project lists, complete transcript pages,
+composer turns, and lifecycle actions.
+
+## Phase 27 - Pending Queue, Steering, And Interrupt
+
+- [ ] B27-001 Write failing queue repository/route tests for create/edit/reorder/remove, optimistic revision, caps, auth, and exact-once claim.
+- [ ] B27-002 Implement explicit pending-message HTTP routes and transactional dispatch claim.
+- [ ] B27-003 Write failing normalized adapter tests for supported/unsupported steering and interrupt idempotency.
+- [ ] B27-004 Implement active-turn steer/interrupt routes with provider capability checks, timeout/AbortSignal, and safe failures.
+- [ ] B27-005 Publish queue/turn invalidation frames and prove replay/reconnect does not duplicate delivery.
+- [ ] B27-006 Run concurrency, restart, stale revision, cross-owner, shutdown drain, and real-provider capability smoke.
+
+## Phase 28 - Execution Graph And Attention Inbox
+
+- [ ] B28-001 Write failing repository/contract tests for bounded acyclic parent/child runs and attention state transitions.
+- [ ] B28-002 Implement normalized execution-run persistence/projection with depth, child, concurrency, and event-rate caps.
+- [ ] B28-003 Implement paged owner-scoped attention inbox with dedupe, acknowledgement, resolution, expiry, and safe routing targets.
+- [ ] B28-004 Integrate approval/input/failure/completion/review/unread/handoff lifecycle into attention transactions.
+- [ ] B28-005 Add stream invalidation and notification coalescing tests across two simulated shells.
+- [ ] B28-006 Run fake/real child-run tests, restart reconciliation, cap/eviction, auth, and safe-error audit.
+- [ ] B28-007 Write failing provider option/profile/prompt/skill/MCP/connected-service/quota contract and authorization tests.
+- [ ] B28-008 Implement normalized provider option discovery and immutable thread-start configuration snapshots using canonical owner skills and write-only secret references.
+- [ ] B28-009 Implement owner-scoped profile metadata, connected-service materialization state, and coarse quota snapshots without expanding legacy SQLite persistence.
+- [ ] B28-010 Add safe setup/switch/recovery tests and publish provider-control capabilities to the shell handoff.
+- [ ] B28-011 Write a table-driven provider conformance harness covering install/auth health, create, normalized stream, abort, restart, safe errors, capability truthfulness, timeout, and cleanup for every first-release adapter.
+- [ ] B28-012 Implement and real-process test first-class adapters for Claude Code, Codex, Pi, and OpenCode plus a validated custom ACP-compatible adapter family; keep credentials and native resume identities server-side.
+- [ ] B28-013 Implement capability-gated compatibility adapters for Kiro, GitHub Copilot CLI, Qwen Code, Kimi CLI, Kilo Code, and Auggie without generic shell-command escape hatches.
+- [ ] B28-014 Prove each provider/runtime combination advertises only verified resume, discovery/import, fork, rollback, steering, approval, image, model/mode, and handoff capabilities; reject Gemini CLI as unsupported for this release.
+
+Gate B3: desktop/mobile may consume queue, run graph, attention inbox, and the
+versioned provider matrix only after the conformance harness and required
+real-process smokes pass.
+
+## Phase 29 - Terminal, Repository, Review, And Attachment Backend
+
+- [ ] B29-001 Write failing many-terminal binding tests over canonical `/api/terminal/sessions` records.
+- [ ] B29-002 Implement role-labelled terminal bind/list/unbind routes without storing terminal bytes or forking terminal process state.
+- [ ] B29-003 Write failing repository-status and source-control mutation tests for validated owner worktrees, caps, timeouts, compensation, and safe errors.
+- [ ] B29-004 Implement bounded branch/stash/pull/push/worktree operations through focused source-control services.
+- [ ] B29-005 Write failing review-comment revision/authorization tests, then implement structured create/update/resolve routes.
+- [ ] B29-006 Write failing attachment ownership/MIME/size/count/quota/cleanup tests, then implement server-owned upload metadata/object references.
+- [ ] B29-007 Run cross-shell terminal attach, file conflict, diff/comment, commit/PR, attachment, preview, SSRF, timeout, and shutdown tests.
+- [ ] B29-008 Add per-route owner/editor/viewer matrices and per-action Zod schemas for commit, branch, switch, stash, pull, push, worktree, and pull-request operations; reject force/arbitrary remote/argument paths.
+
+Gate B4: complete project tooling is available to both shell clients.
+
+## Phase 30 - Runtime Handoff And Collaboration
+
+- [ ] B30-001 Write failing handoff saga tests for compatible, incompatible, duplicate, timeout, destination failure, source failure, restart, and rollback states.
+- [ ] B30-002 Implement destination preflight and persisted runtime-binding handoff without client-visible provider state.
+- [ ] B30-003 Write failing owner/editor/viewer authorization matrices for transcript, turns, approvals, terminals, files, repository operations, and participant mutations.
+- [ ] B30-004 Implement capability-gated participant grant/list/revoke routes aligned with Matrix owner/org/shared authorization.
+- [ ] B30-005 Persist audit events for grants, revocations, decisions, handoffs, and privileged workspace mutations.
+- [ ] B30-006 Run security, transaction, idempotency, expiry, safe-error, and two-runtime integration tests.
+
+Gate B5: handoff/collaboration remains disabled until all authorization and audit
+evidence passes.
+
+## Phase 31 - Memory, Automation, Policy, And Recovery Integration
+
+- [ ] B31-001 Inventory and write failing adapter tests for the existing Matrix memory, scheduler, voice action, connected-service, diagnostics, bug-report, feature-policy, retention, and enterprise principal boundaries.
+- [ ] B31-002 Migrate/extend coding-thread memory indexing in owner Postgres without expanding legacy embedded stores; implement bounded owner-authorized search with result anchors, backfill lifecycle, retention, and collaboration filters.
+- [ ] B31-003 Implement owner-Postgres automation and automation-run records with leases, retries, idempotency, history, and coding-thread targets while reusing existing schedule validation and normal thread operations.
+- [ ] B31-004 Bind an existing voice session to optional validated thread context and expose the same turn/queue/approval/attention actions; prove voice has no provider/file/terminal shortcut beyond the caller's policy.
+- [ ] B31-005 Implement one contract-owned feature catalog/effective policy engine plus dry-run-capable retention workers, connected-service materialization state, and coarse provider usage/quota projections.
+- [ ] B31-006 Implement startup/crash reconciliation checkpoints for turns, queue claims, runs, handoffs, bindings, and attention.
+- [ ] B31-007 Add redacted bounded coding-workspace diagnostic snapshots to the canonical bug-report/support path.
+- [ ] B31-008 Extend verified principals with org/role claims sourced from the existing identity provider, centralize authorization/offboarding checks, and do not implement a second identity federation protocol in the gateway.
+- [ ] B31-009 Run owner/org principal, offboarding, retention dry-run/cleanup, feature disable, restart/crash, voice approval, automation lease/duplicate, memory authorization, and diagnostic redaction tests.
+
+## Phase 32 - Non-Visual Desktop And Mobile Client Plumbing
+
+Goal: let the backend stack own deterministic client contracts and state plumbing
+so local shell agents can focus primarily on interaction and visual quality.
+
+- [ ] B32-001 Write failing desktop trusted-core/preload contract tests for computer inventory, transcript pages, lifecycle, queue, steering, execution graph, attention, terminals, repository/review/attachments, memory, automations, policy, and recovery.
+- [ ] B32-002 Implement bounded validated desktop main-process clients, IPC handlers/events, cursor/reconnect orchestration, and safe stores without adding final renderer layout.
+- [ ] B32-003 Write failing mobile gateway-client/parser tests for the same capabilities plus selected-computer routing, app foreground/background, offline, and stale-reference reconciliation.
+- [ ] B32-004 Implement mobile authenticated clients, pure reducers, bounded in-memory pages, safe reference persistence, and deterministic fixture adapters without final screen composition.
+- [ ] B32-005 Add a shared deterministic fixture catalog matching the preview seed and every backend gate; forbid credentials/transcript persistence/provider-specific client branches.
+- [ ] B32-006 Run full desktop tests/typecheck/build, mobile Jest/lint/tsc, root typecheck, pattern scan, and client forbidden-state scans.
+
+## Phase 33 - Shared Backend Preview Handoff
+
+Goal: publish one exact backend integration target before either shell builds the
+final experience against it.
+
+- [ ] B33-001 Open every backend layer ready for review in one Graphite stack and reach current-head CI plus Greptile 5/5 per layer.
+- [ ] B33-002 Deploy the exact backend top to a disposable preview computer through the end-to-end preview workflow.
+- [ ] B33-003 Seed one safe project fixture with two task conversations, long transcript, queue, child runs, two terminals, repository changes, review comment, attachment, preview, attention, memory reference, automation, and the exact provider tier/capability matrix.
+- [ ] B33-004 Give desktop/mobile agents the exact backend SHA, preview handle, runtime capability list, fixture IDs, and `backend-v2-shell-handoff.md` before final shell implementation begins.
+- [ ] B33-005 Run a current-head clean-room scan proving no external evaluation source name, provenance, path, copied code/test/UI text/asset, or dependency appears in repository files, commits, PR metadata, generated artifacts, or shipped UI.
+
+Gate B5.5: final shell implementation waits for the exact preview handoff; fixture
+work before this gate is exploratory and cannot be presented as integration
+evidence.
+
+## Phase 34 - Desktop, Mobile, And Shared Preview Acceptance
+
+Goal: restack the existing reviewed shell work onto canonical contracts and let
+the local agents concentrate on polished Matrix-native UX.
+
+- [ ] UI34-001 Preserve PR #919 parent lineage, reconcile the canonical computer contract at Gate B0.5, and restack bottom-up after its backend layer merges.
+- [ ] UI34-002 Desktop agent replaces dashboard/event-view presentation with status-grouped conversation navigation, complete transcript, integrated composer, queue/run/attention states, and one contextual Changes/Terminal/Preview/Activity inspector using Phase 32 IPC only.
+- [ ] UI34-003 Desktop agent preserves project/task multi-chat navigation and Conversation/Kanban identity while adding archive/fork/import/handoff and project tooling affordances.
+- [ ] UI34-004 Preserve PR #914 parent lineage, reconcile the canonical computer contract at Gate B0.5, and restack bottom-up after its backend layer merges.
+- [ ] UI34-005 Mobile agent implements attention/working conversation home, full-screen transcript/composer, and phone/tablet Chat/Files/Review/Terminal/Activity navigation using Phase 32 clients only.
+- [ ] UI34-006 Mobile agent preserves project/task multi-chat and Conversation/Kanban identity plus keyboard, safe areas, orientation, foreground, reconnect, and terminal fallback behavior.
+- [ ] UI34-007 Desktop and mobile expose normalized provider tier/readiness/profile/model/mode/reasoning/approval controls plus prompt/skill/MCP/connected-service/quota state, render unsupported operations as disabled, and never render or persist secret-bearing effective configuration.
+- [ ] UI34-008 Desktop and mobile add authorized memory-result attachment, automation create/history/disable, and explicit policy-disabled/recovery states using Phase 32 clients; voice remains an existing channel surface rather than a duplicate shell recorder.
+- [ ] UI34-009 Both agents run accessibility, dynamic text, loading/empty/error/offline, long transcript, large diff, queue, approval, provider controls, memory, automation, policy-disabled, recovery, and narrow/wide screenshot/device checks.
+- [ ] B34-001 Run desktop and mobile against the same preview runtime for the complete provider conformance matrix, disabled controls, transcript pagination, same-thread turns, queue, approvals, child runs, terminals, repository/review, preview, memory, automation, reconnect, restart, and runtime switch.
+- [ ] B34-002 Run performance, resource-cap, unsafe-error, persistence migration, export/delete, rollback, host-bundle, desktop regression, and SDK 57 device gates.
+- [ ] B34-003 Update `completion-audit.md`, internal docs, public docs only for verified behavior, and obtain product-owner release confirmation.
+
+Gate B6: full backend and both shells are testable together; preview success does
+not replace release-channel validation.
+
 ## Cross-Cutting Guardrails
 
 ### Do
@@ -1058,8 +1522,14 @@ Goal: prove cross-shell coding-agent workflows before broad rollout.
 - [ ] Do not replace mobile terminal rendering without fallback.
 - [ ] Do not introduce new persistence tech for this feature.
 - [ ] Do not hide interactive provider setup in a background job when the user needs to act.
+- [ ] Do not copy external evaluation source code, tests, UI text, assets, or dependencies, and do not expose its names, provenance, or local paths in repository files, comments, tests, snapshots, commits, PR metadata, generated artifacts, or shipped UI.
 
 ## Suggested PR Slices
+
+The original slices below document the landed foundation. Phases 18-20 are
+merged, Phases 21-23 are represented by paused shell stacks and incomplete final
+acceptance, and the proposed backend-first expansion is Phases 24-34 after Gate
+B0 confirmation.
 
 1. **contracts(agent-shells): add schemas and tests**
    - Contract package or gateway-local contracts only.
@@ -1124,12 +1594,32 @@ Goal: prove cross-shell coding-agent workflows before broad rollout.
 
 ## Open Questions
 
-- [ ] What is the canonical existing source of truth for project/task/thread records today: gateway workspace files, owner Postgres, kernel conversation store, or a combination?
-- [ ] Which first provider path should be used for thread creation in the first implementation PR?
+Resolved by the product clarification checkpoint:
+
+- [x] One visible chat/session is one resumable coding-agent thread.
+- [x] One task may own several independent coding-agent threads.
+- [x] Conversation and Kanban are two views over the same canonical project/task/thread records.
+- [x] A normal follow-up is a new turn in the same thread; creating a new related chat is a separate explicit action.
+- [x] Existing Matrix project/task APIs and task statuses remain canonical.
+
+Confirmed by the product owner before Phase 18 implementation:
+
+- [x] New chats require a project; legacy unassigned chats remain read-compatible under `Unassigned`.
+- [x] Task status is explicit/manual canonical state; mixed thread states only change card badges/attention.
+- [x] A busy thread rejects another normal turn instead of silently queueing it.
+- [x] Both desktop and mobile expose Conversation and Kanban as primary agent-workspace modes.
+
+Resolved implementation questions:
+
+- [x] Canonical project/task records remain in existing workspace services; coding threads remain in the gateway/runtime thread store until a separately reviewed owner-persistence migration.
+- [x] Existing workspace-backed provider tests remain the fake/baseline path; real providers stay behind normalized server-side adapters and flags.
+- [x] Desktop trusted core owns authenticated thread streams and bridges validated events to the renderer.
+- [x] Mobile uses the `/agents` stack without replacing existing Mission Control or tabs.
+- [x] Public docs for the clarified UX are deferred until implementation/runtime verification, so unshipped behavior is not advertised.
+
+Historical questions retained for unrelated future work:
+
 - [ ] Does the current terminal WebSocket already carry monotonic sequence numbers in all environments, or do we need a compatibility replay adapter?
-- [ ] Should desktop renderer subscribe to thread streams directly with injected auth headers, or should trusted core own streams and bridge events through IPC?
-- [ ] Which mobile route should be the default entry point for agent work: existing Mission Control or new `/agents` stack?
-- [ ] What is the minimum public-doc update required before internal rollout?
 - [ ] Which provider setup actions must be foreground terminal sessions because they need user interaction?
 - [ ] What is the safe cap for active thread event subscribers per runtime?
 - [ ] What are the exact memory limits for desktop cached workspaces and mobile transcript windows?

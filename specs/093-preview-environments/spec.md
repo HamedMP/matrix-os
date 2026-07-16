@@ -111,6 +111,7 @@ connect to, CLI betas need a paired shell), and today each is assembled by hand.
 | `logs.matrix-os.com` (ingest) | HTTP basic auth (bcrypt hash in Caddy config, secret from `.env`) | push-only: `POST /loki/api/v1/push`; all other paths 404 | Tunnel-only; no host port. Query APIs are NOT exposed. |
 | Loki query | none (loopback) | reachable only from ops VPS / docker network | Agents query via `preview-logs.sh` on the ops box or via Grafana |
 | Platform API calls in CI | `Authorization: Bearer PLATFORM_SECRET` (repo secret) | existing platform route guards | Same secret host-bundle-release.yml already uses |
+| `POST /vps/preview/provision` | `Authorization: Bearer PLATFORM_SECRET` | operator-only preview provisioning | Accepts only identical `pr-<N>` handles and runtime slots, rejects caller-selected server types, writes a server-owned preview class, and uses a separate bounded preview capacity limit without weakening customer billing entitlements. |
 | Preview VPS shell | Clerk (existing) | VPS bound to `PREVIEW_CLERK_USER_ID` | Team members use the runtime switcher with their own Clerk session per existing platform rules |
 | Staging slots | Tunnel hostname only | no new auth (matches existing `staging.matrix-os.com` posture) | Slots run branch code with dev credentials only; never production secrets |
 | Cloud Run preview | gcloud OIDC (existing workflow auth) | dedicated preview service + preview secrets | Production service and secrets are never referenced |
@@ -122,6 +123,19 @@ connect to, CLI betas need a paired shell), and today each is assembled by hand.
   metadata stored, never interpolated into shell unquoted.
 - Workflow inputs: PR number comes from the GitHub event payload (integer), handle is
   constructed as `pr-<N>` and therefore always matches the platform's handle regex.
+- Preview provisioning validates the CI-derived handle and runtime slot again at the
+  platform boundary, requires them to be identical, rejects unknown fields, and uses
+  the mutating-route body limit before JSON parsing.
+- Preview accounting requires both the validated `pr-<N>` shape and the persisted
+  server-owned `preview` provisioning class. Normal customer provisioning always
+  writes `customer`, so customer-selected handles or runtime slots cannot bypass
+  billing slot enforcement. The authenticated operator path may adopt an existing
+  matching row before excluding it from customer billing. Exact per-PR lookup falls
+  back to the same owner's matching legacy `runtimeSlot: preview` row under the
+  owner lock, so migration cannot create a duplicate provider server. Exact slots
+  must match the requested handle or fail with a generic conflict, and a live
+  matching legacy row wins over a failed exact row during migration. The failed
+  duplicate is retired and queued for provider cleanup before capacity is checked.
 - `matrix-install-logship`: URL must be `https://`, handle must match
   `^[a-z0-9][a-z0-9-]{1,62}$`, env must be one of `preview|prod|staging`; the Alloy
   binary download is pinned to an exact version and verified against a recorded
@@ -170,6 +184,11 @@ connect to, CLI betas need a paired shell), and today each is assembled by hand.
   for idle slots; `down` removes containers and the per-slot named volumes are reused
   per slot (bounded count).
 - Preview VPSes: hard TTL 72h via reaper; one VPS per PR (idempotent provision).
+- Concurrent preview provisioning is serialized by the owner provisioning lock and
+  capped separately from customer billing slots. `CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT`
+  defaults to 8 and rejects values outside the bounded range 1-16. Preview rows are
+  excluded from customer entitlement counts, while non-deleted failed preview rows
+  continue to consume preview capacity until their slot is retried or deleted.
 - Cloud Run preview revisions: deleted on PR close (see Architecture); bounded by
   open labeled PRs.
 - Logship enrollment inventory: `enable-vps-logship.sh` records every enrolled

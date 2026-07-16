@@ -38,6 +38,7 @@ async function createHarness() {
   const threads = createCodingAgentThreadStore({
     homePath,
     now,
+    relationValidator: { validateCreate: async () => undefined },
     providers: [
       createFakeCodingAgentProvider({ providerId: "codex" }),
     ],
@@ -57,6 +58,7 @@ async function createHarness() {
   return {
     app,
     homePath,
+    threads,
     setPrincipal: (principal: RequestPrincipal) => {
       currentPrincipal = principal;
     },
@@ -102,13 +104,44 @@ describe("coding agent thread lifecycle", () => {
     });
     expect(firstSnapshot.events.items.map((event) => event.type)).toEqual([
       "thread.created",
+      "user.message",
       "thread.status",
       "assistant.text.delta",
     ]);
+    expect(firstSnapshot.events.items[1]).toMatchObject({
+      type: "user.message",
+      text: createBody.prompt,
+      clientRequestId: createBody.clientRequestId,
+    });
 
     const replay = await app.request(`/api/coding-agents/threads/${firstSnapshot.thread.id}/events`);
     expect(replay.status).toBe(200);
-    expect(AgentThreadSnapshotSchema.parse(await replay.json()).events.items).toHaveLength(3);
+    expect(AgentThreadSnapshotSchema.parse(await replay.json()).events.items).toHaveLength(4);
+  });
+
+  it("aggregates every bounded owner project thread beyond the list page", async () => {
+    const { threads } = await createHarness();
+    for (let index = 0; index < 55; index += 1) {
+      await threads.createThread(ownerPrincipal, {
+        ...createBody,
+        clientRequestId: `req_project_count_${index}`,
+      });
+    }
+    await threads.createThread(otherPrincipal, {
+      ...createBody,
+      clientRequestId: "req_other_project_count",
+    });
+
+    const page = await threads.listThreads(ownerPrincipal);
+    const counts = await threads.listProjectCounts(ownerPrincipal);
+
+    expect(page.items).toHaveLength(50);
+    expect(page.hasMore).toBe(true);
+    expect(counts).toEqual([{
+      projectId: "repo-main",
+      threadCount: 55,
+      attentionCount: 0,
+    }]);
   });
 
   it("replays events after a cursor and includes active threads in the runtime summary", async () => {
@@ -123,6 +156,7 @@ describe("coding agent thread lifecycle", () => {
     expect(replay.status).toBe(200);
     const replayBody = AgentThreadSnapshotSchema.parse(await replay.json());
     expect(replayBody.events.items.map((event) => event.type)).toEqual([
+      "user.message",
       "thread.status",
       "assistant.text.delta",
     ]);
@@ -154,6 +188,7 @@ describe("coding agent thread lifecycle", () => {
     const threads = createCodingAgentThreadStore({
       homePath,
       now: () => baseNow,
+      relationValidator: { validateCreate: async () => undefined },
       providers: [createFakeCodingAgentProvider({ providerId: "codex", deltaCount: 250 })],
     });
     const app = new Hono();
@@ -179,6 +214,7 @@ describe("coding agent thread lifecycle", () => {
     const threads = createCodingAgentThreadStore({
       homePath,
       now: () => baseNow,
+      relationValidator: { validateCreate: async () => undefined },
       providers: [createFakeCodingAgentProvider({ providerId: "codex", deltaCount: 250 })],
     });
     const app = new Hono();
@@ -481,6 +517,7 @@ describe("coding agent thread lifecycle", () => {
     const threads = createCodingAgentThreadStore({
       homePath,
       now: () => baseNow,
+      relationValidator: { validateCreate: async () => undefined },
       providers: [provider],
     });
 
@@ -591,6 +628,7 @@ describe("coding agent thread lifecycle", () => {
     const threads = createCodingAgentThreadStore({
       homePath,
       now: () => baseNow,
+      relationValidator: { validateCreate: async () => undefined },
       providers: [provider],
     });
     const app = new Hono();
@@ -625,6 +663,7 @@ describe("coding agent thread lifecycle", () => {
     expect(decided.thread).toMatchObject({ status: "running", attention: "none" });
     expect(decided.events.items.map((event) => event.type)).toEqual([
       "thread.created",
+      "user.message",
       "approval.requested",
       "approval.resolved",
       "thread.status",
@@ -683,6 +722,7 @@ describe("coding agent thread lifecycle", () => {
     const threads = createCodingAgentThreadStore({
       homePath,
       now: () => baseNow,
+      relationValidator: { validateCreate: async () => undefined },
       providers: [provider],
     });
     const app = new Hono();
@@ -719,6 +759,7 @@ describe("coding agent thread lifecycle", () => {
     expect(answered.thread).toMatchObject({ status: "running", attention: "none" });
     expect(answered.events.items.map((event) => event.type)).toEqual([
       "thread.created",
+      "user.message",
       "user_input.requested",
       "user_input.answered",
       "thread.status",
@@ -751,10 +792,11 @@ describe("coding agent thread lifecycle", () => {
     });
     expect(created.snapshot.events.items.map((event) => event.type)).toEqual([
       "thread.created",
+      "user.message",
       "thread.error",
       "thread.completed",
     ]);
-    expect(created.snapshot.events.items[1]).toMatchObject({
+    expect(created.snapshot.events.items[2]).toMatchObject({
       type: "thread.error",
       error: {
         code: "provider_run_failed",
@@ -824,6 +866,7 @@ describe("coding agent thread lifecycle", () => {
     expect(aborted.thread.status).toBe("aborted");
     expect(aborted.events.items.map((event) => event.type)).toEqual([
       "thread.created",
+      "user.message",
       "thread.status",
       "thread.status",
       "assistant.text.completed",
@@ -1024,6 +1067,6 @@ describe("coding agent thread lifecycle", () => {
 
     expect(raw).toContain(snapshot.thread.id);
     expect(raw).toContain("owner_user");
-    expect(raw).not.toMatch(/Inspect the failing tests/);
+    expect(raw).toContain(createBody.prompt);
   });
 });

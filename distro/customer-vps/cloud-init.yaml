@@ -88,10 +88,13 @@ write_files:
       Group=matrix
       EnvironmentFile=/opt/matrix/env/host.env
       Environment=SYMPHONY_PORT=4766
+      Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1
       WorkingDirectory=/opt/matrix
       ExecStart=/opt/matrix/bin/matrix-gateway
       Restart=on-failure
       RestartSec=5
+      MemoryHigh=1G
+      MemoryMax=1536M
 
       [Install]
       WantedBy=multi-user.target
@@ -434,6 +437,30 @@ write_files:
 runcmd:
   - |
     set -eu
+    # Swap first so nothing later in provisioning (or after) can OOM the box.
+    # Fleet default 8GiB, shrunk to keep >=10GiB free on /; skipped below 2GiB.
+    # matrix-ensure-swap (host bundle) reconciles the same policy on updates.
+    (
+      SWAP_GB=8
+      free_gb=$(( $(df -k --output=avail / | tail -1) / 1024 / 1024 ))
+      if [ "$free_gb" -lt $((SWAP_GB + 10)) ]; then SWAP_GB=$((free_gb - 10)); fi
+      in_fstab() { awk -v path="$1" '$1 == path { found = 1 } END { exit found ? 0 : 1 }' /etc/fstab 2>/dev/null; }
+      if [ "$SWAP_GB" -ge 2 ] && [ ! -e /swapfile ] && ! in_fstab /swapfile; then
+        if fallocate -l "${SWAP_GB}G" /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=$((SWAP_GB * 1024)) status=none; then
+          chmod 600 /swapfile
+          if mkswap /swapfile && swapon /swapfile; then
+            printf '/swapfile none swap sw 0 0\n' >> /etc/fstab
+          else
+            swapoff /swapfile 2>/dev/null || true
+            rm -f /swapfile
+          fi
+        else
+          rm -f /swapfile
+        fi
+      fi
+      printf 'vm.swappiness=10\n' > /etc/sysctl.d/99-matrix-swap.conf
+      sysctl -p /etc/sysctl.d/99-matrix-swap.conf
+    ) || echo "matrix-host: swap setup failed (non-fatal)" >&2
     apt_get_update() {
       apt-get update \
         -o Acquire::Retries=5 \
@@ -453,7 +480,18 @@ runcmd:
     add-apt-repository -y universe
     apt_get_update
 
-    DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl sudo unzip
+    DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip
+    install -d -o root -g root -m 0755 /etc/apparmor.d
+    cat >/etc/apparmor.d/bwrap <<'EOF'
+    abi <abi/4.0>,
+    include <tunables/global>
+
+    profile bwrap /usr/bin/bwrap flags=(unconfined) {
+      userns,
+      include if exists <local/bwrap>
+    }
+    EOF
+    systemctl reload apparmor
     curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
     unzip -q /tmp/awscliv2.zip -d /tmp
     /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli

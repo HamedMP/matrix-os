@@ -5,6 +5,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { z } from "zod/v4";
+import { CodingAgentWorkspaceResumeStateSchema } from "../../shared/coding-agent-project-workspace";
 
 export const PANEL_LAYOUT_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -53,6 +54,7 @@ const KEY_SCHEMAS = {
   panelLayouts: PanelLayoutsSchema,
   appearance: AppearanceSchema,
   recents: RecentsSchema,
+  codingAgentWorkspace: CodingAgentWorkspaceResumeStateSchema,
 } as const;
 
 export type LocalStoreKey = keyof typeof KEY_SCHEMAS;

@@ -16,6 +16,7 @@ import {
   CODE_SESSION_COOKIE,
   NATIVE_APP_SESSION_COOKIE,
   SHELL_ROUTE_COOKIE,
+  SHELL_RUNTIME_SLOT_COOKIE,
   isValidNativeAppSessionProof,
   readCookie,
 } from './session-cookies.js';
@@ -29,11 +30,21 @@ export interface ExplicitVmRoute {
   upstreamPath: string;
 }
 
+const NATIVE_APP_STREAM_PATH = /^\/api\/native-apps\/sessions\/session_[A-Za-z0-9_-]{24,96}\/stream(?:\/|$)/;
+const NATIVE_APP_STREAM_CAPABILITY_PATH = /^\/api\/native-apps\/sessions\/session_[A-Za-z0-9_-]{24,96}\/stream\/stream_[A-Za-z0-9_-]{24,96}(?:\/|$)/;
+
 export interface AppDomainIdentity {
   handle: string;
   userId: string;
   runtimeSlot?: string;
   source?: 'auth' | 'mobile-session' | 'static-route';
+}
+
+export interface SyncBearerIdentity {
+  handle: string;
+  userId: string;
+  runtimeSlot?: string;
+  expiresAt: number;
 }
 
 export function readMobileAppSessionRoutingHandle(path: string, rawUrl: string): string | null {
@@ -102,14 +113,70 @@ export function buildShellRouteCookie(handle: string): string {
   ].join('; ');
 }
 
+export function buildShellRuntimeSlotCookie(runtimeSlot: string): string {
+  return [
+    `${SHELL_RUNTIME_SLOT_COOKIE}=${encodeURIComponent(runtimeSlot)}`,
+    'Path=/',
+    'HttpOnly',
+    'Secure',
+    'SameSite=Lax',
+    'Max-Age=600',
+  ].join('; ');
+}
+
+export function readShellRuntimeSlotCookie(path: string, cookieHeader: string | undefined): string | null {
+  if (!isAppDomainGatewayPath(path) && !isAppDomainStaticAssetPath(path)) {
+    return null;
+  }
+  const runtimeSlot = readCookie(cookieHeader, SHELL_RUNTIME_SLOT_COOKIE);
+  const parsed = RuntimeSlotSchema.safeParse(runtimeSlot);
+  return parsed.success ? parsed.data : null;
+}
+
 export function readExplicitVmRoute(path: string): ExplicitVmRoute | null {
-  const match = path.match(/^\/vm\/([a-z][a-z0-9-]{2,30})(?:\/(.*))?$/);
-  if (!match?.[1]) return null;
+  const match = path.match(/^\/vm\/([^/]+)(?:\/(.*))?$/);
+  if (!match?.[1] || !HANDLE_PATTERN.test(match[1])) return null;
   const rest = match[2];
   return {
     handle: match[1],
     upstreamPath: rest ? `/${rest}` : '/',
   };
+}
+
+export function readExplicitVmWebSocketRoute(path: string): ExplicitVmRoute | null {
+  try {
+    const url = new URL(path, 'https://app.matrix-os.com');
+    return readExplicitVmRoute(url.pathname);
+  } catch (err: unknown) {
+    if (err instanceof TypeError) return null;
+    throw err;
+  }
+}
+
+export function buildExplicitVmWebSocketUpstreamPath(path: string): string {
+  try {
+    const url = new URL(path, 'https://app.matrix-os.com');
+    const route = readExplicitVmRoute(url.pathname);
+    if (!route) return path;
+    return `${route.upstreamPath}${url.search}`;
+  } catch (err: unknown) {
+    if (err instanceof TypeError) return path;
+    throw err;
+  }
+}
+
+export function isNativeAppStreamPath(path: string): boolean {
+  return NATIVE_APP_STREAM_PATH.test(path);
+}
+
+export function hasExplicitVmNativeAppStreamCapability(
+  method: string,
+  route: ExplicitVmRoute,
+): boolean {
+  // The route only selects the gateway capability endpoint. The gateway still
+  // timing-safely validates the full random stream token against a live session.
+  return (method === 'GET' || method === 'HEAD')
+    && NATIVE_APP_STREAM_CAPABILITY_PATH.test(route.upstreamPath);
 }
 
 function readGatewayRouteCookie(path: string, cookieHeader: string | undefined): string | null {
@@ -138,6 +205,49 @@ function isSyncJwtAuthError(err: unknown): boolean {
   );
 }
 
+export async function resolveSyncBearerIdentity(opts: {
+  authorization: string | undefined;
+  db: PlatformDB;
+  platformJwtSecret: string;
+  legacyContainerRoutingEnabled?: boolean;
+}): Promise<SyncBearerIdentity | null> {
+  const match = /^Bearer ([^\s]+)$/.exec(opts.authorization ?? '');
+  const token = match?.[1];
+  if (!token || token.length < 32 || token.length > 8192) return null;
+
+  let claims: Awaited<ReturnType<typeof verifySyncJwt>>;
+  try {
+    claims = await verifySyncJwt(token, { secret: opts.platformJwtSecret });
+  } catch (err: unknown) {
+    if (isSyncJwtAuthError(err)) return null;
+    throw err;
+  }
+
+  const runtimeSlot = RuntimeSlotSchema.safeParse(claims.runtime_slot).success
+    ? claims.runtime_slot
+    : undefined;
+  const record = opts.legacyContainerRoutingEnabled === false
+    ? undefined
+    : await getContainer(opts.db, claims.handle);
+  if (record?.clerkUserId === claims.sub) {
+    return {
+      handle: record.handle,
+      userId: record.clerkUserId,
+      runtimeSlot,
+      expiresAt: claims.exp,
+    };
+  }
+
+  const machine = await getActiveUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
+  if (!machine || machine.clerkUserId !== claims.sub) return null;
+  return {
+    handle: machine.handle,
+    userId: machine.clerkUserId,
+    runtimeSlot: machine.runtimeSlot,
+    expiresAt: claims.exp,
+  };
+}
+
 export async function resolveAppDomainIdentity(opts: {
   authHeader: string | undefined;
   cookieHeader: string | undefined;
@@ -145,6 +255,7 @@ export async function resolveAppDomainIdentity(opts: {
   db: PlatformDB;
   platformJwtSecret: string;
   allowUnroutedClerkIdentity?: boolean;
+  clerkPrincipalOnly?: boolean;
   legacyContainerRoutingEnabled?: boolean;
   requestedHandle?: string | null;
   runtimeSlot: string;
@@ -169,6 +280,17 @@ export async function resolveAppDomainIdentity(opts: {
           }
         }
       }
+      const runtimeSlot = RuntimeSlotSchema.safeParse(claims.runtime_slot).success
+        ? claims.runtime_slot
+        : undefined;
+      if (opts.clerkPrincipalOnly) {
+        return {
+          handle: claims.handle,
+          userId: claims.sub,
+          runtimeSlot,
+          source: 'auth',
+        };
+      }
       const record = opts.legacyContainerRoutingEnabled === false
         ? undefined
         : await getContainer(opts.db, claims.handle);
@@ -179,9 +301,6 @@ export async function resolveAppDomainIdentity(opts: {
           source: 'auth',
         };
       }
-      const runtimeSlot = RuntimeSlotSchema.safeParse(claims.runtime_slot).success
-        ? claims.runtime_slot
-        : undefined;
       const machine = await getRunningUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
       if (machine?.clerkUserId === claims.sub) {
         return {
@@ -223,8 +342,22 @@ export async function resolveAppDomainIdentity(opts: {
     return null;
   }
 
+  if (opts.clerkPrincipalOnly) {
+    return {
+      handle: '',
+      userId: result.userId,
+    };
+  }
+
   if (opts.requestedHandle) {
-    const requestedMachine = await getActiveUserMachineByHandle(opts.db, opts.requestedHandle);
+    let requestedMachine = await getActiveUserMachineByHandle(
+      opts.db,
+      opts.requestedHandle,
+      opts.runtimeSlot,
+    );
+    if (!requestedMachine && opts.runtimeSlot === 'primary') {
+      requestedMachine = await getActiveUserMachineByHandle(opts.db, opts.requestedHandle);
+    }
     if (requestedMachine && requestedMachine.clerkUserId === result.userId) {
       return {
         handle: requestedMachine.handle,

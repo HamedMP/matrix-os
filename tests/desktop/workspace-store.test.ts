@@ -286,6 +286,23 @@ describe("persistence", () => {
     expect(persistence.loadLayouts).toHaveBeenCalledTimes(1);
   });
 
+  it("normalizes legacy task layouts before exposing them to workspace panels", async () => {
+    const legacy = {
+      order: ["terminal", "editor"],
+      visible: { terminal: true, editor: true },
+      sizes: { terminal: 50, editor: 50 },
+      touchedAt: 10,
+    } as unknown as PanelLayout;
+    useWorkspace.getState().configure(makePersistence({ task_legacy: legacy }));
+
+    await useWorkspace.getState().hydrate();
+
+    const hydrated = useWorkspace.getState().layouts.task_legacy!;
+    expect(hydrated.order).toEqual(PANEL_KINDS);
+    expect(hydrated.visible.timeline).toBe(false);
+    expect(hydrated.sizes.timeline).toBe(0);
+  });
+
   it("hydrate tolerates a load failure and still marks the store hydrated", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
