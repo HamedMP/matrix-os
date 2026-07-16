@@ -23,6 +23,9 @@ public enum GatewayError: Error, Equatable, Sendable {
     /// Local misconfiguration (e.g. no VPS resolved / empty host) — distinct from
     /// not-found and from transient connectivity.
     case misconfigured
+    /// 409 — request conflicted with current state. Safe code is allowlisted and
+    /// only used for control flow; UI copy remains generic.
+    case conflict(code: String?)
 
     /// Safe, generic, user-facing copy. Contains no server/provider/path detail.
     public var userMessage: String {
@@ -34,15 +37,22 @@ public enum GatewayError: Error, Equatable, Sendable {
         case .timeout: return "The request timed out. Please try again."
         case .decoding: return "Received an unexpected response. Please try again."
         case .misconfigured: return "No computer is connected. Select a runtime to continue."
+        case .conflict: return "Something went wrong. Please try again."
         }
     }
 
+    public var safeCode: String? {
+        if case .conflict(let code) = self { return code }
+        return nil
+    }
+
     /// Maps an HTTP status code to a generic error. 2xx returns nil (success).
-    static func from(statusCode: Int) -> GatewayError? {
+    static func from(statusCode: Int, data: Data? = nil) -> GatewayError? {
         switch statusCode {
         case 200..<300: return nil
         case 401: return .unauthorized
         case 404: return .notFound
+        case 409: return .conflict(code: safeErrorCode(from: data))
         default: return .server
         }
     }
@@ -56,5 +66,25 @@ public enum GatewayError: Error, Equatable, Sendable {
             }
         }
         return .network
+    }
+
+    private struct ErrorEnvelope: Decodable {
+        struct ErrorBody: Decodable {
+            let code: String?
+        }
+
+        let error: ErrorBody?
+    }
+
+    private static func safeErrorCode(from data: Data?) -> String? {
+        guard let data else { return nil }
+        guard let envelope = try? JSONDecoder().decode(ErrorEnvelope.self, from: data) else { return nil }
+        guard let code = envelope.error?.code, (1...64).contains(code.count) else { return nil }
+        let allowed = code.unicodeScalars.allSatisfy { scalar in
+            (scalar.value >= 97 && scalar.value <= 122) ||
+                (scalar.value >= 48 && scalar.value <= 57) ||
+                scalar.value == 95
+        }
+        return allowed ? code : nil
     }
 }

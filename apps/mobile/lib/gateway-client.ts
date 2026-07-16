@@ -5,6 +5,7 @@ import {
   type MobileTerminalSession,
 } from "@/lib/terminal-state";
 import { logMobileCodingAgentWarning } from "@/lib/coding-agent-diagnostics";
+import { twoWordShellSessionName } from "@/lib/shell-session-names";
 import {
   AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
@@ -242,6 +243,8 @@ type ReactNativeWebSocketConstructor = new (
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 export const DEFAULT_GATEWAY_FETCH_TIMEOUT_MS = 10_000;
+const TWO_WORD_COLLISION_RETRIES = 3;
+const TERMINAL_CREATE_ATTEMPTS = TWO_WORD_COLLISION_RETRIES + 1;
 const SAFE_REVIEW_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const SECURE_TOKEN_TRANSPORT_ERROR =
   "Matrix OS Cloud requires HTTPS/WSS.";
@@ -298,6 +301,20 @@ function logGatewayCatchWarning(scope: string, err: unknown): void {
 
 function logGatewayWarning(scope: string, detail: unknown): void {
   logMobileCodingAgentWarning(scope, detail);
+}
+
+async function readGatewayErrorCode(res: Response): Promise<string | null> {
+  try {
+    const data = await res.clone().json() as { error?: { code?: unknown } };
+    return typeof data.error?.code === "string" ? data.error.code : null;
+  } catch (err: unknown) {
+    logGatewayCatchWarning("failed to read gateway error code", err);
+    return null;
+  }
+}
+
+async function isSessionExistsResponse(res: Response): Promise<boolean> {
+  return res.status === 409 && await readGatewayErrorCode(res) === "session_exists";
 }
 
 export class GatewayClient {
@@ -1343,28 +1360,37 @@ export class GatewayClient {
 
   /** Create a new shell session and return its zellij name, or null on failure. */
   async createTerminalSession(): Promise<string | null> {
-    const name = `matrix-${randomShellSuffix()}`;
-    try {
-      const res = await this.fetchGateway("/api/terminal/sessions", {
-        method: "POST",
-        body: JSON.stringify({ name }),
-        headers: { "Content-Type": "application/json" },
+    for (let attempt = 0; attempt < TERMINAL_CREATE_ATTEMPTS; attempt += 1) {
+      const name = twoWordShellSessionName({
+        collisionFallback: attempt >= TWO_WORD_COLLISION_RETRIES,
       });
-      if (!res.ok) {
-        await res.text().catch((err: unknown) => {
-          logGatewayCatchWarning("failed to read terminal session create error body", err);
-          return "";
+      try {
+        const res = await this.fetchGateway("/api/terminal/sessions", {
+          method: "POST",
+          body: JSON.stringify({ name }),
+          headers: { "Content-Type": "application/json" },
         });
-        logGatewayStatusWarning("terminal session create failed", res.status);
+        if (await isSessionExistsResponse(res) && attempt < TERMINAL_CREATE_ATTEMPTS - 1) {
+          continue;
+        }
+        if (!res.ok) {
+          await res.text().catch((err: unknown) => {
+            logGatewayCatchWarning("failed to read terminal session create error body", err);
+            return "";
+          });
+          logGatewayStatusWarning("terminal session create failed", res.status);
+          return null;
+        }
+        const body = (await res.json().catch(() => null)) as { name?: unknown } | null;
+        const created = typeof body?.name === "string" ? body.name : name;
+        return isSafeShellSessionName(created) ? created : null;
+      } catch (err: unknown) {
+        logGatewayCatchWarning("terminal session create unavailable", err);
         return null;
       }
-      const body = (await res.json().catch(() => null)) as { name?: unknown } | null;
-      const created = typeof body?.name === "string" ? body.name : name;
-      return isSafeShellSessionName(created) ? created : null;
-    } catch {
-      logGatewayWarning("terminal session create unavailable", "unavailable");
-      return null;
     }
+    logGatewayWarning("terminal session create failed", "collision_exhausted");
+    return null;
   }
 
   /**

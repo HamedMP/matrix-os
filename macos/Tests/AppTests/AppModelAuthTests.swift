@@ -795,6 +795,63 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.selectedCard?.id, "matrix_session_alpha")
     }
 
+    func testCreateSessionRetriesTwoWordCollisionsBeforeSuffixedFallback() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let postedNames = LockedStringArray()
+        AppTestURLProtocol.setHandler { req in
+            if req.url?.path == "/api/terminal/sessions", req.httpMethod == "POST" {
+                let name = appTestRequestName(req) ?? ""
+                postedNames.append(name)
+                if postedNames.values.count <= 3 {
+                    return (
+                        appTestHTTPResponse(req.url!, 409),
+                        Data(#"{"error":{"code":"session_exists","message":"Request failed"}}"#.utf8)
+                    )
+                }
+                return (
+                    appTestHTTPResponse(req.url!, 201),
+                    Data(#"{"name":"\#(name)"}"#.utf8)
+                )
+            }
+            if req.url?.path == "/api/terminal/sessions" {
+                let name = postedNames.last ?? "swift-falcon"
+                return (
+                    appTestHTTPResponse(req.url!, 200),
+                    Data(#"{"sessions":[{"name":"\#(name)","status":"active"}]}"#.utf8)
+                )
+            }
+            return (appTestHTTPResponse(req.url!, 200), Data("{}".utf8))
+        }
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in
+                GatewayHTTPClient(baseURL: url, tokenProvider: provider, sessionConfiguration: .appTestMocked())
+            },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        let loaded = expectation(description: "created session loads")
+        var cancellables = Set<AnyCancellable>()
+        model.$sessions
+            .filter { !$0.isEmpty }
+            .sink { _ in loaded.fulfill() }
+            .store(in: &cancellables)
+
+        model.createSession()
+        await fulfillment(of: [loaded], timeout: 5)
+
+        let names = postedNames.values
+        XCTAssertEqual(names.count, 4)
+        XCTAssertTrue(names.prefix(3).allSatisfy(isTwoWordShellSessionName))
+        XCTAssertTrue(isFallbackShellSessionName(names[3]))
+        XCTAssertTrue(model.sessions.map(\.name).contains(names[3]))
+    }
+
     func testApprovedSignInOpensHomeWhenNoProjectIsSelected() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         let openedURL = OpenedURLRecorder()
@@ -1153,6 +1210,29 @@ private final class LockedCounter: @unchecked Sendable {
     }
 }
 
+private final class LockedStringArray: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String] = []
+
+    var values: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    var last: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage.last
+    }
+
+    func append(_ value: String) {
+        lock.lock()
+        storage.append(value)
+        lock.unlock()
+    }
+}
+
 private extension URLSessionConfiguration {
     static func appTestMocked() -> URLSessionConfiguration {
         let config = URLSessionConfiguration.ephemeral
@@ -1163,5 +1243,55 @@ private extension URLSessionConfiguration {
 
 private func appTestHTTPResponse(_ url: URL, _ status: Int) -> HTTPURLResponse {
     HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil)!
+}
+
+private func appTestRequestName(_ request: URLRequest) -> String? {
+    guard let data = appTestRequestBodyData(request),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        return nil
+    }
+    return json["name"] as? String
+}
+
+private func appTestRequestBodyData(_ request: URLRequest) -> Data? {
+    if let body = request.httpBody {
+        return body
+    }
+    guard let stream = request.httpBodyStream else { return nil }
+    stream.open()
+    defer { stream.close() }
+    var data = Data()
+    var buffer = [UInt8](repeating: 0, count: 1024)
+    while stream.hasBytesAvailable {
+        let count = stream.read(&buffer, maxLength: buffer.count)
+        if count > 0 {
+            data.append(buffer, count: count)
+        } else {
+            break
+        }
+    }
+    return data
+}
+
+private func isTwoWordShellSessionName(_ name: String) -> Bool {
+    let parts = name.split(separator: "-")
+    return parts.count == 2 && parts.allSatisfy(isLowercaseWord)
+}
+
+private func isFallbackShellSessionName(_ name: String) -> Bool {
+    let parts = name.split(separator: "-")
+    guard parts.count == 3 else { return false }
+    return isLowercaseWord(parts[0]) &&
+        isLowercaseWord(parts[1]) &&
+        parts[2].count == 5 &&
+        parts[2].unicodeScalars.allSatisfy { scalar in
+            (scalar.value >= 97 && scalar.value <= 122) || (scalar.value >= 48 && scalar.value <= 57)
+        }
+}
+
+private func isLowercaseWord(_ value: Substring) -> Bool {
+    !value.isEmpty && value.unicodeScalars.allSatisfy { scalar in
+        scalar.value >= 97 && scalar.value <= 122
+    }
 }
 #endif
