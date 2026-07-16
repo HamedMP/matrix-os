@@ -6,7 +6,8 @@
 # Flow:
 #   deploy   — on label / push while labeled: build bundle v<date>-pr<N>-<sha7>,
 #              publish register-only (--channel none, never promoted),
-#              provision pr-<N> if absent, deploy the exact version, comment.
+#              provision pr-<N> in runtime slot pr-<N> if absent, deploy the
+#              exact version, comment.
 #   teardown — on PR close: delete the pr-<N> VPS.
 #   reaper   — daily: delete any pr-* VPS whose PR is closed or older than 72h,
 #              so orphans cannot accumulate Hetzner cost.
@@ -180,6 +181,7 @@ jobs:
       PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
       HANDLE: ${{ needs.gate.outputs.handle }}
+      RUNTIME_SLOT: ${{ needs.gate.outputs.handle }}
       VERSION: ${{ needs.build.outputs.version }}
     steps:
       - uses: actions/checkout@v6
@@ -212,11 +214,16 @@ jobs:
               '[.machines[] | select(.handle == $h and .status != "deleted")] | .[0].status // "absent"')"
           echo "Fleet status for ${HANDLE}: ${status}"
           if [ "$status" = "absent" ]; then
+            payload="$(jq -cn \
+              --arg clerkUserId "$PREVIEW_CLERK_USER_ID" \
+              --arg handle "$HANDLE" \
+              --arg runtimeSlot "$RUNTIME_SLOT" \
+              '{clerkUserId: $clerkUserId, handle: $handle, runtimeSlot: $runtimeSlot}')"
             code="$(curl -sS --max-time 60 -o /tmp/provision.json -w '%{http_code}' \
               -X POST "${PLATFORM_PUBLIC_URL}/vps/provision" \
               -H "authorization: Bearer ${PLATFORM_SECRET}" \
               -H "content-type: application/json" \
-              -d "{\"clerkUserId\":\"${PREVIEW_CLERK_USER_ID}\",\"handle\":\"${HANDLE}\",\"runtimeSlot\":\"preview\"}")"
+              --data-binary "$payload")"
             if [ "$code" != "202" ] && [ "$code" != "200" ]; then
               echo "Provision failed with HTTP ${code} (body in workflow log)" >&2
               cat /tmp/provision.json >&2

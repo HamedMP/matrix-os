@@ -65,9 +65,11 @@ connect to, CLI betas need a paired shell), and today each is assembled by hand.
   release validation (`/^[A-Za-z0-9._-]{1,128}$/`).
 - Publish: `scripts/publish-release.sh` **without** `--channel` — the release is
   registered but never promoted; no channel pointer can ever select a PR bundle.
-- Provision: `POST /vps/provision` with `handle: pr-<N>`, a dedicated
-  `PREVIEW_CLERK_USER_ID` secret, `runtimeSlot: preview`. Idempotent: if the handle
-  already exists in `/vps/fleet`, skip provision and deploy only.
+- Provision: `POST /vps/provision` with matching `handle: pr-<N>` and
+  `runtimeSlot: pr-<N>`, plus a dedicated `PREVIEW_CLERK_USER_ID` secret. The
+  per-PR slot preserves owner/slot idempotency while allowing concurrent preview
+  VPSes for the shared QA owner. If the handle already exists in `/vps/fleet`,
+  skip provision and deploy only.
 - Deploy: `POST /vps/deploy {"version": "...", "handle": "pr-<N>"}` — version-pinned,
   single-handle. Never channel-wide.
 - Report: PR comment with the VM URL, bundle version, and log-query one-liner.

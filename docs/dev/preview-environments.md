@@ -53,9 +53,11 @@ Add the **`preview-vps`** label to a same-repo PR. The `Preview VPS` workflow:
 2. Publishes it **register-only** (`publish-release.sh --channel none`): the
    release exists in R2 + platform DB but no channel pointer can ever select
    it, so it cannot reach real users.
-3. Provisions VPS `pr-<N>` (runtime slot `preview`, bound to the
-   `PREVIEW_CLERK_USER_ID` Clerk user) if absent, then deploys exactly that
-   version to exactly that handle.
+3. Provisions VPS `pr-<N>` in the matching `pr-<N>` runtime slot, bound to the
+   `PREVIEW_CLERK_USER_ID` Clerk user, if absent, then deploys exactly that
+   version to exactly that handle. The per-PR slot keeps provisioning
+   idempotent without making concurrent previews for the shared QA owner
+   collide.
 4. Comments the URL on the PR: `https://app.matrix-os.com/vm/pr-<N>`.
 
 Teardown is automatic on PR close. A daily reaper deletes any `pr-*` VPS whose
