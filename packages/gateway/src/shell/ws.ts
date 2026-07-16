@@ -246,14 +246,14 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     return true;
   }
 
-  function emitOutput(runtime: SessionRuntime, data: string): void {
+  function emitOutput(runtime: SessionRuntime, data: string, finalConn?: ConnState): void {
     if (data.length === 0) {
       return;
     }
     const result = runtime.buffer.writeLive(data);
     const frame = { type: "output", seq: result.seq, data };
     for (const conn of runtime.conns) {
-      if (!conn.closed) {
+      if (!conn.closed || conn === finalConn) {
         deliver(conn, frame);
       }
     }
@@ -548,13 +548,19 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       if (conn.closed) {
         return;
       }
-      if (runtime.conns.size === 1 && runtime.conns.has(conn) && idleAttachGraceMs <= 0) {
-        await closeSharedAttach(runtime);
-        conn.closed = true;
+      conn.closed = true;
+      const isLastConn = runtime.conns.size === 1 && runtime.conns.has(conn);
+      if (isLastConn && idleAttachGraceMs <= 0) {
+        if (runtime.outputCompat) {
+          const pendingOutput = runtime.outputCompat.flush();
+          if (pendingOutput.length > 0) {
+            emitOutput(runtime, pendingOutput, conn);
+          }
+        }
         runtime.conns.delete(conn);
+        await closeSharedAttach(runtime);
         return;
       }
-      conn.closed = true;
       detachConn();
     };
 

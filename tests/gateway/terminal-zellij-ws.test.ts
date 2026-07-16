@@ -696,6 +696,43 @@ describe("zellij terminal WebSocket", () => {
     expect(pty.killed).toBe(true);
   });
 
+  it("marks a sole client closed before awaiting shared attach shutdown", async () => {
+    const pty = new FakePty();
+    const flush = deferred<void>();
+    const append = vi.fn((_: string, records: Array<{ type: string }>) => (
+      records.some((record) => record.type === "output")
+        ? flush.promise
+        : Promise.resolve()
+    ));
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => null),
+        readSince: vi.fn(async () => []),
+        append,
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+      persistFlushIntervalMs: 0,
+      idleAttachGraceMs: 0,
+    });
+
+    const ws = socket();
+    const session = await handler.open({ ws, session: "main", fromSeq: 0 });
+    pty.emitData("pending-close-flush");
+    const sentBeforeClose = ws.sent.length;
+
+    session.onClose();
+    session.onMessage("{");
+
+    expect(ws.sent).toHaveLength(sentBeforeClose);
+    flush.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    handler.dispose();
+  });
+
   it("skips delivery to a slow client without pausing the shared attach", async () => {
     const pty = new FakePty();
     const fastWs = socket();
