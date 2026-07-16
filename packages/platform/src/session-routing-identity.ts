@@ -284,7 +284,7 @@ export async function resolveAppDomainIdentity(opts: {
         ? claims.runtime_slot
         : undefined;
       // Browser app sessions establish the owner; shell cookies select that owner's active computer.
-      if (bearerToken === appSessionToken && opts.requestedHandle) {
+      if (bearerToken === appSessionToken && opts.requestedHandle && !opts.clerkPrincipalOnly) {
         let requestedMachine = await getActiveUserMachineByHandle(
           opts.db,
           opts.requestedHandle,
