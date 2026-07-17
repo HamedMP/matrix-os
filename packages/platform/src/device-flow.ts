@@ -35,6 +35,22 @@ export interface IssuedToken {
 
 export interface IssueTokenInput {
   clerkUserId: string;
+  runtimeSlot?: string;
+  handle?: string;
+}
+
+export interface DeviceApprovalTarget {
+  handle: string;
+  runtimeSlot: string;
+}
+
+export class DeviceApprovalError extends Error {
+  readonly code = 'computer_unavailable';
+
+  constructor() {
+    super('Selected computer unavailable');
+    this.name = 'DeviceApprovalError';
+  }
 }
 
 export type DevicePollResult =
@@ -47,6 +63,7 @@ export type DevicePollResult =
       expiresAt: number;
       handle: string;
       clerkUserId: string;
+      runtimeSlot?: string;
       profile?: DeviceProfile;
     };
 
@@ -57,6 +74,10 @@ export interface DeviceFlowConfig {
   intervalSec?: number; // default 5
   maxInFlightPolls?: number; // default 1024
   issueTokenTimeoutMs?: number; // default 30000
+  resolveApprovalTarget?: (
+    db: PlatformDB,
+    input: { clerkUserId: string; runtimeSlot: string },
+  ) => Promise<DeviceApprovalTarget | null>;
   now?: () => number;
   random?: (bytes: number) => Buffer;
   issueToken?: (input: IssueTokenInput) => Promise<IssuedToken>;
@@ -65,7 +86,7 @@ export interface DeviceFlowConfig {
 export interface DeviceFlow {
   createDeviceCode(): Promise<DeviceCodeIssue>;
   pollDeviceCode(deviceCode: string): Promise<DevicePollResult>;
-  approveDeviceCode(userCode: string, clerkUserId: string): Promise<void>;
+  approveDeviceCode(userCode: string, clerkUserId: string, runtimeSlot?: string): Promise<void>;
 }
 
 export function formatUserCode(raw: string): string {
@@ -139,6 +160,8 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
               device_code: deviceCode,
               user_code: userCodeRaw,
               clerk_user_id: null,
+              runtime_slot: null,
+              runtime_handle: null,
               expires_at: ts + expiresInSec * 1000,
               last_polled_at: null,
               created_at: ts,
@@ -195,11 +218,11 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
               .where('device_code', '=', deviceCode)
               .execute();
           }
-          return { status: 'expired' } as DevicePollResult;
+          return { status: 'expired' } as const;
         }
 
         if (row.last_polled_at && ts - row.last_polled_at < intervalSec * 1000) {
-          return { status: 'slow_down' } as DevicePollResult;
+          return { status: 'slow_down' } as const;
         }
 
         if (!row.clerk_user_id) {
@@ -208,12 +231,14 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
             .set({ last_polled_at: ts })
             .where('device_code', '=', deviceCode)
             .execute();
-          return { status: 'pending' } as DevicePollResult;
+          return { status: 'pending' } as const;
         }
 
         return {
           status: 'approved',
           clerkUserId: row.clerk_user_id,
+          runtimeSlot: row.runtime_slot,
+          runtimeHandle: row.runtime_handle,
         } as const;
       });
 
@@ -256,7 +281,11 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
               return { status: 'expired' } as DevicePollResult;
             }
 
-            if (row.clerk_user_id !== claimed.clerkUserId) {
+            if (
+              row.clerk_user_id !== claimed.clerkUserId ||
+              row.runtime_slot !== claimed.runtimeSlot ||
+              row.runtime_handle !== claimed.runtimeHandle
+            ) {
               return { status: 'expired' } as DevicePollResult;
             }
 
@@ -277,7 +306,11 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
             const timer = setTimeout(() => {
               reject(new Error('issueToken timeout'));
             }, issueTokenTimeoutMs);
-            void issueToken({ clerkUserId: claimed.clerkUserId }).then(
+            void issueToken({
+              clerkUserId: claimed.clerkUserId,
+              ...(claimed.runtimeSlot ? { runtimeSlot: claimed.runtimeSlot } : {}),
+              ...(claimed.runtimeHandle ? { handle: claimed.runtimeHandle } : {}),
+            }).then(
               (value) => {
                 clearTimeout(timer);
                 resolve(value);
@@ -295,6 +328,7 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
             expiresAt: issued.expiresAt,
             handle: issued.handle,
             clerkUserId: claimed.clerkUserId,
+            ...(claimed.runtimeSlot ? { runtimeSlot: claimed.runtimeSlot } : {}),
             ...(issued.profile ? { profile: issued.profile } : {}),
           });
         } catch (err: unknown) {
@@ -308,7 +342,11 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
       return issuePromise;
     },
 
-    async approveDeviceCode(userCode: string, clerkUserId: string): Promise<void> {
+    async approveDeviceCode(
+      userCode: string,
+      clerkUserId: string,
+      runtimeSlot?: string,
+    ): Promise<void> {
       const ts = now();
       const normalized = normalizeUserCode(userCode);
       await config.db.transaction(async (trx) => {
@@ -328,15 +366,48 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
             .execute();
           throw new Error('Expired user_code');
         }
-        if (row.clerk_user_id && row.clerk_user_id !== clerkUserId) {
+        if (row.clerk_user_id) {
+          const sameBinding = row.clerk_user_id === clerkUserId
+            && row.runtime_slot === (runtimeSlot ?? null)
+            && (runtimeSlot === undefined || row.runtime_handle !== null);
+          if (sameBinding) return;
           throw new Error('Device code already approved');
         }
 
-        await trx.executor
+        let selectedTarget: DeviceApprovalTarget | null = null;
+        if (runtimeSlot) {
+          selectedTarget = config.resolveApprovalTarget
+            ? await config.resolveApprovalTarget(trx, { clerkUserId, runtimeSlot })
+            : null;
+          if (!selectedTarget || selectedTarget.runtimeSlot !== runtimeSlot) {
+            throw new DeviceApprovalError();
+          }
+        }
+
+        const updated = await trx.executor
           .updateTable('device_codes')
-          .set({ clerk_user_id: clerkUserId })
+          .set({
+            clerk_user_id: clerkUserId,
+            runtime_slot: runtimeSlot ?? null,
+            runtime_handle: selectedTarget?.handle ?? null,
+          })
           .where('user_code', '=', normalized)
-          .execute();
+          .where('clerk_user_id', 'is', null)
+          .returning(['clerk_user_id', 'runtime_slot', 'runtime_handle'])
+          .executeTakeFirst();
+        if (updated) return;
+
+        const committed = await trx.executor
+          .selectFrom('device_codes')
+          .select(['clerk_user_id', 'runtime_slot', 'runtime_handle'])
+          .where('user_code', '=', normalized)
+          .executeTakeFirst();
+        const sameCommittedBinding = committed?.clerk_user_id === clerkUserId
+          && committed.runtime_slot === (runtimeSlot ?? null)
+          && committed.runtime_handle === (selectedTarget?.handle ?? null);
+        if (!sameCommittedBinding) {
+          throw new Error('Device code already approved');
+        }
       });
     },
   };

@@ -615,6 +615,7 @@ describe("AuthService device flow", () => {
         expiresAt: 10_000 + HOUR_MS,
         userId: "user-1",
         handle: "neo",
+        runtimeSlot: "review",
         displayName: "Thomas Anderson",
       });
     });
@@ -629,7 +630,7 @@ describe("AuthService device flow", () => {
         signedIn: true,
         handle: "neo",
         displayName: "Thomas Anderson",
-        runtimeSlot: "primary",
+        runtimeSlot: "review",
         platformHost: "https://app.matrix-os.com",
         authGeneration: 1,
       });

@@ -11,6 +11,7 @@ export const AuthDataSchema = z.object({
   expiresAt: z.number().nonnegative(),
   userId: z.string().min(1),
   handle: z.string().min(1),
+  runtimeSlot: z.string().min(1).max(32).optional(),
 });
 
 export type AuthData = z.infer<typeof AuthDataSchema>;
