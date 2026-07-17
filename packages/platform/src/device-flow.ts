@@ -366,7 +366,11 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
             .execute();
           throw new Error('Expired user_code');
         }
-        if (row.clerk_user_id && row.clerk_user_id !== clerkUserId) {
+        if (row.clerk_user_id) {
+          const sameBinding = row.clerk_user_id === clerkUserId
+            && row.runtime_slot === (runtimeSlot ?? null)
+            && (runtimeSlot === undefined || row.runtime_handle !== null);
+          if (sameBinding) return;
           throw new Error('Device code already approved');
         }
 
@@ -380,7 +384,7 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
           }
         }
 
-        await trx.executor
+        const updated = await trx.executor
           .updateTable('device_codes')
           .set({
             clerk_user_id: clerkUserId,
@@ -388,7 +392,22 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
             runtime_handle: selectedTarget?.handle ?? null,
           })
           .where('user_code', '=', normalized)
-          .execute();
+          .where('clerk_user_id', 'is', null)
+          .returning(['clerk_user_id', 'runtime_slot', 'runtime_handle'])
+          .executeTakeFirst();
+        if (updated) return;
+
+        const committed = await trx.executor
+          .selectFrom('device_codes')
+          .select(['clerk_user_id', 'runtime_slot', 'runtime_handle'])
+          .where('user_code', '=', normalized)
+          .executeTakeFirst();
+        const sameCommittedBinding = committed?.clerk_user_id === clerkUserId
+          && committed.runtime_slot === (runtimeSlot ?? null)
+          && committed.runtime_handle === (selectedTarget?.handle ?? null);
+        if (!sameCommittedBinding) {
+          throw new Error('Device code already approved');
+        }
       });
     },
   };

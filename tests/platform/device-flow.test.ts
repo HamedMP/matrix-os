@@ -163,6 +163,60 @@ describe("device flow: polling", () => {
     });
   });
 
+  it("preserves the first runtime binding across concurrent approvals", async () => {
+    let targetCalls = 0;
+    let signalSecondReached: (() => void) | undefined;
+    let releaseSecond: (() => void) | undefined;
+    const secondReached = new Promise<void>((resolve) => {
+      signalSecondReached = resolve;
+    });
+    const secondMayFinish = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    flow = createDeviceFlow({
+      db,
+      now: () => now,
+      verificationBase: VERIFY_BASE,
+      resolveApprovalTarget: async (_transactionDb, { runtimeSlot }) => {
+        targetCalls++;
+        if (runtimeSlot === "pr-first") {
+          await secondReached;
+          return { handle: "pr-first", runtimeSlot };
+        }
+        signalSecondReached?.();
+        await secondMayFinish;
+        return { handle: "pr-second", runtimeSlot };
+      },
+      issueToken: async () => {
+        throw new Error("must not issue");
+      },
+    });
+    const issued = await flow.createDeviceCode();
+
+    const firstApproval = flow.approveDeviceCode(issued.userCode, "user_alice", "pr-first");
+    await vi.waitFor(() => expect(targetCalls).toBe(1));
+    const secondApproval = flow.approveDeviceCode(issued.userCode, "user_alice", "pr-second");
+    await secondReached;
+
+    await expect(firstApproval).resolves.toBeUndefined();
+    releaseSecond?.();
+    await expect(secondApproval).rejects.toThrow("Device code already approved");
+    await expect(
+      flow.approveDeviceCode(issued.userCode, "user_alice", "pr-first"),
+    ).resolves.toBeUndefined();
+
+    const row = await db.executor
+      .selectFrom("device_codes")
+      .select(["clerk_user_id", "runtime_slot", "runtime_handle"])
+      .where("device_code", "=", issued.deviceCode)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({
+      clerk_user_id: "user_alice",
+      runtime_slot: "pr-first",
+      runtime_handle: "pr-first",
+    });
+  });
+
   it("leaves the device code pending when the selected computer is unavailable", async () => {
     flow = createDeviceFlow({
       db,
