@@ -1371,6 +1371,7 @@ describe("TerminalApp", () => {
   it("anchors desktop close confirmation beside the session without dimming the terminal", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     let deleted = false;
+    let latestSeq = 2;
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       calls.push({ url, init });
@@ -1390,7 +1391,7 @@ describe("TerminalApp", () => {
                 status: "active",
                 placement: "active",
                 visualStatus: "finished",
-                latestSeq: 2,
+                latestSeq,
                 lastSeenSeq: 1,
                 unread: true,
                 tabs: [{ idx: 0, name: "review", focused: true }],
@@ -1453,9 +1454,24 @@ describe("TerminalApp", () => {
     expect(sheet.style.transformOrigin).toBe("left center");
     expect(screen.queryByRole("button", { name: "Cancel close session" })).toBeNull();
     expect(calls.filter((call) => call.init?.method === "DELETE")).toHaveLength(0);
+    const cancelButton = within(dialog).getByRole("button", { name: "Cancel" });
+    const deleteButton = within(dialog).getByRole("button", { name: "Delete" });
+    expect(document.activeElement).toBe(cancelButton);
+
+    deleteButton.focus();
+    expect(document.activeElement).toBe(deleteButton);
+    latestSeq = 3;
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(within(screen.getByRole("dialog", { name: "Close this session?" })).getByText("active · 2 unread")).toBeTruthy();
+    expect(document.activeElement).toBe(deleteButton);
 
     await act(async () => {
-      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      fireEvent.click(cancelButton);
       await Promise.resolve();
     });
     expect(screen.queryByRole("dialog", { name: "Close this session?" })).toBeNull();
@@ -3110,6 +3126,7 @@ describe("TerminalApp", () => {
     ));
     expect(deleteCalls).toHaveLength(1);
     expect(screen.queryByText("matrix-main")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByTestId("terminal-session-name-bench"));
   });
 
   it("removes open panes for a managed shell after deleting that shell", async () => {

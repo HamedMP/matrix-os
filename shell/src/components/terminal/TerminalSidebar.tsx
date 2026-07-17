@@ -159,6 +159,9 @@ export function LocalTerminalSidebar() {
   if (deletingShellsRef.current === null) deletingShellsRef.current = new Set();
   const [deletingShellNames, setDeletingShellNames] = useState<string[]>([]);
   const [closeConfirmationRequest, setCloseConfirmationRequest] = useState<CloseConfirmationRequest | null>(null);
+  const pendingDeleteFocusRef = useRef<{ deletedName: string; targetName: string | null } | null>(null);
+  const refreshSessionsButtonRef = useRef<HTMLButtonElement>(null);
+  const sessionsScrollRef = useRef<HTMLDivElement>(null);
   const [newSessionMenuAnchor, setNewSessionMenuAnchor] = useState<NewSessionMenuAnchor | null>(null);
   const [backgroundSessionsExpanded, setBackgroundSessionsExpanded] = useState(true);
   const [draggingShellName, setDraggingShellName] = useState<string | null>(null);
@@ -637,6 +640,33 @@ export function LocalTerminalSidebar() {
     ? activePaneSessionId
     : null;
   const drawerWidth = ctx.mobile ? "100%" : clampTerminalSidebarWidth(ctx.sidebarWidth);
+  const queueFocusAfterManagedShellDelete = (shellName: string) => {
+    const shellIndex = unfilteredRenderedShells.findIndex((shell) => shell.name === shellName);
+    const remainingShells = unfilteredRenderedShells.filter((shell) => shell.name !== shellName);
+    const targetIndex = shellIndex === -1 ? 0 : Math.min(shellIndex, remainingShells.length - 1);
+    pendingDeleteFocusRef.current = {
+      deletedName: shellName,
+      targetName: remainingShells[targetIndex]?.name ?? null,
+    };
+  };
+  useEffect(() => {
+    const pendingFocus = pendingDeleteFocusRef.current;
+    if (!pendingFocus || closeConfirmationRequest || deletingShellNames.includes(pendingFocus.deletedName)) {
+      return;
+    }
+    pendingDeleteFocusRef.current = null;
+    const sessionButtons = Array.from(
+      sessionsScrollRef.current?.querySelectorAll<HTMLButtonElement>("[data-session-name]") ?? [],
+    );
+    const preferredButton = pendingFocus.targetName
+      ? sessionButtons.find((button) => button.getAttribute("data-session-name") === pendingFocus.targetName)
+      : null;
+    const focusTarget = preferredButton
+      ?? sessionButtons[0]
+      ?? sessionsScrollRef.current
+      ?? refreshSessionsButtonRef.current;
+    focusTarget?.focus({ preventScroll: true });
+  }, [closeConfirmationRequest, deletingShellNames]);
   const startSidebarResize = (event: ReactPointerEvent<HTMLElement>) => {
     if (ctx.mobile) return;
     event.preventDefault();
@@ -837,6 +867,7 @@ export function LocalTerminalSidebar() {
       }}
       onConfirm={() => {
         const shellName = pendingCloseRequest.shell.name;
+        queueFocusAfterManagedShellDelete(shellName);
         setCloseConfirmationRequest(null);
         void deleteManagedShell(shellName);
       }}
@@ -1007,6 +1038,7 @@ export function LocalTerminalSidebar() {
             {!ctx.mobile && (
               <>
                 <button
+                  ref={refreshSessionsButtonRef}
                   type="button"
                   aria-label="Refresh sessions"
                   onClick={() => void fetchShells()}
@@ -1081,8 +1113,10 @@ export function LocalTerminalSidebar() {
       </div>
 
       <div
+        ref={sessionsScrollRef}
         data-testid="terminal-sessions-scroll"
         data-terminal-scrollbar="drawer"
+        tabIndex={-1}
         className="terminal-sessions-scroll min-h-0 flex-1 overflow-y-auto"
         style={{ display: "flex", flexDirection: "column", gap: 18, padding: ctx.mobile ? 20 : 18 }}
       >

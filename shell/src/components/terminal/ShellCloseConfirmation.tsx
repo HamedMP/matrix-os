@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { Trash2Icon } from "lucide-react";
 
@@ -129,16 +129,17 @@ export function ShellCloseConfirmation({
 }) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
   const [desktopPosition, setDesktopPosition] = useState<PopoverPosition>(() => (
     typeof window === "undefined"
       ? { left: POPOVER_MARGIN, top: POPOVER_MARGIN, placement: "right" }
       : readPopoverPosition(anchorElement, null)
   ));
   const displayName = formatShellDisplayName(shell.name);
-  const titleId = "terminal-close-confirmation-title";
   const bodyCopy = mobile
     ? "Closing permanently deletes this session and its transcript. This can't be undone."
     : "Closing ends the session and permanently deletes it and its transcript. You won't be able to reopen or recover it — this can't be undone.";
+  const cancelConfirmation = useEffectEvent(onCancel);
 
   useLayoutEffect(() => {
     if (mobile) return;
@@ -163,23 +164,27 @@ export function ShellCloseConfirmation({
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") onCancel();
+      if (event.key === "Escape") cancelConfirmation();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onCancel]);
+  }, []);
 
   useEffect(() => {
     if (mobile) return;
     cancelButtonRef.current?.focus({ preventScroll: true });
+  }, [mobile]);
+
+  useEffect(() => {
+    if (mobile) return;
     const onPointerDown = (event: globalThis.PointerEvent) => {
       const target = event.target;
       if (target instanceof Node && sheetRef.current?.contains(target)) return;
-      onCancel();
+      cancelConfirmation();
     };
     document.addEventListener("pointerdown", onPointerDown, true);
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
-  }, [mobile, onCancel]);
+  }, [mobile]);
 
   const sheetStyle: CSSProperties = mobile
     ? {
