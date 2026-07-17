@@ -337,12 +337,11 @@ function applyXtermScrollOptions(term: Terminal): void {
   term.options.scrollOnUserInput = true;
 }
 
-function refreshTerminalRenderer(term: Terminal | null): void {
-  const maybeRefresh = (term as { refresh?: unknown } | null)?.refresh;
-  if (typeof maybeRefresh !== "function" || !term || term.rows <= 0) {
+function refreshTerminalRenderer(term: Terminal): void {
+  if (term.rows <= 0) {
     return;
   }
-  maybeRefresh.call(term, 0, term.rows - 1);
+  term.refresh(0, term.rows - 1);
 }
 
 type DisposableWebglAddon = { dispose: () => void };
@@ -971,11 +970,9 @@ export function TerminalPane({
         fitAddon = cached.fitAddon;
         searchAddon = cached.searchAddon;
         webglAddon = null;
-        webglAddonRef.current = toDisposableWebglAddon(cached.webglAddon);
-        if (webglAddonRef.current) {
-          log("webgl-disposed-from-cache-restore", { webglDisabled });
-          disposeWebgl();
-        }
+        // Cached terminals intentionally never retain WebGL. Restore starts on
+        // the DOM renderer, then re-enables WebGL after attach + fit.
+        webglAddonRef.current = null;
         termRef.current = cached.terminal;
         fitAddonRef.current = cached.fitAddon;
         searchAddonRef.current = cached.searchAddon;
