@@ -582,7 +582,7 @@ export function ShellSessionGroup({
   onOpen: (shell: ShellSessionSummary) => void;
   onToggle: (shell: ShellSessionSummary) => void;
   onRename: (shell: ShellSessionSummary, nextName: string) => Promise<boolean>;
-  onDelete: (shell: ShellSessionSummary) => void;
+  onDelete: (shell: ShellSessionSummary, anchorElement: HTMLElement, returnFocusElement: HTMLButtonElement) => void;
   draggingShellName: string | null;
   dragOverShellName: string | null;
   onDragStart: (shell: ShellSessionSummary) => void;
@@ -653,7 +653,7 @@ export function ShellSessionGroup({
                 onOpen={() => onOpen(shell)}
                 onToggle={() => onToggle(shell)}
                 onRename={(nextName) => onRename(shell, nextName)}
-                onDelete={() => onDelete(shell)}
+                onDelete={(anchorElement, returnFocusElement) => onDelete(shell, anchorElement, returnFocusElement)}
                 dragging={shell.name === draggingShellName}
                 dropTarget={shell.name === dragOverShellName}
                 onDragStart={() => onDragStart(shell)}
@@ -754,7 +754,7 @@ function ShellCard({
   onOpen: () => void;
   onToggle: () => void;
   onRename: (nextName: string) => Promise<boolean>;
-  onDelete: () => void;
+  onDelete: (anchorElement: HTMLElement, returnFocusElement: HTMLButtonElement) => void;
   dragging: boolean;
   dropTarget: boolean;
   onDragStart: () => void;
@@ -1223,8 +1223,12 @@ function ShellCard({
                       disabled={deleting}
                       onClick={() => {
                         if (deleting) return;
+                        const anchorElement = cardRef.current;
+                        const returnFocusElement = moreButtonRef.current;
                         closeContextMenuWithFocusReturn();
-                        onDelete();
+                        if (anchorElement && returnFocusElement) {
+                          onDelete(anchorElement, returnFocusElement);
+                        }
                       }}
                     >
                       <Trash2Icon size={13} strokeWidth={2} />

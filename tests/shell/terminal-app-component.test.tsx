@@ -1352,7 +1352,7 @@ describe("TerminalApp", () => {
     ]));
   });
 
-  it("asks for Paper confirmation before permanently deleting a session", async () => {
+  it("anchors desktop close confirmation beside the session without dimming the terminal", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     let deleted = false;
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -1398,8 +1398,21 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    const row = screen.getByRole("button", { name: "Open claude-review" }).closest(".group");
+    const row = screen.getByRole("button", { name: "Open claude-review" }).closest<HTMLElement>(".group");
     expect(row).toBeTruthy();
+    vi.spyOn(row!, "getBoundingClientRect").mockReturnValue({
+      bottom: 316,
+      height: 52,
+      left: 28,
+      right: 360,
+      top: 264,
+      width: 332,
+      x: 28,
+      y: 264,
+      toJSON: () => ({}),
+    });
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1440 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 900 });
 
     let menu = await openSessionContextMenu("claude-review", "claude-review");
     await act(async () => {
@@ -1411,9 +1424,18 @@ describe("TerminalApp", () => {
     expect(within(dialog).getByText("Closing ends the session and permanently deletes it and its transcript. You won't be able to reopen or recover it — this can't be undone.")).toBeTruthy();
     expect(within(dialog).getByText("claude-review")).toBeTruthy();
     expect(within(dialog).getByText("active · 1 unread")).toBeTruthy();
-    expect(dialog.style.alignItems).toBe("center");
-    expect(dialog.style.justifyContent).toBe("center");
-    expect(dialog.style.background).toBe("rgba(3, 10, 3, 0.74)");
+    expect(dialog.getAttribute("aria-modal")).toBe("false");
+    expect(dialog.dataset.placement).toBe("right");
+    expect(dialog.style.position).toBe("fixed");
+    expect(dialog.style.left).toBe("372px");
+    expect(dialog.style.background).not.toBe("rgba(3, 10, 3, 0.74)");
+    const sheet = screen.getByTestId("terminal-close-confirmation-sheet");
+    expect(sheet.style.boxShadow).toBe("none");
+    expect(sheet.dataset.terminalCloseMotion).toBe("desktop");
+    expect(sheet.style.animationName).toBe("terminal-close-popover-in-right");
+    expect(sheet.style.animationDuration).toBe("180ms");
+    expect(sheet.style.transformOrigin).toBe("left center");
+    expect(screen.queryByRole("button", { name: "Cancel close session" })).toBeNull();
     expect(calls.filter((call) => call.init?.method === "DELETE")).toHaveLength(0);
 
     await act(async () => {
@@ -1483,6 +1505,11 @@ describe("TerminalApp", () => {
     const sheet = screen.getByTestId("terminal-close-confirmation-sheet");
     expect(sheet.style.borderTopLeftRadius).toBe("26px");
     expect(sheet.style.borderTopRightRadius).toBe("26px");
+    expect(dialog.dataset.terminalCloseMotion).toBe("mobile-backdrop");
+    expect(dialog.style.animationName).toBe("terminal-close-backdrop-in");
+    expect(sheet.dataset.terminalCloseMotion).toBe("mobile-sheet");
+    expect(sheet.style.animationName).toBe("terminal-close-sheet-in");
+    expect(sheet.style.animationDuration).toBe("220ms");
     expect(within(sheet).getByRole("button", { name: "Delete" })).toBeTruthy();
     expect(within(sheet).getByRole("button", { name: "Cancel" })).toBeTruthy();
   });
