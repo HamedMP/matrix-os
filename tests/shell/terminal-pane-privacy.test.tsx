@@ -7,6 +7,7 @@ const stubTerminal = vi.hoisted(() => ({
   element: null as HTMLElement | null,
   focus: vi.fn(),
   write: vi.fn(),
+  refresh: vi.fn(),
   dispose: vi.fn(),
   cols: 80,
   rows: 24,
