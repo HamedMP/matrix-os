@@ -10,8 +10,8 @@ import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-
 import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-settings";
 import { getTerminalThemePreset } from "./terminal-themes";
 import { getTerminalAppChromeCssVars, getTerminalAppChromeTheme, getTerminalAppThemeOption } from "./terminal-app-chrome-theme";
-import { TerminalAppContext, useTerminalAppContext, type TerminalWindowControls } from "./TerminalAppContext";
-import { LocalTerminalTabBar, TerminalEmbeddedToolbar, TerminalWorkspaceChrome } from "./TerminalChrome";
+import { TerminalAppContext, type TerminalWindowControls } from "./TerminalAppContext";
+import { TerminalEmbeddedToolbar, TerminalWorkspaceChrome } from "./TerminalChrome";
 import { MobileCommandComposer, MobileTerminalActions } from "./MobileTerminalControls";
 import { DEFAULT_TERMINAL_SIDEBAR_WIDTH, LocalTerminalSidebar } from "./TerminalSidebar";
 import { TerminalKeyBar } from "./TerminalKeyBar";
@@ -26,7 +26,6 @@ import {
   destroyTerminalSessions,
   getCanonicalShellSessionIds,
   getFirstPaneId,
-  getPaneCwd,
   getPaneIdsForSession,
   getPaneSessionId,
   getSessionIds,
@@ -976,5 +975,3 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     </div>
   );
 }
-
-// ---- Local versions of TabBar and Sidebar that use context instead of global store ----
