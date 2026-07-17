@@ -6,7 +6,6 @@ import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 
 const CANONICAL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
 const TWO_WORD_SESSION_NAME_PATTERN = /^[a-z]+-[a-z]+$/;
-const TWO_WORD_FALLBACK_SESSION_NAME_PATTERN = /^[a-z]+-[a-z]+-[a-z0-9]{5}$/;
 
 const paneGridSpy = vi.fn();
 const { saveThemeSpy, terminalSettingsState } = vi.hoisted(() => ({
@@ -115,6 +114,22 @@ function terminalSessionPostBodies(): string[] {
   return vi.mocked(fetch).mock.calls
     .filter(([input, init]) => String(input).includes("/api/terminal/sessions") && init?.method === "POST")
     .map(([, init]) => String(init?.body ?? ""));
+}
+
+function terminalSessionPostPayloads(): Array<{ name?: unknown; cmd?: unknown; cwd?: unknown }> {
+  return terminalSessionPostBodies().map((body) => JSON.parse(body) as { name?: unknown; cmd?: unknown; cwd?: unknown });
+}
+
+function expectTerminalCreatePayloadForCommand(cmd: string | RegExp): { name: string; cmd: string; cwd?: unknown } {
+  const payload = terminalSessionPostPayloads().find((body) => (
+    typeof body.name === "string" &&
+    typeof body.cmd === "string" &&
+    (typeof cmd === "string" ? body.cmd === cmd : cmd.test(body.cmd))
+  ));
+  expect(payload).toBeTruthy();
+  expect(payload?.name).toMatch(TWO_WORD_SESSION_NAME_PATTERN);
+  expect(String(payload?.name).split("-")).toHaveLength(2);
+  return payload as { name: string; cmd: string; cwd?: unknown };
 }
 
 function mockJsonResponse(body: unknown, status = 200): Response {
@@ -1986,7 +2001,7 @@ describe("TerminalApp", () => {
     });
   });
 
-  it("retries two-word shell name collisions before using a suffixed fallback", async () => {
+  it("retries shell name collisions with fresh two-word names only", async () => {
     const postedNames: string[] = [];
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -2005,14 +2020,14 @@ describe("TerminalApp", () => {
           return Promise.resolve(mockJsonResponse({ name: "main", created: true }, 201));
         }
         if (typeof body.name === "string") postedNames.push(body.name);
-        if (postedNames.length <= 3) {
+        if (postedNames.length < 10) {
           return Promise.resolve(mockJsonResponse({ error: { code: "session_exists", message: "Request failed" } }, 409));
         }
         return Promise.resolve(mockJsonResponse({ name: body.name, created: true }, 201));
       }
       if (url.endsWith("/api/terminal/sessions")) {
         return Promise.resolve(mockJsonResponse({
-          sessions: postedNames.length >= 4 ? [{ name: postedNames[3], status: "active" }] : [],
+          sessions: postedNames.length >= 10 ? [{ name: postedNames[9], status: "active" }] : [],
         }));
       }
       return Promise.resolve(mockJsonResponse({}));
@@ -2030,16 +2045,12 @@ describe("TerminalApp", () => {
       await chooseNewSessionMenuItem(/Shell/);
     });
 
-    await vi.waitFor(() => expect(postedNames).toHaveLength(4));
-    expect(postedNames.slice(0, 3)).toEqual([
-      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
-      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
-      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
-    ]);
-    expect(postedNames[3]).toMatch(TWO_WORD_FALLBACK_SESSION_NAME_PATTERN);
+    await vi.waitFor(() => expect(postedNames).toHaveLength(10));
+    expect(postedNames).toEqual(Array.from({ length: 10 }, () => expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN)));
+    expect(postedNames.every((name) => name.split("-").length === 2)).toBe(true);
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        sessionId: postedNames[3],
+        sessionId: postedNames[9],
       },
     });
   });
@@ -3629,22 +3640,22 @@ describe("TerminalApp", () => {
 
     await chooseNewSessionMenuItemAfterStatus(/^Claude Code$/);
 
-    expect(terminalSessionPostBodies().some((body) => /"name":"claude-[a-z0-9-]+".*"cmd":"claude"/.test(body))).toBe(true);
+    const claudePayload = expectTerminalCreatePayloadForCommand("claude");
     await vi.waitFor(() => {
       expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
         paneTree: {
-          sessionId: expect.stringMatching(/^claude-[a-z0-9-]+$/),
+          sessionId: claudePayload.name,
         },
       });
     });
 
     await chooseNewSessionMenuItemAfterStatus(/^Codex$/);
 
-    expect(terminalSessionPostBodies().some((body) => /"name":"codex-[a-z0-9-]+".*"cmd":"codex"/.test(body))).toBe(true);
+    const codexPayload = expectTerminalCreatePayloadForCommand("codex");
     await vi.waitFor(() => {
       expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
         paneTree: {
-          sessionId: expect.stringMatching(/^codex-[a-z0-9-]+$/),
+          sessionId: codexPayload.name,
           compatMode: "codex-tui",
         },
       });
@@ -3652,22 +3663,22 @@ describe("TerminalApp", () => {
 
     await chooseNewSessionMenuItemAfterStatus(/^OpenCode$/);
 
-    expect(terminalSessionPostBodies().some((body) => /"name":"opencode-[a-z0-9-]+".*"cmd":"opencode"/.test(body))).toBe(true);
+    const opencodePayload = expectTerminalCreatePayloadForCommand("opencode");
     await vi.waitFor(() => {
       expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
         paneTree: {
-          sessionId: expect.stringMatching(/^opencode-[a-z0-9-]+$/),
+          sessionId: opencodePayload.name,
         },
       });
     });
 
     await chooseNewSessionMenuItemAfterStatus(/^Pi$/);
 
-    expect(terminalSessionPostBodies().some((body) => /"name":"pi-[a-z0-9-]+".*"cmd":"pi"/.test(body))).toBe(true);
+    const piPayload = expectTerminalCreatePayloadForCommand("pi");
     await vi.waitFor(() => {
       expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
         paneTree: {
-          sessionId: expect.stringMatching(/^pi-[a-z0-9-]+$/),
+          sessionId: piPayload.name,
         },
       });
     });
@@ -3699,8 +3710,8 @@ describe("TerminalApp", () => {
         return Promise.resolve({ ok: true, json: async () => ({}) });
       }
       if (url.includes("/api/terminal/sessions") && init?.method === "POST") {
-        const body = JSON.parse(String(init.body ?? "{}")) as { name?: string; cwd?: string };
-        if (body.name?.startsWith("claude-") && body.cwd === "projects") {
+        const body = JSON.parse(String(init.body ?? "{}")) as { name?: string; cwd?: string; cmd?: string };
+        if (body.cmd === "claude" && body.cwd === "projects") {
           return Promise.resolve({
             ok: false,
             status: 400,
@@ -3731,13 +3742,17 @@ describe("TerminalApp", () => {
     await vi.waitFor(() => {
       const bodies = terminalSessionPostBodies()
         .map((body) => JSON.parse(body) as { name: string; cwd: string; cmd?: string })
-        .filter((body) => body.name.startsWith("claude-"));
+        .filter((body) => body.cmd === "claude");
       expect(bodies.map((body) => body.cwd)).toEqual(["projects", "~"]);
       expect(bodies.every((body) => body.cmd === "claude")).toBe(true);
+      expect(bodies.map((body) => body.name)).toEqual([
+        expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
+        expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
+      ]);
       expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
         paneTree: {
           cwd: "~",
-          sessionId: expect.stringMatching(/^claude-[a-z0-9-]+$/),
+          sessionId: bodies[1]?.name,
         },
       });
     });
@@ -3790,10 +3805,10 @@ describe("TerminalApp", () => {
       await chooseNewSessionMenuItemAfterStatus(/Claude Code.*Install/);
     });
 
-    expect(terminalSessionPostBodies().some((body) => /"name":"claude-[a-z0-9-]+".*"cmd":"sh -lc .*export MATRIX_NODE_PREFIX=/.test(body))).toBe(true);
+    const claudeInstallPayload = expectTerminalCreatePayloadForCommand(/^sh -lc .*@anthropic-ai\/claude-code@latest/);
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        sessionId: expect.stringMatching(/^claude-[a-z0-9-]+$/),
+        sessionId: claudeInstallPayload.name,
       },
     });
 
@@ -3801,21 +3816,23 @@ describe("TerminalApp", () => {
       await chooseNewSessionMenuItemAfterStatus(/Codex.*Install/);
     });
 
-    expect(terminalSessionPostBodies().some((body) => /"name":"codex-[a-z0-9-]+".*"cmd":"sh -lc .*export MATRIX_NODE_PREFIX=/.test(body))).toBe(true);
-    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+    const codexInstallPayload = expectTerminalCreatePayloadForCommand(/^sh -lc .*@openai\/codex@latest/);
+    const codexInstallPaneProps = paneGridSpy.mock.lastCall?.[0] as { paneTree: { sessionId?: string; compatMode?: string } };
+    expect(codexInstallPaneProps).toMatchObject({
       paneTree: {
-        sessionId: expect.stringMatching(/^codex-[a-z0-9-]+$/),
+        sessionId: codexInstallPayload.name,
       },
     });
+    expect(codexInstallPaneProps.paneTree.compatMode).toBeUndefined();
 
     await act(async () => {
       await chooseNewSessionMenuItemAfterStatus(/OpenCode.*Install/);
     });
 
-    expect(terminalSessionPostBodies().some((body) => /"name":"opencode-[a-z0-9-]+".*"cmd":"sh -lc .*export MATRIX_NODE_PREFIX=/.test(body))).toBe(true);
+    const opencodeInstallPayload = expectTerminalCreatePayloadForCommand(/^sh -lc .*opencode-ai@latest/);
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        sessionId: expect.stringMatching(/^opencode-[a-z0-9-]+$/),
+        sessionId: opencodeInstallPayload.name,
       },
     });
 
@@ -3823,10 +3840,10 @@ describe("TerminalApp", () => {
       await chooseNewSessionMenuItemAfterStatus(/Pi.*Install/);
     });
 
-    expect(terminalSessionPostBodies().some((body) => /"name":"pi-[a-z0-9-]+".*"cmd":"sh -lc .*export MATRIX_NODE_PREFIX=.*--ignore-scripts/.test(body))).toBe(true);
+    const piInstallPayload = expectTerminalCreatePayloadForCommand(/^sh -lc .*--ignore-scripts.*@earendil-works\/pi-coding-agent@latest/);
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        sessionId: expect.stringMatching(/^pi-[a-z0-9-]+$/),
+        sessionId: piInstallPayload.name,
       },
     });
   });

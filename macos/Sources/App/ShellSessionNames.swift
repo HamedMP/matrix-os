@@ -14,14 +14,10 @@ private let shellSessionNouns = [
     "fern", "grove", "isle", "moss", "reef", "dune", "fjord", "atlas",
 ]
 
-func generatedShellSessionName(collisionFallback: Bool = false) -> String {
+let shellSessionCreateAttempts = 10
+
+func generatedShellSessionName() -> String {
     let adjective = shellSessionAdjectives.randomElement() ?? "swift"
     let noun = shellSessionNouns.randomElement() ?? "falcon"
-    let base = "\(adjective)-\(noun)"
-    guard collisionFallback else { return base }
-    let suffix = UUID().uuidString
-        .lowercased()
-        .replacingOccurrences(of: "-", with: "")
-        .prefix(5)
-    return "\(base)-\(suffix)"
+    return "\(adjective)-\(noun)"
 }

@@ -5,7 +5,7 @@
 import { create } from "zustand";
 import { AppError, type AppErrorCategory } from "../../../shared/app-error";
 import type { ApiClient } from "../lib/api";
-import { twoWordShellSessionName } from "../lib/shell-session-names";
+import { SHELL_SESSION_CREATE_ATTEMPTS, twoWordShellSessionName } from "../lib/shell-session-names";
 import {
   mergeAttachableSessions,
   type AttachableSession,
@@ -79,11 +79,9 @@ function asArray<T>(value: unknown): T[] {
 }
 
 let loadSequence = 0;
-const TWO_WORD_COLLISION_RETRIES = 3;
-const CREATE_ATTEMPTS = TWO_WORD_COLLISION_RETRIES + 1;
 
-function nextSessionName(attempt: number): string {
-  return twoWordShellSessionName({ collisionFallback: attempt >= TWO_WORD_COLLISION_RETRIES });
+function nextSessionName(): string {
+  return twoWordShellSessionName();
 }
 
 function isSessionExistsError(err: unknown): boolean {
@@ -92,12 +90,12 @@ function isSessionExistsError(err: unknown): boolean {
 
 async function createTerminalSessionWithRetries(api: ApiClient): Promise<{ name: string; response: { name?: unknown } }> {
   for (let attempt = 0; ; attempt += 1) {
-    const name = nextSessionName(attempt);
+    const name = nextSessionName();
     try {
       const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name });
       return { name, response };
     } catch (err: unknown) {
-      if (isSessionExistsError(err) && attempt < CREATE_ATTEMPTS - 1) continue;
+      if (isSessionExistsError(err) && attempt < SHELL_SESSION_CREATE_ATTEMPTS - 1) continue;
       throw err;
     }
   }

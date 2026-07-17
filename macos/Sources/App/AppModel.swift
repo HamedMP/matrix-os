@@ -1979,10 +1979,8 @@ public final class AppModel: ObservableObject {
             struct CreateSessionResponse: Decodable {
                 let name: String?
             }
-            let twoWordCollisionRetries = 3
-            let createAttempts = twoWordCollisionRetries + 1
-            for attempt in 0..<createAttempts {
-                let name = generatedShellSessionName(collisionFallback: attempt >= twoWordCollisionRetries)
+            for attempt in 0..<shellSessionCreateAttempts {
+                let name = generatedShellSessionName()
                 do {
                     let response: CreateSessionResponse = try await client.post(
                         "/api/terminal/sessions",
@@ -1996,7 +1994,7 @@ public final class AppModel: ObservableObject {
                         await MainActor.run { self?.openSession(named: created.name) }
                     }
                     return
-                } catch GatewayError.conflict(let code) where code == "session_exists" && attempt < createAttempts - 1 {
+                } catch GatewayError.conflict(let code) where code == "session_exists" && attempt < shellSessionCreateAttempts - 1 {
                     continue
                 } catch {
                     await MainActor.run { self?.openError = .createSessionFailed }

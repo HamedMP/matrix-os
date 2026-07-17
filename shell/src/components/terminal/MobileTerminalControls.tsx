@@ -84,8 +84,8 @@ export function MobileTerminalActions({
       ? option.launchCommand ?? (option.claudeMode ? "claude" : undefined)
       : terminalAgentVisibleInstallCommand(option);
     void ctx.createShellSessionTab(label, getCwd(), {
-      namePrefix: option.id,
       cmd,
+      ...(installed && option.id === "codex" ? { compatMode: "codex-tui" } : {}),
     });
   };
 

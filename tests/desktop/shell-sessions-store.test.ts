@@ -5,7 +5,6 @@ import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-g
 import { isValidShellSessionName, useShellSessions } from "@desktop/renderer/src/stores/shell-sessions";
 
 const TWO_WORD_SESSION_NAME_PATTERN = /^[a-z]+-[a-z]+$/;
-const TWO_WORD_FALLBACK_SESSION_NAME_PATTERN = /^[a-z]+-[a-z]+-[a-z0-9]{5}$/;
 
 function makeApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
@@ -131,26 +130,27 @@ describe("useShellSessions", () => {
     expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-created"]);
   });
 
-  it("uses a suffixed shell name only after repeated two-word collisions", async () => {
+  it("uses fresh two-word shell names only after repeated collisions", async () => {
     const post = vi
       .fn()
       .mockRejectedValueOnce(new AppError("server", { detail: "session_exists" }))
       .mockRejectedValueOnce(new AppError("server", { detail: "session_exists" }))
       .mockRejectedValueOnce(new AppError("server", { detail: "session_exists" }))
-      .mockResolvedValueOnce({ name: "fallback-created" });
-    const get = vi.fn().mockResolvedValue({ sessions: [{ name: "fallback-created", status: "active" }] });
+      .mockResolvedValueOnce({ name: "matrix-created" });
+    const get = vi.fn().mockResolvedValue({ sessions: [{ name: "matrix-created", status: "active" }] });
 
     const created = await useShellSessions.getState().create(makeApi({ post, get }));
 
-    expect(created?.name).toBe("fallback-created");
+    expect(created?.name).toBe("matrix-created");
     expect(post).toHaveBeenCalledTimes(4);
     const bodies = post.mock.calls.map(([, body]) => body as { name: string; cwd: string });
-    expect(bodies.slice(0, 3).map((body) => body.name)).toEqual([
+    expect(bodies.map((body) => body.name)).toEqual([
+      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
       expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
       expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
       expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
     ]);
-    expect(bodies[3]?.name).toMatch(TWO_WORD_FALLBACK_SESSION_NAME_PATTERN);
+    expect(bodies.every((body) => body.name.split("-").length === 2)).toBe(true);
   });
 
   it("keeps a created shell when an older load resolves after create refresh", async () => {

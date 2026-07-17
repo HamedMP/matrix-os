@@ -1,4 +1,4 @@
 export {
   createShellSessionName as twoWordShellSessionName,
-  type ShellSessionNameOptions,
+  SHELL_SESSION_CREATE_ATTEMPTS,
 } from "@matrix-os/contracts";

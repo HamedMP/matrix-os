@@ -795,7 +795,7 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.selectedCard?.id, "matrix_session_alpha")
     }
 
-    func testCreateSessionRetriesTwoWordCollisionsBeforeSuffixedFallback() async throws {
+    func testCreateSessionRetriesPureTwoWordCollisions() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         try await principal.setToken("token")
         let postedNames = LockedStringArray()
@@ -803,7 +803,7 @@ final class AppModelAuthTests: XCTestCase {
             if req.url?.path == "/api/terminal/sessions", req.httpMethod == "POST" {
                 let name = appTestRequestName(req) ?? ""
                 postedNames.append(name)
-                if postedNames.values.count <= 3 {
+                if postedNames.values.count < shellSessionCreateAttempts {
                     return (
                         appTestHTTPResponse(req.url!, 409),
                         Data(#"{"error":{"code":"session_exists","message":"Request failed"}}"#.utf8)
@@ -846,10 +846,9 @@ final class AppModelAuthTests: XCTestCase {
         await fulfillment(of: [loaded], timeout: 5)
 
         let names = postedNames.values
-        XCTAssertEqual(names.count, 4)
-        XCTAssertTrue(names.prefix(3).allSatisfy(isTwoWordShellSessionName))
-        XCTAssertTrue(isFallbackShellSessionName(names[3]))
-        XCTAssertTrue(model.sessions.map(\.name).contains(names[3]))
+        XCTAssertEqual(names.count, shellSessionCreateAttempts)
+        XCTAssertTrue(names.allSatisfy(isTwoWordShellSessionName))
+        XCTAssertTrue(model.sessions.map(\.name).contains(names.last ?? ""))
     }
 
     func testApprovedSignInOpensHomeWhenNoProjectIsSelected() async throws {
@@ -1276,17 +1275,6 @@ private func appTestRequestBodyData(_ request: URLRequest) -> Data? {
 private func isTwoWordShellSessionName(_ name: String) -> Bool {
     let parts = name.split(separator: "-")
     return parts.count == 2 && parts.allSatisfy(isLowercaseWord)
-}
-
-private func isFallbackShellSessionName(_ name: String) -> Bool {
-    let parts = name.split(separator: "-")
-    guard parts.count == 3 else { return false }
-    return isLowercaseWord(parts[0]) &&
-        isLowercaseWord(parts[1]) &&
-        parts[2].count == 5 &&
-        parts[2].unicodeScalars.allSatisfy { scalar in
-            (scalar.value >= 97 && scalar.value <= 122) || (scalar.value >= 48 && scalar.value <= 57)
-        }
 }
 
 private func isLowercaseWord(_ value: Substring) -> Bool {

@@ -1,17 +1,15 @@
 import {
   createShellSessionName,
   SHELL_SESSION_ADJECTIVES,
+  SHELL_SESSION_CREATE_ATTEMPTS,
   SHELL_SESSION_NOUNS,
-  type ShellSessionNameOptions,
 } from "@matrix-os/contracts";
 
-export { SHELL_SESSION_ADJECTIVES, SHELL_SESSION_NOUNS };
-
-export type TwoWordSessionNameOptions = ShellSessionNameOptions;
+export { SHELL_SESSION_ADJECTIVES, SHELL_SESSION_CREATE_ATTEMPTS, SHELL_SESSION_NOUNS };
 
 /** Returns a friendly session handle like "swift-falcon". */
-export function twoWordSessionName(options: TwoWordSessionNameOptions = {}): string {
-  return createShellSessionName(options);
+export function twoWordSessionName(): string {
+  return createShellSessionName();
 }
 
 /**
