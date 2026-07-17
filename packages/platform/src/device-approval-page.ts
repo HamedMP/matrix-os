@@ -43,6 +43,7 @@ export function approvalPage(
     var nativeApp = ${isNativeApp ? 'true' : 'false'};
     var runtimeReady = false;
     var selectedRuntimeSlot = '';
+    var computerSelectionRequired = true;
 
     function deviceReturnPath() {
       var url = new URL(window.location.href);
@@ -162,6 +163,7 @@ export function approvalPage(
           typeof computer.runtimeSlot === 'string' && typeof computer.handle === 'string';
       });
       if (available.length === 0) return false;
+      computerSelectionRequired = true;
       select.innerHTML = '';
       available.forEach(function(computer) {
         var option = document.createElement('option');
@@ -315,6 +317,19 @@ export function approvalPage(
           return;
         }
         showLoadingState('Checking your Matrix computer...');
+        var computerState = await loadComputers(token);
+        if (computerState === 'auth') {
+          showAuth();
+          return;
+        }
+        if (computerState === 'ok') {
+          showConfirm();
+          return;
+        }
+        if (computerState === 'error') {
+          showSignedInRecoveryState();
+          return;
+        }
         var res = await fetchWithTimeout('/api/auth/app-session', {
           method: 'POST',
           headers: {
@@ -325,19 +340,8 @@ export function approvalPage(
           credentials: 'same-origin',
         });
         if (res.ok) {
-          var computerState = await loadComputers(token);
-          if (computerState === 'auth') {
-            showAuth();
-            return;
-          }
-          if (computerState === 'empty') {
-            showRuntimeSetupState();
-            return;
-          }
-          if (computerState === 'error') {
-            showSignedInRecoveryState();
-            return;
-          }
+          computerSelectionRequired = false;
+          runtimeReady = true;
           showConfirm();
           return;
         }
@@ -376,11 +380,11 @@ export function approvalPage(
         }
 
         var body = new URLSearchParams({ userCode: userCode, csrf: csrf });
-        if (!selectedRuntimeSlot) {
+        if (computerSelectionRequired && !selectedRuntimeSlot) {
           setStatus('Choose a computer to continue.');
           return;
         }
-        body.set('runtimeSlot', selectedRuntimeSlot);
+        if (selectedRuntimeSlot) body.set('runtimeSlot', selectedRuntimeSlot);
         var nativeRedirectUri = document.getElementById('native-redirect-uri')?.value || '';
         var nativeRedirectSig = document.getElementById('native-redirect-sig')?.value || '';
         if (nativeRedirectUri) body.set('redirectUri', nativeRedirectUri);

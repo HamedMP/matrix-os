@@ -913,6 +913,12 @@ describe("device routes", () => {
       expect(html).toContain("return renderComputers(await response.json()) ? 'ok' : 'empty';");
       expect(html).toContain("if (computerState === 'error') {");
       expect(html).toContain("showSignedInRecoveryState();");
+      const continueStart = html.indexOf("async function continueDeviceOnboarding");
+      const inventoryRequest = html.indexOf("var computerState = await loadComputers(token);", continueStart);
+      const appSessionRequest = html.indexOf("fetchWithTimeout('/api/auth/app-session'", continueStart);
+      expect(inventoryRequest).toBeGreaterThan(continueStart);
+      expect(appSessionRequest).toBeGreaterThan(inventoryRequest);
+      expect(html.indexOf("if (computerState === 'ok') {", continueStart)).toBeLessThan(appSessionRequest);
     });
 
     it("starts signed-out CLI approval on signup and sends runtime setup to the shell billing tab", async () => {
