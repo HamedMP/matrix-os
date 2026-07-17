@@ -1,0 +1,151 @@
+:root {
+  --app-bg: var(--matrix-bg, #dfe6ef);
+  --app-fg: var(--matrix-fg, #2c2c2e);
+  --app-muted-fg: var(--matrix-muted-fg, #6e6e73);
+  --app-font: var(--matrix-font-sans, -apple-system, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif);
+  color-scheme: light;
+}
+
+/* Glass tuning when the bridge reports the macos-glass design system. */
+:root[data-matrix-design="macos-glass"] {
+  --app-bg: var(--matrix-bg, #dfe6ef);
+}
+
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; height: 100%; margin: 0; }
+body {
+  background:
+    radial-gradient(900px 480px at 15% 0%, rgba(255, 255, 255, 0.65), transparent 55%),
+    radial-gradient(1000px 620px at 90% 100%, rgba(148, 180, 220, 0.35), transparent 60%),
+    var(--app-bg);
+  color: var(--app-fg);
+  font-family: var(--app-font);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+button, textarea { font: inherit; }
+button { cursor: pointer; }
+
+.stickies-app {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.stickies-toolbar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 100000;
+}
+.stickies-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(18px) saturate(1.5);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  color: var(--app-fg);
+  font-size: 12.5px;
+  font-weight: 600;
+  box-shadow: 0 4px 14px rgba(31, 38, 56, 0.16);
+}
+.stickies-add:hover {
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.stickies-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--app-muted-fg);
+  font-size: 14px;
+  pointer-events: none;
+}
+
+.sticky {
+  position: absolute;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(18px) saturate(1.5);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  box-shadow:
+    0 14px 34px rgba(31, 38, 56, 0.22),
+    0 2px 6px rgba(31, 38, 56, 0.12);
+  overflow: hidden;
+}
+
+/* Specular highlight across the top of the glass. */
+.sticky::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 46%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.04));
+  pointer-events: none;
+}
+
+.sticky-header {
+  position: relative;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  cursor: grab;
+  user-select: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.35);
+}
+.sticky-header:active {
+  cursor: grabbing;
+}
+
+.sticky-close {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #ff5f57;
+  color: rgba(90, 12, 8, 0.85);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+  opacity: 0.55;
+}
+.sticky:hover .sticky-close,
+.sticky-close:focus-visible {
+  opacity: 1;
+}
+
+.sticky-body {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 10px 12px 12px;
+  border: 0;
+  resize: none;
+  background: transparent;
+  color: rgba(46, 36, 8, 0.88);
+  font-size: 13px;
+  line-height: 1.5;
+  outline: none;
+}
+.sticky-body::placeholder {
+  color: rgba(46, 36, 8, 0.45);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
