@@ -39,8 +39,7 @@ interface ShellSessionsState {
 
 const SHELL_SESSION_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?$/;
 const DEFAULT_CWD = "projects";
-const TWO_WORD_COLLISION_RETRIES = 3;
-const CREATE_ATTEMPTS = TWO_WORD_COLLISION_RETRIES + 1;
+const CREATE_ATTEMPTS = 10;
 
 export function isValidShellSessionName(name: string): boolean {
   return SHELL_SESSION_NAME_PATTERN.test(name);
@@ -50,8 +49,8 @@ function shellConnectCommand(name: string): string {
   return `matrix shell connect ${name}`;
 }
 
-function nextShellName(attempt: number): string {
-  return twoWordShellSessionName({ collisionFallback: attempt >= TWO_WORD_COLLISION_RETRIES });
+function nextShellName(): string {
+  return twoWordShellSessionName();
 }
 
 function isSessionExistsError(err: unknown): boolean {
@@ -223,7 +222,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
     const generation = captureRuntimeGeneration();
     set({ creating: true, error: null });
     for (let attempt = 0; attempt < CREATE_ATTEMPTS; attempt += 1) {
-      const name = nextShellName(attempt);
+      const name = nextShellName();
       try {
         const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name, cwd: DEFAULT_CWD });
         if (!isCurrentRuntimeGeneration(generation)) return null;

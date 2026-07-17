@@ -96,21 +96,12 @@ export const SHELL_SESSION_NOUNS = [
   "fern", "grove", "isle", "moss", "reef", "dune", "fjord", "atlas",
 ] as const;
 
-export interface ShellSessionNameOptions {
-  collisionFallback?: boolean;
-}
-
 function pickShellSessionWord<T>(list: readonly T[]): T {
   return list[Math.floor(Math.random() * list.length)]!;
 }
 
-function shellSessionEntropySuffix(): string {
-  return Math.floor(Math.random() * 36 ** 5).toString(36).padStart(5, "0");
-}
-
-export function createShellSessionName(options: ShellSessionNameOptions = {}): string {
-  const base = `${pickShellSessionWord(SHELL_SESSION_ADJECTIVES)}-${pickShellSessionWord(SHELL_SESSION_NOUNS)}`;
-  return options.collisionFallback ? `${base}-${shellSessionEntropySuffix()}` : base;
+export function createShellSessionName(): string {
+  return `${pickShellSessionWord(SHELL_SESSION_ADJECTIVES)}-${pickShellSessionWord(SHELL_SESSION_NOUNS)}`;
 }
 
 export const SafeDisplayStringSchema = boundedDisplayText(120, 512);

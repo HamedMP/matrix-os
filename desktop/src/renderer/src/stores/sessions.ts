@@ -79,11 +79,10 @@ function asArray<T>(value: unknown): T[] {
 }
 
 let loadSequence = 0;
-const TWO_WORD_COLLISION_RETRIES = 3;
-const CREATE_ATTEMPTS = TWO_WORD_COLLISION_RETRIES + 1;
+const CREATE_ATTEMPTS = 10;
 
-function nextSessionName(attempt: number): string {
-  return twoWordShellSessionName({ collisionFallback: attempt >= TWO_WORD_COLLISION_RETRIES });
+function nextSessionName(): string {
+  return twoWordShellSessionName();
 }
 
 function isSessionExistsError(err: unknown): boolean {
@@ -92,7 +91,7 @@ function isSessionExistsError(err: unknown): boolean {
 
 async function createTerminalSessionWithRetries(api: ApiClient): Promise<{ name: string; response: { name?: unknown } }> {
   for (let attempt = 0; ; attempt += 1) {
-    const name = nextSessionName(attempt);
+    const name = nextSessionName();
     try {
       const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name });
       return { name, response };

@@ -1979,10 +1979,9 @@ public final class AppModel: ObservableObject {
             struct CreateSessionResponse: Decodable {
                 let name: String?
             }
-            let twoWordCollisionRetries = 3
-            let createAttempts = twoWordCollisionRetries + 1
+            let createAttempts = 10
             for attempt in 0..<createAttempts {
-                let name = generatedShellSessionName(collisionFallback: attempt >= twoWordCollisionRetries)
+                let name = generatedShellSessionName()
                 do {
                     let response: CreateSessionResponse = try await client.post(
                         "/api/terminal/sessions",

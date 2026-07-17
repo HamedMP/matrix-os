@@ -21,18 +21,8 @@ export function genId() {
   return Math.random().toString(36).slice(2, 9);
 }
 
-export function terminalSessionName(prefix = "matrix", options: { collisionFallback?: boolean } = {}) {
-  const normalized = prefix.toLowerCase();
-  // A meaningful prefix (e.g. a project name) keeps the prefixed form; the
-  // default produces a friendly two-word handle instead of matrix-<random>.
-  if (normalized && normalized !== "matrix") {
-    const safePrefix = normalized
-      .replace(/[^a-z0-9-]/g, "-")
-      .replace(/^-+/, "")
-      .slice(0, 22) || "matrix";
-    return `${safePrefix}-${genId()}`.slice(0, 31);
-  }
-  return twoWordSessionName(options);
+export function terminalSessionName() {
+  return twoWordSessionName();
 }
 
 export function splitPaneInTree(node: PaneNode, paneId: string, dir: "horizontal" | "vertical"): PaneNode {

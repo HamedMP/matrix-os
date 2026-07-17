@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useEffectEvent, useRef, useState, type KeyboardEvent, type SetStateAction } from "react";
-import { countPanes as countPanesFromStore, getAllPaneIds } from "@/stores/terminal-store";
+import { countPanes as countPanesFromStore, getAllPaneIds, type TerminalCompatMode } from "@/stores/terminal-store";
 import { PaneGrid } from "./PaneGrid";
 import { useTheme } from "@/hooks/useTheme";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -10,7 +10,7 @@ import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-
 import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-settings";
 import { getTerminalThemePreset } from "./terminal-themes";
 import { getTerminalAppChromeCssVars, getTerminalAppChromeTheme, getTerminalAppThemeOption } from "./terminal-app-chrome-theme";
-import { TerminalAppContext, useTerminalAppContext, type TerminalWindowControls } from "./TerminalAppContext";
+import { TerminalAppContext, useTerminalAppContext, type CreateShellSessionTabOptions, type TerminalWindowControls } from "./TerminalAppContext";
 import { LocalTerminalTabBar, TerminalEmbeddedToolbar, TerminalWorkspaceChrome } from "./TerminalChrome";
 import { MobileCommandComposer, MobileTerminalActions } from "./MobileTerminalControls";
 import { DEFAULT_TERMINAL_SIDEBAR_WIDTH, LocalTerminalSidebar } from "./TerminalSidebar";
@@ -48,6 +48,8 @@ import {
 
 export { TERMINAL_INPUT_EVENT };
 export type { TerminalInputEventDetail };
+
+const CREATE_SHELL_SESSION_ATTEMPTS = 10;
 
 function dispatchPaneInput(paneId: string | null, data: string): void {
   if (!paneId) return;
@@ -374,7 +376,12 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     return id;
   };
 
-  const addSessionTab = (label: string, sessionId: string, cwd = DEFAULT_CWD) => {
+  const addSessionTab = (
+    label: string,
+    sessionId: string,
+    cwd = DEFAULT_CWD,
+    options: { compatMode?: TerminalCompatMode; legacyCompat?: boolean } = {},
+  ) => {
     const id = genId();
     const paneId = genId();
     const tab: Tab = {
@@ -385,7 +392,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         id: paneId,
         cwd,
         sessionId,
-        compatMode: compatModeForShellSession(sessionId),
+        compatMode: options.compatMode ?? (options.legacyCompat === false ? undefined : compatModeForShellSession(sessionId)),
       },
     };
     setTabs((prev) => [...prev, tab]);
@@ -397,16 +404,12 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const createShellSessionTab = async (
     label: string,
     cwd = DEFAULT_CWD,
-    options: { namePrefix?: string; cmd?: string } = {},
+    options: CreateShellSessionTabOptions = {},
   ) => {
     let requestedCwd = cwd || "~";
     let retriedHomeCwd = false;
-    const twoWordCollisionRetries = 3;
-    const maxAttempts = options.namePrefix ? 3 : twoWordCollisionRetries + 1;
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const name = terminalSessionName(options.namePrefix, {
-        collisionFallback: !options.namePrefix && attempt >= twoWordCollisionRetries,
-      });
+    for (let attempt = 0; attempt < CREATE_SHELL_SESSION_ATTEMPTS; attempt += 1) {
+      const name = terminalSessionName();
       try {
         // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequential-by-design retry loop: each attempt only runs if the prior one failed with a 409 name collision or abort; parallelizing would create multiple sessions
         const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
@@ -434,7 +437,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         }
         const data = await res.json() as { name?: unknown };
         const sessionName = typeof data.name === "string" ? data.name : name;
-        addSessionTab(label, sessionName, requestedCwd);
+        addSessionTab(label, sessionName, requestedCwd, { compatMode: options.compatMode, legacyCompat: false });
         return sessionName;
       } catch (err: unknown) {
         console.warn(

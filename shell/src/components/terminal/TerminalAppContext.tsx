@@ -1,5 +1,6 @@
 import { createContext, use, type MouseEventHandler, type PointerEventHandler } from "react";
 
+import type { TerminalCompatMode } from "@/stores/terminal-store";
 import type { Tab } from "./terminal-layout";
 
 export interface TerminalWindowControls {
@@ -18,6 +19,11 @@ export interface TerminalWindowDragHandleProps {
   onDoubleClick?: MouseEventHandler<HTMLElement>;
 }
 
+export interface CreateShellSessionTabOptions {
+  cmd?: string;
+  compatMode?: TerminalCompatMode;
+}
+
 export interface TerminalAppContextType {
   tabs: Tab[];
   activeTabId: string;
@@ -30,7 +36,7 @@ export interface TerminalAppContextType {
   terminalBackground: string;
   addTab: (cwd: string, label?: string, claude?: boolean, startupCommand?: string) => string;
   addSessionTab: (label: string, sessionId: string, cwd?: string) => string;
-  createShellSessionTab: (label: string, cwd?: string, options?: { namePrefix?: string; cmd?: string }) => Promise<string | null>;
+  createShellSessionTab: (label: string, cwd?: string, options?: CreateShellSessionTabOptions) => Promise<string | null>;
   backgroundShellSession: (sessionId: string) => void;
   removeDeletedShellSessionFromLayout: (sessionId: string) => void;
   closeTab: (tabId: string) => void;

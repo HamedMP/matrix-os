@@ -108,12 +108,12 @@ describe("Terminal WebSocket protocol", () => {
     expect(twoWordSessionName()).toBe("swift-falcon");
   });
 
-  it("adds an entropy suffix only for collision fallback names", () => {
+  it("keeps two-word friendly terminal session names even for repeated candidates", () => {
     vi.spyOn(Math, "random")
       .mockReturnValueOnce(0)
       .mockReturnValueOnce(0)
       .mockReturnValueOnce(0);
 
-    expect(twoWordSessionName({ collisionFallback: true })).toBe("swift-falcon-00000");
+    expect(twoWordSessionName()).toBe("swift-falcon");
   });
 });

@@ -14,14 +14,21 @@ function readSwiftList(source: string, name: string): string[] {
 }
 
 describe("shell session names contract", () => {
-  it("creates plain two-word names until collision fallback is requested", () => {
+  it("always creates plain two-word names", () => {
     const originalRandom = Math.random;
     try {
       Math.random = () => 0;
       expect(createShellSessionName()).toBe("swift-falcon");
-      expect(createShellSessionName({ collisionFallback: true })).toBe("swift-falcon-00000");
     } finally {
       Math.random = originalRandom;
+    }
+  });
+
+  it("generates lowercase two-segment names without suffix escape hatches", () => {
+    for (let index = 0; index < 200; index += 1) {
+      const name = createShellSessionName();
+      expect(name).toMatch(/^[a-z]+-[a-z]+$/);
+      expect(name.split("-")).toHaveLength(2);
     }
   });
 

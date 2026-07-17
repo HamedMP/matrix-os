@@ -795,8 +795,8 @@ export function LocalTerminalSidebar() {
         ? option.launchCommand ?? (option.claudeMode ? "claude" : undefined)
         : terminalAgentVisibleInstallCommand(option);
       const name = await ctx.createShellSessionTab(label, cwd, {
-        namePrefix: option.id,
         cmd,
+        ...(installed && option.id === "codex" ? { compatMode: "codex-tui" } : {}),
       });
       if (name) {
         await fetchShells({ silent: true });
