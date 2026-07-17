@@ -51,6 +51,8 @@ const restorePlan = vi.hoisted(() => ({
         cols: number;
         rows: number;
         focus: ReturnType<typeof vi.fn>;
+        loadAddon: ReturnType<typeof vi.fn>;
+        refresh: ReturnType<typeof vi.fn>;
         write: ReturnType<typeof vi.fn>;
         dispose: ReturnType<typeof vi.fn>;
         onData: ReturnType<typeof vi.fn>;
@@ -92,6 +94,7 @@ vi.mock("@xterm/xterm", () => ({
 
     loadAddon = vi.fn();
     focus = vi.fn();
+    refresh = vi.fn();
     write = vi.fn();
     dispose = vi.fn();
     onData = vi.fn(() => ({ dispose: vi.fn() }));
@@ -199,6 +202,9 @@ vi.mock("@/stores/terminal-settings", () => {
 });
 
 import { TerminalPane } from "../../shell/src/components/terminal/TerminalPane.js";
+import { cacheTerminal } from "../../shell/src/components/terminal/terminal-cache.js";
+
+const mockedCacheTerminal = vi.mocked(cacheTerminal);
 
 const theme = {
   mode: "dark",
@@ -273,6 +279,8 @@ function createCachedTerminal() {
       cols: 80,
       rows: 24,
       focus: vi.fn(),
+      loadAddon: vi.fn(),
+      refresh: vi.fn(),
       write: vi.fn(),
       dispose: vi.fn(),
       onData: vi.fn(() => ({ dispose: vi.fn() })),
@@ -305,6 +313,7 @@ describe("TerminalPane scrolling", () => {
       setTimeout(() => cb(0), 0)) as typeof requestAnimationFrame;
     stubWs.send.mockReset();
     stubWs.close.mockReset();
+    mockedCacheTerminal.mockClear();
     WebSocketMock.instances.length = 0;
     buildAuthenticatedWebSocketUrl.mockClear();
     Reflect.deleteProperty(window, "visualViewport");
@@ -398,6 +407,92 @@ describe("TerminalPane scrolling", () => {
     expect(cached.viewport.style.getPropertyValue("scrollbar-gutter")).toBe("stable");
     expect(cached.viewport.style.overscrollBehavior).toBe("contain");
     expect(cached.viewport.style.touchAction).toBe("pan-y");
+  });
+
+  it("disposes WebGL before caching an unmounted desktop pane", async () => {
+    const { unmount } = render(
+      <TerminalPane
+        paneId="pane-cache-webgl-dispose-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        shouldCacheOnUnmount={() => true}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(createdWebglAddons).toHaveLength(1));
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+
+    await act(async () => {
+      unmount();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(mockedCacheTerminal).toHaveBeenCalledOnce());
+
+    const webglAddon = createdWebglAddons[0];
+    expect(webglAddon.dispose).toHaveBeenCalledOnce();
+    expect(webglAddon.dispose.mock.invocationCallOrder[0]).toBeLessThan(
+      mockedCacheTerminal.mock.invocationCallOrder[0],
+    );
+    expect(mockedCacheTerminal.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+      terminal: createdTerminals[0],
+      fitAddon: createdFitAddons[0],
+      webglAddon: null,
+      ws: WebSocketMock.instances[0],
+    }));
+  });
+
+  it("reattaches and refreshes a DOM cached terminal before re-enabling WebGL", async () => {
+    const cached = createCachedTerminal();
+    const fitAddon = { fit: vi.fn() };
+    restorePlan.current = {
+      cached: {
+        terminal: cached.terminal,
+        fitAddon,
+        webglAddon: null,
+        searchAddon: null,
+        ws: stubWs,
+        lastSeq: 14,
+        hasReplayCursor: true,
+        sessionId: "cached-terminal-with-dom-renderer",
+      },
+      reuseTerminal: true,
+      reuseSocket: true,
+      sessionId: "cached-terminal-with-dom-renderer",
+      lastSeq: 14,
+      hasReplayCursor: true,
+    };
+
+    const { container } = render(
+      <TerminalPane
+        paneId="pane-cached-webgl-restore-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(container.querySelector(".xterm")).toBe(cached.terminal.element));
+    await waitFor(() => expect(cached.terminal.refresh).toHaveBeenCalledWith(0, 23));
+    await waitFor(() => expect(createdWebglAddons).toHaveLength(1));
+
+    expect(createdTerminals).toHaveLength(0);
+    expect(fitAddon.fit).toHaveBeenCalled();
+    expect(cached.terminal.loadAddon).toHaveBeenCalledWith(createdWebglAddons[0]);
+    expect(fitAddon.fit.mock.invocationCallOrder[0]).toBeLessThan(
+      cached.terminal.loadAddon.mock.invocationCallOrder[0],
+    );
+    expect(cached.terminal.refresh.mock.invocationCallOrder[0]).toBeLessThan(
+      cached.terminal.loadAddon.mock.invocationCallOrder[0],
+    );
   });
 
   it("does not refocus xterm on mobile visual viewport resize when native keyboard is suppressed", async () => {
@@ -509,7 +604,7 @@ describe("TerminalPane scrolling", () => {
     }));
   });
 
-  it("keeps attempting WebGL on desktop panes", async () => {
+  it("loads WebGL on fresh desktop panes", async () => {
     render(
       <TerminalPane
         paneId="pane-desktop-webgl-test"

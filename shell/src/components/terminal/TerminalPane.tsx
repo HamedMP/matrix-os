@@ -337,6 +337,23 @@ function applyXtermScrollOptions(term: Terminal): void {
   term.options.scrollOnUserInput = true;
 }
 
+function refreshTerminalRenderer(term: Terminal): void {
+  if (term.rows <= 0) {
+    return;
+  }
+  term.refresh(0, term.rows - 1);
+}
+
+type DisposableWebglAddon = { dispose: () => void };
+
+function toDisposableWebglAddon(addon: unknown): DisposableWebglAddon | null {
+  if (!addon || typeof addon !== "object") {
+    return null;
+  }
+  const dispose = (addon as { dispose?: unknown }).dispose;
+  return typeof dispose === "function" ? (addon as DisposableWebglAddon) : null;
+}
+
 function terminalTelemetry(event: string, properties: Record<string, string | number | boolean | undefined>): void {
   const payload = {
     source: "terminal-pane",
@@ -438,7 +455,7 @@ export function TerminalPane({
   const onSessionAttachedRef = useRef(onSessionAttached);
   const shouldCacheOnUnmountRef = useRef(shouldCacheOnUnmount);
   const shouldDestroyOnUnmountRef = useRef(shouldDestroyOnUnmount);
-  const webglAddonRef = useRef<{ dispose: () => void } | null>(null);
+  const webglAddonRef = useRef<DisposableWebglAddon | null>(null);
   const webglContextLossDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const webglRecreateAttemptedRef = useRef(false);
   const onDataDisposableRef = useRef<{ dispose: () => void } | null>(null);
@@ -811,9 +828,8 @@ export function TerminalPane({
       };
 
       // Tears down only the context-loss subscription (the closure that drives
-      // DOM-renderer fallback). Safe to call on every cleanup path: on a cache
-      // for tab-switch the WebGL addon itself stays loaded on the retained
-      // terminal, while on a destroy path term.dispose() disposes the addon.
+      // DOM-renderer fallback). Cache paths dispose WebGL before detaching the
+      // xterm element; destroy paths let term.dispose() dispose loaded addons.
       const teardownWebglSubscription = () => {
         webglContextLossDisposableRef.current?.dispose();
         webglContextLossDisposableRef.current = null;
@@ -953,27 +969,10 @@ export function TerminalPane({
         applyXtermScrollOptions(term);
         fitAddon = cached.fitAddon;
         searchAddon = cached.searchAddon;
-        webglAddon = cached.webglAddon;
-        // The cached terminal kept its WebGL addon loaded, but the old
-        // context-loss subscription was torn down on cache. Re-wire it (or
-        // re-create the renderer if a prior context loss left it on the DOM
-        // renderer).
-        webglAddonRef.current = (cached.webglAddon as { dispose: () => void } | null) ?? null;
-        if (webglDisabled && webglAddonRef.current) {
-          disposeWebgl();
-          webglAddon = null;
-        } else if (webglAddonRef.current) {
-          wireWebglContextLoss(
-            webglAddonRef.current as unknown as {
-              onContextLoss: (cb: () => void) => { dispose: () => void };
-            },
-          );
-        } else if (!webglDisabled) {
-          void enableWebgl().then((addon) => {
-            webglAddon = addon;
-          });
-        }
-        fitAddon.fit();
+        webglAddon = null;
+        // Cached terminals intentionally never retain WebGL. Restore starts on
+        // the DOM renderer, then re-enables WebGL after attach + fit.
+        webglAddonRef.current = null;
         termRef.current = cached.terminal;
         fitAddonRef.current = cached.fitAddon;
         searchAddonRef.current = cached.searchAddon;
@@ -981,7 +980,21 @@ export function TerminalPane({
         sessionIdRef.current = cachedRestore.sessionId;
         lastSeqRef.current = cachedRestore.lastSeq;
         hasReplayCursorRef.current = cachedRestore.hasReplayCursor;
+        let restoredFitSucceeded = false;
+        try {
+          fitAddon.fit();
+          sendTerminalResize(wsRef.current, term, allowRemoteResizeRef.current);
+          restoredFitSucceeded = true;
+        } catch (err: unknown) {
+          log("fit-failed", { message: err instanceof Error ? err.message : String(err) });
+        }
+        refreshTerminalRenderer(term);
         scheduleStableFit();
+        if (!webglDisabled && restoredFitSucceeded) {
+          void enableWebgl().then((addon) => {
+            webglAddon = addon;
+          });
+        }
       } else {
         // Cache miss — create fresh terminal
         // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower dynamic import() expressions; lazy-loading xterm this way is intentional code-splitting, not a defect.
@@ -1627,10 +1640,9 @@ export function TerminalPane({
         clearReconnectTimer();
         clearPendingReconnectBanner();
         heartbeatRef.current?.stop();
-        // Drop the context-loss subscription on every path. On a cache (tab
-        // switch) the WebGL addon stays loaded on the retained terminal and is
-        // re-wired on reattach; on a destroy path term.dispose() below disposes
-        // the addon along with the terminal.
+        // Drop the context-loss subscription on every path. Cache paths dispose
+        // the live WebGL renderer before detaching the retained xterm element;
+        // destroy paths let term.dispose() dispose loaded addons.
         teardownWebglSubscription();
         onDataDisposableRef.current?.dispose();
         onDataDisposableRef.current = null;
@@ -1666,6 +1678,13 @@ export function TerminalPane({
         } else if (wsRef.current) {
           // Tab switch — cache the terminal for instant restore
           log("cleanup-cache-terminal");
+          const retainedWebglAddon = webglAddonRef.current ?? toDisposableWebglAddon(webglAddon);
+          if (retainedWebglAddon && !webglAddonRef.current) {
+            webglAddonRef.current = retainedWebglAddon;
+          }
+          log("webgl-disposed-before-cache", { hadWebgl: Boolean(retainedWebglAddon) });
+          disposeWebgl();
+          webglAddon = null;
           const termElement = (term as { element?: HTMLElement }).element;
           if (termElement?.parentNode) {
             termElement.parentNode.removeChild(termElement);
@@ -1676,10 +1695,7 @@ export function TerminalPane({
           cacheTerminal(paneId, {
             terminal: term,
             fitAddon,
-            // The live addon ref is authoritative: it tracks the renderer
-            // through any context-loss re-create that may have replaced the
-            // addon captured in the local `webglAddon` binding.
-            webglAddon: webglAddonRef.current ?? webglAddon,
+            webglAddon: null,
             searchAddon,
             ws: wsRef.current,
             lastSeq: lastSeqRef.current,
