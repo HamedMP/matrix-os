@@ -1,0 +1,171 @@
+:root {
+  --app-bg: var(--matrix-bg, #ece9d8);
+  --app-fg: var(--matrix-fg, #1f1f1f);
+  --app-muted-fg: var(--matrix-muted-fg, #5a5646);
+  --app-font: var(--matrix-font-sans, "Tahoma", "Segoe UI", system-ui, sans-serif);
+  --xp-face: #c0c0c0;
+  --xp-light: #ffffff;
+  --xp-dark: #808080;
+  --xp-darker: #404040;
+  --cell: 26px;
+  color-scheme: light;
+}
+
+/* The bridge tags the document with the active shell design; reinforce the
+   XP chrome when running under the winxp design system. */
+:root[data-matrix-design="winxp"] {
+  --app-bg: var(--matrix-bg, #ece9d8);
+  --xp-face: #c0c0c0;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; height: 100%; margin: 0; }
+body {
+  background: var(--app-bg);
+  color: var(--app-fg);
+  font-family: var(--app-font);
+  overflow: auto;
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; cursor: pointer; }
+
+.xp-app {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.xp-window {
+  display: inline-grid;
+  gap: 8px;
+  padding: 10px;
+  background: var(--xp-face);
+  border: 3px solid;
+  border-color: var(--xp-light) var(--xp-darker) var(--xp-darker) var(--xp-light);
+  box-shadow: 0 10px 28px rgba(31, 31, 31, 0.28);
+  max-width: 100%;
+}
+
+.xp-menu {
+  display: flex;
+  gap: 2px;
+}
+.xp-menu-item {
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--app-fg);
+}
+.xp-menu-item:hover {
+  border-color: var(--xp-light) var(--xp-dark) var(--xp-dark) var(--xp-light);
+}
+.xp-menu-item.active {
+  border-color: var(--xp-dark) var(--xp-light) var(--xp-light) var(--xp-dark);
+  background: rgba(255, 255, 255, 0.35);
+  font-weight: 700;
+}
+
+.xp-hud {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px;
+  border: 2px solid;
+  border-color: var(--xp-dark) var(--xp-light) var(--xp-light) var(--xp-dark);
+}
+
+.lcd {
+  display: inline-flex;
+  gap: 1px;
+  padding: 2px 3px;
+  background: #140404;
+  border: 1px solid var(--xp-dark);
+}
+
+.xp-face {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  background: var(--xp-face);
+  border: 3px solid;
+  border-color: var(--xp-light) var(--xp-dark) var(--xp-dark) var(--xp-light);
+  padding: 0;
+}
+.xp-face:active {
+  border-color: var(--xp-dark) var(--xp-light) var(--xp-light) var(--xp-dark);
+}
+
+.xp-board-scroll {
+  overflow: auto;
+  max-width: calc(100vw - 64px);
+  max-height: calc(100vh - 190px);
+  border: 3px solid;
+  border-color: var(--xp-dark) var(--xp-light) var(--xp-light) var(--xp-dark);
+}
+
+.xp-board {
+  display: grid;
+  gap: 0;
+  padding: 6px;
+  background: var(--xp-face);
+  width: max-content;
+}
+
+.xp-cell {
+  width: var(--cell);
+  height: var(--cell);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: var(--xp-face);
+  border: 3px solid;
+  border-color: var(--xp-light) var(--xp-dark) var(--xp-dark) var(--xp-light);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+  user-select: none;
+}
+.xp-cell.revealed {
+  border: 1px solid var(--xp-dark);
+  background: #c6c6c6;
+}
+.xp-cell.exploded {
+  background: #ff2018;
+}
+.xp-cell .question {
+  color: #404040;
+  font-weight: 800;
+}
+
+.n1 { color: #0000ff; }
+.n2 { color: #008000; }
+.n3 { color: #ff0000; }
+.n4 { color: #000080; }
+.n5 { color: #800000; }
+.n6 { color: #008080; }
+.n7 { color: #000000; }
+.n8 { color: #808080; }
+
+.xp-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--app-muted-fg);
+  padding: 0 2px;
+}
+.xp-best {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
