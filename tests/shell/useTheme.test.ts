@@ -254,4 +254,33 @@ describe("theme system", () => {
 
     expect(loadShellSnapshot(scope)?.theme?.name).toBe("saved-theme");
   });
+
+  describe("theme style validation", () => {
+    it.each(["flat", "neumorphic", "macos-glass", "winxp", "win11"])(
+      "accepts the %s style during normalization",
+      (style) => {
+        const theme = normalizeTheme({ name: "styled", style });
+        expect(theme.style).toBe(style);
+      },
+    );
+
+    it("drops unknown styles when the fallback has no style", () => {
+      const theme = normalizeTheme({ name: "bad-style", style: "skeuomorphic" });
+      expect(theme.style).toBeUndefined();
+    });
+
+    it("falls back to the fallback theme style for unknown styles", () => {
+      const fallback: Theme = { ...DEFAULT_THEME, style: "win11" };
+      const theme = normalizeTheme({ name: "bad-style", style: "aero" }, fallback);
+      expect(theme.style).toBe("win11");
+    });
+
+    it("applies design-system styles to the root element on save", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+
+      await saveTheme({ ...DEFAULT_THEME, name: "xp", style: "winxp" });
+
+      expect(document.documentElement.getAttribute("data-theme-style")).toBe("winxp");
+    });
+  });
 });

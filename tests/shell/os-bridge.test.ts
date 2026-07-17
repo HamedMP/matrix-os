@@ -243,5 +243,12 @@ describe("OS Bridge", () => {
       expect(script).toContain("gatewayFetch: function(url, init, timeoutMs)");
       expect(script).toContain("MatrixOS bridge fetch timed out");
     });
+
+    it("accepts a design id and exposes it via MatrixOS.design and data-matrix-design", () => {
+      const script = buildBridgeScript("test-app", undefined, "win11");
+      expect(script).toContain("win11");
+      expect(script).toContain("dataset.matrixDesign");
+      expect(script).toContain("design: currentDesign");
+    });
   });
 });

@@ -16,6 +16,7 @@ const shared = vi.hoisted(() => ({
 
 vi.mock("@/hooks/useTheme", () => ({
   useTheme: () => ({ mode: "dark" }),
+  saveTheme: vi.fn(),
 }));
 
 vi.mock("@/hooks/useDesktopConfig", () => ({
@@ -78,7 +79,7 @@ describe("AppearanceSection warning logs", () => {
     });
   });
 
-  it("does not render global theme preset controls", async () => {
+  it("renders the design picker instead of the old global theme presets", async () => {
     const { queryByRole, getByRole, getByAltText } = render(<AppearanceSection />);
 
     await waitFor(() => {
@@ -86,11 +87,11 @@ describe("AppearanceSection warning logs", () => {
     });
 
     expect(getByRole("heading", { name: "Appearance" })).toBeTruthy();
+    expect(getByRole("heading", { name: "Design" })).toBeTruthy();
     expect(getByRole("heading", { name: "Background" })).toBeTruthy();
     expect(getByRole("heading", { name: "Dock" })).toBeTruthy();
     expect(queryByRole("heading", { name: "Theme" })).toBeNull();
     expect(queryByRole("button", { name: /Sage/i })).toBeNull();
-    expect(queryByRole("button", { name: /Retro/i })).toBeNull();
   });
 
   it("logs upload failures when the wallpaper POST fails", async () => {

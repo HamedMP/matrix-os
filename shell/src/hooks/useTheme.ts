@@ -12,7 +12,7 @@ import {
 export interface Theme {
   name: string;
   mode?: "light" | "dark";
-  style?: "flat" | "neumorphic";
+  style?: "flat" | "neumorphic" | "macos-glass" | "winxp" | "win11";
   colors: Record<string, string>;
   fonts: Record<string, string>;
   radius: string;
@@ -67,7 +67,11 @@ export function normalizeTheme(value: unknown, fallbackTheme: Theme = DEFAULT_TH
   return {
     name: typeof value.name === "string" && value.name.trim() ? value.name : fallbackTheme.name,
     ...(value.mode === "light" || value.mode === "dark" ? { mode: value.mode } : {}),
-    ...(value.style === "flat" || value.style === "neumorphic"
+    ...(value.style === "flat" ||
+      value.style === "neumorphic" ||
+      value.style === "macos-glass" ||
+      value.style === "winxp" ||
+      value.style === "win11"
       ? { style: value.style }
       : fallbackTheme.style
         ? { style: fallbackTheme.style }
@@ -106,7 +110,7 @@ function applyTheme(theme: Theme) {
 
   root.style.setProperty("--radius", theme.radius);
 
-  // Set theme style attribute for CSS neumorphic overrides
+  // Set theme style attribute for CSS design-system overrides
   root.setAttribute("data-theme-style", theme.style ?? "flat");
 }
 
