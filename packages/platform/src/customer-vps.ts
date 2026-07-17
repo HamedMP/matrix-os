@@ -1196,7 +1196,13 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async deploy(target?: DeployTarget): Promise<DeployResult> {
-      const runningMachines = await listRunningUserMachines(deps.db, 500);
+      const runningMachines = await listRunningUserMachines(
+        deps.db,
+        500,
+        target?.handle
+          ? { handle: target.handle }
+          : { provisioningClass: 'customer' },
+      );
       const machines = selectCustomerVpsDeployMachines(runningMachines, target);
       const results: DeployResult['results'] = [];
       let triggered = 0;

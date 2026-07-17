@@ -2166,13 +2166,24 @@ export async function listPendingProviderDeletions(
 export async function listRunningUserMachines(
   db: PlatformDB,
   limit: number,
+  filters: {
+    handle?: string;
+    provisioningClass?: UserMachineProvisioningClass;
+  } = {},
 ): Promise<UserMachineRecord[]> {
   await db.ready;
-  const rows = await db.executor
+  let query = db.executor
     .selectFrom('user_machines')
     .selectAll()
     .where('status', '=', 'running')
-    .where('deleted_at', 'is', null)
+    .where('deleted_at', 'is', null);
+  if (filters.handle !== undefined) {
+    query = query.where('handle', '=', filters.handle);
+  }
+  if (filters.provisioningClass !== undefined) {
+    query = query.where('provisioning_class', '=', filters.provisioningClass);
+  }
+  const rows = await query
     .orderBy('last_seen_at', 'desc')
     .limit(limit)
     .execute();

@@ -9,6 +9,8 @@ import {
   getActiveUserMachineByHandle,
   getRunningUserMachineByHandle,
   getUserMachine,
+  insertUserMachine,
+  listRunningUserMachines,
   listPendingProviderDeletions,
   promoteHostBundleChannel,
   updateUserMachine,
@@ -1828,6 +1830,34 @@ describe('platform/customer-vps', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it('filters deploy candidates before applying the running-machine limit', async () => {
+    await insertUserMachine(db, {
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff120',
+      clerkUserId: 'preview_owner',
+      handle: 'pr-992',
+      runtimeSlot: 'pr-992',
+      provisioningClass: 'preview',
+      status: 'running',
+      provisionedAt: '2026-04-26T12:01:00.000Z',
+      lastSeenAt: '2026-04-26T12:01:00.000Z',
+    });
+    await insertUserMachine(db, {
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff121',
+      clerkUserId: 'customer_owner',
+      handle: 'alice',
+      provisioningClass: 'customer',
+      status: 'running',
+      provisionedAt: '2026-04-26T12:00:00.000Z',
+      lastSeenAt: '2026-04-26T12:00:00.000Z',
+    });
+
+    const candidates = await listRunningUserMachines(db, 1, {
+      provisioningClass: 'customer',
+    });
+
+    expect(candidates.map((machine) => machine.handle)).toEqual(['alice']);
   });
 
   it('only deploys to the requested VPS handle when provided', async () => {
