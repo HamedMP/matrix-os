@@ -14,6 +14,8 @@ private let shellSessionNouns = [
     "fern", "grove", "isle", "moss", "reef", "dune", "fjord", "atlas",
 ]
 
+let shellSessionCreateAttempts = 10
+
 func generatedShellSessionName() -> String {
     let adjective = shellSessionAdjectives.randomElement() ?? "swift"
     let noun = shellSessionNouns.randomElement() ?? "falcon"

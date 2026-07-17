@@ -45,11 +45,10 @@ import {
   DEFAULT_SHELL_SESSION_NAME,
   formatShellDisplayName,
 } from "./TerminalSidebarItems";
+import { SHELL_SESSION_CREATE_ATTEMPTS } from "./terminal-session-names";
 
 export { TERMINAL_INPUT_EVENT };
 export type { TerminalInputEventDetail };
-
-const CREATE_SHELL_SESSION_ATTEMPTS = 10;
 
 function dispatchPaneInput(paneId: string | null, data: string): void {
   if (!paneId) return;
@@ -408,7 +407,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   ) => {
     let requestedCwd = cwd || "~";
     let retriedHomeCwd = false;
-    for (let attempt = 0; attempt < CREATE_SHELL_SESSION_ATTEMPTS; attempt += 1) {
+    for (let attempt = 0; attempt < SHELL_SESSION_CREATE_ATTEMPTS; attempt += 1) {
       const name = terminalSessionName();
       try {
         // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequential-by-design retry loop: each attempt only runs if the prior one failed with a 409 name collision or abort; parallelizing would create multiple sessions

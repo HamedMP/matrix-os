@@ -1979,8 +1979,7 @@ public final class AppModel: ObservableObject {
             struct CreateSessionResponse: Decodable {
                 let name: String?
             }
-            let createAttempts = 10
-            for attempt in 0..<createAttempts {
+            for attempt in 0..<shellSessionCreateAttempts {
                 let name = generatedShellSessionName()
                 do {
                     let response: CreateSessionResponse = try await client.post(
@@ -1995,7 +1994,7 @@ public final class AppModel: ObservableObject {
                         await MainActor.run { self?.openSession(named: created.name) }
                     }
                     return
-                } catch GatewayError.conflict(let code) where code == "session_exists" && attempt < createAttempts - 1 {
+                } catch GatewayError.conflict(let code) where code == "session_exists" && attempt < shellSessionCreateAttempts - 1 {
                     continue
                 } catch {
                     await MainActor.run { self?.openError = .createSessionFailed }

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { AppError, type AppErrorCategory } from "../../../shared/app-error";
 import type { ApiClient } from "../lib/api";
-import { twoWordShellSessionName } from "../lib/shell-session-names";
+import { SHELL_SESSION_CREATE_ATTEMPTS, twoWordShellSessionName } from "../lib/shell-session-names";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
 
 export type ShellSessionPlacement = "active" | "background";
@@ -39,7 +39,6 @@ interface ShellSessionsState {
 
 const SHELL_SESSION_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?$/;
 const DEFAULT_CWD = "projects";
-const CREATE_ATTEMPTS = 10;
 
 export function isValidShellSessionName(name: string): boolean {
   return SHELL_SESSION_NAME_PATTERN.test(name);
@@ -221,7 +220,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
     // must not repopulate the new one (the transition already reset `creating`).
     const generation = captureRuntimeGeneration();
     set({ creating: true, error: null });
-    for (let attempt = 0; attempt < CREATE_ATTEMPTS; attempt += 1) {
+    for (let attempt = 0; attempt < SHELL_SESSION_CREATE_ATTEMPTS; attempt += 1) {
       const name = nextShellName();
       try {
         const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name, cwd: DEFAULT_CWD });
@@ -266,7 +265,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
         return created;
       } catch (err: unknown) {
         if (!isCurrentRuntimeGeneration(generation)) return null;
-        if (isSessionExistsError(err) && attempt < CREATE_ATTEMPTS - 1) continue;
+        if (isSessionExistsError(err) && attempt < SHELL_SESSION_CREATE_ATTEMPTS - 1) continue;
         console.error("[shell-sessions] Failed to create shell session:", err);
         set({ creating: false, error: errorCategory(err) });
         return null;

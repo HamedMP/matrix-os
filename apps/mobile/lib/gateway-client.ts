@@ -5,7 +5,7 @@ import {
   type MobileTerminalSession,
 } from "@/lib/terminal-state";
 import { logMobileCodingAgentWarning } from "@/lib/coding-agent-diagnostics";
-import { twoWordShellSessionName } from "@/lib/shell-session-names";
+import { SHELL_SESSION_CREATE_ATTEMPTS, twoWordShellSessionName } from "@/lib/shell-session-names";
 import {
   AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
@@ -243,7 +243,6 @@ type ReactNativeWebSocketConstructor = new (
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 export const DEFAULT_GATEWAY_FETCH_TIMEOUT_MS = 10_000;
-const TERMINAL_CREATE_ATTEMPTS = 10;
 const SAFE_REVIEW_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const SECURE_TOKEN_TRANSPORT_ERROR =
   "Matrix OS Cloud requires HTTPS/WSS.";
@@ -1359,7 +1358,7 @@ export class GatewayClient {
 
   /** Create a new shell session and return its zellij name, or null on failure. */
   async createTerminalSession(): Promise<string | null> {
-    for (let attempt = 0; attempt < TERMINAL_CREATE_ATTEMPTS; attempt += 1) {
+    for (let attempt = 0; attempt < SHELL_SESSION_CREATE_ATTEMPTS; attempt += 1) {
       const name = twoWordShellSessionName();
       try {
         const res = await this.fetchGateway("/api/terminal/sessions", {
@@ -1367,7 +1366,7 @@ export class GatewayClient {
           body: JSON.stringify({ name }),
           headers: { "Content-Type": "application/json" },
         });
-        if (await isSessionExistsResponse(res) && attempt < TERMINAL_CREATE_ATTEMPTS - 1) {
+        if (await isSessionExistsResponse(res) && attempt < SHELL_SESSION_CREATE_ATTEMPTS - 1) {
           continue;
         }
         if (!res.ok) {

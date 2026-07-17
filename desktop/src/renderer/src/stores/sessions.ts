@@ -5,7 +5,7 @@
 import { create } from "zustand";
 import { AppError, type AppErrorCategory } from "../../../shared/app-error";
 import type { ApiClient } from "../lib/api";
-import { twoWordShellSessionName } from "../lib/shell-session-names";
+import { SHELL_SESSION_CREATE_ATTEMPTS, twoWordShellSessionName } from "../lib/shell-session-names";
 import {
   mergeAttachableSessions,
   type AttachableSession,
@@ -79,7 +79,6 @@ function asArray<T>(value: unknown): T[] {
 }
 
 let loadSequence = 0;
-const CREATE_ATTEMPTS = 10;
 
 function nextSessionName(): string {
   return twoWordShellSessionName();
@@ -96,7 +95,7 @@ async function createTerminalSessionWithRetries(api: ApiClient): Promise<{ name:
       const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name });
       return { name, response };
     } catch (err: unknown) {
-      if (isSessionExistsError(err) && attempt < CREATE_ATTEMPTS - 1) continue;
+      if (isSessionExistsError(err) && attempt < SHELL_SESSION_CREATE_ATTEMPTS - 1) continue;
       throw err;
     }
   }

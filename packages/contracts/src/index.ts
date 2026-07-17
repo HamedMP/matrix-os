@@ -96,6 +96,8 @@ export const SHELL_SESSION_NOUNS = [
   "fern", "grove", "isle", "moss", "reef", "dune", "fjord", "atlas",
 ] as const;
 
+export const SHELL_SESSION_CREATE_ATTEMPTS = 10;
+
 function pickShellSessionWord<T>(list: readonly T[]): T {
   return list[Math.floor(Math.random() * list.length)]!;
 }
