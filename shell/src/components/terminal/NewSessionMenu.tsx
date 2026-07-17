@@ -128,7 +128,7 @@ export function NewSessionMenu({
         onClick={onCreateShell}
       />
       {TERMINAL_AGENT_OPTIONS.map((option) => {
-        const installed = agentStatuses?.[option.id] ?? option.fallbackInstalled;
+        const installed = agentStatuses?.[option.id] === true;
         return (
           <NewSessionMenuItem
             key={option.id}

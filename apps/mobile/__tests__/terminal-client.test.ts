@@ -10,6 +10,8 @@ import { jsonResponse } from "./mobile-shell-test-utils";
 
 const SESSION_ID = "c4319d6a-a24c-4820-a0f8-f6f8a6ce76b9";
 const SHELL_NAME = "matrix-7af3c2e";
+const TWO_WORD_SESSION_NAME_PATTERN = /^[a-z]+-[a-z]+$/;
+const TWO_WORD_FALLBACK_SESSION_NAME_PATTERN = /^[a-z]+-[a-z]+-[a-z0-9]{5}$/;
 
 class MockWebSocket {
   static OPEN = 1;
@@ -78,6 +80,33 @@ describe("mobile terminal client", () => {
       `https://app.matrix-os.test/api/terminal/sessions/${SHELL_NAME}?force=1`,
       expect.objectContaining({ method: "DELETE" }),
     );
+  });
+
+  it("creates shell sessions with two-word names before a suffixed collision fallback", async () => {
+    const postedNames: string[] = [];
+    const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+      if (String(input).endsWith("/api/terminal/sessions") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body ?? "{}")) as { name?: string };
+        if (typeof body.name === "string") postedNames.push(body.name);
+        if (postedNames.length <= 3) {
+          return jsonResponse({ error: { code: "session_exists", message: "Request failed" } }, { status: 409 });
+        }
+        return jsonResponse({ name: body.name }, { status: 201 });
+      }
+      return jsonResponse({});
+    });
+
+    const gateway = new GatewayClient("https://app.matrix-os.test", "clerk-token");
+    const created = await gateway.createTerminalSession();
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(created).toBe(postedNames[3]);
+    expect(postedNames.slice(0, 3)).toEqual([
+      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
+      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
+      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
+    ]);
+    expect(postedNames[3]).toMatch(TWO_WORD_FALLBACK_SESSION_NAME_PATTERN);
   });
 
   it("builds token-authenticated terminal websocket URLs", () => {

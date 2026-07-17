@@ -10,8 +10,8 @@ import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-
 import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-settings";
 import { getTerminalThemePreset } from "./terminal-themes";
 import { getTerminalAppChromeCssVars, getTerminalAppChromeTheme, getTerminalAppThemeOption } from "./terminal-app-chrome-theme";
-import { TerminalAppContext, useTerminalAppContext, type TerminalWindowControls } from "./TerminalAppContext";
-import { LocalTerminalTabBar, TerminalEmbeddedToolbar, TerminalWorkspaceChrome } from "./TerminalChrome";
+import { TerminalAppContext, type TerminalWindowControls } from "./TerminalAppContext";
+import { TerminalEmbeddedToolbar, TerminalWorkspaceChrome } from "./TerminalChrome";
 import { MobileCommandComposer, MobileTerminalActions } from "./MobileTerminalControls";
 import { DEFAULT_TERMINAL_SIDEBAR_WIDTH, LocalTerminalSidebar } from "./TerminalSidebar";
 import { TerminalKeyBar } from "./TerminalKeyBar";
@@ -26,7 +26,6 @@ import {
   destroyTerminalSessions,
   getCanonicalShellSessionIds,
   getFirstPaneId,
-  getPaneCwd,
   getPaneIdsForSession,
   getPaneSessionId,
   getSessionIds,
@@ -67,6 +66,10 @@ async function readShellErrorCode(res: Response): Promise<string | null> {
     console.warn("Failed to parse shell error response:", err instanceof Error ? err.message : String(err));
     return null;
   }
+}
+
+async function isShellSessionExistsResponse(res: Response): Promise<boolean> {
+  return res.status === 409 && await readShellErrorCode(res) === "session_exists";
 }
 
 async function ensureShellSessions(sessionNames: string[]): Promise<boolean> {
@@ -397,8 +400,12 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   ) => {
     let requestedCwd = cwd || "~";
     let retriedHomeCwd = false;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const name = terminalSessionName(options.namePrefix);
+    const twoWordCollisionRetries = 3;
+    const maxAttempts = options.namePrefix ? 3 : twoWordCollisionRetries + 1;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const name = terminalSessionName(options.namePrefix, {
+        collisionFallback: !options.namePrefix && attempt >= twoWordCollisionRetries,
+      });
       try {
         // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequential-by-design retry loop: each attempt only runs if the prior one failed with a 409 name collision or abort; parallelizing would create multiple sessions
         const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
@@ -407,7 +414,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           body: JSON.stringify({ name, cwd: requestedCwd, ...(options.cmd ? { cmd: options.cmd } : {}) }),
           signal: AbortSignal.timeout(10_000),
         });
-        if (res.status === 409) {
+        if (await isShellSessionExistsResponse(res)) {
           continue;
         }
         if (!res.ok) {
@@ -968,5 +975,3 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     </div>
   );
 }
-
-// ---- Local versions of TabBar and Sidebar that use context instead of global store ----

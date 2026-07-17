@@ -207,8 +207,8 @@ export class AuthService {
           userId: token.userId,
           handle: token.handle,
         };
-        let runtimeSlot = this.profile?.runtimeSlot ?? "primary";
-        if (runtimeSlot !== "primary") {
+        let runtimeSlot = token.runtimeSlot ?? this.profile?.runtimeSlot ?? "primary";
+        if (!token.runtimeSlot && runtimeSlot !== "primary") {
           try {
             credential = await this.exchangeRuntimeCredential(credential, runtimeSlot);
           } catch (err: unknown) {

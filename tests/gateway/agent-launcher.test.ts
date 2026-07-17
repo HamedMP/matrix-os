@@ -65,6 +65,40 @@ describe("agent-launcher", () => {
     }));
   });
 
+  it("detects agents with the Matrix node prefix on PATH", async () => {
+    const originalPath = process.env.PATH;
+    const originalNodePrefix = process.env.MATRIX_NODE_PREFIX;
+    process.env.PATH = "/usr/local/bin:/usr/bin:/bin";
+    process.env.MATRIX_NODE_PREFIX = "/opt/matrix/runtime/node";
+    const runCommand = vi.fn(async () => ({ stdout: "ok\n", stderr: "" }));
+    const launcher = createAgentLauncher({
+      runCommand,
+      cwd: "/home/matrix/home",
+      runtimeHome: "/home/matrix/home",
+    });
+
+    try {
+      await launcher.detectAgents();
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+      if (originalNodePrefix === undefined) {
+        delete process.env.MATRIX_NODE_PREFIX;
+      } else {
+        process.env.MATRIX_NODE_PREFIX = originalNodePrefix;
+      }
+    }
+
+    expect(runCommand).toHaveBeenCalledWith("claude", ["--version"], expect.objectContaining({
+      env: expect.objectContaining({
+        PATH: "/home/matrix/home/.local/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin",
+      }),
+    }));
+  });
+
   it("constructs non-interactive Codex exec argv without shell interpolation", () => {
     const launch = buildAgentLaunch({
       agent: "codex",

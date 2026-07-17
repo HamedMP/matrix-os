@@ -283,6 +283,25 @@ export async function resolveAppDomainIdentity(opts: {
       const runtimeSlot = RuntimeSlotSchema.safeParse(claims.runtime_slot).success
         ? claims.runtime_slot
         : undefined;
+      // Browser app sessions establish the owner; shell cookies select that owner's active computer.
+      if (bearerToken === appSessionToken && opts.requestedHandle && !opts.clerkPrincipalOnly) {
+        let requestedMachine = await getActiveUserMachineByHandle(
+          opts.db,
+          opts.requestedHandle,
+          opts.runtimeSlot,
+        );
+        if (!requestedMachine && opts.runtimeSlot === 'primary') {
+          requestedMachine = await getActiveUserMachineByHandle(opts.db, opts.requestedHandle);
+        }
+        if (requestedMachine?.clerkUserId === claims.sub) {
+          return {
+            handle: requestedMachine.handle,
+            userId: requestedMachine.clerkUserId,
+            runtimeSlot: requestedMachine.runtimeSlot,
+            source: 'auth',
+          };
+        }
+      }
       if (opts.clerkPrincipalOnly) {
         return {
           handle: claims.handle,

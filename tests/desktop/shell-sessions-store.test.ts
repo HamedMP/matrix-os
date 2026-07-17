@@ -4,6 +4,9 @@ import type { ApiClient } from "@desktop/renderer/src/lib/api";
 import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 import { isValidShellSessionName, useShellSessions } from "@desktop/renderer/src/stores/shell-sessions";
 
+const TWO_WORD_SESSION_NAME_PATTERN = /^[a-z]+-[a-z]+$/;
+const TWO_WORD_FALLBACK_SESSION_NAME_PATTERN = /^[a-z]+-[a-z]+-[a-z0-9]{5}$/;
+
 function makeApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
     baseUrl: "https://x.test",
@@ -106,7 +109,7 @@ describe("useShellSessions", () => {
     expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-reset"]);
   });
 
-  it("creates shell sessions with matrix names, projects cwd, and retries one 409 conflict", async () => {
+  it("creates shell sessions with two-word names, projects cwd, and retries one 409 conflict", async () => {
     const post = vi
       .fn()
       .mockRejectedValueOnce(new AppError("server", { detail: "session_exists" }))
@@ -118,14 +121,36 @@ describe("useShellSessions", () => {
     expect(created?.name).toBe("matrix-created");
     expect(post).toHaveBeenCalledTimes(2);
     expect(post).toHaveBeenNthCalledWith(1, "/api/terminal/sessions", {
-      name: expect.stringMatching(/^matrix-[a-z0-9]{7}$/),
+      name: expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
       cwd: "projects",
     });
     expect(post).toHaveBeenNthCalledWith(2, "/api/terminal/sessions", {
-      name: expect.stringMatching(/^matrix-[a-z0-9]{7}$/),
+      name: expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
       cwd: "projects",
     });
     expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-created"]);
+  });
+
+  it("uses a suffixed shell name only after repeated two-word collisions", async () => {
+    const post = vi
+      .fn()
+      .mockRejectedValueOnce(new AppError("server", { detail: "session_exists" }))
+      .mockRejectedValueOnce(new AppError("server", { detail: "session_exists" }))
+      .mockRejectedValueOnce(new AppError("server", { detail: "session_exists" }))
+      .mockResolvedValueOnce({ name: "fallback-created" });
+    const get = vi.fn().mockResolvedValue({ sessions: [{ name: "fallback-created", status: "active" }] });
+
+    const created = await useShellSessions.getState().create(makeApi({ post, get }));
+
+    expect(created?.name).toBe("fallback-created");
+    expect(post).toHaveBeenCalledTimes(4);
+    const bodies = post.mock.calls.map(([, body]) => body as { name: string; cwd: string });
+    expect(bodies.slice(0, 3).map((body) => body.name)).toEqual([
+      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
+      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
+      expect.stringMatching(TWO_WORD_SESSION_NAME_PATTERN),
+    ]);
+    expect(bodies[3]?.name).toMatch(TWO_WORD_FALLBACK_SESSION_NAME_PATTERN);
   });
 
   it("keeps a created shell when an older load resolves after create refresh", async () => {

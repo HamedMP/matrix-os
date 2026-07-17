@@ -64,7 +64,8 @@ until it gets 200 (approved), 410 (expired), or a hard error.
   accessToken: string,    // signed sync JWT (HS256/RS256)
   expiresAt: number,      // epoch ms
   userId: string,         // Clerk userId, e.g. "user_2abcDEF"
-  handle: string          // "alice"
+  handle: string,         // selected Matrix computer handle, e.g. "alice" or "pr-992"
+  runtimeSlot?: string    // selected runtime slot; omitted by older platform versions
 }
 ```
 
@@ -85,6 +86,7 @@ The JWT carries:
   sub: string,          // Clerk userId
   handle: string,       // matches the gateway's MATRIX_HANDLE
   gateway_url: string,  // hint -- /api/me is authoritative
+  runtime_slot?: string,// selected Matrix computer runtime slot
   iat: number,          // epoch seconds
   exp: number,          // epoch seconds (default iat + 24 hours)
   iss: "matrix-os-platform"
@@ -108,8 +110,10 @@ Set-Cookie: device_csrf=<32-hex>; Path=/auth/device; Max-Age=900;
 
 The page embeds:
 - The Clerk SignIn widget if no session exists, OR
-- A `<form method="POST" action="/auth/device/approve">` with hidden
-  `userCode` and `csrf` inputs once a session is present.
+- The signed-in user's display name, username, email, and profile picture.
+- The user's available Matrix computers from `/api/auth/computers`.
+- A `<form method="POST" action="/auth/device/approve">` with `userCode`,
+  `csrf`, and the selected `runtimeSlot` once a session is present.
 
 **Response 400**: `user_code` query param missing.
 
@@ -124,7 +128,7 @@ Marks the device pairing as approved. Intended for the form on
 
 **Request**: `application/x-www-form-urlencoded`
 ```
-userCode=BCDF-GHJK&csrf=<value>
+userCode=BCDF-GHJK&csrf=<value>&runtimeSlot=primary
 ```
 
 **CSRF check**: the `csrf` form value MUST equal the `device_csrf` cookie
@@ -132,6 +136,8 @@ set by `GET /auth/device`. Constant-time compared.
 
 **Response 200**: `text/html` with "Login successful, return to your terminal".
 The CLI's next poll on `/api/auth/device/token` will return 200 with a JWT.
+The selected computer is validated against the approving Clerk user and bound
+to the one-time device code before the JWT is issued.
 
 **Response 401** `{error: "unauthorized"}`: no Clerk session present or invalid.
 **Response 403** `{error: "csrf_mismatch"}`: CSRF cookie/form mismatch.
@@ -153,7 +159,8 @@ this after successful login to discover where its daemon should connect.
 ```typescript
 {
   userId: string,    // Clerk userId
-  handle: string,    // "alice"
+  handle: string,    // selected computer handle
+  runtimeSlot?: string, // selected VPS runtime slot
   gatewayUrl: string // "https://app.matrix-os.com" or per GATEWAY_URL_TEMPLATE in dev
 }
 ```

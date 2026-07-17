@@ -57,6 +57,7 @@ import type {
   ResizeMachineRequest,
 } from './customer-vps-schema.js';
 import { assertPreviewProvisioningCapacity, isPreviewMachine } from './customer-vps-preview.js';
+import { selectCustomerVpsDeployMachines } from './customer-vps-deploy-selection.js';
 import {
   getRuntimeAccessDecision,
   type BillingEntitlement,
@@ -1195,10 +1196,14 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async deploy(target?: DeployTarget): Promise<DeployResult> {
-      const runningMachines = await listRunningUserMachines(deps.db, 500);
-      const machines = target?.handle
-        ? runningMachines.filter((machine) => machine.handle === target.handle)
-        : runningMachines;
+      const runningMachines = await listRunningUserMachines(
+        deps.db,
+        500,
+        target?.handle
+          ? { handle: target.handle }
+          : { provisioningClass: 'customer' },
+      );
+      const machines = selectCustomerVpsDeployMachines(runningMachines, target);
       const results: DeployResult['results'] = [];
       let triggered = 0;
       let failed = 0;

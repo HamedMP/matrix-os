@@ -128,7 +128,7 @@ public struct GatewayHTTPClient: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw GatewayError.server
         }
-        if let mapped = GatewayError.from(statusCode: http.statusCode) {
+        if let mapped = GatewayError.from(statusCode: http.statusCode, data: data) {
             throw mapped
         }
         return data

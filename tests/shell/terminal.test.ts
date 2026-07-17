@@ -100,12 +100,20 @@ describe("Terminal WebSocket protocol", () => {
     expect(terminalWebSocketPathForSession(null)).toBe("/ws/terminal");
   });
 
-  it("adds an entropy suffix to friendly terminal session names", () => {
+  it("uses two-word friendly terminal session names by default", () => {
+    vi.spyOn(Math, "random")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0);
+
+    expect(twoWordSessionName()).toBe("swift-falcon");
+  });
+
+  it("adds an entropy suffix only for collision fallback names", () => {
     vi.spyOn(Math, "random")
       .mockReturnValueOnce(0)
       .mockReturnValueOnce(0)
       .mockReturnValueOnce(0);
 
-    expect(twoWordSessionName()).toBe("swift-falcon-00000");
+    expect(twoWordSessionName({ collisionFallback: true })).toBe("swift-falcon-00000");
   });
 });

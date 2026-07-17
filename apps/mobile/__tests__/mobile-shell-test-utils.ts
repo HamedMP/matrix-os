@@ -51,6 +51,7 @@ export function jsonResponse(body: unknown, init: { ok?: boolean; status?: numbe
     status,
     json: jest.fn().mockResolvedValue(body),
     text: jest.fn().mockResolvedValue(text),
+    clone: jest.fn(() => jsonResponse(body, { ok, status })),
   } as unknown as Response;
 }
 

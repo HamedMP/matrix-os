@@ -307,7 +307,7 @@ describe("useSessions store", () => {
     const created = await useSessions.getState().create(makeApi(get, post));
 
     expect(post).toHaveBeenCalledWith("/api/terminal/sessions", {
-      name: expect.stringMatching(/^operator-[a-z0-9]+-[a-f0-9]{8}$/),
+      name: expect.stringMatching(/^[a-z]+-[a-z]+$/),
     });
     expect(created?.attachName).toBe("operator-new");
     expect(useSessions.getState().sessions.map((s) => s.attachName)).toEqual(["operator-new"]);

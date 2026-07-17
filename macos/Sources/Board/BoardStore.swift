@@ -49,7 +49,7 @@ public enum BoardError: Error, Equatable, Sendable {
         case .network: return .offline
         case .timeout: return .timeout
         case .misconfigured: return .misconfigured
-        case .notFound, .server, .decoding: return .generic
+        case .notFound, .conflict, .server, .decoding: return .generic
         }
     }
 }

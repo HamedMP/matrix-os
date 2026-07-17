@@ -207,6 +207,22 @@ final class GatewayHTTPClientTests: XCTestCase {
         }
     }
 
+    func testConflictPreservesAllowlistedSafeErrorCode() async {
+        MockURLProtocol.setHandler { req in
+            (
+                httpResponse(req.url!, 409),
+                Data(#"{"error":{"code":"session_exists","message":"Postgres path /secret leaked"}}"#.utf8)
+            )
+        }
+        let client = makeClient()
+        await assertThrows(client) { _ = try await $0.get("/x", as: Sample.self) } expecting: { error in
+            XCTAssertEqual(error, .conflict(code: "session_exists"))
+            XCTAssertEqual(error.safeCode, "session_exists")
+            XCTAssertFalse(error.userMessage.lowercased().contains("postgres"))
+            XCTAssertFalse(error.userMessage.contains("/secret"))
+        }
+    }
+
     func testMalformedJSONMapsToDecoding() async {
         MockURLProtocol.setHandler { req in
             (httpResponse(req.url!, 200), Data("not json at all".utf8))
