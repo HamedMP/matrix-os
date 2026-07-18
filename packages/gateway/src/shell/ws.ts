@@ -331,6 +331,12 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       sendJson(conn.ws, { type: "exit", code: event.exitCode });
     }
     runtime.conns.clear();
+    // Every connection was just cleared without running its detach path, so
+    // their sizing registrations would linger. Drop the arbiter so a later
+    // reconnect negotiates from fresh declarations instead of stale ones;
+    // the persisted canonical size reloads from the registry on next open.
+    runtime.sizing?.dispose();
+    runtime.sizing = null;
     void flushAndRotateQueue(runtime, "final scrollback flush failed", true);
   }
 

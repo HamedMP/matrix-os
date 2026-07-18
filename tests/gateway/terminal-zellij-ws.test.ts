@@ -1077,6 +1077,40 @@ describe("zellij terminal WebSocket", () => {
     handler.dispose();
   });
 
+  it("drops stale sizing registrations when the shared attach exits so reconnects negotiate fresh", async () => {
+    const ptyA = new FakePty();
+    const ptyB = new FakePty();
+    const sizes: Array<{ cols: number; rows: number } | undefined> = [];
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: {
+        attachSession: vi.fn((_name: string, opts?: { size?: { cols: number; rows: number } }) => {
+          sizes.push(opts?.size);
+          return sizes.length === 1 ? ptyA : ptyB;
+        }),
+      },
+      maxReplayBytes: 4096,
+      sizingDebounceMs: 5,
+    });
+
+    await handler.open({ ws: socket(), session: "main", fromSeq: 0, clientClass: "hard", declaredSize: { cols: 80, rows: 20 } });
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    expect(sizes[0]).toEqual({ cols: 80, rows: 20 });
+
+    // The zellij attach process dies unexpectedly, clearing every connection.
+    ptyA.emitExit({ exitCode: 1 });
+
+    const reconnected = await handler.open({ ws: socket(), session: "main", fromSeq: 0, clientClass: "hard", declaredSize: { cols: 200, rows: 50 } });
+    await new Promise((resolve) => setTimeout(resolve, 15));
+
+    // The reconnect spawns and pins at its own declaration; the dead 80x20
+    // hard client must not participate in negotiation anymore.
+    expect(sizes[1]).toEqual({ cols: 200, rows: 50 });
+    expect(ptyB.resizes.at(-1)).toEqual({ cols: 200, rows: 50 });
+    expect(reconnected).toBeDefined();
+    handler.dispose();
+  });
+
   it("accepts terminal query token and bearer auth through constant-time auth middleware", async () => {
     const next = vi.fn();
     const makeContext = (url: string, authorization?: string) => ({
