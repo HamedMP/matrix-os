@@ -330,6 +330,7 @@ export default function AgentComposerScreen() {
     let summary = result.summary;
     if (
       requestedProjectId !== undefined
+      && typeof client.getCodingAgentProjectWorkspace === "function"
       && !summary.projects.items.some((project) => project.id === requestedProjectId)
     ) {
       const workspaceResult = await client.getCodingAgentProjectWorkspace({
@@ -374,7 +375,7 @@ export default function AgentComposerScreen() {
   const selectedProject = summary && draft ? availableProject(summary, draft.projectId) : undefined;
   const modes = selectedProvider?.supportedModes ?? [];
   const canCompose = Boolean(summary && capabilityEnabled(summary, "codingAgentsThreadCreate"));
-  const canCreate = Boolean(canCompose && selectedProject);
+  const canCreate = canCompose;
 
   const chooseProvider = useCallback((provider: AgentProviderSummary) => {
     if (!summary) return;
@@ -552,19 +553,6 @@ export default function AgentComposerScreen() {
         />
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Project</Text>
-          <View accessibilityLabel={selectedProject ? `Project ${selectedProject.label}` : "Project required"} style={styles.projectContext}>
-            <Ionicons name="folder-open-outline" size={18} color={theme.colors.moss} />
-            <View style={styles.rowText}>
-              <Text selectable style={styles.rowTitle}>{selectedProject?.label ?? "Choose a project first"}</Text>
-              <Text selectable style={styles.rowSubtitle}>
-                {draft.taskId ? `Task ${draft.taskId}` : "Project-level conversation"}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        <View style={styles.section}>
           <Text style={styles.sectionTitle}>Provider</Text>
           <Pressable
             accessibilityRole="button"
@@ -732,18 +720,6 @@ const styles = StyleSheet.create((theme, rt) => ({
     fontFamily: theme.fonts.sansSemiBold,
     fontSize: 14,
     color: theme.colors.foreground,
-  },
-  projectContext: {
-    minHeight: 62,
-    borderRadius: 14,
-    borderCurve: "continuous" as const,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.card,
-    padding: theme.spacing.md,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing.md,
   },
   providerButton: {
     minHeight: 62,

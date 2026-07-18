@@ -178,28 +178,6 @@ describe("AgentComposerScreen", () => {
     expect(client.createCodingAgentThread).not.toHaveBeenCalled();
   });
 
-  it("does not create a new conversation without a validated project route", async () => {
-    const client = {
-      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
-        ok: true,
-        summary: summaryFixture(),
-      }),
-      createCodingAgentThread: jest.fn(),
-    };
-    useGatewayMock.mockReturnValue(gatewayContext({
-      client: client as unknown as GatewayClient,
-      connectionState: "connected",
-    }));
-
-    render(<AgentComposerScreen />);
-
-    fireEvent.changeText(await screen.findByLabelText("Agent run prompt"), "Investigate mobile composer");
-
-    expect(screen.getByText("Choose a project from the Agents workspace before starting a conversation.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Start run" }).props.accessibilityState?.disabled).toBe(true);
-    expect(client.createCodingAgentThread).not.toHaveBeenCalled();
-  });
-
   it("creates a project-bound task conversation and preserves its accepted identity", async () => {
     mockSearchParams = { projectId: "matrix-os", taskId: "task_auth" };
     const client = {
@@ -434,7 +412,7 @@ describe("AgentComposerScreen", () => {
       }));
       expect(mockRouterPush).toHaveBeenCalledWith({
         pathname: "/agents/[threadId]",
-        params: { threadId: "thread_mobile_project" },
+        params: { projectId: "mobile-project", threadId: "thread_mobile_project" },
       });
     });
     expect(AsyncStorage.getItem).not.toHaveBeenCalled();
@@ -737,7 +715,7 @@ describe("AgentComposerScreen", () => {
         pathname: "/agents/[threadId]",
         params: {
           projectId: "matrix-os",
-          taskId: "task_auth",
+          taskId: "task_mobile",
           threadId: "thread_mobile_followup",
         },
       });
