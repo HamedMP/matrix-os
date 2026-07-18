@@ -1143,12 +1143,12 @@ export function LocalTerminalSidebar() {
         {!shellsLoading && shellsError && (
           <div style={{ color: "#8F6712", fontSize: 12, padding: "24px 0", textAlign: "center" }}>{shellsError}</div>
         )}
-        {!shellsLoading && !shellsError && !creatingShell && renderedShells.length === 0 && (
+        {!shellsLoading && !shellsError && !creatingShell && Boolean(filter) && renderedShells.length === 0 && (
           <div style={{ color: "var(--terminal-drawer-muted)", fontSize: 12, padding: "24px 0", textAlign: "center" }}>
-            {filter ? "No sessions match" : "No sessions yet"}
+            No sessions match
           </div>
         )}
-        {!shellsLoading && (activeShells.length > 0 || creatingShell) && (
+        {!shellsLoading && (!filter || activeShells.length > 0 || creatingShell) && (
           <ShellSessionGroup
             label="Active"
             shells={activeShells}

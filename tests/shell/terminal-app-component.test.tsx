@@ -204,6 +204,9 @@ describe("TerminalApp", () => {
       if (url.includes("/api/terminal/layout")) {
         return Promise.resolve({ ok: true, json: async () => ({}) });
       }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [{ name: "main", status: "active" }] }) });
+      }
       return Promise.resolve({ ok: true, json: async () => ({}) });
     }));
   });
@@ -2653,7 +2656,7 @@ describe("TerminalApp", () => {
 
     expect(screen.getByText("No terminal tabs open")).toBeTruthy();
     expect(screen.getByRole("button", { name: "New Terminal" })).toBeTruthy();
-    expect(screen.getByText("ACTIVE (0)")).toBeTruthy();
+    expect(screen.getByTestId("terminal-session-group-active").textContent).toContain("Active (0)");
     expect(screen.queryByTestId("terminal-pane-grid")).toBeNull();
     expect(terminalSessionPostBodies()).toHaveLength(0);
 

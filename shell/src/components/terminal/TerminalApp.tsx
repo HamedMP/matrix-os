@@ -40,10 +40,7 @@ import {
   type Tab,
   type TerminalLayout,
 } from "./terminal-layout";
-import {
-  DEFAULT_SHELL_SESSION_NAME,
-  formatShellDisplayName,
-} from "./TerminalSidebarItems";
+import { formatShellDisplayName } from "./TerminalSidebarItems";
 import { SHELL_SESSION_CREATE_ATTEMPTS } from "./terminal-session-names";
 
 export { TERMINAL_INPUT_EVENT };
@@ -120,10 +117,6 @@ async function ensureShellSessions(sessionNames: string[]): Promise<boolean> {
   }
 }
 
-async function ensureDefaultShellSession(): Promise<boolean> {
-  return ensureShellSessions([DEFAULT_SHELL_SESSION_NAME]);
-}
-
 async function getFirstOrderedShellSessionName(): Promise<string | null> {
   try {
     const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
@@ -146,15 +139,6 @@ async function getFirstOrderedShellSessionName(): Promise<string | null> {
     console.warn("Failed to load ordered shell sessions:", err instanceof Error ? err.message : err);
     return null;
   }
-}
-
-async function ensureInitialShellSession(): Promise<string | null> {
-  const firstOrdered = await getFirstOrderedShellSessionName();
-  if (firstOrdered) {
-    return firstOrdered;
-  }
-  const sessionReady = await ensureDefaultShellSession();
-  return sessionReady ? DEFAULT_SHELL_SESSION_NAME : null;
 }
 
 let globalShellThemePreferenceLoadStarted = false;
@@ -530,7 +514,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
               }
             }
 
-            const sessionName = await ensureInitialShellSession();
+            const sessionName = await getFirstOrderedShellSessionName();
             if (!cancelled && sessionName) {
               addSessionTab(formatShellDisplayName(sessionName), sessionName);
               setInitialized(true);
@@ -543,12 +527,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       }
 
       if (!cancelled) {
-        const sessionName = await ensureInitialShellSession();
+        const sessionName = await getFirstOrderedShellSessionName();
         if (!cancelled) {
           if (sessionName) {
             addSessionTab(formatShellDisplayName(sessionName), sessionName);
-          } else {
-            addTab(DEFAULT_CWD);
           }
           setInitialized(true);
         }
