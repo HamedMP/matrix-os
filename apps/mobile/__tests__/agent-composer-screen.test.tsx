@@ -241,9 +241,8 @@ describe("AgentComposerScreen", () => {
       expect(client.createCodingAgentThread).toHaveBeenCalledWith(expect.objectContaining({
         providerId: "codex",
         projectId: "matrix-os",
-        prompt: "Investigate mobile composer",
-        projectId: "matrix-os",
         taskId: "task_auth",
+        prompt: "Investigate mobile composer",
         clientRequestId: expect.stringMatching(/^req_mobile_/),
       }));
       expect(mockRouterPush).toHaveBeenCalledWith({
@@ -726,8 +725,6 @@ describe("AgentComposerScreen", () => {
         projectId: "matrix-os",
         taskId: "task_mobile",
         prompt: expect.stringContaining("Please follow up on this agent run."),
-        projectId: "matrix-os",
-        taskId: "task_auth",
         attachments: [
           expect.objectContaining({
             id: "thread:thread_mobile",
