@@ -1,17 +1,20 @@
 ---
 name: worktree-pr-monitor
-description: Create or continue an isolated Matrix OS worktree PR, validate it, push it, monitor CI and GitHub review feedback, iterate until the latest trusted Greptile result is 5/5, then add ready-for-ci and wait for triggered CI to pass before pinging completion. Use when asked to run a worktree to PR to monitor workflow, get a PR to Greptile 5/5 plus CI pass, or publish changes while keeping main clean.
+description: Create or continue one isolated Matrix OS manual-worktree PR, validate it, mark a completed draft ready, resolve current-head review feedback through Greptile 5/5, then add ready-for-ci and wait for triggered CI. Use when asked for the worktree-to-PR monitoring workflow, including when a coordinator assigns a leaf agent exclusive ownership of one worktree, branch, and PR.
 ---
 
 # Worktree PR Monitor
 
-Use this skill only when the requester explicitly asks for the manual git
-worktree -> PR -> monitor workflow. It keeps `/home/deploy/matrix-os` on `main`
-while implementation happens in `/home/deploy/matrix-os.worktrees/<slug>`.
+Use this skill only when the requester explicitly asks for the manual Git
+worktree -> PR -> monitor workflow or when a coordinator explicitly assigns
+that workflow to a leaf agent. Keep the primary checkout unchanged while
+implementation happens in a persistent manual worktree at the path required by
+the repository instructions.
 
-Do not use this skill for Swarm or multi-agent runs. The repo-level Swarm ban on
-`isolation: "worktree"` still applies; this workflow is a user-requested manual
-git worktree flow for isolated PR publication.
+Do not use this skill to coordinate a Swarm or share a worktree between agents.
+A leaf agent in a multi-agent run may use it only when it exclusively owns one
+coordinator-assigned worktree, branch, and PR. The repo-level ban on Agent-tool
+`isolation: "worktree"` still applies; use a persistent manual Git worktree.
 
 ## Preconditions
 
@@ -19,20 +22,23 @@ git worktree flow for isolated PR publication.
 - The current repository is `HamedMP/matrix-os`.
 - The repository has a label exactly named `ready-for-ci`; if it is missing,
   stop and report the blocker instead of creating the label silently.
-- The requester wants a PR in a worktree, not only a local patch.
-- The requester explicitly asked for a worktree or invoked this workflow.
+- The requester or coordinating workflow wants a PR in a worktree, not only a
+  local patch.
+- The requester explicitly asked for a worktree or a coordinator explicitly
+  assigned this leaf workflow.
 
 ## Rules
 
-- If the requester did not explicitly ask for a worktree, follow the current
-  branch workflow instead.
-- Keep `/home/deploy/matrix-os` on `main`.
-- Put feature work in `/home/deploy/matrix-os.worktrees/<slug>`.
+- If neither the requester nor a coordinator explicitly assigned a worktree,
+  follow the current branch workflow instead.
+- Keep the primary checkout on its existing branch and preserve unrelated work.
+- Resolve the manual-worktree location from repository instructions; do not
+  assume a fixed home directory or reuse another agent's path.
 - Use a semantic branch and PR title. Do not prefix titles with agent/tool tags.
 - Stage only files in scope.
 - Do not merge unless explicitly asked.
 - If Greptile has reviewed the PR, the loop is complete only when the latest
-  trusted Greptile result is `5/5`.
+  trusted Greptile result is `5/5` for the current PR head.
 - Add the `ready-for-ci` label only after the latest trusted Greptile result is
   `5/5`; this label triggers the broader PR CI workflows.
 - If the repository label `ready-for-ci` is missing, report the blocker instead
@@ -56,9 +62,10 @@ git worktree flow for isolated PR publication.
 2. Create or enter the worktree.
    - Slug: concise task slug, e.g. `fix-canvas-terminal-clicks`.
    - Branch: `codex/<slug>` unless the requester named a branch.
-   - Path: `/home/deploy/matrix-os.worktrees/<slug>`.
+   - Path: an exact, validated path allowed by repository instructions. Use the
+     coordinator-assigned path when operating as a leaf agent.
    - Command shape:
-     `git worktree add -b codex/<slug> /home/deploy/matrix-os.worktrees/<slug> origin/main`
+     `git worktree add -b codex/<slug> /absolute/path/to/worktree origin/main`
 
 3. Implement.
    - Follow TDD where practical: add a failing focused regression before the
@@ -86,16 +93,23 @@ git worktree flow for isolated PR publication.
      - `Review/Monitoring`
      - `Invariants` when backend code changed
 
-7. Monitor review feedback until Greptile is complete.
+7. Mark completed drafts ready for review.
+   - Keep an incomplete PR in draft state.
+   - After implementation and applicable local validation finish, inspect the
+     PR state and run `gh pr ready` if it is still a draft.
+   - Marking the PR ready may trigger baseline CI. Monitor those checks, but do
+     not treat them as a substitute for the later `ready-for-ci` gate.
+
+8. Monitor review feedback until Greptile is complete.
    - Use `gh pr checks --watch` or equivalent GitHub API status reads for
      already-running checks.
    - Use thread-aware review inspection for unresolved GitHub review threads.
    - Inspect issue comments for Codex reviews.
-   - Inspect Greptile feedback and rating. If the latest trusted Greptile
-     result is below `5/5`, implement fixes, rerun relevant checks, commit,
-     push, and continue monitoring.
+   - Inspect Greptile feedback and rating for the current PR head. If the latest
+     trusted result is stale or below `5/5`, implement fixes, rerun relevant
+     checks, commit, push, and continue monitoring.
 
-8. Trigger and monitor label-gated CI.
+9. Trigger and monitor label-gated CI.
    - Before labeling, verify that the repository label exists:
      `gh label list --search ready-for-ci --json name`. If the exact
      `ready-for-ci` label is missing, stop and report the blocker.
@@ -110,7 +124,7 @@ git worktree flow for isolated PR publication.
      Do not re-add `ready-for-ci` until Greptile is again `5/5` on the latest
      commit.
 
-9. Ping completion.
+10. Ping completion.
    - Reply with:
      - PR URL
      - branch and worktree path
@@ -126,12 +140,13 @@ git worktree flow for isolated PR publication.
 ```sh
 git status --short --branch
 git worktree list
-git worktree add -b codex/<slug> /home/deploy/matrix-os.worktrees/<slug> origin/main
+git worktree add -b codex/<slug> /absolute/path/to/worktree origin/main
 bun run typecheck
 bun run check:patterns
 bun run test
 git push -u origin HEAD
 gh pr view --json number,url,title,state,headRefName,baseRefName
+gh pr ready
 gh label list --search ready-for-ci --json name
 gh pr edit --add-label ready-for-ci
 gh pr edit --remove-label ready-for-ci
