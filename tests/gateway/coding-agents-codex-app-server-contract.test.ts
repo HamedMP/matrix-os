@@ -9,7 +9,7 @@ describe("Codex app-server contract", () => {
     expect(CODEX_APP_SERVER_CONTRACT).toMatchObject({
       packageName: "@openai/codex",
       minimumVersion: "0.144.0",
-      latestVerifiedVersion: "0.144.3",
+      latestVerifiedVersion: "0.144.6",
       experimental: true,
       requiredServerMethods: [
         "item/commandExecution/requestApproval",
@@ -30,8 +30,16 @@ describe("Codex app-server contract", () => {
       version: "0.144.3",
     });
     expect(codexAppServerContractStatus("codex-cli 0.144.4")).toEqual({
-      status: "unverified_newer",
+      status: "verified",
       version: "0.144.4",
+    });
+    expect(codexAppServerContractStatus("codex-cli 0.144.6")).toEqual({
+      status: "verified",
+      version: "0.144.6",
+    });
+    expect(codexAppServerContractStatus("codex-cli 0.144.7")).toEqual({
+      status: "unverified_newer",
+      version: "0.144.7",
     });
     expect(codexAppServerContractStatus("codex-cli 0.143.9")).toEqual({
       status: "unverified_older",
