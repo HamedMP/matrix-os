@@ -16,8 +16,8 @@ The landed checkpoint is not the confirmed final information architecture. Curre
 - Coding threads carry optional `projectId`/`taskId`; the read model quarantines stale cross-project task relations, and the shell-create path now requires an owned canonical project plus a same-project canonical task when provided. Legacy unassigned records remain read-compatible and can be adopted exactly once through an explicit idempotent owner-scoped mutation. Persisted public thread changes publish bounded project/task workspace activity events.
 - Existing task UI has one `linkedSessionId`; it cannot be used as the source of truth for coding conversations because one task must support several independent threads.
 - The current desktop `AgentWorkspace` is a sectioned dashboard. It does not provide the required persistent project/task/thread navigator or a segmented Conversation/Kanban mode over one selected project.
-- The pending mobile stack provides the attention-first cockpit, project-bound new-run composer, and thread detail, but not full project-first task/thread navigation or a Kanban mode.
-- Current desktop/mobile follow-up controls still seed a new thread with a structured reference. The gateway now supports same-thread turns and workspace-session resume, but shell clients have not switched to that route yet. Delivering input to a running workspace session settles that turn without marking the thread complete; canonical session-stop reconciliation owns terminal thread status.
+- Mobile now adds gateway-validated project/task/thread routes, multi-thread Conversation groups, and a capability-gated Kanban projection with phone/tablet layouts. SDK 57 device and cross-shell evidence remain outstanding.
+- Desktop follow-up controls still seed a new thread with a structured reference. Mobile now uses the gateway same-thread turn route with transient drafts and exact retry idempotency; desktop and cross-shell confirmation remain outstanding. Delivering input to a running workspace session settles that turn without marking the thread complete; canonical session-stop reconciliation owns terminal thread status.
 - Existing desktop Kanban task routes/statuses are canonical and reusable, but coding-thread aggregates and multi-thread task navigation are not integrated into that board.
 
 The clarified target and required evidence are defined in `SPEC.md`, `ARCHITECTURE.md`, `plan.md`, `tasks.md`, and `acceptance-tests.md`. No implementation completion claim should treat the existing dashboard/create path as proof of those requirements.
@@ -440,6 +440,8 @@ Screen:
 - `apps/mobile/app/agents/index.tsx`
 - `apps/mobile/app/agents/new.tsx`
 - `apps/mobile/app/agents/[threadId].tsx`
+- `apps/mobile/app/agents/projects/[projectId]/index.tsx`
+- `apps/mobile/app/agents/projects/[projectId]/board.tsx`
 - Read-only phone-first dashboard with Needs attention, Working, and a contract-bounded Recent section, plus providers and canonical terminal sessions.
 - The dashboard renders the shared mobile connection banner with agent-workspace labels for connecting, offline, and reconnecting states; the banner can retry the existing gateway client connection and does not hide the last hydrated gateway summary.
 - The cockpit is derived only from the bounded `RuntimeSummarySchema.activeThreads` and `attentionThreads` lists. Approval, input, and failed states sort into Needs attention; queued, starting, and running states sort into Working; every completed attention plus completed, aborted, recoverable stale, and archived status supplied by those bounded lists remains reachable in Recent. Duplicate thread ids are projected once and sorted by gateway timestamps.
@@ -457,6 +459,8 @@ Screen:
 - When the runtime advertises `codingAgentsSourceControl`, review details can prepare a local source-control commit for bounded reviewed file paths through the authenticated gateway client with a mobile-generated idempotency request id. Mobile stores no commit payloads, diffs, file bytes, credentials, or raw errors.
 - When a source-control pull request is created or found, review details can open the returned HTTPS pull request URL through the OS browser opener. Mobile still stores no pull request payloads beyond transient component state.
 - Safe generic review error state if review summaries are unavailable; review failures do not drop the runtime summary dashboard.
+- Project routes hydrate only the authenticated gateway `RuntimeSummarySchema` and `ProjectAgentWorkspaceSchema` projections. Conversation mode separates project-level chats from canonical task groups and exposes every attached thread as an independent route.
+- When `codingAgentsKanbanView` is enabled, the selected project can switch between Conversation and Kanban without changing its valid selected task/thread references. The board uses canonical visible task columns, hides archived tasks, renders gateway-projected thread/active/attention aggregates, and never infers or mutates task status from thread state. Phones use vertically grouped sections and tablets wrap the same columns into a wider board.
 - Composer route for creating accepted project-bound coding-agent threads. The mobile composer is keyboard-aware, selects one available canonical runtime-summary project, preserves an optional validated task route reference, and includes the selected project id plus optional task id in `CreateAgentThreadRequestSchema`.
 - When the runtime has no available projects, including summaries containing only missing or stale rows, the composer offers scratch creation or GitHub import through canonical `POST /api/coding-agents/projects`. It validates requests and responses with the shared Zod 4 schemas, reuses one idempotency request id for retries of the same create, refreshes `RuntimeSummarySchema`, and enables thread creation only after the returned project id appears as an available canonical project. Explicit stale project routes remain unselected instead of being remapped to an unrelated project. Project mutation details and repository URLs stay transient.
 - Active thread rows navigate to `/agents/:threadId`; the thread route hydrates a bounded thread snapshot, shows provider/status/terminal metadata, event counts, loading, tap refresh, pull-to-refresh, safe generic error states, a pinned current-action panel for the newest unresolved approval or input request, and an event timeline for gateway-bounded snapshot events with a local jump-to-latest control. After the initial snapshot, the route subscribes to `/ws/coding-agents/thread/:threadId` through the authenticated gateway client, validates all stream frames with Zod 4 schemas, merges same-thread live events without duplicating replayed snapshot events, refreshes the bounded snapshot when the app returns to the foreground, and detaches on unmount. Assistant text lifecycle events are grouped by bounded `messageId`; normal assistant prose can render as a capped transient preview after local safe-display filtering, while sensitive-looking content falls back to update counts plus completion state. Message ids are never rendered. File-change events render generic summaries instead of raw paths. Tool activity events are grouped by bounded `toolCallId` and render only safe display metadata, coarse output presence/truncation, output counts, collapsible safe detail rows, and completion outcome, never raw tool output.
@@ -479,6 +483,7 @@ Persisted UI references:
 - `apps/mobile/lib/agent-workspace-state.ts` stores only bounded selected runtime/project/task/thread IDs, `viewMode`, and `updatedAt`, and removes the superseded v1 safe-reference key during hydration.
 - `apps/mobile/lib/mobile-shell-state.ts` stores only the current shell mode plus safe bounded app or terminal session references, including canonical named shell sessions such as `main` or `matrix-abc1234`.
 - Agent workspace state reconciles stale references against runtime summary items.
+- Child task/thread references remain pending through summary hydration and are retained or dropped only after the matching project workspace validates them.
 - Does not store transcripts, terminal output, file contents, diffs, credentials, approvals payloads, file write payloads, or launch tokens.
 - The project selector/empty-state flow does not use AsyncStorage; project names, repository URLs, mutation responses, and runtime summaries remain transient.
 
@@ -490,6 +495,9 @@ Focused tests:
 - `apps/mobile/__tests__/agents-preview-screen.test.tsx`
 - `apps/mobile/__tests__/agent-thread-screen.test.tsx`
 - `apps/mobile/__tests__/agent-workspace-state.test.ts`
+- `apps/mobile/__tests__/agent-project-workspace-screen.test.tsx`
+- `apps/mobile/__tests__/agent-project-route.test.tsx`
+- `apps/mobile/__tests__/agent-project-board-route.test.tsx`
 - `apps/mobile/__tests__/push.test.ts`
 
 ## Browser Shell State

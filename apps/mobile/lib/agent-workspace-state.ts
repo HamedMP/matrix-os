@@ -91,16 +91,20 @@ export function reconcileAgentWorkspaceState(
     ? summary.projects.items.find((project) => project.id === state.selectedProjectId)
     : undefined;
   const selectedProjectId = liveProject?.id ?? summary.projects.items[0]?.id ?? null;
+  const projectChanged = state.selectedProjectId !== selectedProjectId;
+  const scopeChanged = runtimeChanged || projectChanged;
 
   const base: AgentWorkspaceState = {
     ...state,
     selectedRuntimeId: summary.runtime.id,
     selectedProjectId,
-    selectedTaskId: runtimeChanged ? null : state.selectedTaskId,
-    selectedThreadId: runtimeChanged ? null : state.selectedThreadId,
+    selectedTaskId: scopeChanged ? null : state.selectedTaskId,
+    selectedThreadId: scopeChanged ? null : state.selectedThreadId,
   };
 
-  if (!workspace || workspace.project.id !== selectedProjectId) {
+  if (!workspace) return base;
+
+  if (workspace.project.id !== selectedProjectId) {
     return {
       ...base,
       selectedTaskId: null,

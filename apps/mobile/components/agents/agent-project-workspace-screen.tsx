@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import * as ReactNative from "react-native";
 import {
   ActivityIndicator,
   AppState,
@@ -6,7 +7,6 @@ import {
   RefreshControl,
   ScrollView,
   Text,
-  useWindowDimensions,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -24,12 +24,24 @@ import type {
   GatewayClient,
 } from "@/lib/gateway-client";
 import {
+  AgentProjectKanban,
+  AgentProjectViewModeControl,
+} from "@/components/agents/agent-project-kanban";
+import { AgentProjectConversation } from "@/components/agents/agent-project-conversation";
+import {
+  countLabel,
+  includeWorkspaceProject,
+  runtimeCapabilityEnabled,
+} from "@/components/agents/agent-project-utils";
+import {
   loadAgentWorkspaceState,
   reconcileAgentWorkspaceState,
   saveAgentWorkspaceState,
   selectAgentWorkspaceProject,
   selectAgentWorkspaceThread,
+  selectAgentWorkspaceViewMode,
   type AgentWorkspaceState,
+  type AgentWorkspaceViewMode,
 } from "@/lib/agent-workspace-state";
 import { agentProjectWorkspaceStyles as styles } from "@/components/agents/agent-project-workspace-styles";
 
@@ -65,6 +77,8 @@ interface AgentProjectWorkspaceScreenProps {
   onOpenProject: (projectId: string) => void;
   onOpenThread: (identity: AgentConversationIdentity) => void;
   onNewConversation: (identity: { projectId: string; taskId: string | null }) => void;
+  onViewModeChange?: (viewMode: AgentWorkspaceViewMode) => void;
+  routeViewMode?: AgentWorkspaceViewMode | null;
 }
 
 const PROJECT_WORKSPACE_ERROR = "Project workspace unavailable. Refresh or choose another project.";
@@ -120,11 +134,14 @@ export function AgentProjectWorkspaceScreen({
   onOpenProject,
   onOpenThread,
   onNewConversation,
+  onViewModeChange,
+  routeViewMode = null,
 }: AgentProjectWorkspaceScreenProps) {
   const { theme } = useUnistyles();
-  const { width } = useWindowDimensions();
+  const { width } = ReactNative.useWindowDimensions();
   const [state, setState] = useState<ProjectScreenState>({ status: "loading" });
   const generationRef = useRef(0);
+  const appliedRouteViewSeedRef = useRef<string | null>(null);
   const stateRef = useRef<ProjectScreenState>(state);
   const previousConnectionStateRef = useRef(connectionState);
 
@@ -172,7 +189,10 @@ export function AgentProjectWorkspaceScreen({
       ? null
       : await client.getCodingAgentProjectWorkspace({ projectId: parsedRequestedProject.data });
     if (generation !== generationRef.current) return;
-    if (requestedWorkspaceResult?.ok && requestedWorkspaceResult.workspace.project.id === parsedRequestedProject.data) {
+    if (
+      requestedWorkspaceResult?.ok
+      && requestedWorkspaceResult.workspace.project.id === parsedRequestedProject.data
+    ) {
       workspaceResult = requestedWorkspaceResult;
       liveSummary = includeWorkspaceProject(liveSummary, requestedWorkspaceResult.workspace);
       selection = reconcileAgentWorkspaceState(restored, liveSummary);
@@ -198,12 +218,29 @@ export function AgentProjectWorkspaceScreen({
       return;
     }
 
+    selection = reconcileAgentWorkspaceState(selection, liveSummary, workspaceResult.workspace);
+    const canShowKanban = kanbanViewEnabled(liveSummary);
+    const routeViewSeedKey = routeViewMode ? `${selectedProjectId}:${routeViewMode}` : null;
+    const canApplyRouteView = routeViewMode === "conversation"
+      || (routeViewMode === "kanban" && canShowKanban);
+    const routeViewModeToApply = (
+      routeViewSeedKey
+      && appliedRouteViewSeedRef.current !== routeViewSeedKey
+      && canApplyRouteView
+    ) ? routeViewMode : null;
+    if (routeViewModeToApply) {
+      selection = selectAgentWorkspaceViewMode(selection, routeViewModeToApply);
+    } else if (!canShowKanban && selection.viewMode === "kanban") {
+      selection = selectAgentWorkspaceViewMode(selection, "conversation");
+    }
     selection = {
-      ...reconcileAgentWorkspaceState(selection, liveSummary, workspaceResult.workspace),
+      ...selection,
       updatedAt: new Date().toISOString(),
     };
     await persistSelection(selection);
     if (generation !== generationRef.current) return;
+    if (routeViewModeToApply) appliedRouteViewSeedRef.current = routeViewSeedKey;
+    if (!routeViewMode) appliedRouteViewSeedRef.current = null;
     setState({
       status: "ready",
       value: {
@@ -218,7 +255,7 @@ export function AgentProjectWorkspaceScreen({
     if (!requestedExists && selectedProjectId !== requestedProjectId) {
       onOpenProject(selectedProjectId);
     }
-  }, [client, onOpenProject, requestedProjectId]);
+  }, [client, onOpenProject, requestedProjectId, routeViewMode]);
 
   useEffect(() => {
     const timeoutId = setTimeout(() => void hydrate(), 0);
@@ -271,6 +308,7 @@ export function AgentProjectWorkspaceScreen({
   const { summary, workspace, selection, refreshing, loadingMore, warning } = state.value;
   const offline = connectionState !== "connected";
   const tablet = width >= 768;
+  const canShowKanban = kanbanViewEnabled(summary);
   const canCreateConversations = runtimeCapabilityEnabled(summary, "codingAgentsThreadCreate");
   const canLoadMore = workspaceHasNextPage(workspace);
 
@@ -280,12 +318,24 @@ export function AgentProjectWorkspaceScreen({
     const options = nextWorkspacePageOptions(current.value.workspace);
     if (!options) return;
     const generation = generationRef.current;
-    setState({ status: "ready", value: { ...current.value, loadingMore: true, warning: null } });
+    setState({
+      status: "ready",
+      value: { ...current.value, loadingMore: true, warning: null },
+    });
     const result = await client.getCodingAgentProjectWorkspace(options);
     if (generation !== generationRef.current) return;
     const latest = stateRef.current;
-    if (latest.status !== "ready" || !result.ok || result.workspace.project.id !== latest.value.workspace.project.id) {
-      setHydrationFailure(generationRef, generation, latest.status === "ready" ? latest.value : null, setState);
+    if (
+      latest.status !== "ready"
+      || !result.ok
+      || result.workspace.project.id !== latest.value.workspace.project.id
+    ) {
+      setHydrationFailure(
+        generationRef,
+        generation,
+        latest.status === "ready" ? latest.value : null,
+        setState,
+      );
       return;
     }
     setState({
@@ -317,9 +367,20 @@ export function AgentProjectWorkspaceScreen({
     void persistSelection(nextSelection);
     onOpenThread({
       projectId: workspace.project.id,
-      taskId: thread.taskId ?? null,
+      taskId: nextSelection.selectedTaskId,
       threadId: thread.id,
     });
+  };
+
+  const changeViewMode = (viewMode: AgentWorkspaceViewMode) => {
+    if (viewMode === "kanban" && !canShowKanban) return;
+    const nextSelection = {
+      ...selectAgentWorkspaceViewMode(selection, viewMode),
+      updatedAt: new Date().toISOString(),
+    };
+    setState({ status: "ready", value: { ...state.value, selection: nextSelection } });
+    void persistSelection(nextSelection);
+    onViewModeChange?.(viewMode);
   };
 
   return (
@@ -341,17 +402,21 @@ export function AgentProjectWorkspaceScreen({
       <View style={styles.projectHeader}>
         <View style={styles.projectHeaderText}>
           <Text selectable style={styles.heading}>{workspace.project.label}</Text>
-          <Text selectable style={styles.subheading}>Conversations by project and task</Text>
+          <Text selectable style={styles.subheading}>
+            {selection.viewMode === "kanban" ? "Tasks by canonical status" : "Conversations by project and task"}
+          </Text>
         </View>
-        {canCreateConversations ? <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="New project conversation"
-          onPress={() => onNewConversation({ projectId: workspace.project.id, taskId: null })}
-          style={styles.primaryButton}
-        >
-          <Ionicons name="add" size={17} color={theme.colors.primaryForeground} />
-          <Text style={styles.primaryButtonText}>New chat</Text>
-        </Pressable> : null}
+        {canCreateConversations ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="New project conversation"
+            onPress={() => onNewConversation({ projectId: workspace.project.id, taskId: null })}
+            style={styles.primaryButton}
+          >
+            <Ionicons name="add" size={17} color={theme.colors.primaryForeground} />
+            <Text style={styles.primaryButtonText}>New chat</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.projectSelector}>
@@ -372,55 +437,27 @@ export function AgentProjectWorkspaceScreen({
         })}
       </ScrollView>
 
-      <ConversationSection title="Project chats" count={workspace.projectThreads.items.length}>
-        {workspace.projectThreads.items.length === 0 ? (
-          <Text selectable style={styles.emptyText}>No project-level conversations yet.</Text>
-        ) : null}
-        {workspace.projectThreads.items.map((thread) => (
-          <ConversationRow key={thread.id} thread={thread} onPress={() => openThread(thread)} />
-        ))}
-      </ConversationSection>
+      {canShowKanban ? (
+        <AgentProjectViewModeControl viewMode={selection.viewMode} onChange={changeViewMode} />
+      ) : null}
 
-      <View style={styles.taskList}>
-        <Text selectable style={styles.sectionHeading}>Tasks</Text>
-        {workspace.tasks.items.length === 0 ? (
-          <Text selectable style={styles.emptyText}>No tasks are available in this project.</Text>
-        ) : null}
-        {workspace.tasks.items.map((task) => {
-          const threads = taskThreads(workspace, task.id);
-          return (
-            <View
-              key={task.id}
-              accessible
-              accessibilityLabel={`${task.title}, ${countLabel(task.threadCount, "conversation")}`}
-              style={styles.taskCard}
-            >
-              <View style={styles.taskHeader}>
-                <View style={styles.taskHeaderText}>
-                  <Text selectable style={styles.rowTitle}>{task.title}</Text>
-                  <Text selectable style={styles.rowSubtitle}>
-                    {countLabel(task.threadCount, "conversation")} · {task.status.replace(/_/g, " ")}
-                  </Text>
-                </View>
-                {canCreateConversations ? <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`New conversation for ${task.title}`}
-                  onPress={() => onNewConversation({ projectId: workspace.project.id, taskId: task.id })}
-                  style={styles.secondaryButton}
-                >
-                  <Ionicons name="add" size={16} color={theme.colors.forest} />
-                </Pressable> : null}
-              </View>
-              {threads.length === 0 ? (
-                <Text selectable style={styles.emptyText}>No conversations for this task.</Text>
-              ) : null}
-              {threads.map((thread) => (
-                <ConversationRow key={thread.id} thread={thread} onPress={() => openThread(thread)} />
-              ))}
-            </View>
-          );
-        })}
-      </View>
+      {selection.viewMode === "kanban" && canShowKanban ? (
+        <AgentProjectKanban
+          workspace={workspace}
+          tablet={tablet}
+          canCreateConversations={canCreateConversations}
+          onOpenThread={openThread}
+          onNewConversation={(taskId) => onNewConversation({ projectId: workspace.project.id, taskId })}
+        />
+      ) : (
+        <AgentProjectConversation
+          workspace={workspace}
+          canCreateConversations={canCreateConversations}
+          onOpenThread={openThread}
+          onNewConversation={(taskId) => onNewConversation({ projectId: workspace.project.id, taskId })}
+        />
+      )}
+
       {canLoadMore ? (
         <Pressable
           accessibilityRole="button"
@@ -430,69 +467,24 @@ export function AgentProjectWorkspaceScreen({
           onPress={() => void loadMore()}
           style={styles.retryButton}
         >
-          {loadingMore ? <ActivityIndicator color={theme.colors.primaryForeground} /> : <Text style={styles.retryButtonText}>Load more</Text>}
+          {loadingMore ? (
+            <ActivityIndicator color={theme.colors.primaryForeground} />
+          ) : (
+            <Text style={styles.retryButtonText}>Load more</Text>
+          )}
         </Pressable>
       ) : null}
     </ScrollView>
   );
 }
 
-export function taskThreads(workspace: ProjectAgentWorkspace, taskId: string): AgentThreadSummary[] {
-  return workspace.taskThreads.items.filter((thread) => thread.taskId === taskId);
-}
-
-function ConversationSection({
-  title,
-  count,
-  children,
-}: {
-  title: string;
-  count: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <View style={styles.section}>
-      <View style={styles.sectionTitleRow}>
-        <Text selectable style={styles.sectionHeading}>{title}</Text>
-        <Text selectable style={styles.countText}>{count}</Text>
-      </View>
-      {children}
-    </View>
-  );
-}
-
-function ConversationRow({ thread, onPress }: { thread: AgentThreadSummary; onPress: () => void }) {
-  const { theme } = useUnistyles();
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Open conversation ${thread.title}`}
-      onPress={onPress}
-      style={({ pressed }) => [styles.threadRow, pressed ? styles.pressed : null]}
-    >
-      <View style={styles.threadIcon}>
-        <Ionicons name="chatbubble-ellipses-outline" size={17} color={theme.colors.moss} />
-      </View>
-      <View style={styles.threadText}>
-        <Text selectable numberOfLines={1} style={styles.rowTitle}>{thread.title}</Text>
-        <Text selectable style={styles.rowSubtitle}>{thread.providerId} · {thread.status.replace(/_/g, " ")}</Text>
-      </View>
-      {thread.attention && thread.attention !== "none" ? (
-        <View style={styles.attentionDot} />
-      ) : null}
-      <Ionicons name="chevron-forward" size={17} color={theme.colors.mutedForeground} />
-    </Pressable>
-  );
-}
-
 function projectWorkspaceCapabilitiesEnabled(summary: RuntimeSummary): boolean {
-  const enabled = (id: "codingAgentsProjectWorkspace" | "codingAgentsConversationView") =>
-    summary.capabilities.some((capability) => capability.id === id && capability.enabled);
-  return enabled("codingAgentsProjectWorkspace") && enabled("codingAgentsConversationView");
+  return runtimeCapabilityEnabled(summary, "codingAgentsProjectWorkspace")
+    && runtimeCapabilityEnabled(summary, "codingAgentsConversationView");
 }
 
-function runtimeCapabilityEnabled(summary: RuntimeSummary, id: RuntimeSummary["capabilities"][number]["id"]): boolean {
-  return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
+function kanbanViewEnabled(summary: RuntimeSummary): boolean {
+  return runtimeCapabilityEnabled(summary, "codingAgentsKanbanView");
 }
 
 function setHydrationFailure(
@@ -513,10 +505,14 @@ function setHydrationFailure(
   setState({ status: "error", message });
 }
 
-function includeWorkspaceProject(summary: RuntimeSummary, workspace: ProjectAgentWorkspace): RuntimeSummary {
-  const items = [...summary.projects.items.filter((project) => project.id !== workspace.project.id), workspace.project]
-    .slice(-summary.projects.limit);
-  return { ...summary, projects: { ...summary.projects, items } };
+async function persistSelection(selection: AgentWorkspaceState): Promise<void> {
+  try {
+    await saveAgentWorkspaceState(selection);
+  } catch (error: unknown) {
+    console.warn("[mobile] agent workspace selection could not be saved", {
+      name: error instanceof Error ? error.name : "Unknown",
+    });
+  }
 }
 
 function workspaceHasNextPage(workspace: ProjectAgentWorkspace): boolean {
@@ -527,7 +523,9 @@ function workspaceHasNextPage(workspace: ProjectAgentWorkspace): boolean {
   );
 }
 
-function nextWorkspacePageOptions(workspace: ProjectAgentWorkspace): CodingAgentProjectWorkspaceOptions | null {
+function nextWorkspacePageOptions(
+  workspace: ProjectAgentWorkspace,
+): CodingAgentProjectWorkspaceOptions | null {
   const options: CodingAgentProjectWorkspaceOptions = { projectId: workspace.project.id };
   if (workspace.tasks.hasMore && workspace.tasks.nextCursor) {
     options.taskCursor = workspace.tasks.nextCursor;
@@ -544,13 +542,21 @@ function nextWorkspacePageOptions(workspace: ProjectAgentWorkspace): CodingAgent
   return Object.keys(options).length > 1 ? options : null;
 }
 
-function mergeWorkspacePage(current: ProjectAgentWorkspace, page: ProjectAgentWorkspace, options: CodingAgentProjectWorkspaceOptions): ProjectAgentWorkspace {
+function mergeWorkspacePage(
+  current: ProjectAgentWorkspace,
+  page: ProjectAgentWorkspace,
+  options: CodingAgentProjectWorkspaceOptions,
+): ProjectAgentWorkspace {
   return {
     ...current,
     project: page.project,
     tasks: options.taskCursor ? mergeWorkspaceList(current.tasks, page.tasks) : current.tasks,
-    projectThreads: options.projectThreadCursor ? mergeWorkspaceList(current.projectThreads, page.projectThreads) : current.projectThreads,
-    taskThreads: options.taskThreadCursor ? mergeWorkspaceList(current.taskThreads, page.taskThreads) : current.taskThreads,
+    projectThreads: options.projectThreadCursor
+      ? mergeWorkspaceList(current.projectThreads, page.projectThreads)
+      : current.projectThreads,
+    taskThreads: options.taskThreadCursor
+      ? mergeWorkspaceList(current.taskThreads, page.taskThreads)
+      : current.taskThreads,
     updatedAt: page.updatedAt,
   };
 }
@@ -563,19 +569,10 @@ function mergeWorkspaceList<T extends { id: string }>(
   for (const item of page.items) byId.set(item.id, item);
   const items = [...byId.values()].slice(0, MAX_ACCUMULATED_WORKSPACE_ITEMS);
   const hasMore = page.hasMore && items.length < MAX_ACCUMULATED_WORKSPACE_ITEMS;
-  return { items, hasMore, ...(hasMore && page.nextCursor ? { nextCursor: page.nextCursor } : {}), limit: page.limit };
-}
-
-async function persistSelection(selection: AgentWorkspaceState): Promise<void> {
-  try {
-    await saveAgentWorkspaceState(selection);
-  } catch (error: unknown) {
-    console.warn("[mobile] agent workspace selection could not be saved", {
-      name: error instanceof Error ? error.name : "Unknown",
-    });
-  }
-}
-
-function countLabel(count: number, label: string): string {
-  return `${count} ${label}${count === 1 ? "" : "s"}`;
+  return {
+    items,
+    hasMore,
+    ...(hasMore && page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    limit: page.limit,
+  };
 }

@@ -158,6 +158,26 @@ Manual terminal checks on a phone:
 5. Leave and reopen Terminal, then continue the running session.
 6. End the session and confirm the resume card disappears or shows the safe recovery message.
 
+## Coding-Agent Project Workspace Validation
+
+Automated mobile checks cover the gateway-projected project/task/conversation model and both project views:
+
+```bash
+pnpm --dir apps/mobile exec jest --runInBand __tests__/agent-workspace-state.test.ts __tests__/agent-project-workspace-screen.test.tsx __tests__/agent-project-route.test.tsx __tests__/agent-project-board-route.test.tsx __tests__/agent-thread-screen.test.tsx
+pnpm --dir apps/mobile exec tsc --noEmit
+pnpm --dir apps/mobile run lint
+```
+
+Manual checks in the SDK 57 dev client:
+
+1. Open Agents, select a project, and confirm its project-level chats and task groups come from the live gateway projection.
+2. Open two different conversations attached to one task and confirm each route retains its exact project, task, and thread identity.
+3. Send a follow-up and confirm it stays in the current conversation; retry a busy response without creating a replacement thread.
+4. Switch between Conversation and Kanban and confirm the selected project/task/thread stays stable.
+5. Confirm Kanban uses To do, Running, Waiting, Blocked, and Complete sections; archived tasks stay hidden and mixed thread states do not move a task.
+6. Check the phone layout in portrait and landscape, then verify the wrapped board at tablet width.
+7. Background and reopen the app, reconnect the gateway, and confirm stale references reconcile to the live project workspace.
+
 ## Full Mobile Readiness Gates
 
 Use these before handing the branch to a real-device tester:

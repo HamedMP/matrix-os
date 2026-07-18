@@ -8,6 +8,7 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
 }));
 
 import React from "react";
+import * as ReactNative from "react-native";
 import { AppState } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
@@ -23,6 +24,7 @@ const summary = {
   capabilities: [
     { id: "codingAgentsProjectWorkspace", enabled: true },
     { id: "codingAgentsConversationView", enabled: true },
+    { id: "codingAgentsKanbanView", enabled: true },
     { id: "codingAgentsThreadCreate", enabled: true },
   ],
   providers: [],
@@ -195,10 +197,17 @@ describe("mobile project-first coding-agent workspace", () => {
     );
   });
 
-  it("opens a valid routed project beyond the summary page", async () => {
+  it("opens a valid routed project that is beyond the bounded summary page", async () => {
     const requestedWorkspace: ProjectAgentWorkspace = {
       ...workspace,
-      project: { ...workspace.project, id: "older-project", label: "Older Project" },
+      project: {
+        id: "older-project",
+        label: "Older Project",
+        status: "available",
+        taskCount: 0,
+        threadCount: 0,
+        attentionCount: 0,
+      },
       tasks: { items: [], hasMore: false, limit: 100 },
       projectThreads: { items: [], hasMore: false, limit: 100 },
       taskThreads: { items: [], hasMore: false, limit: 100 },
@@ -206,19 +215,56 @@ describe("mobile project-first coding-agent workspace", () => {
     const client = clientFixture();
     client.getCodingAgentRuntimeSummary.mockResolvedValue({
       ok: true,
-      summary: { ...summary, projects: { ...summary.projects, hasMore: true, nextCursor: "website" } },
+      summary: {
+        ...summary,
+        projects: { ...summary.projects, hasMore: true, nextCursor: "website" },
+      },
     });
     client.getCodingAgentProjectWorkspace.mockResolvedValue({ ok: true, workspace: requestedWorkspace });
     const onOpenProject = jest.fn();
 
-    render(<AgentProjectWorkspaceScreen client={client as never} connectionState="connected" requestedProjectId="older-project" onOpenProject={onOpenProject} onOpenThread={jest.fn()} onNewConversation={jest.fn()} />);
+    render(
+      <AgentProjectWorkspaceScreen
+        client={client as never}
+        connectionState="connected"
+        requestedProjectId="older-project"
+        onOpenProject={onOpenProject}
+        onOpenThread={jest.fn()}
+        onNewConversation={jest.fn()}
+      />,
+    );
 
     expect(await screen.findByRole("button", { name: "Open project Older Project" })).toBeTruthy();
     expect(client.getCodingAgentProjectWorkspace).toHaveBeenCalledWith({ projectId: "older-project" });
     expect(onOpenProject).not.toHaveBeenCalled();
   });
 
-  it("loads and merges bounded project workspace cursors", async () => {
+  it("falls back to a live summary project only when the routed project endpoint rejects it", async () => {
+    const client = clientFixture();
+    client.getCodingAgentProjectWorkspace
+      .mockResolvedValueOnce({ ok: false, error: "Project workspace unavailable" })
+      .mockResolvedValueOnce({ ok: true, workspace });
+    const onOpenProject = jest.fn();
+
+    render(
+      <AgentProjectWorkspaceScreen
+        client={client as never}
+        connectionState="connected"
+        requestedProjectId="stale-project"
+        onOpenProject={onOpenProject}
+        onOpenThread={jest.fn()}
+        onNewConversation={jest.fn()}
+      />,
+    );
+
+    expect(await screen.findByText("Project audit")).toBeTruthy();
+    expect(screen.getByText("The previous project was unavailable. Showing a live project instead.")).toBeTruthy();
+    expect(client.getCodingAgentProjectWorkspace).toHaveBeenNthCalledWith(1, { projectId: "stale-project" });
+    expect(client.getCodingAgentProjectWorkspace).toHaveBeenNthCalledWith(2, { projectId: "matrix-os" });
+    expect(onOpenProject).toHaveBeenCalledWith("matrix-os");
+  });
+
+  it("loads and merges every bounded workspace list from gateway cursors", async () => {
     const firstPage: ProjectAgentWorkspace = {
       ...workspace,
       tasks: { ...workspace.tasks, hasMore: true, nextCursor: "task_auth" },
@@ -227,16 +273,55 @@ describe("mobile project-first coding-agent workspace", () => {
     };
     const secondPage: ProjectAgentWorkspace = {
       ...workspace,
-      tasks: { items: [{ ...workspace.tasks.items[0], id: "task_release", title: "Ship release" }], hasMore: false, limit: 100 },
-      projectThreads: { items: [{ ...workspace.projectThreads.items[0], id: "thread_docs", title: "Write release notes" }], hasMore: false, limit: 100 },
-      taskThreads: { items: [{ ...workspace.taskThreads.items[0], id: "thread_ship", taskId: "task_release", title: "Publish candidate" }], hasMore: false, limit: 100 },
+      tasks: {
+        items: [{
+          ...workspace.tasks.items[0],
+          id: "task_release",
+          title: "Ship release",
+          order: 1,
+          threadCount: 1,
+          activeThreadCount: 0,
+          attentionCount: 0,
+        }],
+        hasMore: false,
+        limit: 100,
+      },
+      projectThreads: {
+        items: [{
+          ...workspace.projectThreads.items[0],
+          id: "thread_docs",
+          title: "Write release notes",
+        }],
+        hasMore: false,
+        limit: 100,
+      },
+      taskThreads: {
+        items: [{
+          ...workspace.taskThreads.items[0],
+          id: "thread_ship",
+          taskId: "task_release",
+          title: "Publish candidate",
+        }],
+        hasMore: false,
+        limit: 100,
+      },
     };
     const client = clientFixture();
     client.getCodingAgentProjectWorkspace
       .mockResolvedValueOnce({ ok: true, workspace: firstPage })
       .mockResolvedValueOnce({ ok: true, workspace: secondPage });
 
-    render(<AgentProjectWorkspaceScreen client={client as never} connectionState="connected" requestedProjectId="matrix-os" onOpenProject={jest.fn()} onOpenThread={jest.fn()} onNewConversation={jest.fn()} />);
+    render(
+      <AgentProjectWorkspaceScreen
+        client={client as never}
+        connectionState="connected"
+        requestedProjectId="matrix-os"
+        onOpenProject={jest.fn()}
+        onOpenThread={jest.fn()}
+        onNewConversation={jest.fn()}
+      />,
+    );
+
     fireEvent.press(await screen.findByRole("button", { name: "Load more project workspace" }));
 
     expect(await screen.findByText("Ship release")).toBeTruthy();
@@ -251,19 +336,37 @@ describe("mobile project-first coding-agent workspace", () => {
       taskThreadCursor: "thread_fix",
       taskThreadLimit: 100,
     });
+    expect(screen.queryByRole("button", { name: "Load more project workspace" })).toBeNull();
   });
 
-  it("hides creation affordances when thread creation is disabled", async () => {
+  it("hides all chat creation affordances when the runtime disables thread creation", async () => {
     const client = clientFixture();
     client.getCodingAgentRuntimeSummary.mockResolvedValue({
       ok: true,
-      summary: { ...summary, capabilities: summary.capabilities.filter(({ id }) => id !== "codingAgentsThreadCreate") },
+      summary: {
+        ...summary,
+        capabilities: summary.capabilities.filter(({ id }) => id !== "codingAgentsThreadCreate"),
+      },
     });
-    render(<AgentProjectWorkspaceScreen client={client as never} connectionState="connected" requestedProjectId="matrix-os" onOpenProject={jest.fn()} onOpenThread={jest.fn()} onNewConversation={jest.fn()} />);
+
+    render(
+      <AgentProjectWorkspaceScreen
+        client={client as never}
+        connectionState="connected"
+        requestedProjectId="matrix-os"
+        onOpenProject={jest.fn()}
+        onOpenThread={jest.fn()}
+        onNewConversation={jest.fn()}
+      />,
+    );
 
     await screen.findByText("Project audit");
     expect(screen.queryByRole("button", { name: "New project conversation" })).toBeNull();
     expect(screen.queryByRole("button", { name: "New conversation for Repair authentication" })).toBeNull();
+
+    fireEvent.press(screen.getByRole("button", { name: "Show Kanban" }));
+    expect(await screen.findByTestId("kanban-phone-board")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "New Kanban conversation for Repair authentication" })).toBeNull();
   });
 
   it("restores safe selection, drops stale child references, and refreshes on foreground", async () => {
@@ -429,5 +532,212 @@ describe("mobile project-first coding-agent workspace", () => {
     );
 
     await waitFor(() => expect(client.getCodingAgentProjectWorkspace).toHaveBeenCalledTimes(2));
+  });
+
+  it("preserves selected project, task, and thread while switching Conversation and Kanban", async () => {
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify({
+      selectedRuntimeId: "rt_primary",
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_auth",
+      selectedThreadId: "thread_fix",
+      viewMode: "conversation",
+      updatedAt: "2026-07-10T13:00:00.000Z",
+    }));
+    const onViewModeChange = jest.fn();
+
+    render(
+      <AgentProjectWorkspaceScreen
+        client={clientFixture() as never}
+        connectionState="connected"
+        requestedProjectId="matrix-os"
+        onOpenProject={jest.fn()}
+        onOpenThread={jest.fn()}
+        onNewConversation={jest.fn()}
+        onViewModeChange={onViewModeChange}
+      />,
+    );
+
+    await screen.findByText("Project audit");
+    fireEvent.press(screen.getByRole("button", { name: "Show Kanban" }));
+
+    expect(await screen.findByTestId("kanban-phone-board")).toBeTruthy();
+    const kanbanSelection = JSON.parse(jest.mocked(AsyncStorage.setItem).mock.calls.at(-1)?.[1] ?? "{}");
+    expect(kanbanSelection).toMatchObject({
+      selectedProjectId: "matrix-os",
+      selectedTaskId: "task_auth",
+      selectedThreadId: "thread_fix",
+      viewMode: "kanban",
+    });
+    expect(onViewModeChange).toHaveBeenCalledWith("kanban");
+
+    fireEvent.press(screen.getByRole("button", { name: "Show Conversation" }));
+    expect(await screen.findByText("Project chats")).toBeTruthy();
+    expect(onViewModeChange).toHaveBeenLastCalledWith("conversation");
+  });
+
+  it("renders canonical task columns and bounded aggregates without inferring status from threads", async () => {
+    const canonicalWorkspace: ProjectAgentWorkspace = {
+      ...workspace,
+      tasks: {
+        ...workspace.tasks,
+        items: [{ ...workspace.tasks.items[0], status: "todo" }],
+      },
+    };
+    const client = clientFixture();
+    client.getCodingAgentProjectWorkspace.mockResolvedValue({ ok: true, workspace: canonicalWorkspace });
+
+    render(
+      <AgentProjectWorkspaceScreen
+        client={client as never}
+        connectionState="connected"
+        requestedProjectId="matrix-os"
+        onOpenProject={jest.fn()}
+        onOpenThread={jest.fn()}
+        onNewConversation={jest.fn()}
+        onViewModeChange={jest.fn()}
+      />,
+    );
+
+    await screen.findByText("Project audit");
+    fireEvent.press(screen.getByRole("button", { name: "Show Kanban" }));
+
+    expect(await screen.findByLabelText("To do column, 1 task")).toBeTruthy();
+    expect(screen.getByLabelText("Running column, 0 tasks")).toBeTruthy();
+    expect(screen.getByLabelText("Repair authentication, todo, 2 conversations, 1 active, 1 needs attention")).toBeTruthy();
+    expect(screen.queryByLabelText(/Archived column/)).toBeNull();
+  });
+
+  it("opens every attached task conversation from Kanban with exact identity", async () => {
+    const onOpenThread = jest.fn();
+    render(
+      <AgentProjectWorkspaceScreen
+        client={clientFixture() as never}
+        connectionState="connected"
+        requestedProjectId="matrix-os"
+        onOpenProject={jest.fn()}
+        onOpenThread={onOpenThread}
+        onNewConversation={jest.fn()}
+        onViewModeChange={jest.fn()}
+      />,
+    );
+
+    await screen.findByText("Project audit");
+    fireEvent.press(screen.getByRole("button", { name: "Show Kanban" }));
+    fireEvent.press(await screen.findByLabelText("Open Kanban conversation Plan repair"));
+    expect(onOpenThread).toHaveBeenCalledWith({
+      projectId: "matrix-os",
+      taskId: "task_auth",
+      threadId: "thread_plan",
+    });
+
+    fireEvent.press(screen.getByRole("button", { name: "Show Kanban" }));
+    fireEvent.press(await screen.findByLabelText("Open Kanban conversation Implement repair"));
+    expect(onOpenThread).toHaveBeenLastCalledWith({
+      projectId: "matrix-os",
+      taskId: "task_auth",
+      threadId: "thread_fix",
+    });
+  });
+
+  it("uses a Kanban route as an initial seed without overriding Conversation after foregrounding", async () => {
+    let appStateListener: ((state: string) => void) | undefined;
+    jest.spyOn(AppState, "addEventListener").mockImplementation((_, listener) => {
+      appStateListener = listener as (state: string) => void;
+      return { remove: jest.fn() } as never;
+    });
+    const client = clientFixture();
+
+    render(
+      <AgentProjectWorkspaceScreen
+        client={client as never}
+        connectionState="connected"
+        requestedProjectId="matrix-os"
+        onOpenProject={jest.fn()}
+        onOpenThread={jest.fn()}
+        onNewConversation={jest.fn()}
+        onViewModeChange={jest.fn()}
+        routeViewMode="kanban"
+      />,
+    );
+
+    fireEvent.press(await screen.findByLabelText("Open Kanban conversation Plan repair"));
+    expect(await screen.findByText("Project chats")).toBeTruthy();
+
+    await act(async () => {
+      appStateListener?.("active");
+    });
+    await waitFor(() => expect(client.getCodingAgentProjectWorkspace).toHaveBeenCalledTimes(2));
+
+    expect(screen.getByText("Project chats")).toBeTruthy();
+    expect(screen.queryByTestId("kanban-phone-board")).toBeNull();
+  });
+
+  it("keeps the Kanban route seed when foreground hydration races the initial safe-reference save", async () => {
+    let appStateListener: ((state: string) => void) | undefined;
+    jest.spyOn(AppState, "addEventListener").mockImplementation((_, listener) => {
+      appStateListener = listener as (state: string) => void;
+      return { remove: jest.fn() } as never;
+    });
+    let resolveFirstSave: (() => void) | undefined;
+    jest.mocked(AsyncStorage.setItem)
+      .mockImplementationOnce(() => new Promise<void>((resolve) => {
+        resolveFirstSave = resolve;
+      }))
+      .mockResolvedValue(undefined);
+    const client = clientFixture();
+
+    render(
+      <AgentProjectWorkspaceScreen
+        client={client as never}
+        connectionState="connected"
+        requestedProjectId="matrix-os"
+        onOpenProject={jest.fn()}
+        onOpenThread={jest.fn()}
+        onNewConversation={jest.fn()}
+        onViewModeChange={jest.fn()}
+        routeViewMode="kanban"
+      />,
+    );
+
+    await waitFor(() => expect(AsyncStorage.setItem).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      appStateListener?.("active");
+    });
+    await waitFor(() => expect(client.getCodingAgentProjectWorkspace).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      resolveFirstSave?.();
+    });
+
+    expect(await screen.findByTestId("kanban-phone-board")).toBeTruthy();
+    const latestSelection = JSON.parse(
+      jest.mocked(AsyncStorage.setItem).mock.calls.at(-1)?.[1] ?? "{}",
+    );
+    expect(latestSelection.viewMode).toBe("kanban");
+  });
+
+  it("uses the tablet Kanban board layout at tablet widths", async () => {
+    jest.spyOn(ReactNative, "useWindowDimensions").mockReturnValue({
+      width: 1024,
+      height: 768,
+      scale: 2,
+      fontScale: 1,
+    });
+
+    render(
+      <AgentProjectWorkspaceScreen
+        client={clientFixture() as never}
+        connectionState="connected"
+        requestedProjectId="matrix-os"
+        onOpenProject={jest.fn()}
+        onOpenThread={jest.fn()}
+        onNewConversation={jest.fn()}
+        onViewModeChange={jest.fn()}
+      />,
+    );
+
+    await screen.findByText("Project audit");
+    fireEvent.press(screen.getByRole("button", { name: "Show Kanban" }));
+
+    expect(await screen.findByTestId("kanban-tablet-board")).toBeTruthy();
   });
 });
