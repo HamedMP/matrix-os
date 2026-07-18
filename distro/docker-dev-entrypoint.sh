@@ -16,7 +16,9 @@ ensure_deps() {
     return 0
   fi
   echo "[matrix-os-dev] Installing dependencies (lockfile changed)..."
-  pnpm install --frozen-lockfile
+  # Root installs must remain self-contained under /app/node_modules. Global
+  # store links point into /root and become inaccessible after su-exec.
+  pnpm install --frozen-lockfile --config.enableGlobalVirtualStore=false
   md5sum pnpm-lock.yaml > node_modules/.pnpm-lock-hash 2>/dev/null || true
 }
 ensure_deps
@@ -185,7 +187,7 @@ if [ "${MATRIX_DEV_DEP_WATCH:-1}" != "0" ]; then
       sleep 5
       md5sum --status -c node_modules/.pnpm-lock-hash 2>/dev/null && continue
       echo "[matrix-os-dev] Lockfile changed -- reinstalling dependencies..."
-      if pnpm install --frozen-lockfile; then
+      if pnpm install --frozen-lockfile --config.enableGlobalVirtualStore=false; then
         md5sum pnpm-lock.yaml > node_modules/.pnpm-lock-hash 2>/dev/null || true
         echo "[matrix-os-dev] Dependencies synced; HMR will pick up changes."
       else

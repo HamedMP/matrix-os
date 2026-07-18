@@ -132,6 +132,15 @@ describe('CI workflows', () => {
     }
   });
 
+  it('keeps dev-container dependency links accessible after dropping root', () => {
+    const root = process.cwd();
+    const entrypoint = readFileSync(join(root, 'distro/docker-dev-entrypoint.sh'), 'utf8');
+    const installs = entrypoint.match(/pnpm install --frozen-lockfile[^\n]*/g) ?? [];
+
+    expect(installs).toHaveLength(2);
+    expect(installs.every((install) => install.includes('--config.enableGlobalVirtualStore=false'))).toBe(true);
+  });
+
   it('runs sync-client CI only on the supported Node 20 runtime', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
