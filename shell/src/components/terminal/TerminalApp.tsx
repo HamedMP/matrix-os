@@ -929,9 +929,15 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
             >
               <div
                 className="flex flex-1 min-h-0 min-w-0 flex-col"
-                role="tabpanel"
-                id="terminal-tabpanel"
-                aria-labelledby={`terminal-tab-${activeTab.id}`}
+                // Tab linkage only exists while the design tab strip renders
+                // (OS designs, desktop); otherwise the ids would dangle.
+                {...(terminalDesign && !mobile
+                  ? {
+                      role: "tabpanel",
+                      id: "terminal-tabpanel",
+                      "aria-labelledby": `terminal-tab-${activeTab.id}`,
+                    }
+                  : {})}
               >
                 <PaneGrid
                   paneTree={activeTab.paneTree}
