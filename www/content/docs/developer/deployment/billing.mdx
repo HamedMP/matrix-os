@@ -29,6 +29,10 @@ Machine resize uses the same entitlement allowlist as provisioning. A running VP
 
 Extra machines, storage, and future Hetzner-backed capacity should be modeled as separate Stripe Prices. Matrix maps those prices to entitlement fields such as additional runtime slots or allowed machine capacity. Do not hardcode Hetzner prices into Stripe plan names; keep provider cost data in the Matrix runtime catalog so Hetzner price changes can be updated without renaming public plans.
 
+Signed-in customers manage computers at `/runtime`. The page lists every computer from the platform inventory, including the server-provided open URL, and lets customers name and build another computer without replacing existing data. Preview machines remain visible but do not consume paid customer capacity. Each customer computer has independent files, apps, and owner data.
+
+When the current entitlement already has an unused runtime slot, setup proceeds directly to provisioning. At full capacity, Stripe customers enter a focused Customer Portal subscription-update flow for the existing subscription. Matrix waits for the signed subscription webhook to increase `maxRuntimeSlots` before provisioning; the browser redirect alone never grants capacity. Internally managed accounts are directed to their Matrix administrator instead of Stripe.
+
 ## Stripe Setup
 
 Create recurring monthly and yearly Stripe Prices for the three plans, plus add-on Prices as needed. Configure promotion codes in Stripe for launch discounts, time-limited percentage discounts, pay-X-get-Y campaigns, and referrals.
@@ -43,7 +47,8 @@ Required platform environment:
 | `STRIPE_PRICE_MATRIX_STARTER_MONTHLY` / `STRIPE_PRICE_MATRIX_STARTER_ANNUAL` | Starter Price IDs. |
 | `STRIPE_PRICE_MATRIX_BUILDER_MONTHLY` / `STRIPE_PRICE_MATRIX_BUILDER_ANNUAL` | Builder Price IDs. |
 | `STRIPE_PRICE_MATRIX_MAX_MONTHLY` / `STRIPE_PRICE_MATRIX_MAX_ANNUAL` | Max Price IDs. |
-| `STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY` / `STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL` | Optional extra-machine add-on Price IDs. |
+| `STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY` / `STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL` | Extra-machine add-on Price IDs. |
+| `STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_MONTHLY` / `STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_ANNUAL` | Focused portal configuration IDs that expose only the matching monthly or annual extra-machine update choices. Required for customer add-computer billing. |
 | `PLATFORM_PUBLIC_URL` | Used to build checkout and portal return URLs. |
 
 Production Cloud Run deployments read the Price IDs from Secret Manager. The
@@ -59,6 +64,8 @@ required secret names are:
 | `STRIPE_PRICE_MATRIX_MAX_ANNUAL` | `stripe-price-matrix-max-annual` |
 | `STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY` | `stripe-price-extra-runtime-monthly` |
 | `STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL` | `stripe-price-extra-runtime-annual` |
+| `STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_MONTHLY` | `stripe-portal-configuration-extra-runtime-monthly` |
+| `STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_ANNUAL` | `stripe-portal-configuration-extra-runtime-annual` |
 
 The signed-in pre-VPS path defaults to Builder monthly checkout. Missing price
 secret access should block deployment rather than letting new users reach a
@@ -70,4 +77,4 @@ Webhook events to subscribe:
 - `customer.subscription.updated`
 - `customer.subscription.deleted`
 
-Stripe Checkout uses automatic tax and promotion codes. The customer portal should remain enabled so users can update payment methods, apply supported coupons, and manage subscriptions through Stripe-hosted flows.
+Stripe Checkout uses automatic tax and promotion codes. Keep the general customer portal enabled for account management. Create separate monthly and annual extra-runtime portal configurations with subscription updates enabled and only the matching add-on choices exposed; Matrix selects the configuration, subscription, and interval server-side.

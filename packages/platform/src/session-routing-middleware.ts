@@ -12,7 +12,6 @@ import {
   getContainer,
   getRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
-  listActiveUserMachinesByClerkId,
   updateLastActive,
 } from './db.js';
 import { issueSyncJwt } from './sync-jwt.js';
@@ -45,7 +44,6 @@ import {
   CLERK_SCRIPT_ORIGIN,
   getAuthPage,
   getNoContainerPage,
-  getRuntimePickerPage,
   getVpsBootPage,
 } from './auth-pages.js';
 import { appDomainServiceWorkerResponse } from './app-domain-service-worker.js';
@@ -55,9 +53,6 @@ import {
   NATIVE_APP_SESSION_PROXY_HEADER,
   buildCodeSessionCookie,
 } from './session-cookies.js';
-import {
-  buildRuntimePickerMachines,
-} from './runtime-probes.js';
 import { HANDLE_PATTERN, describeError } from './platform-route-utils.js';
 import {
   APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS,
@@ -360,14 +355,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const requestRuntimeSlot = runtimeSelection.source === 'query'
       ? runtimeSelection.slot
       : cookieRuntimeSlot ?? runtimeSelection.slot;
-    let singleMachineRuntimeSlot: string | null = null;
 
     const isGatewayPath = isAppDomain && isAppDomainGatewayPath(path);
-    const allowAuthShellUnroutedIdentity = !legacyContainerRoutingEnabled && shouldProxyAuthShellForUnroutedUser({
+    const allowAuthShellUnroutedIdentity = shouldProxyAuthShellForUnroutedUser({
       isAppDomain,
       method: c.req.method,
       path,
-    });
+    }) && (!legacyContainerRoutingEnabled || path === '/runtime');
     const publishableKey = appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
     const authMode = path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
     const requestedRouteHandle = !explicitVmRoute && isAppDomain
@@ -605,30 +599,15 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       });
     }
 
-    const shouldOfferRuntimePicker =
+    const shouldServeRuntimeManager =
       isAppDomain &&
       identity.userId &&
-      identity.source !== 'mobile-session' &&
-      identity.source !== 'static-route' &&
       path === '/runtime';
-    if (shouldOfferRuntimePicker) {
-      const machines = await listActiveUserMachinesByClerkId(db, identity.userId);
-      if (machines.length === 0 && path === '/runtime') {
-        return c.redirect('/');
-      }
-      if (path === '/runtime' || machines.length > 1) {
-        const pickerMachines = await buildRuntimePickerMachines(machines, platformSecret, customerVpsProxyDispatcher);
-        applyNoStoreHeaders(c);
-        c.header('X-Frame-Options', 'DENY');
-        c.header('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'none'");
-        return c.html(getRuntimePickerPage({ machines: pickerMachines, selectedHandle: identity.handle }));
-      }
-      if (machines.length === 1 && runtimeSelection.source === 'default') {
-        singleMachineRuntimeSlot = machines[0]!.runtimeSlot;
-      }
+    if (shouldServeRuntimeManager) {
+      return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
     }
 
-    let runtimeSlot = identity.runtimeSlot ?? singleMachineRuntimeSlot ?? requestRuntimeSlot;
+    let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
     let requestedActiveMachine: UserMachineRecord | undefined;
     let runningMachine = identity.userId
       ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)

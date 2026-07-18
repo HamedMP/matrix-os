@@ -12,6 +12,8 @@ describe('CI workflows', () => {
     ['STRIPE_PRICE_MATRIX_MAX_ANNUAL', 'stripe-price-matrix-max-annual'],
     ['STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY', 'stripe-price-extra-runtime-monthly'],
     ['STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL', 'stripe-price-extra-runtime-annual'],
+    ['STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_MONTHLY', 'stripe-portal-configuration-extra-runtime-monthly'],
+    ['STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_ANNUAL', 'stripe-portal-configuration-extra-runtime-annual'],
   ] as const;
 
   it('exposes a stable aggregate CI result job for branch protection', () => {

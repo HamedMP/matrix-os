@@ -26,6 +26,8 @@ const env = {
   STRIPE_PRICE_MATRIX_MAX_ANNUAL: 'price_max_annual',
   STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY: 'price_extra_runtime_monthly',
   STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL: 'price_extra_runtime_annual',
+  STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_MONTHLY: 'bpc_extra_runtime_monthly',
+  STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_ANNUAL: 'bpc_extra_runtime_annual',
   STRIPE_WEBHOOK_SECRET: 'whsec_test',
 };
 
@@ -478,9 +480,36 @@ describe('platform billing routes', () => {
         subscriptionId: 'sub_123',
         priceId: 'price_extra_runtime_annual',
         interval: 'annual',
+        configurationId: 'bpc_extra_runtime_annual',
         afterCompletionReturnUrl: 'https://app.matrix-os.com/runtime?new=1',
       },
     });
+  });
+
+  it('fails closed when the focused portal configuration for the matching interval is missing', async () => {
+    await upsertBillingCustomer(db, {
+      clerkUserId: 'user_123', stripeCustomerId: 'cus_123',
+      createdAt: '2026-05-30T00:00:00.000Z', updatedAt: '2026-05-30T00:00:00.000Z',
+    });
+    await upsertBillingEntitlement(db, {
+      clerkUserId: 'user_123', source: 'stripe', stripeSubscriptionId: 'sub_123',
+      stripePriceId: 'price_builder_annual', planSlug: 'matrix_builder', status: 'active',
+      maxRuntimeSlots: 1, includedRuntimeSlots: 1, addonRuntimeSlots: 0,
+      defaultServerType: 'cpx32', allowedServerTypes: ['cpx32'], gracePeriodEndsAt: null,
+      effectiveFrom: '2026-05-30T00:00:00.000Z', effectiveUntil: null,
+      updatedAt: '2026-05-30T00:00:00.000Z',
+    });
+    const { STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_ANNUAL: _omitted, ...missingConfigurationEnv } = env;
+    const app = createApp('user_123', missingConfigurationEnv);
+
+    const response = await app.request('/billing/portal', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ intent: 'add_computer', returnPath: '/runtime?new=1' }),
+    });
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ error: 'Billing unavailable', code: 'billing_unavailable' });
+    expect(stripe.createPortalSession).not.toHaveBeenCalled();
   });
 
   it('rejects invalid portal bodies and unsafe return paths without calling Stripe', async () => {
@@ -528,6 +557,26 @@ describe('platform billing routes', () => {
       error: 'Account managed internally',
       code: 'managed_account',
     });
+    expect(stripe.createPortalSession).not.toHaveBeenCalled();
+  });
+
+  it('identifies internally managed add-computer capacity without requiring a Stripe customer', async () => {
+    await upsertBillingOverride(db, {
+      id: 'override_internal', clerkUserId: 'user_123', planSlug: 'internal', status: 'active',
+      maxRuntimeSlots: 1, includedRuntimeSlots: 1, addonRuntimeSlots: 0,
+      defaultServerType: 'cpx52', allowedServerTypes: ['cpx52'], reason: 'managed',
+      createdBy: 'test', expiresAt: null, revokedAt: null,
+      createdAt: '2026-05-30T00:00:00.000Z',
+    });
+    const app = createApp();
+
+    const response = await app.request('/billing/portal', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ intent: 'add_computer', returnPath: '/runtime?new=1' }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ code: 'managed_account' });
     expect(stripe.createPortalSession).not.toHaveBeenCalled();
   });
 

@@ -106,7 +106,7 @@ export interface StripeBillingClient {
       subscriptionId: string;
       priceId: string;
       interval: MatrixBillingInterval;
-      configurationId?: string;
+      configurationId: string;
       afterCompletionReturnUrl: string;
     };
   }): Promise<{ url: string }>;
@@ -266,9 +266,6 @@ export function createBillingRoutes(options: {
       if (options.stripe.apiTimeoutMs > MAX_STRIPE_API_TIMEOUT_MS) {
         throw new Error('stripe_timeout_exceeds_budget');
       }
-      const customer = await getBillingCustomerByClerkUserId(options.db, clerkUserId);
-      if (!customer) return c.json({ error: 'Billing unavailable' }, 404);
-
       if (parsed.data.intent === 'add_computer') {
         const currentTime = now();
         const state = await getBillingEntitlementState(options.db, clerkUserId, currentTime.toISOString());
@@ -283,6 +280,8 @@ export function createBillingRoutes(options: {
         if (!entitlement?.stripeSubscriptionId || !entitlement.stripePriceId) {
           return c.json(BILLING_UNAVAILABLE_RESPONSE, 404);
         }
+        const customer = await getBillingCustomerByClerkUserId(options.db, clerkUserId);
+        if (!customer) return c.json({ error: 'Billing unavailable' }, 404);
         const priceEntry = loadStripePriceCatalog(env).priceToPlan.get(entitlement.stripePriceId);
         if (!priceEntry || priceEntry.kind !== 'base_plan') {
           return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
@@ -296,6 +295,7 @@ export function createBillingRoutes(options: {
         const configurationId = interval === 'annual'
           ? env.STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_ANNUAL
           : env.STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_MONTHLY;
+        if (!configurationId) return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
         const session = await options.stripe.createPortalSession({
           customerId: customer.stripeCustomerId,
           returnUrl,
@@ -304,13 +304,15 @@ export function createBillingRoutes(options: {
             subscriptionId: entitlement.stripeSubscriptionId,
             priceId,
             interval,
-            ...(configurationId ? { configurationId } : {}),
+            configurationId,
             afterCompletionReturnUrl: returnUrl,
           },
         });
         return c.json({ url: session.url }, 200);
       }
 
+      const customer = await getBillingCustomerByClerkUserId(options.db, clerkUserId);
+      if (!customer) return c.json({ error: 'Billing unavailable' }, 404);
       const session = await options.stripe.createPortalSession({
         customerId: customer.stripeCustomerId,
         returnUrl: resolveBillingReturnUrl(env, 'portal', parsed.data.returnPath),

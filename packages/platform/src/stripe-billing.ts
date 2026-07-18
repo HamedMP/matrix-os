@@ -63,7 +63,7 @@ export function createStripeBillingClient(options: {
         return_url: input.returnUrl,
         ...(input.flow
           ? {
-            ...(input.flow.configurationId ? { configuration: input.flow.configurationId } : {}),
+            configuration: input.flow.configurationId,
             flow_data: {
               type: input.flow.type,
               subscription_update: { subscription: input.flow.subscriptionId },

@@ -78,6 +78,7 @@ describe('platform/journey-routes', () => {
       const invalid = await app.request('/api/journey?runtimeSlot=Bad%20Slot!');
       expect(invalid.status).toBe(400);
       await expect(invalid.json()).resolves.toEqual({ error: 'Invalid request' });
+      expect((await app.request('/api/journey?runtimeSlot=studio-')).status).toBe(400);
     });
 
     it('503 when a journey dependency fails (no phase guessing)', async () => {
