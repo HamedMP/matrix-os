@@ -177,8 +177,11 @@ export class AgentSessionStateStore {
       const aliases = await this.readAliases();
       const target = this.resolveAlias(aliases, safeName);
       await this.unlinkIfPresent(this.snapshotPath(target));
-      for (const [alias, aliasTarget] of Object.entries(aliases)) {
-        if (alias === target || aliasTarget === target) delete aliases[alias];
+      const aliasesToDelete = Object.keys(aliases).filter((alias) => (
+        alias === target || this.resolveAlias(aliases, alias) === target
+      ));
+      for (const alias of aliasesToDelete) {
+        delete aliases[alias];
       }
       if (Object.keys(aliases).length > 0) {
         await this.writeAliases(aliases);

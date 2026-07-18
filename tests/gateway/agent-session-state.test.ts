@@ -134,6 +134,28 @@ describe("agent session state", () => {
     await expect(store.get("calm-otter")).resolves.toBeNull();
   });
 
+  it("removes every alias in a legacy multi-hop rename chain on delete", async () => {
+    const root = await tempRoot();
+    const store = new AgentSessionStateStore({ homePath: root });
+    await store.apply(event("turn-started", "2026-07-18T10:00:00.000Z"));
+    await store.rename("calm-otter", "bright-heron");
+
+    const aliasesPath = join(root, "system", "agent-sessions", "aliases.json");
+    await writeFile(aliasesPath, `${JSON.stringify({
+      version: 1,
+      aliases: {
+        "calm-otter": "swift-falcon",
+        "swift-falcon": "bright-heron",
+      },
+    })}\n`);
+
+    await store.delete("bright-heron");
+
+    await expect(readFile(aliasesPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(store.get("calm-otter")).resolves.toBeNull();
+    await expect(store.get("swift-falcon")).resolves.toBeNull();
+  });
+
   it("creates the state directory with owner-only access", async () => {
     const root = await tempRoot();
     await mkdir(join(root, "system"), { recursive: true });

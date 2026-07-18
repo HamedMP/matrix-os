@@ -187,6 +187,10 @@ describe("agent session bridge registration", () => {
     const piBridge = join(root, ".pi", "agent", "extensions", "matrix-session-metadata.ts");
     await expect(readFile(opencodeBridge, "utf8")).resolves.toContain(command);
     await expect(readFile(piBridge, "utf8")).resolves.toContain(command);
+    await expect(readFile(opencodeBridge, "utf8")).resolves.toContain(
+      'Buffer.byteLength(encoded, "utf8") <= 65536',
+    );
+    await expect(readFile(opencodeBridge, "utf8")).resolves.not.toContain(".slice(0, 65536)");
     expect((await stat(opencodeBridge)).mode & 0o777).toBe(0o600);
     expect((await stat(piBridge)).mode & 0o777).toBe(0o600);
   });
