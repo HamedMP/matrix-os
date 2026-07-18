@@ -1,0 +1,331 @@
+/* Per-OS-design terminal interior chrome (tab strip). Active only when
+   TerminalApp marks its root with data-terminal-design="winxp" | "win11" |
+   "macos-glass". flat/neumorphic never render the strip, so these rules stay
+   inert for the default Matrix terminal. Design tokens (--xp-*, --win11-*,
+   --glass-*) come from the data-theme-style sections in globals.css. */
+
+/* --- Shared structure (variant-agnostic geometry) --- */
+
+.terminal-design-tabstrip {
+  align-items: stretch;
+  display: flex;
+  flex-shrink: 0;
+  min-width: 0;
+  /* Stack above the terminal body so the win11 chevron dropdown (positioned
+     below the strip) paints over the content surface instead of under it. */
+  position: relative;
+  user-select: none;
+  z-index: 20;
+}
+
+.terminal-design-tabstrip-tabs {
+  align-items: stretch;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.terminal-design-tabstrip-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.terminal-design-tab {
+  align-items: center;
+  display: flex;
+  min-width: 0;
+}
+
+.terminal-design-tab-activate {
+  align-items: center;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  min-width: 0;
+  padding: 0;
+}
+
+.terminal-design-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-design-tab-close {
+  align-items: center;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-shrink: 0;
+  justify-content: center;
+  padding: 0;
+}
+
+.terminal-design-tabstrip-actions {
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.terminal-design-tabstrip-button {
+  align-items: center;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  justify-content: center;
+  padding: 0;
+}
+
+/* ───────────────────────────────────────────────
+   Windows XP: classic cmd.exe interior. The tab
+   strip becomes an XP raised bar (Luna bevels,
+   Tahoma 11px) with square raised tabs and small
+   raised toolbar buttons. No translucency.
+   ─────────────────────────────────────────────── */
+
+[data-terminal-design="winxp"] .terminal-design-tabstrip {
+  background: var(--xp-chrome);
+  border-bottom: 1px solid var(--xp-bevel-dark);
+  box-shadow: inset 0 1px 0 var(--xp-bevel-light);
+  color: #1f1f1f;
+  font-family: Tahoma, "Segoe UI", sans-serif;
+  font-size: 11px;
+  height: 27px;
+  padding: 3px 4px 0;
+}
+
+[data-terminal-design="winxp"] .terminal-design-tab {
+  background: var(--xp-chrome);
+  border: 1px solid var(--xp-bevel-dark);
+  border-bottom: 0;
+  border-radius: 2px 2px 0 0;
+  box-shadow: inset 1px 1px 0 var(--xp-bevel-light);
+  margin-right: 2px;
+  max-width: 160px;
+  padding: 0 3px 0 8px;
+}
+
+[data-terminal-design="winxp"] .terminal-design-tab:hover {
+  background: #f5f3e8;
+}
+
+[data-terminal-design="winxp"] .terminal-design-tab[data-active="true"] {
+  background: #ffffff;
+  box-shadow: inset 1px 1px 0 var(--xp-bevel-light);
+  font-weight: bold;
+}
+
+[data-terminal-design="winxp"] .terminal-design-tab-activate {
+  height: 100%;
+  padding-right: 4px;
+}
+
+[data-terminal-design="winxp"] .terminal-design-tab-close {
+  border: 1px solid transparent;
+  border-radius: 2px;
+  height: 14px;
+  margin-left: 2px;
+  width: 14px;
+}
+
+[data-terminal-design="winxp"] .terminal-design-tab-close:hover {
+  background: var(--xp-chrome);
+  border-color: var(--xp-bevel-dark);
+  box-shadow: inset 1px 1px 0 var(--xp-bevel-light);
+}
+
+[data-terminal-design="winxp"] .terminal-design-tabstrip-button {
+  background: var(--xp-chrome);
+  border: 1px solid var(--xp-bevel-dark);
+  border-radius: 2px;
+  box-shadow:
+    inset 1px 1px 0 var(--xp-bevel-light),
+    inset -1px -1px 0 #b5b2a1;
+  height: 18px;
+  margin-bottom: 2px;
+  width: 20px;
+}
+
+[data-terminal-design="winxp"] .terminal-design-tabstrip-button:hover {
+  background: #f5f3e8;
+}
+
+[data-terminal-design="winxp"] .terminal-design-tabstrip-button:active {
+  box-shadow:
+    inset 1px 1px 0 var(--xp-bevel-dark),
+    inset -1px -1px 0 var(--xp-bevel-light);
+}
+
+/* ───────────────────────────────────────────────
+   Windows 11: Windows Terminal. Dark acrylic tab
+   strip, rounded tabs with hover-revealed close
+   buttons, a "+" new-tab button and a chevron
+   tab-list menu. Segoe UI labels.
+   ─────────────────────────────────────────────── */
+
+[data-terminal-design="win11"] .terminal-design-tabstrip {
+  background: rgba(31, 31, 31, 0.86);
+  backdrop-filter: var(--win11-blur);
+  -webkit-backdrop-filter: var(--win11-blur);
+  color: #d4d4d4;
+  font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  font-size: 12px;
+  height: 36px;
+  padding: 4px 6px 0;
+}
+
+[data-terminal-design="win11"] .terminal-design-tab {
+  border-radius: 6px 6px 0 0;
+  max-width: 200px;
+  padding: 0 4px 0 12px;
+}
+
+[data-terminal-design="win11"] .terminal-design-tab:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+[data-terminal-design="win11"] .terminal-design-tab[data-active="true"] {
+  background: #2d2d2d;
+  color: #ffffff;
+}
+
+[data-terminal-design="win11"] .terminal-design-tab-activate {
+  height: 100%;
+}
+
+[data-terminal-design="win11"] .terminal-design-tab-close {
+  border-radius: 4px;
+  height: 20px;
+  margin-left: 6px;
+  opacity: 0;
+  width: 20px;
+}
+
+[data-terminal-design="win11"] .terminal-design-tab:hover .terminal-design-tab-close,
+[data-terminal-design="win11"] .terminal-design-tab[data-active="true"] .terminal-design-tab-close,
+[data-terminal-design="win11"] .terminal-design-tab-close:focus-visible {
+  opacity: 1;
+}
+
+[data-terminal-design="win11"] .terminal-design-tab-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+[data-terminal-design="win11"] .terminal-design-tabstrip-button {
+  border-radius: 4px;
+  height: 24px;
+  margin: 0 1px 4px;
+  width: 28px;
+}
+
+[data-terminal-design="win11"] .terminal-design-tabstrip-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+[data-terminal-design="win11"] .terminal-design-tablist-menu {
+  background: rgba(40, 40, 40, 0.96);
+  backdrop-filter: var(--win11-blur);
+  -webkit-backdrop-filter: var(--win11-blur);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  padding: 4px;
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 30;
+}
+
+[data-terminal-design="win11"] .terminal-design-tablist-menu-item {
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 6px 10px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+[data-terminal-design="win11"] .terminal-design-tablist-menu-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+[data-terminal-design="win11"] .terminal-design-tablist-menu-item[aria-checked="true"] {
+  color: #ffffff;
+  font-weight: 600;
+}
+
+/* ───────────────────────────────────────────────
+   macOS glass: Terminal.app. Minimal glass strip
+   with segmented-control style tabs; SF font for
+   labels. The traffic-light chrome lives in the
+   window title bar (per-design chrome above).
+   ─────────────────────────────────────────────── */
+
+[data-terminal-design="macos-glass"] .terminal-design-tabstrip {
+  background: var(--glass-surface);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid var(--glass-edge);
+  box-shadow: var(--glass-specular);
+  color: #1d1d1f;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  font-size: 12px;
+  gap: 4px;
+  height: 34px;
+  padding: 4px 8px;
+}
+
+[data-terminal-design="macos-glass"] .terminal-design-tab {
+  border-radius: 7px;
+  max-width: 180px;
+  padding: 0 4px 0 10px;
+}
+
+[data-terminal-design="macos-glass"] .terminal-design-tab[data-active="true"] {
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.12),
+    var(--glass-specular);
+}
+
+[data-terminal-design="macos-glass"] .terminal-design-tab-activate {
+  height: 100%;
+}
+
+[data-terminal-design="macos-glass"] .terminal-design-tab-close {
+  border-radius: 999px;
+  height: 16px;
+  margin-left: 4px;
+  opacity: 0.45;
+  width: 16px;
+}
+
+[data-terminal-design="macos-glass"] .terminal-design-tab-close:hover {
+  background: rgba(0, 0, 0, 0.08);
+  opacity: 1;
+}
+
+[data-terminal-design="macos-glass"] .terminal-design-tabstrip-button {
+  border-radius: 6px;
+  height: 24px;
+  width: 26px;
+}
+
+[data-terminal-design="macos-glass"] .terminal-design-tabstrip-button:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
