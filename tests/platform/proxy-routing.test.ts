@@ -20,6 +20,7 @@ import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { buildBillingSetupTarget } from "../../packages/platform/src/auth-pages.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import * as syncJwt from "../../packages/platform/src/sync-jwt.js";
+import { shouldServeRuntimeManager } from "../../packages/platform/src/session-routing-middleware.js";
 import type { CustomerVpsService } from "../../packages/platform/src/customer-vps.js";
 import {
   JWT_SECRET,
@@ -64,6 +65,27 @@ describe("platform proxy routing", () => {
     expect(buildPostAuthRedirectPath("https://app.matrix-os.com/sign-in/sso-callback?runtime=staging&session=secret")).toBe(
       "/?runtime=staging",
     );
+  });
+
+  it("serves runtime management only for authenticated browser identities", () => {
+    expect(shouldServeRuntimeManager({
+      isAppDomain: true,
+      path: "/runtime",
+      userId: "user_alice",
+      identitySource: "auth",
+    })).toBe(true);
+    expect(shouldServeRuntimeManager({
+      isAppDomain: true,
+      path: "/runtime",
+      userId: "user_alice",
+      identitySource: "mobile-session",
+    })).toBe(false);
+    expect(shouldServeRuntimeManager({
+      isAppDomain: true,
+      path: "/runtime",
+      userId: "user_alice",
+      identitySource: "static-route",
+    })).toBe(false);
   });
 
   it("adds a timeout and a derived platform verification token on app-domain proxy fetches", async () => {

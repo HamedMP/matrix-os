@@ -70,6 +70,7 @@ import {
   shouldForwardProxyHeader,
 } from './session-routing-proxy.js';
 import {
+  type AppDomainIdentity,
   buildAppRouteCookie,
   buildShellRouteCookie,
   buildShellRuntimeSlotCookie,
@@ -91,6 +92,21 @@ import {
 import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
+
+export function shouldServeRuntimeManager(input: {
+  isAppDomain: boolean;
+  path: string;
+  userId: string;
+  identitySource?: AppDomainIdentity['source'];
+}): boolean {
+  return Boolean(
+    input.isAppDomain &&
+    input.userId &&
+    input.path === '/runtime' &&
+    input.identitySource !== 'mobile-session' &&
+    input.identitySource !== 'static-route'
+  );
+}
 
 interface CreateSessionRoutingMiddlewareOpts {
   db: PlatformDB;
@@ -599,11 +615,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       });
     }
 
-    const shouldServeRuntimeManager =
-      isAppDomain &&
-      identity.userId &&
-      path === '/runtime';
-    if (shouldServeRuntimeManager) {
+    const serveRuntimeManager = shouldServeRuntimeManager({
+      isAppDomain,
+      path,
+      userId: identity.userId,
+      identitySource: identity.source,
+    });
+    if (serveRuntimeManager) {
       return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
     }
 
