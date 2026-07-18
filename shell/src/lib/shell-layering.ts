@@ -1,4 +1,8 @@
 export const SHELL_Z_INDEX = {
+  // Windows XP desktop icons: above the wallpaper (painted on <body>) but
+  // below every app window — window z-order starts at
+  // SHELL_WINDOW_Z_INDEX_START = 1.
+  desktopIcons: 0,
   // Panel-local card elevation. This stays below app windows and only orders
   // sibling rows inside a shell surface.
   terminalSessionMenuCard: 30,

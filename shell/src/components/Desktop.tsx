@@ -32,6 +32,7 @@ import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
 import { MenuBar } from "./MenuBar";
 import { WindowsTaskbar } from "./taskbar/WindowsTaskbar";
+import { XpDesktopIcons } from "./desktop/XpDesktopIcons";
 import { useThemeStyle } from "./window/useThemeStyle";
 import { useIsClient } from "@/hooks/useIsClient";
 import { OsBootScreen } from "./os-session/OsBootScreen";
@@ -49,6 +50,7 @@ import { DeveloperModeDashboard } from "./developer/DeveloperModeDashboard";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
+import { reconcileDesignApps, type ApiAppEntry } from "@/lib/design-apps-refresh";
 import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
@@ -200,6 +202,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const isClient = useIsClient();
   const [initialThemeStyle] = useState(() => readPersistedThemeStyle(cacheScope));
   const launchPathConsumedRef = useRef<string | null>(null);
+  const designApiPathsRef = useRef<Set<string>>(new Set());
   const [manualSetupVisible, setManualSetupVisible] = useState(false);
 
   const dock = useDesktopConfigStore((s) => s.dock);
@@ -582,6 +585,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       // Load pre-installed apps from /api/apps (apps/ directory)
       if (Array.isArray(bootstrap.apps)) {
         const appsList = bootstrap.apps;
+        // Baseline for the design-switch reconcile effect: removals only ever
+        // apply to entries that came from /api/apps.
+        designApiPathsRef.current = new Set(
+          appsList.map((app) => normalizeBuiltInAppPath(app.path.replace(/^\/files\//, ""))),
+        );
         for (const app of appsList) {
           if (isLoadAborted()) return;
           // path from API is like "/files/apps/calculator/index.html"
@@ -803,6 +811,43 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const themeStyle = useThemeStyle();
   // Windows designs replace the mac menu bar + dock with a bottom taskbar.
   const isWindowsDesign = themeStyle === "winxp" || themeStyle === "win11";
+
+  // The gateway re-filters design-scoped apps on every /api/apps call, but
+  // the shell only bootstraps its list once. Refetch on mid-session design
+  // switches so scoped apps (XP Minesweeper, Widgets, Stickies…) appear and
+  // disappear live without a reload.
+  const designStyleRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!themeStyle) return;
+    if (designStyleRef.current === null) {
+      designStyleRef.current = themeStyle;
+      return;
+    }
+    if (designStyleRef.current === themeStyle) return;
+    designStyleRef.current = themeStyle;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`${GATEWAY_URL}/api/apps`, { signal: AbortSignal.timeout(10_000) });
+        if (!res.ok || cancelled) return;
+        const apiApps = (await res.json()) as ApiAppEntry[];
+        const { next, apiPaths } = reconcileDesignApps({
+          current: useWindowManager.getState().apps,
+          apiApps,
+          previousApiPaths: designApiPathsRef.current,
+          normalizePath: (path) => normalizeBuiltInAppPath(path.replace(/^\/files\//, "")),
+          iconUrlFor: (app) => iconUrlForSlug(app.icon ?? app.slug),
+        });
+        designApiPathsRef.current = apiPaths;
+        wmSetApps(next);
+      } catch (err) {
+        if (!cancelled) {
+          console.warn("[desktop] design app refresh failed:", err instanceof Error ? err.message : String(err));
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [themeStyle, wmSetApps]);
   const visibleWindowCount = windows.reduce((count, w) => count + (w.minimized ? 0 : 1), 0);
   // Developer Fast Path dashboard removed (off-brand + redundant with the
   // new Set up your workspace checklist). Dev mode opens to the terminal.
@@ -1086,6 +1131,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     />
   ) : null;
 
+  // Shared by the Windows taskbar (start menu, quick launch) and the XP
+  // desktop icons: open the app window or focus the existing one.
+  const openAppOrFocus = (path: string, name?: string) =>
+    focusOrOpen(name ?? apps.find((a) => a.path === path)?.name ?? "App", path);
+
   if (firstRunStatus === "checking") {
     return (
       <TooltipProvider delayDuration={300}>
@@ -1111,7 +1161,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         <WindowsTaskbar
           apps={apps}
           windows={windows}
-          onOpenApp={(path, name) => focusOrOpen(name ?? apps.find((a) => a.path === path)?.name ?? "App", path)}
+          onOpenApp={openAppOrFocus}
           onFocusWindow={(id) => { wmRestoreAndFocusWindow(id); focusCanvasWindow(id); }}
           onMinimizeWindow={animateMinimize}
           onOpenSettings={() => { setSettingsOpen(true); setTaskBoardOpen(false); setChatOpen(false); }}
@@ -1539,6 +1589,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
         <div className="relative flex-1 min-h-0 overflow-hidden">
           <DotGrid />
+          {/* XP desktop icons: above the wallpaper, below app windows. The
+              component self-gates to the winxp design and renders null
+              otherwise. */}
+          <XpDesktopIcons onOpenApp={openAppOrFocus} />
           <MissionControl
             open={taskBoardOpen}
             apps={apps}
