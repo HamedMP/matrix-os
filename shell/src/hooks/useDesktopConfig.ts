@@ -31,8 +31,22 @@ export interface DesktopConfig {
   };
 }
 
-const BUNDLED_WALLPAPERS = new Set(["moraine-lake.jpg"]);
+export const BUNDLED_WALLPAPERS = new Set([
+  "moraine-lake.jpg",
+  "xp-bliss.svg",
+  "win11-bloom.svg",
+  "macos-light.svg",
+]);
 const SETTINGS_FETCH_TIMEOUT_MS = 10_000;
+
+// Bundled defaults live in shell/public/wallpapers and work even when the
+// gateway is unreachable. User-uploaded wallpapers are served by the gateway
+// under /files/system/wallpapers.
+export function wallpaperUrl(name: string, gatewayUrl: string): string {
+  return BUNDLED_WALLPAPERS.has(name)
+    ? `/wallpapers/${name}`
+    : `${gatewayUrl}/files/system/wallpapers/${name}`;
+}
 
 const DEFAULT_DESKTOP_CONFIG: DesktopConfig = {
   background: { type: "wallpaper", name: "moraine-lake.jpg" },
@@ -76,12 +90,7 @@ function applyBackground(config: DesktopConfig["background"], gatewayUrl: string
       body.style.background = `linear-gradient(${config.angle ?? 135}deg, ${config.from}, ${config.to})`;
       break;
     case "wallpaper": {
-      // Bundled defaults live in shell/public/wallpapers and work even when
-      // the gateway is unreachable. User-uploaded wallpapers are served by
-      // the gateway under /files/system/wallpapers.
-      const url = BUNDLED_WALLPAPERS.has(config.name)
-        ? `/wallpapers/${config.name}`
-        : `${gatewayUrl}/files/system/wallpapers/${config.name}`;
+      const url = wallpaperUrl(config.name, gatewayUrl);
       body.style.backgroundImage = `url(${url})`;
       body.style.backgroundSize = "cover";
       body.style.backgroundPosition = "center";
@@ -133,7 +142,7 @@ export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
     applyDesktopConfigSnapshot(cachedConfig, gatewayUrl, { setDock, setPinnedApps, setDockOrder });
   }, [cacheKey, cacheScope, gatewayUrl, setDock, setPinnedApps, setDockOrder]);
 
-  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the setConfig/setDock/setPinnedApps/setDockOrder calls all populate distinct stores from a single fetched desktop-config payload inside one async .then callback; they run together once the load resolves, not as a synchronous render-time cascade, and target separate Zustand slices that cannot be collapsed
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state, react-doctor/no-fetch-in-effect -- the setConfig/setDock/setPinnedApps/setDockOrder calls all populate distinct stores from a single fetched desktop-config payload inside one async .then callback; they run together once the mount-only gateway load resolves (guarded by AbortController), not as a synchronous render-time cascade, and target separate Zustand slices that cannot be collapsed
   useEffect(() => {
     const controller = new AbortController();
     fetchDesktopConfig(gatewayUrl, controller.signal).then((cfg) => {

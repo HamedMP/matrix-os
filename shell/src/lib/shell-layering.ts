@@ -5,6 +5,10 @@ export const SHELL_Z_INDEX = {
   appWindowMax: 500,
   fullscreenWindow: 600,
   fullscreenExit: 601,
+  // Windows-design taskbar + start menu: above every window (XP's taskbar is
+  // "always on top" by default, Win11 keeps it above app windows too) but
+  // below Settings, which must stay reachable over shell chrome.
+  taskbar: 650,
   settings: 700,
   hardGate: 800,
   // Passive notification cards should stay above shell surfaces and gates, but

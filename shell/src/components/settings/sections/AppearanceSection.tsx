@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useId } from "react";
 import { useTheme } from "@/hooks/useTheme";
-import { saveDesktopConfig, useDesktopConfig, buildMeshGradient, type DesktopConfig } from "@/hooks/useDesktopConfig";
+import { saveDesktopConfig, useDesktopConfig, buildMeshGradient, BUNDLED_WALLPAPERS, wallpaperUrl, type DesktopConfig } from "@/hooks/useDesktopConfig";
 import { useDesktopConfigStore, type DockConfig } from "@/stores/desktop-config";
 import { getGatewayUrl } from "@/lib/gateway";
 import { UploadIcon, XIcon, ImageIcon, PaletteIcon } from "lucide-react";
@@ -44,6 +44,11 @@ export function AppearanceSection() {
   }));
 
   const dock = config.dock;
+
+  // Bundled defaults ship with the shell, so they are always selectable in the
+  // grid even when the gateway's wallpaper directory doesn't list them (e.g.
+  // existing homes predate them, since template sync skips user wallpapers).
+  const gridWallpapers = [...new Set([...BUNDLED_WALLPAPERS, ...wallpapers])];
 
   // Sync the editor inputs from the persisted background config using the
   // render-time prev-prop pattern instead of an effect.
@@ -258,9 +263,9 @@ export function AppearanceSection() {
         {/* Image */}
         {bgMode === "image" && (
           <div className="space-y-3 py-2">
-            {wallpapers.length > 0 && (
+            {gridWallpapers.length > 0 && (
               <div className="grid grid-cols-3 gap-2">
-                {wallpapers.map((name) => (
+                {gridWallpapers.map((name) => (
                   <div key={name} className="relative group">
                     <button
                       type="button"
@@ -271,20 +276,23 @@ export function AppearanceSection() {
                           : "border-border hover:border-primary/40"
                       }`}
                     >
-                      {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- user-uploaded wallpaper served from a runtime gateway host that cannot be statically configured for next/image */}
+                      {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- wallpaper previews resolve to a bundled /wallpapers asset or a runtime gateway host that cannot be statically configured for next/image */}
                       <img
-                        src={`${getGatewayUrl()}/files/system/wallpapers/${name}`}
+                        src={wallpaperUrl(name, getGatewayUrl())}
                         alt={name}
                         className="w-full h-full object-cover"
                       />
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteWallpaper(name)}
-                      className="absolute top-1 right-1 size-5 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                    >
-                      <XIcon className="size-3" />
-                    </button>
+                    {!BUNDLED_WALLPAPERS.has(name) && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteWallpaper(name)}
+                        aria-label={`Delete wallpaper ${name}`}
+                        className="absolute top-1 right-1 size-5 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <XIcon className="size-3" />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

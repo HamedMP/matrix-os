@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">
+  <defs>
+    <radialGradient id="petalDeep" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#4a6fd4"/>
+      <stop offset="0.65" stop-color="#6f9bec"/>
+      <stop offset="1" stop-color="#a8c4f5"/>
+    </radialGradient>
+    <radialGradient id="petalMid" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#5b80dd"/>
+      <stop offset="0.6" stop-color="#7aa7f0"/>
+      <stop offset="1" stop-color="#c3d6f8"/>
+    </radialGradient>
+    <radialGradient id="petalLight" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#7aa7f0"/>
+      <stop offset="0.7" stop-color="#a8c4f5"/>
+      <stop offset="1" stop-color="#dbe7fa"/>
+    </radialGradient>
+    <radialGradient id="core" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#f4f8fe"/>
+      <stop offset="0.55" stop-color="#c9d9f7"/>
+      <stop offset="1" stop-color="#8fb1ef"/>
+    </radialGradient>
+    <filter id="soft" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="6"/>
+    </filter>
+    <filter id="softer" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+    <filter id="shadowBlur" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="34"/>
+    </filter>
+  </defs>
+
+  <rect width="1920" height="1080" fill="#eef4fb"/>
+
+  <!-- faint ambient wash -->
+  <ellipse cx="1160" cy="560" rx="760" ry="460" fill="#e2ecfa" opacity="0.7" filter="url(#shadowBlur)"/>
+
+  <g transform="translate(1150 545) rotate(-12)">
+    <!-- depth shadow beneath the bloom -->
+    <ellipse cx="10" cy="55" rx="430" ry="310" fill="#4a6fd4" opacity="0.16" filter="url(#shadowBlur)"/>
+
+    <!-- outer petal ring -->
+    <g filter="url(#soft)">
+      <ellipse cx="185" cy="0" rx="250" ry="88" fill="url(#petalLight)" opacity="0.75" transform="rotate(0)"/>
+      <ellipse cx="185" cy="0" rx="250" ry="88" fill="url(#petalMid)" opacity="0.7" transform="rotate(40)"/>
+      <ellipse cx="185" cy="0" rx="250" ry="88" fill="url(#petalLight)" opacity="0.75" transform="rotate(80)"/>
+      <ellipse cx="185" cy="0" rx="250" ry="88" fill="url(#petalMid)" opacity="0.7" transform="rotate(120)"/>
+      <ellipse cx="185" cy="0" rx="250" ry="88" fill="url(#petalLight)" opacity="0.75" transform="rotate(160)"/>
+      <ellipse cx="185" cy="0" rx="250" ry="88" fill="url(#petalMid)" opacity="0.7" transform="rotate(200)"/>
+      <ellipse cx="185" cy="0" rx="250" ry="88" fill="url(#petalLight)" opacity="0.75" transform="rotate(240)"/>
+      <ellipse cx="185" cy="0" rx="250" ry="88" fill="url(#petalMid)" opacity="0.7" transform="rotate(280)"/>
+      <ellipse cx="185" cy="0" rx="250" ry="88" fill="url(#petalLight)" opacity="0.75" transform="rotate(320)"/>
+    </g>
+
+    <!-- inner petal ring -->
+    <g filter="url(#soft)">
+      <ellipse cx="105" cy="0" rx="150" ry="56" fill="url(#petalDeep)" opacity="0.8" transform="rotate(30)"/>
+      <ellipse cx="105" cy="0" rx="150" ry="56" fill="url(#petalMid)" opacity="0.8" transform="rotate(90)"/>
+      <ellipse cx="105" cy="0" rx="150" ry="56" fill="url(#petalDeep)" opacity="0.8" transform="rotate(150)"/>
+      <ellipse cx="105" cy="0" rx="150" ry="56" fill="url(#petalMid)" opacity="0.8" transform="rotate(210)"/>
+      <ellipse cx="105" cy="0" rx="150" ry="56" fill="url(#petalDeep)" opacity="0.8" transform="rotate(270)"/>
+      <ellipse cx="105" cy="0" rx="150" ry="56" fill="url(#petalMid)" opacity="0.8" transform="rotate(330)"/>
+    </g>
+
+    <!-- luminous core -->
+    <circle r="95" fill="url(#core)" filter="url(#softer)"/>
+    <circle r="42" fill="#f7fafe" opacity="0.9" filter="url(#softer)"/>
+  </g>
+</svg>

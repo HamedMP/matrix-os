@@ -1000,23 +1000,25 @@ pre {
 }
 
 /* ═══════════════════════════════════════════════
-   macOS 27 glass overrides — active only when
-   data-theme-style="macos-glass" is on :root.
-   Dark-leaning frosted glass: deep blur, specular
-   top highlights, vibrant accent tinting.
+   macOS (Tahoe) liquid glass overrides — active
+   only when data-theme-style="macos-glass" is on
+   :root. Light translucent white glass: deep blur
+   and saturation, hairline borders, specular top
+   highlights, layered soft shadows, system-blue
+   accents.
    ═══════════════════════════════════════════════ */
 
 /* --- Shared glass recipe (vars scoped to this style) --- */
 [data-theme-style="macos-glass"] {
   --glass-blur: blur(40px) saturate(180%);
-  --glass-surface: color-mix(in srgb, var(--card) 62%, transparent);
-  --glass-surface-strong: color-mix(in srgb, var(--card) 78%, transparent);
-  --glass-edge: rgba(255, 255, 255, 0.16);
-  --glass-specular: inset 0 1px 0 rgba(255, 255, 255, 0.22);
-  --glass-shadow: 0 16px 48px rgba(0, 0, 0, 0.42);
+  --glass-surface: rgba(255, 255, 255, 0.55);
+  --glass-surface-strong: rgba(255, 255, 255, 0.72);
+  --glass-edge: rgba(0, 0, 0, 0.08);
+  --glass-specular: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  --glass-shadow: 0 12px 40px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
-/* --- Cards: frosted panel --- */
+/* --- Cards: frosted white panel --- */
 [data-theme-style="macos-glass"] [data-slot="card"] {
   background: var(--glass-surface);
   backdrop-filter: var(--glass-blur);
@@ -1027,16 +1029,16 @@ pre {
 
 /* --- Buttons: tinted glass, accent glow on primary --- */
 [data-theme-style="macos-glass"] [data-slot="button"][data-variant="default"] {
-  background: color-mix(in srgb, var(--primary) 88%, transparent);
-  border: 1px solid color-mix(in srgb, var(--primary) 60%, rgba(255, 255, 255, 0.5));
+  background: color-mix(in srgb, var(--primary) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary) 65%, rgba(255, 255, 255, 0.6));
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.28),
-    0 4px 16px color-mix(in srgb, var(--primary) 35%, transparent);
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 4px 14px color-mix(in srgb, var(--primary) 30%, transparent);
 }
 
 [data-theme-style="macos-glass"] [data-slot="button"][data-variant="secondary"],
 [data-theme-style="macos-glass"] [data-slot="button"][data-variant="outline"] {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.55);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-edge);
@@ -1044,26 +1046,26 @@ pre {
 }
 
 [data-theme-style="macos-glass"] [data-slot="button"][data-variant="ghost"]:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.06);
 }
 
-/* --- Inputs: dark glass well --- */
+/* --- Inputs: bright glass well --- */
 [data-theme-style="macos-glass"] [data-slot="input"],
 [data-theme-style="macos-glass"] [data-slot="textarea"] {
-  background: rgba(0, 0, 0, 0.24);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
 [data-theme-style="macos-glass"] [data-slot="input"]:focus-visible,
 [data-theme-style="macos-glass"] [data-slot="textarea"]:focus-visible {
   border-color: var(--ring);
   box-shadow:
-    inset 0 1px 3px rgba(0, 0, 0, 0.35),
-    0 0 0 3px color-mix(in srgb, var(--ring) 35%, transparent);
+    inset 0 1px 3px rgba(0, 0, 0, 0.06),
+    0 0 0 3px color-mix(in srgb, var(--ring) 30%, transparent);
 }
 
-/* --- Panels & dropdowns: frosted glass --- */
+/* --- Panels & dropdowns: frosted white glass --- */
 [data-theme-style="macos-glass"] [data-slot="select-content"],
 [data-theme-style="macos-glass"] [data-slot="context-menu-content"],
 [data-theme-style="macos-glass"] [data-slot="dialog-content"],
@@ -1076,11 +1078,23 @@ pre {
   box-shadow: var(--glass-specular), var(--glass-shadow);
 }
 
-/* --- Menu items: vibrant accent selection --- */
+/* Menus and dropdowns keep the tight 12px macOS menu radius; dialogs get the
+   larger 14px window radius. */
+[data-theme-style="macos-glass"] [data-slot="select-content"],
+[data-theme-style="macos-glass"] [data-slot="context-menu-content"],
+[data-theme-style="macos-glass"] [data-slot="popover-content"] {
+  border-radius: 12px;
+}
+
+[data-theme-style="macos-glass"] [data-slot="dialog-content"] {
+  border-radius: 14px;
+}
+
+/* --- Menu items: system-blue selection --- */
 [data-theme-style="macos-glass"] [data-menu-dropdown] button:hover,
 [data-theme-style="macos-glass"] [data-slot="context-menu-item"]:hover,
 [data-theme-style="macos-glass"] [data-slot="context-menu-item"][data-highlighted] {
-  background: color-mix(in srgb, var(--primary) 75%, transparent) !important;
+  background: color-mix(in srgb, var(--primary) 85%, transparent) !important;
   color: var(--primary-foreground) !important;
   border-radius: 6px;
 }
@@ -1094,41 +1108,41 @@ pre {
   box-shadow: var(--glass-specular), var(--glass-shadow) !important;
 }
 
-/* --- Dock: floating glass tray --- */
+/* --- Dock: floating translucent white pill --- */
 [data-theme-style="macos-glass"] [data-dock] {
-  background: color-mix(in srgb, var(--card) 55%, transparent) !important;
+  background: var(--glass-surface) !important;
   backdrop-filter: var(--glass-blur) !important;
   -webkit-backdrop-filter: var(--glass-blur) !important;
   border: 1px solid var(--glass-edge) !important;
   border-radius: 22px !important;
-  box-shadow: var(--glass-specular), 0 18px 44px rgba(0, 0, 0, 0.45) !important;
+  box-shadow: var(--glass-specular), 0 12px 32px rgba(0, 0, 0, 0.14), 0 2px 8px rgba(0, 0, 0, 0.06) !important;
 }
 
 [data-theme-style="macos-glass"] [data-dock] button {
   border-radius: 14px !important;
-  transition: transform 0.12s ease, background-color 0.12s ease;
+  transition: scale 0.12s ease, transform 0.12s ease, background-color 0.12s ease;
 }
 
 [data-theme-style="macos-glass"] [data-dock] button:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.05);
 }
 
 [data-theme-style="macos-glass"] [data-dock] button img {
   border-radius: 10px !important;
 }
 
-/* --- Menu Bar: vibrant frosted strip --- */
+/* --- Menu Bar: ultra-translucent white strip over the wallpaper --- */
 [data-theme-style="macos-glass"] [data-menu-bar] {
-  background: color-mix(in srgb, var(--card) 48%, transparent) !important;
+  background: rgba(255, 255, 255, 0.45) !important;
   backdrop-filter: var(--glass-blur) !important;
   -webkit-backdrop-filter: var(--glass-blur) !important;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
-  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.25) !important;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.04) !important;
 }
 
 [data-theme-style="macos-glass"] [data-menu-bar] button:hover {
-  background: rgba(255, 255, 255, 0.12) !important;
-  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.07) !important;
+  border-radius: 5px;
 }
 
 /* --- Menu dropdowns: frosted panel --- */
@@ -1149,7 +1163,7 @@ pre {
 [data-theme-style="macos-glass"] [data-app-icon] {
   border-radius: 18px !important;
   border: 1px solid var(--glass-edge) !important;
-  box-shadow: var(--glass-specular), 0 8px 20px rgba(0, 0, 0, 0.35) !important;
+  box-shadow: var(--glass-specular), 0 8px 20px rgba(0, 0, 0, 0.12) !important;
 }
 
 [data-theme-style="macos-glass"] [data-app-icon] img {
@@ -1157,26 +1171,25 @@ pre {
 }
 
 [data-theme-style="macos-glass"] [data-app-tile]:hover [data-app-icon] {
-  filter: brightness(1.08);
+  filter: brightness(1.04);
 }
 
-/* --- Mission Control: deep vibrancy scrim --- */
+/* --- Mission Control: light vibrancy scrim --- */
 [data-theme-style="macos-glass"] [data-mission-backdrop] {
-  background: rgba(10, 10, 22, 0.45) !important;
+  background: rgba(245, 245, 247, 0.5) !important;
   opacity: 1 !important;
-  backdrop-filter: blur(28px) saturate(150%) !important;
-  -webkit-backdrop-filter: blur(28px) saturate(150%) !important;
+  backdrop-filter: blur(28px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
 }
 
-/* --- Selection: vibrant accent tint --- */
+/* --- Selection: translucent system-blue tint, text color unchanged --- */
 [data-theme-style="macos-glass"] ::selection {
-  background: color-mix(in srgb, var(--primary) 55%, transparent);
-  color: var(--primary-foreground);
+  background: color-mix(in srgb, var(--primary) 28%, transparent);
 }
 
-/* --- Scrollbars: translucent glass thumb --- */
+/* --- Scrollbars: translucent dark thumb --- */
 [data-theme-style="macos-glass"] ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(0, 0, 0, 0.28);
   border-radius: 3px;
 }
 

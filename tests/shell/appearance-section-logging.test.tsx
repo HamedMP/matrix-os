@@ -22,7 +22,13 @@ vi.mock("@/hooks/useTheme", () => ({
 vi.mock("@/hooks/useDesktopConfig", () => ({
   useDesktopConfig: () => shared.config,
   saveDesktopConfig: shared.saveDesktopConfigMock,
+  saveDesktopConfigPatch: vi.fn(),
   buildMeshGradient: () => "linear-gradient(#111111, #222222)",
+  BUNDLED_WALLPAPERS: new Set(["moraine-lake.jpg", "xp-bliss.svg", "win11-bloom.svg", "macos-light.svg"]),
+  wallpaperUrl: (name: string, gatewayUrl: string) =>
+    new Set(["moraine-lake.jpg", "xp-bliss.svg", "win11-bloom.svg", "macos-light.svg"]).has(name)
+      ? `/wallpapers/${name}`
+      : `${gatewayUrl}/files/system/wallpapers/${name}`,
 }));
 
 vi.mock("@/stores/desktop-config", () => ({
