@@ -7,6 +7,7 @@ import type { RuntimeSummary } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { AgentCockpit } from "@/components/agent-cockpit";
+import { AgentProjectList } from "@/components/agents/agent-project-workspace-screen";
 import { AGENT_WORKSPACE_CONNECTION_LABELS, capabilityEnabled } from "@/components/agents/agent-workspace-shared";
 import { useRuntimeSummary } from "@/lib/use-runtime-summary";
 import { capture } from "@/lib/analytics";
@@ -117,13 +118,33 @@ export default function AgentsScreen() {
       <AgentCockpit
         summary={summary}
         canCreate={canCreate}
-        onCreate={() => router.push("/agents/new")}
+        onCreate={() => {
+          const defaultProjectId = summary.projects.items[0]?.id;
+          if (defaultProjectId) {
+            router.push({ pathname: "/agents/new", params: { projectId: defaultProjectId } } as never);
+            return;
+          }
+          router.push("/agents/new");
+        }}
         onCreateInProject={(projectId) => router.push({ pathname: "/agents/new", params: { projectId } } as never)}
         onOpenThread={(thread) => {
           capture("agent_thread_opened");
           router.push(`/agents/${thread.id}` as any);
         }}
       />
+
+      {capabilityEnabled(summary, "codingAgentsProjectWorkspace")
+        && capabilityEnabled(summary, "codingAgentsConversationView") ? (
+          <AgentProjectList
+            summary={summary}
+            onOpenProject={(projectId) => {
+              router.push({
+                pathname: "/agents/projects/[projectId]",
+                params: { projectId },
+              } as never);
+            }}
+          />
+        ) : null}
 
       <View style={styles.navRow}>
         {navCards.map((card) => (

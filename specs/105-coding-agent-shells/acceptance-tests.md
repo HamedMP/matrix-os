@@ -1,6 +1,6 @@
 # Acceptance Tests: Project Conversations And Kanban
 
-**Status**: Phase 18-20 backend evidence and Phase 21 desktop navigator/conversation/Kanban/computer/inspector evidence added; mobile and cross-shell evidence remains planned
+**Status**: Phase 18-20 backend evidence, Phase 21 desktop navigator/conversation/Kanban/computer/inspector evidence, and Phase 22.1 mobile project-route evidence added; remaining Conversation/Kanban, security, device, and cross-shell evidence remains planned
 **Updated**: 2026-07-10
 
 This matrix is the executable acceptance contract for the clarified coding-agent shell model. A task checkbox in `tasks.md` is complete only when its named test IDs have current evidence on the exact implementation head. Existing checkpoint tests remain required regressions but do not prove these new cases.
@@ -100,6 +100,13 @@ Every clarified functional requirement and buildable success criterion has at le
 | MB-008 | Conversation/Kanban control preserves selected project/task/thread. | Phone route/state test. |
 | MB-009 | Kanban renders canonical columns and multi-thread card aggregates. | Phone and tablet-width component tests. |
 | MB-010 | Opening either thread from a task card returns to the same conversation identity. | Router parameter validation/navigation test. |
+
+### Phase 22.1 Evidence
+
+- `MB-001`: `apps/mobile/__tests__/agent-project-entry-route.test.tsx` proves the Agents entry opens a gateway-projected project and starts creation with that exact project ID; the existing attention/recent-work assertions remain in `apps/mobile/__tests__/agents-screen.test.tsx`.
+- `MB-002`: `apps/mobile/__tests__/agent-project-workspace-screen.test.tsx` hydrates the shared `ProjectAgentWorkspaceSchema` projection and renders the project chat plus its task group.
+- `MB-003`: the same component test opens both `thread_plan` and `thread_fix` independently with the exact `projectId`/`taskId`/`threadId`; `apps/mobile/__tests__/agent-project-route.test.tsx` verifies those IDs cross the Expo Router boundary unchanged.
+- `MB-004` and `SEC-004`: `apps/mobile/__tests__/agent-workspace-state.test.ts` and the project-workspace lifecycle test cover allowlisted serialization, malformed storage, runtime/project reconciliation, stale child IDs, foreground refresh, and reconnect refresh. Device smoke remains part of the Phase 22 gate and is not proven by these Jest tests.
 
 ## Security Tests
 

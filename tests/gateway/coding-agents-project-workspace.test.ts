@@ -42,16 +42,62 @@ describe("coding agent project workspace route", () => {
       projects: {
         listProjectSummaries: vi.fn(async () => ({ items: [], hasMore: false, limit: 50 })),
       },
-      capabilities: { projectWorkspace: true },
+      capabilities: {
+        projectWorkspace: true,
+        conversationView: true,
+        kanbanView: true,
+      },
       now: () => new Date(now),
     });
 
     const summary = await service.getSummary(testPrincipal);
 
-    expect(summary.capabilities).toContainEqual({
-      id: "codingAgentsProjectWorkspace",
-      enabled: true,
+    expect(summary.capabilities).toEqual(expect.arrayContaining([
+      {
+        id: "codingAgentsProjectWorkspace",
+        enabled: true,
+      },
+      {
+        id: "codingAgentsConversationView",
+        enabled: true,
+      },
+      {
+        id: "codingAgentsKanbanView",
+        enabled: true,
+      },
+    ]));
+  });
+
+  it("GW-004 disables every project view capability when its read model is unavailable", async () => {
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      projects: {
+        listProjectSummaries: vi.fn(async () => {
+          throw new Error("Postgres failed at /home/matrix/home with token=secret");
+        }),
+      },
+      capabilities: {
+        projectWorkspace: true,
+        conversationView: true,
+        kanbanView: true,
+      },
+      now: () => new Date(now),
     });
+
+    const summary = await service.getSummary(testPrincipal);
+
+    for (const id of [
+      "codingAgentsProjectWorkspace",
+      "codingAgentsConversationView",
+      "codingAgentsKanbanView",
+    ] as const) {
+      expect(summary.capabilities).toContainEqual({
+        id,
+        enabled: false,
+        reason: "Project workspace is temporarily unavailable",
+      });
+    }
+    expect(JSON.stringify(summary)).not.toMatch(/Postgres|\/home\/matrix|token|secret/i);
   });
 
   it("GW-004 authenticates before reading a project workspace", async () => {

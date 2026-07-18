@@ -1283,10 +1283,10 @@ Goal: expose the same hierarchy and conversations with SDK 57 phone/tablet ergon
 
 ### 22.1 Project-First Routes And Resume
 
-- [ ] Add project route/selector and project workspace hydration.
-- [ ] Render task groups with all attached threads plus project-level threads.
-- [ ] Persist only bounded project/task/thread/view references.
-- [ ] Reconcile stale references on app resume/runtime switch.
+- [x] Add project route/selector and project workspace hydration.
+- [x] Render task groups with all attached threads plus project-level threads.
+- [x] Persist only bounded project/task/thread/view references.
+- [x] Reconcile stale references on app resume/runtime switch.
 
 Tests: `MB-001`, `MB-002`, `MB-003`, `MB-004`, `SEC-004`.
 

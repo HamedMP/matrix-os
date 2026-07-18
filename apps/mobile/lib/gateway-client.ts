@@ -24,6 +24,8 @@ import {
   FileSearchResponseSchema,
   FileWriteRequestSchema,
   FileWriteResponseSchema,
+  ProjectAgentWorkspaceSchema,
+  ProjectIdSchema,
   RequestIdSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
@@ -33,6 +35,7 @@ import {
   SourceControlCreatePullRequestResponseSchema,
   SourceControlPrepareCommitRequestSchema,
   SourceControlPrepareCommitResponseSchema,
+  TaskIdSchema,
   ThreadIdSchema,
   UserInputAnswerRequestSchema,
   type CreateAgentThreadRequest,
@@ -49,6 +52,7 @@ import {
   type FileSearchResponse,
   type FileWriteRequest,
   type FileWriteResponse,
+  type ProjectAgentWorkspace,
   type ReviewSnapshot,
   type RuntimeSummary,
   type SourceControlCreatePullRequestRequest,
@@ -148,6 +152,30 @@ export type CodingAgentRuntimeSummaryResult =
 export type ProjectCreateResult =
   | ({ ok: true } & CodingAgentProjectCreateResponse)
   | { ok: false; error: "Project could not be created. Try again." };
+
+export type CodingAgentProjectWorkspaceResult =
+  | { ok: true; workspace: ProjectAgentWorkspace }
+  | { ok: false; error: "Project workspace unavailable" };
+
+export interface CodingAgentProjectWorkspaceOptions {
+  projectId: string;
+  taskCursor?: string;
+  taskLimit?: number;
+  projectThreadCursor?: string;
+  projectThreadLimit?: number;
+  taskThreadCursor?: string;
+  taskThreadLimit?: number;
+}
+
+const CodingAgentProjectWorkspaceOptionsSchema = z.object({
+  projectId: ProjectIdSchema,
+  taskCursor: TaskIdSchema.optional(),
+  taskLimit: z.number().int().min(1).max(100).optional(),
+  projectThreadCursor: ThreadIdSchema.optional(),
+  projectThreadLimit: z.number().int().min(1).max(100).optional(),
+  taskThreadCursor: ThreadIdSchema.optional(),
+  taskThreadLimit: z.number().int().min(1).max(100).optional(),
+}).strict();
 
 const CodingAgentNotificationPreferencesRouteResponseSchema = z.object({
   preferences: CodingAgentNotificationPreferencesSchema,
@@ -929,6 +957,40 @@ export class GatewayClient {
     } catch (err: unknown) {
       logGatewayCatchWarning("/api/coding-agents/projects unavailable", err);
       return { ok: false, error: "Project could not be created. Try again." };
+    }
+  }
+
+  async getCodingAgentProjectWorkspace(
+    options: CodingAgentProjectWorkspaceOptions,
+  ): Promise<CodingAgentProjectWorkspaceResult> {
+    try {
+      const parsedOptions = CodingAgentProjectWorkspaceOptionsSchema.safeParse(options);
+      if (!parsedOptions.success) {
+        return { ok: false, error: "Project workspace unavailable" };
+      }
+      const { projectId, ...pageOptions } = parsedOptions.data;
+      const query = new URLSearchParams();
+      for (const [key, value] of Object.entries(pageOptions)) {
+        if (value !== undefined) query.set(key, String(value));
+      }
+      const queryString = query.toString();
+      const res = await this.fetchGateway(
+        `/api/coding-agents/projects/${encodeURIComponent(projectId)}/workspace${queryString ? `?${queryString}` : ""}`,
+      );
+      if (!res.ok) {
+        logCodingAgentStatusWarning("/api/coding-agents/projects/:projectId/workspace unavailable", res.status);
+        return { ok: false, error: "Project workspace unavailable" };
+      }
+      const body = await res.json();
+      const parsed = ProjectAgentWorkspaceSchema.safeParse(body);
+      if (!parsed.success) {
+        logCodingAgentParseWarning("/api/coding-agents/projects/:projectId/workspace returned invalid payload");
+        return { ok: false, error: "Project workspace unavailable" };
+      }
+      return { ok: true, workspace: parsed.data };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/projects/:projectId/workspace unavailable", err);
+      return { ok: false, error: "Project workspace unavailable" };
     }
   }
 
