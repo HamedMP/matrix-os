@@ -104,7 +104,7 @@ import { createCodingAgentRoutes } from "./coding-agents/routes.js";
 import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type CodingAgentProviderAdapter, type CodingAgentThreadStore, type CodingAgentTurnStore } from "./coding-agents/thread-store.js";
 import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./coding-agents/thread-stream.js";
 import { createWorkspaceCodingAgentProviderSet } from "./coding-agents/workspace-provider.js";
-import { configuredWorkspaceProviderAgents } from "./coding-agents/workspace-provider-config.js";
+import { resolveWorkspaceProviderRuntime } from "./coding-agents/workspace-provider-config.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
 import { createCodingAgentTurnLifecycle } from "./coding-agents/turn-lifecycle.js";
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
@@ -118,6 +118,8 @@ import { createCodingAgentSourceControlStore } from "./coding-agents/source-cont
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
 import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
 import { createCodingAgentProjectMutationService } from "./coding-agents/project-mutations.js";
+import { createCodexEventBridge, type CodexEventBridge } from "./coding-agents/codex-event-bridge.js";
+import { createCodexControlClient } from "./coding-agents/codex-control-client.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -433,7 +435,14 @@ export async function createGateway(config: GatewayConfig) {
   const internalPlatformToken = process.env.UPGRADE_TOKEN;
   const internalHandle = process.env.MATRIX_HANDLE;
   let platformDb: PlatformDb | null = null;
-  const agentCredentialLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
+  const workspaceProviderRuntime = resolveWorkspaceProviderRuntime(process.env);
+  const codingAgentWorkspaceAgents = workspaceProviderRuntime.agents;
+  const codexExecutable = workspaceProviderRuntime.codexExecutable;
+  const agentCredentialLauncher = createAgentLauncher({
+    cwd: homePath,
+    runtimeHome: homePath,
+    codexExecutable,
+  });
   let agentDetectionInFlight: Promise<Awaited<ReturnType<typeof agentCredentialLauncher.detectAgents>>> | null = null;
   let internalIntegrationBaseUrl: string | null = null;
   const PLATFORM_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -508,6 +517,8 @@ export async function createGateway(config: GatewayConfig) {
     },
   });
   let codingAgentThreadStore: (CodingAgentThreadStore & CodingAgentTurnStore) | undefined;
+  let codexEventBridge: CodexEventBridge | undefined;
+  let codingAgentApprovalsEnabled = false;
   const codingAgentSessionStopReconciler = createCodingAgentSessionStopReconciler();
   const workspaceEventStore = createWorkspaceEventStore({ homePath });
   const reviewStore = createReviewStore({ homePath });
@@ -542,15 +553,16 @@ export async function createGateway(config: GatewayConfig) {
   });
   const codingAgentProviders: CodingAgentProviderAdapter[] = [];
   const codingAgentRegistryProviders: CodingAgentProviderAdapter[] = [];
-  const codingAgentWorkspaceAgents = configuredWorkspaceProviderAgents(process.env);
   if (codingAgentWorkspaceAgents.length > 0) {
     const codingAgentProjectManager = createProjectManager({ homePath });
+    codexEventBridge = codexExecutable
+      ? createCodexEventBridge({ homePath, codexExecutable })
+      : undefined;
     const codingAgentWorktreeManager = createWorktreeManager({ homePath });
-    const codingAgentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
     const codingAgentSessionManager = createAgentSessionManager({
       homePath,
       worktreeManager: codingAgentWorktreeManager,
-      agentLauncher: codingAgentLauncher,
+      agentLauncher: agentCredentialLauncher,
       zellijRuntime: workspaceZellijRuntime,
       inputWriter: (sessionId, input, signal) =>
         workspaceZellijRuntime.sendInput(sessionId, input, signal),
@@ -566,7 +578,10 @@ export async function createGateway(config: GatewayConfig) {
     const providerSet = createWorkspaceCodingAgentProviderSet({
       agents: codingAgentWorkspaceAgents,
       runtime: codingAgentWorkspaceRuntime,
+      codexEvents: codexEventBridge,
+      codexControl: codexExecutable ? createCodexControlClient({ homePath }) : undefined,
     });
+    codingAgentApprovalsEnabled = providerSet.approvalsEnabled;
     codingAgentProviders.push(...providerSet.executionProviders);
     codingAgentRegistryProviders.push(...providerSet.registryProviders);
   } else if (process.env.MATRIX_CODING_AGENTS_FAKE_PROVIDER === "1") {
@@ -587,6 +602,7 @@ export async function createGateway(config: GatewayConfig) {
         workspaceEventPublisher.publishCodingAgentThreadProjection(change),
     })
     : undefined;
+  if (codingAgentThreadStore) codexEventBridge?.attachThreadStore(codingAgentThreadStore);
   const codingAgentProviderRegistry = createCodingAgentProviderRegistry({
     providers: codingAgentRegistryProviders,
     agentCredentials: agentCredentialService,
@@ -635,7 +651,7 @@ export async function createGateway(config: GatewayConfig) {
       kanbanView: true,
       workspace: codingAgentWorkspaceEnabled,
       sameThreadTurns: codingAgentTurnsEnabled,
-      approvals: false,
+      approvals: codingAgentApprovalsEnabled,
       review: true,
       preview: true,
       files: true,
@@ -2832,6 +2848,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/", createWorkspaceRoutes({
     homePath,
     zellijRuntime: workspaceZellijRuntime,
+    agentLauncher: agentCredentialLauncher,
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
     eventStore: workspaceEventStore,
     eventPublisher: workspaceEventPublisher,
@@ -4257,6 +4274,7 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       await codingAgentTurnLifecycle.shutdown();
+      await codexEventBridge?.shutdown();
       codingAgentThreadStream?.shutdown();
       codingAgentAttentionNotifications?.dispose();
       codingAgentSessionStopReconciler.dispose();

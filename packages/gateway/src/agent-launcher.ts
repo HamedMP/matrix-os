@@ -1,6 +1,11 @@
 import { execFile } from "node:child_process";
+import { isAbsolute } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
+import { CODEX_VERIFIED_VERSION } from "@matrix-os/contracts";
+import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
+import { codexExecContractStatus } from "./coding-agents/codex-version.js";
 
 export const SupportedAgentSchema = z.enum(["claude", "codex", "opencode", "pi"]);
 export type SupportedAgent = z.infer<typeof SupportedAgentSchema>;
@@ -33,6 +38,8 @@ export interface AgentLaunchInput {
   sandbox?: AgentLaunchSandbox;
   approvalPolicy?: "untrusted" | "on-request" | "on-failure" | "never";
   runtimeHome?: string;
+  providerEventPath?: string;
+  codexExecutable?: string;
 }
 
 export interface AgentLaunchSpec {
@@ -50,6 +57,21 @@ type CommandRunner = (
 
 const execFileAsync = promisify(execFile);
 const DETECT_TIMEOUT_MS = 5_000;
+const ProviderEventPathSchema = z.string()
+  .trim()
+  .min(1)
+  .max(4096)
+  .refine(isAbsolute)
+  .regex(/^[^\u0000\r\n]+\.jsonl$/);
+const CODEX_APP_SERVER_RUNNER_PATH = fileURLToPath(
+  new URL("./coding-agents/codex-app-server-runner.mjs", import.meta.url),
+);
+const CodexAppServerConfigSchema = z.object({
+  prompt: z.string().trim().min(1).max(64 * 1024),
+  approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
+  sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
+  writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
+}).strict();
 
 const AGENTS: Record<SupportedAgent, { command: string; displayName: string }> = {
   claude: { command: "claude", displayName: "Claude" },
@@ -72,6 +94,12 @@ const defaultRunCommand: CommandRunner = async (command, args, options) => {
 function firstLine(value: string): string | undefined {
   const line = value.split("\n").map((part) => part.trim()).find(Boolean);
   return line || undefined;
+}
+
+function isExactVerifiedCodexVersion(version: string | undefined): boolean {
+  if (!version) return false;
+  const status = codexExecContractStatus(version);
+  return status.status === "verified" && status.version === CODEX_VERIFIED_VERSION;
 }
 
 function promptArgs(prompt?: string): string[] {
@@ -257,28 +285,61 @@ function codexPrompt(prompt: string | undefined, mode?: AgentLaunchInput["mode"]
   return prompt ? `${planPrefix}\n\n${prompt}` : planPrefix;
 }
 
+function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppServerConfigSchema> {
+  codexSandboxArgs(input.sandbox);
+  const sandbox = input.sandbox;
+  const mode = sandbox?.enabled === false
+    ? "danger-full-access"
+    : sandbox?.mode ?? "workspace-write";
+  return CodexAppServerConfigSchema.parse({
+    prompt: codexPrompt(input.prompt, input.mode),
+    approvalPolicy: input.approvalPolicy === "on-failure"
+      ? "on-request"
+      : input.approvalPolicy ?? "never",
+    sandbox: mode,
+    writableRoots: mode === "workspace-write" ? sandbox?.writableRoots ?? [] : [],
+  });
+}
+
 export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
   const parsed = SupportedAgentSchema.parse(input.agent);
-  const command = AGENTS[parsed].command;
+  const command = parsed === "codex" && input.codexExecutable
+    ? CodexExecutableSchema.parse(input.codexExecutable)
+    : AGENTS[parsed].command;
   const env = agentRuntimeEnv(input.runtimeHome);
   switch (parsed) {
     case "claude":
       return { command, args: claudeLaunchArgs(input), cwd: input.cwd, env };
     case "codex":
-      return {
-        command,
-        args: [
+      {
+        const args = [
           "--ask-for-approval",
           input.approvalPolicy ?? "never",
+          ...codexSandboxArgs(input.sandbox),
           "exec",
           "--skip-git-repo-check",
-          ...codexSandboxArgs(input.sandbox),
           ...codexModeArgs(input.mode),
           ...promptArgs(codexPrompt(input.prompt, input.mode)),
-        ],
-        cwd: input.cwd,
-        env,
-      };
+        ];
+        if (!input.providerEventPath) return { command, args, cwd: input.cwd, env };
+        const providerEventPath = ProviderEventPathSchema.parse(input.providerEventPath);
+        const appServerConfig = Buffer.from(
+          JSON.stringify(codexAppServerConfig(input)),
+          "utf8",
+        ).toString("base64");
+        return {
+          command: process.execPath,
+          args: [
+            CODEX_APP_SERVER_RUNNER_PATH,
+            providerEventPath,
+            CODEX_VERIFIED_VERSION,
+            command,
+            appServerConfig,
+          ],
+          cwd: input.cwd,
+          env,
+        };
+      }
     case "opencode":
       return { command, args: ["run", ...promptArgs(input.prompt)], cwd: input.cwd, env };
     case "pi":
@@ -290,6 +351,7 @@ export function createAgentLauncher(options: {
   runCommand?: CommandRunner;
   cwd?: string;
   runtimeHome?: string;
+  codexExecutable?: string;
 } = {}) {
   const runCommand = options.runCommand ?? defaultRunCommand;
   const cwd = options.cwd ?? process.cwd();
@@ -300,9 +362,12 @@ export function createAgentLauncher(options: {
       const agents: AgentStatus[] = [];
       for (const id of SupportedAgentSchema.options) {
         const config = AGENTS[id];
+        const command = id === "codex" && options.codexExecutable
+          ? CodexExecutableSchema.parse(options.codexExecutable)
+          : config.command;
         let version: string | undefined;
         try {
-          const result = await runCommand(config.command, ["--version"], {
+          const result = await runCommand(command, ["--version"], {
             cwd,
             timeout: DETECT_TIMEOUT_MS,
             env: detectEnv,
@@ -323,8 +388,25 @@ export function createAgentLauncher(options: {
           continue;
         }
 
+        if (
+          id === "codex"
+          && options.codexExecutable
+          && !isExactVerifiedCodexVersion(version)
+        ) {
+          agents.push({
+            id,
+            command: config.command,
+            displayName: config.displayName,
+            installed: false,
+            authState: "unknown",
+            version,
+            errorCode: "agent_missing",
+          });
+          continue;
+        }
+
         try {
-          await runCommand(config.command, authStatusArgs(id), {
+          await runCommand(command, authStatusArgs(id), {
             cwd,
             timeout: DETECT_TIMEOUT_MS,
             env: detectEnv,
@@ -357,7 +439,11 @@ export function createAgentLauncher(options: {
     },
 
     buildLaunch(input: AgentLaunchInput): AgentLaunchSpec {
-      return buildAgentLaunch({ ...input, runtimeHome: input.runtimeHome ?? options.runtimeHome });
+      return buildAgentLaunch({
+        ...input,
+        runtimeHome: input.runtimeHome ?? options.runtimeHome,
+        codexExecutable: input.codexExecutable ?? options.codexExecutable,
+      });
     },
   };
 }

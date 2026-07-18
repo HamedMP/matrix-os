@@ -92,6 +92,22 @@ Provider-specific behavior belongs behind the gateway provider adapter interface
 - Use foreground terminal setup actions when user interaction is required.
 - Avoid provider-specific branches in shell components unless the shared contract explicitly exposes safe metadata.
 
+Provider executable discovery does not imply protocol compatibility. Codex
+support uses checked-in exec JSONL and app-server manifests with one bounded
+installed-version range. The daily `Codex Provider Contracts` workflow resolves
+the latest published package, verifies both protocol digests, and fails on
+version or schema drift. Runtime capabilities must remain disabled for any
+installed version outside the verified range; do not silently fall back to raw
+terminal parsing for approvals or structured input.
+
+App-server requests must pass through the gateway's bounded request normalizer.
+Command, file-change, and permission requests use Matrix-authored generic copy;
+raw commands, paths, hosts, and permission payloads never enter thread events.
+Structured questions retain only validated display fields and Matrix-generated
+question ids. Native JSON-RPC ids and provider thread, turn, item, and question
+ids are control-runtime state and must never cross HTTP, WebSocket, IPC, push,
+or persisted shell contracts.
+
 The gateway provider registry owns shell-facing provider projections. It validates the bounded configured adapter set at startup, validates and bounds owner-scoped credential responses, combines adapter metadata with that credential state, and keeps credential-known non-system providers visible even before an execution adapter is registered. Credential-only projections preserve coarse install/auth state but remain unavailable for runs until an adapter exists. Credential-source failures fail closed to unavailable/unknown adapter projections without running setup or health reads. Adapter reads receive timeout signals, and only coarse health booleans enter a capped owner/provider TTL cache with LRU eviction. Invalid summaries or setup actions degrade to generic safe state; raw health output and credentials never enter the runtime summary.
 
 Workspace provider projections are configured with the bounded, comma-separated `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` setting. The supported rollout values are `claude` and `codex`; duplicates, unknown values, empty entries, and more than two entries fail startup with a generic configuration error. Every explicitly configured Claude/Codex adapter enters both the registry and executable provider sets. Customer host bundles enable the executable Codex adapter through the legacy `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1` setting so thread routes are present on a fresh runtime; provider readiness still fails closed until the provider CLI is installed and connected. The legacy setting remains a Codex-only compatibility path when the explicit list is unset, and an explicitly empty provider list disables workspace providers even when the legacy setting is present.
@@ -132,6 +148,14 @@ Approval and input requests are gateway-owned lifecycle events.
 - A shell submits a decision or answer with a bounded `clientRequestId`.
 - Gateway applies the first valid decision idempotently, appends the resolution event, and broadcasts it.
 - Other shells update from the returned snapshot or stream event.
+
+Structured provider input may carry up to eight bounded questions with stable
+question ids, optional choices, and free-form or secret-entry metadata. New
+clients submit the bounded `structuredAnswers` map and also include the existing
+legacy `answer` fallback for wire compatibility. Provider adapters must prefer
+the structured map, verify every question id against the pending request, and
+must not append answer values to thread events, logs, notifications, or shell
+persistence.
 
 Client UI must disable duplicate submission while a decision is in flight and recover by rehydrating the thread snapshot on failure. User-facing errors should be generic and recovery-oriented.
 

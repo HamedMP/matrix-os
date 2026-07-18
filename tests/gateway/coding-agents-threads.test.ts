@@ -601,6 +601,9 @@ describe("coding agent thread lifecycle", () => {
       submitApproval({ thread, approvalId, request, now: providerNow, nextEventId }) {
         approvalCalls += 1;
         expect(approvalId).toBe("appr_test");
+        if (request.clientRequestId === "req_approval_failure") {
+          throw new Error("provider control unavailable at /private/socket");
+        }
         expect(request).toEqual({
           decision: "approve",
           clientRequestId: "req_approval_1",
@@ -646,6 +649,11 @@ describe("coding agent thread lifecycle", () => {
       correlationId: "corr_test",
     };
 
+    const failed = await app.request(jsonRequest(
+      `/api/coding-agents/threads/${created.thread.id}/approvals/appr_test/decision`,
+      { ...body, clientRequestId: "req_approval_failure" },
+    ));
+    const afterFailure = await threads.getThread(ownerPrincipal, created.thread.id);
     const first = await app.request(jsonRequest(`/api/coding-agents/threads/${created.thread.id}/approvals/appr_test/decision`, body));
     const duplicate = await app.request(jsonRequest(`/api/coding-agents/threads/${created.thread.id}/approvals/appr_test/decision`, body));
     const oversized = await app.request(new Request(`http://localhost/api/coding-agents/threads/${created.thread.id}/approvals/appr_test/decision`, {
@@ -654,10 +662,17 @@ describe("coding agent thread lifecycle", () => {
       body: JSON.stringify(body),
     }));
 
+    expect(failed.status).toBe(503);
+    expect(afterFailure.thread).toMatchObject({ status: "waiting_for_approval", attention: "approval_required" });
+    expect(afterFailure.events.items.map((event) => event.type)).toEqual([
+      "thread.created",
+      "user.message",
+      "approval.requested",
+    ]);
     expect(first.status).toBe(200);
     expect(duplicate.status).toBe(200);
     expect(oversized.status).toBe(413);
-    expect(approvalCalls).toBe(1);
+    expect(approvalCalls).toBe(2);
     const decided = AgentThreadSnapshotSchema.parse(await first.json());
     const duplicateSnapshot = AgentThreadSnapshotSchema.parse(await duplicate.json());
     expect(decided.thread).toMatchObject({ status: "running", attention: "none" });
@@ -691,6 +706,26 @@ describe("coding agent thread lifecycle", () => {
               title: "Need input",
               safeDescription: "Provide the missing detail.",
               required: true,
+              questions: [
+                {
+                  questionId: "implementation",
+                  header: "Approach",
+                  question: "Which implementation should be used?",
+                  options: [
+                    { label: "Minimal", description: "Change only the required code." },
+                    { label: "Complete", description: "Include the related migration." },
+                  ],
+                  allowOther: false,
+                  secret: false,
+                },
+                {
+                  questionId: "credential",
+                  header: "Credential",
+                  question: "Enter the temporary value.",
+                  allowOther: true,
+                  secret: true,
+                },
+              ],
               correlationId: "corr_input",
             },
           }),
@@ -700,6 +735,20 @@ describe("coding agent thread lifecycle", () => {
         inputCalls += 1;
         expect(inputRequestId).toBe("req_input_prompt");
         expect(request.answer).toBe("Use the safe implementation path.");
+        expect(request.structuredAnswers).toEqual({
+          implementation: ["Minimal"],
+          credential: [expect.stringMatching(/secret-value$/)],
+        });
+        if (request.clientRequestId === "req_input_echo") {
+          return [AgentThreadEventSchema.parse({
+            type: "assistant.text.delta",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            messageId: "message_secret_echo",
+            delta: request.structuredAnswers?.credential?.[0] ?? "",
+          })];
+        }
         return [
           AgentThreadEventSchema.parse({
             type: "user_input.answered",
@@ -736,10 +785,39 @@ describe("coding agent thread lifecycle", () => {
     );
     const body = {
       answer: "Use the safe implementation path.",
+      structuredAnswers: {
+        implementation: ["Minimal"],
+        credential: ["final-secret-value"],
+      },
       clientRequestId: "req_input_1",
       correlationId: "corr_input",
     };
 
+    const unknownQuestion = await app.request(jsonRequest(
+      `/api/coding-agents/threads/${created.thread.id}/inputs/req_input_prompt/answer`,
+      {
+        ...body,
+        structuredAnswers: { ...body.structuredAnswers, unknown: ["Minimal"] },
+        clientRequestId: "req_input_unknown",
+      },
+    ));
+    const invalidOption = await app.request(jsonRequest(
+      `/api/coding-agents/threads/${created.thread.id}/inputs/req_input_prompt/answer`,
+      {
+        ...body,
+        structuredAnswers: { ...body.structuredAnswers, implementation: ["Unsupported"] },
+        clientRequestId: "req_input_option",
+      },
+    ));
+    const secretEcho = await app.request(jsonRequest(
+      `/api/coding-agents/threads/${created.thread.id}/inputs/req_input_prompt/answer`,
+      {
+        ...body,
+        structuredAnswers: { ...body.structuredAnswers, credential: ["temporary-secret-value"] },
+        clientRequestId: "req_input_echo",
+      },
+    ));
+    const afterSecretEcho = await threads.getThread(ownerPrincipal, created.thread.id);
     const first = await app.request(jsonRequest(`/api/coding-agents/threads/${created.thread.id}/inputs/req_input_prompt/answer`, body));
     const duplicate = await app.request(jsonRequest(`/api/coding-agents/threads/${created.thread.id}/inputs/req_input_prompt/answer`, body));
     const malformed = await app.request(jsonRequest(`/api/coding-agents/threads/${created.thread.id}/inputs/../answer`, body));
@@ -749,11 +827,15 @@ describe("coding agent thread lifecycle", () => {
       body: JSON.stringify(body),
     }));
 
+    expect(unknownQuestion.status).toBe(400);
+    expect(invalidOption.status).toBe(400);
+    expect(secretEcho.status).toBe(503);
+    expect(JSON.stringify(afterSecretEcho)).not.toContain("temporary-secret-value");
     expect(first.status).toBe(200);
     expect(duplicate.status).toBe(200);
     expect(malformed.status).toBe(404);
     expect(oversized.status).toBe(413);
-    expect(inputCalls).toBe(1);
+    expect(inputCalls).toBe(2);
     const answered = AgentThreadSnapshotSchema.parse(await first.json());
     const duplicateSnapshot = AgentThreadSnapshotSchema.parse(await duplicate.json());
     expect(answered.thread).toMatchObject({ status: "running", attention: "none" });
@@ -764,9 +846,144 @@ describe("coding agent thread lifecycle", () => {
       "user_input.answered",
       "thread.status",
     ]);
+    expect(JSON.stringify(answered)).not.toContain("Private custom response");
+    expect(JSON.stringify(answered)).not.toContain("Use the safe implementation path.");
     expect(duplicateSnapshot.events.items.map((event) => event.eventId)).toEqual(
       answered.events.items.map((event) => event.eventId),
     );
+  });
+
+  it("accepts safe thread completion events after a user input answer", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-input-completion-"));
+    const provider: CodingAgentProviderAdapter = {
+      providerId: "codex",
+      startThread({ thread, now: providerNow, nextEventId }) {
+        return [AgentThreadEventSchema.parse({
+          type: "user_input.requested",
+          eventId: nextEventId(),
+          threadId: thread.id,
+          occurredAt: providerNow().toISOString(),
+          request: {
+            requestId: "req_input_completion",
+            threadId: thread.id,
+            title: "Need input",
+            safeDescription: "Choose how to continue.",
+            required: true,
+            correlationId: "corr_input_completion",
+          },
+        })];
+      },
+      submitInput({ thread, inputRequestId, request, now: providerNow, nextEventId }) {
+        if (request.answer === "Fail.") {
+          return [
+            AgentThreadEventSchema.parse({
+              type: "user_input.answered",
+              eventId: nextEventId(),
+              threadId: thread.id,
+              occurredAt: providerNow().toISOString(),
+              requestId: inputRequestId,
+              correlationId: request.correlationId,
+            }),
+            AgentThreadEventSchema.parse({
+              type: "thread.error",
+              eventId: nextEventId(),
+              threadId: thread.id,
+              occurredAt: providerNow().toISOString(),
+              error: {
+                code: "provider_run_failed",
+                safeMessage: "Private custom response",
+                retryable: true,
+                recoveryActions: ["retry"],
+              },
+            }),
+            AgentThreadEventSchema.parse({
+              type: "thread.completed",
+              eventId: nextEventId(),
+              threadId: thread.id,
+              occurredAt: providerNow().toISOString(),
+              outcome: "failed",
+            }),
+          ];
+        }
+        return [
+          AgentThreadEventSchema.parse({
+            type: "user_input.answered",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            requestId: inputRequestId,
+            correlationId: request.correlationId,
+          }),
+          AgentThreadEventSchema.parse({
+            type: "thread.completed",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            outcome: "completed",
+          }),
+        ];
+      },
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      relationValidator: { validateCreate: async () => undefined },
+      providers: [provider],
+    });
+    const created = await threads.createThread(ownerPrincipal, createBody);
+
+    const answered = await threads.submitInput(
+      ownerPrincipal,
+      created.snapshot.thread.id,
+      "req_input_completion",
+      {
+        answer: "Continue.",
+        clientRequestId: "req_input_completion_answer",
+        correlationId: "corr_input_completion",
+      },
+    );
+
+    expect(answered.thread).toMatchObject({ status: "completed", attention: "none" });
+    expect(answered.events.items.map((event) => event.type)).toEqual([
+      "thread.created",
+      "user.message",
+      "user_input.requested",
+      "user_input.answered",
+      "thread.completed",
+    ]);
+
+    const failedThread = await threads.createThread(ownerPrincipal, {
+      ...createBody,
+      clientRequestId: "req_create_input_failure",
+    });
+    const failed = await threads.submitInput(
+      ownerPrincipal,
+      failedThread.snapshot.thread.id,
+      "req_input_completion",
+      {
+        answer: "Fail.",
+        clientRequestId: "req_input_failure_answer",
+        correlationId: "corr_input_completion",
+      },
+    );
+
+    expect(failed.thread).toMatchObject({ status: "failed", attention: "failed" });
+    expect(failed.events.items.map((event) => event.type)).toEqual([
+      "thread.created",
+      "user.message",
+      "user_input.requested",
+      "user_input.answered",
+      "thread.error",
+      "thread.completed",
+    ]);
+    expect(JSON.stringify(failed)).not.toContain("Private custom response");
+    expect(failed.events.items[4]).toMatchObject({
+      type: "thread.error",
+      error: {
+        code: "provider_run_failed",
+        safeMessage: "Agent run could not continue. Try again.",
+      },
+    });
   });
 
   it("records a safe failed thread when a provider start fails", async () => {

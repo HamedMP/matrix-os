@@ -142,13 +142,13 @@ RUN apk add --no-cache \
 
 RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
 
-# AI coding CLIs. Defaults track latest so fresh Matrix runtimes start current;
-# build args allow reproducible rebuilds when pinning a release is required.
+# AI coding CLIs. Codex advances only after both provider protocols are verified.
+ARG CODEX_VERSION=0.144.6
 ARG OPENCODE_AI_VERSION=latest
 ARG PI_CODING_AGENT_VERSION=latest
 RUN npm install -g \
     @anthropic-ai/claude-code@latest \
-    @openai/codex@latest \
+    "@openai/codex@${CODEX_VERSION}" \
     "opencode-ai@${OPENCODE_AI_VERSION}"
 RUN npm install -g --ignore-scripts \
     "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"

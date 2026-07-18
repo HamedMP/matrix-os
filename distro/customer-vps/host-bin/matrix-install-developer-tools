@@ -15,6 +15,7 @@ TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"
 STATE_DIR="${MATRIX_DEVELOPER_TOOLS_STATE_DIR:-/var/lib/matrix-developer-tools}"
 FAILED_FILE="$STATE_DIR/failed-tools"
 INSTALLED_FILE="$STATE_DIR/installed-tools"
+CODEX_VERSION="0.144.6"
 
 log() {
   printf 'matrix-install-developer-tools: %s\n' "$*"
@@ -90,11 +91,21 @@ tool_bin_name() {
   printf '%s\n' "$tool"
 }
 
+codex_version_is_current() {
+  local output escaped_version
+  output="$(/opt/matrix/runtime/node/bin/codex --version 2>/dev/null)" || return 1
+  escaped_version="${CODEX_VERSION//./\\.}"
+  printf '%s\n' "$output" | grep -Eq "(^|[[:space:]])${escaped_version}([[:space:]]|$)"
+}
+
 is_tool_installed() {
   local tool="$1"
   local bin_name
   bin_name="$(tool_bin_name "$tool")"
-  grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]
+  grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ] || return 1
+  if [ "$tool" = "codex" ]; then
+    codex_version_is_current
+  fi
 }
 
 if [ "$MODE" != "--tools-only" ]; then

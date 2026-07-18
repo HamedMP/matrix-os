@@ -94,9 +94,11 @@ Each agent maps to an npm package:
 | Agent | Package |
 |---|---|
 | Claude Code | `@anthropic-ai/claude-code@latest` |
-| Codex | `@openai/codex@latest` |
+| Codex | `@openai/codex@0.144.3` (Matrix-verified) |
 | OpenCode | `opencode-ai@latest` |
 | Pi | `@earendil-works/pi-coding-agent@latest` |
+
+Matrix pins Codex to the newest version whose structured event and approval protocols have passed compatibility checks. A scheduled check detects new Codex releases; Matrix advances the pinned version only after both protocols pass together.
 
 The default node prefix is `/opt/matrix/runtime/node`. Set `MATRIX_NODE_PREFIX` in your environment to use a different location.
 
@@ -170,6 +172,8 @@ Matrix OS syncs a curated skill pack into each agent's skill discovery path at i
 
 Agent work is organized into threads. A thread records the selected provider, project or worktree context, lifecycle status, and safe event timeline. Desktop and mobile can keep an open thread updated from gateway state and can reopen a thread to see progress without replaying terminal output into local storage.
 
+Codex threads use the installed CLI's structured event stream when its version matches Matrix's verified compatibility range. Matrix turns assistant messages, tool activity, file changes, and completion state into bounded thread events while keeping raw commands, command output, provider errors, and credentials out of shell timelines. Follow-up messages resume the same provider thread. If the installed CLI is newer or older than the verified range, Matrix marks structured execution unavailable until the compatibility contract is updated.
+
 Threads may need attention when an agent:
 
 - requests approval for an action;
@@ -203,7 +207,7 @@ Some agents ask before taking sensitive actions. Matrix routes those approval re
   </Step>
 </Steps>
 
-User-input requests work the same way: answer from desktop or mobile, and the thread continues from the shared runtime state.
+User-input requests work the same way: answer from desktop or mobile, and the thread continues from the shared runtime state. Matrix enables these controls only for provider versions whose local decision protocol has passed compatibility checks; an unavailable provider connection leaves the request pending so it can be retried safely.
 
 ## Terminal continuity
 

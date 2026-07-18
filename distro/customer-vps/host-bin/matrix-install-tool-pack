@@ -16,6 +16,7 @@ MATRIX_APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}"
 MATRIX_RUNTIME_DIR="${MATRIX_RUNTIME_DIR:-/opt/matrix/runtime}"
 NODE_PREFIX="${MATRIX_NODE_PREFIX:-$MATRIX_RUNTIME_DIR/node}"
 CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"
+CODEX_VERSION="0.144.6"
 OPENCODE_AI_VERSION="${OPENCODE_AI_VERSION:-latest}"
 PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-latest}"
 CODE_SERVER_DIST="code-server-${CODE_SERVER_VERSION}-linux-amd64"
@@ -173,7 +174,7 @@ install_claude_code() {
 
 install_codex_package() {
   run_npm_install install -g --prefix "$NODE_PREFIX" \
-    @openai/codex@latest
+    "@openai/codex@${CODEX_VERSION}"
 }
 
 install_codex() {
