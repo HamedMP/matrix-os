@@ -58,11 +58,16 @@ export function TerminalDesignTabStrip({ design }: { design: TerminalDesignId })
               key={tab.id}
               className="terminal-design-tab"
               data-active={active ? "true" : undefined}
+              // Presentation role keeps the tab button "owned" by the tablist
+              // despite the wrapper (ARIA tab containment).
+              role="presentation"
             >
               <button
                 type="button"
                 role="tab"
+                id={`terminal-tab-${tab.id}`}
                 aria-selected={active}
+                aria-controls="terminal-tabpanel"
                 className="terminal-design-tab-activate"
                 onClick={() => ctx.setActiveTab(tab.id)}
               >
