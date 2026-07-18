@@ -561,6 +561,15 @@ function consumePendingTerminalStop(
   };
 }
 
+function safeProviderRunError() {
+  return SafeClientErrorSchema.parse({
+    code: "provider_run_failed",
+    safeMessage: "Agent run could not continue. Try again.",
+    retryable: true,
+    recoveryActions: ["retry"],
+  });
+}
+
 function safeProviderRunFailureEvents(threadId: string, now: () => Date, eventId: () => string): AgentThreadEvent[] {
   return [
     AgentThreadEventSchema.parse({
@@ -568,12 +577,7 @@ function safeProviderRunFailureEvents(threadId: string, now: () => Date, eventId
       eventId: eventId(),
       threadId,
       occurredAt: now().toISOString(),
-      error: SafeClientErrorSchema.parse({
-        code: "provider_run_failed",
-        safeMessage: "Agent run could not continue. Try again.",
-        retryable: true,
-        recoveryActions: ["retry"],
-      }),
+      error: safeProviderRunError(),
     }),
     AgentThreadEventSchema.parse({
       type: "thread.completed",
@@ -679,6 +683,65 @@ function defaultInputAnswerEvents(
       status: "running",
     }),
   ];
+}
+
+function invalidInputAnswer(message: string): never {
+  throw new z.ZodError([{ code: "custom", message, path: ["structuredAnswers"] }]);
+}
+
+function validateInputAnswer(
+  state: StoredThreadState,
+  threadId: string,
+  inputRequestId: string,
+  request: UserInputAnswerRequest,
+): void {
+  const requestIndex = state.events.findLastIndex((event) =>
+    event.threadId === threadId &&
+    event.type === "user_input.requested" &&
+    event.request.requestId === inputRequestId
+  );
+  if (requestIndex < 0) invalidInputAnswer("Input request is unavailable");
+  const pending = state.events[requestIndex];
+  if (pending?.type !== "user_input.requested") invalidInputAnswer("Input request is unavailable");
+  const alreadyAnswered = state.events.slice(requestIndex + 1).some((event) =>
+    event.threadId === threadId &&
+    event.type === "user_input.answered" &&
+    event.requestId === inputRequestId
+  );
+  if (alreadyAnswered || pending.request.correlationId !== request.correlationId) {
+    invalidInputAnswer("Input request is unavailable");
+  }
+  if (!request.structuredAnswers) return;
+  const questions = pending.request.questions;
+  if (!questions) invalidInputAnswer("Structured input is unavailable");
+  const questionsById = new Map(questions.map((question) => [question.questionId, question]));
+  const answers = Object.entries(request.structuredAnswers);
+  if (pending.request.required && answers.length !== questions.length) {
+    invalidInputAnswer("All required questions must be answered");
+  }
+  for (const [questionId, values] of answers) {
+    const question = questionsById.get(questionId);
+    if (!question) invalidInputAnswer("Question is unavailable");
+    if (question.options && !question.allowOther) {
+      const labels = new Set(question.options.map((option) => option.label));
+      if (values.some((value) => !labels.has(value))) invalidInputAnswer("Answer option is unavailable");
+    }
+  }
+}
+
+function parseInputProviderEvents(events: AgentThreadEvent[], threadId: string): AgentThreadEvent[] {
+  const parsed = parseProviderEvents(events, threadId);
+  if (parsed.some((event) =>
+    event.type !== "user_input.answered" &&
+    event.type !== "thread.status" &&
+    event.type !== "thread.error" &&
+    event.type !== "thread.completed"
+  )) {
+    throw new Error("Provider input response contained content events");
+  }
+  return parsed.map((event) => event.type === "thread.error"
+    ? AgentThreadEventSchema.parse({ ...event, error: safeProviderRunError() })
+    : event);
 }
 
 function parseProviderEvents(events: AgentThreadEvent[], threadId: string): AgentThreadEvent[] {
@@ -1518,11 +1581,12 @@ export function createCodingAgentThreadStore(
         if (thread.inputAnswerClientRequestIds.includes(request.clientRequestId) || terminalThread(thread)) {
           return { state, result: { snapshot: snapshotFor(thread, state.events), eventsToPublish: [] } };
         }
+        validateInputAnswer(state, threadId, parsedInputRequestId, request);
         const provider = providers.find((candidate) => candidate.providerId === thread.providerId);
         let inputEvents: AgentThreadEvent[];
         if (provider?.submitInput) {
           try {
-            inputEvents = parseProviderEvents(await provider.submitInput({
+            inputEvents = parseInputProviderEvents(await provider.submitInput({
               principal,
               thread: stripOwner(thread),
               inputRequestId: parsedInputRequestId,
