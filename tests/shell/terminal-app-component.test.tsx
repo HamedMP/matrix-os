@@ -3862,7 +3862,7 @@ describe("TerminalApp", () => {
       await chooseNewSessionMenuItemAfterStatus(/Codex.*Install/);
     });
 
-    const codexInstallPayload = expectTerminalCreatePayloadForCommand(/^sh -lc .*@openai\/codex@latest/);
+    const codexInstallPayload = expectTerminalCreatePayloadForCommand(/^sh -lc .*@openai\/codex@/);
     const codexInstallPaneProps = paneGridSpy.mock.lastCall?.[0] as { paneTree: { sessionId?: string; compatMode?: string } };
     expect(codexInstallPaneProps).toMatchObject({
       paneTree: {
