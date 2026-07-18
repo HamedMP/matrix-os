@@ -153,7 +153,7 @@ vi.mock("@xterm/addon-image", () => ({
 
 vi.mock("../../shell/src/components/terminal/terminal-cache.js", () => ({
   cacheTerminal: vi.fn(),
-  getCached: vi.fn(() => null),
+  takeCached: vi.fn(() => null),
   removeCached: vi.fn(),
   hasCached: vi.fn(() => false),
 }));

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   cacheTerminal,
-  getCached,
+  takeCached,
   removeCached,
   hasCached,
   type CachedTerminal,
@@ -27,13 +27,15 @@ describe("Terminal Cache", () => {
     }
   });
 
-  it("cacheTerminal stores an entry and getCached retrieves it", () => {
+  it("cacheTerminal stores an entry and takeCached transfers ownership", () => {
     const entry = createMockCachedTerminal({ sessionId: "session-abc" });
     cacheTerminal("pane-1", entry);
 
-    const cached = getCached("pane-1");
+    const cached = takeCached("pane-1");
     expect(cached).not.toBeNull();
     expect(cached!.sessionId).toBe("session-abc");
+    expect(hasCached("pane-1")).toBe(false);
+    expect(takeCached("pane-1")).toBeNull();
   });
 
   it("detaches and closes the socket before caching when socket retention is disabled", () => {
@@ -43,7 +45,7 @@ describe("Terminal Cache", () => {
 
     expect((entry.ws as unknown as { send: ReturnType<typeof vi.fn> }).send).toHaveBeenCalledWith(JSON.stringify({ type: "detach" }));
     expect((entry.ws as unknown as { close: ReturnType<typeof vi.fn> }).close).toHaveBeenCalledOnce();
-    expect(getCached("pane-1")).toMatchObject({
+    expect(takeCached("pane-1")).toMatchObject({
       sessionId: "main",
       lastSeq: 42,
     });
@@ -65,8 +67,8 @@ describe("Terminal Cache", () => {
     expect((entry.ws as unknown as { close: ReturnType<typeof vi.fn> }).close).toHaveBeenCalledOnce();
   });
 
-  it("getCached returns null for cache miss", () => {
-    expect(getCached("nonexistent")).toBeNull();
+  it("takeCached returns null for cache miss", () => {
+    expect(takeCached("nonexistent")).toBeNull();
   });
 
   it("hasCached returns true for cached pane", () => {
@@ -84,7 +86,7 @@ describe("Terminal Cache", () => {
 
     removeCached("pane-1");
     expect(hasCached("pane-1")).toBe(false);
-    expect(getCached("pane-1")).toBeNull();
+    expect(takeCached("pane-1")).toBeNull();
   });
 
   it("removeCached is a no-op for nonexistent key", () => {
@@ -99,11 +101,25 @@ describe("Terminal Cache", () => {
     cacheTerminal("pane-1", entry1);
     cacheTerminal("pane-1", entry2);
 
-    const cached = getCached("pane-1");
+    const cached = takeCached("pane-1");
     expect(cached!.sessionId).toBe("session-2");
     expect((entry1.ws as unknown as { send: ReturnType<typeof vi.fn> }).send).toHaveBeenCalledWith(JSON.stringify({ type: "detach" }));
     expect((entry1.ws as unknown as { close: ReturnType<typeof vi.fn> }).close).toHaveBeenCalledOnce();
     expect((entry1.terminal as unknown as { dispose: ReturnType<typeof vi.fn> }).dispose).toHaveBeenCalledOnce();
+  });
+
+  it("does not dispose a restored terminal when it is cached again", () => {
+    const entry = createMockCachedTerminal({ sessionId: "session-restored" });
+    cacheTerminal("pane-1", entry);
+
+    const restored = takeCached("pane-1");
+    expect(restored).toBe(entry);
+
+    cacheTerminal("pane-1", { ...restored! });
+
+    expect((entry.ws as unknown as { send: ReturnType<typeof vi.fn> }).send).not.toHaveBeenCalled();
+    expect((entry.ws as unknown as { close: ReturnType<typeof vi.fn> }).close).not.toHaveBeenCalled();
+    expect((entry.terminal as unknown as { dispose: ReturnType<typeof vi.fn> }).dispose).not.toHaveBeenCalled();
   });
 
   it("supports multiple panes cached simultaneously", () => {
@@ -111,14 +127,14 @@ describe("Terminal Cache", () => {
     cacheTerminal("pane-2", createMockCachedTerminal({ sessionId: "s2" }));
     cacheTerminal("pane-3", createMockCachedTerminal({ sessionId: "s3" }));
 
-    expect(getCached("pane-1")!.sessionId).toBe("s1");
-    expect(getCached("pane-2")!.sessionId).toBe("s2");
-    expect(getCached("pane-3")!.sessionId).toBe("s3");
+    expect(takeCached("pane-1")!.sessionId).toBe("s1");
+    expect(takeCached("pane-2")!.sessionId).toBe("s2");
+    expect(takeCached("pane-3")!.sessionId).toBe("s3");
   });
 
   it("preserves lastSeq value", () => {
     cacheTerminal("pane-1", createMockCachedTerminal({ lastSeq: 42 }));
-    expect(getCached("pane-1")!.lastSeq).toBe(42);
+    expect(takeCached("pane-1")!.lastSeq).toBe(42);
   });
 
   it("evicts the oldest entry before exceeding the hard cap", () => {
