@@ -274,9 +274,9 @@ function bridgeEmitterSource(agent: AgentKind, command: string): string {
 }
 
 function openCodePluginSource(command: string): string {
-  return `${bridgeEmitterSource("opencode", command)}\nexport const MatrixSessionMetadata = async () => ({\n  event: async ({ event }) => emit(event.type, event),\n  "tool.execute.after": async (input) => emit("tool.execute.after", input),\n});\n`;
+  return `${bridgeEmitterSource("opencode", command)}\nexport const MatrixSessionMetadata = async () => ({\n  event: async ({ event }) => {\n    if (event.type !== "tool.execute.after") emit(event.type, event);\n  },\n  "tool.execute.after": async (input) => emit("tool.execute.after", input),\n});\n`;
 }
 
 function piExtensionSource(command: string): string {
-  return `${bridgeEmitterSource("pi", command)}\nexport default function matrixSessionMetadata(pi) {\n  for (const eventName of ["before_agent_start", "agent_start", "agent_end", "tool_execution_end", "session_shutdown"]) {\n    pi.on(eventName, (event) => emit(eventName, event));\n  }\n}\n`;
+  return `${bridgeEmitterSource("pi", command)}\nexport default function matrixSessionMetadata(pi) {\n  for (const eventName of ["before_agent_start", "agent_end", "tool_execution_end", "session_shutdown"]) {\n    pi.on(eventName, (event) => emit(eventName, event));\n  }\n}\n`;
 }

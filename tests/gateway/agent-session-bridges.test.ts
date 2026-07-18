@@ -186,8 +186,12 @@ describe("agent session bridge registration", () => {
 
     const opencodeBridge = join(root, ".config", "opencode", "plugins", "matrix-session-metadata.js");
     const piBridge = join(root, ".pi", "agent", "extensions", "matrix-session-metadata.ts");
-    await expect(readFile(opencodeBridge, "utf8")).resolves.toContain(command);
-    await expect(readFile(piBridge, "utf8")).resolves.toContain(command);
+    const opencodeSource = await readFile(opencodeBridge, "utf8");
+    const piSource = await readFile(piBridge, "utf8");
+    expect(opencodeSource).toContain(command);
+    expect(opencodeSource).toContain('event.type !== "tool.execute.after"');
+    expect(piSource).toContain(command);
+    expect(piSource).not.toContain('"agent_start",');
     await expect(readFile(opencodeBridge, "utf8")).resolves.toContain(
       'Buffer.byteLength(encoded, "utf8") <= 65536',
     );
