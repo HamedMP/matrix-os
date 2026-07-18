@@ -75,6 +75,7 @@ export function XpToolbar({ taskPaneOpen, onToggleTaskPane }: XpToolbarProps) {
 
   const toggleSearch = () => {
     if (searchOpen) {
+      setQuery("");
       clearSearch();
       setSearchOpen(false);
     } else {
@@ -219,6 +220,7 @@ export function XpToolbar({ taskPaneOpen, onToggleTaskPane }: XpToolbarProps) {
                 submitSearch();
               } else if (e.key === "Escape") {
                 e.preventDefault();
+                setQuery("");
                 clearSearch();
                 setSearchOpen(false);
               }
