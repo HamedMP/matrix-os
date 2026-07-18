@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, type Ref } from "react";
-import { PowerIcon, SearchIcon } from "lucide-react";
+import { LockIcon, LogOutIcon, PowerIcon, SearchIcon } from "lucide-react";
 import type { AppEntry } from "@/hooks/useWindowManager";
 import { isBuiltInAppPath } from "@/lib/builtin-apps";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { useOsSessionStore } from "../os-session/os-session-store";
 import { StartMenuUser, TaskbarAppIcon } from "./taskbar-shared";
 import {
   resolveBuiltInStartApps,
@@ -27,11 +28,18 @@ const MAX_RECOMMENDED = 3;
 /**
  * Windows 11 start menu: centered acrylic panel with a live-filtering search
  * field, a 6-column Pinned grid (built-ins first), a Recommended section with
- * the most recent apps, and a footer with the user identity plus a decorative
- * power button (closes the menu only).
+ * the most recent apps, and a footer with the user identity plus a power
+ * button that opens a Lock / Sign out flyout (session simulation via the
+ * os-session store).
  */
 export function Win11StartMenu({ ref, apps, onOpenApp, onOpenSettings, onClose }: Win11StartMenuProps) {
   const [query, setQuery] = useState("");
+  const [powerOpen, setPowerOpen] = useState(false);
+
+  const openLockScreen = () => {
+    onClose();
+    useOsSessionStore.getState().openWin11Lock();
+  };
 
   const pinnedApps: TaskbarAppEntry[] = [];
   const pinnedPaths = new Set<string>();
@@ -121,9 +129,29 @@ export function Win11StartMenu({ ref, apps, onOpenApp, onOpenSettings, onClose }
         >
           <StartMenuUser avatarSize={28} className="win11-start-user" />
         </button>
-        <button type="button" className="win11-start-power" aria-label="Power" onClick={onClose}>
-          <PowerIcon aria-hidden="true" />
-        </button>
+        <div className="win11-start-power-wrap">
+          {powerOpen ? (
+            <div className="win11-power-flyout" role="menu" aria-label="Power options">
+              <button type="button" role="menuitem" className="win11-power-flyout-item" onClick={openLockScreen}>
+                <LockIcon aria-hidden="true" />
+                <span>Lock</span>
+              </button>
+              <button type="button" role="menuitem" className="win11-power-flyout-item" onClick={openLockScreen}>
+                <LogOutIcon aria-hidden="true" />
+                <span>Sign out</span>
+              </button>
+            </div>
+          ) : null}
+          <button
+            type="button"
+            className="win11-start-power"
+            aria-label="Power"
+            aria-expanded={powerOpen}
+            onClick={() => setPowerOpen((open) => !open)}
+          >
+            <PowerIcon aria-hidden="true" />
+          </button>
+        </div>
       </div>
     </div>
   );

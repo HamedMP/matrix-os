@@ -818,3 +818,49 @@
   width: 16px;
   height: 16px;
 }
+
+/* Power flyout: small acrylic menu above the footer power button with the
+   Lock / Sign out session actions (mirrors the real Win11 power flyout). */
+.win11-start-power-wrap {
+  position: relative;
+}
+
+.win11-power-flyout {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  display: flex;
+  flex-direction: column;
+  min-width: 148px;
+  padding: 4px;
+  border: 1px solid var(--win11-stroke);
+  border-radius: 8px;
+  background: var(--win11-acrylic-strong);
+  backdrop-filter: var(--win11-blur);
+  -webkit-backdrop-filter: var(--win11-blur);
+  box-shadow: var(--win11-shadow);
+}
+
+.win11-power-flyout-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  color: #1b1b1b;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  text-align: left;
+}
+
+.win11-power-flyout-item:hover {
+  background: var(--win11-hover);
+}
+
+.win11-power-flyout-item svg {
+  width: 14px;
+  height: 14px;
+}
