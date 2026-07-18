@@ -292,6 +292,71 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     }
   });
 
+  it('bundled home sync ships OS wallpapers but keeps other wallpapers user-owned', () => {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-wallpapers-'));
+    const appDir = join(tempDir, 'app');
+    const homeDir = join(tempDir, 'home');
+    const templateWallpapers = join(appDir, 'home', 'system', 'wallpapers');
+    const homeWallpapers = join(homeDir, 'system', 'wallpapers');
+
+    try {
+      mkdirSync(templateWallpapers, { recursive: true });
+      mkdirSync(homeWallpapers, { recursive: true });
+
+      // The template ships all four OS wallpapers plus (hypothetically) an
+      // entry whose name collides with a user upload — the prefix must stay
+      // user-owned for everything except the four exact bundled filenames.
+      writeFileSync(join(appDir, 'home', '.template-manifest.json'), JSON.stringify({
+        'system/wallpapers/macos-light.svg': sha256('macos light v1'),
+        'system/wallpapers/moraine-lake.jpg': sha256('moraine v2'),
+        'system/wallpapers/win11-bloom.svg': sha256('win11 bloom v2'),
+        'system/wallpapers/xp-bliss.svg': sha256('xp bliss v1'),
+        'system/wallpapers/custom.jpg': sha256('template custom'),
+      }, null, 2));
+      // Existing VPS home: a stale tracked bloom, a user upload, and a
+      // user-modified file colliding with a template entry name.
+      writeFileSync(join(homeDir, '.template-manifest.json'), JSON.stringify({
+        'system/wallpapers/win11-bloom.svg': sha256('win11 bloom v1'),
+      }, null, 2));
+      writeFileSync(join(templateWallpapers, 'macos-light.svg'), 'macos light v1');
+      writeFileSync(join(templateWallpapers, 'moraine-lake.jpg'), 'moraine v2');
+      writeFileSync(join(templateWallpapers, 'win11-bloom.svg'), 'win11 bloom v2');
+      writeFileSync(join(templateWallpapers, 'xp-bliss.svg'), 'xp bliss v1');
+      writeFileSync(join(templateWallpapers, 'custom.jpg'), 'template custom');
+      writeFileSync(join(homeWallpapers, 'win11-bloom.svg'), 'win11 bloom v1');
+      writeFileSync(join(homeWallpapers, 'user-upload.jpg'), 'my own photo');
+      writeFileSync(join(homeWallpapers, 'custom.jpg'), 'user customized');
+
+      const result = spawnSync('bash', [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          APP_DIR: appDir,
+          MATRIX_HOME: homeDir,
+        },
+      });
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      // Missing bundled wallpapers are added; tracked-but-stale ones update.
+      expect(readFileSync(join(homeWallpapers, 'xp-bliss.svg'), 'utf8')).toBe('xp bliss v1');
+      expect(readFileSync(join(homeWallpapers, 'macos-light.svg'), 'utf8')).toBe('macos light v1');
+      expect(readFileSync(join(homeWallpapers, 'moraine-lake.jpg'), 'utf8')).toBe('moraine v2');
+      expect(readFileSync(join(homeWallpapers, 'win11-bloom.svg'), 'utf8')).toBe('win11 bloom v2');
+      // User wallpapers are untouched — including one colliding with a
+      // template manifest entry, proving the override is name-exact.
+      expect(readFileSync(join(homeWallpapers, 'user-upload.jpg'), 'utf8')).toBe('my own photo');
+      expect(readFileSync(join(homeWallpapers, 'custom.jpg'), 'utf8')).toBe('user customized');
+      const log = readFileSync(join(homeDir, 'system', 'logs', 'template-sync.log'), 'utf8');
+      expect(log).toContain('Added: system/wallpapers/xp-bliss.svg');
+      expect(log).toContain('Updated: system/wallpapers/win11-bloom.svg');
+      expect(log).toContain('Skipped: system/wallpapers/custom.jpg (protected user data)');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('bundled home sync upgrades pre-manifest system-owned first-party app files', () => {
     const root = process.cwd();
     const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-system-app-'));
