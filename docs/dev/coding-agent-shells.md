@@ -309,11 +309,26 @@ Before enabling a mobile coding-agent shell change broadly:
 5. Confirm Chat, Apps, Terminal, and Settings tabs still open.
 6. Keep the existing terminal fallback. Do not land native terminal replacement behavior without separate device validation.
 
+### Real Runtime Smoke
+
+Use the opt-in smoke helper after a coding-agent shell stack is deployed to a Matrix runtime and before treating desktop/mobile validation as complete:
+
+```bash
+MATRIX_RUNTIME_URL="https://app.matrix-os.com/vm/<handle>" \
+MATRIX_RUNTIME_TOKEN="<short-lived runtime token>" \
+node scripts/coding-agents/real-runtime-smoke.mjs
+```
+
+The helper performs read-only authenticated checks for `GET /api/coding-agents/summary`, `GET /api/coding-agents/threads`, `GET /api/coding-agents/reviews`, and `GET /api/coding-agents/notification-preferences`. It validates bounded response contracts with Zod 4, applies per-request timeouts, caps response bodies, and redacts bearer tokens from logs.
+
+Do not paste live token values, raw response bodies, transcripts, terminal output, file contents, diffs, provider errors, private hostnames, or VPS IPs into PR comments. Record only the command shape, pass/fail status, and sanitized recovery notes.
+
 ## Validation Commands
 
 Run the smallest focused tests for the touched surface, then the shared gates that apply:
 
 ```bash
+pnpm exec vitest run tests/scripts/coding-agent-real-runtime-smoke.test.ts
 pnpm exec vitest run tests/contracts/coding-agents.test.ts tests/gateway/coding-agents-summary.test.ts
 pnpm --filter desktop run typecheck
 pnpm --dir apps/mobile exec jest --runInBand
