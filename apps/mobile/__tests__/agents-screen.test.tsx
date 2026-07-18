@@ -503,7 +503,10 @@ describe("AgentsScreen", () => {
     await act(async () => {
       fireEvent.press(screen.getByLabelText("Start a new agent run"));
     });
-    expect(mockRouterPush).toHaveBeenCalledWith("/agents/new");
+    expect(mockRouterPush).toHaveBeenCalledWith({
+      pathname: "/agents/new",
+      params: { projectId: "matrix-os" },
+    });
   });
 
   it("presents a deduplicated attention-first mobile cockpit", async () => {

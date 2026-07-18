@@ -18,6 +18,10 @@ const mockRouterPush = jest.fn();
 
 jest.mock("expo-router", () => ({
   useLocalSearchParams: () => ({}),
+  useFocusEffect: (callback: () => void) => {
+    const React = require("react");
+    React.useEffect(callback, [callback]);
+  },
   useRouter: () => ({ push: mockRouterPush }),
 }));
 
@@ -94,7 +98,7 @@ describe("Agents project-first entry route", () => {
       params: { projectId: "matrix-os" },
     });
 
-    fireEvent.press(screen.getByLabelText("New run"));
+    fireEvent.press(screen.getByLabelText("Start a new agent run"));
     expect(mockRouterPush).toHaveBeenCalledWith({
       pathname: "/agents/new",
       params: { projectId: "matrix-os" },
