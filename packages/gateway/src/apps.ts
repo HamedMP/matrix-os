@@ -34,7 +34,13 @@ async function resolveActiveDesignId(homePath: string): Promise<DesignId> {
   try {
     theme = JSON.parse(await readFile(themePath, "utf8"));
   } catch (err: unknown) {
-    if (err instanceof SyntaxError || isExpectedFsScanError(err)) {
+    if (err instanceof SyntaxError) {
+      console.warn(
+        `[apps] theme config is not valid JSON; falling back to the "${DEFAULT_DESIGN_ID}" design`,
+      );
+      return DEFAULT_DESIGN_ID;
+    }
+    if (isExpectedFsScanError(err)) {
       return DEFAULT_DESIGN_ID;
     }
     console.warn(
