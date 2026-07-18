@@ -118,7 +118,14 @@ export default function AgentsScreen() {
       <AgentCockpit
         summary={summary}
         canCreate={canCreate}
-        onCreate={() => router.push("/agents/new")}
+        onCreate={() => {
+          const defaultProjectId = summary.projects.items[0]?.id;
+          if (defaultProjectId) {
+            router.push({ pathname: "/agents/new", params: { projectId: defaultProjectId } } as never);
+            return;
+          }
+          router.push("/agents/new");
+        }}
         onCreateInProject={(projectId) => router.push({ pathname: "/agents/new", params: { projectId } } as never)}
         onOpenThread={(thread) => {
           capture("agent_thread_opened");
