@@ -16,8 +16,10 @@ const fileBrowserSrc = readFileSync(fileBrowserPath, "utf8");
 /** Extract the declaration body of a `[data-theme-style="<style>"] <selector> { ... }` rule. */
 function designRule(css: string, style: string, selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Tolerate `}` inside values (e.g. url()/comments): the rule body ends at a
+  // closing brace on its own line, which is the file's formatting convention.
   const match = css.match(
-    new RegExp(`\\[data-theme-style="${style}"\\] ${escaped} \\{([^}]*)\\}`),
+    new RegExp(`\\[data-theme-style="${style}"\\] ${escaped} \\{([\\s\\S]*?)\\n\\}`),
   );
   if (!match) throw new Error(`missing ${style} rule for ${selector}`);
   return match[1];
@@ -88,7 +90,7 @@ describe("other designs: no opaque-content regressions", () => {
 
 describe("shared app theme (iframe apps): win11 opaque surfaces", () => {
   it("uses opaque win11 surface tokens", () => {
-    const tokens = sharedThemeCss.match(/:root\[data-matrix-design="win11"\] \{([^}]*)\}/);
+    const tokens = sharedThemeCss.match(/:root\[data-matrix-design="win11"\] \{([\s\S]*?)\n\}/);
     expect(tokens).not.toBeNull();
     expect(tokens![1]).toContain("--app-card: #fafafa");
     expect(tokens![1]).toContain("--app-glass: #fafafa");
@@ -98,12 +100,12 @@ describe("shared app theme (iframe apps): win11 opaque surfaces", () => {
 
   it("drops the backdrop blur from win11 app cards and toolbars", () => {
     const card = sharedThemeCss.match(
-      /:root\[data-matrix-design="win11"\] \.card,\s*:root\[data-matrix-design="win11"\] \.metric \{([^}]*)\}/,
+      /:root\[data-matrix-design="win11"\] \.card,\s*:root\[data-matrix-design="win11"\] \.metric \{([\s\S]*?)\n\}/,
     );
     expect(card).not.toBeNull();
     expect(card![1]).not.toContain("backdrop-filter");
     const toolbar = sharedThemeCss.match(
-      /:root\[data-matrix-design="win11"\] \.toolbar,\s*:root\[data-matrix-design="win11"\] \.segmented \{([^}]*)\}/,
+      /:root\[data-matrix-design="win11"\] \.toolbar,\s*:root\[data-matrix-design="win11"\] \.segmented \{([\s\S]*?)\n\}/,
     );
     expect(toolbar).not.toBeNull();
     expect(toolbar![1]).not.toContain("backdrop-filter");

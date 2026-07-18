@@ -330,6 +330,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       // A leftover from the superseded .svg wallpaper generation: no longer
       // in the system-owned set, so the sync must leave it alone.
       writeFileSync(join(homeWallpapers, 'xp-bliss.svg'), 'old svg from previous sync');
+      writeFileSync(join(homeWallpapers, 'win11-bloom.svg'), 'old bloom svg from previous sync');
 
       const result = spawnSync('bash', [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')], {
         cwd: root,
@@ -353,6 +354,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       expect(readFileSync(join(homeWallpapers, 'custom.jpg'), 'utf8')).toBe('user customized');
       // Leftovers from the superseded .svg generation are user data now.
       expect(readFileSync(join(homeWallpapers, 'xp-bliss.svg'), 'utf8')).toBe('old svg from previous sync');
+      expect(readFileSync(join(homeWallpapers, 'win11-bloom.svg'), 'utf8')).toBe('old bloom svg from previous sync');
       const log = readFileSync(join(homeDir, 'system', 'logs', 'template-sync.log'), 'utf8');
       expect(log).toContain('Added: system/wallpapers/xp-bliss.jpg');
       expect(log).toContain('Updated: system/wallpapers/win11-bloom.jpg');
