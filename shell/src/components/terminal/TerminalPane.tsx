@@ -16,7 +16,7 @@ import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-sett
 import { buildXtermTheme } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
-import { cacheTerminal, getCached, removeCached, type CachedTerminal } from "./terminal-cache";
+import { cacheTerminal, removeCached, takeCached, type CachedTerminal } from "./terminal-cache";
 import { discardStaleCachedTerminal, getCachedTerminalRestorePlan } from "./terminal-restore";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 import { applyTerminalAppearance } from "./terminal-appearance";
@@ -856,7 +856,7 @@ export function TerminalPane({
       }
 
       // Check cache first — instant tab switch
-      const cachedRestore = getCachedTerminalRestorePlan(getCached(paneId));
+      const cachedRestore = getCachedTerminalRestorePlan(takeCached(paneId));
       const cached = cachedRestore.cached;
       const canReuseCachedTerminal = cachedRestore.reuseTerminal;
       const canReuseCachedSocket = cachedRestore.reuseSocket;

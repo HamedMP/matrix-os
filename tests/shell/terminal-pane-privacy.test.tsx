@@ -38,7 +38,7 @@ const MAX_TERMINAL_INPUT = 65_536;
 
 vi.mock("../../shell/src/components/terminal/terminal-cache.js", () => ({
   cacheTerminal: vi.fn(),
-  getCached: vi.fn(() => null),
+  takeCached: vi.fn(() => null),
   removeCached: vi.fn(),
   hasCached: vi.fn(() => false),
 }));
