@@ -59,9 +59,15 @@ const ProviderEventPathSchema = z.string()
   .max(4096)
   .refine(isAbsolute)
   .regex(/^[^\u0000\r\n]+\.jsonl$/);
-const CODEX_RUNNER_PATH = fileURLToPath(
-  new URL("./coding-agents/codex-runner.mjs", import.meta.url),
+const CODEX_APP_SERVER_RUNNER_PATH = fileURLToPath(
+  new URL("./coding-agents/codex-app-server-runner.mjs", import.meta.url),
 );
+const CodexAppServerConfigSchema = z.object({
+  prompt: z.string().trim().min(1).max(64 * 1024),
+  approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
+  sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
+  writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
+}).strict();
 
 const AGENTS: Record<SupportedAgent, { command: string; displayName: string }> = {
   claude: { command: "claude", displayName: "Claude" },
@@ -269,6 +275,22 @@ function codexPrompt(prompt: string | undefined, mode?: AgentLaunchInput["mode"]
   return prompt ? `${planPrefix}\n\n${prompt}` : planPrefix;
 }
 
+function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppServerConfigSchema> {
+  codexSandboxArgs(input.sandbox);
+  const sandbox = input.sandbox;
+  const mode = sandbox?.enabled === false
+    ? "danger-full-access"
+    : sandbox?.mode ?? "workspace-write";
+  return CodexAppServerConfigSchema.parse({
+    prompt: codexPrompt(input.prompt, input.mode),
+    approvalPolicy: input.approvalPolicy === "on-failure"
+      ? "on-request"
+      : input.approvalPolicy ?? "never",
+    sandbox: mode,
+    writableRoots: mode === "workspace-write" ? sandbox?.writableRoots ?? [] : [],
+  });
+}
+
 export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
   const parsed = SupportedAgentSchema.parse(input.agent);
   const command = AGENTS[parsed].command;
@@ -289,11 +311,13 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
         ];
         if (!input.providerEventPath) return { command, args, cwd: input.cwd, env };
         const providerEventPath = ProviderEventPathSchema.parse(input.providerEventPath);
-        const execIndex = args.indexOf("exec");
-        const structuredArgs = [...args.slice(0, execIndex + 1), "--json", ...args.slice(execIndex + 1)];
+        const appServerConfig = Buffer.from(
+          JSON.stringify(codexAppServerConfig(input)),
+          "utf8",
+        ).toString("base64");
         return {
           command: process.execPath,
-          args: [CODEX_RUNNER_PATH, providerEventPath, command, ...structuredArgs],
+          args: [CODEX_APP_SERVER_RUNNER_PATH, providerEventPath, command, appServerConfig],
           cwd: input.cwd,
           env,
         };
