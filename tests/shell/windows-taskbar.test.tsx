@@ -288,4 +288,15 @@ describe("WindowsTaskbar", () => {
     expect(handlers.onOpenApp).not.toHaveBeenCalled();
     expect(handlers.onOpenSettings).not.toHaveBeenCalled();
   });
+
+  it("opens Settings from the Win11 start menu user footer, like XP's Control Panel", async () => {
+    setDesign("win11");
+    const { container, handlers } = await renderTaskbar();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    const menu = container.querySelector("[data-win11-start-menu]") as HTMLElement;
+    fireEvent.click(within(menu).getByRole("button", { name: "Account settings" }));
+    expect(handlers.onOpenSettings).toHaveBeenCalledTimes(1);
+    expect(container.querySelector("[data-win11-start-menu]")).toBeNull();
+  });
 });

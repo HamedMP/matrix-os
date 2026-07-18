@@ -15,6 +15,9 @@ export interface Win11StartMenuProps {
   ref?: Ref<HTMLDivElement>;
   apps: AppEntry[];
   onOpenApp: (path: string, name?: string) => void;
+  /** Opens shell Settings (the Win11 design hides the mac MenuBar, so the
+      start menu is the only pointer path to it). */
+  onOpenSettings: () => void;
   onClose: () => void;
 }
 
@@ -27,7 +30,7 @@ const MAX_RECOMMENDED = 3;
  * the most recent apps, and a footer with the user identity plus a decorative
  * power button (closes the menu only).
  */
-export function Win11StartMenu({ ref, apps, onOpenApp, onClose }: Win11StartMenuProps) {
+export function Win11StartMenu({ ref, apps, onOpenApp, onOpenSettings, onClose }: Win11StartMenuProps) {
   const [query, setQuery] = useState("");
 
   const pinnedApps: TaskbarAppEntry[] = [];
@@ -110,7 +113,14 @@ export function Win11StartMenu({ ref, apps, onOpenApp, onClose }: Win11StartMenu
         </>
       ) : null}
       <div className="win11-start-footer">
-        <StartMenuUser avatarSize={28} className="win11-start-user" />
+        <button
+          type="button"
+          className="win11-start-user-button"
+          aria-label="Account settings"
+          onClick={onOpenSettings}
+        >
+          <StartMenuUser avatarSize={28} className="win11-start-user" />
+        </button>
         <button type="button" className="win11-start-power" aria-label="Power" onClick={onClose}>
           <PowerIcon aria-hidden="true" />
         </button>

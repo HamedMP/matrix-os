@@ -779,6 +779,23 @@
   color: #333333;
 }
 
+.win11-start-user-button {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  margin: -4px -8px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.win11-start-user-button:hover {
+  background: var(--win11-hover);
+}
+
 .win11-start-power {
   display: flex;
   align-items: center;

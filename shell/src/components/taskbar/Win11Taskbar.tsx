@@ -155,6 +155,10 @@ export function Win11Taskbar({
             setStartOpen(false);
             onOpenApp(path, name);
           }}
+          onOpenSettings={() => {
+            setStartOpen(false);
+            onOpenSettings();
+          }}
           onClose={() => setStartOpen(false)}
         />
       ) : null}
