@@ -17,7 +17,7 @@ import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { sessionAccent } from "./terminal-session-names";
 import { NewSessionMenu } from "./NewSessionMenu";
 import type { TerminalAgentId, TerminalAgentOption } from "./terminal-agent-options";
-import type { ShellSessionSummary } from "./terminal-session-state";
+import { getShellVisualStatus, type ShellSessionSummary } from "./terminal-session-state";
 import { formatTerminalAgentName, TerminalSessionHoverCard } from "./TerminalSessionHoverCard";
 
 export const DEFAULT_SHELL_SESSION_NAME = "main";
@@ -293,13 +293,6 @@ async function copyTextToClipboard(text: string): Promise<void> {
     return;
   }
   throw new Error(legacyCopyError instanceof Error ? legacyCopyError.message : "Clipboard copy unavailable");
-}
-
-function getShellVisualStatus(shell: ShellSessionSummary): NonNullable<ShellSessionSummary["visualStatus"]> {
-  if (shell.visualStatus) return shell.visualStatus;
-  if (shell.status === "degraded") return "waiting";
-  if (shell.status === "exited") return shell.unread ? "finished" : "idle";
-  return shell.unread ? "finished" : "idle";
 }
 
 export function getShellStatusDotStyle(shell: ShellSessionSummary): CSSProperties {

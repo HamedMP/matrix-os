@@ -276,11 +276,10 @@ describe("TerminalApp", () => {
           json: async () => ({ sessions: [
             {
               name: "calm-otter",
-              status: "active",
+              status: "degraded",
               placement: "active",
               agent: "codex",
               subtitle: "Implement agent-aware terminal sessions",
-              visualStatus: "waiting",
               lastAction: "Requested approval",
               agentUpdatedAt: "2026-07-18T10:00:00.000Z",
               tabs: [],
@@ -324,6 +323,7 @@ describe("TerminalApp", () => {
     });
     const hoverCard = screen.getByTestId("terminal-session-hover-card-calm-otter");
     expect(hoverCard.getAttribute("data-side")).toBe("right");
+    expect(hoverCard.textContent).toContain("waiting");
     expect(hoverCard.textContent).toContain("Requested approval");
 
     const moreButton = screen.getByRole("button", { name: "More actions for calm-otter" });

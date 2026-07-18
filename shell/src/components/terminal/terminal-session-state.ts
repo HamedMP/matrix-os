@@ -16,6 +16,14 @@ export interface ShellSessionSummary {
   tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
 }
 
+export function getShellVisualStatus(
+  shell: ShellSessionSummary,
+): NonNullable<ShellSessionSummary["visualStatus"]> {
+  if (shell.visualStatus) return shell.visualStatus;
+  if (shell.status === "degraded") return "waiting";
+  return shell.unread ? "finished" : "idle";
+}
+
 export type ShellUiStatePatch = Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq">>;
 type ShellUiStatePatchKey = keyof ShellUiStatePatch;
 

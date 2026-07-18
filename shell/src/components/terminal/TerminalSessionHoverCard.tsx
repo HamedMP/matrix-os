@@ -3,7 +3,7 @@
 import type { CSSProperties, ReactElement, RefObject } from "react";
 import { HoverCard as HoverCardPrimitive } from "radix-ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
-import type { ShellSessionSummary } from "./terminal-session-state";
+import { getShellVisualStatus, type ShellSessionSummary } from "./terminal-session-state";
 
 const HOVER_CARD_WIDTH = 288;
 const HOVER_CARD_GAP = 12;
@@ -68,7 +68,7 @@ export function TerminalSessionHoverCard({
   children: ReactElement;
 }) {
   const agentName = formatTerminalAgentName(shell.agent);
-  const liveState = shell.visualStatus ?? (shell.unread ? "finished" : "idle");
+  const liveState = getShellVisualStatus(shell);
   return (
     <HoverCardPrimitive.Root
       open={open && !suppressed}
