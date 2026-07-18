@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { CODEX_VERIFIED_VERSION } from '../../packages/contracts/src/index.js';
 
 function sha256(content: string) {
   return createHash('sha256').update(content).digest('hex');
@@ -99,7 +100,8 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('install_code_server()');
     expect(installer).toContain('install_hermes()');
     expect(installer).toContain('@anthropic-ai/claude-code@latest');
-    expect(installer).toContain('@openai/codex@latest');
+    expect(installer).toContain(`CODEX_VERSION="${CODEX_VERIFIED_VERSION}"`);
+    expect(installer).toContain('"@openai/codex@${CODEX_VERSION}"');
     expect(installer).toContain('OPENCODE_AI_VERSION="${OPENCODE_AI_VERSION:-latest}"');
     expect(installer).toContain('PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-latest}"');
     expect(installer).toContain('"opencode-ai@${OPENCODE_AI_VERSION}"');

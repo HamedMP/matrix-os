@@ -3695,7 +3695,9 @@ describe("TerminalApp", () => {
 
     await chooseNewSessionMenuItemAfterStatus(/^Codex$/);
 
-    const codexPayload = expectTerminalCreatePayloadForCommand("codex");
+    const codexPayload = expectTerminalCreatePayloadForCommand(
+      'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"; exec "$MATRIX_NODE_PREFIX/bin/codex"',
+    );
     await vi.waitFor(() => {
       expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
         paneTree: {
@@ -3860,7 +3862,7 @@ describe("TerminalApp", () => {
       await chooseNewSessionMenuItemAfterStatus(/Codex.*Install/);
     });
 
-    const codexInstallPayload = expectTerminalCreatePayloadForCommand(/^sh -lc .*@openai\/codex@latest/);
+    const codexInstallPayload = expectTerminalCreatePayloadForCommand(/^sh -lc .*@openai\/codex@/);
     const codexInstallPaneProps = paneGridSpy.mock.lastCall?.[0] as { paneTree: { sessionId?: string; compatMode?: string } };
     expect(codexInstallPaneProps).toMatchObject({
       paneTree: {

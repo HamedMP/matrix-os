@@ -6,6 +6,7 @@ import {
   AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
   AgentThreadSummarySchema,
+  CODEX_VERIFIED_NPM_PACKAGE,
   SafeSetupActionSchema,
   type AgentThreadEvent,
 } from "../../packages/contracts/src/index.js";
@@ -53,7 +54,7 @@ function workspaceSession(overrides: Record<string, unknown> = {}) {
 describe("coding agent workspace provider", () => {
   it.each([
     ["claude", "@anthropic-ai/claude-code@latest", "claude"],
-    ["codex", "@openai/codex@latest", "codex login"],
+    ["codex", CODEX_VERIFIED_NPM_PACKAGE, "codex login"],
   ] as const)("returns bounded foreground install and connect actions for %s", async (
     agent,
     installPackage,
@@ -264,7 +265,7 @@ describe("coding agent workspace provider", () => {
         runtimePreference: "zellij",
         sessionId: expect.stringMatching(/^sess_[A-Za-z0-9_-]+$/),
         mode: "default",
-        approvalPolicy: "on_request",
+        approvalPolicy: "never",
         sandboxMode: "workspace_write",
       }),
     });
@@ -281,7 +282,6 @@ describe("coding agent workspace provider", () => {
       "user.message",
       "thread.status",
       "terminal.bound",
-      "assistant.text.delta",
     ]);
   });
 
@@ -365,6 +365,7 @@ describe("coding agent workspace provider", () => {
   });
 
   it("aborts the deterministic workspace session for a thread", async () => {
+    const markStopped = vi.fn();
     const runtime = {
       startSession: vi.fn(async () => ({ ok: true, status: 201, session: workspaceSession() })),
       stopSession: vi.fn(async () => ({ ok: true, session: workspaceSession({ runtime: { type: "zellij", status: "exited" } }) })),
@@ -373,6 +374,12 @@ describe("coding agent workspace provider", () => {
       providerId: "codex",
       agent: "codex",
       runtime,
+      codexEvents: {
+        healthCheck: vi.fn(async () => ({ ok: true })),
+        watch: vi.fn(async () => ({ path: "/tmp/provider-events.jsonl" })),
+        unwatch: vi.fn(),
+        markStopped,
+      },
     });
     const thread = AgentThreadSummarySchema.parse({
       id: "thread_workspace_1",
@@ -394,6 +401,8 @@ describe("coding agent workspace provider", () => {
     });
 
     expect(runtime.stopSession).toHaveBeenCalledWith("sess_workspace_1");
+    expect(markStopped).toHaveBeenCalledWith("sess_workspace_1");
+    expect(runtime.stopSession.mock.invocationCallOrder[0]).toBeLessThan(markStopped.mock.invocationCallOrder[0]!);
     expect((events ?? []).map((event: AgentThreadEvent) => AgentThreadEventSchema.parse(event).type)).toEqual([
       "thread.status",
       "thread.completed",
@@ -452,7 +461,7 @@ describe("coding agent workspace provider", () => {
     expect(resumeState).toEqual({ conversationId: "sess_workspace_1" });
     expect(sendInput).toHaveBeenCalledWith(
       "sess_workspace_1",
-      "Continue with the tests.\r",
+      `matrix-turn-v1:${Buffer.from("Continue with the tests.", "utf-8").toString("base64")}\r`,
       signal,
     );
     expect(resumed).toMatchObject({
@@ -503,5 +512,112 @@ describe("coding agent workspace provider", () => {
       await threads.shutdownTurns();
       await rm(homePath, { recursive: true, force: true });
     }
+  });
+
+  it("forwards approval and structured input decisions to the deterministic Codex control session", async () => {
+    const submitApproval = vi.fn(async () => undefined);
+    const submitInput = vi.fn(async () => undefined);
+    const startSession = vi.fn(async () => ({ ok: true, status: 201, session: workspaceSession() }));
+    const provider = createWorkspaceCodingAgentProvider({
+      providerId: "codex",
+      agent: "codex",
+      runtime: {
+        startSession,
+        stopSession: vi.fn(),
+      },
+      codexControl: { submitApproval, submitInput },
+    });
+    const thread = AgentThreadSummarySchema.parse({
+      id: "thread_workspace_control_1",
+      providerId: "codex",
+      title: "Coding agent run",
+      status: "running",
+      attention: "approval_required",
+      createdAt: baseNow.toISOString(),
+      updatedAt: baseNow.toISOString(),
+    });
+
+    await expect(provider.startThread({
+      principal: ownerPrincipal,
+      thread,
+      request: createBody,
+      now: () => baseNow,
+      nextEventId: vi.fn()
+        .mockReturnValueOnce("evt_workspace_control_status")
+        .mockReturnValueOnce("evt_workspace_control_terminal"),
+    })).resolves.toMatchObject({
+      resumeState: { conversationId: "sess_workspace_control_1" },
+    });
+    expect(startSession).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({ approvalPolicy: "on_request" }),
+    }));
+
+    await expect(provider.submitApproval?.({
+      principal: ownerPrincipal,
+      thread,
+      approvalId: "appr_codex_11111111111111111111111111111111",
+      request: {
+        decision: "approve",
+        clientRequestId: "req_workspace_approval_1",
+        correlationId: "corr_workspace_approval_1",
+      },
+      now: () => baseNow,
+      nextEventId: () => "evt_workspace_approval_1",
+    })).resolves.toEqual([]);
+    await expect(provider.submitInput?.({
+      principal: ownerPrincipal,
+      thread: { ...thread, attention: "input_required" },
+      inputRequestId: "req_codex_22222222222222222222222222222222",
+      request: {
+        answer: "Submitted structured response.",
+        structuredAnswers: {
+          question_codex_333333333333333333333333: ["Minimal"],
+        },
+        clientRequestId: "req_workspace_input_1",
+        correlationId: "corr_workspace_input_1",
+      },
+      now: () => baseNow,
+      nextEventId: () => "evt_workspace_input_1",
+    })).resolves.toEqual([]);
+
+    expect(submitApproval).toHaveBeenCalledWith({
+      sessionId: "sess_workspace_control_1",
+      approvalId: "appr_codex_11111111111111111111111111111111",
+      decision: "approve",
+      clientRequestId: "req_workspace_approval_1",
+    });
+    expect(submitInput).toHaveBeenCalledWith({
+      sessionId: "sess_workspace_control_1",
+      inputRequestId: "req_codex_22222222222222222222222222222222",
+      structuredAnswers: {
+        question_codex_333333333333333333333333: ["Minimal"],
+      },
+      clientRequestId: "req_workspace_input_1",
+    });
+  });
+
+  it("advertises approval support only when the Codex control bridge is present", () => {
+    const runtime = { startSession: vi.fn(), stopSession: vi.fn() };
+    const codexEvents = {
+      healthCheck: vi.fn(async () => ({ ok: true })),
+      watch: vi.fn(),
+      unwatch: vi.fn(),
+      markStopped: vi.fn(),
+    };
+
+    expect(createWorkspaceCodingAgentProviderSet({
+      agents: ["codex"],
+      runtime,
+      codexEvents,
+    }).approvalsEnabled).toBe(false);
+    expect(createWorkspaceCodingAgentProviderSet({
+      agents: ["codex"],
+      runtime,
+      codexEvents,
+      codexControl: {
+        submitApproval: vi.fn(),
+        submitInput: vi.fn(),
+      },
+    }).approvalsEnabled).toBe(true);
   });
 });

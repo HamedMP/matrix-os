@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import type { SupportedAgent } from "../agent-launcher.js";
+import { codexExecutableFromEnv } from "./codex-executable.js";
 
 const WorkspaceProviderAgentSchema = z.enum(["claude", "codex"]);
 const WorkspaceProviderAgentsSchema = z.array(WorkspaceProviderAgentSchema)
@@ -15,8 +16,22 @@ const ExplicitWorkspaceProvidersSchema = z.string()
   .pipe(WorkspaceProviderAgentsSchema);
 
 interface WorkspaceProviderEnvironment {
+  [key: string]: string | undefined;
   MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER?: string;
   MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS?: string;
+  MATRIX_NODE_PREFIX?: string;
+}
+
+export function resolveWorkspaceProviderRuntime(
+  environment: WorkspaceProviderEnvironment,
+): { agents: SupportedAgent[]; codexExecutable: string | undefined } {
+  const agents = configuredWorkspaceProviderAgents(environment);
+  return {
+    agents,
+    codexExecutable: agents.includes("codex")
+      ? codexExecutableFromEnv(environment)
+      : undefined,
+  };
 }
 
 export function configuredWorkspaceProviderAgents(

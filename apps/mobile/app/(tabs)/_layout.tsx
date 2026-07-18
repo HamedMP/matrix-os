@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
 import { useGateway } from "../_layout";
+import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 
 // Apps is the launcher home; Chat sits beside it as the always-available
 // Hermes assistant surface.
@@ -14,6 +15,7 @@ export const unstable_settings = {
 const TAB_ICONS: Record<string, { outline: keyof typeof Ionicons.glyphMap; filled: keyof typeof Ionicons.glyphMap }> = {
   chat: { outline: "chatbubble-outline", filled: "chatbubble" },
   apps: { outline: "apps-outline", filled: "apps" },
+  workspaces: { outline: "chatbubbles-outline", filled: "chatbubbles" },
   terminal: { outline: "terminal-outline", filled: "terminal" },
   settings: { outline: "settings-outline", filled: "settings" },
 };
@@ -78,6 +80,14 @@ export default function TabsLayout() {
         options={{
           title: "Chat",
           tabBarIcon: ({ focused }) => <TabIcon name="chat" focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="workspaces"
+        options={{
+          title: "Chats",
+          href: CODING_AGENTS_MOBILE_WORKSPACE ? undefined : null,
+          tabBarIcon: ({ focused }) => <TabIcon name="workspaces" focused={focused} />,
         }}
       />
       <Tabs.Screen

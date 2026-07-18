@@ -111,6 +111,25 @@ Use Team ID `PX4JL74Y2K` and bundle ID `com.matrixos.mobile`.
 - `redirect url ... does not match an authorized redirect URI`: add
   `matrixos://sso-callback` to Clerk's native redirect allowlist.
 
+### Native Computer Selection
+
+Cloud-authenticated users can switch between their main and preview Matrix computers from
+**Settings → Switch computer**. The platform-owned `GET /api/auth/computers` projection returns a
+bounded list of safe labels, statuses, versions, and same-origin `/vm/:handle` paths. The mobile app
+validates that response and persists only the selected `GatewayConnection`; it never persists the
+computer inventory or platform metadata.
+
+A Basic Auth connection has no Clerk identity and therefore cannot list Cloud computers. The
+chooser must offer the Cloud sign-in route in that state. After Cloud sign-in, switching computers
+reuses the existing Clerk token provider and does not require another sign-out.
+
+Focused validation:
+
+```bash
+pnpm exec vitest run tests/platform/proxy-routing.test.ts -t 'Matrix computers|native computer'
+pnpm --filter matrix-os-mobile run test --runInBand --runTestsByPath __tests__/computer-picker-screen.test.tsx __tests__/settings-screen.test.tsx __tests__/storage.test.ts __tests__/mobile-computers.test.ts
+```
+
 ## State
 
 Mobile resume state is intentionally small and validated before use.
@@ -157,6 +176,26 @@ Manual terminal checks on a phone:
 4. Use Tab, Escape, arrows, Control, paste, and font size controls.
 5. Leave and reopen Terminal, then continue the running session.
 6. End the session and confirm the resume card disappears or shows the safe recovery message.
+
+## Coding-Agent Project Workspace Validation
+
+Automated mobile checks cover the gateway-projected project/task/conversation model and both project views:
+
+```bash
+pnpm --dir apps/mobile exec jest --runInBand __tests__/agent-workspace-state.test.ts __tests__/agent-project-workspace-screen.test.tsx __tests__/agent-project-route.test.tsx __tests__/agent-project-board-route.test.tsx __tests__/agent-thread-screen.test.tsx
+pnpm --dir apps/mobile exec tsc --noEmit
+pnpm --dir apps/mobile run lint
+```
+
+Manual checks in the SDK 57 dev client:
+
+1. Open Agents, select a project, and confirm its project-level chats and task groups come from the live gateway projection.
+2. Open two different conversations attached to one task and confirm each route retains its exact project, task, and thread identity.
+3. Send a follow-up and confirm it stays in the current conversation; retry a busy response without creating a replacement thread.
+4. Switch between Conversation and Kanban and confirm the selected project/task/thread stays stable.
+5. Confirm Kanban uses To do, Running, Waiting, Blocked, and Complete sections; archived tasks stay hidden and mixed thread states do not move a task.
+6. Check the phone layout in portrait and landscape, then verify the wrapped board at tablet width.
+7. Background and reopen the app, reconnect the gateway, and confirm stale references reconcile to the live project workspace.
 
 ## Full Mobile Readiness Gates
 

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
 import {
   buildAgentLaunch,
   createAgentLauncher,
@@ -99,6 +100,56 @@ describe("agent-launcher", () => {
     }));
   });
 
+  it("uses one configured absolute Codex executable for detection and launch", async () => {
+    const codexExecutable = "/opt/matrix/runtime/node/bin/codex";
+    const runCommand = vi.fn(async (command: string, args: string[]) => ({
+      stdout: command === codexExecutable && args[0] === "--version"
+        ? `codex-cli ${CODEX_VERIFIED_VERSION}\n`
+        : "ok\n",
+      stderr: "",
+    }));
+    const launcher = createAgentLauncher({ runCommand, codexExecutable });
+
+    await launcher.detectAgents();
+    const launch = launcher.buildLaunch({
+      agent: "codex",
+      cwd: "/home/matrix/home/projects/repo",
+      prompt: "fix tests",
+      sandbox: { enabled: true, mode: "workspace-write" },
+      providerEventPath: "/home/matrix/home/system/coding-agents/provider-events/sess_bound.jsonl",
+    });
+
+    expect(runCommand).toHaveBeenCalledWith(codexExecutable, ["--version"], expect.any(Object));
+    expect(runCommand).toHaveBeenCalledWith(codexExecutable, ["login", "status"], expect.any(Object));
+    expect(launch.command).toBe(process.execPath);
+    expect(launch.args.slice(1, 4)).toEqual([
+      "/home/matrix/home/system/coding-agents/provider-events/sess_bound.jsonl",
+      CODEX_VERIFIED_VERSION,
+      codexExecutable,
+    ]);
+  });
+
+  it("marks an unverified configured Codex version unavailable before auth probing", async () => {
+    const codexExecutable = "/opt/matrix/runtime/node/bin/codex";
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === codexExecutable && args[0] === "--version") {
+        return { stdout: "codex-cli 0.144.1\n", stderr: "" };
+      }
+      return { stdout: `${command} 1.0.0\n`, stderr: "" };
+    });
+    const launcher = createAgentLauncher({ runCommand, codexExecutable });
+
+    const result = await launcher.detectAgents();
+
+    expect(result.agents.find((agent) => agent.id === "codex")).toMatchObject({
+      installed: false,
+      authState: "unknown",
+      errorCode: "agent_missing",
+      version: "codex-cli 0.144.1",
+    });
+    expect(runCommand).not.toHaveBeenCalledWith(codexExecutable, ["login", "status"], expect.any(Object));
+  });
+
   it("constructs non-interactive Codex exec argv without shell interpolation", () => {
     const launch = buildAgentLaunch({
       agent: "codex",
@@ -112,12 +163,12 @@ describe("agent-launcher", () => {
       args: [
         "--ask-for-approval",
         "never",
-        "exec",
-        "--skip-git-repo-check",
         "--sandbox",
         "workspace-write",
         "--add-dir",
         "/tmp/matrixos-codex",
+        "exec",
+        "--skip-git-repo-check",
         "--",
         "fix tests; rm -rf /",
       ],
@@ -157,12 +208,12 @@ describe("agent-launcher", () => {
         expect(launch.args).toEqual([
           "--ask-for-approval",
           "never",
-          "exec",
-          "--skip-git-repo-check",
           "--sandbox",
           "workspace-write",
           "--add-dir",
           "/tmp/sandbox",
+          "exec",
+          "--skip-git-repo-check",
           "--",
           "--dangerously-bypass-sandbox",
         ]);
@@ -191,20 +242,21 @@ describe("agent-launcher", () => {
     expect(launchEmpty.args).not.toContain("--");
   });
 
-  it("places Codex exec controls before sandbox flags and the prompt last", () => {
+  it("places Codex security controls before exec and the prompt last", () => {
     const launch = buildAgentLaunch({
       agent: "codex",
       cwd: "/home/matrixos/home/projects/repo",
       prompt: "--help",
       sandbox: { enabled: true, writableRoots: ["/tmp/sandbox"] },
     });
-    expect(launch.args.slice(0, 4)).toEqual(["--ask-for-approval", "never", "exec", "--skip-git-repo-check"]);
     const sandboxIndex = launch.args.indexOf("--sandbox");
     const writableRootIndex = launch.args.indexOf("--add-dir");
+    const execIndex = launch.args.indexOf("exec");
     const dashDashIndex = launch.args.indexOf("--");
-    expect(sandboxIndex).toBeGreaterThan(3);
+    expect(sandboxIndex).toBeGreaterThan(1);
     expect(writableRootIndex).toBeGreaterThan(sandboxIndex);
-    expect(dashDashIndex).toBeGreaterThan(writableRootIndex);
+    expect(execIndex).toBeGreaterThan(writableRootIndex);
+    expect(dashDashIndex).toBeGreaterThan(execIndex);
     expect(launch.args.at(-1)).toBe("--help");
   });
 
@@ -220,10 +272,10 @@ describe("agent-launcher", () => {
     expect(launch.args).toEqual([
       "--ask-for-approval",
       "on-request",
-      "exec",
-      "--skip-git-repo-check",
       "--sandbox",
       "read-only",
+      "exec",
+      "--skip-git-repo-check",
       "--",
       "review only",
     ]);
@@ -241,10 +293,10 @@ describe("agent-launcher", () => {
     expect(reviewLaunch.args).toEqual([
       "--ask-for-approval",
       "never",
-      "exec",
-      "--skip-git-repo-check",
       "--sandbox",
       "read-only",
+      "exec",
+      "--skip-git-repo-check",
       "review",
       "--",
       "check this PR",
@@ -274,7 +326,7 @@ describe("agent-launcher", () => {
       cwd: "/home/matrixos/home/projects/repo",
       prompt: "work",
       sandbox: { enabled: false, adminOverride: true },
-    }).args).toEqual(["--ask-for-approval", "never", "exec", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "--", "work"]);
+    }).args).toEqual(["--ask-for-approval", "never", "--dangerously-bypass-approvals-and-sandbox", "exec", "--skip-git-repo-check", "--", "work"]);
   });
 
   it("constructs a strict workspace-scoped Claude launch policy", () => {

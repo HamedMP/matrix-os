@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { parseDocument } from 'yaml';
+import { CODEX_VERIFIED_VERSION } from '../../packages/contracts/src/index.js';
 import {
   loadCustomerVpsCloudInitTemplate,
   redactCloudInitSecrets,
@@ -422,7 +423,8 @@ exit 99
     expect(toolPackInstaller).toContain('finish_agent_install()');
     expect(toolPackInstaller).toContain('install_code_server()');
     expect(toolPackInstaller).toContain('@anthropic-ai/claude-code@latest');
-    expect(toolPackInstaller).toContain('@openai/codex@latest');
+    expect(toolPackInstaller).toContain(`CODEX_VERSION="${CODEX_VERIFIED_VERSION}"`);
+    expect(toolPackInstaller).toContain('"@openai/codex@${CODEX_VERSION}"');
     expect(toolPackInstaller).toContain('OPENCODE_AI_VERSION="${OPENCODE_AI_VERSION:-latest}"');
     expect(toolPackInstaller).toContain('PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-latest}"');
     expect(toolPackInstaller).toContain('"opencode-ai@${OPENCODE_AI_VERSION}"');

@@ -1283,29 +1283,38 @@ Goal: expose the same hierarchy and conversations with SDK 57 phone/tablet ergon
 
 ### 22.1 Project-First Routes And Resume
 
-- [ ] Add project route/selector and project workspace hydration.
-- [ ] Render task groups with all attached threads plus project-level threads.
-- [ ] Persist only bounded project/task/thread/view references.
-- [ ] Reconcile stale references on app resume/runtime switch.
+- [x] Add project route/selector and project workspace hydration.
+- [x] Render task groups with all attached threads plus project-level threads.
+- [x] Persist only bounded project/task/thread/view references.
+- [x] Reconcile stale references on app resume/runtime switch.
 
 Tests: `MB-001`, `MB-002`, `MB-003`, `MB-004`, `SEC-004`.
 
 ### 22.2 Conversation View
 
-- [ ] Send follow-ups to the selected thread turn route.
-- [ ] Preserve keyboard avoidance, safe areas, app suspension, streaming, and approval/input behavior.
-- [ ] Keep terminal handoff on canonical named sessions.
+- [x] Send follow-ups to the selected thread turn route.
+- [x] Preserve keyboard avoidance, safe areas, app suspension, streaming, and approval/input behavior.
+- [x] Keep terminal handoff on canonical named sessions.
 
 Tests: `MB-005`, `MB-006`, `MB-007`.
 
 ### 22.3 Kanban View
 
-- [ ] Add Conversation/Kanban control for the selected project.
-- [ ] Render canonical task columns as phone-appropriate sections/horizontal board and tablet split view.
-- [ ] Show bounded multi-thread aggregates and open any thread on a task.
-- [ ] Preserve selected context when returning to Conversation.
+- [x] Add Conversation/Kanban control for the selected project.
+- [x] Render canonical task columns as phone-appropriate sections/horizontal board and tablet split view.
+- [x] Show bounded multi-thread aggregates and open any thread on a task.
+- [x] Preserve selected context when returning to Conversation.
 
 Tests: `MB-008`, `MB-009`, `MB-010`.
+
+### 22.4 Remote Computer Selection
+
+- [x] Add an authenticated bounded platform projection for the current user's active computers.
+- [x] Add a native Settings chooser for main/preview computers without persisting the inventory.
+- [x] Reuse the existing Clerk token provider after selection and keep Basic Auth isolated.
+- [x] Offer Cloud sign-in when a self-hosted session has no Clerk identity.
+
+Tests: `MB-011`, `SEC-004`.
 
 Gate:
 
@@ -1405,7 +1414,15 @@ composer turns, and lifecycle actions.
 - [ ] B28-009 Implement owner-scoped profile metadata, connected-service materialization state, and coarse quota snapshots without expanding legacy SQLite persistence.
 - [ ] B28-010 Add safe setup/switch/recovery tests and publish provider-control capabilities to the shell handoff.
 - [ ] B28-011 Write a table-driven provider conformance harness covering install/auth health, create, normalized stream, abort, restart, safe errors, capability truthfulness, timeout, and cleanup for every first-release adapter.
+- [x] B28-011a Add a strict, forward-compatible Codex exec JSONL normalizer, durable idempotent provider-event ingestion, exact verified-version/schema metadata, and a scheduled published-version drift check.
+- [x] B28-011b Pin the Codex experimental app-server schema and required approval/input request methods to the same exact installed versions as exec JSONL, and make the scheduled latest-version check fail on either protocol drift.
+- [x] B28-011c Add bounded structured provider question/option/answer contracts while preserving the existing single-answer shell request and keeping answer text out of durable thread events.
+- [x] B28-011d Normalize verified Codex app-server command, file, permission, and structured-input requests into safe Matrix events while keeping native request, thread, turn, item, command, path, host, and permission payloads server-private.
+- [x] B28-011e Bind discovery, health, install, and launch to one validated Codex executable and exact verified package version; recheck it immediately before provider spawn and monitor the published package daily so both protocol contracts advance together.
+- [x] B28-011f Submit idempotent Codex approval and structured-input decisions through a bounded local control socket, fail closed on unavailable or malformed peers, and advertise approval capability only when the control bridge is wired.
 - [ ] B28-012 Implement and real-process test first-class adapters for Claude Code, Codex, Pi, and OpenCode plus a validated custom ACP-compatible adapter family; keep credentials and native resume identities server-side.
+- [x] B28-012a Wire the Codex workspace runner to the normalized provider-event ingestion contract and prove assistant/tool/file events through deterministic replay, event-sink publication, and a real child-process test. Disposable-runtime smoke remains in B34-001.
+- [x] B28-012b Route coding-thread Codex launches through the bounded app-server control runner, respond fail-closed to malformed provider requests, and retain the exec JSONL runner as a directly tested compatibility path.
 - [ ] B28-013 Implement capability-gated compatibility adapters for Kiro, GitHub Copilot CLI, Qwen Code, Kimi CLI, Kilo Code, and Auggie without generic shell-command escape hatches.
 - [ ] B28-014 Prove each provider/runtime combination advertises only verified resume, discovery/import, fork, rollback, steering, approval, image, model/mode, and handoff capabilities; reject Gemini CLI as unsupported for this release.
 

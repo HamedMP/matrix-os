@@ -35,6 +35,7 @@ import {
   TerminalSessionSummarySchema,
   ThreadIdSchema,
   UserInputAnswerRequestSchema,
+  UserInputRequestSchema,
   buildCreateAgentThreadRequestFromComposer,
   defaultAgentThreadComposerDraft,
 } from "../../packages/contracts/src/index.js";
@@ -367,6 +368,111 @@ describe("coding agent contracts", () => {
       clientRequestId: "req_answer_preserve",
       correlationId: "corr_answer",
     }).answer).toBe(answerWithWhitespace);
+
+    const structuredRequest = UserInputRequestSchema.parse({
+      requestId: "req_input_structured",
+      threadId: "thread_input_structured",
+      title: "Choose an approach",
+      safeDescription: "The coding agent needs two decisions before continuing.",
+      required: true,
+      autoResolutionMs: 120_000,
+      correlationId: "corr_input_structured",
+      questions: [
+        {
+          questionId: "implementation",
+          header: "Approach",
+          question: "Which implementation should be used?",
+          options: [
+            { label: "Minimal", description: "Change only the required code." },
+            { label: "Complete", description: "Include the related migration." },
+          ],
+          allowOther: true,
+          secret: false,
+        },
+        {
+          questionId: "confirmation",
+          header: "Confirm",
+          question: "Should the coding agent continue?",
+          secret: false,
+        },
+      ],
+    });
+    expect(structuredRequest.questions).toHaveLength(2);
+    expect(() => UserInputRequestSchema.parse({
+      ...structuredRequest,
+      questions: [{
+        ...structuredRequest.questions[0],
+        options: [
+          { label: "Minimal", description: "Change only the required code." },
+          { label: "Minimal", description: "Use a different native choice." },
+        ],
+      }],
+    })).toThrow();
+
+    const structuredAnswer = UserInputAnswerRequestSchema.parse({
+      answer: "Submitted structured response.",
+      structuredAnswers: {
+        implementation: ["Minimal"],
+        confirmation: ["Yes"],
+      },
+      clientRequestId: "req_answer_structured",
+      correlationId: "corr_input_structured",
+    });
+    expect(structuredAnswer.structuredAnswers?.implementation).toEqual(["Minimal"]);
+
+    const maximumStructuredAnswer = UserInputAnswerRequestSchema.parse({
+      answer: "a".repeat(8000),
+      structuredAnswers: Object.fromEntries(
+        Array.from({ length: 8 }, (_, questionIndex) => [
+          `question_${questionIndex}`,
+          Array.from({ length: 4 }, () => "a".repeat(400)),
+        ]),
+      ),
+      clientRequestId: "req_answer_maximum",
+      correlationId: "corr_input_structured",
+    });
+    expect(Buffer.byteLength(JSON.stringify(maximumStructuredAnswer), "utf8")).toBeLessThanOrEqual(40 * 1024);
+
+    const maximumLegacyAnswer = UserInputAnswerRequestSchema.parse({
+      answer: "a".repeat(32_000),
+      clientRequestId: "req_answer_legacy_maximum",
+      correlationId: "corr_input_structured",
+    });
+    expect(maximumLegacyAnswer.answer).toHaveLength(32_000);
+    expect(Buffer.byteLength(JSON.stringify(maximumLegacyAnswer), "utf8")).toBeLessThanOrEqual(40 * 1024);
+
+    const escapedStructuredAnswer = {
+      answer: "\\".repeat(8000),
+      structuredAnswers: Object.fromEntries(
+        Array.from({ length: 8 }, (_, questionIndex) => [
+          `question_${questionIndex}`,
+          Array.from({ length: 4 }, () => "\\".repeat(400)),
+        ]),
+      ),
+      clientRequestId: "req_answer_escaped",
+      correlationId: "corr_input_structured",
+    };
+    expect(Buffer.byteLength(JSON.stringify(escapedStructuredAnswer), "utf8")).toBeGreaterThan(40 * 1024);
+    expect(() => UserInputAnswerRequestSchema.parse(escapedStructuredAnswer)).toThrow();
+
+    expect(() => UserInputRequestSchema.parse({
+      ...structuredRequest,
+      questions: [structuredRequest.questions![0], structuredRequest.questions![0]],
+    })).toThrow();
+    expect(() => UserInputAnswerRequestSchema.parse({
+      answer: "Submitted structured response.",
+      structuredAnswers: Object.fromEntries(
+        Array.from({ length: 9 }, (_, index) => [`question_${index}`, ["answer"]]),
+      ),
+      clientRequestId: "req_answer_too_many",
+      correlationId: "corr_input_structured",
+    })).toThrow();
+    expect(() => UserInputAnswerRequestSchema.parse({
+      answer: "Submitted structured response.",
+      structuredAnswers: { implementation: ["a".repeat(401)] },
+      clientRequestId: "req_answer_too_large",
+      correlationId: "corr_input_structured",
+    })).toThrow();
 
     expect(FileMetadataSchema.parse({
       path: "src/index.ts",

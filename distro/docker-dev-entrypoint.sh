@@ -16,8 +16,9 @@ ensure_deps() {
     return 0
   fi
   echo "[matrix-os-dev] Installing dependencies (lockfile changed)..."
-  # Root installs must remain self-contained under /app/node_modules. Global
-  # store links point into /root and become inaccessible after su-exec.
+  # Host worktrees share pnpm's global virtual store, but this container
+  # installs as root before dropping to matrixos. Keep the Docker dependency
+  # volume self-contained so its links remain readable after the user switch.
   pnpm install --frozen-lockfile --config.enableGlobalVirtualStore=false
   md5sum pnpm-lock.yaml > node_modules/.pnpm-lock-hash 2>/dev/null || true
 }
