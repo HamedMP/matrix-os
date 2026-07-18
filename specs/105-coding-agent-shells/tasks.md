@@ -22,7 +22,7 @@ As of the `056b3da668ed6d1753712120316d2d5accfafdcf` main checkpoint:
 - PR #869 desktop validation now confirms the command-palette Agents entry still opens after terminal interaction, and menu-template tests cover the native Agents accelerator used to focus the same workspace.
 - The mobile SDK 57 coding-agent device smoke runbook now lives in `docs/dev/mobile-shell.md`.
 - The desktop coding-agent real-runtime smoke runbook now lives in `docs/dev/coding-agent-shells.md`.
-- PR #879 adds an opt-in read-only real-runtime smoke helper for deployed `/api/coding-agents` route validation without writing runtime state.
+- PR #879 adds an opt-in read-only real-runtime smoke helper for deployed `/api/coding-agents` route validation without writing runtime state; the stacked assertion slice adds optional read-only capability/provider/count/snapshot checks for stricter deployed-runtime validation.
 - Remaining work is validation and rollout hardening: run the real-runtime smoke helper against a deployed Matrix computer, complete real-runtime desktop visual smoke, complete mobile SDK 57 device smoke, wire mobile workspace reference persistence into the new Agents cockpit, and continue docs sync as later provider/runtime behavior changes.
 
 That checkpoint is not the clarified final product. The active backlog now requires a project-first hierarchy, same-thread conversation turns, tasks with multiple threads, and Conversation/Kanban views. `acceptance-tests.md` is the authoritative test matrix for this follow-up work.

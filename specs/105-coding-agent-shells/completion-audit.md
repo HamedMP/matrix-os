@@ -117,7 +117,7 @@ The real-runtime smoke helper checkpoint in PR #879 added repeatable read-only d
 - `bun run check:patterns`
 - `bun run typecheck`
 
-That helper validates authenticated deployed-runtime `summary`, `threads`, `reviews`, and `notification-preferences` responses through bounded schemas, preserves `/vm/<handle>` base paths, rejects token CLI arguments, redacts bearer material, caps response bodies, and prints no raw response bodies. It is not evidence that a human has completed the desktop or mobile visual smoke on a deployed runtime.
+That helper validates authenticated deployed-runtime `summary`, `threads`, `reviews`, and `notification-preferences` responses through bounded schemas, preserves `/vm/<handle>` base paths, rejects token CLI arguments, redacts bearer material, caps response bodies, and prints no raw response bodies. The stacked assertion slice keeps the helper read-only while adding optional checks for required capabilities, ready providers, minimum active thread/terminal/preview/review counts, review pagination, and an existing thread snapshot. It is not evidence that a human has completed the desktop or mobile visual smoke on a deployed runtime.
 
 ## Remaining Validation
 

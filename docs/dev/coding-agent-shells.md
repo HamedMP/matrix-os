@@ -403,6 +403,21 @@ node scripts/coding-agents/real-runtime-smoke.mjs
 
 The helper performs read-only authenticated checks for `GET /api/coding-agents/summary`, `GET /api/coding-agents/threads`, `GET /api/coding-agents/reviews`, and `GET /api/coding-agents/notification-preferences`. It validates bounded response contracts with Zod 4, applies per-request timeouts, caps response bodies, and redacts bearer tokens from logs.
 
+Add read-only assertions when the deployed runtime is expected to expose specific coding-agent surfaces:
+
+```bash
+MATRIX_RUNTIME_URL="https://app.matrix-os.com/vm/<handle>" \
+MATRIX_RUNTIME_TOKEN="<short-lived runtime token>" \
+node scripts/coding-agents/real-runtime-smoke.mjs \
+  --require-capability codingAgentsRuntimeSummary \
+  --require-capability codingAgentsMobileWorkspace \
+  --require-ready-provider \
+  --min-active-threads 1 \
+  --min-terminal-sessions 1
+```
+
+Available assertion flags are `--require-capability <id>`, `--require-ready-provider`, `--require-thread-snapshot`, `--min-active-threads <count>`, `--min-terminal-sessions <count>`, `--min-preview-sessions <count>`, and `--min-reviews <count>`. The helper remains read-only; it follows review cursors only when a minimum review count is requested and validates a thread snapshot only when `--require-thread-snapshot` is passed.
+
 Do not paste live token values, raw response bodies, transcripts, terminal output, file contents, diffs, provider errors, private hostnames, or VPS IPs into PR comments. Record only the command shape, pass/fail status, and sanitized recovery notes.
 
 ## Validation Commands
