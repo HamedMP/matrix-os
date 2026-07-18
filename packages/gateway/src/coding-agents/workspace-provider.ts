@@ -306,10 +306,10 @@ export function createWorkspaceCodingAgentProviderSet(
     providerId: agent,
     agent,
     runtime: options.runtime,
-    runnable: agent === "codex",
+    runnable: agent === "codex" || agent === "claude",
   }));
   return {
     registryProviders,
-    executionProviders: registryProviders.filter((provider) => provider.providerId === "codex"),
+    executionProviders: registryProviders,
   };
 }

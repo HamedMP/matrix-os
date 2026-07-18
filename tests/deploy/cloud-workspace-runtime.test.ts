@@ -66,11 +66,25 @@ describe("cloud workspace runtime gates", () => {
   it("publishes public cloud coding workspace docs", () => {
     const docsPath = join(root, "www/content/docs/guide/cloud-coding.mdx");
     const docs = existsSync(docsPath) ? readFileSync(docsPath, "utf-8") : "";
+    const runbook = readFileSync(join(root, "docs/dev/coding-agent-shells.md"), "utf-8");
+    const currentState = readFileSync(join(root, "specs/105-coding-agent-shells/current-state.md"), "utf-8");
 
     expect(docs).toContain("GitHub authentication");
     expect(docs).toContain("Data ownership");
     expect(docs).toContain("Review loops");
     expect(docs).toContain("Browser IDE");
     expect(docs).toContain("Sandboxing");
+    expect(docs).toContain("AppArmor");
+    expect(runbook).toContain("`on_request` and `never` map to `dontAsk`");
+    expect(runbook).toContain("scoped `Edit(...)` allow rules");
+    expect(docs).toContain("Built-in file edits remain available only inside the selected worktree");
+    expect(runbook).toContain('Prompted thread launches add `--print`');
+    expect(runbook).toContain("workspace trust prompt");
+    expect(runbook).toContain("shared Git metadata directory");
+    expect(currentState).toContain("stale unowned scratch directories");
+    expect(runbook).toContain("AppArmor profile");
+    expect(runbook).not.toContain("map to manual approval");
+    expect(currentState).not.toContain("Claude registry-only");
+    expect(currentState).not.toContain("thread creation remains fail-closed until [#893]");
   });
 });
