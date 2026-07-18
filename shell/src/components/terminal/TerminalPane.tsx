@@ -1451,17 +1451,22 @@ export function TerminalPane({
         }
       }
 
-      function connectWs() {
-        const generation = wsGenerationRef.current + 1;
-        wsGenerationRef.current = generation;
+      function getCanonicalReplayRequest(): CanonicalReplayRequest | undefined {
         const currentSessionId = sessionIdRef.current;
-        const wsPath = terminalWebSocketPathForSession(currentSessionId);
-        const replayRequest: CanonicalReplayRequest | undefined = currentSessionId && isCanonicalShellSessionId(currentSessionId)
+        return currentSessionId && isCanonicalShellSessionId(currentSessionId)
           ? {
               mode: hasReplayCursorRef.current ? "cursor-resume" : "cold-replay",
               requestedSeq: hasReplayCursorRef.current ? lastSeqRef.current : 0,
             }
           : undefined;
+      }
+
+      function connectWs() {
+        const generation = wsGenerationRef.current + 1;
+        wsGenerationRef.current = generation;
+        const currentSessionId = sessionIdRef.current;
+        const wsPath = terminalWebSocketPathForSession(currentSessionId);
+        const replayRequest = getCanonicalReplayRequest();
         const query = currentSessionId && isCanonicalShellSessionId(currentSessionId)
           ? { session: currentSessionId, fromSeq: String(replayRequest?.requestedSeq ?? 0) }
           : currentSessionId || !cwd
@@ -1526,6 +1531,7 @@ export function TerminalPane({
       if (cached && canReuseCachedSocket) {
         bindWs(cached.ws, cached.ws.readyState === WebSocket.CONNECTING, {
           alreadyAttached: cached.ws.readyState === WebSocket.OPEN,
+          replayRequest: getCanonicalReplayRequest(),
         });
       } else {
         if (cached && !canReuseCachedTerminal) {

@@ -315,6 +315,7 @@ describe("TerminalPane scrolling", () => {
       setTimeout(() => cb(0), 0)) as typeof requestAnimationFrame;
     stubWs.send.mockReset();
     stubWs.close.mockReset();
+    stubWs.readyState = WebSocketMock.OPEN;
     mockedCacheTerminal.mockClear();
     mockedCapturePostHogEvent.mockClear();
     WebSocketMock.instances.length = 0;
@@ -739,6 +740,57 @@ describe("TerminalPane scrolling", () => {
 
     const telemetryPayloads = mockedCapturePostHogEvent.mock.calls.map(([, payload]) => payload);
     expect(telemetryPayloads).not.toContainEqual(expect.objectContaining({ data: expect.anything() }));
+  });
+
+  it("records cursor-resume metadata when a cached canonical socket finishes connecting", async () => {
+    const cached = createCachedTerminal();
+    stubWs.readyState = WebSocketMock.CONNECTING;
+    restorePlan.current = {
+      cached: {
+        terminal: cached.terminal,
+        fitAddon: { fit: vi.fn() },
+        webglAddon: null,
+        searchAddon: null,
+        ws: stubWs,
+        lastSeq: 23,
+        hasReplayCursor: true,
+        sessionId: "main",
+      },
+      reuseTerminal: true,
+      reuseSocket: true,
+      sessionId: "main",
+      lastSeq: 23,
+      hasReplayCursor: true,
+    };
+
+    render(
+      <TerminalPane
+        paneId="pane-cached-connecting-telemetry-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(stubWs.onmessage).not.toBeNull());
+    await act(async () => {
+      stubWs.readyState = WebSocketMock.OPEN;
+      stubWs.onopen?.();
+      stubWs.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 23 }),
+      });
+    });
+
+    expect(mockedCapturePostHogEvent).toHaveBeenCalledWith("shell_terminal_ws", expect.objectContaining({
+      event: "attached",
+      replayMode: "cursor-resume",
+      requestedSeq: 23,
+      acceptedSeq: 23,
+    }));
   });
 
   it("resumes from the next accepted sequence and renders missed output once", async () => {
