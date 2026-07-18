@@ -76,6 +76,25 @@ describe("Sticky Notes (win11) app", () => {
     expect(within(list).getByText("Ship the win11 build")).toBeTruthy();
   });
 
+  it("flushes a pending autosave when the app unmounts before the debounce fires", async () => {
+    const bridge = installMatrixDataBridge();
+    const { unmount } = render(<App />);
+
+    await screen.findByText(/no note selected/i);
+    fireEvent.click(screen.getAllByRole("button", { name: /new note/i })[0]);
+    const editor = screen.getByLabelText(/note text/i) as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: "last-second edit" } });
+
+    // Unmount within the 600ms debounce window: the pending save must flush.
+    unmount();
+    await waitFor(() => {
+      expect(bridge.writeData).toHaveBeenCalledWith(
+        NOTES_KEY,
+        expect.arrayContaining([expect.objectContaining({ text: "last-second edit" })]),
+      );
+    });
+  });
+
   it("switches the selected note from the list", async () => {
     installMatrixDataBridge(new Map([[NOTES_KEY, savedNotes]]));
     render(<App />);
