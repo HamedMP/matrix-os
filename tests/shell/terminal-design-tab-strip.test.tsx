@@ -233,6 +233,20 @@ describe("TerminalApp per-design interior chrome", () => {
     expect(within(tablist).getByRole("tab", { name: "Shell" }).getAttribute("aria-selected")).toBe("true");
   });
 
+  it("links design tabs to the terminal panel with ARIA containment and controls", async () => {
+    setThemeStyle("win11");
+    render(<TerminalApp initialSessionId="canvas-session-123" />);
+    await flushAsync();
+
+    const tablist = screen.getByRole("tablist", { name: "Terminal tabs" });
+    const tab = within(tablist).getByRole("tab", { name: "Canvas Terminal" });
+    expect(tab.id).toMatch(/^terminal-tab-/);
+    expect(tab.getAttribute("aria-controls")).toBe("terminal-tabpanel");
+
+    const panel = screen.getByRole("tabpanel");
+    expect(panel.getAttribute("aria-labelledby")).toBe(tab.id);
+  });
+
   it("lists and activates open tabs from the win11 chevron menu", async () => {
     setThemeStyle("win11");
     render(<TerminalApp initialSessionId="canvas-session-123" />);

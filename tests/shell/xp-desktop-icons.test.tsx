@@ -19,6 +19,7 @@ vi.mock("@/hooks/useFileBrowser", () => ({
 }));
 
 import { XpDesktopIcons } from "../../shell/src/components/desktop/XpDesktopIcons.js";
+import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 
 function setDesign(style: string) {
   document.documentElement.setAttribute("data-theme-style", style);
@@ -43,6 +44,7 @@ describe("XpDesktopIcons", () => {
     vi.clearAllMocks();
     document.documentElement.removeAttribute("data-theme-style");
     store.pendingView = null;
+    useWindowManager.setState({ windows: [] });
   });
 
   it("renders nothing for non-XP designs", async () => {
@@ -85,6 +87,23 @@ describe("XpDesktopIcons", () => {
 
     expect(onOpenApp).toHaveBeenCalledWith("__file-browser__", "Files");
     expect(store.navigate).toHaveBeenCalledWith("");
+    expect(store.requestView).toHaveBeenCalledWith("files");
+  });
+
+  it("focuses an already-open Files window without resetting its location", async () => {
+    setDesign("winxp");
+    const onOpenApp = vi.fn();
+    useWindowManager.setState({
+      windows: [
+        { id: "w-files", title: "Files", path: "__file-browser__", x: 10, y: 10, width: 640, height: 480, minimized: false, zIndex: 1 },
+      ],
+    });
+    await renderIcons(onOpenApp);
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "My Computer" }));
+
+    expect(onOpenApp).toHaveBeenCalledWith("__file-browser__", "Files");
+    expect(store.navigate).not.toHaveBeenCalled();
     expect(store.requestView).toHaveBeenCalledWith("files");
   });
 
