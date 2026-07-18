@@ -126,6 +126,7 @@ Post-merge checkpoint updates:
 
 - PR #868 confirmed mobile thread detail terminal handoff persists the bounded canonical terminal session reference needed by the Terminal route without persisting terminal output or transcript data.
 - PR #869 confirmed the desktop command-palette Agents entry still opens after terminal interaction, and menu-template tests cover the native Agents accelerator used to focus the same workspace.
+- PR #879 adds an opt-in real-runtime smoke helper at `scripts/coding-agents/real-runtime-smoke.mjs` that validates deployed `/api/coding-agents/summary`, `/threads`, `/reviews`, and `/notification-preferences` responses through bounded Zod schemas without writing runtime state. This is rollout hardening only; deployed desktop/mobile visual smoke remains a separate manual validation step.
 
 ## Shared Contracts
 
@@ -569,6 +570,12 @@ Mobile diagnostics:
 
 ```bash
 pnpm --filter matrix-os-mobile exec jest __tests__/coding-agent-diagnostics.test.ts __tests__/gateway-client.test.ts --runInBand
+```
+
+Real-runtime smoke helper:
+
+```bash
+MATRIX_RUNTIME_URL="https://app.matrix-os.com/vm/<handle>" MATRIX_RUNTIME_TOKEN="<short-lived runtime token>" node scripts/coding-agents/real-runtime-smoke.mjs
 ```
 
 Desktop typecheck:
