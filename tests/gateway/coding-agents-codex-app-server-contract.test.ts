@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
 import {
   CODEX_APP_SERVER_CONTRACT,
   codexAppServerContractStatus,
@@ -8,9 +9,13 @@ describe("Codex app-server contract", () => {
   it("pins the bounded server requests used by Matrix", () => {
     expect(CODEX_APP_SERVER_CONTRACT).toMatchObject({
       packageName: "@openai/codex",
-      minimumVersion: "0.144.0",
-      latestVerifiedVersion: "0.144.6",
+      latestVerifiedVersion: CODEX_VERIFIED_VERSION,
       experimental: true,
+      verifiedVersions: {
+        "0.144.3": {
+          schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+      },
       requiredServerMethods: [
         "item/commandExecution/requestApproval",
         "item/fileChange/requestApproval",
@@ -22,7 +27,7 @@ describe("Codex app-server contract", () => {
 
   it("accepts only installed versions covered by the app-server schema", () => {
     expect(codexAppServerContractStatus("codex-cli 0.144.1")).toEqual({
-      status: "verified",
+      status: "unverified_older",
       version: "0.144.1",
     });
     expect(codexAppServerContractStatus("0.144.3")).toEqual({

@@ -392,9 +392,12 @@ Guidance:
 - Health checks must be timeout-bound.
 - Provider protocol support is version-gated independently from executable
   discovery. For Codex, Matrix pins both the exec JSONL schema and the
-  experimental app-server schema to one verified package range, checks the
-  latest published package daily, and fails closed for installed versions
-  outside that range or whenever either schema digest changes.
+  experimental app-server schema to the same set of exact verified package
+  versions, checks the latest published package daily, and fails closed for an
+  unverified installed version or whenever either schema digest or required
+  event/method surface changes. Discovery, health checks, and provider spawn
+  use one validated absolute executable path, with an immediate version recheck
+  before the child process starts.
 
 ### Thread Create
 

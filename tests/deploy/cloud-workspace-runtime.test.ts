@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
 
 const root = process.cwd();
 
@@ -13,7 +14,8 @@ describe("cloud workspace runtime gates", () => {
     }
     for (const agentCli of [
       "@anthropic-ai/claude-code@latest",
-      "@openai/codex@latest",
+      `ARG CODEX_VERSION=${CODEX_VERIFIED_VERSION}`,
+      '"@openai/codex@${CODEX_VERSION}"',
       "OPENCODE_AI_VERSION=latest",
       "PI_CODING_AGENT_VERSION=latest",
       '"opencode-ai@${OPENCODE_AI_VERSION}"',

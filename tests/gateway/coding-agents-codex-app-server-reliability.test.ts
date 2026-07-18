@@ -94,7 +94,14 @@ async function startFakeRuntime(
     process.cwd(),
     "packages/gateway/src/coding-agents/codex-app-server-runner.mjs",
   );
-  const child = spawn(process.execPath, [runnerPath, eventPath, process.execPath, fakePath, config], {
+  const child = spawn(process.execPath, [
+    runnerPath,
+    eventPath,
+    process.version.slice(1),
+    process.execPath,
+    fakePath,
+    config,
+  ], {
     cwd: homePath,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -253,7 +260,8 @@ describe("Codex app-server runner reliability", () => {
 
     try {
       await expect(waitForExit(runtime.child)).resolves.toBe(1);
-      expect(await readFile(runtime.eventPath, "utf8")).toContain('"type":"turn.failed"');
+      expect((await readFile(runtime.eventPath, "utf8")).slice(-1000))
+        .toContain('"type":"turn.failed"');
     } finally {
       await cleanup(runtime);
     }
@@ -298,7 +306,8 @@ describe("Codex app-server runner reliability", () => {
 
     try {
       await expect(waitForExit(runtime.child)).resolves.toBe(1);
-      expect(await readFile(runtime.eventPath, "utf8")).toContain('"type":"turn.failed"');
+      expect((await readFile(runtime.eventPath, "utf8")).slice(-1000))
+        .toContain('"type":"turn.failed"');
       await expect(lstat(runtime.controlPath)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await cleanup(runtime);

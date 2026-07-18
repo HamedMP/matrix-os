@@ -12,7 +12,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/main.ts",
-    "build": "pnpm --dir ../.. --filter '@matrix-os/observability' build && tsc && cp src/coding-agents/codex-runner.mjs dist/coding-agents/codex-runner.mjs && cp src/coding-agents/codex-app-server-runner.mjs dist/coding-agents/codex-app-server-runner.mjs"
+    "build": "pnpm --dir ../.. --filter '@matrix-os/observability' build && tsc && cp src/coding-agents/codex-provider-version-check.mjs dist/coding-agents/codex-provider-version-check.mjs && cp src/coding-agents/codex-runner.mjs dist/coding-agents/codex-runner.mjs && cp src/coding-agents/codex-app-server-runner.mjs dist/coding-agents/codex-app-server-runner.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.4.0",

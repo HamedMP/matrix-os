@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { buildAgentLaunch } from "../../packages/gateway/src/agent-launcher.js";
+import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
 import {
   codexProviderEventPath,
   createCodexEventBridge,
@@ -55,11 +56,12 @@ describe("Codex structured event runtime", () => {
 
     expect(launch.command).toBe(process.execPath);
     expect(launch.args[0]).toMatch(/coding-agents\/codex-app-server-runner\.mjs$/);
-    expect(launch.args.slice(1, 3)).toEqual([
+    expect(launch.args.slice(1, 4)).toEqual([
       "/home/matrix/home/system/coding-agents/provider-events/sess_test.jsonl",
+      CODEX_VERIFIED_VERSION,
       "codex",
     ]);
-    const config = JSON.parse(Buffer.from(launch.args[3]!, "base64").toString("utf8"));
+    const config = JSON.parse(Buffer.from(launch.args[4]!, "base64").toString("utf8"));
     expect(config).toEqual({
       prompt: "Fix the failing route.",
       approvalPolicy: "never",
@@ -68,6 +70,7 @@ describe("Codex structured event runtime", () => {
     });
     expect(launch.args).not.toContain("sh");
     expect(launch.args).not.toContain("-c");
+    expect(launch.args).not.toContain("app-server");
     expect(launch.args).not.toContain("app-server");
   });
 
@@ -93,6 +96,7 @@ describe("Codex structured event runtime", () => {
       const result = await runProcess(process.execPath, [
         runnerPath,
         eventPath,
+        process.version.slice(1),
         process.execPath,
         fakeCodexPath,
         "exec",
@@ -136,6 +140,7 @@ describe("Codex structured event runtime", () => {
       const result = await runProcess(process.execPath, [
         runnerPath,
         eventPath,
+        process.version.slice(1),
         process.execPath,
         fakeCodexPath,
         "exec",
@@ -177,6 +182,7 @@ describe("Codex structured event runtime", () => {
       const result = await runProcess(process.execPath, [
         runnerPath,
         eventPath,
+        process.version.slice(1),
         process.execPath,
         fakeCodexPath,
         "--ask-for-approval",
@@ -237,6 +243,7 @@ describe("Codex structured event runtime", () => {
 
   it("does not cache an aborted Codex version probe", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-bridge-"));
+    const codexExecutable = "/opt/matrix/runtime/node/bin/codex";
     const runVersionCommand = vi.fn(async (
       _command: string,
       _args: string[],
@@ -245,11 +252,12 @@ describe("Codex structured event runtime", () => {
       if (options.signal.aborted) {
         throw Object.assign(new Error("aborted"), { name: "AbortError" });
       }
-      return { stdout: "codex-cli 0.144.1\n", stderr: "" };
+      return { stdout: "codex-cli 0.144.3\n", stderr: "" };
     });
     const bridge = createCodexEventBridge({
       homePath,
       pollIntervalMs: 60_000,
+      codexExecutable,
       runVersionCommand,
     });
     const controller = new AbortController();
@@ -264,6 +272,11 @@ describe("Codex structured event runtime", () => {
         path: codexProviderEventPath(homePath, "sess_version_retry_1"),
       });
       expect(runVersionCommand).toHaveBeenCalledTimes(2);
+      expect(runVersionCommand).toHaveBeenLastCalledWith(
+        codexExecutable,
+        ["--version"],
+        expect.any(Object),
+      );
     } finally {
       await bridge.shutdown();
       await rm(homePath, { recursive: true, force: true });
@@ -287,7 +300,7 @@ describe("Codex structured event runtime", () => {
     const bridge = createCodexEventBridge({
       homePath,
       pollIntervalMs: 60_000,
-      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.144.1\n", stderr: "" })),
+      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.144.3\n", stderr: "" })),
     });
     bridge.attachThreadStore({ ingestProviderEvents });
     try {
@@ -341,7 +354,7 @@ describe("Codex structured event runtime", () => {
     const bridge = createCodexEventBridge({
       homePath,
       pollIntervalMs: 60_000,
-      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.144.1\n", stderr: "" })),
+      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.144.3\n", stderr: "" })),
     });
     bridge.attachThreadStore({
       async ingestProviderEvents(_principal, _threadId, batch) {
@@ -384,7 +397,7 @@ describe("Codex structured event runtime", () => {
     const bridge = createCodexEventBridge({
       homePath,
       pollIntervalMs: 60_000,
-      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.144.1\n", stderr: "" })),
+      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.144.3\n", stderr: "" })),
     });
     bridge.attachThreadStore({
       async ingestProviderEvents(_principal, _threadId, batch) {
@@ -425,7 +438,7 @@ describe("Codex structured event runtime", () => {
     const bridge = createCodexEventBridge({
       homePath,
       pollIntervalMs: 60_000,
-      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.144.1\n", stderr: "" })),
+      runVersionCommand: vi.fn(async () => ({ stdout: "codex-cli 0.144.3\n", stderr: "" })),
     });
     const runtime = {
       startSession: vi.fn(async () => ({

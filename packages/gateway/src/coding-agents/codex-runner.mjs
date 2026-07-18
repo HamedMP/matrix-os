@@ -5,6 +5,7 @@ import { dirname, isAbsolute } from "node:path";
 import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
+import { assertCodexProviderVersion } from "./codex-provider-version-check.mjs";
 
 process.on("uncaughtException", () => {
   process.stderr.write("Codex event runner stopped unexpectedly.\n");
@@ -26,6 +27,7 @@ const TURN_FRAME_PREFIX = "matrix-turn-v1:";
 const PROVIDER_THREAD_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/;
 const RunnerInputSchema = z.object({
   eventPath: z.string().min(1).max(4096).refine(isAbsolute).regex(/^[^\u0000\r\n]+\.jsonl$/),
+  expectedVersion: z.string().regex(/^\d+\.\d+\.\d+$/),
   command: z.string().min(1).max(4096).regex(/^[^\u0000\r\n]+$/),
   initialArgs: z.array(z.string().max(100_000)).min(1).max(128),
 }).strict().superRefine((value, context) => {
@@ -58,14 +60,22 @@ const FramedPromptSchema = z.string()
 
 const parsedInput = RunnerInputSchema.safeParse({
   eventPath: process.argv[2],
-  command: process.argv[3],
-  initialArgs: process.argv.slice(4),
+  expectedVersion: process.argv[3],
+  command: process.argv[4],
+  initialArgs: process.argv.slice(5),
 });
 if (!parsedInput.success) {
   process.stderr.write("Codex event runner configuration is invalid.\n");
   process.exit(1);
 }
-const { eventPath, command, initialArgs } = parsedInput.data;
+const { eventPath, expectedVersion, command, initialArgs } = parsedInput.data;
+
+try {
+  await assertCodexProviderVersion({ command, expectedVersion, cwd: process.cwd() });
+} catch (_error) {
+  process.stderr.write("Codex provider version is not verified.\n");
+  process.exit(1);
+}
 
 await mkdir(dirname(eventPath), { recursive: true });
 try {

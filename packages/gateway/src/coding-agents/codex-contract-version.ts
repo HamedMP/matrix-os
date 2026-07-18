@@ -25,17 +25,15 @@ function compareVersions(left: string, right: string): number {
 
 export function codexContractStatus(
   versionOutput: string,
-  contract: { minimumVersion: string; latestVerifiedVersion: string },
+  contract: { latestVerifiedVersion: string; verifiedVersions: Record<string, unknown> },
 ): CodexContractStatus {
   const match = versionOutput.trim().match(/(?:^|\s)(\d+\.\d+\.\d+)(?:\s|$)/);
   const parsed = CodexVersionSchema.safeParse(match?.[1]);
   if (!parsed.success) return { status: "invalid" };
   const version = parsed.data;
-  if (compareVersions(version, contract.minimumVersion) < 0) {
-    return { status: "unverified_older", version };
-  }
+  if (Object.hasOwn(contract.verifiedVersions, version)) return { status: "verified", version };
   if (compareVersions(version, contract.latestVerifiedVersion) > 0) {
     return { status: "unverified_newer", version };
   }
-  return { status: "verified", version };
+  return { status: "unverified_older", version };
 }
