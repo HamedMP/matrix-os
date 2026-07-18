@@ -63,6 +63,7 @@ export default function App() {
     if (!loaded) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
+      saveTimer.current = null;
       void (async () => {
         try {
           await window.MatrixOS?.writeData?.(NOTES_KEY, notes);
@@ -75,6 +76,29 @@ export default function App() {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, [notes, loaded]);
+
+  const notesRef = useRef(notes);
+  useEffect(() => {
+    notesRef.current = notes;
+  }, [notes]);
+
+  // Flush a pending debounced save on unmount so edits typed in the last
+  // debounce window are not silently dropped.
+  useEffect(
+    () => () => {
+      if (!saveTimer.current) return;
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+      void (async () => {
+        try {
+          await window.MatrixOS?.writeData?.(NOTES_KEY, notesRef.current);
+        } catch (err: unknown) {
+          console.warn("[sticky-notes] final save failed:", errMsg(err));
+        }
+      })();
+    },
+    [],
+  );
 
   // Refresh relative timestamps in the list once a minute.
   useEffect(() => {
