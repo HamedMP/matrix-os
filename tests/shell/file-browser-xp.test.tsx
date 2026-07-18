@@ -220,6 +220,30 @@ describe("FileBrowser Windows XP explorer", () => {
     expect(store.search).toHaveBeenCalledWith("notes");
   });
 
+  it("clears the XP search query when the search box is closed", async () => {
+    document.documentElement.setAttribute("data-theme-style", "winxp");
+    await renderBrowser();
+
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    let input = screen.getByRole("textbox", { name: "Search files" }) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "notes" } });
+
+    // Close via the toolbar toggle: the local query is cleared, not preserved.
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(store.clearSearch).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    input = screen.getByRole("textbox", { name: "Search files" }) as HTMLInputElement;
+    expect(input.value).toBe("");
+
+    // Same reset on Escape.
+    fireEvent.change(input, { target: { value: "abc" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    input = screen.getByRole("textbox", { name: "Search files" }) as HTMLInputElement;
+    expect(input.value).toBe("");
+  });
+
   it("switches view mode through the Views menu using the store action", async () => {
     document.documentElement.setAttribute("data-theme-style", "winxp");
     await renderBrowser();
