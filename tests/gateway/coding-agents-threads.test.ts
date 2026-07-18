@@ -931,6 +931,7 @@ describe("coding agent thread lifecycle", () => {
     expect(answered.thread).toMatchObject({ status: "completed", attention: "none" });
     expect(answered.events.items.map((event) => event.type)).toEqual([
       "thread.created",
+      "user.message",
       "user_input.requested",
       "user_input.answered",
       "thread.completed",
@@ -954,13 +955,14 @@ describe("coding agent thread lifecycle", () => {
     expect(failed.thread).toMatchObject({ status: "failed", attention: "failed" });
     expect(failed.events.items.map((event) => event.type)).toEqual([
       "thread.created",
+      "user.message",
       "user_input.requested",
       "user_input.answered",
       "thread.error",
       "thread.completed",
     ]);
     expect(JSON.stringify(failed)).not.toContain("Private custom response");
-    expect(failed.events.items[3]).toMatchObject({
+    expect(failed.events.items[4]).toMatchObject({
       type: "thread.error",
       error: {
         code: "provider_run_failed",
