@@ -30,7 +30,8 @@ export async function withBridgeFileLock<T>(homePath: string, fn: () => Promise<
   const directory = join(homePath, "system", "agent-sessions");
   const lockPath = join(directory, ".bridge.lock");
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  for (let attempt = 0; attempt < BRIDGE_LOCK_RETRIES; attempt += 1) {
+  let attempt = 0;
+  while (true) {
     try {
       const handle = await open(lockPath, "wx", 0o600);
       try {
@@ -42,12 +43,15 @@ export async function withBridgeFileLock<T>(homePath: string, fn: () => Promise<
         });
       }
     } catch (err: unknown) {
-      if (!isAlreadyExistsError(err) || attempt === BRIDGE_LOCK_RETRIES - 1) throw err;
+      if (!isAlreadyExistsError(err)) throw err;
+      if (attempt === BRIDGE_LOCK_RETRIES - 1) {
+        throw new Error("Agent bridge lock unavailable", { cause: err });
+      }
       if (await removeStaleBridgeLock(lockPath)) continue;
       await new Promise((resolveDelay) => setTimeout(resolveDelay, BRIDGE_LOCK_RETRY_MS));
+      attempt += 1;
     }
   }
-  throw new Error("Agent bridge lock unavailable");
 }
 
 async function removeStaleBridgeLock(lockPath: string): Promise<boolean> {

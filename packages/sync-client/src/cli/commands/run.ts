@@ -90,7 +90,16 @@ export async function createOrAttachRunSession(
 }
 
 export function inferRunAgent(command: string[]): "claude" | "codex" | "opencode" | "pi" | undefined {
-  const executable = command[0]?.split("/").pop();
+  let index = 0;
+  const usesEnv = command[index]?.split("/").pop() === "env";
+  if (usesEnv) index += 1;
+  while (
+    index < command.length &&
+    (/^[A-Za-z_][A-Za-z0-9_]*=/.test(command[index]) || (usesEnv && command[index].startsWith("-")))
+  ) {
+    index += 1;
+  }
+  const executable = command[index]?.split("/").pop();
   return executable === "claude" || executable === "codex" || executable === "opencode" || executable === "pi"
     ? executable
     : undefined;

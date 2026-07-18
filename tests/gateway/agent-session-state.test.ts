@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -153,5 +153,19 @@ describe("agent session state", () => {
     await expect(store.get("calm-otter")).resolves.toBeNull();
     await expect(store.get("swift-falcon")).resolves.not.toBeNull();
     await expect(store.get("bright-river")).resolves.not.toBeNull();
+  });
+
+  it("evicts corrupt snapshots without rejecting a successful event write", async () => {
+    const root = await tempRoot();
+    const directory = join(root, "system", "agent-sessions");
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, "corrupt-entry.json"), "{not valid snapshot json", { mode: 0o600 });
+    const store = new AgentSessionStateStore({ homePath: root, maxSnapshots: 1 });
+
+    await expect(store.apply(event("turn-started", "2026-07-18T10:00:00.000Z"))).resolves.toMatchObject({
+      sessionName: "calm-otter",
+      phase: "running",
+    });
+    await expect(readFile(join(directory, "corrupt-entry.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

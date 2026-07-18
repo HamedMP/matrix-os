@@ -96,6 +96,7 @@ export interface ShellSession extends PersistedShellSession {
 export interface ShellSessionUiStatePatch {
   placement?: ShellPlacement;
   lastSeenSeq?: number | null;
+  /** @deprecated Accepted for one compatibility release and intentionally ignored. */
   visualStatus?: ShellVisualStatus;
 }
 

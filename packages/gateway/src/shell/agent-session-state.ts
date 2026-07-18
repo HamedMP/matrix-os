@@ -1,5 +1,5 @@
 import { chmod, mkdir, readFile, readdir, unlink } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { z } from "zod/v4";
 import { writeUtf8FileAtomic } from "./atomic-write.js";
 import { SESSION_NAME_PATTERN, validateSessionName } from "./names.js";
@@ -253,8 +253,20 @@ export class AgentSessionStateStore {
     if (files.length <= this.maxSnapshots) return;
 
     const snapshots = await Promise.all(files.map(async (file) => {
-      const name = basename(file, ".json");
-      return { file, snapshot: await this.readSnapshot(name) };
+      try {
+        return {
+          file,
+          snapshot: AgentSessionSnapshotSchema.parse(
+            JSON.parse(await readFile(join(this.directoryPath, file), "utf8")),
+          ),
+        };
+      } catch (err: unknown) {
+        if (!(err instanceof SyntaxError) && !(err instanceof z.ZodError) && !isMissingFileError(err)) {
+          throw err;
+        }
+        console.warn("[shell] ignored an invalid agent session snapshot during cleanup");
+        return { file, snapshot: null };
+      }
     }));
     snapshots.sort((left, right) => (
       (left.snapshot?.agentUpdatedAt ?? "").localeCompare(right.snapshot?.agentUpdatedAt ?? "")
