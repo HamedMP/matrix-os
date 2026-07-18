@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type Ref } from "react";
+import { useEffect, useRef, useState, type Ref } from "react";
 import { LockIcon, LogOutIcon, PowerIcon, SearchIcon } from "lucide-react";
 import type { AppEntry } from "@/hooks/useWindowManager";
 import { isBuiltInAppPath } from "@/lib/builtin-apps";
@@ -35,6 +35,38 @@ const MAX_RECOMMENDED = 3;
 export function Win11StartMenu({ ref, apps, onOpenApp, onOpenSettings, onClose }: Win11StartMenuProps) {
   const [query, setQuery] = useState("");
   const [powerOpen, setPowerOpen] = useState(false);
+  const powerWrapRef = useRef<HTMLDivElement>(null);
+  const powerButtonRef = useRef<HTMLButtonElement>(null);
+
+  // ARIA menu pattern for the power flyout: focus the first item on open,
+  // arrow keys move between items, Escape closes and re-focuses the trigger.
+  useEffect(() => {
+    if (!powerOpen) return;
+    powerWrapRef.current
+      ?.querySelector<HTMLButtonElement>(".win11-power-flyout-item")
+      ?.focus();
+  }, [powerOpen]);
+
+  const onFlyoutKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      setPowerOpen(false);
+      powerButtonRef.current?.focus();
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const items = Array.from(
+      powerWrapRef.current?.querySelectorAll<HTMLButtonElement>(".win11-power-flyout-item") ?? [],
+    );
+    if (items.length === 0) return;
+    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next =
+      event.key === "ArrowDown"
+        ? (current + 1) % items.length
+        : (current - 1 + items.length) % items.length;
+    items[next]?.focus();
+  };
 
   const openLockScreen = () => {
     onClose();
@@ -129,9 +161,14 @@ export function Win11StartMenu({ ref, apps, onOpenApp, onOpenSettings, onClose }
         >
           <StartMenuUser avatarSize={28} className="win11-start-user" />
         </button>
-        <div className="win11-start-power-wrap">
+        <div className="win11-start-power-wrap" ref={powerWrapRef}>
           {powerOpen ? (
-            <div className="win11-power-flyout" role="menu" aria-label="Power options">
+            <div
+              className="win11-power-flyout"
+              role="menu"
+              aria-label="Power options"
+              onKeyDown={onFlyoutKeyDown}
+            >
               <button type="button" role="menuitem" className="win11-power-flyout-item" onClick={openLockScreen}>
                 <LockIcon aria-hidden="true" />
                 <span>Lock</span>
@@ -147,7 +184,9 @@ export function Win11StartMenu({ ref, apps, onOpenApp, onOpenSettings, onClose }
             className="win11-start-power"
             aria-label="Power"
             aria-expanded={powerOpen}
+            aria-haspopup="menu"
             onClick={() => setPowerOpen((open) => !open)}
+            ref={powerButtonRef}
           >
             <PowerIcon aria-hidden="true" />
           </button>
