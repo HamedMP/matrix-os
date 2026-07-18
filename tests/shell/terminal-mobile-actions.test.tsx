@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PaneNode } from "../../shell/src/stores/terminal-store.js";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "../../shell/src/components/terminal/terminal-input-event.js";
@@ -169,6 +169,74 @@ describe("TerminalApp mobile actions", () => {
       ));
       expect(agentStatusCalls).toHaveLength(1);
     });
+  });
+
+  it("shows checking on mobile and launches directly while the status request is pending", async () => {
+    const pendingAgentStatus = new Promise<Response>(() => {});
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/agents")) return pendingAgentStatus;
+      if (url.endsWith("/api/terminal/layout") && init?.method !== "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ tabs: [] }) });
+      }
+      if (url.endsWith("/api/terminal/sessions")) {
+        const body = typeof init?.body === "string" ? JSON.parse(init.body) as { name?: string } : {};
+        return Promise.resolve({ ok: true, status: 201, json: async () => ({ name: body.name }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<TerminalApp mobile />);
+    fireEvent.click(await screen.findByRole("button", { name: "New session" }));
+
+    const menu = await screen.findByRole("menu", { name: "New session menu" });
+    expect(within(menu).getAllByText("Checking…")).toHaveLength(4);
+    expect(within(menu).queryByText("Install")).toBeNull();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /Claude Code.*Checking/ }));
+
+    await waitFor(() => {
+      const payloads = fetchMock.mock.calls
+        .filter(([input, init]) => String(input).endsWith("/api/terminal/sessions") && init?.method === "POST")
+        .map(([, init]) => JSON.parse(String(init?.body ?? "{}")) as { cmd?: string });
+      expect(payloads).toEqual(expect.arrayContaining([expect.objectContaining({ cmd: "claude" })]));
+      expect(payloads.some((payload) => payload.cmd?.includes("npm install"))).toBe(false);
+    });
+  });
+
+  it("shows Install on mobile only for an explicitly missing executable", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/agents")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            agents: [
+              { id: "claude", installState: "missing", installed: false },
+              { id: "codex", installState: "unknown", installed: null },
+              { id: "opencode", installState: "installed", installed: true },
+              { id: "pi", installState: "unknown", installed: null },
+            ],
+          }),
+        });
+      }
+      if (url.endsWith("/api/terminal/layout") && init?.method !== "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ tabs: [] }) });
+      }
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp mobile />);
+    fireEvent.click(await screen.findByRole("button", { name: "New session" }));
+
+    const menu = await screen.findByRole("menu", { name: "New session menu" });
+    await waitFor(() => {
+      expect(within(menu).getByRole("menuitem", { name: /Claude Code.*Install/ })).toBeTruthy();
+    });
+    expect(within(menu).getAllByText("Install")).toHaveLength(1);
+    expect(within(menu).getByRole("menuitem", { name: /^OpenCode$/ })).toBeTruthy();
+    expect(within(menu).queryByRole("menuitem", { name: /Codex.*Install/ })).toBeNull();
+    expect(within(menu).queryByRole("menuitem", { name: /Pi.*Install/ })).toBeNull();
   });
 
   it("keeps mobile command input keyboard-safe and uses green primary actions", async () => {

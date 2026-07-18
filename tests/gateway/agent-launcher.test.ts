@@ -7,44 +7,136 @@ import {
 } from "../../packages/gateway/src/agent-launcher.js";
 
 describe("agent-launcher", () => {
+  function commandError(code: string, message = code): Error & { code: string } {
+    return Object.assign(new Error(message), { code });
+  }
+
   function claudeSettings(args: string[]): Record<string, unknown> {
     const settingsIndex = args.indexOf("--settings");
     expect(settingsIndex).toBeGreaterThanOrEqual(0);
     return JSON.parse(args[settingsIndex + 1]!) as Record<string, unknown>;
   }
 
-  it("detects installed, missing, and auth-needed agents without leaking raw command errors", async () => {
-    const runCommand = vi.fn(async (command: string, args: string[]) => {
-      if (args[0] === "--version" && command !== "opencode") {
-        return { stdout: `${command} 1.0.0\n`, stderr: "" };
-      }
-      if (args[0] === "--version" && command === "opencode") {
-        throw new Error("ENOENT: opencode missing from /usr/bin");
-      }
-      if (args[0] === "login" && args[1] === "status" && command === "codex") {
-        throw new Error("not logged in: token sk-secret");
-      }
-      return { stdout: "ok\n", stderr: "" };
+  it("starts all four installation probes before any finishes and keeps stable order", async () => {
+    const started: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const runCommand = vi.fn(async (command: string, args: string[], options: { timeout: number }) => {
+      expect(args).toEqual(["--version"]);
+      expect(options.timeout).toBe(5_000);
+      started.push(command);
+      await gate;
+      return {
+        stdout: command === "codex" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : `${command} 1.0.0\n`,
+        stderr: "",
+      };
     });
     const launcher = createAgentLauncher({ runCommand });
 
-    const result = await launcher.detectAgents();
+    const resultPromise = launcher.detectAgentInstallations();
+    await vi.waitFor(() => {
+      expect(started).toEqual(["claude", "codex", "opencode", "pi"]);
+    });
+    release();
+
+    const result = await resultPromise;
+    expect(result.agents.map((agent) => agent.id)).toEqual(["claude", "codex", "opencode", "pi"]);
+  });
+
+  it("isolates missing and timed-out installation probes without discarding successful results", async () => {
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      expect(args).toEqual(["--version"]);
+      if (command === "opencode") throw commandError("ENOENT", "private missing path");
+      if (command === "codex") throw commandError("ETIMEDOUT", "private timeout detail");
+      return { stdout: `${command} 1.0.0\n`, stderr: "" };
+    });
+    const launcher = createAgentLauncher({ runCommand });
+
+    const result = await launcher.detectAgentInstallations();
 
     expect(result.agents.find((agent) => agent.id === "claude")).toMatchObject({
+      installState: "installed",
       installed: true,
-      authState: "ok",
+      authState: "unknown",
+      errorCode: null,
     });
     expect(result.agents.find((agent) => agent.id === "codex")).toMatchObject({
-      installed: true,
-      authState: "required",
-      errorCode: "agent_auth_required",
+      installState: "unknown",
+      installed: null,
+      errorCode: "agent_check_failed",
     });
     expect(result.agents.find((agent) => agent.id === "opencode")).toMatchObject({
+      installState: "missing",
       installed: false,
       authState: "unknown",
       errorCode: "agent_missing",
     });
-    expect(JSON.stringify(result)).not.toContain("sk-secret");
+    expect(result.agents.find((agent) => agent.id === "pi")).toMatchObject({
+      installState: "installed",
+      installed: true,
+      errorCode: null,
+    });
+    expect(JSON.stringify(result)).not.toContain("private");
+  });
+
+  it("never invokes authentication commands during installation detection", async () => {
+    const runCommand = vi.fn(async (command: string) => ({
+      stdout: command === "codex" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : `${command} 1.0.0\n`,
+      stderr: "",
+    }));
+    const launcher = createAgentLauncher({ runCommand });
+
+    await launcher.detectAgentInstallations();
+
+    expect(runCommand).toHaveBeenCalledTimes(4);
+    expect(runCommand.mock.calls.every(([, args]) => args[0] === "--version")).toBe(true);
+  });
+
+  it("checks Claude and Codex credentials concurrently after each version probe", async () => {
+    const started: string[] = [];
+    let releaseVersions!: () => void;
+    let releaseAuth!: () => void;
+    const versionGate = new Promise<void>((resolve) => {
+      releaseVersions = resolve;
+    });
+    const authGate = new Promise<void>((resolve) => {
+      releaseAuth = resolve;
+    });
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      const key = `${command}:${args.join(" ")}`;
+      started.push(key);
+      if (args[0] === "--version") {
+        await versionGate;
+        return {
+          stdout: command === "codex" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : `${command} 1.0.0\n`,
+          stderr: "",
+        };
+      }
+      await authGate;
+      return { stdout: "ok\n", stderr: "" };
+    });
+    const launcher = createAgentLauncher({ runCommand });
+
+    const resultPromise = launcher.detectAgentCredentials();
+    await vi.waitFor(() => {
+      expect(started).toEqual(["claude:--version", "codex:--version"]);
+    });
+    releaseVersions();
+    await vi.waitFor(() => {
+      expect(started).toEqual([
+        "claude:--version",
+        "codex:--version",
+        "claude:auth status",
+        "codex:login status",
+      ]);
+    });
+    releaseAuth();
+
+    const result = await resultPromise;
+    expect(result.agents.map((agent) => agent.id)).toEqual(["claude", "codex"]);
+    expect(result.agents.every((agent) => agent.authState === "ok")).toBe(true);
   });
 
   it("checks auth with the Matrix runtime home so terminal logins are reused", async () => {
@@ -55,7 +147,7 @@ describe("agent-launcher", () => {
       runtimeHome: "/home/matrix/home",
     });
 
-    await launcher.detectAgents();
+    await launcher.detectAgentCredentials();
 
     expect(runCommand).toHaveBeenCalledWith("codex", ["login", "status"], expect.objectContaining({
       cwd: "/home/matrix/home",
@@ -79,7 +171,7 @@ describe("agent-launcher", () => {
     });
 
     try {
-      await launcher.detectAgents();
+      await launcher.detectAgentInstallations();
     } finally {
       if (originalPath === undefined) {
         delete process.env.PATH;
@@ -110,7 +202,7 @@ describe("agent-launcher", () => {
     }));
     const launcher = createAgentLauncher({ runCommand, codexExecutable });
 
-    await launcher.detectAgents();
+    await launcher.detectAgentCredentials();
     const launch = launcher.buildLaunch({
       agent: "codex",
       cwd: "/home/matrix/home/projects/repo",
@@ -129,7 +221,7 @@ describe("agent-launcher", () => {
     ]);
   });
 
-  it("marks an unverified configured Codex version unavailable before auth probing", async () => {
+  it("keeps an unverified configured Codex version installed but workspace-incompatible", async () => {
     const codexExecutable = "/opt/matrix/runtime/node/bin/codex";
     const runCommand = vi.fn(async (command: string, args: string[]) => {
       if (command === codexExecutable && args[0] === "--version") {
@@ -139,15 +231,40 @@ describe("agent-launcher", () => {
     });
     const launcher = createAgentLauncher({ runCommand, codexExecutable });
 
-    const result = await launcher.detectAgents();
+    const result = await launcher.detectAgentInstallations();
 
     expect(result.agents.find((agent) => agent.id === "codex")).toMatchObject({
-      installed: false,
+      installState: "installed",
+      installed: true,
       authState: "unknown",
-      errorCode: "agent_missing",
+      workspaceCompatibility: "unsupported",
+      errorCode: "agent_version_unsupported",
       version: "codex-cli 0.144.1",
     });
     expect(runCommand).not.toHaveBeenCalledWith(codexExecutable, ["login", "status"], expect.any(Object));
+  });
+
+  it("deduplicates overlapping installation scans and expires the five-second cache", async () => {
+    let now = 1_000;
+    const runCommand = vi.fn(async (command: string) => ({
+      stdout: command === "codex" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : `${command} 1.0.0\n`,
+      stderr: "",
+    }));
+    const launcher = createAgentLauncher({ runCommand, now: () => now });
+
+    const [first, overlapping] = await Promise.all([
+      launcher.detectAgentInstallations(),
+      launcher.detectAgentInstallations(),
+    ]);
+    expect(overlapping).toBe(first);
+    expect(runCommand).toHaveBeenCalledTimes(4);
+
+    expect(await launcher.detectAgentInstallations()).toBe(first);
+    expect(runCommand).toHaveBeenCalledTimes(4);
+
+    now += 5_001;
+    expect(await launcher.detectAgentInstallations()).not.toBe(first);
+    expect(runCommand).toHaveBeenCalledTimes(8);
   });
 
   it("constructs non-interactive Codex exec argv without shell interpolation", () => {
