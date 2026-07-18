@@ -881,8 +881,23 @@ export function TerminalPane({
       let fitAddon: FitAddon;
       let searchAddon: unknown = null;
       let webglAddon: unknown = null;
+      let coldReplayRevealFrame: number | null = null;
       const xtermTheme = buildXtermTheme(theme, terminalThemeId);
       codexCompatTransformRef.current = createCodexTuiCompatTransform(xtermTheme);
+
+      const clearColdReplayRevealFrame = () => {
+        if (coldReplayRevealFrame !== null) {
+          cancelAnimationFrame(coldReplayRevealFrame);
+          coldReplayRevealFrame = null;
+        }
+      };
+
+      const setTerminalVisible = (visible: boolean) => {
+        const element = (term as { element?: HTMLElement | null }).element;
+        if (element) {
+          element.style.visibility = visible ? "visible" : "hidden";
+        }
+      };
 
       const focusIfAllowed = () => {
         if (isFocusedRef.current && !suppressNativeKeyboard) {
@@ -1161,12 +1176,38 @@ export function TerminalPane({
         wsGenerationRef.current = generation;
         wsRef.current = ws;
         const alreadyAttached = options.alreadyAttached === true;
+        const isColdReplay = options.replayRequest?.mode === "cold-replay";
+        let coldReplayRevealRequested = false;
+        clearColdReplayRevealFrame();
+        setTerminalVisible(!isColdReplay);
         const isCurrentWs = () => (
           wsRef.current === ws
           && wsGenerationRef.current === generation
           && !disposed
           && !isClosingRef.current
         );
+        const revealColdReplayAfterWrites = () => {
+          if (!isColdReplay || coldReplayRevealRequested) {
+            return;
+          }
+          coldReplayRevealRequested = true;
+          term.write("", () => {
+            if (!isCurrentWs()) {
+              return;
+            }
+            clearColdReplayRevealFrame();
+            coldReplayRevealFrame = requestAnimationFrame(() => {
+              coldReplayRevealFrame = null;
+              if (!isCurrentWs()) {
+                return;
+              }
+              setTerminalVisible(true);
+              track("cold-replay-visible", {
+                requestedSeq: options.replayRequest?.requestedSeq,
+              });
+            });
+          });
+        };
         log("bind-ws", {
           attachOnOpen,
           alreadyAttached,
@@ -1258,6 +1299,7 @@ export function TerminalPane({
         };
 
         ws.onclose = () => {
+          clearColdReplayRevealFrame();
           if (!isCurrentWs()) {
             return;
           }
@@ -1412,6 +1454,7 @@ export function TerminalPane({
               outputBufferRef.current = "";
               break;
             case "replay-end":
+              revealColdReplayAfterWrites();
               break;
 
             case "exit": {
@@ -1437,6 +1480,7 @@ export function TerminalPane({
               } else {
                 term.write(`\r\n\x1b[31m[Error: ${safeMsg}]\x1b[0m\r\n`);
               }
+              revealColdReplayAfterWrites();
               break;
             }
           }
@@ -1664,6 +1708,7 @@ export function TerminalPane({
         clearAuthDetectTimer();
         clearReconnectTimer();
         clearPendingReconnectBanner();
+        clearColdReplayRevealFrame();
         heartbeatRef.current?.stop();
         // Drop the context-loss subscription on every path. Cache paths dispose
         // the live WebGL renderer before detaching the retained xterm element;

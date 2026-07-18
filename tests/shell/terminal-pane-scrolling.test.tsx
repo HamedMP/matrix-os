@@ -8,6 +8,7 @@ const createdTerminals = vi.hoisted(() => [] as Array<{
   element: HTMLElement | null;
   viewport: HTMLElement | null;
   focus: ReturnType<typeof vi.fn>;
+  flushWrites: () => void;
 }>);
 
 const createdFitAddons = vi.hoisted(() => [] as Array<{
@@ -86,6 +87,7 @@ vi.mock("@xterm/xterm", () => ({
     rows = 24;
     options: Record<string, unknown>;
     parser = { registerOscHandler: vi.fn() };
+    private writeCallbacks: Array<() => void> = [];
 
     constructor(options: Record<string, unknown>) {
       this.options = options;
@@ -95,7 +97,16 @@ vi.mock("@xterm/xterm", () => ({
     loadAddon = vi.fn();
     focus = vi.fn();
     refresh = vi.fn();
-    write = vi.fn();
+    write = vi.fn((_data: string, callback?: () => void) => {
+      if (callback) {
+        this.writeCallbacks.push(callback);
+      }
+    });
+    flushWrites = () => {
+      for (const callback of this.writeCallbacks.splice(0)) {
+        callback();
+      }
+    };
     dispose = vi.fn();
     onData = vi.fn(() => ({ dispose: vi.fn() }));
     onResize = vi.fn(() => ({ dispose: vi.fn() }));
@@ -691,6 +702,59 @@ describe("TerminalPane scrolling", () => {
     expect(restoredTerminal.write).toHaveBeenCalledWith("retained-before-refresh\r\n");
   });
 
+  it("keeps a fresh canonical xterm hidden while old alternate-screen frames rebuild the current viewport", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-private-cold-replay-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        sessionId="main"
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const socket = WebSocketMock.instances[0]!;
+    const terminal = createdTerminals[0]!;
+    await waitFor(() => expect(terminal.element).not.toBeNull());
+
+    expect(terminal.element?.style.visibility).toBe("hidden");
+
+    const replayFrames = [
+      "\x1b[?10",
+      "49h\x1b[32mOLD_CMATRIX_FRAME_A\r\n",
+      "OLD_CMATRIX_FRAME_B\x1b[0m\x1b[?104",
+      "9l\x1b[2J\x1b[H",
+      "CURRENT_ECHO_OUTPUT\r\n",
+    ];
+    await act(async () => {
+      socket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+      });
+      socket.onmessage?.({ data: JSON.stringify({ type: "replay-start", fromSeq: 0 }) });
+      for (const [seq, data] of replayFrames.entries()) {
+        socket.onmessage?.({ data: JSON.stringify({ type: "output", seq, data }) });
+        expect(terminal.element?.style.visibility).toBe("hidden");
+      }
+      socket.onmessage?.({ data: JSON.stringify({ type: "replay-end", toSeq: replayFrames.length - 1 }) });
+    });
+
+    expect(terminal.element?.style.visibility).toBe("hidden");
+    expect(terminal.write).toHaveBeenCalledWith(expect.stringContaining("OLD_CMATRIX_FRAME_A"));
+    expect(terminal.write).toHaveBeenCalledWith("CURRENT_ECHO_OUTPUT\r\n");
+
+    await act(async () => {
+      terminal.flushWrites();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(terminal.element?.style.visibility).toBe("visible");
+  });
+
   it("records cold replay and cursor resume request/accept metadata without terminal content", async () => {
     render(
       <TerminalPane
@@ -791,6 +855,7 @@ describe("TerminalPane scrolling", () => {
       requestedSeq: 23,
       acceptedSeq: 23,
     }));
+    expect(cached.terminal.element.style.visibility).toBe("visible");
   });
 
   it("resumes from the next accepted sequence and renders missed output once", async () => {
@@ -823,6 +888,7 @@ describe("TerminalPane scrolling", () => {
     await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
     const reconnectSocket = WebSocketMock.instances[1]!;
     expect(new URL(reconnectSocket.url).searchParams.get("fromSeq")).toBe("41");
+    expect(terminal.element?.style.visibility).toBe("visible");
     await act(async () => {
       reconnectSocket.onmessage?.({
         data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 41 }),
