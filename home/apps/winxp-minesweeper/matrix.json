@@ -10,9 +10,6 @@
   "designs": ["winxp"],
   "runtimeVersion": "^1.0.0",
   "listingTrust": "first_party",
-  "tags": [
-    "puzzle"
-  ],
   "build": {
     "install": "true",
     "command": "vite build --base ./ --outDir dist",

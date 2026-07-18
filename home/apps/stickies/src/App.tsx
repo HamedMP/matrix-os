@@ -27,10 +27,16 @@ export default function App() {
   const [notes, setNotes] = useState<StickyNote[]>([]);
   const [loaded, setLoaded] = useState(false);
   const notesRef = useRef(notes);
-  notesRef.current = notes;
+  useEffect(() => {
+    notesRef.current = notes;
+  }, [notes]);
   const zCounter = useRef(1);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+
+  // Remove window-level drag listeners if the app unmounts mid-gesture.
+  useEffect(() => () => dragCleanupRef.current?.(), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,13 +80,14 @@ export default function App() {
   }, [notes, loaded]);
 
   const addNote = useCallback(() => {
+    zCounter.current += 1;
+    const z = zCounter.current;
     setNotes((current) => {
-      zCounter.current += 1;
       const color = STICKY_COLORS[current.length % STICKY_COLORS.length].id;
       const offset = 40 + (current.length % 6) * 28;
       return [
         ...current,
-        { id: newId(), x: offset, y: offset + 24, z: zCounter.current, text: "", color },
+        { id: newId(), x: offset, y: offset + 24, z, text: "", color },
       ];
     });
   }, []);
@@ -118,11 +125,18 @@ export default function App() {
         const y = Math.max(0, Math.min(maxY, ev.clientY - grabDy));
         setNotes((current) => current.map((n) => (n.id === id ? { ...n, x, y } : n)));
       };
-      const onUp = () => {
+      const endDrag = () => {
         window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        if (dragCleanupRef.current === endDrag) dragCleanupRef.current = null;
       };
+      const onUp = () => endDrag();
+      // End any stale drag before starting a new one, and keep a ref so an
+      // unmount mid-gesture can remove the window-level listeners.
+      dragCleanupRef.current?.();
+      dragCleanupRef.current = endDrag;
       window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp, { once: true });
+      window.addEventListener("pointerup", onUp);
     },
     [bringToFront],
   );
