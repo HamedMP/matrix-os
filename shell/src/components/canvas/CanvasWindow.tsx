@@ -19,10 +19,11 @@ import { useThemeStyle } from "../window/useThemeStyle";
 import { resolveTitleBarVariant } from "../window/title-bar-variant";
 import {
   MacGlassTitleBarChrome,
+  MacTitleBarChrome,
   Win11TitleBarChrome,
+  Win98TitleBarChrome,
   WinXpTitleBarChrome,
 } from "../window/DesignTitleBarChrome";
-import { Minus, Maximize2 } from "lucide-react";
 
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
@@ -52,13 +53,6 @@ function ensureCanvasWindowMotionStyles() {
   style.textContent = CANVAS_WINDOW_MOTION_CSS;
   document.head.appendChild(style);
 }
-
-const win98Bevel = {
-  borderTop: "1.5px solid var(--neu-shadow-light)",
-  borderLeft: "1.5px solid var(--neu-shadow-light)",
-  borderBottom: "1.5px solid var(--neu-shadow-dark)",
-  borderRight: "1.5px solid var(--neu-shadow-dark)",
-};
 
 interface CanvasWindowProps {
   win: AppWindow;
@@ -348,118 +342,8 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
   const titleBarHeight = 36;
   const titleBarGap = 8;
 
-  // Default mac pill chrome (flat style).
-  const macChrome = (
-    <div
-      className={`relative w-full h-full rounded-2xl flex items-center gap-2 px-3 overflow-hidden transition-all duration-200 backdrop-blur-xl backdrop-saturate-150 ${
-        isFocused
-          ? "bg-muted/80 border border-border/50 shadow-sm"
-          : "bg-muted/40 border border-border/20 opacity-80"
-      }`}
-    >
-      <TrafficLights
-        className="mr-2 shrink-0 relative z-10"
-        onClose={() => closeWindow(win.id)}
-        onMinimize={animateMinimize}
-        onFullscreen={() => useWindowManager.getState().toggleFullscreen(win.id)}
-      />
-      {/* Centered title with icon */}
-      <div className="flex-1 flex items-center justify-center gap-1.5 min-w-0 relative z-10">
-        {iconUrl ? (
-          // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png with ?v=etag) that cannot be statically configured for next/image
-          <img src={iconUrl} alt="" className="size-4 rounded-md object-cover shrink-0" draggable={false} />
-        ) : (
-          <span className="size-4 rounded-md bg-muted flex items-center justify-center text-[9px] font-semibold text-muted-foreground shrink-0">
-            {win.title.charAt(0).toUpperCase()}
-          </span>
-        )}
-        <span className="text-xs font-medium text-foreground/70 truncate">
-          {win.title}
-        </span>
-      </div>
-      <div className="w-[42px] shrink-0" />
-    </div>
-  );
-
-  // Win98 raised chrome (neumorphic style).
-  const win98Chrome = (
-    <div
-      className={`relative w-full h-full flex items-center px-2 gap-2 ${
-        isFocused
-          ? "bg-primary text-primary-foreground"
-          : "bg-muted text-muted-foreground"
-      }`}
-      style={{
-        ...win98Bevel,
-        borderTopWidth: "2px",
-        borderLeftWidth: "2px",
-        borderBottomWidth: "2px",
-        borderRightWidth: "2px",
-        borderRadius: "2px",
-      }}
-    >
-      {/* Left: icon + title */}
-      <div className="flex items-center gap-1.5 min-w-0 flex-1">
-        {iconUrl ? (
-          // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png with ?v=etag) that cannot be statically configured for next/image
-          <img src={iconUrl} alt="" className="size-4 object-cover shrink-0" style={{ imageRendering: "auto" }} draggable={false} />
-        ) : (
-          <span className="size-4 flex items-center justify-center text-[10px] font-bold shrink-0">
-            {win.title.charAt(0).toUpperCase()}
-          </span>
-        )}
-        <span className="text-xs font-bold truncate">
-          {win.title}
-        </span>
-      </div>
-      {/* Right: Win98 window buttons */}
-      <div className="flex items-center gap-0.5 shrink-0" onDoubleClick={(e) => e.stopPropagation()}>
-        <button
-          type="button"
-          className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
-          style={{
-            ...win98Bevel,
-            fontSize: "12px",
-            lineHeight: 1,
-          }}
-          onClick={(e) => { e.stopPropagation(); animateMinimize(); }}
-          aria-label="Minimize"
-        >
-          <Minus className="size-2.5" />
-        </button>
-        <button
-          type="button"
-          className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
-          style={{
-            ...win98Bevel,
-            fontSize: "12px",
-            lineHeight: 1,
-          }}
-          onClick={(e) => { e.stopPropagation(); useWindowManager.getState().toggleFullscreen(win.id); }}
-          aria-label="Fullscreen"
-        >
-          <Maximize2 className="size-2.5" />
-        </button>
-        <button
-          type="button"
-          className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
-          style={{
-            ...win98Bevel,
-            fontSize: "12px",
-            fontWeight: 700,
-            lineHeight: 1,
-          }}
-          onClick={(e) => { e.stopPropagation(); closeWindow(win.id); }}
-          aria-label="Close"
-        >
-          ×
-        </button>
-      </div>
-    </div>
-  );
-
-  // Design-system chrome (macos-glass / winxp / win11) shares the same
-  // handlers as the mac/win98 bars; only the visual bar differs.
+  // All five title-bar variants share the same handlers; only the visual bar
+  // differs. Chrome components live in window/DesignTitleBarChrome.tsx.
   const designChromeProps = {
     title: win.title,
     iconUrl,
@@ -472,7 +356,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
   const titleBarChrome = (() => {
     switch (titleBarVariant) {
       case "win98":
-        return win98Chrome;
+        return <Win98TitleBarChrome {...designChromeProps} />;
       case "macos-glass":
         return <MacGlassTitleBarChrome {...designChromeProps} />;
       case "winxp":
@@ -480,7 +364,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
       case "win11":
         return <Win11TitleBarChrome {...designChromeProps} />;
       default:
-        return macChrome;
+        return <MacTitleBarChrome {...designChromeProps} />;
     }
   })();
 

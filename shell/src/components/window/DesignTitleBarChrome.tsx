@@ -1,13 +1,13 @@
 "use client";
 
+import { Maximize2, Minus } from "lucide-react";
 import { TrafficLights } from "./TrafficLights";
 import { WinXpCaptionButtons, Win11CaptionButtons } from "./DesignCaptionButtons";
 
 /**
  * Floating title-bar chrome (the inner content of Canvas floating title bars)
- * for the design-system theme styles. The outer absolute positioning + drag
- * handling stays in CanvasWindow; these components only render the visual
- * bar, following the macTitleBar/win98TitleBar precedent: inline
+ * for every theme style. The outer absolute positioning + drag handling stays
+ * in CanvasWindow; these components only render the visual bar: inline
  * `var(--...)` token styles + data attributes, no extra CSS.
  */
 
@@ -20,6 +20,13 @@ export interface DesignTitleBarChromeProps {
   onMaximize: () => void;
 }
 
+const win98Bevel = {
+  borderTop: "1.5px solid var(--neu-shadow-light)",
+  borderLeft: "1.5px solid var(--neu-shadow-light)",
+  borderBottom: "1.5px solid var(--neu-shadow-dark)",
+  borderRight: "1.5px solid var(--neu-shadow-dark)",
+};
+
 function TitleIcon({ title, iconUrl }: { title: string; iconUrl?: string }) {
   return iconUrl ? (
     // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png with ?v=etag) that cannot be statically configured for next/image
@@ -28,6 +35,127 @@ function TitleIcon({ title, iconUrl }: { title: string; iconUrl?: string }) {
     <span className="size-4 rounded-md bg-muted flex items-center justify-center text-[9px] font-semibold text-muted-foreground shrink-0">
       {title.charAt(0).toUpperCase()}
     </span>
+  );
+}
+
+/** Default mac pill chrome (flat style). */
+export function MacTitleBarChrome({
+  title,
+  iconUrl,
+  isFocused,
+  onClose,
+  onMinimize,
+  onMaximize,
+}: DesignTitleBarChromeProps) {
+  return (
+    <div
+      className={`relative w-full h-full rounded-2xl flex items-center gap-2 px-3 overflow-hidden transition-all duration-200 backdrop-blur-xl backdrop-saturate-150 ${
+        isFocused
+          ? "bg-muted/80 border border-border/50 shadow-sm"
+          : "bg-muted/40 border border-border/20 opacity-80"
+      }`}
+    >
+      <TrafficLights
+        className="mr-2 shrink-0 relative z-10"
+        onClose={onClose}
+        onMinimize={onMinimize}
+        onFullscreen={onMaximize}
+      />
+      {/* Centered title with icon */}
+      <div className="flex-1 flex items-center justify-center gap-1.5 min-w-0 relative z-10">
+        <TitleIcon title={title} iconUrl={iconUrl} />
+        <span className="text-xs font-medium text-foreground/70 truncate">
+          {title}
+        </span>
+      </div>
+      <div className="w-[42px] shrink-0" />
+    </div>
+  );
+}
+
+/** Win98 raised chrome (neumorphic style). */
+export function Win98TitleBarChrome({
+  title,
+  iconUrl,
+  isFocused,
+  onClose,
+  onMinimize,
+  onMaximize,
+}: DesignTitleBarChromeProps) {
+  return (
+    <div
+      className={`relative w-full h-full flex items-center px-2 gap-2 ${
+        isFocused
+          ? "bg-primary text-primary-foreground"
+          : "bg-muted text-muted-foreground"
+      }`}
+      style={{
+        ...win98Bevel,
+        borderTopWidth: "2px",
+        borderLeftWidth: "2px",
+        borderBottomWidth: "2px",
+        borderRightWidth: "2px",
+        borderRadius: "2px",
+      }}
+    >
+      {/* Left: icon + title */}
+      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+        {iconUrl ? (
+          // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png with ?v=etag) that cannot be statically configured for next/image
+          <img src={iconUrl} alt="" className="size-4 object-cover shrink-0" style={{ imageRendering: "auto" }} draggable={false} />
+        ) : (
+          <span className="size-4 flex items-center justify-center text-[10px] font-bold shrink-0">
+            {title.charAt(0).toUpperCase()}
+          </span>
+        )}
+        <span className="text-xs font-bold truncate">
+          {title}
+        </span>
+      </div>
+      {/* Right: Win98 window buttons */}
+      <div className="flex items-center gap-0.5 shrink-0" onDoubleClick={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
+          style={{
+            ...win98Bevel,
+            fontSize: "12px",
+            lineHeight: 1,
+          }}
+          onClick={(e) => { e.stopPropagation(); onMinimize(); }}
+          aria-label="Minimize"
+        >
+          <Minus className="size-2.5" />
+        </button>
+        <button
+          type="button"
+          className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
+          style={{
+            ...win98Bevel,
+            fontSize: "12px",
+            lineHeight: 1,
+          }}
+          onClick={(e) => { e.stopPropagation(); onMaximize(); }}
+          aria-label="Fullscreen"
+        >
+          <Maximize2 className="size-2.5" />
+        </button>
+        <button
+          type="button"
+          className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
+          style={{
+            ...win98Bevel,
+            fontSize: "12px",
+            fontWeight: 700,
+            lineHeight: 1,
+          }}
+          onClick={(e) => { e.stopPropagation(); onClose(); }}
+          aria-label="Close"
+        >
+          ×
+        </button>
+      </div>
+    </div>
   );
 }
 

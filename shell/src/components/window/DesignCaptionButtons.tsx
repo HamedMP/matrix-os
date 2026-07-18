@@ -17,6 +17,8 @@ export interface CaptionButtonsProps {
   onMinimize?: () => void;
   /** When omitted the maximize button is not rendered (e.g. modal surfaces). */
   onMaximize?: () => void;
+  /** Dims and disables the close button (e.g. surfaces that cannot be closed). */
+  closeDisabled?: boolean;
 }
 
 const xpButtonBase: CSSProperties = {
@@ -36,7 +38,7 @@ const xpCloseButton: CSSProperties = {
   background: "linear-gradient(to bottom, #e67c52, #d6522c)",
 };
 
-export function WinXpCaptionButtons({ onClose, onMinimize, onMaximize }: CaptionButtonsProps) {
+export function WinXpCaptionButtons({ onClose, onMinimize, onMaximize, closeDisabled }: CaptionButtonsProps) {
   const buttonClass =
     "size-[21px] flex items-center justify-center text-white hover:brightness-110 active:brightness-95";
   return (
@@ -69,10 +71,11 @@ export function WinXpCaptionButtons({ onClose, onMinimize, onMaximize }: Caption
       )}
       <button
         type="button"
-        className={buttonClass}
+        className={`${buttonClass} disabled:opacity-50 disabled:hover:brightness-100`}
         style={xpCloseButton}
         onClick={(e) => { e.stopPropagation(); onClose(); }}
         aria-label="Close"
+        disabled={closeDisabled}
       >
         <X className="size-3" strokeWidth={3} />
       </button>
@@ -80,7 +83,7 @@ export function WinXpCaptionButtons({ onClose, onMinimize, onMaximize }: Caption
   );
 }
 
-export function Win11CaptionButtons({ onClose, onMinimize, onMaximize }: CaptionButtonsProps) {
+export function Win11CaptionButtons({ onClose, onMinimize, onMaximize, closeDisabled }: CaptionButtonsProps) {
   const buttonClass =
     "h-6 w-8 flex items-center justify-center rounded text-foreground/70 transition-colors hover:bg-[var(--win11-hover)]";
   return (
@@ -111,9 +114,10 @@ export function Win11CaptionButtons({ onClose, onMinimize, onMaximize }: Caption
       )}
       <button
         type="button"
-        className={`${buttonClass} hover:bg-[#c42b1c] hover:text-white`}
+        className={`${buttonClass} hover:bg-[#c42b1c] hover:text-white disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-foreground/70`}
         onClick={(e) => { e.stopPropagation(); onClose(); }}
         aria-label="Close"
+        disabled={closeDisabled}
       >
         <X className="size-3.5" strokeWidth={1.5} />
       </button>
@@ -126,7 +130,7 @@ export function DesignCaptionButtons({
   variant,
   ...props
 }: CaptionButtonsProps & { variant: TitleBarVariant }) {
-  return variant === "winxp"
-    ? <WinXpCaptionButtons {...props} />
-    : <Win11CaptionButtons {...props} />;
+  if (variant === "winxp") return <WinXpCaptionButtons {...props} />;
+  if (variant === "win11") return <Win11CaptionButtons {...props} />;
+  return null;
 }

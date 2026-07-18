@@ -260,12 +260,13 @@ function SettingsFrame({
             className="flex items-center gap-3 px-4 py-3 border-b border-border/40 select-none"
             style={designTitleBarContainerStyle(titleBarVariant)}
           >
-            {usesCaptionButtons(titleBarVariant) && !closeDisabled ? (
+            {usesCaptionButtons(titleBarVariant) ? (
               <>
                 <h1 className="text-xs font-medium flex-1">Settings</h1>
                 <DesignCaptionButtons
                   variant={titleBarVariant}
                   onClose={() => onOpenChange(false)}
+                  closeDisabled={closeDisabled}
                 />
               </>
             ) : (

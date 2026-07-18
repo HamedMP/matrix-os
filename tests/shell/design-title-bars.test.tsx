@@ -2,6 +2,7 @@
 import React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";import { CanvasWindow } from "../../shell/src/components/canvas/CanvasWindow.js";
+import { DesignCaptionButtons } from "../../shell/src/components/window/DesignCaptionButtons.js";
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
 import { useWindowManager, type AppWindow } from "../../shell/src/hooks/useWindowManager.js";
 
@@ -147,5 +148,34 @@ describe("CanvasWindow design-system title bars", () => {
     });
 
     expect(container.querySelector('[data-title-bar="win11"]')).toBeTruthy();
+  });
+});
+
+describe("DesignCaptionButtons", () => {
+  it("renders nothing for non-Windows variants", () => {
+    for (const variant of ["mac", "win98", "macos-glass"] as const) {
+      const { container, unmount } = render(
+        <DesignCaptionButtons variant={variant} onClose={() => {}} />,
+      );
+      expect(container.firstChild).toBeNull();
+      unmount();
+    }
+  });
+
+  it("disables the close button for both Windows variants when closeDisabled is set", () => {
+    for (const variant of ["winxp", "win11"] as const) {
+      const { unmount } = render(
+        <DesignCaptionButtons variant={variant} onClose={() => {}} closeDisabled />,
+      );
+      const close = screen.getByRole("button", { name: "Close" }) as HTMLButtonElement;
+      expect(close.disabled).toBe(true);
+      unmount();
+    }
+  });
+
+  it("keeps the close button enabled by default", () => {
+    render(<DesignCaptionButtons variant="winxp" onClose={() => {}} />);
+    const close = screen.getByRole("button", { name: "Close" }) as HTMLButtonElement;
+    expect(close.disabled).toBe(false);
   });
 });
