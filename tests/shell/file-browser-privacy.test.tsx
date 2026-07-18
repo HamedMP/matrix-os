@@ -70,6 +70,7 @@ vi.mock("@/hooks/usePreviewWindow", () => {
 vi.mock("@/hooks/useWindowManager", () => {
   const state = {
     windows: [] as unknown[],
+    focusedWindowId: "win-files" as string | null,
     openWindow: vi.fn(),
     focusWindow: vi.fn(),
   };

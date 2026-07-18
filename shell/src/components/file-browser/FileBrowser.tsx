@@ -76,12 +76,16 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
   // Outside-in view requests (XP desktop icons: Recycle Bin / My Computer)
   // arrive through the shared store. Consume them here so the trash toggle
   // stays owned by this component, like the sidebar/task-pane Trash links.
+  // Only the focused Files window honors a request: with several Files
+  // windows open, an unfocused one must not jump views.
+  const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
   useEffect(() => {
     if (!pendingView) return;
+    if (focusedWindowId !== windowId) return;
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- consumes a one-shot cross-component view request from the shared file-browser store; the trash flag is local UI state that cannot be derived from the store value in render
     setShowingTrash(pendingView === "trash");
     consumeViewRequest();
-  }, [pendingView, consumeViewRequest]);
+  }, [pendingView, focusedWindowId, windowId, consumeViewRequest]);
 
   // File watcher integration
   const onFileChange = (path: string, _event: "add" | "change" | "unlink") => {
