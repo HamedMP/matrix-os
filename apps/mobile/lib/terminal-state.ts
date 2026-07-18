@@ -20,6 +20,10 @@ export interface MobileTerminalSession {
   // Shell-sessions model (aligned with desktop, so tabs are continuable across clients).
   /** Live UI status from the gateway: running | waiting (needs input) | finished | idle. */
   visualStatus?: ShellVisualStatus;
+  agent?: "claude" | "codex" | "opencode" | "pi";
+  subtitle?: string;
+  lastAction?: string;
+  agentUpdatedAt?: string;
   updatedAt?: string;
   unread?: boolean;
   tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
@@ -222,6 +226,12 @@ export function parseShellSessions(value: unknown): MobileTerminalSession[] {
     }
     if (typeof c.updatedAt === "string") session.updatedAt = c.updatedAt;
     if (typeof c.unread === "boolean") session.unread = c.unread;
+    if (c.agent === "claude" || c.agent === "codex" || c.agent === "opencode" || c.agent === "pi") {
+      session.agent = c.agent;
+    }
+    if (typeof c.subtitle === "string") session.subtitle = c.subtitle;
+    if (typeof c.lastAction === "string") session.lastAction = c.lastAction;
+    if (typeof c.agentUpdatedAt === "string") session.agentUpdatedAt = c.agentUpdatedAt;
     if (Array.isArray(c.tabs)) {
       const tabs: NonNullable<MobileTerminalSession["tabs"]> = [];
       for (const tab of c.tabs) {

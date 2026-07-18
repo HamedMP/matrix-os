@@ -131,6 +131,29 @@ claude
 
 See [CLI reference](/docs/cli) for `matrix run` and `matrix shell connect` options, and [Shell](/docs/shell) for how named sessions work across devices.
 
+## Agent-aware terminal sessions
+
+Terminal session rows identify Claude Code, Codex, OpenCode, and Pi when Matrix launches the agent. An agent started manually inside an existing Matrix terminal identifies itself after its first supported lifecycle event. If more than one supported agent runs in the same terminal, the row shows the agent that emitted the most recent event.
+
+Agent rows can show a short task subtitle and one of four live states:
+
+| State | Meaning |
+|---|---|
+| **Running** | The agent is working on an active turn. |
+| **Waiting** | The agent explicitly requested approval or user input. |
+| **Finished** | The latest turn completed and has output you have not viewed. |
+| **Idle** | The latest completed output has already been viewed, or the agent is between turns. |
+
+The status dot and text use only these four states. Tool-specific activity such as editing or testing does not create additional states.
+
+On desktop, hover an agent session row to see its full subtitle, current live state, last reliable action, and update time. The card opens to the right of the session and stays closed on touch layouts or when there is not enough space. Opening the session action menu, renaming, or dragging the row closes the information card so the three-dot actions remain unobscured.
+
+Matrix builds this metadata from each agent's supported hooks, plugins, or extensions without making another model request. Subtitles prefer an agent-provided title or summary, then a short completed-response sentence, then the first user prompt. The metadata bridge stores only normalized fields under `~/system/`: agent identity, short subtitle, safe last-action label, lifecycle phase, and update time. It does not store complete prompts, transcripts, raw commands, tool arguments, or full agent responses.
+
+If an agent bridge is disabled, unavailable, or fails, the terminal continues normally. Matrix falls back to shell command markers, recent output, and unread output for the session's live state. The terminal session list still refreshes on its normal five-second interval.
+
+Codex requires you to review new user-level command hooks before they run. When Codex first reports the Matrix lifecycle hook, open `/hooks` and approve it. Until then, the terminal uses the same shell-derived fallback state.
+
 ## Agent credentials
 
 Each agent requires its own credentials. Sign in through the agent's own CLI flow after the install completes — for example `claude` prompts for Anthropic account login, and `codex` and `opencode` require an API key or provider login.

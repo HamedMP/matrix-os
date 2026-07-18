@@ -830,6 +830,7 @@ export function LocalTerminalSidebar() {
         : terminalAgentVisibleInstallCommand(option);
       const name = await ctx.createShellSessionTab(label, cwd, {
         cmd,
+        ...(installed ? { agent: option.id } : {}),
         ...(installed && option.id === "codex" ? { compatMode: "codex-tui" } : {}),
       });
       if (name) {

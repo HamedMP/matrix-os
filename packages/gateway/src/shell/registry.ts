@@ -2,6 +2,13 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
 import { writeUtf8FileAtomic } from "./atomic-write.js";
+import {
+  AgentKindSchema,
+  AgentSessionStateStore,
+  deriveAgentVisualStatus,
+  type AgentKind,
+  type AgentSessionSnapshot,
+} from "./agent-session-state.js";
 import { shellError } from "./errors.js";
 import { resolveShellCwd, SESSION_NAME_PATTERN, validateLayoutName, validateSessionName } from "./names.js";
 import type { ScrollbackActivity, ScrollbackStore } from "./scrollback-store.js";
@@ -15,7 +22,6 @@ const ShellSessionReferenceSchema = z.object({
   sessionName: z.string().regex(SESSION_NAME_PATTERN),
 });
 const SHELL_RUNNING_FALLBACK_WINDOW_MS = 12_000;
-const SHELL_TRANSITIONAL_VISUAL_STATUS_WINDOW_MS = 12_000;
 
 export interface ShellRegistryAdapter {
   listSessions(): Promise<string[]>;
@@ -50,6 +56,7 @@ const ShellSessionSchema = z.object({
   }).optional(),
   visualStatus: ShellVisualStatusSchema.optional(),
   visualStatusUpdatedAt: z.string().optional(),
+  agent: AgentKindSchema.optional(),
 });
 
 const RegistryFileSchema = z.object({
@@ -80,6 +87,10 @@ export interface ShellSession extends PersistedShellSession {
   references: ShellSessionReference[];
   recoverable: boolean;
   recoveryReason?: "missing_runtime_session";
+  agent?: AgentKind;
+  subtitle?: string;
+  lastAction?: string;
+  agentUpdatedAt?: string;
 }
 
 export interface ShellSessionUiStatePatch {
@@ -92,21 +103,29 @@ export interface ShellNameScopedStore {
   rename(fromName: string, toName: string): Promise<void>;
 }
 
+export interface ShellAgentStateStore extends ShellNameScopedStore {
+  get(name: string): Promise<AgentSessionSnapshot | null>;
+  delete(name: string): Promise<void>;
+}
+
 export interface ShellRegistryOptions {
   homePath: string;
   adapter: ShellRegistryAdapter;
   persistPath?: string;
   scrollbackStore?: ScrollbackStore;
   preferencesStore?: ShellNameScopedStore;
+  agentStateStore?: ShellAgentStateStore;
 }
 
 export class ShellRegistry {
   private readonly persistPath: string;
+  private readonly agentStateStore: ShellAgentStateStore;
   private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: ShellRegistryOptions) {
     this.persistPath =
       options.persistPath ?? join(options.homePath, "system", "shell-sessions.json");
+    this.agentStateStore = options.agentStateStore ?? new AgentSessionStateStore({ homePath: options.homePath });
   }
 
   async list(): Promise<ShellSession[]> {
@@ -171,11 +190,13 @@ export class ShellRegistry {
     cwd?: string;
     layout?: string;
     cmd?: string;
+    agent?: AgentKind;
   }): Promise<ShellSession> {
     return this.withMutationLock(async () => {
       const name = validateSessionName(input.name);
       const cwd = input.cwd ? await resolveShellCwd(input.cwd, this.options.homePath) : undefined;
       const layoutName = input.layout ? validateLayoutName(input.layout) : undefined;
+      const agent = input.agent ?? inferAgentFromCommand(input.cmd);
       const file = await this.read();
       const live = new Set(await this.options.adapter.listSessions());
 
@@ -188,6 +209,7 @@ export class ShellRegistry {
           status: "active",
           updatedAt: now,
           ...(layoutName ? { layoutName } : {}),
+          ...(agent ? { agent } : {}),
         };
         file.sessions[name] = session;
         await this.write(file);
@@ -209,6 +231,7 @@ export class ShellRegistry {
         placement: "active",
         lastSeenSeq: null,
         kind: "session",
+        ...(agent ? { agent } : {}),
       };
       file.sessions[name] = session;
       if (file.order) {
@@ -250,18 +273,14 @@ export class ShellRegistry {
         }
         existing = this.adoptSession(targetName, now);
       }
-      const existingVisualStatusUpdatedAt =
-        existing.visualStatusUpdatedAt ?? (existing.visualStatus ? existing.updatedAt : undefined);
-      const visualStatusIntent = patch.visualStatus !== undefined;
       const next: PersistedShellSession = {
         ...existing,
         updatedAt: now,
-        ...(existingVisualStatusUpdatedAt ? { visualStatusUpdatedAt: existingVisualStatusUpdatedAt } : {}),
         ...(patch.placement !== undefined ? { placement: patch.placement } : {}),
         ...(patch.lastSeenSeq !== undefined ? { lastSeenSeq: patch.lastSeenSeq } : {}),
-        ...(patch.visualStatus !== undefined ? { visualStatus: patch.visualStatus } : {}),
-        ...(visualStatusIntent ? { visualStatusUpdatedAt: now } : {}),
       };
+      delete next.visualStatus;
+      delete next.visualStatusUpdatedAt;
       file.sessions[targetName] = next;
       await this.write(file);
       return this.decorateSession(next, file);
@@ -324,11 +343,21 @@ export class ShellRegistry {
       await this.options.adapter.renameSession(targetName, safeNextName);
       let scrollbackRenamed = false;
       let preferencesRenamed = false;
+      let agentStateRenamed = false;
       try {
         await this.options.scrollbackStore?.rename(targetName, safeNextName);
         scrollbackRenamed = true;
         await this.options.preferencesStore?.rename(targetName, safeNextName);
         preferencesRenamed = true;
+        try {
+          await this.agentStateStore.rename(targetName, safeNextName);
+          agentStateRenamed = true;
+        } catch (err: unknown) {
+          console.warn(
+            "[shell] failed to rename agent session state:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
         if (file.order) {
           const nextLive = new Set(live);
           nextLive.delete(targetName);
@@ -355,6 +384,14 @@ export class ShellRegistry {
           await this.options.preferencesStore?.rename(safeNextName, targetName).catch((rollbackErr: unknown) => {
             console.warn(
               "[shell] failed to rollback renamed preferences:",
+              rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
+            );
+          });
+        }
+        if (agentStateRenamed) {
+          await this.agentStateStore.rename(safeNextName, targetName).catch((rollbackErr: unknown) => {
+            console.warn(
+              "[shell] failed to rollback renamed agent state:",
               rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
             );
           });
@@ -402,6 +439,7 @@ export class ShellRegistry {
       this.removeReferencesForTarget(file, targetName);
       this.removeAliasesForTarget(file, targetName);
       await this.cleanupScrollback(targetName);
+      await this.cleanupAgentState(targetName);
       await this.write(file);
     });
   }
@@ -466,9 +504,15 @@ export class ShellRegistry {
     const unread = latestSeq !== null && lastSeenSeq !== null && latestSeq > lastSeenSeq;
     const references = file ? this.referencesForTarget(file, session.name) : [];
     const recoverable = session.status === "exited" && references.length > 0;
-    const visualStatus = this.deriveVisualStatus(session, unread, activity);
+    const agentSnapshot = await this.readAgentSnapshot(session.name);
+    const visualStatus = deriveAgentVisualStatus(agentSnapshot, unread)
+      ?? this.deriveVisualStatus(session, unread, activity);
     return {
       ...session,
+      ...(agentSnapshot?.agent ? { agent: agentSnapshot.agent } : {}),
+      ...(agentSnapshot?.subtitle ? { subtitle: agentSnapshot.subtitle } : {}),
+      ...(agentSnapshot?.lastAction ? { lastAction: agentSnapshot.lastAction } : {}),
+      ...(agentSnapshot?.agentUpdatedAt ? { agentUpdatedAt: agentSnapshot.agentUpdatedAt } : {}),
       placement: session.placement ?? "active",
       lastSeenSeq: lastSeenSeq ?? null,
       latestSeq,
@@ -499,15 +543,6 @@ export class ShellRegistry {
     }
     if (activity?.latestOutputAt && isRecentShellOutput(activity.latestOutputAt)) {
       return "running";
-    }
-    if (
-      session.visualStatus === "waiting" &&
-      isRecentShellTimestamp(
-        session.visualStatusUpdatedAt ?? session.updatedAt,
-        SHELL_TRANSITIONAL_VISUAL_STATUS_WINDOW_MS,
-      )
-    ) {
-      return "waiting";
     }
     return unread ? "finished" : "idle";
   }
@@ -708,6 +743,29 @@ export class ShellRegistry {
     }
   }
 
+  private async cleanupAgentState(name: string): Promise<void> {
+    try {
+      await this.agentStateStore.delete(name);
+    } catch (err: unknown) {
+      console.warn(
+        "[shell] failed to clean agent session state:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  private async readAgentSnapshot(name: string): Promise<AgentSessionSnapshot | null> {
+    try {
+      return await this.agentStateStore.get(name);
+    } catch (err: unknown) {
+      console.warn(
+        "[shell] agent session state unavailable:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return null;
+    }
+  }
+
   private async withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
     const run = this.mutationQueue.then(fn, fn);
     this.mutationQueue = run.then(
@@ -716,6 +774,24 @@ export class ShellRegistry {
     );
     return run;
   }
+}
+
+export function inferAgentFromCommand(command: string | undefined): AgentKind | undefined {
+  if (!command) return undefined;
+  const tokens = command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)?.map((token) => (
+    token.replace(/^(?:"(.*)"|'(.*)')$/, "$1$2")
+  )) ?? [];
+  let index = 0;
+  if (tokens[index] === "env") index += 1;
+  while (
+    index < tokens.length &&
+    (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index]) || tokens[index].startsWith("-"))
+  ) {
+    index += 1;
+  }
+  const executable = tokens[index]?.split("/").pop();
+  const parsed = AgentKindSchema.safeParse(executable);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function inferAliasSource(name: string): ShellSessionAliasSource {

@@ -17,11 +17,15 @@ export interface ShellSessionSummary {
   lastSeenSeq?: number | null;
   unread?: boolean;
   visualStatus?: ShellVisualStatus;
+  agent?: "claude" | "codex" | "opencode" | "pi";
+  subtitle?: string;
+  lastAction?: string;
+  agentUpdatedAt?: string;
   attachCommand?: string;
   tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
 }
 
-export type ShellUiStatePatch = Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq" | "visualStatus">>;
+export type ShellUiStatePatch = Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq">>;
 
 interface ShellSessionsState {
   sessions: ShellSessionSummary[];
@@ -87,6 +91,12 @@ function asShellSession(value: unknown): ShellSessionSummary | null {
     shell.visualStatus = record.visualStatus;
   }
   if (typeof record.attachCommand === "string") shell.attachCommand = record.attachCommand;
+  if (record.agent === "claude" || record.agent === "codex" || record.agent === "opencode" || record.agent === "pi") {
+    shell.agent = record.agent;
+  }
+  if (typeof record.subtitle === "string") shell.subtitle = record.subtitle;
+  if (typeof record.lastAction === "string") shell.lastAction = record.lastAction;
+  if (typeof record.agentUpdatedAt === "string") shell.agentUpdatedAt = record.agentUpdatedAt;
   if (Array.isArray(record.tabs)) {
     const tabs: NonNullable<ShellSessionSummary["tabs"]> = [];
     for (const tab of record.tabs) {

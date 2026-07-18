@@ -188,6 +188,7 @@ describe("run CLI command", () => {
       }),
     ).resolves.toEqual({ detached: true });
     expect(client.attachSession).toHaveBeenCalledWith("setup", { mouse: false });
+    expect(client.createSession).toHaveBeenCalledWith(expect.objectContaining({ agent: "claude" }));
   });
 
   it("passes no-rich-paste mode through interactive run attach", async () => {
@@ -206,6 +207,7 @@ describe("run CLI command", () => {
       }),
     ).resolves.toEqual({ detached: true });
     expect(client.attachSession).toHaveBeenCalledWith("setup", { cwd: "projects/app", noRichPaste: true });
+    expect(client.createSession).toHaveBeenCalledWith(expect.objectContaining({ agent: "codex" }));
   });
 
   it("keeps stdout JSON-only for run -it --json", async () => {

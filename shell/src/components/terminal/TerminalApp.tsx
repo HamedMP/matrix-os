@@ -413,7 +413,12 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, cwd: requestedCwd, ...(options.cmd ? { cmd: options.cmd } : {}) }),
+          body: JSON.stringify({
+            name,
+            cwd: requestedCwd,
+            ...(options.cmd ? { cmd: options.cmd } : {}),
+            ...(options.agent ? { agent: options.agent } : {}),
+          }),
           signal: AbortSignal.timeout(10_000),
         });
         if (await isShellSessionExistsResponse(res)) {

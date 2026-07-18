@@ -18,6 +18,7 @@ import { sessionAccent } from "./terminal-session-names";
 import { NewSessionMenu } from "./NewSessionMenu";
 import type { TerminalAgentId, TerminalAgentOption } from "./terminal-agent-options";
 import type { ShellSessionSummary } from "./terminal-session-state";
+import { formatTerminalAgentName, TerminalSessionHoverCard } from "./TerminalSessionHoverCard";
 
 export const DEFAULT_SHELL_SESSION_NAME = "main";
 
@@ -47,9 +48,10 @@ const SHELL_ROW_DRAG_HANDLE_STYLE: CSSProperties = {
 };
 
 const SESSION_ACTIONS_STYLE: CSSProperties = {
+  flexDirection: "row-reverse",
   gap: 6,
   position: "absolute",
-  right: -8,
+  right: 8,
   top: "50%",
   transform: "translateY(-50%)",
   transition: "opacity 120ms ease",
@@ -678,7 +680,7 @@ function ShellPendingCard() {
         alignItems: "center",
         background: "var(--terminal-drawer-card-bg)",
         border: "1px solid var(--terminal-drawer-card-border)",
-        borderRadius: 10,
+        borderRadius: 8,
         boxShadow: "0 9px 22px var(--terminal-drawer-card-shadow)",
         color: "var(--terminal-drawer-muted)",
         display: "grid",
@@ -767,6 +769,7 @@ function ShellCard({
   const displayName = formatShellDisplayName(shell.name);
   const [actionsVisible, setActionsVisible] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const [hoverCardOpen, setHoverCardOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState(shell.name);
   const [renameSaving, setRenameSaving] = useState(false);
@@ -782,6 +785,9 @@ function ShellCard({
   const showDragHandle = (actionsVisible || dragging) && !renaming && !deleting;
   const renameControlLabel = `Rename ${displayName}`;
   const toggleMenuLabel = foreground ? "Move to Background" : "Make Active";
+  const agentName = shell.agent ? formatTerminalAgentName(shell.agent) : null;
+  const liveState = getShellVisualStatus(shell);
+  const hoverSuppressed = contextMenuOpen || renaming || dragging || Boolean(deleting);
   const getContextMenuItems = () => Array.from(
     contextMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [],
   );
@@ -937,7 +943,7 @@ function ShellCard({
     onOpen();
   };
 
-  return (
+  const card = (
     <div
       ref={cardRef}
       className="group terminal-session-card"
@@ -981,7 +987,7 @@ function ShellCard({
         display: "grid",
         gap: 10,
         gridTemplateColumns: "minmax(0, 1fr)",
-        height: 52,
+        height: shell.agent ? 78 : 52,
         opacity: dragging ? 0.94 : foreground ? 1 : 0.86,
         padding: "0 12px",
         position: "relative",
@@ -1084,55 +1090,123 @@ function ShellCard({
         <div
           className="min-w-0"
           style={{
-            alignItems: "center",
+            alignContent: "center",
             display: "grid",
-            gap: 6,
+            gap: shell.agent ? 2 : 0,
             gridTemplateColumns: "minmax(0, 1fr)",
-            paddingRight: renaming ? 0 : 58,
+            gridTemplateRows: shell.agent ? "18px 16px 16px" : "24px",
+            paddingRight: 34,
           }}
         >
-          {renaming ? (
-            <input
-              ref={renameInputRef}
-              aria-label={`Session name for ${displayName}`}
-              value={renameDraft}
-              disabled={renameSaving}
-              onChange={(event) => setRenameDraft(event.target.value)}
-              onClick={(event) => event.stopPropagation()}
-              onPointerDown={(event) => event.stopPropagation()}
-              onMouseDown={(event) => event.stopPropagation()}
-              onBlur={finishRename}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  void commitRename();
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  cancelRename();
-                }
-              }}
-              style={SESSION_RENAME_INPUT_STYLE}
-            />
-          ) : (
-            <button
-              type="button"
-              data-session-name={shell.name}
-              data-testid={`terminal-session-name-${shell.name}`}
-              aria-label={`Open ${displayName}`}
-              className="min-w-0 truncate"
-              onClick={(event) => {
-                event.stopPropagation();
-                onOpen();
-              }}
+          <div
+            data-testid={`terminal-session-name-row-${shell.name}`}
+            style={{ alignItems: "center", display: "flex", gap: 5, minWidth: 0 }}
+          >
+            {renaming ? (
+              <input
+                ref={renameInputRef}
+                aria-label={`Session name for ${displayName}`}
+                value={renameDraft}
+                disabled={renameSaving}
+                onChange={(event) => setRenameDraft(event.target.value)}
+                onClick={(event) => event.stopPropagation()}
+                onPointerDown={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+                onBlur={finishRename}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void commitRename();
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    cancelRename();
+                  }
+                }}
+                style={SESSION_RENAME_INPUT_STYLE}
+              />
+            ) : (
+              <>
+                <button
+                  type="button"
+                  data-session-name={shell.name}
+                  data-testid={`terminal-session-name-${shell.name}`}
+                  aria-label={`Open ${displayName}`}
+                  className="min-w-0 truncate"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onOpen();
+                  }}
+                  style={{
+                    ...SESSION_NAME_BUTTON_BASE_STYLE,
+                    color: foreground ? "var(--terminal-drawer-fg)" : "var(--terminal-drawer-muted)",
+                    flex: "0 1 auto",
+                    maxWidth: "calc(100% - 27px)",
+                  }}
+                >
+                  {displayName}
+                </button>
+                <button
+                  type="button"
+                  aria-label={renameControlLabel}
+                  title={renameControlLabel}
+                  disabled={renameSaving}
+                  tabIndex={showActions ? 0 : -1}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setHoverCardOpen(false);
+                    setRenameDraft(shell.name);
+                    setRenaming(true);
+                  }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  className="flex items-center justify-center"
+                  style={{
+                    ...SESSION_RENAME_BUTTON_STYLE,
+                    cursor: renameSaving ? "not-allowed" : "pointer",
+                    opacity: showRenameControl ? 1 : 0,
+                  }}
+                >
+                  <PencilIcon size={12} strokeWidth={2} />
+                </button>
+              </>
+            )}
+          </div>
+          {shell.agent ? (
+            <span
+              data-testid={`terminal-session-subtitle-${shell.name}`}
               style={{
-                ...SESSION_NAME_BUTTON_BASE_STYLE,
-                color: foreground ? "var(--terminal-drawer-fg)" : "var(--terminal-drawer-muted)",
+                color: "var(--terminal-drawer-muted)",
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontSize: 11,
+                lineHeight: "16px",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={shell.subtitle}
+            >
+              {shell.subtitle ?? ""}
+            </span>
+          ) : null}
+          {shell.agent && agentName ? (
+            <span
+              data-testid={`terminal-session-agent-state-${shell.name}`}
+              style={{
+                color: "var(--terminal-drawer-subtle)",
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontSize: 10,
+                fontWeight: 700,
+                lineHeight: "16px",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                textTransform: "capitalize",
+                whiteSpace: "nowrap",
               }}
             >
-              {displayName}
-            </button>
-          )}
+              {agentName} <span aria-hidden="true">·</span> {liveState}
+            </span>
+          ) : null}
           {!renaming && (
             <div
               data-testid={`terminal-session-actions-${shell.name}`}
@@ -1144,28 +1218,6 @@ function ShellCard({
                 pointerEvents: showActions ? "auto" : "none",
               }}
             >
-              <button
-                type="button"
-                aria-label={renameControlLabel}
-                title={renameControlLabel}
-                disabled={renameSaving}
-                tabIndex={showActions ? 0 : -1}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setRenameDraft(shell.name);
-                  setRenaming(true);
-                }}
-                onPointerDown={(event) => event.stopPropagation()}
-                onMouseDown={(event) => event.stopPropagation()}
-                className="flex items-center justify-center"
-                style={{
-                  ...SESSION_RENAME_BUTTON_STYLE,
-                  cursor: renameSaving ? "not-allowed" : "pointer",
-                  opacity: showRenameControl ? 1 : 0,
-                }}
-              >
-                <PencilIcon size={12} strokeWidth={2} />
-              </button>
               <div style={{ position: "relative" }}>
                 <button
                   ref={moreButtonRef}
@@ -1176,9 +1228,12 @@ function ShellCard({
                   tabIndex={showActions ? 0 : -1}
                   onClick={(event) => {
                     event.stopPropagation();
+                    setHoverCardOpen(false);
                     restoreFocusAfterMenuCloseRef.current = true;
                     setContextMenuOpen((open) => !open);
                   }}
+                  onFocus={() => setHoverCardOpen(false)}
+                  onPointerEnter={() => setHoverCardOpen(false)}
                   onPointerDown={(event) => event.stopPropagation()}
                   onMouseDown={(event) => event.stopPropagation()}
                   className="flex items-center justify-center"
@@ -1210,7 +1265,7 @@ function ShellCard({
                       <Rows2Icon size={13} strokeWidth={2} />
                     </SessionContextMenuItem>
                     <SessionContextMenuItem
-                      label="Copy Command"
+                      label="Copy Connect Command"
                       onClick={() => {
                         void copyAttachCommand();
                         closeContextMenuWithFocusReturn();
@@ -1260,6 +1315,20 @@ function ShellCard({
         </div>
       </div>
     </div>
+  );
+
+  if (!shell.agent || !agentName) return card;
+  return (
+    <TerminalSessionHoverCard
+      shell={shell as ShellSessionSummary & { agent: NonNullable<ShellSessionSummary["agent"]> }}
+      displayName={displayName}
+      cardRef={cardRef}
+      open={hoverCardOpen}
+      suppressed={hoverSuppressed}
+      onOpenChange={setHoverCardOpen}
+    >
+      {card}
+    </TerminalSessionHoverCard>
   );
 }
 

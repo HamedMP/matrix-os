@@ -133,6 +133,10 @@ describe("mobile terminal state", () => {
         name: "matrix-7af3c2e",
         status: "active",
         visualStatus: "waiting",
+        agent: "claude",
+        subtitle: "Refactor the terminal sidebar",
+        lastAction: "Requested approval",
+        agentUpdatedAt: "2026-07-18T10:00:00.000Z",
         attachedClients: 2,
         updatedAt: "2026-06-24T10:00:00Z",
         tabs: [{ idx: 0, name: "claude", focused: true }, { idx: 1 }],
@@ -146,6 +150,10 @@ describe("mobile terminal state", () => {
       state: "running",
       visualStatus: "waiting",
       attachedClients: 2,
+      agent: "claude",
+      subtitle: "Refactor the terminal sidebar",
+      lastAction: "Requested approval",
+      agentUpdatedAt: "2026-07-18T10:00:00.000Z",
     });
     expect(sessions[0]?.tabs).toEqual([{ idx: 0, name: "claude", focused: true }, { idx: 1 }]);
     expect(sessions[1]?.sessionId).toBe("main");

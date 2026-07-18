@@ -70,10 +70,12 @@ export async function createOrAttachRunSession(
   },
 ): Promise<{ detached: boolean }> {
   try {
+    const agent = inferRunAgent(input.command);
     await client.createSession({
       name: input.name,
       cwd: input.cwd,
       cmd: input.command.map(quoteCommandArg).join(" "),
+      ...(agent ? { agent } : {}),
     });
   } catch (err) {
     if (!input.sessionProvided || !isSessionExistsError(err)) {
@@ -85,6 +87,13 @@ export async function createOrAttachRunSession(
     attachOptions.mouse = input.mouse;
   }
   return await client.attachSession(input.name, attachOptions);
+}
+
+export function inferRunAgent(command: string[]): "claude" | "codex" | "opencode" | "pi" | undefined {
+  const executable = command[0]?.split("/").pop();
+  return executable === "claude" || executable === "codex" || executable === "opencode" || executable === "pi"
+    ? executable
+    : undefined;
 }
 
 function isInteractive(args: Record<string, unknown>, rawArgs: string[] | undefined): boolean {
