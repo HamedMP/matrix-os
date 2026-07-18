@@ -29,6 +29,7 @@ const store = vi.hoisted(() => ({
   searchResults: null as unknown,
   searching: false,
   clipboard: null as unknown,
+  pendingView: null as "files" | "trash" | null,
   navigate: vi.fn(),
   goBack: vi.fn(),
   goForward: vi.fn(),
@@ -53,6 +54,8 @@ const store = vi.hoisted(() => ({
   createFolder: vi.fn(),
   createFile: vi.fn(),
   toggleFavorite: vi.fn(),
+  requestView: vi.fn(),
+  consumeViewRequest: vi.fn(),
 }));
 
 vi.mock("@/hooks/useFileBrowser", () => ({
@@ -119,6 +122,7 @@ describe("FileBrowser Windows XP explorer", () => {
     store.selectedPaths = new Set();
     store.searchResults = null;
     store.loading = false;
+    store.pendingView = null;
   });
 
   // The useThemeStyle hook mirrors data-theme-style via an effect + a
@@ -274,6 +278,24 @@ describe("FileBrowser Windows XP explorer", () => {
     fireEvent.change(input, { target: { value: "system/themes" } });
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
     expect(store.navigate).toHaveBeenCalledWith("system/themes");
+  });
+
+  it("lands in the trash view when a trash view request is pending (Recycle Bin flow)", async () => {
+    document.documentElement.setAttribute("data-theme-style", "winxp");
+    store.pendingView = "trash";
+    await renderBrowser();
+
+    expect(screen.getByTestId("trash-view")).toBeTruthy();
+    expect(store.consumeViewRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the folder view instead of trash when a files view request is pending", async () => {
+    document.documentElement.setAttribute("data-theme-style", "winxp");
+    store.pendingView = "files";
+    await renderBrowser();
+
+    expect(screen.queryByTestId("trash-view")).toBeNull();
+    expect(store.consumeViewRequest).toHaveBeenCalledTimes(1);
   });
 
   it("renders the unchanged classic UI for non-XP designs", async () => {
