@@ -247,6 +247,15 @@ describe("TerminalApp per-design interior chrome", () => {
     expect(panel.getAttribute("aria-labelledby")).toBe(tab.id);
   });
 
+  it("omits the tabpanel role when no design tab strip renders (flat design)", async () => {
+    setThemeStyle("flat");
+    render(<TerminalApp initialSessionId="canvas-session-123" />);
+    await flushAsync();
+
+    expect(screen.queryByRole("tabpanel")).toBeNull();
+    expect(screen.queryByRole("tablist")).toBeNull();
+  });
+
   it("lists and activates open tabs from the win11 chevron menu", async () => {
     setThemeStyle("win11");
     render(<TerminalApp initialSessionId="canvas-session-123" />);
