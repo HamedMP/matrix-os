@@ -24,7 +24,7 @@ vi.mock("@/hooks/useDesktopConfig", () => ({
   saveDesktopConfig: shared.saveDesktopConfigMock,
   saveDesktopConfigPatch: vi.fn(),
   buildMeshGradient: () => "linear-gradient(#111111, #222222)",
-  BUNDLED_WALLPAPERS: new Set(["moraine-lake.jpg", "xp-bliss.svg", "win11-bloom.svg", "macos-light.svg"]),
+  BUNDLED_WALLPAPERS: new Set(["moraine-lake.jpg", "xp-bliss.jpg", "win11-bloom.jpg", "macos-light.svg"]),
   wallpaperUrl: (name: string, gatewayUrl: string) =>
     `${gatewayUrl}/files/system/wallpapers/${name}`,
 }));

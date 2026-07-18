@@ -43,8 +43,8 @@ const DESIGN_OPTIONS: DesignOption[] = [
     this map leave the user's background (and dock) untouched. */
 const DESIGN_BACKGROUNDS: Partial<Record<DesignStyle, DesktopConfig["background"]>> = {
   "macos-glass": { type: "wallpaper", name: "macos-light.svg" },
-  winxp: { type: "wallpaper", name: "xp-bliss.svg" },
-  win11: { type: "wallpaper", name: "win11-bloom.svg" },
+  winxp: { type: "wallpaper", name: "xp-bliss.jpg" },
+  win11: { type: "wallpaper", name: "win11-bloom.jpg" },
 };
 
 /** Designs that also move the dock to match their OS's real placement. */

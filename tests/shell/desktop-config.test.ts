@@ -91,7 +91,7 @@ describe("Desktop config", () => {
     // The shell-public /wallpapers path is unreliable through the platform
     // session-routing proxy, so bundled names must not be special-cased.
     const gatewayUrl = "https://gateway.example.com";
-    for (const name of ["moraine-lake.jpg", "xp-bliss.svg", "win11-bloom.svg", "macos-light.svg"]) {
+    for (const name of ["moraine-lake.jpg", "xp-bliss.jpg", "win11-bloom.jpg", "macos-light.svg"]) {
       expect(wallpaperUrl(name, gatewayUrl)).toBe(
         `${gatewayUrl}/files/system/wallpapers/${name}`,
       );
