@@ -63,15 +63,19 @@ function installMatrixDb(store: FakeStore) {
   return db;
 }
 
-function installMatrixDataBridge(data = new Map<string, unknown>()) {
-  const bridge = {
+function installMatrixDataBridge(data = new Map<string, unknown>(), db?: unknown) {
+  const bridge: Record<string, unknown> = {
     readData: vi.fn(async (key: string) => data.get(key) ?? null),
     writeData: vi.fn(async (key: string, value: unknown) => {
       data.set(key, value);
     }),
   };
+  if (db) bridge.db = db;
   Object.defineProperty(window, "MatrixOS", { configurable: true, value: bridge });
-  return bridge;
+  return bridge as {
+    readData: ReturnType<typeof vi.fn>;
+    writeData: ReturnType<typeof vi.fn>;
+  };
 }
 
 describe("Clock app", () => {
@@ -310,7 +314,8 @@ describe("Clock app", () => {
   });
 
   it("uses the MatrixOS data bridge when app DB is unavailable", async () => {
-    const bridge = installMatrixDataBridge();
+    // Pre-existing user state (an empty saved list) so first-run seeding stays out of scope.
+    const bridge = installMatrixDataBridge(new Map([["clock.zones", []]]));
     render(<App />);
 
     expect(await screen.findAllByText("Synced to device storage")).not.toHaveLength(0);
@@ -331,6 +336,60 @@ describe("Clock app", () => {
         expect.arrayContaining([expect.objectContaining({ tz: "Asia/Tokyo" })]),
       );
     });
+  });
+
+  it("seeds default world-clock cities on first run via the data bridge", async () => {
+    const bridge = installMatrixDataBridge();
+    render(<App />);
+
+    // First run: default cities appear instead of the empty state.
+    expect(await screen.findByText("Los Angeles")).toBeTruthy();
+    expect(screen.getByText("London")).toBeTruthy();
+    expect(screen.getByText("Berlin")).toBeTruthy();
+    expect(screen.getByText("Tokyo")).toBeTruthy();
+
+    await waitFor(() => {
+      expect(bridge.writeData).toHaveBeenCalledWith(
+        "clock.zones",
+        expect.arrayContaining([
+          expect.objectContaining({ tz: "America/Los_Angeles" }),
+          expect.objectContaining({ tz: "Europe/London" }),
+          expect.objectContaining({ tz: "Europe/Berlin" }),
+          expect.objectContaining({ tz: "Asia/Tokyo" }),
+        ]),
+      );
+    });
+  });
+
+  it("does not re-seed default cities after the user removed them all", async () => {
+    const bridge = installMatrixDataBridge(new Map([["clock.zones", []]]));
+    render(<App />);
+
+    expect(await screen.findByText(/no cities yet/i)).toBeTruthy();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const zoneWrites = bridge.writeData.mock.calls.filter(([key]) => key === "clock.zones");
+    expect(zoneWrites).toHaveLength(0);
+  });
+
+  it("seeds default cities into Postgres storage only once", async () => {
+    const store: FakeStore = { zones: [], alarms: [] };
+    const db = installMatrixDb(store);
+    const bridge = installMatrixDataBridge(new Map(), db);
+    render(<App />);
+
+    expect(await screen.findByText("London")).toBeTruthy();
+    await waitFor(() => {
+      expect(store.zones.map((row) => row.tz)).toEqual([
+        "America/Los_Angeles",
+        "Europe/London",
+        "Europe/Berlin",
+        "Asia/Tokyo",
+      ]);
+    });
+    expect(bridge.writeData).toHaveBeenCalledWith("clock.seeded-v1", true);
+    expect(db.insert).toHaveBeenCalledTimes(4);
   });
 
   it("contains invalid saved time zones to one row", async () => {
@@ -380,6 +439,8 @@ describe("Clock app", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 5, 1, 6, 59, 59));
     const bridgeData = new Map<string, unknown>([
+      // Existing (empty) world-clock list keeps first-run seeding out of this alarm test.
+      ["clock.zones", []],
       [
         "clock.alarms",
         [

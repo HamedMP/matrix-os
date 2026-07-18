@@ -27,6 +27,7 @@ import "./styles.css";
 import {
   alarmMinuteKey,
   computeLaps,
+  DEFAULT_WORLD_ZONES,
   formatClock,
   formatStopwatch,
   formatZoneTime,
@@ -45,6 +46,9 @@ import {
 
 const ZONES_TABLE = "zones";
 const ALARMS_TABLE = "alarms";
+const ZONES_KEY = "clock.zones";
+const ALARMS_KEY = "clock.alarms";
+const SEED_MARKER_KEY = "clock.seeded-v1";
 const SNOOZE_MS = 5 * 60_000;
 const MAX_BEEPED_TIMERS = 200;
 
@@ -214,6 +218,19 @@ function dedupeZones(rows: ZoneRow[]): ZoneRow[] {
   return deduped;
 }
 
+/** First-run seeding needs a persistent marker, which only the KV bridge provides. */
+function hasKvBridge(): boolean {
+  return Boolean(window.MatrixOS?.readData && window.MatrixOS?.writeData);
+}
+
+function defaultZoneRows(): ZoneRow[] {
+  return DEFAULT_WORLD_ZONES.map((tz, position) => ({ id: `seed-${tz}`, tz, position }));
+}
+
+function coerceZones(rows: unknown[]): ZoneRow[] {
+  return dedupeZones(rows.map(coerceZone).filter((z): z is ZoneRow => z !== null));
+}
+
 function storageLabel(): string {
   if (typeof window === "undefined") return "Session only";
   if (window.MatrixOS?.db) return "Synced to Matrix Postgres";
@@ -302,13 +319,37 @@ function WorldClock({ now }: { now: Date }) {
   const reload = useCallback(async () => {
     setError(null);
     if (!window.MatrixOS?.db) {
-      const stored = await readAppData<ZoneRow[]>("clock.zones", []);
-      setZones(dedupeZones(stored.map(coerceZone).filter((z): z is ZoneRow => z !== null)));
+      const stored = await readAppData<ZoneRow[] | null>(ZONES_KEY, null);
+      // First run on KV storage: nothing ever written, so seed the default cities.
+      if (stored === null && hasKvBridge()) {
+        const seeded = defaultZoneRows();
+        setZones(seeded);
+        await writeAppData(ZONES_KEY, seeded);
+        return;
+      }
+      setZones(coerceZones(stored ?? []));
       return;
     }
     try {
       const rows = await window.MatrixOS.db.find(ZONES_TABLE, { orderBy: { position: "asc" } });
-      setZones(dedupeZones(rows.map(coerceZone).filter((z): z is ZoneRow => z !== null)));
+      let zones = coerceZones(rows);
+      // First run on Postgres storage: the table is empty and we have never
+      // seeded before. The marker keeps "user deleted every city" distinct
+      // from "brand new install".
+      if (zones.length === 0 && hasKvBridge()) {
+        const seededBefore = await readAppData<boolean>(SEED_MARKER_KEY, false);
+        if (!seededBefore) {
+          await writeAppData(SEED_MARKER_KEY, true);
+          await Promise.all(
+            defaultZoneRows().map((zone) =>
+              window.MatrixOS?.db?.insert(ZONES_TABLE, { tz: zone.tz, position: zone.position }),
+            ),
+          );
+          const fresh = await window.MatrixOS.db.find(ZONES_TABLE, { orderBy: { position: "asc" } });
+          zones = coerceZones(fresh);
+        }
+      }
+      setZones(zones);
     } catch (err: unknown) {
       console.warn("[clock] zones load failed:", err instanceof Error ? err.message : String(err));
       setError("Saved cities could not be loaded.");
@@ -321,7 +362,7 @@ function WorldClock({ now }: { now: Date }) {
   }, [reload]);
 
   const persistLocal = useCallback(async (next: ZoneRow[]) => {
-    await writeAppData("clock.zones", next);
+    await writeAppData(ZONES_KEY, next);
   }, []);
 
   const addZone = useCallback(
@@ -605,7 +646,7 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
   const reload = useCallback(async () => {
     setError(null);
     if (!window.MatrixOS?.db) {
-      const stored = await readAppData<AlarmModel[]>("clock.alarms", []);
+      const stored = await readAppData<AlarmModel[]>(ALARMS_KEY, []);
       setAlarms(stored.map((a) => ({ ...a, repeat: parseRepeat(a.repeat) })));
       return;
     }
@@ -625,7 +666,7 @@ function Alarms({ now, active }: { now: Date; active: boolean }) {
 
   const persistLocal = useCallback(async (next: AlarmModel[]) => {
     await writeAppData(
-      "clock.alarms",
+      ALARMS_KEY,
       next.map((a) => ({ ...a, repeat: serializeRepeat(a.repeat) })),
     );
   }, []);
