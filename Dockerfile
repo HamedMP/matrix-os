@@ -32,7 +32,10 @@ COPY scripts/build-default-apps.mjs scripts/build-default-apps.mjs
 COPY scripts/install-hermes-matrix-skills.sh scripts/install-hermes-matrix-skills.sh
 COPY scripts/sync-matrix-agent-skills.sh scripts/sync-matrix-agent-skills.sh
 
-RUN pnpm install --frozen-lockfile
+# Keep the repo-wide global virtual store (pnpm-workspace.yaml
+# enableGlobalVirtualStore) off inside image builds so node_modules stays
+# self-contained and survives COPY into later stages.
+RUN pnpm install --frozen-lockfile --config.enableGlobalVirtualStore=false
 
 # Copy source
 COPY packages/ packages/
