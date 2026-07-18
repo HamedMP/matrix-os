@@ -10,6 +10,6 @@ describe("land skill", () => {
     );
 
     expect(skill).toContain('gh pr merge --squash --body "$pr_body"');
-    expect(skill).not.toContain('--subject "$pr_title"');
+    expect(skill).not.toContain("--subject");
   });
 });
