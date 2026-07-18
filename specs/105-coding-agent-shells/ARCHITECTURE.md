@@ -390,6 +390,11 @@ Guidance:
   provider identity or capabilities.
 - `setupActions` should contain safe action IDs and labels, not raw arbitrary commands unless explicitly marked as foreground terminal actions.
 - Health checks must be timeout-bound.
+- Provider protocol support is version-gated independently from executable
+  discovery. For Codex, Matrix pins both the exec JSONL schema and the
+  experimental app-server schema to one verified package range, checks the
+  latest published package daily, and fails closed for installed versions
+  outside that range or whenever either schema digest changes.
 
 ### Thread Create
 
@@ -414,6 +419,9 @@ Rules:
 - `clientRequestId` makes create idempotent.
 - Prompt and attachments are bounded.
 - Provider/mode/sandbox/approval combinations are validated server-side.
+- Approval and structured-input capabilities stay disabled until the installed
+  provider's interactive protocol contract is verified; exec JSONL support by
+  itself is not evidence that interactive decisions are supported.
 - Create should return accepted thread snapshot quickly; streaming happens separately.
 - New shell requests require `projectId`; compatibility parsing may accept legacy unassigned records on reads only.
 - If `taskId` is present, the gateway resolves the task and enforces project ownership/match before inserting the thread and first event.
