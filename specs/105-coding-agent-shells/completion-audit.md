@@ -112,7 +112,7 @@ That automated desktop smoke now also covers opening the Agents workspace from t
 ## Remaining Validation
 
 - Run manual desktop smoke against a real Matrix computer for runtime switch, native menu entry points, review/file/preview paths, notification click-through, non-stub provider setup, and cross-shell terminal binding. The automated desktop operator smoke now covers sign-in, project board, terminal attach, current Agents workspace create, command-palette Agents entry, Terminal, Apps, Settings, Chat, and hosted-shell detach through the stub gateway.
-- Run manual mobile SDK 57 device smoke for chat, mission control, terminal, apps, agents workspace, thread detail, terminal handoff, review/file/preview paths, approvals/input, notification tap routing, offline/reconnect state, and persisted safe references.
+- Run the manual mobile SDK 57 device smoke checklist in `docs/dev/mobile-shell.md` for chat, mission control, terminal, apps, agents workspace, thread detail, terminal handoff, review/file/preview paths, approvals/input, notification tap routing, offline/reconnect state, and persisted safe references.
 - Keep `docs/dev/coding-agent-shells.md`, `www/content/docs/coding-agents.mdx`, and this audit synchronized when provider/runtime behavior changes.
 
 ## Security Notes

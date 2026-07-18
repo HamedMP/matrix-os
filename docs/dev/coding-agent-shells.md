@@ -305,7 +305,7 @@ Before enabling a mobile coding-agent shell change broadly:
 1. Run the touched mobile Jest tests and `pnpm --filter matrix-os-mobile exec tsc --noEmit`.
 2. When the slice touches shared shell, gateway, or contract behavior, also run the matching gateway Vitest tests, shell typecheck, and the shell/mobile readiness tests listed in `docs/dev/mobile-shell.md`.
 3. Confirm mobile persisted state contains only bounded UI references.
-4. Open the Agents workspace, thread detail, approval/input controls, review/file detail, preview route, and bound terminal route in a dev client when the slice touches those surfaces.
+4. Run the Coding-Agent SDK 57 Device Smoke checklist in `docs/dev/mobile-shell.md` when the slice touches Agents workspace routing, thread detail, approval/input controls, review/file detail, preview routes, bound terminal routes, notification tap routing, offline/reconnect handling, or mobile persistence.
 5. Confirm Chat, Apps, Terminal, and Settings tabs still open.
 6. Keep the existing terminal fallback. Do not land native terminal replacement behavior without separate device validation.
 
