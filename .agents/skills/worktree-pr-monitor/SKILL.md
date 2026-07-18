@@ -32,8 +32,11 @@ coordinator-assigned worktree, branch, and PR. The repo-level ban on Agent-tool
 - If neither the requester nor a coordinator explicitly assigned a worktree,
   follow the current branch workflow instead.
 - Keep the primary checkout on its existing branch and preserve unrelated work.
-- Resolve the manual-worktree location from repository instructions; do not
-  assume a fixed home directory or reuse another agent's path.
+- Resolve the primary checkout's absolute path and, unless repository
+  instructions specify another location, use the canonical sibling path
+  `<primary-checkout-parent>/<repo-name>.worktrees/<slug>`. For example, a
+  primary checkout at `/home/deploy/matrix-os` uses
+  `/home/deploy/matrix-os.worktrees/<slug>`. Never reuse another agent's path.
 - Use a semantic branch and PR title. Do not prefix titles with agent/tool tags.
 - Stage only files in scope.
 - Do not merge unless explicitly asked.
@@ -62,10 +65,11 @@ coordinator-assigned worktree, branch, and PR. The repo-level ban on Agent-tool
 2. Create or enter the worktree.
    - Slug: concise task slug, e.g. `fix-canvas-terminal-clicks`.
    - Branch: `codex/<slug>` unless the requester named a branch.
-   - Path: an exact, validated path allowed by repository instructions. Use the
-     coordinator-assigned path when operating as a leaf agent.
+   - Path: the coordinator-assigned path for a leaf agent. Otherwise use the
+     canonical absolute sibling path above unless repository instructions
+     explicitly require another location.
    - Command shape:
-     `git worktree add -b codex/<slug> /absolute/path/to/worktree origin/main`
+     `git worktree add -b codex/<slug> /absolute/path/to/matrix-os.worktrees/<slug> origin/main`
 
 3. Implement.
    - Follow TDD where practical: add a failing focused regression before the
@@ -140,7 +144,7 @@ coordinator-assigned worktree, branch, and PR. The repo-level ban on Agent-tool
 ```sh
 git status --short --branch
 git worktree list
-git worktree add -b codex/<slug> /absolute/path/to/worktree origin/main
+git worktree add -b codex/<slug> /absolute/path/to/matrix-os.worktrees/<slug> origin/main
 bun run typecheck
 bun run check:patterns
 bun run test

@@ -31,9 +31,16 @@ comparable evidence and PR comments.
 - Keep one coordinator active until every workstream is complete or blocked.
 - Let `N` equal the number of independently scoped problems supported by the
   supplied report. Spawn one distinct problem owner for each accepted problem.
-- Run only as many workers concurrently as available slots permit, reserving
-  the coordinator slot. Queue remaining workers without reusing an owner for a
-  different problem.
+- Determine capacity before every batch. Read the platform's declared
+  concurrency limit and use its agent-status/list operation to count every
+  active agent, including the coordinator. Compute available platform slots as
+  `total slots - active agents`. If the requester supplied a lower maximum
+  worker concurrency, compute its remaining allowance as `worker cap - active
+  problem workers`; otherwise use the queued-problem count as that allowance.
+  Spawn at most the smallest of the available slots, remaining allowance, and
+  queued problems, then recompute after workers finish. If the platform exposes
+  no limit, ask the requester instead of guessing.
+- Queue remaining workers without reusing an owner for a different problem.
 - Do not use Agent-tool worktree isolation. Use persistent manual Git
   worktrees only.
 - Give each worker exactly one problem, the raw relevant evidence, the pinned

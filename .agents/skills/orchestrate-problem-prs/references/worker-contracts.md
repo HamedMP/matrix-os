@@ -17,6 +17,8 @@ You own exactly one problem: <problem ID and title>.
 
 Source context: <PR, commit, incident, or preview context>
 Pinned base SHA: <SHA>
+Repository instructions: Re-read <applicable AGENTS.md or CLAUDE.md paths> and
+<constitution path> before investigating; those rules remain authoritative.
 Raw problem evidence: <relevant unedited report excerpt and artifact links>
 Expected behavior: <expected behavior>
 Explicit exclusions: <out-of-scope symptoms or workstreams>
