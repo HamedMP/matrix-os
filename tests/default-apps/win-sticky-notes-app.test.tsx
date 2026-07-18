@@ -76,6 +76,26 @@ describe("Sticky Notes (win11) app", () => {
     expect(within(list).getByText("Ship the win11 build")).toBeTruthy();
   });
 
+  it("refuses to create notes beyond MAX_NOTES instead of dropping the oldest on reload", async () => {
+    const full = Array.from({ length: 200 }, (_, i) => ({
+      id: `n-${i}`,
+      text: `note ${i}`,
+      color: "yellow",
+      createdAt: i,
+      updatedAt: i,
+    }));
+    const bridge = installMatrixDataBridge(new Map([[NOTES_KEY, full]]));
+    render(<App />);
+
+    const list = await screen.findByRole("complementary", { name: /notes list/i });
+    await within(list).findByText("note 199");
+    fireEvent.click(screen.getAllByRole("button", { name: /new note/i })[0]);
+
+    // Still exactly 200 notes, and nothing new is written.
+    expect(within(list).getAllByRole("button").length).toBe(200);
+    expect(bridge.writeData).not.toHaveBeenCalled();
+  });
+
   it("flushes a pending autosave when the app unmounts before the debounce fires", async () => {
     const bridge = installMatrixDataBridge();
     const { unmount } = render(<App />);

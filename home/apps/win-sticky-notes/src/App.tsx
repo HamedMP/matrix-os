@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Plus, StickyNote as StickyNoteIcon, Trash2 } from "lucide-react";
 import {
   MAX_NOTE_TEXT,
+  MAX_NOTES,
   NOTES_KEY,
   NOTE_COLORS,
   colorFor,
@@ -110,8 +111,11 @@ export default function App() {
   const selected = sorted.find((note) => note.id === selectedId) ?? null;
 
   const addNote = useCallback(() => {
+    // Match the persistence cap: creating beyond MAX_NOTES would silently
+    // drop the oldest notes on the next load.
+    if (notesRef.current.length >= MAX_NOTES) return;
     const note = createNote(newId(), Date.now());
-    setNotes((cur) => [note, ...cur]);
+    setNotes((cur) => (cur.length >= MAX_NOTES ? cur : [note, ...cur]));
     setSelectedId(note.id);
     // Focus after the editor re-renders with the new selection. rAF is not
     // available in every host (e.g. jsdom), so guard it.
