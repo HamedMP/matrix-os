@@ -52,7 +52,6 @@ const TERMINAL_PASTE_MIME_BY_EXTENSION = new Map([
 const TERMINAL_SCROLLBACK_LINES = 10_000;
 const TERMINAL_SCROLL_SENSITIVITY = 1;
 const TERMINAL_FAST_SCROLL_SENSITIVITY = 5;
-const TERMINAL_LIVE_TAIL_FROM_SEQ = Number.MAX_SAFE_INTEGER;
 const IMAGE_ADDON_OPTIONS: IImageAddonOptions = {
   enableSizeReports: false,
   pixelLimit: 4_194_304,
@@ -345,6 +344,10 @@ function refreshTerminalRenderer(term: Terminal): void {
 }
 
 type DisposableWebglAddon = { dispose: () => void };
+type CanonicalReplayRequest = {
+  mode: "cold-replay" | "cursor-resume";
+  requestedSeq: number;
+};
 
 function toDisposableWebglAddon(addon: unknown): DisposableWebglAddon | null {
   if (!addon || typeof addon !== "object") {
@@ -1148,7 +1151,11 @@ export function TerminalPane({
       function bindWs(
         ws: WebSocket,
         attachOnOpen: boolean,
-        options: { alreadyAttached?: boolean; generation?: number } = {},
+        options: {
+          alreadyAttached?: boolean;
+          generation?: number;
+          replayRequest?: CanonicalReplayRequest;
+        } = {},
       ) {
         const generation = options.generation ?? wsGenerationRef.current + 1;
         wsGenerationRef.current = generation;
@@ -1327,11 +1334,16 @@ export function TerminalPane({
                 attachedSessionId: msg.sessionId,
                 state: msg.state,
                 exitCode: msg.exitCode ?? null,
-                fromSeq: msg.fromSeq,
+                replayMode: options.replayRequest?.mode,
+                requestedSeq: options.replayRequest?.requestedSeq,
+                acceptedSeq: msg.fromSeq,
               });
               track("attached", {
                 state: msg.state,
                 hasExitCode: msg.exitCode != null,
+                replayMode: options.replayRequest?.mode,
+                requestedSeq: options.replayRequest?.requestedSeq,
+                acceptedSeq: msg.fromSeq ?? undefined,
               });
               sessionIdRef.current = msg.sessionId;
               if (msg.fromSeq !== null) {
@@ -1439,14 +1451,24 @@ export function TerminalPane({
         }
       }
 
+      function getCanonicalReplayRequest(): CanonicalReplayRequest | undefined {
+        const currentSessionId = sessionIdRef.current;
+        return currentSessionId && isCanonicalShellSessionId(currentSessionId)
+          ? {
+              mode: hasReplayCursorRef.current ? "cursor-resume" : "cold-replay",
+              requestedSeq: hasReplayCursorRef.current ? lastSeqRef.current : 0,
+            }
+          : undefined;
+      }
+
       function connectWs() {
         const generation = wsGenerationRef.current + 1;
         wsGenerationRef.current = generation;
         const currentSessionId = sessionIdRef.current;
         const wsPath = terminalWebSocketPathForSession(currentSessionId);
-        const fromSeq = hasReplayCursorRef.current ? lastSeqRef.current : TERMINAL_LIVE_TAIL_FROM_SEQ;
+        const replayRequest = getCanonicalReplayRequest();
         const query = currentSessionId && isCanonicalShellSessionId(currentSessionId)
-          ? { session: currentSessionId, fromSeq: String(fromSeq) }
+          ? { session: currentSessionId, fromSeq: String(replayRequest?.requestedSeq ?? 0) }
           : currentSessionId || !cwd
             ? undefined
             : { cwd };
@@ -1456,6 +1478,8 @@ export function TerminalPane({
           wsPath,
           queryCwd,
           querySession,
+          replayMode: replayRequest?.mode,
+          requestedSeq: replayRequest?.requestedSeq,
           reconnectAttempt: reconnectAttemptRef.current,
         });
 
@@ -1500,13 +1524,14 @@ export function TerminalPane({
               previousWs.close();
             }
             const ws = new WebSocket(wsUrl);
-            bindWs(ws, true, { generation });
+            bindWs(ws, true, { generation, replayRequest });
           });
       }
 
       if (cached && canReuseCachedSocket) {
         bindWs(cached.ws, cached.ws.readyState === WebSocket.CONNECTING, {
           alreadyAttached: cached.ws.readyState === WebSocket.OPEN,
+          replayRequest: getCanonicalReplayRequest(),
         });
       } else {
         if (cached && !canReuseCachedTerminal) {
