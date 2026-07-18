@@ -72,8 +72,8 @@ const userOwnedPrefixes = [
 const systemOwnedWallpapers = new Set([
   "system/wallpapers/macos-light.svg",
   "system/wallpapers/moraine-lake.jpg",
-  "system/wallpapers/win11-bloom.svg",
-  "system/wallpapers/xp-bliss.svg",
+  "system/wallpapers/win11-bloom.jpg",
+  "system/wallpapers/xp-bliss.jpg",
 ]);
 
 function parsePositiveInt(value, fallback) {
