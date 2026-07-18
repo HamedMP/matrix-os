@@ -564,26 +564,26 @@ button { cursor: pointer; }
 }
 :root[data-matrix-design="winxp"] .badge { border-radius: 3px; }
 
-/* ----- Windows 11: light acrylic (mica) ----- */
+/* ----- Windows 11: solid Mica content surfaces (acrylic only for flyouts) ----- */
 :root[data-matrix-design="win11"] {
   color-scheme: light;
   --app-bg: #f3f3f3;
   --app-fg: #1b1b1b;
-  --app-card: rgba(249,249,249,0.85);
-  --app-muted: rgba(243,243,243,0.9);
+  --app-card: #fafafa;
+  --app-muted: #f3f3f3;
   --app-muted-fg: #605e5c;
   --app-border: rgba(0,0,0,0.08);
   --app-primary: #0067c0;
   --app-primary-fg: #ffffff;
   --app-accent: #0067c0;
   --app-accent-fg: #ffffff;
-  --app-secondary: rgba(230,230,230,0.9);
+  --app-secondary: #e6e6e6;
   --app-radius: 8px;
   --app-radius-input: 6px;
   --app-radius-sm: 4px;
   --app-font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-  --app-glass: rgba(249,249,249,0.85);
-  --app-glass-strong: rgba(255,255,255,0.9);
+  --app-glass: #fafafa;
+  --app-glass-strong: #ffffff;
   --app-border-light: rgba(0,0,0,0.06);
   --app-border-mid: rgba(0,0,0,0.08);
   --app-border-interactive: rgba(0,0,0,0.14);
@@ -604,8 +604,6 @@ button { cursor: pointer; }
 :root[data-matrix-design="win11"] .card,
 :root[data-matrix-design="win11"] .metric {
   background: var(--app-glass);
-  backdrop-filter: blur(30px);
-  -webkit-backdrop-filter: blur(30px);
   border: 1px solid var(--app-border-light);
   border-radius: 8px;
   box-shadow: var(--app-shadow-sm);
@@ -617,8 +615,6 @@ button { cursor: pointer; }
 :root[data-matrix-design="win11"] .toolbar,
 :root[data-matrix-design="win11"] .segmented {
   background: var(--app-glass);
-  backdrop-filter: blur(30px);
-  -webkit-backdrop-filter: blur(30px);
   border-color: var(--app-border-light);
   border-radius: 8px;
 }
