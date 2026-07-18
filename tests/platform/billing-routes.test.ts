@@ -437,6 +437,100 @@ describe('platform billing routes', () => {
     });
   });
 
+  it('creates a focused add-computer portal flow from server-owned subscription and interval data', async () => {
+    await upsertBillingCustomer(db, {
+      clerkUserId: 'user_123',
+      stripeCustomerId: 'cus_123',
+      createdAt: '2026-05-30T00:00:00.000Z',
+      updatedAt: '2026-05-30T00:00:00.000Z',
+    });
+    await upsertBillingEntitlement(db, {
+      clerkUserId: 'user_123',
+      source: 'stripe',
+      stripeSubscriptionId: 'sub_123',
+      stripePriceId: 'price_builder_annual',
+      planSlug: 'matrix_builder',
+      status: 'active',
+      maxRuntimeSlots: 1,
+      includedRuntimeSlots: 1,
+      addonRuntimeSlots: 0,
+      defaultServerType: 'cpx32',
+      allowedServerTypes: ['cpx22', 'cpx32'],
+      gracePeriodEndsAt: null,
+      effectiveFrom: '2026-05-30T00:00:00.000Z',
+      effectiveUntil: null,
+      updatedAt: '2026-05-30T00:00:00.000Z',
+    });
+    const app = createApp();
+
+    const response = await app.request('/billing/portal', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ intent: 'add_computer', returnPath: '/runtime?new=1' }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(stripe.createPortalSession).toHaveBeenCalledWith({
+      customerId: 'cus_123',
+      returnUrl: 'https://app.matrix-os.com/runtime?new=1',
+      flow: {
+        type: 'subscription_update',
+        subscriptionId: 'sub_123',
+        priceId: 'price_extra_runtime_annual',
+        interval: 'annual',
+        afterCompletionReturnUrl: 'https://app.matrix-os.com/runtime?new=1',
+      },
+    });
+  });
+
+  it('rejects invalid portal bodies and unsafe return paths without calling Stripe', async () => {
+    await upsertBillingCustomer(db, {
+      clerkUserId: 'user_123', stripeCustomerId: 'cus_123',
+      createdAt: '2026-05-30T00:00:00.000Z', updatedAt: '2026-05-30T00:00:00.000Z',
+    });
+    const app = createApp();
+
+    const extra = await app.request('/billing/portal', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ intent: 'manage', unexpected: true }),
+    });
+    const unsafe = await app.request('/billing/portal', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ intent: 'add_computer', returnPath: 'https://evil.example' }),
+    });
+
+    expect(extra.status).toBe(400);
+    expect(unsafe.status).toBe(400);
+    expect(stripe.createPortalSession).not.toHaveBeenCalled();
+  });
+
+  it('does not expose Stripe add-computer flows for internally managed accounts', async () => {
+    await upsertBillingCustomer(db, {
+      clerkUserId: 'user_123', stripeCustomerId: 'cus_123',
+      createdAt: '2026-05-30T00:00:00.000Z', updatedAt: '2026-05-30T00:00:00.000Z',
+    });
+    await upsertBillingOverride(db, {
+      id: 'override_internal', clerkUserId: 'user_123', planSlug: 'internal', status: 'active',
+      maxRuntimeSlots: 1, includedRuntimeSlots: 1, addonRuntimeSlots: 0,
+      defaultServerType: 'cpx52', allowedServerTypes: ['cpx52'], reason: 'managed',
+      createdBy: 'test', expiresAt: null, revokedAt: null,
+      createdAt: '2026-05-30T00:00:00.000Z',
+    });
+    const app = createApp();
+
+    const response = await app.request('/billing/portal', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ intent: 'add_computer', returnPath: '/runtime?new=1' }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Account managed internally',
+      code: 'managed_account',
+    });
+    expect(stripe.createPortalSession).not.toHaveBeenCalled();
+  });
+
   it('reports active access from internal billing overrides', async () => {
     await upsertBillingOverride(db, {
       id: 'override_internal',

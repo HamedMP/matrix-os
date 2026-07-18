@@ -70,6 +70,14 @@ const CheckoutRequestSchema = z.object({
 });
 type CheckoutRequest = z.infer<typeof CheckoutRequestSchema>;
 
+const PortalRequestSchema = z.object({
+  intent: z.enum(['manage', 'add_computer']).default('manage'),
+  returnPath: z.string().min(1).max(2048).optional().refine(
+    (value) => value === undefined || resolveReturnPath(value) === value,
+    { message: 'Invalid return path' },
+  ),
+}).strict();
+
 export interface StripeCheckoutSessionInput {
   clerkUserId: string;
   customerId?: string;
@@ -90,7 +98,18 @@ export interface StripeBillingClient {
    * to the Clerk user from server-written metadata.
    */
   createCheckoutSession(input: StripeCheckoutSessionInput): Promise<{ url: string; id: string }>;
-  createPortalSession(input: { customerId: string; returnUrl: string }): Promise<{ url: string }>;
+  createPortalSession(input: {
+    customerId: string;
+    returnUrl: string;
+    flow?: {
+      type: 'subscription_update';
+      subscriptionId: string;
+      priceId: string;
+      interval: MatrixBillingInterval;
+      configurationId?: string;
+      afterCompletionReturnUrl: string;
+    };
+  }): Promise<{ url: string }>;
   constructWebhookEvent(rawBody: string, signature: string, webhookSecret: string): StripeWebhookEvent;
 }
 
@@ -230,15 +249,71 @@ export function createBillingRoutes(options: {
     const clerkUserId = await resolveRouteClerkUserId(c, 'portal');
     if (!clerkUserId) return c.json({ error: 'Unauthorized' }, 401);
 
+    let rawBody: unknown = {};
+    const raw = await c.req.text();
+    if (raw.trim().length > 0) {
+      try {
+        rawBody = JSON.parse(raw);
+      } catch (err: unknown) {
+        if (!(err instanceof SyntaxError)) throw err;
+        return c.json({ error: 'Invalid request' }, 400);
+      }
+    }
+    const parsed = PortalRequestSchema.safeParse(rawBody);
+    if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
+
     try {
       if (options.stripe.apiTimeoutMs > MAX_STRIPE_API_TIMEOUT_MS) {
         throw new Error('stripe_timeout_exceeds_budget');
       }
       const customer = await getBillingCustomerByClerkUserId(options.db, clerkUserId);
       if (!customer) return c.json({ error: 'Billing unavailable' }, 404);
+
+      if (parsed.data.intent === 'add_computer') {
+        const currentTime = now();
+        const state = await getBillingEntitlementState(options.db, clerkUserId, currentTime.toISOString());
+        const entitlement = computeEffectiveEntitlement({
+          stripeEntitlement: parseBillingEntitlementRecord(state.entitlement),
+          override: parseBillingOverrideRecord(state.override),
+          now: currentTime,
+        });
+        if (entitlement?.source === 'override') {
+          return c.json({ error: 'Account managed internally', code: 'managed_account' }, 409);
+        }
+        if (!entitlement?.stripeSubscriptionId || !entitlement.stripePriceId) {
+          return c.json(BILLING_UNAVAILABLE_RESPONSE, 404);
+        }
+        const priceEntry = loadStripePriceCatalog(env).priceToPlan.get(entitlement.stripePriceId);
+        if (!priceEntry || priceEntry.kind !== 'base_plan') {
+          return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+        }
+        const interval = priceEntry.interval;
+        const priceId = interval === 'annual'
+          ? env.STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL
+          : env.STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY;
+        if (!priceId) return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+        const returnUrl = resolveBillingReturnUrl(env, 'portal', parsed.data.returnPath ?? '/runtime?new=1');
+        const configurationId = interval === 'annual'
+          ? env.STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_ANNUAL
+          : env.STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_MONTHLY;
+        const session = await options.stripe.createPortalSession({
+          customerId: customer.stripeCustomerId,
+          returnUrl,
+          flow: {
+            type: 'subscription_update',
+            subscriptionId: entitlement.stripeSubscriptionId,
+            priceId,
+            interval,
+            ...(configurationId ? { configurationId } : {}),
+            afterCompletionReturnUrl: returnUrl,
+          },
+        });
+        return c.json({ url: session.url }, 200);
+      }
+
       const session = await options.stripe.createPortalSession({
         customerId: customer.stripeCustomerId,
-        returnUrl: resolveBillingReturnUrl(env, 'portal'),
+        returnUrl: resolveBillingReturnUrl(env, 'portal', parsed.data.returnPath),
       });
       return c.json({ url: session.url }, 200);
     } catch (err: unknown) {
@@ -411,6 +486,9 @@ function resolveBillingReturnUrl(
   returnPath?: string,
 ): string {
   const appUrl = appOrigin(env);
+  if (returnPath && state === 'portal') {
+    return new URL(resolveReturnPath(returnPath), new URL(appUrl).origin).toString();
+  }
   if (returnPath && state !== 'portal') {
     const appBase = new URL(appUrl);
     // resolveReturnPath is the authoritative allowlist guard — never build the

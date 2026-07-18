@@ -67,6 +67,10 @@ const RetryBodySchema = z.object({
   runtimeSlot: z.string().regex(SAFE_SLUG).optional(),
 });
 
+const JourneyQuerySchema = z.object({
+  runtimeSlot: z.string().min(1).max(32).regex(SAFE_SLUG).optional(),
+}).strict();
+
 const FirstRunBodySchema = z.object({
   clerkUserId: z.string().min(1).max(256),
   handle: z.string().regex(SAFE_SLUG),
@@ -134,8 +138,10 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
     applyNoStore(c);
     const clerkUserId = await options.resolveUserId(c);
     if (!clerkUserId) return c.json({ error: 'Unauthorized' }, 401);
+    const parsedQuery = JourneyQuerySchema.safeParse(c.req.query());
+    if (!parsedQuery.success) return c.json({ error: 'Invalid request' }, 400);
     try {
-      return c.json(await buildJourney(clerkUserId), 200);
+      return c.json(await buildJourney(clerkUserId, parsedQuery.data.runtimeSlot), 200);
     } catch (err: unknown) {
       console.error('[journey] state derivation failed:', err instanceof Error ? err.message : String(err));
       return c.json({ error: 'journey_unavailable' }, 503);
