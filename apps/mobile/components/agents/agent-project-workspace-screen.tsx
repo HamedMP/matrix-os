@@ -73,12 +73,13 @@ type ProjectScreenState =
 interface AgentProjectWorkspaceScreenProps {
   client: ProjectWorkspaceClient | null;
   connectionState: ConnectionState;
-  requestedProjectId: string;
+  requestedProjectId?: string | null;
   onOpenProject: (projectId: string) => void;
   onOpenThread: (identity: AgentConversationIdentity) => void;
   onNewConversation: (identity: { projectId: string; taskId: string | null }) => void;
   onViewModeChange?: (viewMode: AgentWorkspaceViewMode) => void;
   routeViewMode?: AgentWorkspaceViewMode | null;
+  contentBottomInset?: number;
 }
 
 const PROJECT_WORKSPACE_ERROR = "Project workspace unavailable. Refresh or choose another project.";
@@ -136,6 +137,7 @@ export function AgentProjectWorkspaceScreen({
   onNewConversation,
   onViewModeChange,
   routeViewMode = null,
+  contentBottomInset = 40,
 }: AgentProjectWorkspaceScreenProps) {
   const { theme } = useUnistyles();
   const { width } = ReactNative.useWindowDimensions();
@@ -163,8 +165,10 @@ export function AgentProjectWorkspaceScreen({
       setHydrationFailure(generationRef, generation, retained, setState);
       return;
     }
-    const parsedRequestedProject = ProjectIdSchema.safeParse(requestedProjectId);
-    if (!parsedRequestedProject.success) {
+    const parsedRequestedProject = requestedProjectId === null || requestedProjectId === undefined
+      ? null
+      : ProjectIdSchema.safeParse(requestedProjectId);
+    if (parsedRequestedProject && !parsedRequestedProject.success) {
       setHydrationFailure(generationRef, generation, retained, setState);
       return;
     }
@@ -181,17 +185,24 @@ export function AgentProjectWorkspaceScreen({
 
     let liveSummary = summaryResult.summary;
     let selection = reconcileAgentWorkspaceState(restored, liveSummary);
+    const desiredProjectId = parsedRequestedProject?.success
+      ? parsedRequestedProject.data
+      : selection.selectedProjectId ?? liveSummary.projects.items[0]?.id ?? null;
+    if (!desiredProjectId) {
+      setHydrationFailure(generationRef, generation, retained, setState, "No coding projects are available.");
+      return;
+    }
     let requestedExists = liveSummary.projects.items.some(
-      (project) => project.id === parsedRequestedProject.data,
+      (project) => project.id === desiredProjectId,
     );
     let workspaceResult: CodingAgentProjectWorkspaceResult | null = null;
     const requestedWorkspaceResult = requestedExists
       ? null
-      : await client.getCodingAgentProjectWorkspace({ projectId: parsedRequestedProject.data });
+      : await client.getCodingAgentProjectWorkspace({ projectId: desiredProjectId });
     if (generation !== generationRef.current) return;
     if (
       requestedWorkspaceResult?.ok
-      && requestedWorkspaceResult.workspace.project.id === parsedRequestedProject.data
+      && requestedWorkspaceResult.workspace.project.id === desiredProjectId
     ) {
       workspaceResult = requestedWorkspaceResult;
       liveSummary = includeWorkspaceProject(liveSummary, requestedWorkspaceResult.workspace);
@@ -202,7 +213,7 @@ export function AgentProjectWorkspaceScreen({
       selection = selectAgentWorkspaceProject(
         selection,
         liveSummary,
-        parsedRequestedProject.data,
+        desiredProjectId,
       );
     }
     const selectedProjectId = selection.selectedProjectId;
@@ -252,7 +263,7 @@ export function AgentProjectWorkspaceScreen({
         warning: requestedExists ? null : "The previous project was unavailable. Showing a live project instead.",
       },
     });
-    if (!requestedExists && selectedProjectId !== requestedProjectId) {
+    if (requestedProjectId && !requestedExists && selectedProjectId !== requestedProjectId) {
       onOpenProject(selectedProjectId);
     }
   }, [client, onOpenProject, requestedProjectId, routeViewMode]);
@@ -387,7 +398,11 @@ export function AgentProjectWorkspaceScreen({
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void hydrate()} tintColor={theme.colors.forest} />}
-      contentContainerStyle={[styles.content, tablet ? styles.tabletContent : null]}
+      contentContainerStyle={[
+        styles.content,
+        { paddingBottom: contentBottomInset },
+        tablet ? styles.tabletContent : null,
+      ]}
     >
       {offline ? (
         <View accessibilityRole="alert" style={styles.offlineBanner}>

@@ -197,6 +197,23 @@ describe("mobile project-first coding-agent workspace", () => {
     );
   });
 
+  it("hydrates the first live project when the Chats tab has no routed project", async () => {
+    const client = clientFixture();
+    render(
+      <AgentProjectWorkspaceScreen
+        client={client as never}
+        connectionState="connected"
+        requestedProjectId={null}
+        onOpenProject={jest.fn()}
+        onOpenThread={jest.fn()}
+        onNewConversation={jest.fn()}
+      />,
+    );
+
+    expect(await screen.findByText("Project audit")).toBeTruthy();
+    expect(client.getCodingAgentProjectWorkspace).toHaveBeenCalledWith({ projectId: "matrix-os" });
+  });
+
   it("opens a valid routed project that is beyond the bounded summary page", async () => {
     const requestedWorkspace: ProjectAgentWorkspace = {
       ...workspace,

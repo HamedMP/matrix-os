@@ -17,6 +17,7 @@ The landed checkpoint is not the confirmed final information architecture. Curre
 - Existing task UI has one `linkedSessionId`; it cannot be used as the source of truth for coding conversations because one task must support several independent threads.
 - The current desktop `AgentWorkspace` is a sectioned dashboard. It does not provide the required persistent project/task/thread navigator or a segmented Conversation/Kanban mode over one selected project.
 - Mobile now adds gateway-validated project/task/thread routes, multi-thread Conversation groups, and a capability-gated Kanban projection with phone/tablet layouts. SDK 57 device and cross-shell evidence remain outstanding.
+- Mobile now has a Cloud-authenticated computer chooser backed by a bounded platform projection. It can reconnect the same signed-in shell to main or preview `/vm/:handle` routes while persisting only the selected gateway reference; remote preview device evidence remains outstanding.
 - Desktop follow-up controls still seed a new thread with a structured reference. Mobile now uses the gateway same-thread turn route with transient drafts and exact retry idempotency; desktop and cross-shell confirmation remain outstanding. Delivering input to a running workspace session settles that turn without marking the thread complete; canonical session-stop reconciliation owns terminal thread status.
 - Existing desktop Kanban task routes/statuses are canonical and reusable, but coding-thread aggregates and multi-thread task navigation are not integrated into that board.
 

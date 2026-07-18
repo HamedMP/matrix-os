@@ -15,6 +15,7 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
 }));
 
 const mockRouterPush = jest.fn();
+const mockRouterReplace = jest.fn();
 
 jest.mock("expo-router", () => ({
   useLocalSearchParams: () => ({}),
@@ -22,7 +23,7 @@ jest.mock("expo-router", () => ({
     const React = require("react");
     React.useEffect(callback, [callback]);
   },
-  useRouter: () => ({ push: mockRouterPush }),
+  useRouter: () => ({ push: mockRouterPush, replace: mockRouterReplace }),
 }));
 
 import React from "react";
@@ -67,6 +68,43 @@ const summary = {
 } satisfies RuntimeSummary;
 
 describe("Agents project-first entry route", () => {
+  beforeEach(() => {
+    mockRouterPush.mockReset();
+    mockRouterReplace.mockReset();
+  });
+
+  it("enters the first live project's conversation list instead of the legacy dashboard", async () => {
+    const client = {
+      connect: jest.fn(),
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({ ok: true, summary }),
+      getCodingAgentNotificationPreferences: jest.fn().mockResolvedValue({
+        ok: true,
+        preferences: {
+          attentionPush: { approval: true, input: true, failed: true, completed: false },
+          updatedAt: "2026-07-10T14:00:00.000Z",
+        },
+      }),
+      updateCodingAgentNotificationPreferences: jest.fn(),
+    };
+    jest.mocked(useGateway).mockReturnValue({
+      client: client as never,
+      connectionState: "connected",
+      gateway: null,
+      setGateway: jest.fn(),
+      unreadCount: 0,
+      incrementUnread: jest.fn(),
+      clearUnread: jest.fn(),
+    });
+
+    render(<AgentsScreen />);
+
+    await screen.findByLabelText("Open project Matrix OS");
+    expect(mockRouterReplace).toHaveBeenCalledWith({
+      pathname: "/agents/projects/[projectId]",
+      params: { projectId: "matrix-os" },
+    });
+  });
+
   it("opens a selected project from the bounded runtime summary", async () => {
     const client = {
       connect: jest.fn(),

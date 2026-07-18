@@ -1307,6 +1307,15 @@ Tests: `MB-005`, `MB-006`, `MB-007`.
 
 Tests: `MB-008`, `MB-009`, `MB-010`.
 
+### 22.4 Remote Computer Selection
+
+- [x] Add an authenticated bounded platform projection for the current user's active computers.
+- [x] Add a native Settings chooser for main/preview computers without persisting the inventory.
+- [x] Reuse the existing Clerk token provider after selection and keep Basic Auth isolated.
+- [x] Offer Cloud sign-in when a self-hosted session has no Clerk identity.
+
+Tests: `MB-011`, `SEC-004`.
+
 Gate:
 
 - [ ] Mobile Jest, lint, `tsc --noEmit`, SDK 57 dev-client device smoke, and existing tab/terminal/app/auth regressions pass.

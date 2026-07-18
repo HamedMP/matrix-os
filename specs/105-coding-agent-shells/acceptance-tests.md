@@ -1,6 +1,6 @@
 # Acceptance Tests: Project Conversations And Kanban
 
-**Status**: Phase 18-20 backend evidence, Phase 21 desktop navigator/conversation/Kanban/computer/inspector evidence, and Phase 22.1-22.3 mobile automated evidence added; device, security, and cross-shell evidence remains planned
+**Status**: Phase 18-20 backend evidence, Phase 21 desktop navigator/conversation/Kanban/computer/inspector evidence, and Phase 22.1-22.4 mobile automated evidence added; device, security, and cross-shell evidence remains planned
 **Updated**: 2026-07-10
 
 This matrix is the executable acceptance contract for the clarified coding-agent shell model. A task checkbox in `tasks.md` is complete only when its named test IDs have current evidence on the exact implementation head. Existing checkpoint tests remain required regressions but do not prove these new cases.
@@ -100,25 +100,37 @@ Every clarified functional requirement and buildable success criterion has at le
 | MB-008 | Conversation/Kanban control preserves selected project/task/thread. | Phone route/state test. |
 | MB-009 | Kanban renders canonical columns and multi-thread card aggregates. | Phone and tablet-width component tests. |
 | MB-010 | Opening either thread from a task card returns to the same conversation identity. | Router parameter validation/navigation test. |
+| MB-011 | A Cloud-authenticated phone can switch to a server-projected main/preview computer without signing out or caching the inventory. | Platform route, secure storage, and native chooser tests. |
 
 ### Phase 22.1 Evidence
 
 - `MB-001`: `apps/mobile/__tests__/agent-project-entry-route.test.tsx` proves the Agents entry opens a gateway-projected project and starts creation with that exact project ID; the existing attention/recent-work assertions remain in `apps/mobile/__tests__/agents-screen.test.tsx`.
+- `MB-001`: `apps/mobile/__tests__/project-chats-tab.test.tsx` proves the dedicated Chats tab preserves exact project/task/thread identity and project-scoped creation parameters, while `agent-project-workspace-screen.test.tsx` proves a tab entry without a routed project hydrates the restored or first live gateway project instead of the legacy recent-work dashboard.
+- `MB-001`: the project-route regression proves a stale or external project deep link redirects through the guarded Agents entry without mounting or fetching the project workspace when `EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE` is disabled.
 - `MB-002`: `apps/mobile/__tests__/agent-project-workspace-screen.test.tsx` hydrates the shared `ProjectAgentWorkspaceSchema` projection and renders the project chat plus its task group.
+- `MB-002`: review regressions additionally prove that a valid routed project beyond the bounded summary page is resolved from `GET /api/coding-agents/projects/:projectId/workspace`, and that task, project-thread, and task-thread cursors request and merge bounded follow-up pages without moving the source of truth client-side.
 - `MB-003`: the same component test opens both `thread_plan` and `thread_fix` independently with the exact `projectId`/`taskId`/`threadId`; `apps/mobile/__tests__/agent-project-route.test.tsx` verifies those IDs cross the Expo Router boundary unchanged.
 - `MB-004` and `SEC-004`: `apps/mobile/__tests__/agent-workspace-state.test.ts` and the project-workspace lifecycle test cover allowlisted serialization, malformed storage, runtime/project reconciliation, stale child IDs, foreground refresh, and reconnect refresh. Device smoke remains part of the Phase 22 gate and is not proven by these Jest tests.
+- Physical persistence audit: the paired iPhone app-data container exposed exactly `matrix.agentWorkspaceState.v2` and `matrix.mobileShellState.v1` in React Native AsyncStorage. Both decoded records passed the production contract schemas and strict allowlisted object shapes; a key-name scan found zero transcript, event, terminal output, file, diff, approval, credential, bearer-token, provider, or resume-state matches. Values were not recorded in the evidence log, and the temporary manifest copy was deleted after inspection. This closes the physical-storage portion of `MB-004`/`SEC-004`; interactive stale-reference and resume behavior remains part of the device gate.
 
 ### Phase 22.2 Evidence
 
 - `MB-005`: `apps/mobile/__tests__/gateway-client.test.ts` validates the authenticated, schema-checked `POST /api/coding-agents/threads/:threadId/turns` client. `apps/mobile/__tests__/agent-thread-screen.test.tsx` proves the Conversation composer posts to the currently selected thread, refreshes that bounded snapshot, clears the accepted draft, and never calls create-thread.
-- `MB-006`: the thread-route tests cover busy retry with the same idempotency key, duplicate-submit suppression, offline draft retention, fail-closed capability checks, reconnect rehydration, and foreground snapshot refresh. Drafts stay transient component state and are not added to AsyncStorage.
+- `MB-005`: the client regression uses the gateway route's authoritative `{ error: CreateAgentTurnError }` response shape and proves `thread_busy` remains a retryable busy state instead of degrading to a generic unavailable error.
+- `MB-006`: the thread-route tests cover busy retry with the same idempotency key, duplicate-submit suppression, offline draft retention, fail-closed capability checks, reconnect rehydration, foreground snapshot refresh, and suppression of the composer for queued, approval-waiting, input-waiting, archived, and legacy unassigned threads that the gateway turn contract rejects. Drafts stay transient component state and are not added to AsyncStorage.
 - `MB-007`: the existing thread-route terminal regression still persists and opens only the canonical bounded `terminalSessionId`; the project-route fixtures keep the exact selected project/task/thread identity. Device keyboard, safe-area, background, and terminal handoff smoke remain part of the Phase 22 gate and are not proven by Jest.
 
 ### Phase 22.3 Evidence
 
 - `MB-008`: `apps/mobile/__tests__/agent-project-workspace-screen.test.tsx`, `apps/mobile/__tests__/agent-workspace-state.test.ts`, and `apps/mobile/__tests__/agent-project-route.test.tsx` prove the capability-gated Conversation/Kanban control changes only the view reference, preserves the selected project/task/thread IDs, and replaces the Expo route with the matching project URL.
+- `MB-008`: the normal project-route regression explicitly seeds Conversation, preventing a persisted Kanban reference from reopening when the Conversation URL is entered.
 - `MB-009`: the project-workspace screen test renders phone and tablet board layouts from `ProjectAgentWorkspaceSchema`, asserts canonical `todo`, `running`, `waiting`, `blocked`, and `complete` columns, keeps `archived` hidden, and shows the gateway-projected thread/active/attention aggregates. A mixed completed/running thread fixture remains in the canonical task column instead of inferring a task move.
+- `MB-009`: `apps/mobile/__tests__/mobile-app-config.test.ts` prevents the Expo phone/tablet build from regressing to a portrait-only lock. The physical iPhone dev-client rebuild succeeded with zero errors, and its generated binary declares portrait plus both landscape orientations for iPhone and iPad; direct rotated-layout inspection remains part of the device gate.
 - `MB-010`: the Kanban component test opens both `thread_plan` and `thread_fix` with their exact `projectId`/`taskId`/`threadId`, while `apps/mobile/__tests__/agent-project-board-route.test.tsx` proves the dedicated board route uses the shared project workspace in Kanban mode. SDK 57 device navigation remains part of the Phase 22 gate and is not proven by Jest.
+
+### Phase 22.4 Evidence
+
+- `MB-011`: `tests/platform/proxy-routing.test.ts` proves the Clerk-authenticated computer route returns only the current owner's bounded same-origin projection, rejects anonymous discovery, and quarantines an invalid legacy machine projection without hiding the owner's valid computers. `apps/mobile/__tests__/mobile-computers.test.ts`, `storage.test.ts`, `computer-picker-screen.test.tsx`, and `settings-screen.test.tsx` prove response validation, credential-free selection persistence, Cloud sign-in recovery, load-error recovery, and same-session gateway switching. Preview VPS workflow run `29147546571` built, published, and deployed exact implementation head `3f37e0dc36fd05071f154b881d08d5ccccae2424` as `v2026.07.11-pr914-3f37e0d-r29147546571` on `pr-914`. The preview route calls `provisionPreview`, which fixes `provisioningClass` to `preview`; the service test reads a `pr-897` row back and asserts that class, so the computer projection does not infer preview identity from the client. Platform Cloud Run run `29128264329` separately deployed and smoke-tested zero-traffic candidate revision `matrix-platform-00296-man` without promotion. The Expo SDK 57 dev client bundled and relaunched the current Chats-tab head on the paired physical phone without a runtime crash; rendered selection and the post-switch workspace walkthrough still require direct user confirmation and remain part of the Phase 22 gate.
 
 ## Security Tests
 

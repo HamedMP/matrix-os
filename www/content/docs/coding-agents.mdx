@@ -51,6 +51,18 @@ project projection. Opening one of those chats returns to its exact
 conversation. Moving a task updates its canonical task status; agent thread
 status never moves a card automatically.
 
+### Switch computers on mobile
+
+If your Matrix account has more than one active computer, open **Settings → Switch computer** in
+the mobile app. The chooser lists your main computer and any active preview computer, including its
+coarse status and installed version. Selecting one reconnects Apps, Terminal, and the coding-agent
+workspace to that computer without signing out.
+
+The list is available only while signed in to Matrix OS Cloud. A phone connected directly to a
+self-hosted computer with Basic Auth must sign in to Cloud before it can discover account-owned
+computers. Mobile stores only the selected same-origin computer route; it does not cache the
+account's computer inventory, credentials, or runtime data.
+
 ## Supported agents
 
 Four coding agents are supported:

@@ -111,6 +111,25 @@ Use Team ID `PX4JL74Y2K` and bundle ID `com.matrixos.mobile`.
 - `redirect url ... does not match an authorized redirect URI`: add
   `matrixos://sso-callback` to Clerk's native redirect allowlist.
 
+### Native Computer Selection
+
+Cloud-authenticated users can switch between their main and preview Matrix computers from
+**Settings → Switch computer**. The platform-owned `GET /api/auth/computers` projection returns a
+bounded list of safe labels, statuses, versions, and same-origin `/vm/:handle` paths. The mobile app
+validates that response and persists only the selected `GatewayConnection`; it never persists the
+computer inventory or platform metadata.
+
+A Basic Auth connection has no Clerk identity and therefore cannot list Cloud computers. The
+chooser must offer the Cloud sign-in route in that state. After Cloud sign-in, switching computers
+reuses the existing Clerk token provider and does not require another sign-out.
+
+Focused validation:
+
+```bash
+pnpm exec vitest run tests/platform/proxy-routing.test.ts -t 'Matrix computers|native computer'
+pnpm --filter matrix-os-mobile run test --runInBand --runTestsByPath __tests__/computer-picker-screen.test.tsx __tests__/settings-screen.test.tsx __tests__/storage.test.ts __tests__/mobile-computers.test.ts
+```
+
 ## State
 
 Mobile resume state is intentionally small and validated before use.
