@@ -927,7 +927,12 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                 minHeight: mobile ? 0 : undefined,
               }}
             >
-              <div className="flex flex-1 min-h-0 min-w-0 flex-col">
+              <div
+                className="flex flex-1 min-h-0 min-w-0 flex-col"
+                role="tabpanel"
+                id="terminal-tabpanel"
+                aria-labelledby={`terminal-tab-${activeTab.id}`}
+              >
                 <PaneGrid
                   paneTree={activeTab.paneTree}
                   theme={designTheme}

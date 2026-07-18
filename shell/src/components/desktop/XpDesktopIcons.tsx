@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
+import { useWindowManager } from "@/hooks/useWindowManager";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
   XpComputerGlyph,
@@ -38,6 +39,9 @@ export function XpDesktopIcons({ onOpenApp }: XpDesktopIconsProps) {
   const themeStyle = useThemeStyle();
   const navigate = useFileBrowser((s) => s.navigate);
   const requestView = useFileBrowser((s) => s.requestView);
+  const hasFilesWindow = useWindowManager((s) =>
+    s.windows.some((w) => w.path === "__file-browser__" || w.path.startsWith("__file-browser__:")),
+  );
   const [selectedId, setSelectedId] = useState<XpDesktopIconId | null>(null);
   const layerRef = useRef<HTMLDivElement>(null);
 
@@ -60,7 +64,11 @@ export function XpDesktopIcons({ onOpenApp }: XpDesktopIconsProps) {
     if (id === "recycle-bin") {
       requestView("trash");
     } else {
-      navigate("");
+      // Only reset to home when no Files window exists yet: focusing an
+      // already-open window must not silently reset the location the user
+      // was browsing (the path is shared store state, so a reset would hit
+      // every open Files window).
+      if (!hasFilesWindow) navigate("");
       requestView("files");
     }
     onOpenApp("__file-browser__", "Files");
