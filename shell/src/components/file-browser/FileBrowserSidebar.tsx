@@ -2,27 +2,9 @@
 
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { cn } from "@/lib/utils";
-import {
-  FolderIcon,
-  UsersIcon,
-  AppWindowIcon,
-  SettingsIcon,
-  PuzzleIcon,
-  BoxIcon,
-  DatabaseIcon,
-  Trash2Icon,
-  StarIcon,
-} from "lucide-react";
+import { FolderIcon, Trash2Icon, StarIcon } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-
-const LOCATIONS = [
-  { name: "Agents", path: "agents", icon: UsersIcon },
-  { name: "Apps", path: "apps", icon: AppWindowIcon },
-  { name: "System", path: "system", icon: SettingsIcon },
-  { name: "Plugins", path: "plugins", icon: PuzzleIcon },
-  { name: "Modules", path: "modules", icon: BoxIcon },
-  { name: "Data", path: "data", icon: DatabaseIcon },
-];
+import { FILE_BROWSER_LOCATIONS } from "./file-browser-locations";
 
 interface FileBrowserSidebarProps {
   onTrashClick: () => void;
@@ -60,7 +42,7 @@ export function FileBrowserSidebar({ onTrashClick, showingTrash }: FileBrowserSi
           active={currentPath === "" && !showingTrash}
           onClick={() => navigate("")}
         />
-        {LOCATIONS.map((loc) => (
+        {FILE_BROWSER_LOCATIONS.map((loc) => (
           <SidebarItem
             key={loc.path}
             icon={loc.icon}
