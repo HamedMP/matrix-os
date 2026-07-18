@@ -82,6 +82,7 @@ export interface CreateSessionOptions {
 
 export interface AttachOptions {
   signal?: AbortSignal;
+  size?: { cols: number; rows: number };
 }
 
 export interface ZellijAdapter {
@@ -354,8 +355,8 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
   function attachProcess(name: string, options: AttachOptions = {}): ShellAttachProcess {
     const pty = spawnPty("zellij", ["attach", name], {
       name: "xterm-256color",
-      cols: 120,
-      rows: 40,
+      cols: options.size?.cols ?? 120,
+      rows: options.size?.rows ?? 40,
       cwd,
       env: attachEnv(deps.env, zellijConfigPaths),
     });

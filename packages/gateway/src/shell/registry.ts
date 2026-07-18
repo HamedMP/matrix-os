@@ -43,6 +43,11 @@ const ShellSessionSchema = z.object({
   // "session" for sessions created after reaper support shipped; absent for
   // pre-upgrade sessions, which are exempt from TTL reaping (spec 107 FR-018).
   kind: z.string().optional(),
+  // Canonical terminal size negotiated across hard clients (spec 107 FR-006).
+  canonicalSize: z.object({
+    cols: z.number().int().min(1).max(500),
+    rows: z.number().int().min(1).max(200),
+  }).optional(),
   visualStatus: ShellVisualStatusSchema.optional(),
   visualStatusUpdatedAt: z.string().optional(),
 });
@@ -358,6 +363,20 @@ export class ShellRegistry {
       }
 
       return this.decorateSession(next, file);
+    });
+  }
+
+  async updateCanonicalSize(name: string, size: { cols: number; rows: number }): Promise<void> {
+    return this.withMutationLock(async () => {
+      const safeName = validateSessionName(name);
+      const file = await this.read();
+      const targetName = this.resolveSessionName(file, safeName);
+      const session = file.sessions[targetName];
+      if (!session) {
+        return;
+      }
+      file.sessions[targetName] = { ...session, canonicalSize: size, updatedAt: new Date().toISOString() };
+      await this.write(file);
     });
   }
 

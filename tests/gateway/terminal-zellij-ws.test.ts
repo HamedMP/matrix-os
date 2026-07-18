@@ -982,6 +982,135 @@ describe("zellij terminal WebSocket", () => {
     handler.dispose();
   });
 
+  it("treats a hard declaration without a size as legacy", async () => {
+    const pty = new FakePty();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      maxReplayBytes: 4096,
+      sizingDebounceMs: 5,
+    });
+
+    const session = await handler.open({ ws: socket(), session: "main", fromSeq: 0, clientClass: "hard" });
+    session.onMessage(JSON.stringify({ type: "resize", cols: 100, rows: 30 }));
+
+    // no declared size -> legacy semantics: resize-follow still works
+    expect(pty.resizes).toContainEqual({ cols: 100, rows: 30 });
+    handler.dispose();
+  });
+
+  it("negotiates canonical size across hard clients and pins the shared attach pty", async () => {
+    const pty = new FakePty();
+    const sizes: Array<{ cols: number; rows: number } | undefined> = [];
+    const persisted: Array<[string, { cols: number; rows: number }]> = [];
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: {
+        attachSession: vi.fn((_name: string, opts?: { size?: { cols: number; rows: number } }) => {
+          sizes.push(opts?.size);
+          return pty;
+        }),
+      },
+      maxReplayBytes: 4096,
+      sizingDebounceMs: 5,
+      persistCanonicalSize: (name, size) => {
+        persisted.push([name, size]);
+      },
+    });
+
+    await handler.open({ ws: socket(), session: "main", fromSeq: 0, clientClass: "hard", declaredSize: { cols: 200, rows: 50 } });
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    await handler.open({ ws: socket(), session: "main", fromSeq: 0, clientClass: "hard", declaredSize: { cols: 190, rows: 60 } });
+    await new Promise((resolve) => setTimeout(resolve, 15));
+
+    // the first hard attach spawns the shared pty at its own declared size,
+    // not the fallback
+    expect(sizes).toEqual([{ cols: 200, rows: 50 }]);
+    // after negotiation the shared pty is pinned to the component-wise minimum
+    expect(pty.resizes.at(-1)).toEqual({ cols: 190, rows: 50 });
+    expect(persisted.at(-1)).toEqual(["main", { cols: 190, rows: 50 }]);
+    handler.dispose();
+  });
+
+  it("ignores soft-client resize frames and keeps the canonical size", async () => {
+    const pty = new FakePty();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      maxReplayBytes: 4096,
+      sizingDebounceMs: 5,
+    });
+
+    await handler.open({ ws: socket(), session: "main", fromSeq: 0, clientClass: "hard", declaredSize: { cols: 200, rows: 50 } });
+    const soft = await handler.open({ ws: socket(), session: "main", fromSeq: 0, clientClass: "soft", declaredSize: { cols: 60, rows: 30 } });
+    await new Promise((resolve) => setTimeout(resolve, 15));
+
+    soft.onMessage(JSON.stringify({ type: "resize", cols: 40, rows: 20 }));
+    await new Promise((resolve) => setTimeout(resolve, 15));
+
+    expect(pty.resizes).not.toContainEqual({ cols: 40, rows: 20 });
+    expect(pty.resizes.at(-1)).toEqual({ cols: 200, rows: 50 });
+    handler.dispose();
+  });
+
+  it("keeps legacy resize-follow only until a classified client attaches", async () => {
+    const pty = new FakePty();
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: { attachSession: vi.fn(() => pty) },
+      maxReplayBytes: 4096,
+      sizingDebounceMs: 5,
+    });
+
+    const legacy = await handler.open({ ws: socket(), session: "main", fromSeq: 0 });
+    legacy.onMessage(JSON.stringify({ type: "resize", cols: 100, rows: 30 }));
+    expect(pty.resizes).toContainEqual({ cols: 100, rows: 30 });
+
+    await handler.open({ ws: socket(), session: "main", fromSeq: 0, clientClass: "hard", declaredSize: { cols: 200, rows: 50 } });
+    await new Promise((resolve) => setTimeout(resolve, 15));
+
+    legacy.onMessage(JSON.stringify({ type: "resize", cols: 44, rows: 11 }));
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    expect(pty.resizes).not.toContainEqual({ cols: 44, rows: 11 });
+    // instead the shared pty is pinned to the hard client's canonical size
+    expect(pty.resizes.at(-1)).toEqual({ cols: 200, rows: 50 });
+    handler.dispose();
+  });
+
+  it("drops stale sizing registrations when the shared attach exits so reconnects negotiate fresh", async () => {
+    const ptyA = new FakePty();
+    const ptyB = new FakePty();
+    const sizes: Array<{ cols: number; rows: number } | undefined> = [];
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "main", status: "active" }]) },
+      adapter: {
+        attachSession: vi.fn((_name: string, opts?: { size?: { cols: number; rows: number } }) => {
+          sizes.push(opts?.size);
+          return sizes.length === 1 ? ptyA : ptyB;
+        }),
+      },
+      maxReplayBytes: 4096,
+      sizingDebounceMs: 5,
+    });
+
+    await handler.open({ ws: socket(), session: "main", fromSeq: 0, clientClass: "hard", declaredSize: { cols: 80, rows: 20 } });
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    expect(sizes[0]).toEqual({ cols: 80, rows: 20 });
+
+    // The zellij attach process dies unexpectedly, clearing every connection.
+    ptyA.emitExit({ exitCode: 1 });
+
+    const reconnected = await handler.open({ ws: socket(), session: "main", fromSeq: 0, clientClass: "hard", declaredSize: { cols: 200, rows: 50 } });
+    await new Promise((resolve) => setTimeout(resolve, 15));
+
+    // The reconnect spawns and pins at its own declaration; the dead 80x20
+    // hard client must not participate in negotiation anymore.
+    expect(sizes[1]).toEqual({ cols: 200, rows: 50 });
+    expect(ptyB.resizes.at(-1)).toEqual({ cols: 200, rows: 50 });
+    expect(reconnected).toBeDefined();
+    handler.dispose();
+  });
+
   it("accepts terminal query token and bearer auth through constant-time auth middleware", async () => {
     const next = vi.fn();
     const makeContext = (url: string, authorization?: string) => ({

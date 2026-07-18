@@ -45,7 +45,7 @@ export interface ShellClient {
   deleteLayout(name: string): Promise<Record<string, unknown>>;
   applyLayout(session: string, layout: string): Promise<Record<string, unknown>>;
   dumpLayout(session: string): Promise<Record<string, unknown>>;
-  createAttachUrl(name: string, options?: { fromSeq?: number; token?: string }): string;
+  createAttachUrl(name: string, options?: { fromSeq?: number; token?: string; size?: { cols: number; rows: number } | null }): string;
   sendInput(name: string, data: string): Promise<void>;
   attachSession(name: string, options?: ShellAttachOptions): Promise<{ detached: boolean }>;
 }
@@ -483,10 +483,19 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
   const terminalSessionsPath = "/api/terminal/sessions";
   const terminalLayoutsPath = "/api/terminal/layouts";
 
-  function createAttachUrl(name: string, attachOptions: { fromSeq?: number; token?: string } = {}): string {
+  function createAttachUrl(name: string, attachOptions: { fromSeq?: number; token?: string; size?: { cols: number; rows: number } | null } = {}): string {
     const url = new URL(`${base}/ws/terminal/session`);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.searchParams.set("session", name);
+    if (attachOptions.size) {
+      // Declare as a hard sizing client (spec 107 FR-007): a TTY cannot scale
+      // its render, so its size participates in canonical-size negotiation.
+      // Without a known size the declaration is omitted (legacy behavior) so
+      // an undeclared hard client can never pin the session to a fallback.
+      url.searchParams.set("client", "hard");
+      url.searchParams.set("cols", String(attachOptions.size.cols));
+      url.searchParams.set("rows", String(attachOptions.size.rows));
+    }
     if (typeof attachOptions.fromSeq === "number") {
       url.searchParams.set("fromSeq", String(attachOptions.fromSeq));
     }
@@ -964,6 +973,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           const ws = new WebSocketImpl(createAttachUrl(name, {
             ...attachOptions,
             fromSeq: currentFromSeq(),
+            size: terminalSize(input, output),
           }), { headers });
           currentWs = ws;
           const isCurrentSocket = () => currentWs === ws && socketGeneration === generation && !settled;
