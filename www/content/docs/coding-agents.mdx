@@ -147,6 +147,8 @@ Matrix OS syncs a curated skill pack into each agent's skill discovery path at i
 
 Agent work is organized into threads. A thread records the selected provider, project or worktree context, lifecycle status, and safe event timeline. Desktop and mobile can keep an open thread updated from gateway state and can reopen a thread to see progress without replaying terminal output into local storage.
 
+Codex threads use the installed CLI's structured event stream when its version matches Matrix's verified compatibility range. Matrix turns assistant messages, tool activity, file changes, and completion state into bounded thread events while keeping raw commands, command output, provider errors, and credentials out of shell timelines. Follow-up messages resume the same provider thread. If the installed CLI is newer or older than the verified range, Matrix marks structured execution unavailable until the compatibility contract is updated.
+
 Threads may need attention when an agent:
 
 - requests approval for an action;

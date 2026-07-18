@@ -258,6 +258,9 @@ export function parseCodexExecJsonLine(
   if (codexEvent.type === "thread.started") {
     return { events: [], providerThreadId: codexEvent.thread_id };
   }
+  if (codexEvent.type === "turn.started") {
+    return { events: [event(context, { type: "thread.status", status: "running" })] };
+  }
   if (codexEvent.type === "turn.completed") return { events: [], outcome: "completed" };
   if (codexEvent.type === "turn.failed") return { events: [], outcome: "failed" };
   if (codexEvent.type === "item.started") {
