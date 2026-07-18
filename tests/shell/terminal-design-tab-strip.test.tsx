@@ -240,10 +240,11 @@ describe("TerminalApp per-design interior chrome", () => {
 
     const tablist = screen.getByRole("tablist", { name: "Terminal tabs" });
     const tab = within(tablist).getByRole("tab", { name: "Canvas Terminal" });
-    expect(tab.id).toMatch(/^terminal-tab-/);
-    expect(tab.getAttribute("aria-controls")).toBe("terminal-tabpanel");
-
+    expect(tab.id).toMatch(/^terminal-tab-.+-/);
     const panel = screen.getByRole("tabpanel");
+    // aria-controls points at this instance's panel, and the panel labels back.
+    expect(tab.getAttribute("aria-controls")).toBe(panel.id);
+    expect(panel.id).toMatch(/^terminal-tabpanel-/);
     expect(panel.getAttribute("aria-labelledby")).toBe(tab.id);
   });
 
