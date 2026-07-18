@@ -45,6 +45,14 @@
   outline: none;
 }
 
+/* Keyboard focus cue (the plain :focus rule removes the default outline):
+   the classic XP dotted focus rectangle around the icon. */
+.xp-desktop-icon:focus-visible .xp-desktop-icon-glyph {
+  outline: 1px dotted #ffffff;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+}
+
 .xp-desktop-icon--recycle-bin {
   /* Real XP anchors the Recycle Bin to the bottom-right of the desktop;
      lifted 30px + margin to clear the always-on-top taskbar. */
