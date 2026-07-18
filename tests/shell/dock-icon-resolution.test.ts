@@ -7,7 +7,11 @@ describe("dock icon resolution", () => {
 
     expect(source).toContain("/api/shell/bootstrap");
     expect(source).not.toContain("/api/layout`,");
-    expect(source).not.toContain("/api/apps`,");
+    // The only sanctioned direct /api/apps fetch is the design-switch refresh
+    // effect (reconciles design-scoped apps mid-session); no other ad-hoc
+    // app-list fetches may creep back in.
+    expect(source.match(/\/api\/apps`,/g) ?? []).toHaveLength(1);
+    expect(source).toContain("reconcileDesignApps");
     expect(source).not.toContain("/files/system/modules.json");
   });
 

@@ -52,6 +52,8 @@ vi.mock("@/hooks/useFileBrowser", () => {
     setQuickLookPath: vi.fn(),
     togglePreviewPanel: vi.fn(),
     searchResults: null,
+    pendingView: null as "files" | "trash" | null,
+    consumeViewRequest: vi.fn(),
   };
   return {
     useFileBrowser: (selector: (value: typeof state) => unknown) => selector(state),

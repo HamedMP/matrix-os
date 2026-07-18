@@ -51,6 +51,12 @@ interface FileBrowserState {
   searchResults: SearchResult[] | null;
   searching: boolean;
   clipboard: { paths: string[]; operation: "copy" | "cut" } | null;
+  /**
+   * One-shot view request from outside the Files window (e.g. the XP desktop
+   * icons): the next mounted/active FileBrowser consumes it, shows the
+   * requested view and clears the request via `consumeViewRequest`.
+   */
+  pendingView: "files" | "trash" | null;
 }
 
 interface FileBrowserActions {
@@ -78,6 +84,8 @@ interface FileBrowserActions {
   createFolder(name: string): Promise<void>;
   createFile(name: string): Promise<void>;
   toggleFavorite(path: string): void;
+  requestView(view: "files" | "trash"): void;
+  consumeViewRequest(): void;
 }
 
 async function fetchEntries(path: string): Promise<FileEntry[]> {
@@ -151,6 +159,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
     searchResults: null,
     searching: false,
     clipboard: null,
+    pendingView: null,
 
     navigate(path: string) {
       const { history, historyIndex } = get();
@@ -429,6 +438,14 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
           : [...s.favorites, path];
         return { favorites: next };
       });
+    },
+
+    requestView(view) {
+      set({ pendingView: view });
+    },
+
+    consumeViewRequest() {
+      set({ pendingView: null });
     },
   }),
 );

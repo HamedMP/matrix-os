@@ -28,6 +28,7 @@ describe("useFileBrowser store", () => {
       searchResults: null,
       searching: false,
       clipboard: null,
+      pendingView: null,
     });
     mockFetch.mockReset();
     mockFetch.mockResolvedValue({
@@ -312,6 +313,22 @@ describe("useFileBrowser store", () => {
           body: JSON.stringify({ from: "old.md", to: "new.md" }),
         }),
       );
+    });
+  });
+
+  describe("view requests", () => {
+    it("requestView stores a one-shot pending view", () => {
+      useFileBrowser.getState().requestView("trash");
+      expect(useFileBrowser.getState().pendingView).toBe("trash");
+
+      useFileBrowser.getState().requestView("files");
+      expect(useFileBrowser.getState().pendingView).toBe("files");
+    });
+
+    it("consumeViewRequest clears the pending view", () => {
+      useFileBrowser.getState().requestView("trash");
+      useFileBrowser.getState().consumeViewRequest();
+      expect(useFileBrowser.getState().pendingView).toBeNull();
     });
   });
 });
