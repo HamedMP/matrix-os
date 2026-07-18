@@ -142,6 +142,16 @@ function mockJsonResponse(body: unknown, status = 200): Response {
   } as Response;
 }
 
+function completeAgentStatusResponse(installState: "installed" | "missing" | "unknown" = "unknown") {
+  return {
+    agents: (["claude", "codex", "opencode", "pi"] as const).map((id) => ({
+      id,
+      installState,
+      installed: installState === "installed" ? true : installState === "missing" ? false : null,
+    })),
+  };
+}
+
 function createDragDataTransfer(): DataTransfer {
   const data = new Map<string, string>();
   return {
@@ -195,6 +205,9 @@ describe("TerminalApp", () => {
     vi.stubGlobal("ResizeObserver", ResizeObserverMock as unknown as typeof ResizeObserver);
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/api/agents")) {
+        return Promise.resolve({ ok: true, json: async () => completeAgentStatusResponse() });
+      }
       if (url.includes("/api/files/tree")) {
         return Promise.resolve({ ok: true, json: async () => [] });
       }
@@ -1955,8 +1968,9 @@ describe("TerminalApp", () => {
     const menu = screen.getByRole("menu", { name: "New session menu" });
     expect(within(menu).getByText("NEW TAB")).toBeTruthy();
     expect(within(menu).getByRole("menuitem", { name: /^Shell(?:\s+⌘T)?$/i })).toBeTruthy();
-    expect(within(menu).getByRole("menuitem", { name: /Claude Code.*Install/i })).toBeTruthy();
-    expect(within(menu).getByRole("menuitem", { name: /Codex.*Install/i })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /Claude Code.*Status unavailable/i })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /Codex.*Status unavailable/i })).toBeTruthy();
+    expect(within(menu).queryByText("Install")).toBeNull();
     expect(fetchMock.mock.calls.some(([input, init]) => (
       String(input).endsWith("/api/terminal/sessions") &&
       init?.method === "POST"

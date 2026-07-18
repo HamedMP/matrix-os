@@ -443,7 +443,6 @@ export async function createGateway(config: GatewayConfig) {
     runtimeHome: homePath,
     codexExecutable,
   });
-  let agentDetectionInFlight: Promise<Awaited<ReturnType<typeof agentCredentialLauncher.detectAgents>>> | null = null;
   let internalIntegrationBaseUrl: string | null = null;
   const PLATFORM_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const CAPABILITY_LOOKUP_TIMEOUT_MS = 10_000;
@@ -505,14 +504,21 @@ export async function createGateway(config: GatewayConfig) {
   const agentCredentialService = createAgentCredentialStatusService({
     onChange: (ownerId) => readinessCache.delete(ownerId),
     probeAgent: async (_ownerId, agent) => {
-      agentDetectionInFlight ??= agentCredentialLauncher.detectAgents().finally(() => {
-        agentDetectionInFlight = null;
-      });
-      const detected = await agentDetectionInFlight;
+      const detected = await agentCredentialLauncher.detectAgentCredentials();
       const status = detected.agents.find((candidate) => candidate.id === agent);
       return {
         available: Boolean(status?.installed && status.authState === "ok"),
-        missing: status?.installed === false,
+        condition: status?.errorCode === "agent_missing"
+          ? "missing"
+          : status?.errorCode === "agent_auth_required"
+            ? "auth_required"
+            : status?.errorCode === "agent_version_unsupported"
+              ? "version_unsupported"
+              : status?.errorCode === "agent_check_failed"
+                ? "check_failed"
+                : status?.authState === "ok"
+                  ? "available"
+                  : "check_failed",
       };
     },
   });

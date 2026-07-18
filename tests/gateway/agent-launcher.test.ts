@@ -139,8 +139,40 @@ describe("agent-launcher", () => {
     expect(result.agents.every((agent) => agent.authState === "ok")).toBe(true);
   });
 
+  it("distinguishes auth-required exits from credential check failures", async () => {
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (args[0] === "--version") {
+        return {
+          stdout: command === "codex" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : `${command} 1.0.0\n`,
+          stderr: "",
+        };
+      }
+      if (command === "claude") throw Object.assign(new Error("not logged in"), { code: 1 });
+      throw commandError("ETIMEDOUT", "credential probe timed out");
+    });
+    const launcher = createAgentLauncher({ runCommand });
+
+    const result = await launcher.detectAgentCredentials();
+
+    expect(result.agents.find((agent) => agent.id === "claude")).toMatchObject({
+      installState: "installed",
+      authState: "required",
+      errorCode: "agent_auth_required",
+    });
+    expect(result.agents.find((agent) => agent.id === "codex")).toMatchObject({
+      installState: "installed",
+      authState: "error",
+      errorCode: "agent_check_failed",
+    });
+  });
+
   it("checks auth with the Matrix runtime home so terminal logins are reused", async () => {
-    const runCommand = vi.fn(async () => ({ stdout: "ok\n", stderr: "" }));
+    const runCommand = vi.fn(async (command: string, args: string[]) => ({
+      stdout: command === "codex" && args[0] === "--version"
+        ? `codex-cli ${CODEX_VERIFIED_VERSION}\n`
+        : "ok\n",
+      stderr: "",
+    }));
     const launcher = createAgentLauncher({
       runCommand,
       cwd: "/home/matrix/home",
@@ -242,6 +274,27 @@ describe("agent-launcher", () => {
       version: "codex-cli 0.144.1",
     });
     expect(runCommand).not.toHaveBeenCalledWith(codexExecutable, ["login", "status"], expect.any(Object));
+  });
+
+  it("reports unsupported Codex credentials without running the authentication probe", async () => {
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === "codex" && args[0] === "--version") {
+        return { stdout: "codex-cli 0.144.1\n", stderr: "" };
+      }
+      return { stdout: `${command} 1.0.0\n`, stderr: "" };
+    });
+    const launcher = createAgentLauncher({ runCommand });
+
+    const result = await launcher.detectAgentCredentials();
+
+    expect(result.agents.find((agent) => agent.id === "codex")).toMatchObject({
+      installState: "installed",
+      installed: true,
+      authState: "error",
+      workspaceCompatibility: "unsupported",
+      errorCode: "agent_version_unsupported",
+    });
+    expect(runCommand).not.toHaveBeenCalledWith("codex", ["login", "status"], expect.any(Object));
   });
 
   it("deduplicates overlapping installation scans and expires the five-second cache", async () => {

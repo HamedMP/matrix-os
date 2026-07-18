@@ -327,7 +327,18 @@ describe("workspace API routes", () => {
       killSession: vi.fn(async () => ({ ok: true, session: { ...session, runtime: { ...session.runtime, status: "exited" } } })),
     };
     const agentLauncher = {
-      detectAgents: vi.fn(async () => ({ agents: [{ id: "codex", installed: true, authState: "ok" }] })),
+      detectAgentInstallations: vi.fn(async () => ({ agents: [{
+        id: "codex" as const,
+        command: "codex",
+        displayName: "Codex",
+        installState: "installed" as const,
+        installed: true,
+        authState: "unknown" as const,
+        workspaceCompatibility: "compatible" as const,
+        errorCode: null,
+      }] })),
+      detectAgentCredentials: vi.fn(async () => ({ agents: [] })),
+      detectAgents: vi.fn(async () => ({ agents: [] })),
       buildLaunch: vi.fn(),
     };
     const agentSandbox = {
@@ -434,12 +445,13 @@ describe("workspace API routes", () => {
     expect(sendInput).toHaveBeenCalledWith("sess_route_input", "pwd\n", undefined);
   });
 
-  it("checks default agent auth with the Matrix home", async () => {
+  it("checks default agent installations with the Matrix home without authentication", async () => {
     const binPath = join(homePath, "bin");
     await mkdir(binPath, { recursive: true });
     const script = `#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "--version" ]; then
+  [ "\${HOME:-}" = "\${EXPECTED_MATRIX_HOME:-}" ]
   printf '%s 1.0.0\\n' "$(basename "$0")"
   exit 0
 fi
@@ -468,8 +480,9 @@ exit 1
       const body = await res.json() as { agents: Array<{ id: string; authState: string; errorCode: string | null }> };
 
       expect(body.agents.find((agent) => agent.id === "codex")).toMatchObject({
-        authState: "ok",
-        errorCode: null,
+        installState: "installed",
+        installed: true,
+        authState: "unknown",
       });
     } finally {
       if (originalPath === undefined) {

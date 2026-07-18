@@ -16,7 +16,12 @@ import {
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { sessionAccent } from "./terminal-session-names";
 import { NewSessionMenu } from "./NewSessionMenu";
-import type { TerminalAgentId, TerminalAgentOption } from "./terminal-agent-options";
+import type {
+  TerminalAgentId,
+  TerminalAgentInstallState,
+  TerminalAgentMenuAction,
+  TerminalAgentOption,
+} from "./terminal-agent-options";
 import type { ShellSessionSummary } from "./terminal-session-state";
 
 export const DEFAULT_SHELL_SESSION_NAME = "main";
@@ -332,6 +337,8 @@ export function CollapsedSessionsRail({
   onCreateShell,
   onCreateAgent,
   agentStatuses,
+  agentStatusesChecking,
+  agentStatusesUnavailable,
   onOpen,
 }: {
   shells: ShellSessionSummary[];
@@ -343,8 +350,10 @@ export function CollapsedSessionsRail({
   onNew: () => void;
   onNewMenuClose: () => void;
   onCreateShell: () => void;
-  onCreateAgent: (option: TerminalAgentOption, installed: boolean) => void;
-  agentStatuses: Record<TerminalAgentId, boolean> | null;
+  onCreateAgent: (option: TerminalAgentOption, action: TerminalAgentMenuAction) => void;
+  agentStatuses: Record<TerminalAgentId, TerminalAgentInstallState>;
+  agentStatusesChecking: boolean;
+  agentStatusesUnavailable: boolean;
   onOpen: (shell: ShellSessionSummary) => void;
 }) {
   const activeShells = shells.filter((shell) => shell.placement !== "background");
@@ -410,6 +419,8 @@ export function CollapsedSessionsRail({
             onCreateShell={onCreateShell}
             onCreateAgent={onCreateAgent}
             agentStatuses={agentStatuses}
+            agentStatusesChecking={agentStatusesChecking}
+            agentStatusesUnavailable={agentStatusesUnavailable}
           />
         ) : null}
       </div>

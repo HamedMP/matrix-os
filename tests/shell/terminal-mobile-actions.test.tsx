@@ -64,6 +64,18 @@ describe("TerminalApp mobile actions", () => {
 
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => {
+      if (url.endsWith("/api/agents")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            agents: (["claude", "codex", "opencode", "pi"] as const).map((id) => ({
+              id,
+              installState: "unknown",
+              installed: null,
+            })),
+          }),
+        });
+      }
       if (url.endsWith("/api/terminal/layout") && init?.method !== "PUT") {
         return Promise.resolve({ ok: true, json: async () => ({ tabs: [] }) });
       }
