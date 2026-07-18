@@ -2,6 +2,9 @@ export const SHELL_Z_INDEX = {
   // Panel-local card elevation. This stays below app windows and only orders
   // sibling rows inside a shell surface.
   terminalSessionMenuCard: 30,
+  // mac menu bar (standard + macOS-glass variants): floats above app windows
+  // and the canvas but below the Windows taskbar, Settings, and hard gates.
+  menuBar: 60,
   appWindowMax: 500,
   fullscreenWindow: 600,
   fullscreenExit: 601,

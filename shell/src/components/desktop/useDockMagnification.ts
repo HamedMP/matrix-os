@@ -51,5 +51,5 @@ export function useDockMagnification(
       dock.removeEventListener("pointerleave", onLeave);
       el.style.scale = "";
     };
-  }, [enabled, ref]);
+  }, [enabled]);
 }

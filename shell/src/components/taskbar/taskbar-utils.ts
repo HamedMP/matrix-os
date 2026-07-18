@@ -22,7 +22,7 @@ export const BUILT_IN_START_APPS: readonly TaskbarAppEntry[] = [
 /** Window paths may carry an instance suffix (`__terminal__:setup`, app
     multi-windows) — the app identity is the base path before `:`. */
 export function baseWindowPath(path: string): string {
-  return path.split(":")[0] ?? path;
+  return path.split(":")[0];
 }
 
 /** Built-in shortcuts prefer the (possibly versioned) icon URL the app

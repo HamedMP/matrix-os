@@ -10,6 +10,7 @@ import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { UserButton } from "./UserButton";
 import { ModeSwitcherBar } from "./ModeSwitcherBar";
 import { isSelfHostedDocument } from "@/lib/self-host-mode";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { useThemeStyle } from "./window/useThemeStyle";
 
 const FALLBACK_APP_ICON = "/icon-192.png";
@@ -340,7 +341,7 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, o
   ];
 
   const macGlassMenuBar = isMacGlass ? (
-    <header data-menu-bar className="fixed top-0 inset-x-0 z-[60] hidden md:grid grid-cols-[1fr_auto_1fr] h-8 items-center px-3 text-[13px] leading-8 select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm">
+    <header data-menu-bar className="fixed top-0 inset-x-0 hidden md:grid grid-cols-[1fr_auto_1fr] h-8 items-center px-3 text-[13px] leading-8 select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm" style={{ zIndex: SHELL_Z_INDEX.menuBar }}>
       {/* Left: Apple menu + bold app menu + global menus */}
       <div className="flex items-center gap-0.5 font-medium">
         <MenuDropdown label={<AppleLogoIcon className="size-3.5" />} ariaLabel="Apple menu" items={appleItems} open={openMenu === "apple"} onToggle={() => toggleMenu("apple")} onClose={closeMenu} />
