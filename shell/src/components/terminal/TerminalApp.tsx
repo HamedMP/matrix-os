@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type KeyboardEvent, type SetStateAction } from "react";
+import { useCallback, useEffect, useEffectEvent, useId, useMemo, useRef, useState, type KeyboardEvent, type SetStateAction } from "react";
 import { countPanes as countPanesFromStore, getAllPaneIds, type TerminalCompatMode } from "@/stores/terminal-store";
 import { PaneGrid } from "./PaneGrid";
 import { useTheme } from "@/hooks/useTheme";
@@ -234,6 +234,9 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   // OS-design-native terminal interior: winxp/win11/macos-glass restyle the
   // tab strip and content tokens; flat/neumorphic stay on the default chrome.
   const terminalDesign = resolveTerminalDesign(useThemeStyle());
+  // Per-instance suffix for the tab/panel ARIA ids: multiple terminal windows
+  // under an OS design must not emit duplicate DOM ids or cross-wire controls.
+  const tabStripInstanceId = useId().replace(/:/g, "");
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: designTheme flows through PaneGrid into TerminalPane's xterm options-sync effect deps; a fresh object each render would re-apply the terminal appearance on every render
   const designTheme = useMemo(() => applyTerminalDesignTheme(theme, terminalDesign), [theme, terminalDesign]);
 
@@ -911,7 +914,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     >
       <TerminalAppContext.Provider value={storeApi}>
         {mobile ? (embeddedChrome ? <TerminalEmbeddedToolbar /> : <TerminalWorkspaceChrome />) : null}
-        {terminalDesign && !mobile ? <TerminalDesignTabStrip design={terminalDesign} /> : null}
+        {terminalDesign && !mobile ? <TerminalDesignTabStrip design={terminalDesign} instanceId={tabStripInstanceId} /> : null}
         <div
           className={mobile ? "relative flex flex-1 min-h-0 flex-col" : "relative flex flex-1 min-h-0"}
           style={{ background: "var(--terminal-app-body-bg)" }}
@@ -930,12 +933,13 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
               <div
                 className="flex flex-1 min-h-0 min-w-0 flex-col"
                 // Tab linkage only exists while the design tab strip renders
-                // (OS designs, desktop); otherwise the ids would dangle.
+                // (OS designs, desktop); ids are per-instance so multiple
+                // terminal windows never cross-wire ARIA associations.
                 {...(terminalDesign && !mobile
                   ? {
                       role: "tabpanel",
-                      id: "terminal-tabpanel",
-                      "aria-labelledby": `terminal-tab-${activeTab.id}`,
+                      id: `terminal-tabpanel-${tabStripInstanceId}`,
+                      "aria-labelledby": `terminal-tab-${tabStripInstanceId}-${activeTab.id}`,
                     }
                   : {})}
               >

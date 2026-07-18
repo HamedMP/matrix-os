@@ -17,7 +17,7 @@ import "./terminal-designs.css";
  * driven by `data-design` + the `data-terminal-design` ancestor attribute in
  * terminal-designs.css.
  */
-export function TerminalDesignTabStrip({ design }: { design: TerminalDesignId }) {
+export function TerminalDesignTabStrip({ design, instanceId }: { design: TerminalDesignId; instanceId: string }) {
   const ctx = useTerminalAppContext();
   const [tabListOpen, setTabListOpen] = useState(false);
   const tabListRef = useRef<HTMLDivElement>(null);
@@ -65,9 +65,9 @@ export function TerminalDesignTabStrip({ design }: { design: TerminalDesignId })
               <button
                 type="button"
                 role="tab"
-                id={`terminal-tab-${tab.id}`}
+                id={`terminal-tab-${instanceId}-${tab.id}`}
                 aria-selected={active}
-                aria-controls="terminal-tabpanel"
+                aria-controls={`terminal-tabpanel-${instanceId}`}
                 className="terminal-design-tab-activate"
                 onClick={() => ctx.setActiveTab(tab.id)}
               >
