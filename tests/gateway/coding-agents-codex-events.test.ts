@@ -21,8 +21,15 @@ const context = {
 describe("Codex structured event normalization", () => {
   it("gates runtime parsing against exact verified CLI versions", () => {
     expect(CODEX_EXEC_CONTRACT).toMatchObject({
-      minimumVersion: "0.144.0",
       latestVerifiedVersion: "0.144.6",
+      verifiedVersions: {
+        "0.144.3": {
+          schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+        "0.144.6": {
+          schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+      },
     });
     expect(codexExecContractStatus("codex-cli 0.144.1")).toEqual({
       status: "unverified_older",
