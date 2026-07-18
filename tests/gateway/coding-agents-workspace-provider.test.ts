@@ -95,6 +95,7 @@ describe("coding agent workspace provider", () => {
         'MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"',
       );
       expect(action.command).toContain('PATH="$MATRIX_NODE_PREFIX/bin:$PATH"');
+      expect(action.command).not.toContain('exec "${SHELL:-sh}" -l');
     }
     expect(JSON.stringify(actions)).not.toMatch(/api[_ -]?key|bearer|token|secret|password/i);
   });
