@@ -339,14 +339,27 @@ function WorldClock({ now }: { now: Date }) {
       if (zones.length === 0 && hasKvBridge()) {
         const seededBefore = await readAppData<boolean>(SEED_MARKER_KEY, false);
         if (!seededBefore) {
-          await writeAppData(SEED_MARKER_KEY, true);
-          await Promise.all(
-            defaultZoneRows().map((zone) =>
-              window.MatrixOS?.db?.insert(ZONES_TABLE, { tz: zone.tz, position: zone.position }),
-            ),
-          );
+          try {
+            await Promise.all(
+              defaultZoneRows().map((zone) =>
+                window.MatrixOS?.db?.insert(ZONES_TABLE, { tz: zone.tz, position: zone.position }),
+              ),
+            );
+          } catch (insertErr: unknown) {
+            // A second tab racing the same first run hits the zones unique
+            // index; the defaults already exist in that case, which is fine.
+            console.warn(
+              "[clock] default cities insert failed or raced:",
+              insertErr instanceof Error ? insertErr.message : String(insertErr),
+            );
+          }
           const fresh = await window.MatrixOS.db.find(ZONES_TABLE, { orderBy: { position: "asc" } });
           zones = coerceZones(fresh);
+          // Only mark seeded once rows are actually stored, so a failed
+          // first run retries instead of leaving the world clock empty.
+          if (zones.length > 0) {
+            await writeAppData(SEED_MARKER_KEY, true);
+          }
         }
       }
       setZones(zones);

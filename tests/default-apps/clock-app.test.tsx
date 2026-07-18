@@ -392,6 +392,42 @@ describe("Clock app", () => {
     expect(db.insert).toHaveBeenCalledTimes(4);
   });
 
+  it("does not mark seeding done when the default-city inserts fail", async () => {
+    const store: FakeStore = { zones: [], alarms: [] };
+    const db = installMatrixDb(store);
+    db.insert.mockRejectedValue(new Error("database unavailable"));
+    const bridge = installMatrixDataBridge(new Map(), db);
+    render(<App />);
+
+    // The empty state shows, and the marker stays unset so the next load retries.
+    expect(await screen.findByText(/no cities yet/i)).toBeTruthy();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const markerWrites = bridge.writeData.mock.calls.filter(([key]) => key === "clock.seeded-v1");
+    expect(markerWrites).toHaveLength(0);
+  });
+
+  it("marks seeding done when a racing tab already inserted the defaults", async () => {
+    const store: FakeStore = { zones: [], alarms: [] };
+    const db = installMatrixDb(store);
+    // Simulate a unique-index race: every insert rejects, but the rows
+    // appear anyway because another tab wrote them concurrently.
+    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+      if (table === "zones") {
+        store.zones.push({ id: `race-${String(data.tz)}`, created_at: new Date().toISOString(), ...data });
+      }
+      throw new Error("unique constraint");
+    });
+    const bridge = installMatrixDataBridge(new Map(), db);
+    render(<App />);
+
+    expect(await screen.findByText("London")).toBeTruthy();
+    await waitFor(() => {
+      expect(bridge.writeData).toHaveBeenCalledWith("clock.seeded-v1", true);
+    });
+  });
+
   it("contains invalid saved time zones to one row", async () => {
     installMatrixDb({
       zones: [{ id: "bad-zone", tz: "Invalid/Zone", position: 0 }],
