@@ -1,0 +1,16 @@
+{
+  "packageName": "@openai/codex",
+  "minimumVersion": "0.144.0",
+  "latestVerifiedVersion": "0.144.6",
+  "schemaSha256": "fa46724c54076701d04d29415f22398eb1e8c45abc60b54abd95fad0ecbfe201",
+  "requiredEventTypes": [
+    "thread.started",
+    "turn.started",
+    "turn.completed",
+    "turn.failed",
+    "item.started",
+    "item.updated",
+    "item.completed",
+    "error"
+  ]
+}

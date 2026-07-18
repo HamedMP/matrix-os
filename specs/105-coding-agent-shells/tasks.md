@@ -1414,7 +1414,9 @@ composer turns, and lifecycle actions.
 - [ ] B28-009 Implement owner-scoped profile metadata, connected-service materialization state, and coarse quota snapshots without expanding legacy SQLite persistence.
 - [ ] B28-010 Add safe setup/switch/recovery tests and publish provider-control capabilities to the shell handoff.
 - [ ] B28-011 Write a table-driven provider conformance harness covering install/auth health, create, normalized stream, abort, restart, safe errors, capability truthfulness, timeout, and cleanup for every first-release adapter.
+- [x] B28-011a Add a strict, forward-compatible Codex exec JSONL normalizer, durable idempotent provider-event ingestion, exact verified-version/schema metadata, and a scheduled published-version drift check.
 - [ ] B28-012 Implement and real-process test first-class adapters for Claude Code, Codex, Pi, and OpenCode plus a validated custom ACP-compatible adapter family; keep credentials and native resume identities server-side.
+- [ ] B28-012a Wire the Codex workspace runner to the normalized provider-event ingestion contract and prove assistant/tool/file events stream through replay plus WebSocket publication on a disposable runtime.
 - [ ] B28-013 Implement capability-gated compatibility adapters for Kiro, GitHub Copilot CLI, Qwen Code, Kimi CLI, Kilo Code, and Auggie without generic shell-command escape hatches.
 - [ ] B28-014 Prove each provider/runtime combination advertises only verified resume, discovery/import, fork, rollback, steering, approval, image, model/mode, and handoff capabilities; reject Gemini CLI as unsupported for this release.
 
