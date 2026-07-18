@@ -1,7 +1,7 @@
 # Current State: Coding Agent Shells
 
 **Branch stack**: implementation checkpoint merged to `main` through PR #869 (`056b3da668ed6d1753712120316d2d5accfafdcf`)
-**Updated**: 2026-07-12
+**Updated**: 2026-07-13
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
 For the evidence-based checkpoint audit, see [completion-audit.md](./completion-audit.md).
@@ -53,6 +53,30 @@ checkpoints. The backend expansion remains based on `main` and will deploy to a
 separate disposable preview computer. Both clients will test against that same
 backend preview after Gate B2; no shell branch becomes the backend source of
 truth.
+
+### Kernel Chat History Contract Decision
+
+The mobile Chat tab uses the Matrix kernel conversation store, which is separate
+from coding-agent threads. WebSocket replay remains the source for live buffered
+run events, but it cannot hydrate a completed persisted conversation. The
+canonical persisted-history read contract is therefore an authenticated
+`GET /api/conversations/:id` route with shared Zod schemas:
+
+- `KernelConversationIdSchema` validates the bounded path identifier before any
+  owner-file read.
+- `KernelConversationHistoryQuerySchema` accepts a latest/older cursor and a
+  maximum page size of 50.
+- `KernelConversationHistoryResponseSchema` returns the newest page in
+  chronological order, stable message indexes, a cursor for older messages,
+  and at most 32,000 characters per message with an explicit truncation flag.
+- Raw tool inputs are never projected. Missing or unreadable history returns a
+  generic recovery-oriented error, and successful responses are `no-store`.
+
+Mobile must hydrate this route when switching to a completed conversation and
+may keep only bounded drafts and selected conversation references on device.
+Live WebSocket frames must remain bound to their originating conversation so a
+late frame cannot be appended after the user switches. This kernel-chat route
+does not replace or complete the coding-agent transcript work in Phase 26.
 
 ### Computer And Preview Contract Conflict
 
