@@ -46,7 +46,7 @@ describe("terminal agent options", () => {
     });
     expect(resolveTerminalAgentMenuState("unknown", false, false)).toEqual({
       action: "launch",
-      statusLabel: null,
+      statusLabel: "Status unavailable",
     });
   });
 

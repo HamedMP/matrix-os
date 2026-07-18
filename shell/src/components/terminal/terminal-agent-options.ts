@@ -99,6 +99,7 @@ export function resolveTerminalAgentMenuState(
   if (installState === "unknown" && statusUnavailable) {
     return { action: "launch", statusLabel: "Status unavailable" };
   }
+  if (installState === "unknown") return { action: "launch", statusLabel: "Status unavailable" };
   return { action: "launch", statusLabel: null };
 }
 

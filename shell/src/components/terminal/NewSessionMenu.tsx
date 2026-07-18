@@ -145,7 +145,6 @@ export function NewSessionMenu({
           <NewSessionMenuItem
             key={option.id}
             label={option.label}
-            install={menuState.action === "install"}
             statusLabel={menuState.statusLabel}
             icon={<TerminalAgentLogo muted={installState !== "installed"} option={option} />}
             onClick={() => onCreateAgent(option, menuState.action)}
@@ -184,17 +183,16 @@ function NewSessionMenuItem({
   label,
   icon,
   active = false,
-  install = false,
   statusLabel = null,
   onClick,
 }: {
   label: string;
   icon: ReactNode;
   active?: boolean;
-  install?: boolean;
   statusLabel?: "Install" | "Checking…" | "Status unavailable" | null;
   onClick: () => void;
 }) {
+  const install = statusLabel === "Install";
   return (
     <button
       type="button"
