@@ -108,6 +108,12 @@ Every clarified functional requirement and buildable success criterion has at le
 - `MB-003`: the same component test opens both `thread_plan` and `thread_fix` independently with the exact `projectId`/`taskId`/`threadId`; `apps/mobile/__tests__/agent-project-route.test.tsx` verifies those IDs cross the Expo Router boundary unchanged.
 - `MB-004` and `SEC-004`: `apps/mobile/__tests__/agent-workspace-state.test.ts` and the project-workspace lifecycle test cover allowlisted serialization, malformed storage, runtime/project reconciliation, stale child IDs, foreground refresh, and reconnect refresh. Device smoke remains part of the Phase 22 gate and is not proven by these Jest tests.
 
+### Phase 22.2 Evidence
+
+- `MB-005`: `apps/mobile/__tests__/gateway-client.test.ts` validates the authenticated, schema-checked `POST /api/coding-agents/threads/:threadId/turns` client. `apps/mobile/__tests__/agent-thread-screen.test.tsx` proves the Conversation composer posts to the currently selected thread, refreshes that bounded snapshot, clears the accepted draft, and never calls create-thread.
+- `MB-006`: the thread-route tests cover busy retry with the same idempotency key, duplicate-submit suppression, offline draft retention, fail-closed capability checks, reconnect rehydration, and foreground snapshot refresh. Drafts stay transient component state and are not added to AsyncStorage.
+- `MB-007`: the existing thread-route terminal regression still persists and opens only the canonical bounded `terminalSessionId`; the project-route fixtures keep the exact selected project/task/thread identity. Device keyboard, safe-area, background, and terminal handoff smoke remain part of the Phase 22 gate and are not proven by Jest.
+
 ## Security Tests
 
 | ID | Requirement | Expected Evidence |

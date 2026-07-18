@@ -78,8 +78,6 @@ const ThreadFollowUpSeedParamsSchema = z.object({
 
 type ThreadFollowUpSeedParams = z.infer<typeof ThreadFollowUpSeedParamsSchema>;
 
-let requestCounter = 0;
-
 function firstRouteParam(value: unknown): string | undefined {
   if (Array.isArray(value)) {
     const [first] = value;
@@ -88,9 +86,9 @@ function firstRouteParam(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function nextClientRequestId(): string {
-  requestCounter += 1;
-  return `req_mobile_${Date.now().toString(36)}_${requestCounter}`;
+function nextClientRequestId(requestCounter: { current: number }): string {
+  requestCounter.current = (requestCounter.current + 1) % 1_000_000;
+  return `req_mobile_${Date.now().toString(36)}_${requestCounter.current.toString(36)}`;
 }
 
 function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
@@ -161,7 +159,16 @@ function reviewHunkFollowUpDraft(summary: RuntimeSummary, seed: ReviewHunkSeedPa
   };
 }
 
-function threadFollowUpDraft(summary: RuntimeSummary, seed: ThreadFollowUpSeedParams): AgentThreadComposerDraft {
+function includeWorkspaceProject(summary: RuntimeSummary, project: RuntimeSummary["projects"]["items"][number]): RuntimeSummary {
+  const items = [...summary.projects.items.filter((candidate) => candidate.id !== project.id), project]
+    .slice(-summary.projects.limit);
+  return { ...summary, projects: { ...summary.projects, items } };
+}
+
+function threadFollowUpDraft(
+  summary: RuntimeSummary,
+  seed: ThreadFollowUpSeedParams,
+): AgentThreadComposerDraft {
   const base = defaultAgentThreadComposerDraft(summary);
   const sourceProvider = seed.sourceProviderId
     ? summary.providers.find((provider) => provider.id === seed.sourceProviderId)
@@ -304,6 +311,7 @@ export default function AgentComposerScreen() {
   const generation = useRef(0);
   const submitInFlight = useRef(false);
   const projectCreateRequest = useRef<{ key: string; clientRequestId: string } | null>(null);
+  const requestCounter = useRef(0);
 
   const loadSummary = useCallback(async () => {
     const nextGeneration = generation.current + 1;
@@ -319,7 +327,23 @@ export default function AgentComposerScreen() {
       setState({ status: "error", summary: null, error: "Runtime summary unavailable" });
       return;
     }
-    const summary = result.summary;
+    let summary = result.summary;
+    if (
+      requestedProjectId !== undefined
+      && typeof client.getCodingAgentProjectWorkspace === "function"
+      && !summary.projects.items.some((project) => project.id === requestedProjectId)
+    ) {
+      const workspaceResult = await client.getCodingAgentProjectWorkspace({
+        projectId: requestedProjectId,
+      });
+      if (generation.current !== nextGeneration) return;
+      if (
+        workspaceResult.ok
+        && workspaceResult.workspace.project.id === requestedProjectId
+      ) {
+        summary = includeWorkspaceProject(summary, workspaceResult.workspace.project);
+      }
+    }
     setState({ status: "ready", summary, error: null });
     const baseDraft = defaultAgentThreadComposerDraft(summary);
     const selectedProjectId = defaultProjectId(summary, requestedProjectId);
@@ -350,7 +374,8 @@ export default function AgentComposerScreen() {
   const selectedProvider = summary?.providers.find((provider) => provider.id === draft?.providerId);
   const selectedProject = summary && draft ? availableProject(summary, draft.projectId) : undefined;
   const modes = selectedProvider?.supportedModes ?? [];
-  const canCreate = Boolean(summary && capabilityEnabled(summary, "codingAgentsThreadCreate"));
+  const canCompose = Boolean(summary && capabilityEnabled(summary, "codingAgentsThreadCreate"));
+  const canCreate = canCompose;
 
   const chooseProvider = useCallback((provider: AgentProviderSummary) => {
     if (!summary) return;
@@ -388,7 +413,7 @@ export default function AgentComposerScreen() {
     if (projectCreateRequest.current?.key !== requestKey) {
       projectCreateRequest.current = {
         key: requestKey,
-        clientRequestId: nextClientRequestId(),
+        clientRequestId: nextClientRequestId(requestCounter),
       };
     }
     const clientRequestId = projectCreateRequest.current.clientRequestId;
@@ -436,7 +461,7 @@ export default function AgentComposerScreen() {
     const built = buildCreateAgentThreadRequestFromComposer({
       draft,
       summary,
-      clientRequestId: nextClientRequestId(),
+      clientRequestId: nextClientRequestId(requestCounter),
     });
     if (!built.ok) {
       setCreateError(built.issues[0]?.safeMessage ?? "Agent run could not be started. Try again.");
@@ -454,7 +479,11 @@ export default function AgentComposerScreen() {
       }
       router.push({
         pathname: "/agents/[threadId]",
-        params: { threadId: result.snapshot.thread.id },
+        params: {
+          projectId: built.request.projectId,
+          ...(built.request.taskId ? { taskId: built.request.taskId } : {}),
+          threadId: result.snapshot.thread.id,
+        },
       });
     } finally {
       submitInFlight.current = false;
@@ -528,7 +557,7 @@ export default function AgentComposerScreen() {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Provider ${selectedProvider?.displayName ?? "None"}`}
-            disabled={!canCreate}
+            disabled={!canCompose}
             onPress={() => setPickerOpen((open) => !open)}
             style={styles.providerButton}
           >
@@ -588,7 +617,7 @@ export default function AgentComposerScreen() {
             accessibilityLabel="Agent run prompt"
             multiline
             value={draft.prompt}
-            editable={canCreate}
+            editable={canCompose}
             onChangeText={(prompt) => setDraft((current) => current ? { ...current, prompt } : current)}
             placeholder="Describe the work to run"
             placeholderTextColor={theme.colors.mutedForeground}
@@ -597,8 +626,10 @@ export default function AgentComposerScreen() {
         </View>
 
         {createError ? <Text selectable style={styles.errorText}>{createError}</Text> : null}
-        {!canCreate ? (
+        {!canCompose ? (
           <Text selectable style={styles.errorText}>Agent runs are not available on this runtime yet.</Text>
+        ) : !selectedProject ? (
+          <Text selectable style={styles.errorText}>Choose a project from the Agents workspace before starting a conversation.</Text>
         ) : null}
         <Pressable
           accessibilityRole="button"

@@ -424,6 +424,7 @@ Gateway client:
 - `getCodingAgentNotificationPreferences()` calls `GET /api/coding-agents/notification-preferences`, validates the gateway `{ preferences }` envelope with `CodingAgentNotificationPreferencesSchema`, and returns the safe `"Notification settings unavailable"` error on failure.
 - `updateCodingAgentNotificationPreferences()` sends a full `CodingAgentNotificationPreferencesUpdateSchema` body to `PUT /api/coding-agents/notification-preferences`, validates the gateway `{ preferences }` envelope, and returns the safe `"Notification settings could not be saved. Try again."` error on failure.
 - `getCodingAgentThreadSnapshot()` calls `GET /api/coding-agents/threads/:threadId`, validates `AgentThreadSnapshotSchema`, and returns the safe `"Thread state unavailable"` error on failure.
+- `createCodingAgentTurn()` validates `ThreadIdSchema` and `CreateAgentTurnRequestSchema`, posts to `POST /api/coding-agents/threads/:threadId/turns`, validates the matching `CreateAgentTurnResponseSchema`, and maps busy or unavailable responses to bounded recovery copy.
 - `submitCodingAgentApprovalDecision()` posts bounded approval decisions to `POST /api/coding-agents/threads/:threadId/approvals/:approvalId/decision`, validates `AgentThreadSnapshotSchema`, and returns the safe `"Approval could not be sent. Try again."` error on failure.
 - `submitCodingAgentInputAnswer()` posts bounded answers to `POST /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer`, validates `AgentThreadSnapshotSchema`, and returns the safe `"Input could not be sent. Try again."` error on failure.
 - `getCodingAgentReviews()` calls `GET /api/coding-agents/reviews`, validates a bounded review summary list, and returns the safe `"Review state unavailable"` error on failure.
@@ -464,8 +465,10 @@ Screen:
 - User-input request events render a transient bounded answer composer in the mobile thread route. Answers use mobile-generated idempotency request ids, go through the authenticated gateway client, and replace local thread details with the gateway-returned bounded snapshot. Failed submissions show a generic recovery-oriented message.
 - Successful mobile approval decisions and user-input answers trigger local success haptics only after the gateway-returned bounded snapshot is accepted; haptic failures are logged and do not block the thread state update.
 - Mobile approval/input action state is isolated in `apps/mobile/lib/agent-thread-actions.ts`; the route owns hydration, streaming, and composition while the hook owns transient pending ids, safe per-action errors, bounded input drafts, idempotency request ids, and accepted-snapshot haptic guards.
+- When `codingAgentsSameThreadTurns` is enabled for the current authenticated runtime client, thread details render a transient same-thread composer. It posts only `CreateAgentTurnRequestSchema` to the selected thread, retains failed/offline drafts in memory, reuses the exact idempotency key for a retry, rejects duplicate pending submits, refreshes the bounded snapshot after acceptance/reconnect/foreground, and fails closed across auth/runtime client changes until capabilities are revalidated.
 - Thread details and terminal rows can open the existing `/terminal` tab after persisting only the safe canonical shell-session reference in `mobile-shell-state`; terminal output and transcripts remain outside AsyncStorage.
 - Thread details can open the existing mobile composer for a follow-up run with only bounded source thread id/title/provider route params. The composer validates those params with shared contract schemas and sends a `structured_ref` attachment for the source thread through the normal authenticated create-thread gateway client.
+- Creating a separate related conversation remains a distinct create-thread action; normal Conversation follow-up never leaves the selected thread or calls create-thread.
 - Review-ready events in the mobile thread timeline can open the Agents review section with only a bounded `reviewId` route param. The Agents screen validates that route param with `ReviewIdSchema`, rehydrates the review snapshot through the authenticated gateway client, and ignores invalid values without persisting review or diff content.
 - Push notification tap routing accepts coding-agent attention payloads with a bounded `threadId`, validates that id with `ThreadIdSchema`, opens `/agents/:threadId` for valid thread ids, and falls back to `/agents` for invalid or missing thread references.
 - Preview rows navigate to `/agents/preview` with only the bounded preview id. The route rehydrates the current authenticated runtime summary, validates the matching `PreviewSessionSummarySchema`, renders only currently running HTTPS origins through the existing `AppRuntimeFrame`, offers a safe OS-browser open action for that same authoritative HTTPS origin, and rejects missing, unavailable, non-running, or non-HTTPS previews without rendering raw URLs or persisting preview state.
@@ -473,7 +476,7 @@ Screen:
 
 Persisted UI references:
 
-- `apps/mobile/lib/agent-workspace-state.ts` stores only `selectedThreadId`, `selectedTerminalSessionId`, and `updatedAt`.
+- `apps/mobile/lib/agent-workspace-state.ts` stores only bounded selected runtime/project/task/thread IDs, `viewMode`, and `updatedAt`, and removes the superseded v1 safe-reference key during hydration.
 - `apps/mobile/lib/mobile-shell-state.ts` stores only the current shell mode plus safe bounded app or terminal session references, including canonical named shell sessions such as `main` or `matrix-abc1234`.
 - Agent workspace state reconciles stale references against runtime summary items.
 - Does not store transcripts, terminal output, file contents, diffs, credentials, approvals payloads, file write payloads, or launch tokens.
@@ -518,6 +521,10 @@ Defined capabilities in `RuntimeSummary`:
 - `codingAgentsPreview`
 - `codingAgentsNativeMobileTerminal`
 - `codingAgentsSourceControl`
+- `codingAgentsProjectWorkspace`
+- `codingAgentsSameThreadTurns`
+- `codingAgentsConversationView`
+- `codingAgentsKanbanView`
 
 Client flags:
 
