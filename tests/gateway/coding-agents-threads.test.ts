@@ -666,6 +666,7 @@ describe("coding agent thread lifecycle", () => {
     expect(afterFailure.thread).toMatchObject({ status: "waiting_for_approval", attention: "approval_required" });
     expect(afterFailure.events.items.map((event) => event.type)).toEqual([
       "thread.created",
+      "user.message",
       "approval.requested",
     ]);
     expect(first.status).toBe(200);
