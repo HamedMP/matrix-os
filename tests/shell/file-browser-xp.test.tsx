@@ -72,6 +72,7 @@ vi.mock("@/hooks/usePreviewWindow", () => {
 vi.mock("@/hooks/useWindowManager", () => {
   const state = {
     windows: [] as unknown[],
+    focusedWindowId: "win-files" as string | null,
     openWindow: vi.fn(),
     focusWindow: vi.fn(),
   };
@@ -286,6 +287,25 @@ describe("FileBrowser Windows XP explorer", () => {
     await renderBrowser();
 
     expect(screen.getByTestId("trash-view")).toBeTruthy();
+    expect(store.consumeViewRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("only the focused Files window consumes a pending view request when several are open", async () => {
+    document.documentElement.setAttribute("data-theme-style", "winxp");
+    store.pendingView = "trash";
+    await act(async () => {
+      render(
+        <>
+          <FileBrowser windowId="win-files" />
+          <FileBrowser windowId="win-files-other" />
+        </>,
+      );
+      await Promise.resolve();
+    });
+
+    // The focused window (win-files per the window-manager mock) shows trash;
+    // the unfocused one stays on the folder view and never consumes the request.
+    expect(screen.getAllByTestId("trash-view")).toHaveLength(1);
     expect(store.consumeViewRequest).toHaveBeenCalledTimes(1);
   });
 
