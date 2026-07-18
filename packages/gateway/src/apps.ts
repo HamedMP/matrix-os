@@ -1,9 +1,9 @@
-import { readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { loadAppMeta, type AppMeta } from "@matrix-os/kernel";
 import { listUniqueAppManifests } from "./app-runtime/app-index.js";
 import { computeRuntimeState, type RuntimeState } from "./app-runtime/runtime-state.js";
-import type { AppManifest } from "./app-runtime/manifest-schema.js";
+import { DesignIdEnum, type AppManifest, type DesignId } from "./app-runtime/manifest-schema.js";
 
 export interface AppEntry extends AppMeta {
   slug?: string;
@@ -21,9 +21,36 @@ export async function listApps(homePath: string): Promise<AppEntry[]> {
   const seen = new Set<string>();
 
   await scanAppsDir(appsDir, "", result, seen);
-  await scanRuntimeApps(appsDir, result, seen);
+  await scanRuntimeApps(appsDir, result, seen, await resolveActiveDesignId(homePath));
 
   return result.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+const DEFAULT_DESIGN_ID: DesignId = "flat";
+
+async function resolveActiveDesignId(homePath: string): Promise<DesignId> {
+  const themePath = join(homePath, "system/theme.json");
+  let theme: unknown;
+  try {
+    theme = JSON.parse(await readFile(themePath, "utf8"));
+  } catch (err: unknown) {
+    if (err instanceof SyntaxError) {
+      console.warn(
+        `[apps] theme config is not valid JSON; falling back to the "${DEFAULT_DESIGN_ID}" design`,
+      );
+      return DEFAULT_DESIGN_ID;
+    }
+    if (isExpectedFsScanError(err)) {
+      return DEFAULT_DESIGN_ID;
+    }
+    console.warn(
+      `[apps] Failed to read theme config: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return DEFAULT_DESIGN_ID;
+  }
+  if (!theme || typeof theme !== "object" || !("style" in theme)) return DEFAULT_DESIGN_ID;
+  const style = DesignIdEnum.safeParse(theme.style);
+  return style.success ? style.data : DEFAULT_DESIGN_ID;
 }
 
 const SKIP_DIRS = new Set([
@@ -84,6 +111,7 @@ async function scanRuntimeApps(
   appsDir: string,
   result: AppEntry[],
   seen: Set<string>,
+  activeDesign: DesignId,
 ): Promise<void> {
   try {
     const apps = await listUniqueAppManifests(appsDir);
@@ -91,6 +119,11 @@ async function scanRuntimeApps(
       if (seen.has(app.slug)) continue;
       // Hidden apps are parked: not listed in the launcher and not registered.
       if (app.manifest.hidden) {
+        seen.add(app.slug);
+        continue;
+      }
+      // Design-scoped apps are listed only while the shell's active design matches.
+      if (app.manifest.designs && !app.manifest.designs.includes(activeDesign)) {
         seen.add(app.slug);
         continue;
       }

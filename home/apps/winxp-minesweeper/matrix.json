@@ -1,0 +1,27 @@
+{
+  "name": "Minesweeper",
+  "description": "Classic Windows XP Minesweeper with authentic bevels, flags, chording, and best times",
+  "runtime": "vite",
+  "category": "games",
+  "icon": "minesweeper",
+  "author": "system",
+  "version": "1.0.0",
+  "slug": "winxp-minesweeper",
+  "designs": ["winxp"],
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party",
+  "build": {
+    "install": "true",
+    "command": "vite build --base ./ --outDir dist",
+    "output": "dist",
+    "timeout": 180,
+    "sourceGlobs": [
+      "src/**",
+      "../_shared/**",
+      "../../_shared/**",
+      "index.html",
+      "matrix.json",
+      "vite.config.ts"
+    ]
+  }
+}
