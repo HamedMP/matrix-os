@@ -458,6 +458,7 @@ describe("Codex structured event runtime", () => {
       });
       expect(created.snapshot.events.items.map((event) => event.type)).toEqual([
         "thread.created",
+        "user.message",
         "thread.status",
         "terminal.bound",
       ]);
