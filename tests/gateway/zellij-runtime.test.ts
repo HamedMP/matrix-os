@@ -143,6 +143,8 @@ describe("zellij-runtime", () => {
     expect(config).toContain(`default_shell ${JSON.stringify(shellPath)}`);
     expect(shell).toContain(`exec bash --noprofile --rcfile '${bashrcPath}' -i`);
     expect(shell).toContain(`node '${promptLabelPath}'`);
+    expect(shell).toContain('\\\\[\\\\e[0;1;36m\\\\]$matrix_prompt_label');
+    expect(shell).toContain(':\\\\[\\\\e[0;1;34m\\\\]\\\\w');
     expect(bashrc).toContain('PS1="${MATRIX_TERMINAL_PROMPT}"');
     expect(promptLabel).toContain("handle.json");
     expect(config).toContain('theme "default"');

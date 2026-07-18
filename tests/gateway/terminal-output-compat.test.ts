@@ -5,6 +5,8 @@ const READABLE_PROMPT = "\x1b[38;2;214;216;221;48;2;48;54;61mprompt\x1b[39;49m";
 const RAW_PROMPT = "\x1b[7mprompt\x1b[27m";
 const RAW_EXPLICIT_PROMPT_BG = "\x1b[39m\x1b[48;2;240;240;239mprompt\x1b[39;49m";
 const READABLE_EXPLICIT_PROMPT_BG = "\x1b[39m\x1b[38;2;214;216;221;48;2;48;54;61mprompt\x1b[38;2;214;216;221;49m";
+const MATRIX_PROMPT = "\x1b[0;1;36mpr-1031\x1b[0m:\x1b[0;1;34m~/projects\x1b[0m$ ";
+const NORMALIZED_MATRIX_PROMPT = "\x1b[0m\x1b[1;36mpr-1031\x1b[0m:\x1b[0m\x1b[1;34m~/projects\x1b[0m$ ";
 
 describe("terminal output compatibility stream", () => {
   it("leaves ordinary reverse-video output unchanged before Codex detection", () => {
@@ -146,5 +148,16 @@ describe("terminal output compatibility stream", () => {
     const cursorMove = "\x1b[2J\x1b[3;4H";
 
     expect(stream.write(`${osc52}${cursorMove}`)).toBe(`${osc52}${cursorMove}`);
+  });
+
+  it("preserves a reset-baselined Matrix prompt after chunked Codex alternate-screen exit", () => {
+    const stream = createTerminalOutputCompatStream({ sessionName: "main" });
+
+    expect(stream.write("OpenAI Codex (v0.142.5)\n\x1b[?1049h\x1b[2mCodex")).toBe(
+      "OpenAI Codex (v0.142.5)\n\x1b[?1049h\x1b[2mCodex",
+    );
+    expect(stream.write("\x1b[?104")).toBe("");
+    expect(stream.write("9l\x1b[0;1;")).toBe("\x1b[?1049l");
+    expect(stream.write(MATRIX_PROMPT.slice("\x1b[0;1;".length))).toBe(NORMALIZED_MATRIX_PROMPT);
   });
 });

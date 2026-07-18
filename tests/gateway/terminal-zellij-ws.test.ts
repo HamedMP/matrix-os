@@ -85,6 +85,48 @@ function deferred<T>() {
 }
 
 describe("zellij terminal WebSocket", () => {
+  it("preserves reset-baselined Matrix prompt colors after Codex detach and reattach", async () => {
+    const firstPty = new FakePty();
+    const secondPty = new FakePty();
+    const firstWs = socket();
+    const append = vi.fn(async () => undefined);
+    const handler = createShellWsHandler({
+      registry: { list: vi.fn(async () => [{ name: "sleek-willow", status: "active" }]) },
+      adapter: {
+        attachSession: vi.fn()
+          .mockReturnValueOnce(firstPty)
+          .mockReturnValueOnce(secondPty),
+      },
+      scrollbackStore: {
+        latestSeq: vi.fn(async () => null),
+        readSince: vi.fn(async () => []),
+        append,
+        cleanup: vi.fn(async () => undefined),
+        pathForSession: vi.fn(() => ""),
+      },
+      maxReplayBytes: 4096,
+      persistFlushIntervalMs: 0,
+      idleAttachGraceMs: 0,
+    });
+    const matrixPrompt = "\x1b[0m\x1b[1;36mpr-1031\x1b[0m:\x1b[0m\x1b[1;34m~/projects\x1b[0m$ ";
+
+    const first = await handler.open({ ws: firstWs, session: "sleek-willow", fromSeq: 0 });
+    firstPty.emitData("OpenAI Codex (v0.142.5)\n\x1b[?1049h\x1b[2mCodex\x1b[?1049l");
+    firstPty.emitData("\x1b[0;1;");
+    firstPty.emitData("36mpr-1031\x1b[0m:\x1b[0;1;34m~/projects\x1b[0m$ ");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(firstWs.sent).toContainEqual({ type: "output", seq: 1, data: matrixPrompt });
+    first.onClose();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const reattachedWs = socket();
+    const second = await handler.open({ ws: reattachedWs, session: "sleek-willow", fromSeq: 0 });
+
+    expect(reattachedWs.sent).toContainEqual({ type: "output", seq: 1, data: matrixPrompt });
+    second.onClose();
+  });
+
   it("rewrites detected Codex TUI reverse-video output before send and replay persistence", async () => {
     const pty = new FakePty();
     const secondPty = new FakePty();

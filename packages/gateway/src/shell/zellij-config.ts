@@ -150,9 +150,9 @@ if [ -z "\${MATRIX_TERMINAL_PROMPT:-}" ]; then
   fi
 
   if [ -n "$matrix_prompt_label" ]; then
-    export MATRIX_TERMINAL_PROMPT="\\\\[\\\\e[1;36m\\\\]$matrix_prompt_label\\\\[\\\\e[0m\\\\]:\\\\[\\\\e[1;34m\\\\]\\\\w\\\\[\\\\e[0m\\\\]\\\\$ "
+    export MATRIX_TERMINAL_PROMPT="\\\\[\\\\e[0;1;36m\\\\]$matrix_prompt_label\\\\[\\\\e[0m\\\\]:\\\\[\\\\e[0;1;34m\\\\]\\\\w\\\\[\\\\e[0m\\\\]\\\\$ "
   else
-    export MATRIX_TERMINAL_PROMPT="\\\\[\\\\e[1;36m\\\\]\\\\u\\\\[\\\\e[0m\\\\]:\\\\[\\\\e[1;34m\\\\]\\\\w\\\\[\\\\e[0m\\\\]\\\\$ "
+    export MATRIX_TERMINAL_PROMPT="\\\\[\\\\e[0;1;36m\\\\]\\\\u\\\\[\\\\e[0m\\\\]:\\\\[\\\\e[0;1;34m\\\\]\\\\w\\\\[\\\\e[0m\\\\]\\\\$ "
   fi
 fi
 
