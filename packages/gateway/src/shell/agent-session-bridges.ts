@@ -213,7 +213,8 @@ export async function registerAgentBridges(
       await register();
       return { agent, registered: true } as const;
     } catch (error: unknown) {
-      void error;
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      console.warn(`[shell] failed to register ${agent} agent session bridge`, { error: errorName });
       return { agent, registered: false } as const;
     }
   }));

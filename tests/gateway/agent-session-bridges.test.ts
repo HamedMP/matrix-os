@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   normalizeAgentBridgeEvents,
   registerAgentBridges,
@@ -21,6 +21,7 @@ async function tempRoot(): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -196,6 +197,7 @@ describe("agent session bridge registration", () => {
   });
 
   it("preserves malformed provider configuration while registering the other bridges", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const root = await tempRoot();
     await mkdir(join(root, ".claude"), { recursive: true });
     const settingsPath = join(root, ".claude", "settings.json");
@@ -205,6 +207,10 @@ describe("agent session bridge registration", () => {
       registered: ["codex", "opencode", "pi"],
       failed: ["claude"],
     });
+    expect(warn).toHaveBeenCalledWith(
+      "[shell] failed to register claude agent session bridge",
+      { error: "SyntaxError" },
+    );
     await expect(readFile(settingsPath, "utf8")).resolves.toBe("{ user config is malformed");
     await expect(readFile(join(root, ".codex", "hooks.json"), "utf8")).resolves.toContain(
       "matrix-agent-bridge codex Stop",
