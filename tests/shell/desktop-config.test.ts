@@ -122,6 +122,7 @@ describe("Desktop config", () => {
 
     await saveDesktopConfigPatch({
       background: { type: "wallpaper", name: "moraine-lake.jpg" },
+      dock: { position: "left" },
     });
 
     expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -131,26 +132,19 @@ describe("Desktop config", () => {
     expect(JSON.parse(putOpts.body)).toEqual({
       ...existingConfig,
       background: { type: "wallpaper", name: "moraine-lake.jpg" },
+      dock: { ...existingConfig.dock, position: "left" },
     });
   });
 
-  it("saveDesktopConfigPatch still writes when the current config cannot be loaded", async () => {
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: false, status: 404 })
-      .mockResolvedValueOnce({ ok: true });
+  it("saveDesktopConfigPatch refuses to overwrite preferences when the current config cannot be loaded", async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce({ ok: false, status: 503 });
     vi.stubGlobal("fetch", mockFetch);
 
-    await saveDesktopConfigPatch({
+    await expect(saveDesktopConfigPatch({
       background: { type: "wallpaper", name: "moraine-lake.jpg" },
-    });
+    })).rejects.toThrow("GET /api/settings/desktop 503");
 
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-    const [, putOpts] = mockFetch.mock.calls[1];
-    expect(putOpts.method).toBe("PUT");
-    expect(JSON.parse(putOpts.body)).toEqual({
-      background: { type: "wallpaper", name: "moraine-lake.jpg" },
-    });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it("hook exports are defined", () => {

@@ -170,7 +170,7 @@ describe("DesignPicker", () => {
     await waitFor(() => expect(shared.saveDesktopConfigPatchMock).toHaveBeenCalledTimes(1));
     expect(shared.saveDesktopConfigPatchMock).toHaveBeenCalledWith({
       background: { type: "wallpaper", name: "moraine-lake.jpg" },
-      dock: { ...shared.desktopConfig.dock, position: "bottom" },
+      dock: { position: "bottom" },
     });
   });
 

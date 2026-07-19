@@ -7,6 +7,7 @@ import {
   saveDesktopConfigPatch,
   useDesktopConfig,
   type DesktopConfig,
+  type DesktopConfigPatch,
 } from "@/hooks/useDesktopConfig";
 import {
   getPreset,
@@ -205,7 +206,7 @@ const PREVIEWS: Record<DesignStyle, () => React.ReactElement> = {
 export function DesignPicker() {
   const theme = useTheme();
   const activeId: DesignStyle = theme?.style ?? "flat";
-  const desktopConfig = useDesktopConfig();
+  useDesktopConfig();
 
   const [pendingId, setPendingId] = useState<DesignStyle | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -231,9 +232,9 @@ export function DesignPicker() {
     if (background) {
       try {
         const dockPosition = DESIGN_DOCK_POSITIONS[option.id];
-        const patch: Partial<DesktopConfig> = { background };
+        const patch: DesktopConfigPatch = { background };
         if (dockPosition) {
-          patch.dock = { ...desktopConfig.dock, position: dockPosition };
+          patch.dock = { position: dockPosition };
         }
         await saveDesktopConfigPatch(patch);
       } catch (err) {
