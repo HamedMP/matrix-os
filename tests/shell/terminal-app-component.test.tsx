@@ -307,9 +307,15 @@ describe("TerminalApp", () => {
     expect(screen.getByTestId("terminal-session-subtitle-calm-otter").textContent).toBe(
       "Implement agent-aware terminal sessions",
     );
-    expect(screen.getByTestId("terminal-session-agent-state-calm-otter").textContent).toContain("Codex");
-    expect(screen.getByTestId("terminal-session-agent-state-calm-otter").textContent).toContain("waiting");
+    const agentState = screen.getByTestId("terminal-session-agent-state-calm-otter");
+    expect(agentState.textContent).toContain("Codex");
+    expect(agentState.textContent).toContain("waiting");
+    expectOptimizedImageSrc(
+      within(agentState).getByTestId("terminal-session-agent-logo-image-codex"),
+      "/agent-logos/codex.png",
+    );
     expect(screen.queryByTestId("terminal-session-subtitle-main")).toBeNull();
+    expect(within(screen.getByTestId("terminal-session-card-main")).queryByTestId(/terminal-session-agent-logo-/)).toBeNull();
     expect(screen.getByTestId("terminal-session-card-main").style.height).toBe("52px");
 
     revealSessionActions("calm-otter");
@@ -328,6 +334,10 @@ describe("TerminalApp", () => {
     expect(hoverCard.style.color).not.toContain("var(");
     expect(hoverCard.textContent).toContain("waiting");
     expect(hoverCard.textContent).toContain("Requested approval");
+    expectOptimizedImageSrc(
+      within(hoverCard).getByTestId("terminal-session-hover-agent-logo-image-codex"),
+      "/agent-logos/codex.png",
+    );
 
     const moreButton = screen.getByRole("button", { name: "More actions for calm-otter" });
     fireEvent.pointerEnter(moreButton, { pointerType: "mouse" });

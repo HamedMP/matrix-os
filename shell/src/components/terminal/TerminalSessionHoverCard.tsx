@@ -3,6 +3,7 @@
 import { useEffect, useState, type CSSProperties, type ReactElement, type RefObject } from "react";
 import { HoverCard as HoverCardPrimitive } from "radix-ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { TerminalAgentLogo } from "./TerminalAgentLogo";
 import { getShellVisualStatus, type ShellSessionSummary } from "./terminal-session-state";
 
 const HOVER_CARD_WIDTH = 288;
@@ -133,7 +134,15 @@ export function TerminalSessionHoverCard({
           }}
         >
           <div style={{ alignItems: "center", display: "flex", justifyContent: "space-between", gap: 12 }}>
-            <strong style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12 }}>{agentName}</strong>
+            <div style={{ alignItems: "center", display: "flex", gap: 7, minWidth: 0 }}>
+              {shell.agent ? (
+                <TerminalAgentLogo
+                  agent={shell.agent}
+                  testIdPrefix="terminal-session-hover-agent-logo"
+                />
+              ) : null}
+              <strong style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12 }}>{agentName}</strong>
+            </div>
             <span style={{ color: theme.muted, fontSize: 11, textTransform: "capitalize" }}>
               {liveState}
             </span>

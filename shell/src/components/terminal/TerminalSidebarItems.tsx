@@ -16,6 +16,7 @@ import {
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { sessionAccent } from "./terminal-session-names";
 import { NewSessionMenu } from "./NewSessionMenu";
+import { TerminalAgentLogo } from "./TerminalAgentLogo";
 import type { TerminalAgentId, TerminalAgentOption } from "./terminal-agent-options";
 import { getShellVisualStatus, type ShellSessionSummary } from "./terminal-session-state";
 import { formatTerminalAgentName, TerminalSessionHoverCard } from "./TerminalSessionHoverCard";
@@ -1225,10 +1226,13 @@ function ShellCard({
             <span
               data-testid={`terminal-session-agent-state-${shell.name}`}
               style={{
+                alignItems: "center",
                 color: "var(--terminal-drawer-subtle)",
+                display: "flex",
                 fontFamily: "Inter, system-ui, sans-serif",
                 fontSize: 10,
                 fontWeight: 700,
+                gap: 5,
                 lineHeight: "16px",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -1236,7 +1240,14 @@ function ShellCard({
                 whiteSpace: "nowrap",
               }}
             >
-              {agentName} <span aria-hidden="true">·</span> {liveState}
+              <TerminalAgentLogo
+                agent={shell.agent}
+                compact
+                testIdPrefix="terminal-session-agent-logo"
+              />
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {agentName} <span aria-hidden="true">·</span> {liveState}
+              </span>
             </span>
           ) : null}
           {!renaming && (
