@@ -400,6 +400,8 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
         let committed = false;
         let earlyOutputLength = 0;
         const earlyOutput: string[] = [];
+        let earlyOutputPaused = false;
+        let earlyOutputOverflowed = false;
         let resolveEarlyExit!: (event: { exitCode: number; signal?: number }) => void;
         const earlyExit = new Promise<{ exitCode: number; signal?: number }>((resolve) => {
           resolveEarlyExit = resolve;
@@ -410,11 +412,20 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
             emitOutput(runtime, transformed);
             return;
           }
-          const remaining = earlyAttachOutputLimit - earlyOutputLength;
-          if (remaining <= 0) return;
-          const buffered = data.slice(0, remaining);
-          earlyOutput.push(buffered);
-          earlyOutputLength += buffered.length;
+          if (earlyOutputOverflowed) return;
+          earlyOutput.push(data);
+          earlyOutputLength += data.length;
+          if (earlyOutputLength < earlyAttachOutputLimit || earlyOutputPaused) return;
+          if (child?.pause) {
+            child.pause();
+            earlyOutputPaused = true;
+            return;
+          }
+          // A custom adapter without PTY flow control cannot preserve a
+          // bounded startup buffer. Fail this attach explicitly rather than
+          // acknowledge a connection after silently dropping output.
+          earlyOutputOverflowed = true;
+          child?.kill();
         });
         const exitDisposable = child.onExit((event: { exitCode: number; signal?: number }) => {
           if (committed) {
@@ -434,17 +445,24 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
             ]);
         if (startupTimer !== undefined) clearTimeout(startupTimer);
 
-        if (startupExit) {
+        if (startupExit || earlyOutputOverflowed) {
           dataDisposable.dispose();
           exitDisposable.dispose();
+          if (!startupExit) child.kill();
           child = null;
           if (attempt >= maxAttachAttempts || !canUseAttachPromise(runtime, attachPromise)) {
             if (canUseAttachPromise(runtime, attachPromise)) runtime.outputCompat = null;
-            console.warn(`[shell] zellij attach exited during startup with code ${startupExit.exitCode}`);
+            console.warn(
+              startupExit
+                ? `[shell] zellij attach exited during startup with code ${startupExit.exitCode}`
+                : "[shell] zellij attach exceeded the bounded startup buffer without flow control",
+            );
             return false;
           }
           console.warn(
-            `[shell] zellij attach attempt ${attempt} exited during startup, retrying: code ${startupExit.exitCode}`,
+            startupExit
+              ? `[shell] zellij attach attempt ${attempt} exited during startup, retrying: code ${startupExit.exitCode}`
+              : `[shell] zellij attach attempt ${attempt} exceeded the bounded startup buffer, retrying`,
           );
           await new Promise((resolve) => setTimeout(resolve, 400));
           continue;
@@ -466,6 +484,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           const transformed = runtime.outputCompat?.write(data) ?? data;
           emitOutput(runtime, transformed);
         }
+        if (earlyOutputPaused) child.resume?.();
         return true;
       }
       return false;

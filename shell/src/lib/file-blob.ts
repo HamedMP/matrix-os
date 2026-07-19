@@ -10,3 +10,11 @@ import { getGatewayUrl } from "./gateway";
 export function fileBlobUrl(path: string): string {
   return `${getGatewayUrl()}/api/files/blob?path=${encodeURIComponent(path)}`;
 }
+
+/**
+ * Authenticated streaming URL for owner media. Unlike the bounded blob route,
+ * this endpoint supports large files and browser byte-range requests.
+ */
+export function fileMediaUrl(path: string): string {
+  return `${getGatewayUrl()}/api/files/media?path=${encodeURIComponent(path)}`;
+}

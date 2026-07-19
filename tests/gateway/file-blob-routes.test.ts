@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createFileBlobRoutes } from "../../packages/gateway/src/file-blob-routes.js";
@@ -123,5 +123,42 @@ describe("file blob routes", () => {
     });
     expect(tooLarge.status).toBe(413);
     expect(await tooLarge.json()).toEqual({ error: "payload_too_large" });
+  });
+
+  it("streams large media with byte-range support without the blob body limit", async () => {
+    await mkdir(join(homePath, "media"), { recursive: true });
+    const mediaPath = join(homePath, "media/demo.mp4");
+    await writeFile(mediaPath, Buffer.from("matrix-media"));
+    await truncate(mediaPath, 10 * 1024 * 1024 + 1);
+
+    const blob = await app.request("/blob?path=media/demo.mp4");
+    expect(blob.status).toBe(413);
+
+    const range = await app.request("/media?path=media/demo.mp4", {
+      headers: { Range: "bytes=0-11" },
+    });
+
+    expect(range.status).toBe(206);
+    expect(range.headers.get("accept-ranges")).toBe("bytes");
+    expect(range.headers.get("content-range")).toBe(`bytes 0-11/${10 * 1024 * 1024 + 1}`);
+    expect(range.headers.get("content-length")).toBe("12");
+    expect(range.headers.get("content-type")).toContain("video/mp4");
+    expect(await range.text()).toBe("matrix-media");
+  });
+
+  it("rejects invalid or multi-part media ranges without leaking paths", async () => {
+    await writeFile(join(homePath, "clip.mp3"), "0123456789");
+
+    const invalid = await app.request("/media?path=clip.mp3", {
+      headers: { Range: "bytes=20-30" },
+    });
+    expect(invalid.status).toBe(416);
+    expect(invalid.headers.get("content-range")).toBe("bytes */10");
+
+    const multipart = await app.request("/media?path=clip.mp3", {
+      headers: { Range: "bytes=0-1,4-5" },
+    });
+    expect(multipart.status).toBe(416);
+    expect(await multipart.text()).not.toContain(homePath);
   });
 });

@@ -622,6 +622,30 @@ describe("zellij terminal WebSocket", () => {
     expect(ws.sent).not.toContainEqual(expect.objectContaining({ type: "exit" }));
   }, 15_000);
 
+  it("preserves output that crosses the attach startup buffer threshold", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const earlyOutput = "x".repeat(70 * 1024);
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => {
+          queueMicrotask(() => pty.emitData(earlyOutput));
+          return pty;
+        }),
+      },
+      attachStartupGraceMs: 10,
+    });
+
+    await handler.open({ ws, session: "main", fromSeq: 0 });
+
+    expect(ws.sent).toContainEqual({ type: "output", seq: 0, data: earlyOutput });
+    expect(pty.pauseCount).toBe(1);
+    expect(pty.resumeCount).toBe(1);
+  });
+
   it("rejects missing sessions with a stable error", async () => {
     const ws = socket();
     const handler = createShellWsHandler({

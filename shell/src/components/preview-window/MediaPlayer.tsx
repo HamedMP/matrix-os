@@ -1,6 +1,6 @@
 "use client";
 
-import { fileBlobUrl } from "@/lib/file-blob";
+import { fileMediaUrl } from "@/lib/file-blob";
 
 interface MediaPlayerProps {
   path: string;
@@ -8,7 +8,7 @@ interface MediaPlayerProps {
 }
 
 export function MediaPlayer({ path, type }: MediaPlayerProps) {
-  const url = fileBlobUrl(path);
+  const url = fileMediaUrl(path);
 
   if (type === "audio") {
     return (

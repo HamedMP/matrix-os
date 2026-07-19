@@ -9,6 +9,7 @@ const gatewayCallers = [
   "shell/src/components/onboarding/steps/GithubStep.tsx",
   "shell/src/components/onboarding/steps/RepoStep.tsx",
   "shell/src/lib/posthog-client.ts",
+  "shell/src/lib/file-blob.ts",
 ] as const;
 
 describe("explicit computer API isolation", () => {
