@@ -10,6 +10,7 @@
     "test:screenshots": "playwright test"
   },
   "dependencies": {
+    "@base-ui/react": "^1.6.0",
     "@clerk/nextjs": "6.39.5",
     "@clerk/ui": "1.12.1",
     "@codemirror/commands": "^6.10.3",
@@ -49,7 +50,6 @@
     "lucide-react": "^0.563.0",
     "next": "16.2.6",
     "posthog-js": "^1.376.0",
-    "radix-ui": "^1.4.3",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "react-markdown": "^10.1.0",
@@ -62,7 +62,6 @@
     "tailwind-merge": "^3.6.0",
     "three": "^0.184.0",
     "use-stick-to-bottom": "^1.1.4",
-    "vaul": "^1.1.2",
     "vis-data": "^8.0.4",
     "vis-network": "^10.1.0",
     "zustand": "^5.0.13"
@@ -82,7 +81,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.3",
     "jsdom": "^28.0.0",
-    "shadcn": "^3.8.4",
+    "shadcn": "^4.13.0",
     "tailwindcss": "^4",
     "tw-animate-css": "^1.4.0",
     "typescript": "^5"

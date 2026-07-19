@@ -163,7 +163,12 @@ export function ChatPanel({
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium">History</span>
           {conversations.length > 1 && (
-            <Select value={sessionId ?? ""} onValueChange={onSwitchConversation}>
+            <Select
+              value={sessionId ?? ""}
+              onValueChange={(id) => {
+                if (id !== null) onSwitchConversation(id);
+              }}
+            >
               <SelectTrigger size="sm" className="h-6 text-xs w-[130px]">
                 <SelectValue placeholder="Select..." />
               </SelectTrigger>

@@ -71,10 +71,10 @@ describe("UserButton", () => {
   });
 
   async function openAccountMenu() {
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for kongfupanda13" }), {
-      button: 0,
-      ctrlKey: false,
-    });
+    // Base UI menus open from the trigger's click activation. This also
+    // exercises the keyboard-equivalent activation path instead of Radix's
+    // pointer-down implementation detail.
+    fireEvent.click(screen.getByRole("button", { name: "Account menu for kongfupanda13" }));
     return screen.findByRole("menuitem", { name: "Sign out" });
   }
 

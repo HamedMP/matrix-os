@@ -8,10 +8,15 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Loader2Icon, LogOutIcon, ServerIcon, SettingsIcon, UserIcon } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
 import { useState } from "react";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { isSelfHostedDocument } from "@/lib/self-host-mode";
@@ -75,19 +80,21 @@ function Placeholder({ variant = "dock" }: { variant?: UserButtonVariant }) {
   const isSettings = variant === "settings";
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <div
-          className={cn(
-            "flex items-center justify-center rounded-xl border border-border/60 bg-card shadow-sm",
-            variant === "menubar" ? "size-[18px] rounded-full border-0 shadow-none" : "size-10",
-            isSettings && "min-h-12 w-full justify-start gap-3 rounded-2xl px-2",
-          )}
-        >
-          <UserIcon className={cn("size-4", variant === "menubar" && "size-[14px]")} />
-          {isSettings ? (
-            <span className="min-w-0 truncate text-sm font-semibold text-foreground">Account</span>
-          ) : null}
-        </div>
+      <TooltipTrigger
+        render={
+          <div
+            className={cn(
+              "flex items-center justify-center rounded-xl border border-border/60 bg-card shadow-sm",
+              variant === "menubar" ? "size-[18px] rounded-full border-0 shadow-none" : "size-10",
+              isSettings && "min-h-12 w-full justify-start gap-3 rounded-2xl px-2",
+            )}
+          />
+        }
+      >
+        <UserIcon className={cn("size-4", variant === "menubar" && "size-[14px]")} />
+        {isSettings ? (
+          <span className="min-w-0 truncate text-sm font-semibold text-foreground">Account</span>
+        ) : null}
       </TooltipTrigger>
       <TooltipContent side="right" sideOffset={8}>
         Sign in
@@ -162,7 +169,7 @@ function SelfHostedUserButton({
 
   return (
     <Tooltip>
-      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipTrigger render={button} />
       <TooltipContent side={isMenubar ? "bottom" : "right"} sideOffset={8}>
         {label}
       </TooltipContent>
@@ -199,7 +206,7 @@ function MountedUserButton({
   const itemClass =
     "flex cursor-default items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-medium text-foreground outline-none transition-colors hover:bg-foreground/[0.06] focus:bg-foreground/[0.06]";
   const dangerItemClass =
-    "flex cursor-default items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-medium text-foreground outline-none transition-colors hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive data-[disabled]:opacity-60";
+    "flex cursor-default items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-medium text-foreground outline-none transition-colors hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive data-disabled:opacity-60";
 
   async function handleSignOut() {
     if (signingOut) return;
@@ -220,103 +227,102 @@ function MountedUserButton({
   }
 
   return (
-    <DropdownMenuPrimitive.Root>
-      <DropdownMenuPrimitive.Trigger asChild>
-        <button
-          type="button"
-          aria-label={`Account menu for ${displayName}`}
-          className={cn(
-            "flex items-center justify-center rounded-xl border border-border/60 bg-card text-foreground shadow-sm transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            isMenubar ? "size-[18px] rounded-full border-0 bg-transparent shadow-none" : "size-10",
-            isSettings && "min-h-12 w-full justify-start gap-3 rounded-2xl px-2",
-          )}
-        >
-          <AccountAvatar
-            avatarUrl={avatarUrl}
-            displayName={displayName}
-            compact={isMenubar}
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`Account menu for ${displayName}`}
+            className={cn(
+              "flex items-center justify-center rounded-xl border border-border/60 bg-card text-foreground shadow-sm transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              isMenubar ? "size-[18px] rounded-full border-0 bg-transparent shadow-none" : "size-10",
+              isSettings && "min-h-12 w-full justify-start gap-3 rounded-2xl px-2",
+            )}
           />
-          {isSettings ? (
-            <span className="min-w-0 truncate text-left text-sm font-semibold">
-              {displayName}
-            </span>
-          ) : null}
-        </button>
-      </DropdownMenuPrimitive.Trigger>
-      <DropdownMenuPrimitive.Portal>
-        <DropdownMenuPrimitive.Content
-          align={isMenubar ? "end" : "start"}
-          side={isMenubar ? "bottom" : "top"}
-          sideOffset={10}
-          style={{ zIndex: SHELL_Z_INDEX.popover }}
-          className="w-[272px] overflow-hidden rounded-[20px] border border-border/60 bg-popover p-2 text-popover-foreground shadow-[0_24px_70px_rgba(50,53,46,0.28)]"
-        >
-          <div className="flex items-center gap-3 rounded-2xl bg-foreground/[0.035] px-3 py-3">
-            <span className="shrink-0 rounded-full ring-1 ring-black/[0.06]">
-              <AccountAvatar avatarUrl={avatarUrl} displayName={displayName} />
-            </span>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold leading-tight">{displayName}</p>
-              {secondary ? (
-                <p className="mt-0.5 truncate text-xs text-muted-foreground">{secondary}</p>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="mt-1.5 flex flex-col gap-0.5">
-            {onOpenSettings ? (
-              <DropdownMenuPrimitive.Item
-                className={itemClass}
-                onSelect={() => {
-                  onOpenSettings();
-                }}
-              >
-                <SettingsIcon className="size-4 text-muted-foreground" aria-hidden="true" />
-                Settings
-              </DropdownMenuPrimitive.Item>
+        }
+      >
+        <AccountAvatar
+          avatarUrl={avatarUrl}
+          displayName={displayName}
+          compact={isMenubar}
+        />
+        {isSettings ? (
+          <span className="min-w-0 truncate text-left text-sm font-semibold">
+            {displayName}
+          </span>
+        ) : null}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align={isMenubar ? "end" : "start"}
+        side={isMenubar ? "bottom" : "top"}
+        sideOffset={10}
+        style={{ zIndex: SHELL_Z_INDEX.popover }}
+        className="w-[272px] overflow-hidden rounded-[20px] border border-border/60 bg-popover p-2 text-popover-foreground shadow-[0_24px_70px_rgba(50,53,46,0.28)]"
+      >
+        <div className="flex items-center gap-3 rounded-2xl bg-foreground/[0.035] px-3 py-3">
+          <span className="shrink-0 rounded-full ring-1 ring-black/[0.06]">
+            <AccountAvatar avatarUrl={avatarUrl} displayName={displayName} />
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold leading-tight">{displayName}</p>
+            {secondary ? (
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">{secondary}</p>
             ) : null}
-            <DropdownMenuPrimitive.Item
+          </div>
+        </div>
+
+        <div className="mt-1.5 flex flex-col gap-0.5">
+          {onOpenSettings ? (
+            <DropdownMenuItem
               className={itemClass}
-              onSelect={() => {
-                clerk.openUserProfile();
+              onClick={() => {
+                onOpenSettings();
               }}
             >
-              <UserIcon className="size-4 text-muted-foreground" aria-hidden="true" />
-              Manage account
-            </DropdownMenuPrimitive.Item>
-            <DropdownMenuPrimitive.Item asChild>
-              <Link className={itemClass} href="/runtime">
-                <ServerIcon className="size-4 text-muted-foreground" aria-hidden="true" />
-                Switch computer
-              </Link>
-            </DropdownMenuPrimitive.Item>
-          </div>
-
-          <div className="mx-1 my-1.5 h-px bg-border/50" />
-
-          <DropdownMenuPrimitive.Item
-            className={dangerItemClass}
-            aria-busy={signingOut}
-            disabled={signingOut}
-            onSelect={(event) => {
-              event.preventDefault();
-              void handleSignOut();
+              <SettingsIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+              Settings
+            </DropdownMenuItem>
+          ) : null}
+          <DropdownMenuItem
+            className={itemClass}
+            onClick={() => {
+              clerk.openUserProfile();
             }}
           >
-            {signingOut ? (
-              <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
-            ) : (
-              <LogOutIcon className="size-4" aria-hidden="true" />
-            )}
-            {signingOut ? "Signing out…" : "Sign out"}
-          </DropdownMenuPrimitive.Item>
+            <UserIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+            Manage account
+          </DropdownMenuItem>
+          <DropdownMenuItem render={<Link className={itemClass} href="/runtime" />}>
+            <ServerIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+            Switch computer
+          </DropdownMenuItem>
+        </div>
 
-          <p className="px-2.5 pb-0.5 pt-2 text-center text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/60">
-            Secured by Clerk
-          </p>
-        </DropdownMenuPrimitive.Content>
-      </DropdownMenuPrimitive.Portal>
-    </DropdownMenuPrimitive.Root>
+        <div className="mx-1 my-1.5 h-px bg-border/50" />
+
+        <DropdownMenuItem
+          className={dangerItemClass}
+          aria-busy={signingOut}
+          disabled={signingOut}
+          closeOnClick={false}
+          onClick={(event) => {
+            event.preventDefault();
+            void handleSignOut();
+          }}
+        >
+          {signingOut ? (
+            <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <LogOutIcon className="size-4" aria-hidden="true" />
+          )}
+          {signingOut ? "Signing out…" : "Sign out"}
+        </DropdownMenuItem>
+
+        <p className="px-2.5 pb-0.5 pt-2 text-center text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/60">
+          Secured by Clerk
+        </p>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

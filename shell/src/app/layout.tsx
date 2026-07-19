@@ -14,6 +14,7 @@ import { PwaRegister } from "@/components/pwa/PwaRegister";
 import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 import { PostHogIdentify } from "@/components/PostHogIdentify";
 import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -95,11 +96,13 @@ export default async function RootLayout({
       data-posthog-disable-replay={process.env.POSTHOG_DISABLE_REPLAY ? "1" : undefined}
     >
       <body className={`${inter.variable} ${instrumentSans.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable}`}>
-        {children}
-        {includePostHogIdentify ? <PostHogIdentify /> : null}
-        <PwaRegister />
-        <InstallPrompt />
-        <Toaster />
+        <TooltipProvider>
+          {children}
+          {includePostHogIdentify ? <PostHogIdentify /> : null}
+          <PwaRegister />
+          <InstallPrompt />
+          <Toaster />
+        </TooltipProvider>
       </body>
     </html>
   );
