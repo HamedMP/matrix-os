@@ -437,6 +437,14 @@ write_files:
 runcmd:
   - |
     set -eu
+    # Hetzner marks the root password expired when a server is created without
+    # SSH keys; expired accounts fail sudo/PAM account checks, which breaks
+    # every sudo-based installer (Hermes, tool pack). Clear expiry for the
+    # system accounts we transition between.
+    chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 root || true
+    chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 matrix || true
+  - |
+    set -eu
     # Swap first so nothing later in provisioning (or after) can OOM the box.
     # Fleet default 8GiB, shrunk to keep >=10GiB free on /; skipped below 2GiB.
     # matrix-ensure-swap (host bundle) reconciles the same policy on updates.

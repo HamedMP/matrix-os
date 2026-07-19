@@ -49,7 +49,6 @@ shell/test-results/
 shell/playwright-report/
 
 # Next.js generated types
-www/next-env.d.ts
 
 # Next.js auto-generated
 **/next-env.d.ts

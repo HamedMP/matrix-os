@@ -9,7 +9,7 @@ const SETUP_SESSION_TTL_MS = 1000 * 60 * 60 * 24;
 export interface AdminProviderCard {
   id: "hermes" | "claude" | "codex" | string;
   label: string;
-  status: "available" | "missing" | "expired" | "revoked" | "failed" | "not_applicable" | "connected" | "approved" | "unavailable";
+  status: "available" | "missing" | "auth_required" | "check_failed" | "version_unsupported" | "expired" | "revoked" | "failed" | "not_applicable" | "connected" | "approved" | "unavailable";
   mode: "matrix_system_agent" | "bring_your_own" | "integration";
   nextAction: string | null;
 }

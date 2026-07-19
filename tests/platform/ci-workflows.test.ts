@@ -46,7 +46,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('name: Docs Contract Tests');
     expect(workflow).toContain('docs_contract_tests: ${{ steps.changed.outputs.docs_contract_tests }}');
     expect(workflow).toContain("if: needs.changes.outputs.docs_contract_tests == 'true'");
-    expect(workflow).toContain('pnpm exec vitest run tests/www/self-host-docs.test.ts');
+    expect(workflow).toContain('pnpm exec vitest run tests/repository/site-extraction.test.ts');
     expect(workflow).toContain('| Docs Contract Tests | $DOCS_CONTRACT_RESULT |');
     expect(readme).toContain('- `Docs Contract Tests`');
     expect(readme).toContain('Docs-only changes still run targeted docs contract tests');

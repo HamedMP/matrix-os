@@ -87,8 +87,29 @@ describe("agent credential status routes", () => {
     const body = await (await app.request("/credentials/status")).json();
     expect(body.activeAgents).toEqual(["hermes"]);
     expect(body.agents).toEqual(expect.arrayContaining([
-      expect.objectContaining({ agent: "codex", status: "missing", verifiedAt: null }),
+      expect.objectContaining({ agent: "codex", status: "auth_required", verifiedAt: null }),
     ]));
+  });
+
+  it.each([
+    ["missing", "agent_not_installed", 409],
+    ["auth_required", "agent_auth_required", 409],
+    ["check_failed", "agent_check_failed", 503],
+    ["version_unsupported", "agent_version_unsupported", 409],
+  ] as const)("maps %s probes to a distinct credential condition", async (condition, error, status) => {
+    const service = createAgentCredentialStatusService({
+      probeAgent: async () => ({ available: false, condition }),
+    });
+    const app = createAgentCredentialRoutes({ service, getPrincipal: () => testPrincipal });
+
+    const summary = await (await app.request("/credentials/status")).json();
+    expect(summary.agents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ agent: "codex", status: condition }),
+    ]));
+
+    const verified = await app.request(post("/credentials/codex/verify"));
+    expect(verified.status).toBe(status);
+    expect(await verified.json()).toMatchObject({ error, retryable: true });
   });
 
   it("does not mark an agent available when the login probe fails", async () => {

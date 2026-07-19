@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orchestrate Problem PRs"
+  short_description: "Diagnose and shepherd independent problems to PRs"
+  default_prompt: "Use $orchestrate-problem-prs to decompose this report, diagnose each independent problem, and shepherd the resulting PRs to review readiness."

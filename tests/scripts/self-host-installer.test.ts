@@ -5,13 +5,8 @@ import { describe, expect, it } from "vitest";
 const root = process.cwd();
 
 describe("self-host server installer", () => {
-  it("keeps the website-hosted installer identical to the source installer", () => {
-    const source = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
-    const website = readFileSync(join(root, "www/public/install-server.sh"), "utf8");
-
-    expect(website).toBe(source);
+  it("keeps the source installer executable", () => {
     expect(statSync(join(root, "scripts/install-server.sh")).mode & 0o111).not.toBe(0);
-    expect(statSync(join(root, "www/public/install-server.sh")).mode & 0o111).not.toBe(0);
   });
 
   it("installs from a verified host bundle and writes standalone self-host configuration", () => {
@@ -62,7 +57,6 @@ describe("self-host server installer", () => {
 
   it("reports privacy-scoped manual install telemetry with an opt-out", () => {
     const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
-    const route = readFileSync(join(root, "www/src/app/api/install-telemetry/route.ts"), "utf8");
 
     expect(script).toContain("MATRIX_INSTALL_TELEMETRY_URL");
     expect(script).toContain("MATRIX_NO_TELEMETRY");
@@ -83,22 +77,6 @@ describe("self-host server installer", () => {
     expect(script).not.toContain("\"handle\"");
     expect(script).not.toContain("MATRIX_INSTALL_HANDLE\",\"");
 
-    expect(route).toContain("MAX_BODY_BYTES = 4096");
-    expect(route).toContain("RATE_LIMIT_MAX_INSTALL_IDS");
-    expect(route).toContain("installTelemetryBuckets");
-    expect(route).toContain("allowInstallTelemetryEvent(input.installId)");
-    expect(route).toContain("return jsonResponse(429)");
-    expect(route).toContain("readBoundedJson");
-    expect(route).toContain("request.body?.getReader()");
-    expect(route).toContain("totalBytes > MAX_BODY_BYTES");
-    expect(route).toContain("await reader.cancel()");
-    expect(route).toContain("installTelemetrySchema");
-    expect(route).toContain("const posthog = getPostHogClient()");
-    expect(route).toContain("posthog.capture");
-    expect(route).toContain("await shutdownPostHog()");
-    expect(route).toContain("matrix_manual_install_completed");
-    expect(route).toContain("install_surface: 'linux_vps_script'");
-    expect(route).toContain("$ip: '0.0.0.0'");
   });
 
   it("protects the public surface with nginx basic auth and keeps services loopback", () => {
