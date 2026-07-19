@@ -331,6 +331,9 @@ describe("TerminalApp", () => {
       within(agentState).getByTestId("terminal-session-agent-logo-image-codex"),
       "/agent-logos/codex.png",
     );
+    const compactAgentLogo = within(agentState).getByTestId("terminal-session-agent-logo-codex");
+    expect(compactAgentLogo.style.border).toBe("");
+    expect(compactAgentLogo.style.boxShadow).toBe("");
     expect(screen.queryByTestId("terminal-session-subtitle-main")).toBeNull();
     expect(within(screen.getByTestId("terminal-session-card-main")).queryByTestId(/terminal-session-agent-logo-/)).toBeNull();
     expect(screen.getByTestId("terminal-session-card-main").style.height).toBe("52px");
@@ -362,6 +365,9 @@ describe("TerminalApp", () => {
     expect(
       within(hoverCard).getByTestId("terminal-session-hover-agent-logo-image-codex").getAttribute("loading"),
     ).toBe("eager");
+    const hoverAgentLogo = within(hoverCard).getByTestId("terminal-session-hover-agent-logo-codex");
+    expect(hoverAgentLogo.style.border).toBe("");
+    expect(hoverAgentLogo.style.boxShadow).toBe("");
 
     const moreButton = screen.getByRole("button", { name: "More actions for calm-otter" });
     fireEvent.pointerEnter(moreButton, { pointerType: "mouse" });

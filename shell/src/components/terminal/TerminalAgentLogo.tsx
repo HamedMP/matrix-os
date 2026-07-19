@@ -6,8 +6,6 @@ import { TERMINAL_AGENT_OPTIONS, type TerminalAgentId } from "./terminal-agent-o
 
 const AGENT_LOGO_BASE_STYLE: CSSProperties = {
   alignItems: "center",
-  border: "1px solid rgba(255, 255, 255, 0.56)",
-  boxShadow: "0 1px 0 rgba(255, 255, 255, 0.36) inset, 0 4px 9px rgba(49, 54, 45, 0.14)",
   boxSizing: "border-box",
   color: "#FFFDF7",
   display: "inline-flex",
