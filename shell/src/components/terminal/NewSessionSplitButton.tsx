@@ -41,7 +41,7 @@ export function NewSessionSplitButton({
       <ButtonGroup
         aria-label="New session actions"
         data-testid="terminal-new-session-split-button"
-        className="terminal-new-session-split-button"
+        className="terminal-drawer-primary-control terminal-new-session-split-button"
       >
         <Button
           type="button"

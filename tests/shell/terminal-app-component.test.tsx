@@ -2219,6 +2219,33 @@ describe("TerminalApp", () => {
     expect(dropdownTrigger.getAttribute("data-state")).toBe("closed");
   });
 
+  it("uses one primary surface for every desktop drawer header control", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const controls = [
+      screen.getByTestId("terminal-new-session-split-button"),
+      screen.getByRole("button", { name: "Refresh sessions" }),
+      screen.getByRole("button", { name: "Hide sessions drawer" }),
+    ];
+
+    for (const control of controls) {
+      expect(control.classList.contains("terminal-drawer-primary-control")).toBe(true);
+      expect(control.getAttribute("style") ?? "").not.toContain("--terminal-drawer-button-");
+    }
+
+    const primaryControlStyles = Array.from(document.querySelectorAll("style"))
+      .map((style) => style.textContent ?? "")
+      .find((styles) => styles.includes(".terminal-drawer-primary-control"));
+    expect(primaryControlStyles).toContain("background: var(--terminal-drawer-primary-button-bg)");
+    expect(primaryControlStyles).toContain("color: var(--terminal-drawer-primary-button-fg)");
+  });
+
   it("opens split-button session choices with ArrowDown from the primary action", async () => {
     render(<TerminalApp />);
 
@@ -2723,6 +2750,44 @@ describe("TerminalApp", () => {
     expect(matrixRailButton.textContent).toBe("mma");
     expect(matrixRailButton.getAttribute("aria-current")).toBe("true");
     expect(matrixRailButton.getAttribute("data-selected")).toBe("true");
+  });
+
+  it("elevates the collapsed new-session menu above terminal content only while open", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
+
+    let sidebarShell = screen.getByTestId("terminal-sidebar-shell");
+    expect(sidebarShell.style.overflow).toBe("hidden");
+    expect(sidebarShell.style.zIndex).toBe("");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "New session" }));
+      await Promise.resolve();
+    });
+
+    sidebarShell = screen.getByTestId("terminal-sidebar-shell");
+    expect(screen.getByRole("menu", { name: "New session menu" })).toBeTruthy();
+    expect(sidebarShell.style.overflow).toBe("visible");
+    expect(sidebarShell.style.position).toBe("relative");
+    expect(sidebarShell.style.zIndex).toBe("3");
+
+    await act(async () => {
+      fireEvent.pointerDown(document.body);
+      await Promise.resolve();
+    });
+
+    sidebarShell = screen.getByTestId("terminal-sidebar-shell");
+    expect(screen.queryByRole("menu", { name: "New session menu" })).toBeNull();
+    expect(sidebarShell.style.overflow).toBe("hidden");
+    expect(sidebarShell.style.position).toBe("");
+    expect(sidebarShell.style.zIndex).toBe("");
   });
 
   it("uses Paper collapsed rail abbreviations and fixed control sizing", async () => {
