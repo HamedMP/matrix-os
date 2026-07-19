@@ -85,7 +85,7 @@ const STATE_KEYS = [
   "panelLayouts",
   "appearance",
   "recents",
-  "codingAgentWorkspace",
+  "projectViews",
 ] as const;
 
 const MAX_STATE_VALUE_BYTES = 64 * 1024;

@@ -1,16 +1,23 @@
 import { ChevronRight, GitBranch, SquareTerminal } from "lucide-react";
-import type { RuntimeSummary } from "@matrix-os/contracts";
+import type { AgentThreadSummary, RuntimeSummary } from "@matrix-os/contracts";
 import { Button } from "../../design/primitives";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useTabs } from "../../stores/tabs";
 import { AgentWorkspaceSection as Section } from "./AgentWorkspaceSection";
 
-export function ThreadList({ summary }: { summary: RuntimeSummary }) {
+export function ThreadList({
+  summary,
+  onOpenThread,
+}: {
+  summary: RuntimeSummary;
+  onOpenThread?: (thread: AgentThreadSummary) => void;
+}) {
   const openTab = useTabs((s) => s.openTab);
   const activeThreadId = useCodingAgentWorkspace((s) => s.activeThreadId);
   const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
   const findAttachableSessionName = (sessionId: string): string | null =>
     summary.terminalSessions.items.find((session) => session.id === sessionId && session.attachable)?.name ?? null;
+  const openThread = onOpenThread ?? ((thread: AgentThreadSummary) => void loadThreadSnapshot(thread.id));
 
   return (
     <Section title="Active Threads" count={summary.activeThreads.items.length}>
@@ -61,7 +68,7 @@ export function ThreadList({ summary }: { summary: RuntimeSummary }) {
                   variant="ghost"
                   aria-label={`Open details for ${thread.title}`}
                   title={`Open details for ${thread.title}`}
-                  onClick={() => void loadThreadSnapshot(thread.id)}
+                  onClick={() => openThread(thread)}
                 >
                   <ChevronRight size={14} />
                 </Button>
@@ -79,7 +86,13 @@ export function ThreadList({ summary }: { summary: RuntimeSummary }) {
   );
 }
 
-export function CreatedThreadHandleList({ summary }: { summary: RuntimeSummary }) {
+export function CreatedThreadHandleList({
+  summary,
+  onOpenThread,
+}: {
+  summary: RuntimeSummary;
+  onOpenThread?: (thread: AgentThreadSummary) => void;
+}) {
   const createdThreadHandles = useCodingAgentWorkspace((s) => s.createdThreadHandles);
   const activeThreadId = useCodingAgentWorkspace((s) => s.activeThreadId);
   const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
@@ -88,6 +101,7 @@ export function CreatedThreadHandleList({ summary }: { summary: RuntimeSummary }
     ...summary.attentionThreads.items.map((thread) => thread.id),
   ]);
   const visibleHandles = createdThreadHandles.filter((thread) => !summaryThreadIds.has(thread.id));
+  const openThread = onOpenThread ?? ((thread: AgentThreadSummary) => void loadThreadSnapshot(thread.id));
 
   if (visibleHandles.length === 0) return null;
 
@@ -107,7 +121,7 @@ export function CreatedThreadHandleList({ summary }: { summary: RuntimeSummary }
                 borderColor: active ? "var(--accent)" : "var(--border-subtle)",
                 background: active ? "var(--accent-muted)" : "var(--bg-surface)",
               }}
-              onClick={() => void loadThreadSnapshot(thread.id)}
+              onClick={() => openThread(thread)}
             >
               <div className="flex min-w-0 items-center gap-2">
                 <GitBranch size={15} style={{ color: "var(--text-tertiary)" }} />

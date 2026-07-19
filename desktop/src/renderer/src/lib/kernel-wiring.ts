@@ -11,8 +11,9 @@ import {
 import { useConnection } from "../stores/connection";
 import { useHermesChat } from "../stores/hermes-chat";
 import { useCodingAgentWorkspace } from "../stores/coding-agent-workspace";
-import { AGENTS_WORKSPACE_TAB_SPEC, useTabs } from "../stores/tabs";
+import { useTabs } from "../stores/tabs";
 import { useThreads } from "../stores/threads";
+import { openCodingAgentThread } from "./project-chat";
 import { routeThreadNotification, unifiedAttentionCount } from "../stores/unified-threads";
 
 const KERNEL_CHAT_EVENT_TYPES = new Set([
@@ -140,8 +141,8 @@ export function wireKernel(): () => void {
   updateBadge();
 
   // Clicking a native notification focuses the thread on its own surface:
-  // kernel threads render in the Chat tab, coding-agent threads in the Agents
-  // workspace. Never select across store namespaces.
+  // kernel threads render in the Chat tab, coding-agent threads open inside
+  // their project tab's Chats view. Never select across store namespaces.
   const offNotificationClick = onEvent("notification:clicked", ({ threadId }) => {
     const route = routeThreadNotification(
       threadId,
@@ -152,13 +153,7 @@ export function wireKernel(): () => void {
       useTabs.getState().openTab({ kind: "chat", title: "Hermes", closable: false });
       return;
     }
-    useCodingAgentWorkspace.getState().loadThreadSnapshot(route.select).catch((err: unknown) => {
-      console.warn(
-        "[kernel-wiring] notification thread open failed:",
-        err instanceof Error ? err.message : String(err),
-      );
-    });
-    useTabs.getState().openTab(AGENTS_WORKSPACE_TAB_SPEC);
+    openCodingAgentThread(route.select);
   });
 
   activeSocket.connect();

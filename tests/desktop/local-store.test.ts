@@ -55,25 +55,24 @@ describe("local store", () => {
     expect(await store.get("appearance")).toEqual({ theme: "system" });
   });
 
-  it("persists only bounded coding-agent workspace references and view mode", async () => {
+  it("persists only bounded per-project view references", async () => {
     const store = createLocalStore({ dir: await makeDir() });
-    const resumeState = {
-      selectedProjectId: "matrix-os",
-      selectedTaskId: "task_auth",
-      selectedThreadId: "thread_plan",
-      viewMode: "conversation" as const,
-      updatedAt: "2026-07-10T12:00:00.000Z",
+    const viewsState = {
+      runtimeScope: "operator|https://platform.test|primary",
+      views: {
+        "matrix-os": { view: "chats" as const, selectedThreadId: "thread_plan", touchedAt: 1_750_000_000_000 },
+      },
     };
 
-    await store.set("codingAgentWorkspace", resumeState);
-    expect(await store.get("codingAgentWorkspace")).toEqual(resumeState);
-    await expect(store.setUnknown("codingAgentWorkspace", {
-      ...resumeState,
-      transcript: ["private"],
+    await store.set("projectViews", viewsState);
+    expect(await store.get("projectViews")).toEqual(viewsState);
+    await expect(store.setUnknown("projectViews", {
+      ...viewsState,
+      views: { "matrix-os": { view: "chats", selectedThreadId: "thread_plan", touchedAt: 1, transcript: ["private"] } },
     })).rejects.toThrow();
-    await expect(store.setUnknown("codingAgentWorkspace", {
-      ...resumeState,
-      bearerToken: "secret",
+    await expect(store.setUnknown("projectViews", {
+      ...viewsState,
+      views: { "matrix-os": { view: "kanban", selectedThreadId: null, touchedAt: 1 } },
     })).rejects.toThrow();
   });
 

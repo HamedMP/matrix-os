@@ -808,13 +808,12 @@ describe("IPC contract", () => {
     const schema = INVOKE_CHANNELS["state:set"].request;
     expect(schema.safeParse({ key: "appearance", value: { theme: "dark" } }).success).toBe(true);
     expect(schema.safeParse({
-      key: "codingAgentWorkspace",
+      key: "projectViews",
       value: {
-        selectedProjectId: "matrix-os",
-        selectedTaskId: "task_auth",
-        selectedThreadId: "thread_plan",
-        viewMode: "conversation",
-        updatedAt: "2026-07-10T12:00:00.000Z",
+        runtimeScope: "operator|https://platform.test|primary",
+        views: {
+          "matrix-os": { view: "chats", selectedThreadId: "thread_plan", touchedAt: 1_750_000_000_000 },
+        },
       },
     }).success).toBe(true);
     expect(schema.safeParse({ key: "nope", value: 1 }).success).toBe(false);

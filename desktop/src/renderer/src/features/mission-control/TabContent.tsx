@@ -3,18 +3,15 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import { useTabs, type Tab } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
-import Board from "../board/Board";
+import ProjectTab from "../project/ProjectTab";
 import TaskWorkspace from "../workspace/TaskWorkspace";
 import TerminalView from "../terminal/TerminalView";
-import ThreadView from "../threads/ThreadView";
 import SettingsView from "../settings/SettingsView";
 import HomeTab from "./HomeTab";
 import ChatTab from "../chat/ChatTab";
-import AgentWorkspace from "../coding-agents/AgentWorkspace";
 import { AppLauncher } from "../embeds";
 import TerminalsTab from "../terminal/TerminalsTab";
 import EmbedHost from "../embeds/EmbedHost";
-import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import FilesWorkspace from "../files/FilesWorkspace";
 
 export class TabErrorBoundary extends Component<{
@@ -61,16 +58,12 @@ function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
       return <AppLauncher />;
     case "app":
       return tab.slug ? <EmbedHost kind="app" slug={tab.slug} active={active} /> : null;
-    case "board":
-      return <Board projectSlug={tab.projectSlug} active={active} />;
+    case "project":
+      return tab.projectSlug ? <ProjectTab projectSlug={tab.projectSlug} active={active} /> : null;
     case "task":
       return tab.taskId ? <TaskWorkspace taskId={tab.taskId} projectSlug={tab.projectSlug} active={active} /> : null;
     case "terminal":
       return tab.sessionName ? <TerminalView sessionName={tab.sessionName} active={active} /> : null;
-    case "agents":
-      return CODING_AGENTS_DESKTOP_WORKSPACE ? <AgentWorkspace /> : <ChatTab />;
-    case "thread":
-      return tab.threadId ? <ThreadView threadId={tab.threadId} /> : null;
     case "settings":
       return <SettingsView />;
     default:
