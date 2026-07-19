@@ -47,8 +47,8 @@ const DESIGN_BACKGROUNDS: Partial<Record<DesignStyle, DesktopConfig["background"
   // Product default: macOS deliberately starts on the first image shown in
   // Appearance. macos-light.svg remains available as a user-selectable image.
   "macos-glass": { type: "wallpaper", name: "moraine-lake.jpg" },
-  winxp: { type: "wallpaper", name: "xp-bliss.svg" },
-  win11: { type: "wallpaper", name: "win11-bloom.svg" },
+  winxp: { type: "wallpaper", name: "xp-bliss.jpg" },
+  win11: { type: "wallpaper", name: "win11-bloom.jpg" },
 };
 
 /** Designs that also move the dock to match their OS's real placement. */

@@ -176,7 +176,7 @@ describe("DesignPicker", () => {
 
     await waitFor(() => expect(shared.saveDesktopConfigPatchMock).toHaveBeenCalledTimes(1));
     expect(shared.saveDesktopConfigPatchMock).toHaveBeenCalledWith({
-      background: { type: "wallpaper", name: "xp-bliss.svg" },
+      background: { type: "wallpaper", name: "xp-bliss.jpg" },
     });
   });
 
@@ -187,7 +187,7 @@ describe("DesignPicker", () => {
 
     await waitFor(() => expect(shared.saveDesktopConfigPatchMock).toHaveBeenCalledTimes(1));
     expect(shared.saveDesktopConfigPatchMock).toHaveBeenCalledWith({
-      background: { type: "wallpaper", name: "win11-bloom.svg" },
+      background: { type: "wallpaper", name: "win11-bloom.jpg" },
     });
   });
 

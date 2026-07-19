@@ -322,23 +322,27 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       writeFileSync(join(appDir, 'home', '.template-manifest.json'), JSON.stringify({
         'system/wallpapers/macos-light.svg': sha256('macos light v1'),
         'system/wallpapers/moraine-lake.jpg': sha256('moraine v2'),
-        'system/wallpapers/win11-bloom.svg': sha256('win11 bloom v2'),
-        'system/wallpapers/xp-bliss.svg': sha256('xp bliss v1'),
+        'system/wallpapers/win11-bloom.jpg': sha256('win11 bloom v2'),
+        'system/wallpapers/xp-bliss.jpg': sha256('xp bliss v1'),
         'system/wallpapers/custom.jpg': sha256('template custom'),
       }, null, 2));
       // Existing VPS home: a stale tracked bloom, a user upload, and a
       // user-modified file colliding with a template entry name.
       writeFileSync(join(homeDir, '.template-manifest.json'), JSON.stringify({
-        'system/wallpapers/win11-bloom.svg': sha256('win11 bloom v1'),
+        'system/wallpapers/win11-bloom.jpg': sha256('win11 bloom v1'),
       }, null, 2));
       writeFileSync(join(templateWallpapers, 'macos-light.svg'), 'macos light v1');
       writeFileSync(join(templateWallpapers, 'moraine-lake.jpg'), 'moraine v2');
-      writeFileSync(join(templateWallpapers, 'win11-bloom.svg'), 'win11 bloom v2');
-      writeFileSync(join(templateWallpapers, 'xp-bliss.svg'), 'xp bliss v1');
+      writeFileSync(join(templateWallpapers, 'win11-bloom.jpg'), 'win11 bloom v2');
+      writeFileSync(join(templateWallpapers, 'xp-bliss.jpg'), 'xp bliss v1');
       writeFileSync(join(templateWallpapers, 'custom.jpg'), 'template custom');
-      writeFileSync(join(homeWallpapers, 'win11-bloom.svg'), 'win11 bloom v1');
+      writeFileSync(join(homeWallpapers, 'win11-bloom.jpg'), 'win11 bloom v1');
       writeFileSync(join(homeWallpapers, 'user-upload.jpg'), 'my own photo');
       writeFileSync(join(homeWallpapers, 'custom.jpg'), 'user customized');
+      // A leftover from the superseded .svg wallpaper generation: no longer
+      // in the system-owned set, so the sync must leave it alone.
+      writeFileSync(join(homeWallpapers, 'xp-bliss.svg'), 'old svg from previous sync');
+      writeFileSync(join(homeWallpapers, 'win11-bloom.svg'), 'old bloom svg from previous sync');
 
       const result = spawnSync('bash', [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')], {
         cwd: root,
@@ -352,17 +356,20 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
 
       expect(result.status, result.stderr || result.stdout).toBe(0);
       // Missing bundled wallpapers are added; tracked-but-stale ones update.
-      expect(readFileSync(join(homeWallpapers, 'xp-bliss.svg'), 'utf8')).toBe('xp bliss v1');
+      expect(readFileSync(join(homeWallpapers, 'xp-bliss.jpg'), 'utf8')).toBe('xp bliss v1');
       expect(readFileSync(join(homeWallpapers, 'macos-light.svg'), 'utf8')).toBe('macos light v1');
       expect(readFileSync(join(homeWallpapers, 'moraine-lake.jpg'), 'utf8')).toBe('moraine v2');
-      expect(readFileSync(join(homeWallpapers, 'win11-bloom.svg'), 'utf8')).toBe('win11 bloom v2');
+      expect(readFileSync(join(homeWallpapers, 'win11-bloom.jpg'), 'utf8')).toBe('win11 bloom v2');
       // User wallpapers are untouched — including one colliding with a
       // template manifest entry, proving the override is name-exact.
       expect(readFileSync(join(homeWallpapers, 'user-upload.jpg'), 'utf8')).toBe('my own photo');
       expect(readFileSync(join(homeWallpapers, 'custom.jpg'), 'utf8')).toBe('user customized');
+      // Leftovers from the superseded .svg generation are user data now.
+      expect(readFileSync(join(homeWallpapers, 'xp-bliss.svg'), 'utf8')).toBe('old svg from previous sync');
+      expect(readFileSync(join(homeWallpapers, 'win11-bloom.svg'), 'utf8')).toBe('old bloom svg from previous sync');
       const log = readFileSync(join(homeDir, 'system', 'logs', 'template-sync.log'), 'utf8');
-      expect(log).toContain('Added: system/wallpapers/xp-bliss.svg');
-      expect(log).toContain('Updated: system/wallpapers/win11-bloom.svg');
+      expect(log).toContain('Added: system/wallpapers/xp-bliss.jpg');
+      expect(log).toContain('Updated: system/wallpapers/win11-bloom.jpg');
       expect(log).toContain('Skipped: system/wallpapers/custom.jpg (protected user data)');
     } finally {
       rmSync(tempDir, { recursive: true, force: true });

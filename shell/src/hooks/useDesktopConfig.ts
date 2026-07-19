@@ -37,8 +37,8 @@ export type DesktopConfigPatch = Omit<Partial<DesktopConfig>, "dock"> & {
 
 export const BUNDLED_WALLPAPERS = new Set([
   "moraine-lake.jpg",
-  "xp-bliss.svg",
-  "win11-bloom.svg",
+  "xp-bliss.jpg",
+  "win11-bloom.jpg",
   "macos-light.svg",
 ]);
 const SETTINGS_FETCH_TIMEOUT_MS = 10_000;

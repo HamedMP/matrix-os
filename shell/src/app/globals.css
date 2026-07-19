@@ -1480,8 +1480,10 @@ pre {
 /* ═══════════════════════════════════════════════
    Windows 11 (Fluent/Mica) overrides — active only
    when data-theme-style="win11" is on :root.
-   Light acrylic surfaces, soft elevation, pill
-   hover states, #0067c0 accent interactions.
+   Solid Mica content surfaces (opaque, hairline
+   borders, soft elevation); translucent acrylic is
+   reserved for title bars, flyouts, and shell
+   chrome. #0067c0 accent interactions.
    ═══════════════════════════════════════════════ */
 
 /* --- Fluent tokens --- */
@@ -1489,16 +1491,19 @@ pre {
   --win11-acrylic: rgba(249, 249, 249, 0.85);
   --win11-acrylic-strong: rgba(249, 249, 249, 0.93);
   --win11-blur: blur(30px) saturate(150%);
+  /* Mica window content is opaque; acrylic (translucency + blur) is reserved
+     for title bars, flyouts, and shell chrome. */
+  --win11-mica: #fafafa;
   --win11-stroke: rgba(0, 0, 0, 0.06);
   --win11-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
   --win11-hover: rgba(0, 0, 0, 0.05);
 }
 
-/* --- Cards: Mica surface with soft elevation --- */
+/* --- Cards: solid Mica surface (opaque) with soft elevation --- */
 [data-theme-style="win11"] [data-slot="card"] {
-  background: var(--win11-acrylic);
-  backdrop-filter: var(--win11-blur);
-  -webkit-backdrop-filter: var(--win11-blur);
+  background: var(--win11-mica);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   border: 1px solid var(--win11-stroke);
   border-radius: var(--radius);
   box-shadow: var(--win11-shadow);
@@ -1581,11 +1586,25 @@ pre {
   border-radius: 6px !important;
 }
 
-/* --- Window containers (canvas windows): Mica window --- */
+/* --- Window containers (canvas windows): opaque Mica content, hairline frame --- */
 [data-theme-style="win11"] .rounded-lg.bg-card {
+  background: var(--win11-mica) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
   border: 1px solid var(--win11-stroke) !important;
   border-radius: var(--radius) !important;
   box-shadow: var(--win11-shadow) !important;
+}
+
+/* --- File browser rows: Fluent hover + accent selection pills (4px) --- */
+[data-theme-style="win11"] [data-file-browser] .hover\:bg-accent\/50:hover {
+  background: var(--win11-hover);
+}
+
+[data-theme-style="win11"] [data-file-browser] .bg-accent {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--foreground);
+  border-radius: 4px;
 }
 
 /* --- Dock: centered acrylic taskbar --- */
