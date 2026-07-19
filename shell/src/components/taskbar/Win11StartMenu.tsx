@@ -1,10 +1,27 @@
 "use client";
 
-import { useState, type Ref } from "react";
-import { LockIcon, LogOutIcon, PowerIcon, SearchIcon } from "lucide-react";
+import { useEffect, useRef, useState, type Ref } from "react";
+import Link from "next/link";
+import { useAuth, useClerk } from "@clerk/nextjs";
+import {
+  Loader2Icon,
+  LockIcon,
+  LogOutIcon,
+  PowerIcon,
+  SearchIcon,
+  ServerIcon,
+  SettingsIcon,
+  UserIcon,
+} from "lucide-react";
 import type { AppEntry } from "@/hooks/useWindowManager";
 import { isBuiltInAppPath } from "@/lib/builtin-apps";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { isSelfHostedDocument } from "@/lib/self-host-mode";
+import {
+  clearMatrixAppSession,
+  clerkSignOutWithTimeout,
+  getSignInRedirectUrl,
+} from "@/lib/sign-out";
 import { useOsSessionStore } from "../os-session/os-session-store";
 import { StartMenuUser, TaskbarAppIcon } from "./taskbar-shared";
 import {
@@ -35,10 +52,73 @@ const MAX_RECOMMENDED = 3;
 export function Win11StartMenu({ ref, apps, onOpenApp, onOpenSettings, onClose }: Win11StartMenuProps) {
   const [query, setQuery] = useState("");
   const [powerOpen, setPowerOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const powerWrapRef = useRef<HTMLDivElement>(null);
+  const powerButtonRef = useRef<HTMLButtonElement>(null);
+  const accountWrapRef = useRef<HTMLDivElement>(null);
+  const accountButtonRef = useRef<HTMLButtonElement>(null);
+  const { isLoaded, isSignedIn, signOut } = useAuth();
+  const clerk = useClerk();
+  const isClerkSignedIn = !isSelfHostedDocument() && isLoaded && isSignedIn;
+
+  // ARIA menu pattern for both flyouts: focus the first item on open, arrow
+  // keys move between items, Escape closes and re-focuses the trigger.
+  useEffect(() => {
+    if (!powerOpen) return;
+    powerWrapRef.current
+      ?.querySelector<HTMLButtonElement>(".win11-power-flyout-item")
+      ?.focus();
+  }, [powerOpen]);
+  useEffect(() => {
+    if (!accountOpen) return;
+    accountWrapRef.current
+      ?.querySelector<HTMLButtonElement>(".win11-power-flyout-item")
+      ?.focus();
+  }, [accountOpen]);
+
+  const onFlyoutKeyDown = (
+    event: React.KeyboardEvent,
+    wrapRef: React.RefObject<HTMLDivElement | null>,
+    close: () => void,
+    triggerRef: React.RefObject<HTMLButtonElement | null>,
+  ) => {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      close();
+      triggerRef.current?.focus();
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const items = Array.from(
+      wrapRef.current?.querySelectorAll<HTMLButtonElement>(".win11-power-flyout-item") ?? [],
+    );
+    if (items.length === 0) return;
+    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next =
+      event.key === "ArrowDown"
+        ? (current + 1) % items.length
+        : (current - 1 + items.length) % items.length;
+    items[next]?.focus();
+  };
 
   const openLockScreen = () => {
     onClose();
     useOsSessionStore.getState().openWin11Lock();
+  };
+
+  const handleSignOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    const redirectUrl = getSignInRedirectUrl();
+    await clearMatrixAppSession();
+    try {
+      await clerkSignOutWithTimeout(signOut, redirectUrl);
+      window.location.replace(redirectUrl);
+    } catch {
+      window.location.replace(redirectUrl);
+    }
   };
 
   const pinnedApps: TaskbarAppEntry[] = [];
@@ -121,17 +201,95 @@ export function Win11StartMenu({ ref, apps, onOpenApp, onOpenSettings, onClose }
         </>
       ) : null}
       <div className="win11-start-footer">
-        <button
-          type="button"
-          className="win11-start-user-button"
-          aria-label="Account settings"
-          onClick={onOpenSettings}
-        >
-          <StartMenuUser avatarSize={28} className="win11-start-user" />
-        </button>
-        <div className="win11-start-power-wrap">
+        <div className="win11-start-user-wrap" ref={accountWrapRef}>
+          {accountOpen ? (
+            <div
+              className="win11-power-flyout win11-power-flyout--account"
+              role="menu"
+              aria-label="Account options"
+              onKeyDown={(e) =>
+                onFlyoutKeyDown(e, accountWrapRef, () => setAccountOpen(false), accountButtonRef)
+              }
+            >
+              <div className="win11-account-header">
+                <StartMenuUser avatarSize={32} className="win11-start-user" />
+              </div>
+              {isClerkSignedIn ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="win11-power-flyout-item"
+                  onClick={() => {
+                    onClose();
+                    clerk.openUserProfile();
+                  }}
+                >
+                  <UserIcon aria-hidden="true" />
+                  <span>Manage account</span>
+                </button>
+              ) : null}
+              <Link
+                href="/runtime"
+                role="menuitem"
+                className="win11-power-flyout-item"
+                onClick={onClose}
+              >
+                <ServerIcon aria-hidden="true" />
+                <span>Switch computer</span>
+              </Link>
+              <button
+                type="button"
+                role="menuitem"
+                className="win11-power-flyout-item"
+                onClick={onOpenSettings}
+              >
+                <SettingsIcon aria-hidden="true" />
+                <span>Settings</span>
+              </button>
+              {isClerkSignedIn ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="win11-power-flyout-item"
+                  disabled={signingOut}
+                  aria-busy={signingOut}
+                  onClick={() => void handleSignOut()}
+                >
+                  {signingOut ? (
+                    <Loader2Icon className="win11-spin" aria-hidden="true" />
+                  ) : (
+                    <LogOutIcon aria-hidden="true" />
+                  )}
+                  <span>{signingOut ? "Signing out…" : "Sign out"}</span>
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          <button
+            type="button"
+            className="win11-start-user-button"
+            aria-label="Account"
+            aria-expanded={accountOpen}
+            aria-haspopup="menu"
+            onClick={() => {
+              setAccountOpen((open) => !open);
+              setPowerOpen(false);
+            }}
+            ref={accountButtonRef}
+          >
+            <StartMenuUser avatarSize={28} className="win11-start-user" />
+          </button>
+        </div>
+        <div className="win11-start-power-wrap" ref={powerWrapRef}>
           {powerOpen ? (
-            <div className="win11-power-flyout" role="menu" aria-label="Power options">
+            <div
+              className="win11-power-flyout"
+              role="menu"
+              aria-label="Power options"
+              onKeyDown={(e) =>
+                onFlyoutKeyDown(e, powerWrapRef, () => setPowerOpen(false), powerButtonRef)
+              }
+            >
               <button type="button" role="menuitem" className="win11-power-flyout-item" onClick={openLockScreen}>
                 <LockIcon aria-hidden="true" />
                 <span>Lock</span>
@@ -147,7 +305,12 @@ export function Win11StartMenu({ ref, apps, onOpenApp, onOpenSettings, onClose }
             className="win11-start-power"
             aria-label="Power"
             aria-expanded={powerOpen}
-            onClick={() => setPowerOpen((open) => !open)}
+            aria-haspopup="menu"
+            onClick={() => {
+              setPowerOpen((open) => !open);
+              setAccountOpen(false);
+            }}
+            ref={powerButtonRef}
           >
             <PowerIcon aria-hidden="true" />
           </button>
