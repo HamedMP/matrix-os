@@ -98,6 +98,7 @@ import {
 } from './runtime-probes.js';
 import { createPlatformMetricsRoutes } from './platform-metrics-routes.js';
 import { createAtsRoutes } from './ats-routes.js';
+import type { AtsDB } from './ats-db.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 import {
   APP_SESSION_COOKIE,
@@ -300,6 +301,7 @@ function getGatewayUrlForHandle(handle: string): string {
 
 export function createApp(deps: {
   db: PlatformDB;
+  atsDb?: AtsDB;
   docker?: Dockerode;
   orchestrator: Orchestrator;
   clerkAuth?: ClerkAuth;
@@ -577,17 +579,19 @@ export function createApp(deps: {
     settlingWindowMs: Number(appEnv.BILLING_SETTLING_WINDOW_MS) || undefined,
   }));
 
-  app.route('/', createAtsRoutes({
-    db,
-    ingestSecret: appEnv.ATS_INGEST_SECRET ?? '',
-    adminSecret: appEnv.ATS_ADMIN_SECRET ?? platformSecret,
-    allowedRoleSlugs: [
-      'founders-associate-gtm-operations',
-      'founding-engineer',
-    ],
-    bookingBaseUrl: appEnv.ATS_BOOKING_BASE_URL,
-    publicSiteUrl: appEnv.MATRIX_PUBLIC_SITE_URL ?? 'https://matrix-os.com',
-  }));
+  if (deps.atsDb) {
+    app.route('/', createAtsRoutes({
+      db: deps.atsDb,
+      ingestSecret: appEnv.ATS_INGEST_SECRET ?? '',
+      adminSecret: appEnv.ATS_ADMIN_SECRET ?? '',
+      allowedRoleSlugs: [
+        'founders-associate-gtm-operations',
+        'founding-engineer',
+      ],
+      bookingBaseUrl: appEnv.ATS_BOOKING_BASE_URL,
+      publicSiteUrl: appEnv.MATRIX_PUBLIC_SITE_URL ?? 'https://matrix-os.com',
+    }));
+  }
 
   // Session-based routing:
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway

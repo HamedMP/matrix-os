@@ -19,7 +19,7 @@ import {
   upsertAtsScorecard,
 } from './ats-repository.js';
 import { ATS_DISPOSITIONS, ATS_STAGES } from './ats-types.js';
-import type { PlatformDB } from './db.js';
+import type { AtsDB } from './ats-db.js';
 import { timingSafeTokenEquals } from './platform-token.js';
 
 const APPLICATION_BODY_LIMIT = 6 * 1024 * 1024;
@@ -111,7 +111,7 @@ function getActorId(headers: { get(name: string): string | null }): string {
 }
 
 export function createAtsRoutes(options: {
-  db: PlatformDB;
+  db: AtsDB;
   ingestSecret: string;
   adminSecret: string;
   allowedRoleSlugs: readonly string[];

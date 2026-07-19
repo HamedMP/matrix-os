@@ -14,8 +14,8 @@ import {
   updateAtsApplicationMetadata,
   upsertAtsScorecard,
 } from '../../packages/platform/src/ats-repository.js';
-import type { PlatformDB } from '../../packages/platform/src/db.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import type { AtsDB } from '../../packages/platform/src/ats-db.js';
+import { createTestAtsDb, destroyTestAtsDb } from './ats-db-test-helper.js';
 
 const NOW = '2026-07-19T12:00:00.000Z';
 
@@ -49,14 +49,14 @@ function applicationInput(overrides: Record<string, unknown> = {}) {
 }
 
 describe('platform ATS repository', () => {
-  let db: PlatformDB;
+  let db: AtsDB;
 
   beforeEach(async () => {
-    ({ db } = await createTestPlatformDb());
+    ({ db } = await createTestAtsDb());
   });
 
   afterEach(async () => {
-    await destroyTestPlatformDb(db);
+    await destroyTestAtsDb(db);
   });
 
   it('creates an application and submission event atomically', async () => {

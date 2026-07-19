@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { PlatformDB } from './db.js';
+import type { AtsDB } from './ats-db.js';
 import {
   applicationColumns,
   mapApplication,
@@ -36,7 +36,7 @@ export class AtsApplicationNotFoundError extends Error {
 }
 
 async function insertEvent(
-  db: PlatformDB,
+  db: AtsDB,
   input: {
     applicationId: string;
     eventType: string;
@@ -60,7 +60,7 @@ async function insertEvent(
 }
 
 export async function createAtsApplication(
-  db: PlatformDB,
+  db: AtsDB,
   input: {
     submissionKey: string;
     roleSlug: string;
@@ -132,7 +132,7 @@ export async function createAtsApplication(
 }
 
 export async function listAtsApplications(
-  db: PlatformDB,
+  db: AtsDB,
   filters: { roleSlug?: string; stage?: AtsStage; disposition?: AtsDisposition; search?: string },
 ): Promise<AtsApplicationSummary[]> {
   await db.ready;
@@ -152,7 +152,7 @@ export async function listAtsApplications(
   return (await query.orderBy('updated_at', 'desc').limit(200).execute()).map(mapApplication);
 }
 
-export async function getAtsApplication(db: PlatformDB, id: string): Promise<AtsApplicationDetail | undefined> {
+export async function getAtsApplication(db: AtsDB, id: string): Promise<AtsApplicationDetail | undefined> {
   await db.ready;
   const application = await db.executor.selectFrom('ats_applications')
     .select(applicationColumns)
@@ -178,7 +178,7 @@ export async function getAtsApplication(db: PlatformDB, id: string): Promise<Ats
 }
 
 export async function getAtsApplicationResume(
-  db: PlatformDB,
+  db: AtsDB,
   id: string,
 ): Promise<{ filename: string; contentType: string; bytes: Uint8Array } | undefined> {
   await db.ready;
@@ -195,7 +195,7 @@ export async function getAtsApplicationResume(
 }
 
 export async function transitionAtsApplication(
-  db: PlatformDB,
+  db: AtsDB,
   input: {
     applicationId: string;
     baseRevision: number;
@@ -240,7 +240,7 @@ export async function transitionAtsApplication(
 }
 
 export async function updateAtsApplicationMetadata(
-  db: PlatformDB,
+  db: AtsDB,
   input: {
     applicationId: string;
     baseRevision: number;
@@ -276,7 +276,7 @@ export async function updateAtsApplicationMetadata(
   });
 }
 
-export async function addAtsNote(db: PlatformDB, input: {
+export async function addAtsNote(db: AtsDB, input: {
   applicationId: string; authorId: string; body: string; at: string;
 }): Promise<AtsNote> {
   await db.ready;
@@ -290,7 +290,7 @@ export async function addAtsNote(db: PlatformDB, input: {
   });
 }
 
-export async function upsertAtsScorecard(db: PlatformDB, input: {
+export async function upsertAtsScorecard(db: AtsDB, input: {
   applicationId: string; interviewerId: string; interviewType: string;
   recommendation: string; ratings: Record<string, number>; strengths: string;
   concerns: string | null; at: string;
@@ -315,7 +315,7 @@ export async function upsertAtsScorecard(db: PlatformDB, input: {
   });
 }
 
-export async function createAtsInterview(db: PlatformDB, input: {
+export async function createAtsInterview(db: AtsDB, input: {
   applicationId: string; interviewType: string; interviewerIds: string[];
   bookingTokenHash: string; bookingUrl: string; actorId: string; at: string;
 }): Promise<AtsInterview> {
@@ -335,7 +335,7 @@ export async function createAtsInterview(db: PlatformDB, input: {
 }
 
 export async function resolveAtsBooking(
-  db: PlatformDB,
+  db: AtsDB,
   bookingTokenHash: string,
   at: string,
 ): Promise<string | undefined> {
@@ -367,7 +367,7 @@ export async function resolveAtsBooking(
   });
 }
 
-export async function createAtsTask(db: PlatformDB, input: {
+export async function createAtsTask(db: AtsDB, input: {
   applicationId: string; title: string; assigneeId: string | null;
   dueAt: string | null; actorId: string; at: string;
 }): Promise<AtsTask> {
@@ -383,7 +383,7 @@ export async function createAtsTask(db: PlatformDB, input: {
   });
 }
 
-export async function completeAtsTask(db: PlatformDB, input: {
+export async function completeAtsTask(db: AtsDB, input: {
   applicationId: string; taskId: string; actorId: string; at: string;
 }): Promise<AtsTask> {
   await db.ready;

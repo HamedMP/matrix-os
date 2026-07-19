@@ -13,10 +13,6 @@ import {
   serializeDeveloperTools,
   type DeveloperToolId,
 } from './developer-tools.js';
-import {
-  migrateAts,
-  type AtsDatabaseTables,
-} from './ats-schema.js';
 
 const DEFAULT_PLATFORM_DB_URL =
   process.env.PLATFORM_DATABASE_URL ??
@@ -304,7 +300,7 @@ interface OnboardingJourneyEventsTable {
   at: string;
 }
 
-export interface PlatformDatabase extends AtsDatabaseTables {
+export interface PlatformDatabase {
   users: UsersTable;
   containers: ContainersTable;
   user_machines: UserMachinesTable;
@@ -1067,7 +1063,6 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_follows_follower ON social_follows(follower_id)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_follows_following ON social_follows(following_id)`.execute(db);
-  await migrateAts(db);
 }
 
 export function createPlatformDb(opts: string | { dialect: unknown } = DEFAULT_PLATFORM_DB_URL ?? ''): PlatformDB {

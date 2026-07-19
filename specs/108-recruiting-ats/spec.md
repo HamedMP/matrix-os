@@ -33,16 +33,16 @@ Email-only applications lose structured answers, duplicate follow-ups, stage his
 Applicant browser
   -> matrix-os-site /api/careers/apply
   -> platform /api/ats/applications (ATS_INGEST_SECRET)
-  -> PostgreSQL ATS tables
+  -> dedicated recruiting PostgreSQL (`ATS_DATABASE_URL`)
 
 Hiring admin browser
   -> Clerk-protected matrix-os-site /admin/ats
-  -> site server actions (ATS_ADMIN_SECRET / PLATFORM_SECRET)
+  -> site server actions (ATS_ADMIN_SECRET)
   -> platform /api/ats/admin/*
-  -> PostgreSQL ATS tables
+  -> dedicated recruiting PostgreSQL (`ATS_DATABASE_URL`)
 ```
 
-The public browser never receives either platform secret. The site validates and forwards multipart applications server-side. Platform routes independently validate every field and file.
+The public browser never receives either platform secret. The site validates and forwards multipart applications server-side. Platform routes independently validate every field and file. Recruiting uses a dedicated PostgreSQL/Neon database and never migrates ATS tables into `PLATFORM_DATABASE_URL`.
 
 ## Roles and authorization
 
@@ -120,7 +120,7 @@ Limits:
 
 ## Privacy and security
 
-- Candidate data is company recruiting data in platform PostgreSQL, not Matrix customer runtime data.
+- Candidate data is company recruiting data in the dedicated ATS PostgreSQL database, not the Matrix platform or customer runtime databases.
 - CVs and answers are never logged, sent to analytics, or returned in list endpoints.
 - Responses expose generic errors; server logs retain bounded operational context only.
 - Mutating Hono endpoints use `bodyLimit`; multipart parsing happens only after the limit middleware.
@@ -140,4 +140,3 @@ Limits:
 - CV download requires admin authorization and returns safe content disposition headers.
 - The careers pages use the structured application flow instead of email.
 - Repository tests cover migrations, idempotency, transactions, authorization, validation, redaction, and core UI contracts.
-

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createAtsRoutes } from '../../packages/platform/src/ats-routes.js';
-import type { PlatformDB } from '../../packages/platform/src/db.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import type { AtsDB } from '../../packages/platform/src/ats-db.js';
+import { createTestAtsDb, destroyTestAtsDb } from './ats-db-test-helper.js';
 
 const INGEST_SECRET = 'test-ingest-secret';
 const ADMIN_SECRET = 'test-admin-secret';
@@ -23,14 +23,14 @@ function validApplicationForm() {
 }
 
 describe('platform ATS routes', () => {
-  let db: PlatformDB;
+  let db: AtsDB;
 
   beforeEach(async () => {
-    ({ db } = await createTestPlatformDb());
+    ({ db } = await createTestAtsDb());
   });
 
   afterEach(async () => {
-    await destroyTestPlatformDb(db);
+    await destroyTestAtsDb(db);
   });
 
   function routes(overrides: Partial<Parameters<typeof createAtsRoutes>[0]> = {}) {
