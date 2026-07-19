@@ -1,9 +1,10 @@
-import { ChevronLeft, ExternalLink, Monitor, RefreshCw } from "lucide-react";
+import { ExternalLink, Monitor, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import type { PreviewSessionSummary, RuntimeSummary } from "@matrix-os/contracts";
-import { Button, IconButton, StatusDot } from "../../design/primitives";
+import { Button, StatusDot } from "../../design/primitives";
 import { invoke } from "../../lib/operator";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { AgentWorkspaceSection } from "../coding-agents/AgentWorkspaceSection";
 
 const STATUS_COLOR: Record<string, string> = {
   running: "var(--success)",
@@ -25,117 +26,119 @@ function canOpenExternally(origin: string | undefined): origin is string {
   }
 }
 
+function openExternalPreview(url: string): void {
+  void invoke("shell:open-external", { url }).catch((err: unknown) => {
+    console.warn("[coding-agents] preview open failed", err instanceof Error ? err.message : String(err));
+  });
+}
+
 /**
- * Inspector Preview surface: preview sessions as the entry state; inspecting
- * one shows a chrome row (URL display, refresh, HTTPS-only open-external)
- * plus the session's live status. Inline rendering is intentionally not
- * attempted here — the renderer CSP allows no remote frames, and port
- * discovery/device emulation belong to a later wave.
+ * Inspector Preview surface: the session list stays visible; inspecting one
+ * adds a chrome row (URL display, refresh, HTTPS-only open-external) above
+ * the session's live details. Inline rendering is intentionally not attempted
+ * here — the renderer CSP allows no remote frames, and port discovery/device
+ * emulation belong to a later wave.
  */
 export function InspectorPreviewPanel({ summary }: { summary: RuntimeSummary }) {
   const previews = summary.previewSessions ?? { items: [], hasMore: false, limit: 50 };
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  // A refresh that drops the inspected session returns the surface to the
-  // list in the same render — no stale chrome for a gone preview.
+  // A refresh that drops the inspected session clears the chrome in the same
+  // render — no stale details for a gone preview.
   const selected = selectedId
     ? previews.items.find((candidate) => candidate.id === selectedId) ?? null
     : null;
 
-  if (selected) {
-    return <PreviewChrome preview={selected} onBack={() => setSelectedId(null)} />;
-  }
-
   return (
-    <div className="grid gap-2">
-      {previews.items.map((preview) => (
-        <button
-          key={preview.id}
-          type="button"
-          aria-label={`Inspect preview ${preview.label}`}
-          className="no-drag flex min-h-[68px] items-center justify-between gap-3 rounded-md border p-3 text-left transition-colors duration-100 hover:brightness-105"
-          style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
-          onClick={() => setSelectedId(preview.id)}
-        >
-          <div className="flex min-w-0 items-center gap-2">
-            <Monitor size={15} style={{ color: "var(--text-tertiary)" }} />
-            <div className="min-w-0">
-              <h3 className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-                {preview.label}
-              </h3>
-              <p className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
-                {preview.origin ?? "No local origin"}
-              </p>
+    <AgentWorkspaceSection title="Previews" count={previews.items.length}>
+      <div className="grid gap-2">
+        {previews.items.map((preview) => (
+          <button
+            key={preview.id}
+            type="button"
+            aria-label={`Inspect preview ${preview.label}`}
+            aria-current={selectedId === preview.id ? "true" : undefined}
+            className="no-drag flex min-h-[68px] items-center justify-between gap-3 rounded-md border p-3 text-left transition-colors duration-100 hover:brightness-105"
+            style={{
+              borderColor: selectedId === preview.id ? "var(--accent)" : "var(--border-subtle)",
+              background: selectedId === preview.id ? "var(--accent-muted)" : "var(--bg-surface)",
+            }}
+            onClick={() => setSelectedId(preview.id)}
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <Monitor size={15} style={{ color: "var(--text-tertiary)" }} />
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                  {preview.label}
+                </h3>
+                <p className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
+                  {preview.origin ?? "No local origin"}
+                </p>
+              </div>
             </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <StatusDot color={STATUS_COLOR[preview.status] ?? DEFAULT_STATUS_COLOR} />
+              <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
+                {preview.status}
+              </span>
+            </div>
+          </button>
+        ))}
+        {previews.items.length === 0 ? (
+          <div
+            className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed px-4 py-8 text-center"
+            style={{ borderColor: "var(--border-subtle)" }}
+          >
+            <Monitor size={22} style={{ color: "var(--text-tertiary)" }} />
+            <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>No previews yet</p>
+            <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
+              Previews appear here when an agent serves a web app for this project.
+            </p>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <StatusDot color={STATUS_COLOR[preview.status] ?? DEFAULT_STATUS_COLOR} />
-            <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
-              {preview.status}
-            </span>
-          </div>
-        </button>
-      ))}
-      {previews.items.length === 0 ? (
-        <div
-          className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed px-4 py-8 text-center"
-          style={{ borderColor: "var(--border-subtle)" }}
-        >
-          <Monitor size={22} style={{ color: "var(--text-tertiary)" }} />
-          <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>No previews yet</p>
-          <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-            Previews appear here when an agent serves a web app for this project.
-          </p>
-        </div>
-      ) : null}
-    </div>
+        ) : null}
+        {selected ? <InspectedPreview preview={selected} /> : null}
+      </div>
+    </AgentWorkspaceSection>
   );
 }
 
-function PreviewChrome({
-  preview,
-  onBack,
-}: {
-  preview: PreviewSessionSummary;
-  onBack: () => void;
-}) {
+function InspectedPreview({ preview }: { preview: PreviewSessionSummary }) {
   const externalUrl = canOpenExternally(preview.origin) ? preview.origin : null;
-
-  const openExternal = () => {
-    if (!externalUrl) return;
-    void invoke("shell:open-external", { url: externalUrl }).catch((err: unknown) => {
-      console.warn("[coding-agents] preview open failed", err instanceof Error ? err.message : String(err));
-    });
-  };
-
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2">
+    <>
       <div
-        className="flex h-9 shrink-0 items-center gap-1 rounded-md border px-1.5"
+        className="flex h-9 items-center gap-1 rounded-md border px-1.5"
         style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
       >
-        <IconButton label="Back to previews" onClick={onBack}>
-          <ChevronLeft size={14} />
-        </IconButton>
         <span
-          className="min-w-0 flex-1 truncate px-1 font-mono text-xs"
+          className="min-w-0 flex-1 truncate px-1.5 font-mono text-xs"
           style={{ color: "var(--text-secondary)" }}
           title={preview.origin ?? undefined}
         >
           {preview.origin ?? "No local origin"}
         </span>
-        <IconButton
-          label="Refresh previews"
+        <button
+          type="button"
+          aria-label="Refresh previews"
+          title="Refresh previews"
+          className="no-drag flex h-7 w-7 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          style={{ color: "var(--text-tertiary)" }}
           onClick={() => void useCodingAgentWorkspace.getState().refresh()}
         >
           <RefreshCw size={13} />
-        </IconButton>
-        <IconButton
-          label={externalUrl ? `Open preview ${preview.label} in browser` : "Open in browser"}
+        </button>
+        <button
+          type="button"
+          aria-label="Open preview in browser"
+          title={externalUrl ? "Open preview in browser" : "HTTPS preview origin required"}
           disabled={!externalUrl}
-          onClick={openExternal}
+          className="no-drag flex h-7 w-7 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
+          style={{ color: "var(--text-tertiary)" }}
+          onClick={() => {
+            if (externalUrl) openExternalPreview(externalUrl);
+          }}
         >
           <ExternalLink size={13} />
-        </IconButton>
+        </button>
       </div>
       <section
         aria-label={`Preview details for ${preview.label}`}
@@ -145,20 +148,24 @@ function PreviewChrome({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-              {preview.label}
+              Preview details
             </h3>
-            <p className="mt-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
-              {externalUrl
-                ? "Inline rendering isn't available in the desktop app yet — open the preview in your browser."
-                : "This preview has no HTTPS origin to open."}
+            <p className="mt-1 truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
+              {preview.origin ?? "No local origin"}
             </p>
           </div>
-          {externalUrl ? (
-            <Button variant="ghost" onClick={openExternal} aria-label={`Open ${preview.label} externally`}>
-              <ExternalLink size={14} />
-              Open
-            </Button>
-          ) : null}
+          <Button
+            variant="ghost"
+            onClick={() => {
+              if (externalUrl) openExternalPreview(externalUrl);
+            }}
+            disabled={!externalUrl}
+            aria-label={externalUrl ? `Open preview ${preview.label} in browser` : "Open in browser"}
+            title={externalUrl ? "Open in browser" : "HTTPS preview origin required"}
+          >
+            <ExternalLink size={14} />
+            Open in browser
+          </Button>
         </div>
         <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
           <div>
@@ -171,6 +178,6 @@ function PreviewChrome({
           </div>
         </dl>
       </section>
-    </div>
+    </>
   );
 }
