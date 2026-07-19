@@ -1095,6 +1095,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       </ShellNotificationStack>
       {isWindowsDesign ? (
         <WindowsTaskbar
+          themeStyle={themeStyle}
           apps={apps}
           windows={windows}
           onOpenApp={(path, name) => focusOrOpen(name ?? apps.find((a) => a.path === path)?.name ?? "App", path)}
