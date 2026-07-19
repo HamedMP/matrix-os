@@ -236,7 +236,11 @@ export function DesignPicker() {
         await saveDesktopConfigPatch(patch);
       } catch (err) {
         console.warn("[appearance] Failed to apply design desktop defaults:", err);
-        setError("Couldn't apply that design. Please try again.");
+        setError(
+          DESIGN_DOCK_POSITIONS[option.id]
+            ? "Design applied, but its wallpaper or Dock position couldn't be updated. Try those settings again below."
+            : "Design applied, but its wallpaper couldn't be updated. Try choosing it again below.",
+        );
       }
     }
     // No `finally` — React Compiler cannot lower TryStatement with a finalizer.
