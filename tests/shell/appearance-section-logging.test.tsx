@@ -6,6 +6,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 const shared = vi.hoisted(() => ({
   saveDesktopConfigMock: vi.fn(),
+  saveDesktopConfigPatchMock: vi.fn(),
   setDockMock: vi.fn(),
   config: {
     background: { type: "wallpaper", name: "forest.png" } as const,
@@ -22,7 +23,7 @@ vi.mock("@/hooks/useTheme", () => ({
 vi.mock("@/hooks/useDesktopConfig", () => ({
   useDesktopConfig: () => shared.config,
   saveDesktopConfig: shared.saveDesktopConfigMock,
-  saveDesktopConfigPatch: vi.fn(),
+  saveDesktopConfigPatch: shared.saveDesktopConfigPatchMock,
   buildMeshGradient: () => "linear-gradient(#111111, #222222)",
   BUNDLED_WALLPAPERS: new Set(["moraine-lake.jpg", "xp-bliss.svg", "win11-bloom.svg", "macos-light.svg"]),
   wallpaperUrl: (name: string, gatewayUrl: string) =>
@@ -59,6 +60,8 @@ class FileReaderMock {
 describe("AppearanceSection warning logs", () => {
   beforeEach(() => {
     shared.saveDesktopConfigMock.mockReset();
+    shared.saveDesktopConfigPatchMock.mockReset();
+    shared.saveDesktopConfigPatchMock.mockResolvedValue(undefined);
     shared.setDockMock.mockReset();
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
       ok: true,
@@ -98,6 +101,23 @@ describe("AppearanceSection warning logs", () => {
     expect(getByRole("heading", { name: "Dock" })).toBeTruthy();
     expect(queryByRole("heading", { name: "Theme" })).toBeNull();
     expect(queryByRole("button", { name: /Sage/i })).toBeNull();
+  });
+
+  it("persists background and Dock controls as targeted patches", async () => {
+    const { getByRole } = render(<AppearanceSection />);
+
+    await waitFor(() => expect(getByRole("button", { name: "forest.png" })).toBeTruthy());
+    fireEvent.click(getByRole("button", { name: "forest.png" }));
+    fireEvent.click(getByRole("button", { name: "bottom" }));
+
+    await waitFor(() => expect(shared.saveDesktopConfigPatchMock).toHaveBeenCalledTimes(2));
+    expect(shared.saveDesktopConfigPatchMock).toHaveBeenNthCalledWith(1, {
+      background: { type: "wallpaper", name: "forest.png" },
+    });
+    expect(shared.saveDesktopConfigPatchMock).toHaveBeenNthCalledWith(2, {
+      dock: { position: "bottom", size: 56, iconSize: 40, autoHide: false },
+    });
+    expect(shared.saveDesktopConfigMock).not.toHaveBeenCalled();
   });
 
   it("logs upload failures when the wallpaper POST fails", async () => {

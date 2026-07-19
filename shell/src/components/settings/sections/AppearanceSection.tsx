@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useId } from "react";
 import { useTheme } from "@/hooks/useTheme";
-import { saveDesktopConfig, useDesktopConfig, buildMeshGradient, BUNDLED_WALLPAPERS, wallpaperUrl, type DesktopConfig } from "@/hooks/useDesktopConfig";
+import { saveDesktopConfigPatch, useDesktopConfig, buildMeshGradient, BUNDLED_WALLPAPERS, wallpaperUrl, type DesktopConfig } from "@/hooks/useDesktopConfig";
 import { useDesktopConfigStore, type DockConfig } from "@/stores/desktop-config";
 import { getGatewayUrl } from "@/lib/gateway";
 import { UploadIcon, XIcon, ImageIcon, PaletteIcon } from "lucide-react";
@@ -93,11 +93,11 @@ export function AppearanceSection() {
 
   async function saveDock(next: DockConfig) {
     setDock(next);
-    await saveDesktopConfig({ ...config, dock: next });
+    await saveDesktopConfigPatch({ dock: next });
   }
 
   const saveBg = async (background: DesktopConfig["background"]) => {
-    await saveDesktopConfig({ ...config, background });
+    await saveDesktopConfigPatch({ background });
   };
 
   async function selectBgMode(mode: BgMode) {
