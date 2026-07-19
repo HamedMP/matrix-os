@@ -43,6 +43,7 @@ import {
   type TreeNode,
   type WorkspaceSessionSummary,
 } from "./TerminalSidebarItems";
+import { TERMINAL_MONO_FONT_FAMILY } from "./terminal-typography";
 
 const SHELL_NEW_BUTTON_BASE_STYLE: CSSProperties = {
   height: 28,
@@ -972,12 +973,12 @@ export function LocalTerminalSidebar() {
             <div className="min-w-0">
               <div
                 data-testid="terminal-expanded-wordmark"
-                style={{ color: "#32352E", fontFamily: "var(--font-orbitron), Orbitron, sans-serif", fontSize: 20, fontWeight: 600, letterSpacing: "-0.01em", lineHeight: "24px" }}
+                style={{ color: "#32352E", fontFamily: "var(--font-orbitron), Orbitron, sans-serif", fontSize: 20, fontWeight: 600, letterSpacing: 0, lineHeight: "24px" }}
               >
-                matrix os
+                Matrix OS
               </div>
               {!ctx.mobile ? (
-                <div className="truncate" style={{ color: "var(--terminal-drawer-muted)", fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 13, lineHeight: "17px" }}>
+                <div className="truncate" style={{ color: "var(--terminal-drawer-muted)", fontFamily: TERMINAL_MONO_FONT_FAMILY, fontSize: 12, lineHeight: "17px" }}>
                   {ctx.sidebarSelectedPath ? formatCwd(ctx.sidebarSelectedPath) : "~/projects"}
                 </div>
               ) : null}

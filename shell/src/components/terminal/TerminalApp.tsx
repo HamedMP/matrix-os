@@ -45,6 +45,7 @@ import {
   formatShellDisplayName,
 } from "./TerminalSidebarItems";
 import { SHELL_SESSION_CREATE_ATTEMPTS } from "./terminal-session-names";
+import { TERMINAL_UI_FONT_FAMILY } from "./terminal-typography";
 
 export { TERMINAL_INPUT_EVENT };
 export type { TerminalInputEventDetail };
@@ -898,6 +899,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         ...appChromeCssVars,
         background: "var(--terminal-app-window-bg)",
         color: "var(--terminal-chrome-fg)",
+        fontFamily: TERMINAL_UI_FONT_FAMILY,
       }}
       role="application"
       aria-label="Terminal"

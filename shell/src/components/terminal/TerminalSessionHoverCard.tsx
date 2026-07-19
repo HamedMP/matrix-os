@@ -5,6 +5,7 @@ import { HoverCard as HoverCardPrimitive } from "radix-ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { TerminalAgentLogo } from "./TerminalAgentLogo";
 import { getShellVisualStatus, type ShellSessionSummary } from "./terminal-session-state";
+import { TERMINAL_MONO_FONT_FAMILY, TERMINAL_UI_FONT_FAMILY } from "./terminal-typography";
 
 const HOVER_CARD_WIDTH = 288;
 const HOVER_CARD_GAP = 12;
@@ -30,6 +31,7 @@ const FALLBACK_HOVER_CARD_THEME: TerminalHoverCardTheme = {
 const HOVER_CARD_BASE_STYLE: CSSProperties = {
   borderRadius: 8,
   display: "grid",
+  fontFamily: TERMINAL_UI_FONT_FAMILY,
   gap: 12,
   maxHeight: "calc(100vh - 24px)",
   maxWidth: "calc(100vw - 24px)",
@@ -108,7 +110,7 @@ function ContextField({
   return (
     <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
       <span style={{ color: theme.subtle, fontSize: 10, fontWeight: 750 }}>{label}</span>
-      <span style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, overflowWrap: "anywhere" }}>
+      <span style={{ fontFamily: TERMINAL_MONO_FONT_FAMILY, fontSize: 11, overflowWrap: "anywhere" }}>
         {value}
       </span>
     </div>
@@ -180,7 +182,7 @@ export function TerminalSessionHoverCard({
                   testIdPrefix="terminal-session-hover-agent-logo"
                 />
               ) : null}
-              <strong style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12 }}>{agentName}</strong>
+              <strong style={{ fontSize: 12, fontWeight: 600 }}>{agentName}</strong>
             </div>
             <span style={{ color: theme.muted, fontSize: 11, textTransform: "capitalize" }}>
               {liveState}
@@ -191,7 +193,7 @@ export function TerminalSessionHoverCard({
               {shell.model ? (
                 <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
                   <span style={{ color: theme.subtle, fontSize: 10, fontWeight: 750 }}>Model</span>
-                  <span style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, overflowWrap: "anywhere" }}>
+                  <span style={{ fontFamily: TERMINAL_MONO_FONT_FAMILY, fontSize: 11, overflowWrap: "anywhere" }}>
                     {shell.model}
                   </span>
                 </div>
@@ -199,7 +201,7 @@ export function TerminalSessionHoverCard({
               {shell.strength ? (
                 <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
                   <span style={{ color: theme.subtle, fontSize: 10, fontWeight: 750 }}>Strength</span>
-                  <span style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12 }}>
+                  <span style={{ fontSize: 12 }}>
                     {formatAgentStrength(shell.strength)}
                   </span>
                 </div>
@@ -207,7 +209,7 @@ export function TerminalSessionHoverCard({
             </div>
           ) : null}
           {shell.subtitle ? (
-            <p style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, lineHeight: "18px", margin: 0, overflowWrap: "anywhere" }}>
+            <p style={{ fontSize: 12, lineHeight: "18px", margin: 0, overflowWrap: "anywhere" }}>
               {shell.subtitle}
             </p>
           ) : null}
@@ -224,12 +226,12 @@ export function TerminalSessionHoverCard({
                       href={pullRequestUrl}
                       target="_blank"
                       rel="noreferrer"
-                      style={{ color: theme.foreground, fontFamily: "Inter, system-ui, sans-serif", fontSize: 12 }}
+                      style={{ color: theme.foreground, fontFamily: TERMINAL_MONO_FONT_FAMILY, fontSize: 11 }}
                     >
                       PR #{shell.pullRequest.number}
                     </a>
                   ) : (
-                    <span style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12 }}>
+                    <span style={{ fontFamily: TERMINAL_MONO_FONT_FAMILY, fontSize: 11 }}>
                       PR #{shell.pullRequest.number}
                     </span>
                   )}
@@ -240,21 +242,21 @@ export function TerminalSessionHoverCard({
           {!shell.agent ? (
             <div style={{ display: "grid", gap: 3 }}>
               <span style={{ color: theme.subtle, fontSize: 10, fontWeight: 750 }}>Shell status</span>
-              <span style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, textTransform: "capitalize" }}>
+              <span style={{ fontSize: 12, textTransform: "capitalize" }}>
                 {shell.status ?? "active"}
               </span>
             </div>
           ) : shell.lastAction ? (
             <div style={{ display: "grid", gap: 3 }}>
               <span style={{ color: theme.subtle, fontSize: 10, fontWeight: 750 }}>Last action</span>
-              <span style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, lineHeight: "17px", overflowWrap: "anywhere" }}>
+              <span style={{ fontSize: 12, lineHeight: "17px", overflowWrap: "anywhere" }}>
                 {shell.lastAction}
               </span>
             </div>
           ) : null}
           <time
             dateTime={updatedAt}
-            style={{ color: theme.subtle, fontFamily: "Inter, system-ui, sans-serif", fontSize: 10 }}
+            style={{ color: theme.subtle, fontSize: 10 }}
           >
             {formatAgentUpdatedAt(updatedAt)}
           </time>

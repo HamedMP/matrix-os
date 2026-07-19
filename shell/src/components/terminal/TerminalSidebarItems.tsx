@@ -25,6 +25,7 @@ import type {
 } from "./terminal-agent-options";
 import { getShellVisualStatus, type ShellSessionSummary } from "./terminal-session-state";
 import { formatAgentStrength, formatTerminalAgentName, TerminalSessionHoverCard } from "./TerminalSessionHoverCard";
+import { TERMINAL_MONO_FONT_FAMILY, TERMINAL_UI_FONT_FAMILY } from "./terminal-typography";
 
 export const DEFAULT_SHELL_SESSION_NAME = "main";
 
@@ -90,9 +91,9 @@ function TerminalAgentMetadataLine({
         alignItems: "center",
         color: "var(--terminal-drawer-subtle)",
         display: "flex",
-        fontFamily: "Inter, system-ui, sans-serif",
+        fontFamily: TERMINAL_UI_FONT_FAMILY,
         fontSize: 10,
-        fontWeight: 700,
+        fontWeight: 600,
         gap: 5,
         lineHeight: "16px",
         minWidth: 0,
@@ -230,9 +231,9 @@ const SESSION_CONTEXT_MENU_ITEM_STYLE: CSSProperties = {
   color: "var(--terminal-drawer-fg)",
   cursor: "pointer",
   display: "flex",
-  fontFamily: "Inter, system-ui, sans-serif",
+  fontFamily: TERMINAL_UI_FONT_FAMILY,
   fontSize: 12,
-  fontWeight: 650,
+  fontWeight: 600,
   gap: 7,
   height: 28,
   padding: "0 8px",
@@ -249,9 +250,9 @@ const SESSION_COPY_FEEDBACK_STYLE: CSSProperties = {
   color: "var(--terminal-drawer-action-fg)",
   display: "inline-flex",
   flexShrink: 0,
-  fontFamily: "Inter, system-ui, sans-serif",
+  fontFamily: TERMINAL_UI_FONT_FAMILY,
   fontSize: 12,
-  fontWeight: 750,
+  fontWeight: 650,
   gap: 5,
   height: 24,
   lineHeight: "14px",
@@ -264,7 +265,7 @@ const SESSION_NAME_BUTTON_BASE_STYLE: CSSProperties = {
   background: "transparent",
   border: 0,
   cursor: "pointer",
-  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+  fontFamily: TERMINAL_MONO_FONT_FAMILY,
   fontSize: 14,
   fontWeight: 700,
   lineHeight: "18px",
@@ -280,7 +281,7 @@ const SESSION_RENAME_INPUT_STYLE: CSSProperties = {
   borderRadius: 6,
   color: "var(--terminal-drawer-fg)",
   flex: "1 1 auto",
-  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+  fontFamily: TERMINAL_MONO_FONT_FAMILY,
   fontSize: 14,
   fontWeight: 700,
   height: 24,
@@ -592,7 +593,7 @@ function CollapsedRailGroup({
               color: accent.fg,
               cursor: "pointer",
               flexShrink: 0,
-              fontFamily: "var(--font-mono, ui-monospace, monospace)",
+              fontFamily: TERMINAL_MONO_FONT_FAMILY,
               fontSize: 12,
               fontWeight: 700,
               height: COLLAPSED_RAIL_ITEM_SIZE,
@@ -826,7 +827,7 @@ function ShellPendingCard() {
       />
       <span
         style={{
-          fontFamily: "var(--font-mono, ui-monospace, monospace)",
+          fontFamily: TERMINAL_MONO_FONT_FAMILY,
           fontSize: 14,
           fontWeight: 700,
           lineHeight: "18px",
@@ -1337,8 +1338,9 @@ function ShellCard({
               data-testid={`terminal-session-subtitle-${shell.name}`}
               style={{
                 color: "var(--terminal-drawer-muted)",
-                fontFamily: "Inter, system-ui, sans-serif",
+                fontFamily: TERMINAL_UI_FONT_FAMILY,
                 fontSize: 11,
+                fontWeight: 500,
                 lineHeight: "16px",
                 overflow: "hidden",
                 textOverflow: "ellipsis",

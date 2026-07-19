@@ -324,10 +324,15 @@ describe("TerminalApp", () => {
       value: () => ({ left: 20, right: 300, top: 20, bottom: 98, width: 280, height: 78, x: 20, y: 20, toJSON: () => ({}) }),
     });
     expect(agentCard.style.height).toBe("78px");
-    expect(screen.getByTestId("terminal-session-subtitle-calm-otter").textContent).toBe(
+    const sessionName = screen.getByTestId("terminal-session-name-calm-otter");
+    expect(sessionName.style.fontFamily).toBe('var(--font-geist-mono), "Geist Mono", ui-monospace, monospace');
+    const sessionSubtitle = screen.getByTestId("terminal-session-subtitle-calm-otter");
+    expect(sessionSubtitle.textContent).toBe(
       "Implement agent-aware terminal sessions",
     );
+    expect(sessionSubtitle.style.fontFamily).toBe("var(--font-geist-sans), Geist, system-ui, sans-serif");
     const agentState = screen.getByTestId("terminal-session-agent-state-calm-otter");
+    expect(agentState.style.fontFamily).toBe("var(--font-geist-sans), Geist, system-ui, sans-serif");
     expect(agentState.textContent).toContain("Codex");
     expect(agentState.textContent).toContain("waiting");
     expect(agentState.textContent).toContain("gpt-5.4");
@@ -370,6 +375,9 @@ describe("TerminalApp", () => {
     expect(hoverCard.textContent).toContain("Matrix OS");
     expect(hoverCard.textContent).toContain("Repository");
     expect(hoverCard.textContent).toContain("HamedMP/matrix-os");
+    expect(within(hoverCard).getByText("HamedMP/matrix-os").style.fontFamily).toBe(
+      'var(--font-geist-mono), "Geist Mono", ui-monospace, monospace',
+    );
     expect(hoverCard.textContent).toContain("Branch");
     expect(hoverCard.textContent).toContain("codex/session-context");
     expect(hoverCard.textContent).toContain("Pull request");
@@ -664,8 +672,11 @@ describe("TerminalApp", () => {
     });
 
     expect(screen.queryByRole("tablist", { name: "Terminal tabs" })).toBeNull();
+    expect(screen.getByRole("application", { name: "Terminal" }).style.fontFamily).toBe(
+      "var(--font-geist-sans), Geist, system-ui, sans-serif",
+    );
     const wordmark = screen.getByTestId("terminal-expanded-wordmark");
-    expect(wordmark.textContent).toBe("matrix os");
+    expect(wordmark.textContent).toBe("Matrix OS");
     expect(wordmark.style.color).toBe("rgb(50, 53, 46)");
     expect(wordmark.style.fontFamily).toBe("var(--font-orbitron), Orbitron, sans-serif");
     expect(screen.getByPlaceholderText("Find a session...")).toBeTruthy();
