@@ -187,16 +187,22 @@ describe("RuntimeManager", () => {
     expect(screen.queryByText("Switch Computer")).toBeNull();
     const heading = await screen.findByRole("heading", { name: "Choose your computer", level: 1 });
     expect(heading.parentElement?.className).toContain("text-center");
-    expect(heading.className).toContain("uppercase");
+    expect(heading.className).not.toContain("uppercase");
+    expect(heading.className).toContain("tracking-[-0.055em]");
+    expect(heading.className).toContain("font-medium");
     expect(heading.className).toContain("bg-clip-text");
     expect(heading.className).toContain("text-transparent");
     expect(heading.className).toContain("onboard-shimmer");
     const shellBackdrop = screen.getByTestId("runtime-shell-backdrop");
     expect(shellBackdrop.getAttribute("src")).toContain("runtime-shell-backdrop.webp");
     expect(shellBackdrop.className).toContain("blur-[18px]");
+    const brandLockup = screen.getByRole("link", { name: "Matrix OS home" });
+    expect(brandLockup.className).toContain("justify-center");
+    expect(brandLockup.className).toContain("mx-auto");
     expect(screen.getByRole("img", { name: "Matrix OS logo" })).toBeTruthy();
+    expect(screen.getByText("MATRIX OS").style.fontFamily).toContain("var(--font-inter)");
     expect(screen.queryByText("Each one is a private Matrix OS workspace with its own files and data.")).toBeNull();
-    expect(screen.getByText("Matrix OS member")).toBeTruthy();
+    expect(screen.getByText("Matrix OS member").className).toContain("font-medium");
     expect(screen.getByText("neo@example.com")).toBeTruthy();
     expect(screen.getByRole("link", { name: /Switch to Studio/i }).getAttribute("href")).toBe(
       "/vm/neo-studio?runtime=studio",
@@ -206,6 +212,7 @@ describe("RuntimeManager", () => {
     expect(screen.getByText("🧪")).toBeTruthy();
     expect(screen.getByText(/Preview Computer/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Get another computer" })).toBeTruthy();
+    expect(screen.getByText("Studio").className).toContain("font-medium");
     const manageAccount = screen.getByRole("button", { name: "Manage account" });
     const signOut = screen.getByRole("button", { name: "Sign out" });
     expect(manageAccount.className).toContain("size-9");
@@ -216,6 +223,7 @@ describe("RuntimeManager", () => {
     expect(screen.getByLabelText("Account").className).toMatch(/fixed/);
     expect(screen.getByLabelText("Account").className).toMatch(/w-fit/);
     expect(screen.getByRole("main").className).toMatch(/overflow-y-auto/);
+    expect(screen.getByRole("main").className).toContain("font-sans");
   });
 
   it("hands signed-out visitors to Clerk authentication", async () => {

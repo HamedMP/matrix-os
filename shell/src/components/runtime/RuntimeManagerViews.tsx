@@ -14,6 +14,8 @@ import {
   ServerIcon,
   ShieldCheckIcon,
 } from "lucide-react";
+import Image from "next/image";
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
@@ -50,7 +52,20 @@ export function ComputerInventory({
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col justify-center py-7 sm:py-12">
       <header className="text-center">
-        <h1 className="bg-[linear-gradient(90deg,#2f392c_0%,#2f392c_24%,#c4a265_50%,#2f392c_76%,#2f392c_100%)] bg-clip-text text-[clamp(2rem,6vw,4rem)] font-medium uppercase leading-[0.98] text-transparent [animation:onboard-shimmer_8s_ease-in-out_infinite,onboard-glow_8s_ease-in-out_infinite] [background-size:300%_100%] motion-reduce:animate-none">
+        <Link
+          href="/"
+          aria-label="Matrix OS home"
+          className="mx-auto mb-7 inline-flex w-fit items-center justify-center gap-3.5 text-forest no-underline sm:mb-8"
+        >
+          <Image src="/matrix-logo.svg" alt="Matrix OS logo" width={27} height={36} priority className="h-9 w-[27px]" />
+          <span
+            className="text-[15px] font-semibold tracking-[0.2em] sm:text-base"
+            style={{ fontFamily: "var(--font-inter), Inter, system-ui, sans-serif" }}
+          >
+            MATRIX OS
+          </span>
+        </Link>
+        <h1 className="bg-[linear-gradient(90deg,#2f392c_0%,#2f392c_24%,#c4a265_50%,#2f392c_76%,#2f392c_100%)] bg-clip-text text-[clamp(2.35rem,5vw,4.25rem)] font-medium leading-[0.98] tracking-[-0.055em] text-transparent [animation:onboard-shimmer_8s_ease-in-out_infinite,onboard-glow_8s_ease-in-out_infinite] [background-size:300%_100%] motion-reduce:animate-none">
           Choose your computer
         </h1>
       </header>
@@ -90,7 +105,7 @@ export function ComputerInventory({
               <span className="grid size-24 place-items-center rounded-full border border-dashed border-forest/20 bg-white/35 text-forest/45 transition duration-200 group-hover:scale-[1.03] group-hover:border-ember/40 group-hover:bg-white/70 group-hover:text-ember group-focus-visible:scale-[1.03]">
                 <PlusIcon className="size-7" aria-hidden="true" />
               </span>
-              <strong className="mt-4 block truncate text-sm font-semibold text-deep">New computer</strong>
+              <strong className="mt-4 block truncate text-[15px] font-medium tracking-[-0.015em] text-deep">New computer</strong>
               <span className="mt-1 text-xs text-forest/45">Buy another</span>
             </button>
           </div>
@@ -145,7 +160,7 @@ function ComputerProfile({ computer, current }: { computer: MatrixComputer; curr
         <span className={`absolute bottom-1 right-1 size-4 rounded-full border-[3px] border-[#F2F1E8] ${available ? "bg-[#6F8E58]" : computer.availability === "starting" ? "bg-ember" : "bg-forest/25"}`} aria-label={status} />
       </span>
       <span className="mt-4 block max-w-full">
-        <strong className="block text-sm font-semibold leading-5 text-deep">{title}</strong>
+        <strong className="block text-[15px] font-medium leading-5 tracking-[-0.015em] text-deep">{title}</strong>
         {current ? <span className="mt-1 inline-flex rounded-full bg-ember/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-ember">Current</span> : null}
       </span>
       <span className="mt-1 truncate text-xs text-forest/50">{computer.label} · {status}</span>

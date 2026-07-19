@@ -5,7 +5,6 @@ import { MatrixComputerListSchema, type MatrixComputerList } from "@matrix-os/co
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 import { LogOutIcon, SettingsIcon, UserIcon } from "lucide-react";
 import Image from "next/image";
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -552,7 +551,7 @@ export function RuntimeManager({
   }
 
   return (
-    <main className="relative isolate h-dvh overflow-y-auto bg-[#DFE0D8] text-deep">
+    <main className="relative isolate h-dvh overflow-y-auto bg-[#DFE0D8] font-sans text-deep">
       <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden="true">
         <Image
           src="/runtime-shell-backdrop.webp"
@@ -578,13 +577,6 @@ export function RuntimeManager({
         className="pointer-events-none fixed -bottom-28 -right-24 z-[2] w-[min(78vw,34rem)] select-none opacity-[0.045] blur-[0.4px] sm:-bottom-36 sm:-right-20"
       />
       <div className="relative z-10 mx-auto flex min-h-full w-full max-w-6xl flex-col px-5 py-5 sm:px-8 sm:py-7 lg:px-10">
-        <header className="flex items-center justify-between">
-          <Link href="/" className="inline-flex w-fit items-center gap-2.5 text-forest no-underline">
-            <Image src="/matrix-logo.svg" alt="Matrix OS logo" width={18} height={24} priority className="h-6 w-[18px]" />
-            <span className="text-xs font-semibold tracking-[0.16em]">MATRIX OS</span>
-          </Link>
-        </header>
-
         <section className="flex flex-1 flex-col pb-28 pt-4 sm:pt-2">
           {step === "list" ? (
             <ComputerInventory overview={overview} onRetry={() => setOverviewRefresh((value) => value + 1)} onAdd={beginAddComputer} />
@@ -657,7 +649,7 @@ export function RuntimeManager({
               )}
             </span>
             <span className="min-w-0 max-w-36 sm:max-w-44">
-              <strong className="block truncate text-xs font-semibold">{displayName}</strong>
+              <strong className="block truncate text-xs font-medium tracking-[-0.01em]">{displayName}</strong>
               <span className="block truncate text-[11px] text-forest/50">{email}</span>
             </span>
           </div>
