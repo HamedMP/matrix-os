@@ -1147,7 +1147,7 @@ function ShellCard({
         display: "grid",
         gap: 10,
         gridTemplateColumns: "minmax(0, 1fr)",
-        height: shell.agent ? hasSubtitle ? 78 : 60 : 52,
+        height: shell.agent ? (hasSubtitle ? 78 : 60) : 52,
         opacity: dragging ? 0.94 : foreground ? 1 : 0.86,
         padding: "0 12px",
         position: "relative",
@@ -1239,7 +1239,7 @@ function ShellCard({
             display: "grid",
             gap: shell.agent ? 2 : 0,
             gridTemplateColumns: "minmax(0, 1fr)",
-            gridTemplateRows: shell.agent ? hasSubtitle ? "18px 16px 16px" : "18px 16px" : "24px",
+            gridTemplateRows: shell.agent ? (hasSubtitle ? "18px 16px 16px" : "18px 16px") : "24px",
             paddingRight: 34,
           }}
         >

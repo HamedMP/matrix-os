@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { execFile as nodeExecFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -594,6 +594,46 @@ describe("zellij adapter", () => {
       expect(layoutText).toContain(`command="${homePath}/system/zellij/matrix-terminal-shell"`);
       expect(layoutText).toMatch(/^\s*args "codex"\s*$/m);
       expect(layoutText).not.toMatch(/\b(?:export|exec)\b|[;&|]/);
+    } finally {
+      pty.emitExit(0);
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves Codex from the custom Matrix node prefix in the generated wrapper", async () => {
+    const pty = ptyProcess();
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-shell-codex-path-home-"));
+    const nodePrefix = join(homePath, "custom-node");
+    const nodeBin = join(nodePrefix, "bin");
+    try {
+      await mkdir(nodeBin, { recursive: true });
+      const codexPath = join(nodeBin, "codex");
+      const zshPath = join(nodeBin, "zsh");
+      await writeFile(codexPath, "#!/usr/bin/env bash\nprintf 'MATRIX_CODEX_READY\\n'\n");
+      await writeFile(zshPath, "#!/usr/bin/env bash\nexit 0\n");
+      await chmod(codexPath, 0o700);
+      await chmod(zshPath, 0o700);
+
+      const adapter = createZellijAdapter({
+        execFile: vi.fn(),
+        spawnPty: vi.fn(() => pty),
+        timeoutMs: 25,
+        startupDelayMs: 1,
+        homePath,
+      });
+      await adapter.createSession({ name: "codex-path", cmd: "codex" });
+
+      const shellPath = join(homePath, "system", "zellij", "matrix-terminal-shell");
+      await expect(execFileAsync(shellPath, ["codex"], {
+        env: {
+          ...process.env,
+          HOME: homePath,
+          MATRIX_HOME: homePath,
+          MATRIX_NODE_PREFIX: nodePrefix,
+          PATH: "/usr/bin:/bin",
+        },
+        timeout: 1_000,
+      })).resolves.toMatchObject({ stdout: "MATRIX_CODEX_READY\n" });
     } finally {
       pty.emitExit(0);
       await rm(homePath, { recursive: true, force: true });
