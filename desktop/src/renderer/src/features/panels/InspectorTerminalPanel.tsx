@@ -1,7 +1,6 @@
 import { ChevronLeft, Play, SquareTerminal } from "lucide-react";
 import { useState } from "react";
 import type { RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
-import { IconButton } from "../../design/primitives";
 import TerminalView from "../terminal/TerminalView";
 
 const STATUS_COLOR: Record<string, string> = {
@@ -39,9 +38,16 @@ export function InspectorTerminalPanel({
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-2">
         <div className="flex shrink-0 items-center gap-2">
-          <IconButton label="Back to terminal sessions" onClick={() => setEmbeddedId(null)}>
+          <button
+            type="button"
+            aria-label="Back to terminal sessions"
+            title="Back to terminal sessions"
+            className="no-drag flex h-7 w-7 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            style={{ color: "var(--text-tertiary)" }}
+            onClick={() => setEmbeddedId(null)}
+          >
             <ChevronLeft size={14} />
-          </IconButton>
+          </button>
           <span
             className="h-2 w-2 shrink-0 rounded-full"
             style={{ background: STATUS_COLOR[embedded.status] ?? "var(--text-tertiary)" }}
@@ -108,9 +114,16 @@ function SessionRow({
           {session.status}
         </span>
         {session.attachable ? (
-          <IconButton label={`Open terminal ${session.name}`} onClick={onOpen}>
+          <button
+            type="button"
+            aria-label={`Open terminal ${session.name}`}
+            title={`Open terminal ${session.name}`}
+            className="no-drag flex h-7 w-7 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            style={{ color: "var(--text-tertiary)" }}
+            onClick={onOpen}
+          >
             <Play size={13} />
-          </IconButton>
+          </button>
         ) : null}
       </div>
     </article>
