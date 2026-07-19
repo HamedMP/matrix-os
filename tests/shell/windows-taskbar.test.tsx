@@ -65,6 +65,7 @@ describe("WindowsTaskbar", () => {
   // outside act(). RTL's cleanup unmounts before the next beforeEach runs.
   beforeEach(() => {
     document.documentElement.removeAttribute("data-theme-style");
+    delete document.documentElement.dataset.matrixSelfHosted;
     resetOsSession();
   });
 
@@ -369,5 +370,21 @@ describe("WindowsTaskbar", () => {
     expect(document.activeElement).toBe(within(flyout).getByRole("menuitem", { name: "Sign out" }));
     fireEvent.keyDown(flyout, { key: "ArrowDown" });
     expect(document.activeElement).toBe(switchComputer);
+  });
+
+  it("hides managed account actions and computer switching when self-hosted", async () => {
+    document.documentElement.dataset.matrixSelfHosted = "1";
+    setDesign("win11");
+    const { container } = await renderTaskbar();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    const menu = container.querySelector("[data-win11-start-menu]") as HTMLElement;
+    fireEvent.click(within(menu).getByRole("button", { name: "Account" }));
+
+    const flyout = within(menu).getByRole("menu", { name: "Account options" });
+    expect(within(flyout).queryByRole("menuitem", { name: "Manage account" })).toBeNull();
+    expect(within(flyout).queryByRole("menuitem", { name: "Sign out" })).toBeNull();
+    expect(within(flyout).queryByRole("menuitem", { name: "Switch computer" })).toBeNull();
+    expect(within(flyout).getByRole("menuitem", { name: "Settings" })).toBeTruthy();
   });
 });

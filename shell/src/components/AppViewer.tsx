@@ -60,7 +60,7 @@ async function handleBridgeFetch(appName: string, payload: unknown, port: Messag
       throw new Error("Blocked bridge fetch URL");
     }
     const requestInit = init && typeof init === "object" ? init as RequestInit : {};
-    const response = await fetch(url, {
+    const response = await fetch(`${getGatewayUrl()}${url}`, {
       method: requestInit.method,
       headers: requestInit.headers,
       body: requestInit.body,

@@ -21,4 +21,11 @@ describe("explicit computer API isolation", () => {
       /fetch\((?:"|'|`)\/api\/(?:agents|client-errors|github|onboarding|projects|workspace)/,
     );
   });
+
+  it("routes runtime-app bridge calls through the explicit computer gateway", () => {
+    const source = readFileSync("shell/src/components/AppViewer.tsx", "utf8");
+
+    expect(source).not.toContain("await fetch(url,");
+    expect(source).toContain("await fetch(`${getGatewayUrl()}${url}`,");
+  });
 });

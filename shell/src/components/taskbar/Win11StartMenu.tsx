@@ -191,15 +191,17 @@ export function Win11StartMenu({ ref, apps, onOpenApp, onOpenSettings, onClose }
                 <StartMenuUser avatarSize={32} className="win11-start-user" />
               </div>
               {isSelfHostedDocument() ? null : <Win11ManagedAccountActions onClose={onClose} />}
-              <Link
-                href="/runtime"
-                role="menuitem"
-                className="win11-power-flyout-item"
-                onClick={onClose}
-              >
-                <ServerIcon aria-hidden="true" />
-                <span>Switch computer</span>
-              </Link>
+              {isSelfHostedDocument() ? null : (
+                <Link
+                  href="/runtime"
+                  role="menuitem"
+                  className="win11-power-flyout-item"
+                  onClick={onClose}
+                >
+                  <ServerIcon aria-hidden="true" />
+                  <span>Switch computer</span>
+                </Link>
+              )}
               <button
                 type="button"
                 role="menuitem"

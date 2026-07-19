@@ -123,6 +123,40 @@ interface CreateSessionRoutingMiddlewareOpts {
   logRouteError: (context: string, err: unknown) => void;
 }
 
+/**
+ * Fetch a runtime response with a bounded header wait. Streaming responses can
+ * release that timer once the upstream headers arrive so the signal does not
+ * terminate a healthy, long-lived response body.
+ */
+export async function fetchRuntimeProxy(
+  targetUrl: string,
+  init: RequestInit,
+  timeoutMs: number,
+  releaseTimeoutAfterHeaders: boolean,
+): Promise<Response> {
+  if (!releaseTimeoutAfterHeaders) {
+    return fetch(targetUrl, {
+      ...init,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(targetUrl, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function shouldReleaseRuntimeProxyTimeout(method: string, path: string): boolean {
+  return method === 'GET' && path === '/api/files/media';
+}
+
 function logCodeDomainUpstreamFailure(opts: {
   handle: string;
   runtimeSlot?: string | null;
@@ -585,14 +619,14 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
 
       try {
-        const upstream = await fetch(targetUrl, {
+        const upstream = await fetchRuntimeProxy(targetUrl, {
           method: c.req.method,
           headers,
           redirect: 'manual',
-          signal: AbortSignal.timeout(proxyTimeoutMs),
           body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
           dispatcher: customerVpsProxyDispatcher,
-        } as RequestInit & { dispatcher: Agent });
+        } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
+        shouldReleaseRuntimeProxyTimeout(c.req.method, explicitVmRoute.upstreamPath));
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         applySandboxedAppAssetCorsHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.header('origin'));
@@ -735,14 +769,14 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
 
       try {
-        const upstream = await fetch(targetUrl, {
+        const upstream = await fetchRuntimeProxy(targetUrl, {
           method: c.req.method,
           headers,
           redirect: 'manual',
-          signal: AbortSignal.timeout(proxyTimeoutMs),
           body,
           dispatcher: customerVpsProxyDispatcher,
-        } as RequestInit & { dispatcher: Agent });
+        } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
+        shouldReleaseRuntimeProxyTimeout(c.req.method, path));
         if (isCodeDomain && upstream.status >= 500) {
           logCodeDomainUpstreamFailure({
             handle: runningMachine.handle,
@@ -926,14 +960,14 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
 
       const targetUrl = `http://${endpoint.host}:${targetPort}${path}${qs}`;
       try {
-        const upstream = await fetch(targetUrl, {
+        const upstream = await fetchRuntimeProxy(targetUrl, {
           method: c.req.method,
           headers,
           redirect: 'manual',
-          signal: AbortSignal.timeout(proxyTimeoutMs),
           body,
           dispatcher: containerProxyDispatcher,
-        } as RequestInit & { dispatcher: Agent });
+        } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
+        shouldReleaseRuntimeProxyTimeout(c.req.method, path));
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));
