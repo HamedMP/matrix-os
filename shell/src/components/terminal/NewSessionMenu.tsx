@@ -192,7 +192,6 @@ function NewSessionMenuItem({
   statusLabel?: "Install" | "Checking…" | "Status unavailable" | null;
   onClick: () => void;
 }) {
-  const install = statusLabel === "Install";
   return (
     <button
       type="button"
