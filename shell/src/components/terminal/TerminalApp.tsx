@@ -83,14 +83,19 @@ interface ShellSessionSummary {
 
 // In-flight dedupe for the sessions list: the mount bootstrap needs the same
 // /api/terminal/sessions payload as the ensure step that follows it, so both
-// join one fetch instead of paying two serial roundtrips.
-let shellSessionsListInflight: Promise<ShellSessionSummary[] | null> | null = null;
+// join one fetch instead of paying two serial roundtrips. Keyed by gateway
+// URL so navigating between machines (/vm/A -> /vm/B) never joins a fetch
+// started for the previous machine.
+let shellSessionsListInflight: { key: string; promise: Promise<ShellSessionSummary[] | null> } | null = null;
 
 function listShellSessions(): Promise<ShellSessionSummary[] | null> {
-  if (shellSessionsListInflight) return shellSessionsListInflight;
-  shellSessionsListInflight = (async () => {
+  const key = getGatewayUrl();
+  if (shellSessionsListInflight?.key === key) {
+    return shellSessionsListInflight.promise;
+  }
+  const promise = (async () => {
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
+      const res = await fetch(`${key}/api/terminal/sessions`, {
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) return null;
@@ -101,8 +106,11 @@ function listShellSessions(): Promise<ShellSessionSummary[] | null> {
       return null;
     }
   })();
-  return shellSessionsListInflight.finally(() => {
-    shellSessionsListInflight = null;
+  shellSessionsListInflight = { key, promise };
+  return promise.finally(() => {
+    if (shellSessionsListInflight?.promise === promise) {
+      shellSessionsListInflight = null;
+    }
   });
 }
 
