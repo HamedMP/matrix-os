@@ -75,7 +75,7 @@ jobs:
           while IFS= read -r file; do
             [ -z "$file" ] && continue
             case "$file" in
-              docs/*|specs/*|www/*|*.md) docs_contract_tests=true ;;
+              docs/*|specs/*|*.md) docs_contract_tests=true ;;
               *) should_run=true; docs_contract_tests=false; break ;;
             esac
           done <<EOF
@@ -250,7 +250,6 @@ jobs:
           for f in "${react_files[@]}"; do
             case "$f" in
               shell/*) dirs["shell"]=1 ;;
-              www/*) dirs["www"]=1 ;;
               packages/ui/*) dirs["packages/ui"]=1 ;;
               # home/apps/** are mostly root-toolchain (no package.json); audited pre-commit, skipped here.
             esac
@@ -371,7 +370,7 @@ jobs:
 
       - name: Run docs contract tests
         if: needs.changes.outputs.docs_contract_tests == 'true'
-        run: pnpm exec vitest run tests/www/self-host-docs.test.ts
+        run: pnpm exec vitest run tests/repository/site-extraction.test.ts
 
   e2e:
     name: E2E Tests

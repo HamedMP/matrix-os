@@ -62,7 +62,7 @@ This section is historical context for old deployments only. Do not use it for n
 ```text
 Internet
   |
-  +-- matrix-os.com ---------> Vercel (www/ -- landing, auth, dashboard)
+  +-- matrix-os.com ---------> Vercel (FinnaAI/matrix-os-site -- landing, auth, dashboard)
   |
   +-- app.matrix-os.com ----+  (session-based: Clerk JWT -> container shell)
   +-- code.matrix-os.com ---+  (session-based: Clerk JWT -> container code-server)

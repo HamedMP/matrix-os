@@ -1,6 +1,0 @@
-{
-  "title": "Deployment",
-  "description": "Operate Matrix OS infrastructure",
-  "icon": "Server",
-  "pages": ["vps-per-user", "billing"]
-}

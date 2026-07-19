@@ -92,6 +92,8 @@ describe('customer VPS host bundle', () => {
 
     expect(script).toContain('matrix-install-tool-pack');
     expect(script).toContain('matrix-owner-env');
+    expect(hermesInstaller).toContain('setpriv --reuid "$MATRIX_RUNTIME_USER"');
+    expect(installer).toContain('setpriv --reuid "$MATRIX_RUNTIME_USER"');
     expect(script).not.toContain('curl --fail --location --max-time 180 "$CODE_SERVER_URL"');
     expect(script).not.toContain('tar -xzf "$DIST_DIR/$CODE_SERVER_ARCHIVE"');
     expect(script).not.toContain('"$STAGE_DIR/runtime/node/bin/npm" install -g --prefix "$STAGE_DIR/runtime/node"');
@@ -183,14 +185,22 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"');
     expect(installer).not.toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS:-codex claude-code opencode pi}"');
     expect(installer).toContain('ensure_agent_sandbox_runtime()');
+    expect(installer).toContain('ensure_terminal_runtime()');
     expect(installer).toContain('apt-get install -y software-properties-common');
     expect(installer).toContain('add-apt-repository -y universe');
     expect(installer).toContain('apt-get install -y bubblewrap socat');
+    expect(installer).toContain('apt-get install -y zsh');
     expect(installer).toContain("cat >/etc/apparmor.d/bwrap <<'EOF'");
     expect(installer).toContain('systemctl reload apparmor');
     expect(installer).toContain('ensure_agent_sandbox_runtime');
     expect(installer.match(/\|\| return 1/g)?.length).toBeGreaterThanOrEqual(7);
     expect(installer).toContain('command -v bwrap >/dev/null 2>&1 && command -v socat >/dev/null 2>&1');
+    expect(installer).toContain('if ! ensure_terminal_runtime; then');
+    expect(installer).toContain('WARN: zsh provisioning failed; terminal will use the Bash fallback');
+    const terminalModeGuard = installer.indexOf('if [ "$MODE" != "--sandbox-only" ]; then');
+    const terminalReconciliation = installer.indexOf('if ! ensure_terminal_runtime; then');
+    expect(terminalModeGuard).toBeGreaterThan(-1);
+    expect(terminalReconciliation).toBeGreaterThan(terminalModeGuard);
     expect(installer).toContain('if ! ensure_agent_sandbox_runtime; then');
     expect(installer).toContain('coding-agent sandbox provisioning failed');
     expect(installer).toContain('MODE="${1:-}"');
@@ -822,7 +832,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       GITHUB_REF_TYPE: 'branch',
       HEAD_COMMIT_MESSAGE: 'docs: update landing page',
       SKIP_DEV_BUNDLE_INPUT: 'false',
-      CHANGED_FILES: ['www/content/docs/index.mdx', 'docs/dev/releases.md', 'README.md', 'AGENTS.md'].join('\n'),
+      CHANGED_FILES: ['docs/dev/onboarding.md', 'docs/dev/releases.md', 'README.md', 'AGENTS.md'].join('\n'),
     });
 
     expect(result.output).toContain('should_build=true');

@@ -42,7 +42,7 @@ Key principles:
 - **Conventional Commits and PR Titles**: commits and PR titles use semantic Conventional Commit style such as `feat(canvas): add workspace canvas`; never prefix PR titles with agent/tool tags like `[codex]`.
 - **Specs go in `specs/`**: NEVER `docs/plans/`. Format: `specs/{NNN}-{feature-name}/`
 - **Kysely/Postgres only**: never add alternative embedded databases or ORMs for new persistence
-- **Landing-adjacent UI uses `@matrix-os/brand`**: auth, onboarding, billing, provisioning, and related shell/www surfaces should consume tokens/primitives from `packages/brand/` instead of ad-hoc hex values or forked brand helpers
+- **Landing-adjacent UI uses `@matrix-os/brand`**: auth, onboarding, billing, provisioning, and related shell surfaces should consume tokens/primitives from `packages/brand/` instead of ad-hoc hex values or forked brand helpers. The public site lives in the private `FinnaAI/matrix-os-site` repository.
 - **Kernel prompt**: keep under 7K tokens
 - **Spike before spec**: test undocumented SDK behavior with throwaway code first
 - **Large files are refactor debt**: aim for <500 LOC for composition entrypoints, containers, hooks, helpers, and focused tests. Treat 500-1000 LOC as a review smell that needs one clear responsibility; do not add behavior to 1000+ LOC files without an extraction plan, and split 2000+ LOC files before adding behavior. See `docs/dev/large-file-refactoring.md`.
@@ -143,11 +143,10 @@ Without Flox: install Node 24+, pnpm 10, bun manually, then `pnpm install`. Full
 | `packages/gateway/` | Hono HTTP/WS gateway, channel adapters, cron |
 | `packages/platform/` | Multi-tenant orchestrator (Clerk auth, per-user VPS provisioning and routing) |
 | `packages/proxy/` | Shared API proxy, usage tracking |
-| `packages/brand/` | Shared brand tokens/primitives consumed by `www` and shell auth/onboarding/billing UI |
+| `packages/brand/` | Shared brand tokens/primitives consumed by shell auth/onboarding/billing UI |
 | `packages/ui/` | Shared UI components |
 | `shell/` | Next.js 16 desktop shell frontend |
 | `apps/mobile/` | Expo/React Native mobile shell |
-| `www/` | matrix-os.com website (Vercel) |
 | `home/` | File system template (copied to `~/matrixos/` on first boot) |
 | `specs/` | Architecture and feature specs |
 | `tests/` | Vitest test suites |
@@ -169,7 +168,6 @@ bun run dev:shell         # shell only
 bun run dev:mobile-shell  # browser shell forced into the mobile launcher/runtime
 bun run dev:proxy         # proxy only
 bun run dev:platform      # platform only
-bun run dev:www           # matrix-os.com website only
 bun run dev:kernel        # kernel package only
 bun run dev:desktop       # Electron desktop shell
 
@@ -197,7 +195,7 @@ Production customer runtime ships as VPS-native host bundles. R2 stores immutabl
 - **Main channel**: pushes to `main` run `.github/workflows/host-bundle-release.yml`, build a host bundle, register it in platform DB, and promote `dev` by default.
 - **Tags**: `v*` tags build immutable release versions and promote `canary` by default. Promote `stable` only after live verification.
 - **Manual release**: workflow dispatch can choose `dev`, `canary`, `beta`, or `stable`, plus severity/changelog. Security severity may auto-deploy.
-- **Build-time env**: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN`/`NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST`, and `NEXT_PUBLIC_POSTHOG_API_HOST` are baked into the shell/www bundles. `NEXT_PUBLIC_POSTHOG_API_HOST` should stay the relative `/relay` same-origin proxy for client traffic; use `POSTHOG_HOST=https://eu.posthog.com` as the private API host for source-map uploads or PostHog API scripts.
+- **Build-time env**: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN`/`NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST`, and `NEXT_PUBLIC_POSTHOG_API_HOST` are baked into the shell bundle. `NEXT_PUBLIC_POSTHOG_API_HOST` should stay the relative `/relay` same-origin proxy for client traffic; use `POSTHOG_HOST=https://eu.posthog.com` as the private API host for source-map uploads or PostHog API scripts.
 - **PostHog alerts bootstrap**: `bun run observability:posthog-alerts` idempotently provisions the "Matrix OS Errors" dashboard plus the baseline exception/provisioning/billing/onboarding insights. Requires `POSTHOG_PERSONAL_API_KEY` and `POSTHOG_PROJECT_ID`; optional `POSTHOG_API_HOST` defaults to `https://eu.posthog.com`. Issue/spike alerts are still configured manually in the PostHog UI because there is no stable public API for them.
 - **Incremental bundle metadata ships with every host bundle**: `./scripts/build-host-bundle.sh` now emits `dist/host-bundle/incremental-manifest.json` plus `dist/host-bundle/objects/sha256/*`, and `./scripts/publish-release.sh` / platform release registration must publish them alongside the full tarball. Platform serves `/system-bundles/<version>/incremental-manifest.json` and `/system-bundles/objects/sha256/<sha256>`, but `requiresFullBundle` remains `true` until the VPS-side delta installer is explicitly enabled.
 - **User data invariant**: updates may replace `/opt/matrix/app` only. Never overwrite owner data under `$MATRIX_HOME` (`/home/matrix/home`), especially `system/desktop.json`, `system/theme.json`, `system/wallpapers/`, `system/icons/`, identity/profile/session/state files, logs, memory, or conversations. Template sync may add/upgrade OS-owned files, but protected user paths must be skipped.
@@ -246,7 +244,7 @@ Production customer runtime ships as VPS-native host bundles. R2 stores immutabl
 - **Never cache-bust with `?t=Date.now()`**: use ETag-based `?v={etag}` only when file changes
 - **Reset `imgFailed` when `iconUrl` changes**: track prev URL with `useRef`, reset on differ
 - **Cloudflare overrides `Cache-Control`**: use `CDN-Cache-Control` header to control Cloudflare independently
-- **PostHog client traffic must stay first-party**: shell and `www` should send analytics through the same-origin `/relay` rewrite, not `/ingest`, `neo.matrix-os.com`, or direct `*.posthog.com` client hosts. Keep legacy `/ingest` rewrites only for already-shipped cached bundles.
+- **PostHog client traffic must stay first-party**: shell should send analytics through the same-origin `/relay` rewrite, not `/ingest`, `neo.matrix-os.com`, or direct `*.posthog.com` client hosts. Keep legacy `/ingest` rewrites only for already-shipped cached bundles.
 - **Shell replay kill switch is runtime-sensitive**: `POSTHOG_DISABLE_REPLAY=1` plus a `matrix-shell` restart disables shell replay without a rebuild; `NEXT_PUBLIC_POSTHOG_DISABLE_REPLAY` is build-time only. Keep `ph-no-capture` on terminal, chat, and file-browser surfaces, and do not enable shell console-log recording.
 - **Production is VPS-native only**: user-facing Matrix OS runs on one VPS per user with host systemd services. Do not use Docker image rebuilds, `docker compose`, or rolling container restarts as the production rollout path for customer runtime.
 - **No per-handle subdomains**: users reach their runtime through session-based routing on `app.matrix-os.com` (Clerk JWT -> customer VPS) or explicit `app.matrix-os.com/vm/<handle>` paths. `<handle>.matrix-os.com` URLs are not supported -- never generate, route, or assume them (`neo.matrix-os.com` is the PostHog proxy Worker, not a user). See `docs/dev/vps-deployment.md`.
@@ -287,7 +285,7 @@ npx react-doctor@latest     # audit React code — REQUIRED when any React (.tsx
 ```
 
 **React audit (mandatory for React changes)**: whenever you create or modify React
-files (`.tsx`/`.jsx` in `shell/`, `home/apps/**`, `packages/ui/`, `www/`), run
+files (`.tsx`/`.jsx` in `shell/`, `home/apps/**`, `packages/ui/`), run
 `npx react-doctor@latest <project-dir>` and resolve its findings **before committing**.
 react-doctor scans a **project directory that has a React `package.json`** (e.g.
 `npx react-doctor@latest shell`), NOT individual files. Root-toolchain default apps under

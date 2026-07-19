@@ -57,6 +57,8 @@ export function NewSessionMenu({
       ref={menuRef}
       role="menu"
       aria-label="New session menu"
+      className="terminal-new-session-menu"
+      data-align={align}
       onPointerDown={(event) => event.stopPropagation()}
       onMouseDown={(event) => event.stopPropagation()}
       style={{
@@ -70,6 +72,7 @@ export function NewSessionMenu({
         gap: 4,
         padding: 8,
         position: "absolute",
+        transformOrigin: align === "mobile" ? "bottom left" : align === "right" ? "top right" : "top left",
         ...(align === "mobile"
           ? { bottom: "calc(100% + 8px)", left: 0 }
           : align === "right"
@@ -119,7 +122,7 @@ export function NewSessionMenu({
             key={option.id}
             label={option.label}
             statusLabel={menuState.statusLabel}
-            icon={<TerminalAgentLogo agent={option.id} muted={installState !== "installed"} />}
+            icon={<TerminalAgentLogo agent={option.id} />}
             onClick={() => onCreateAgent(option, menuState.action)}
           />
         );
@@ -141,7 +144,6 @@ function NewSessionMenuItem({
   statusLabel?: "Install" | "Checking…" | "Status unavailable" | null;
   onClick: () => void;
 }) {
-  const install = statusLabel === "Install";
   return (
     <button
       type="button"
@@ -149,7 +151,7 @@ function NewSessionMenuItem({
       onClick={onClick}
       style={{
         alignItems: "center",
-        background: active ? "var(--terminal-drawer-action-bg)" : install ? "var(--terminal-drawer-card-muted-bg)" : "transparent",
+        background: active ? "var(--terminal-drawer-action-bg)" : "transparent",
         border: 0,
         borderRadius: 7,
         boxSizing: "border-box",
@@ -166,7 +168,7 @@ function NewSessionMenuItem({
         event.currentTarget.style.background = "var(--terminal-drawer-action-bg)";
       }}
       onMouseLeave={(event) => {
-        event.currentTarget.style.background = active ? "var(--terminal-drawer-action-bg)" : install ? "var(--terminal-drawer-card-muted-bg)" : "transparent";
+        event.currentTarget.style.background = active ? "var(--terminal-drawer-action-bg)" : "transparent";
       }}
     >
       {icon}
@@ -178,7 +180,7 @@ function NewSessionMenuItem({
           fontWeight: active ? 700 : 600,
           lineHeight: "17px",
           minWidth: 0,
-          color: install ? "var(--terminal-drawer-muted)" : "var(--terminal-drawer-fg)",
+          color: "var(--terminal-drawer-fg)",
         }}
       >
         {label}

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { ChevronsLeftIcon, PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
+import { ChevronsLeftIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 
 import { getGatewayUrl } from "@/lib/gateway";
 import { NewSessionMenu } from "./NewSessionMenu";
+import { NewSessionSplitButton } from "./NewSessionSplitButton";
 import { ShellCloseConfirmation } from "./ShellCloseConfirmation";
 import { useTerminalAppContext } from "./TerminalAppContext";
 import { ThemePickerButton } from "./TerminalThemePicker";
@@ -71,16 +72,92 @@ const SHELL_STATUS_DOT_CSS = `
 @keyframes terminal-refresh-spin {
   to { transform: rotate(360deg); }
 }
+@keyframes terminal-new-session-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
 .terminal-session-status-dot--running {
   animation: terminal-session-status-pulse 1.35s ease-in-out infinite;
 }
 .terminal-refresh-icon--loading {
   animation: terminal-refresh-spin 0.9s linear infinite;
 }
+.terminal-new-session-split-button {
+  align-items: stretch;
+  background: var(--terminal-drawer-primary-button-bg);
+  border: 1px solid color-mix(in srgb, var(--terminal-drawer-primary-button-bg) 78%, var(--terminal-drawer-primary-button-fg));
+  border-radius: 10px;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--terminal-drawer-primary-button-fg) 14%, transparent) inset;
+  display: inline-flex;
+  height: 40px;
+  overflow: hidden;
+  transition: box-shadow 160ms ease, transform 160ms ease;
+}
+.terminal-new-session-split-button:focus-within {
+  box-shadow:
+    0 0 0 2px var(--terminal-drawer-bg),
+    0 0 0 4px color-mix(in srgb, var(--terminal-drawer-primary-button-bg) 68%, var(--terminal-drawer-primary-button-fg));
+}
+.terminal-new-session-primary-action,
+.terminal-new-session-dropdown-trigger {
+  background: var(--terminal-drawer-primary-button-bg);
+  border: 0;
+  color: var(--terminal-drawer-primary-button-fg);
+  cursor: pointer;
+  padding: 0;
+  transition: background-color 150ms ease, filter 150ms ease, transform 120ms ease;
+}
+.terminal-new-session-primary-action {
+  width: 38px;
+}
+.terminal-new-session-dropdown-trigger {
+  border-left: 1px solid color-mix(in srgb, var(--terminal-drawer-primary-button-fg) 24%, transparent);
+  width: 24px;
+}
+.terminal-new-session-primary-action:hover:not(:disabled),
+.terminal-new-session-dropdown-trigger:hover:not(:disabled),
+.terminal-new-session-dropdown-trigger[data-state="open"] {
+  filter: brightness(1.1);
+}
+.terminal-new-session-primary-action:active:not(:disabled),
+.terminal-new-session-dropdown-trigger:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.terminal-new-session-primary-action:focus-visible,
+.terminal-new-session-dropdown-trigger:focus-visible {
+  outline: none;
+}
+.terminal-new-session-primary-action:disabled,
+.terminal-new-session-dropdown-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+.terminal-new-session-dropdown-chevron {
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.terminal-new-session-dropdown-trigger[data-state="open"] .terminal-new-session-dropdown-chevron {
+  transform: rotate(180deg);
+}
+.terminal-new-session-menu {
+  animation: terminal-new-session-menu-in 170ms cubic-bezier(0.22, 1, 0.36, 1);
+}
 @media (prefers-reduced-motion: reduce) {
   .terminal-session-status-dot--running,
-  .terminal-refresh-icon--loading {
+  .terminal-refresh-icon--loading,
+  .terminal-new-session-menu {
     animation: none;
+  }
+  .terminal-new-session-split-button,
+  .terminal-new-session-primary-action,
+  .terminal-new-session-dropdown-trigger,
+  .terminal-new-session-dropdown-chevron {
+    transition: none;
   }
 }
 `;
@@ -867,7 +944,7 @@ export function LocalTerminalSidebar() {
             display: "flex",
             minHeight: 0,
             opacity: 1,
-            overflow: "visible",
+            overflow: newSessionMenuAnchor === "rail" ? "visible" : "hidden",
             transform: "translateX(0)",
             transition: TERMINAL_SIDEBAR_TRANSITION,
             width: 76,
@@ -986,42 +1063,17 @@ export function LocalTerminalSidebar() {
           </div>
           <div className="flex shrink-0 items-center" style={{ gap: 10 }}>
             {!ctx.mobile ? (
-              <div style={{ position: "relative" }}>
-                <button
-                  type="button"
-                  aria-label="New session"
-                  aria-haspopup="menu"
-                  aria-expanded={newSessionMenuAnchor === "drawer"}
-                  onClick={() => openNewSessionMenu("drawer")}
-                  disabled={creatingShell}
-                  className="flex items-center justify-center"
-                  style={{
-                    background: "var(--terminal-drawer-primary-button-bg)",
-                    border: 0,
-                    borderRadius: 10,
-                    color: "var(--terminal-drawer-primary-button-fg)",
-                    cursor: creatingShell ? "not-allowed" : "pointer",
-                    fontSize: 25,
-                    height: 40,
-                    lineHeight: "28px",
-                    opacity: creatingShell ? 0.72 : 1,
-                    width: 40,
-                  }}
-                >
-                  <PlusIcon aria-hidden="true" size={18} strokeWidth={2.5} />
-                </button>
-                {newSessionMenuAnchor === "drawer" ? (
-                  <NewSessionMenu
-                    align="right"
-                    onClose={() => setNewSessionMenuAnchor(null)}
-                    onCreateShell={() => void createManagedShell()}
-                    onCreateAgent={createAgentSession}
-                    agentStatuses={agentStatuses}
-                    agentStatusesChecking={agentStatusesChecking}
-                    agentStatusesUnavailable={agentStatusesUnavailable}
-                  />
-                ) : null}
-              </div>
+              <NewSessionSplitButton
+                creatingShell={creatingShell}
+                menuOpen={newSessionMenuAnchor === "drawer"}
+                onCreateShell={() => void createManagedShell()}
+                onToggleMenu={() => openNewSessionMenu("drawer")}
+                onCloseMenu={() => setNewSessionMenuAnchor(null)}
+                onCreateAgent={createAgentSession}
+                agentStatuses={agentStatuses}
+                agentStatusesChecking={agentStatusesChecking}
+                agentStatusesUnavailable={agentStatusesUnavailable}
+              />
             ) : null}
             {!ctx.mobile && (
               <>

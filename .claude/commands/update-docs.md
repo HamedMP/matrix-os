@@ -18,8 +18,9 @@ Audit and update these locations in order:
 - `vps-deployment.md`: production deployment changes
 - `releases.md`: release process changes
 
-### 3. Public Docs (`www/content/docs/`)
-Check each section for accuracy:
+### 3. Public Docs (`FinnaAI/matrix-os-site/content/docs/`)
+Public docs deploy from the private `FinnaAI/matrix-os-site` repository. Open a
+separate PR there when product behavior changes. Check each section for accuracy:
 - `guide/getting-started.mdx`: setup instructions, first-run experience
 - `guide/agents.mdx`: agent system, onboarding, personas
 - `guide/apps.mdx`: app manifest, building apps
