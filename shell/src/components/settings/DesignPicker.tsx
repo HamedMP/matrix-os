@@ -44,7 +44,7 @@ const DESIGN_OPTIONS: DesignOption[] = [
 /** Bundled wallpapers applied when a design is picked. Designs missing from
     this map leave the user's background (and dock) untouched. */
 const DESIGN_BACKGROUNDS: Partial<Record<DesignStyle, DesktopConfig["background"]>> = {
-  "macos-glass": { type: "wallpaper", name: "macos-light.svg" },
+  "macos-glass": { type: "wallpaper", name: "moraine-lake.jpg" },
   winxp: { type: "wallpaper", name: "xp-bliss.svg" },
   win11: { type: "wallpaper", name: "win11-bloom.svg" },
 };
