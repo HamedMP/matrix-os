@@ -288,6 +288,7 @@ describe("RuntimeManager", () => {
   });
 
   it("retries the billing handoff without bypassing capacity after a portal failure", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
     let portalAttempts = 0;
     const fetchMock = installFetchRouter({
       billing: billingStatus(2),
@@ -304,9 +305,13 @@ describe("RuntimeManager", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Build computer" }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/Billing is unavailable/i);
+    now.mockReturnValue(121_001);
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
 
     await waitFor(() => expect(navigate).toHaveBeenCalledWith("https://billing.stripe.test/retry"));
+    expect(JSON.parse(window.sessionStorage.getItem("matrix:add-computer-draft:v1") ?? "null")).toMatchObject({
+      createdAt: 121_001,
+    });
     expect(fetchMock.mock.calls.filter(([url]) => url === "/billing/portal")).toHaveLength(2);
     expect(fetchMock).not.toHaveBeenCalledWith("/api/auth/provision-runtime", expect.anything());
   });

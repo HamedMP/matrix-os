@@ -432,15 +432,16 @@ export function RuntimeManager({
     errorRetryActionRef.current = action;
   }
 
-  async function buildComputer(): Promise<void> {
-    if (!draft) return;
+  async function buildComputer(draftOverride?: AddComputerDraft): Promise<void> {
+    const currentDraft = draftOverride ?? draft;
+    if (!currentDraft) return;
     if (overview.status !== "ready") {
       setSafeError("Your computer inventory is still loading. Try again in a moment.");
       setErrorRetryAction("billing");
       setStep("error");
       return;
     }
-    const nextDraft = { ...draft, developerTools: selectedTools };
+    const nextDraft = { ...currentDraft, developerTools: selectedTools };
     setDraft(nextDraft);
     const entitlement = overview.billing.entitlement;
     const capacityAvailable = Boolean(entitlement && activeCustomerCount(overview.inventory) < entitlement.maxRuntimeSlots);
@@ -639,7 +640,7 @@ export function RuntimeManager({
                   resumeProvisionStartedRef.current = false;
                   setDraft(refreshedDraft);
                   safeWriteDraft(refreshedDraft);
-                  void buildComputer();
+                  void buildComputer(refreshedDraft);
                 } else if (errorRetryActionRef.current === "journey") {
                   void retryJourney();
                 } else {
