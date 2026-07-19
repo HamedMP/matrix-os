@@ -643,7 +643,17 @@ export function createApp(deps: {
         return c.json({ error: 'Unauthorized' }, 401);
       }
 
-      const record = await getContainer(db, handle);
+      const machine = await getRunningUserMachineByHandle(db, handle);
+      const legacyContainer = await getContainer(db, handle);
+      if (
+        machine?.clerkUserId &&
+        legacyContainer?.clerkUserId &&
+        machine.clerkUserId !== legacyContainer.clerkUserId
+      ) {
+        return c.json({ error: 'Handle owner mismatch' }, 409);
+      }
+
+      const record = machine ?? legacyContainer;
       if (!record?.clerkUserId) {
         return c.json({ error: 'Unknown handle' }, 404);
       }

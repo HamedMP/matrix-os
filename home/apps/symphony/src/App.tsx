@@ -349,7 +349,7 @@ export default function App() {
   const logLines = flattenLogs(detail?.logs);
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
+    <main className="flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground">
       <SymphonyHeader
         activeIssue={activeIssue}
         busy={busy}
@@ -367,7 +367,7 @@ export default function App() {
         <Notice tone="warning" text="Connect Linear in Matrix Integrations to let Symphony poll assigned work." />
       )}
 
-      <section className="grid gap-5 px-5 pb-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+      <section className="grid min-h-0 flex-1 gap-5 overflow-y-auto px-5 pb-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)] lg:overflow-hidden">
         <RunGroups busy={busy} state={state} onSelectIssue={selectIssue} />
         <DetailPanel activeIssue={activeIssue} detail={detail} logLines={logLines} state={state} />
       </section>
@@ -436,7 +436,7 @@ function Metrics({ state }: { state: SymphonyState }) {
 
 function RunGroups({ busy, state, onSelectIssue }: { busy: string | null; state: SymphonyState; onSelectIssue: (issueIdentifier: string | null | undefined) => void }) {
   return (
-    <div className="space-y-4">
+    <div className="min-h-0 space-y-4 lg:overflow-y-auto lg:pr-1">
       {RUN_GROUPS.map((group) => (
         <section key={group} className="border bg-white">
           <div className="flex items-center justify-between border-b px-4 py-3">
@@ -476,7 +476,7 @@ function DetailPanel({ activeIssue, detail, logLines, state }: {
   state: SymphonyState;
 }) {
   return (
-    <aside className="border bg-white p-4">
+    <aside className="min-h-0 overflow-y-auto border bg-white p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="truncate text-base font-semibold">{detail?.issueIdentifier ?? activeIssue ?? "No active issue"}</h2>
