@@ -60,7 +60,7 @@ async function handleBridgeFetch(appName: string, payload: unknown, port: Messag
       throw new Error("Blocked bridge fetch URL");
     }
     const requestInit = init && typeof init === "object" ? init as RequestInit : {};
-    const response = await fetch(url, {
+    const response = await fetch(`${getGatewayUrl()}${url}`, {
       method: requestInit.method,
       headers: requestInit.headers,
       body: requestInit.body,
@@ -269,7 +269,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     }
 
     let cancelled = false;
-    const baseHref = `/apps/${slug}/`;
+    const baseHref = `${GATEWAY_URL}/apps/${slug}/`;
     fetch(baseHref, { signal: AbortSignal.timeout(BRIDGE_FETCH_TIMEOUT_MS) })
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);

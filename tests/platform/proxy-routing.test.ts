@@ -3075,7 +3075,7 @@ describe("platform proxy routing", () => {
     expect(html).not.toContain('data-matrix-platform-fallback-auth="true"');
   });
 
-  it("routes explicit VM URLs to the named computer and keeps API calls on that computer", async () => {
+  it("keeps another tab's bare API calls on primary after visiting an explicit VM URL", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     await deleteContainer(db, "alice");
     await insertUserMachine(db, {
@@ -3134,8 +3134,54 @@ describe("platform proxy routing", () => {
     expect(api.status).toBe(200);
     const body = await api.json() as { token: string };
     const claims = await syncJwt.verifySyncJwt(body.token, { secret: JWT_SECRET });
-    expect(claims.handle).toBe("alice-staging");
-    expect(claims.runtime_slot).toBe("staging");
+    expect(claims.handle).toBe("alice");
+    expect(claims.runtime_slot).toBe("primary");
+  });
+
+  it("issues websocket tokens for the explicit VM instead of proxying the token request", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff145",
+      clerkUserId: "user_alice",
+      handle: "alice-staging",
+      runtimeSlot: "staging",
+      status: "running",
+      hetznerServerId: 123489,
+      publicIPv4: "203.0.113.37",
+      imageVersion: "v082-login-shell-8935a7cd",
+      provisionedAt: "2026-05-25T11:23:51.076Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 404 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/vm/alice-staging/api/auth/ws-token", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { token: string };
+    const claims = await syncJwt.verifySyncJwt(body.token, { secret: JWT_SECRET });
+    expect(claims).toMatchObject({
+      sub: "user_alice",
+      handle: "alice-staging",
+      runtime_slot: "staging",
+      aud: "matrix-os-sync",
+      iss: "matrix-os-platform",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("routes explicit VM native app capability assets without browser cookies", async () => {
@@ -3544,7 +3590,7 @@ describe("platform proxy routing", () => {
     expect(claims.runtime_slot).toBe("primary");
   });
 
-  it("returns a machine-unavailable error when a stale route cookie has no fallback machine", async () => {
+  it("ignores a stale route cookie when no authenticated machine exists", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     await deleteContainer(db, "alice");
     const app = createApp({
@@ -3564,11 +3610,8 @@ describe("platform proxy routing", () => {
       },
     });
 
-    expect(res.status).toBe(410);
-    expect(await res.json()).toEqual({
-      error: "Matrix computer unavailable",
-      code: "machine_unavailable",
-    });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Unauthorized" });
   });
 
   it("falls back to Clerk routing when the shell route cookie belongs to another user", async () => {

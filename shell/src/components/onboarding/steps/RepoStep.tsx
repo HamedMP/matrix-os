@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { palette as c, fonts, radii, statusTones } from "@matrix-os/brand";
+import { getGatewayUrl } from "@/lib/gateway";
 
 export type RepoStepProps = {
   title: string;
@@ -151,7 +152,7 @@ export function RepoStep({ title, status, expanded, onChange }: RepoStepProps) {
       const params = new URLSearchParams({ limit: "25" });
       if (search.trim()) params.set("search", search.trim());
 
-      fetch(`/api/github/repos?${params}`, { signal: AbortSignal.timeout(10_000) })
+      fetch(`${getGatewayUrl()}/api/github/repos?${params}`, { signal: AbortSignal.timeout(10_000) })
         .then((r) => {
           if (!r.ok) throw new Error("not_ok");
           return r.json() as Promise<{ repos: GithubRepoSummary[] }>;
@@ -174,7 +175,7 @@ export function RepoStep({ title, status, expanded, onChange }: RepoStepProps) {
   }, [expanded, search]);
 
   async function postProject(body: Record<string, string>) {
-    const r = await fetch("/api/projects", {
+    const r = await fetch(`${getGatewayUrl()}/api/projects`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
