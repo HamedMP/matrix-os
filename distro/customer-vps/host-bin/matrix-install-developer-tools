@@ -52,8 +52,22 @@ EOF
   fi
 }
 
+ensure_terminal_runtime() {
+  command -v zsh >/dev/null 2>&1 && return 0
+  command -v apt-get >/dev/null 2>&1 || {
+    log "zsh package is unavailable"
+    return 1
+  }
+  timeout 120 apt-get update \
+    -o Acquire::Retries=3 \
+    -o Acquire::http::Timeout=20 \
+    -o Acquire::https::Timeout=20 || return 1
+  timeout 180 env DEBIAN_FRONTEND=noninteractive apt-get install -y zsh || return 1
+  command -v zsh >/dev/null 2>&1
+}
+
 ensure_agent_sandbox_runtime() {
-  if ! command -v bwrap >/dev/null 2>&1 || ! command -v socat >/dev/null 2>&1 || ! command -v zsh >/dev/null 2>&1; then
+  if ! command -v bwrap >/dev/null 2>&1 || ! command -v socat >/dev/null 2>&1; then
     command -v apt-get >/dev/null 2>&1 || {
       log "coding-agent sandbox packages are unavailable"
       return 1
@@ -67,10 +81,10 @@ ensure_agent_sandbox_runtime() {
       -o Acquire::Retries=3 \
       -o Acquire::http::Timeout=20 \
       -o Acquire::https::Timeout=20 || return 1
-    timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap socat zsh || return 1
+    timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap socat || return 1
   fi
   configure_bwrap_apparmor || return 1
-  command -v bwrap >/dev/null 2>&1 && command -v socat >/dev/null 2>&1 && command -v zsh >/dev/null 2>&1
+  command -v bwrap >/dev/null 2>&1 && command -v socat >/dev/null 2>&1
 }
 
 link_tool() {
@@ -109,6 +123,9 @@ is_tool_installed() {
 }
 
 if [ "$MODE" != "--tools-only" ]; then
+  if ! ensure_terminal_runtime; then
+    log "WARN: zsh provisioning failed; terminal will use the Bash fallback"
+  fi
   if ! ensure_agent_sandbox_runtime; then
     log "coding-agent sandbox provisioning failed"
     exit 1
