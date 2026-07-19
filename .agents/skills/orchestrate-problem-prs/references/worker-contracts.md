@@ -137,7 +137,8 @@ the comments; implementation remains locked.
 Implementation is authorized for <problem ID> in <worktree and PR>. Follow the
 approved plan and Red -> Green -> Refactor. Do not expand scope without
 returning to the coordinator. Commit working increments. After local validation,
-invoke $worktree-pr-monitor for this single assigned PR. Do not merge.
+mark the draft PR ready for review, verify it is no longer a draft, then invoke
+$worktree-pr-monitor for this single assigned PR. Do not merge.
 ```
 
 ## Completion Report

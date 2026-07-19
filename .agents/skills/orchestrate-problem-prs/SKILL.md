@@ -130,14 +130,15 @@ Require focused tests and all applicable repository gates. React changes also
 require React Doctor and current screenshot evidence. Record every skipped gate
 with its exact reason.
 
-After implementation and local validation, tell the owner to invoke
-`$worktree-pr-monitor` for its single assigned PR. The leaf owner must:
+After implementation and local validation, tell the owner to mark its draft PR
+ready for review and verify that it is no longer a draft. Then tell the owner
+to invoke `$worktree-pr-monitor` for its single assigned PR. The leaf owner
+must:
 
-1. mark the completed draft PR ready for review;
-2. resolve current-head review feedback until Greptile reports `5/5`;
-3. add `ready-for-ci` only at the point required by that skill;
-4. wait for the label-triggered current-head CI to pass; and
-5. return the PR URL, worktree, branch, SHA, checks, Greptile rating, and risks.
+1. resolve current-head review feedback until Greptile reports `5/5`;
+2. add `ready-for-ci` only at the point required by that skill;
+3. wait for the label-triggered current-head CI to pass; and
+4. return the PR URL, worktree, branch, SHA, checks, Greptile rating, and risks.
 
 Do not accept stale reviews or checks from an earlier commit.
 

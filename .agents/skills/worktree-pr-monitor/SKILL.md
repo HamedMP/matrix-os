@@ -1,20 +1,19 @@
 ---
 name: worktree-pr-monitor
-description: Create or continue one isolated Matrix OS manual-worktree PR, validate it, mark a completed draft ready, resolve current-head review feedback through Greptile 5/5, then add ready-for-ci and wait for triggered CI. Use when asked for the worktree-to-PR monitoring workflow, including when a coordinator assigns a leaf agent exclusive ownership of one worktree, branch, and PR.
+description: Create or continue an isolated Matrix OS worktree PR, validate it, push it, monitor CI and GitHub review feedback, iterate until the latest trusted Greptile result is 5/5, then add ready-for-ci and wait for triggered CI to pass before pinging completion. Use when asked to run a worktree to PR to monitor workflow, get a PR to Greptile 5/5 plus CI pass, publish changes while keeping main clean, or monitor one worktree, branch, and PR exclusively assigned to a leaf agent.
 ---
 
 # Worktree PR Monitor
 
-Use this skill only when the requester explicitly asks for the manual Git
-worktree -> PR -> monitor workflow or when a coordinator explicitly assigns
-that workflow to a leaf agent. Keep the primary checkout unchanged while
-implementation happens in a persistent manual worktree at the path required by
-the repository instructions.
+Use this skill only when the requester explicitly asks for the manual git
+worktree -> PR -> monitor workflow or a coordinator assigns that workflow to a
+leaf agent. It keeps `/home/deploy/matrix-os` on `main` while implementation
+happens in `/home/deploy/matrix-os.worktrees/<slug>`.
 
-Do not use this skill to coordinate a Swarm or share a worktree between agents.
-A leaf agent in a multi-agent run may use it only when it exclusively owns one
-coordinator-assigned worktree, branch, and PR. The repo-level ban on Agent-tool
-`isolation: "worktree"` still applies; use a persistent manual Git worktree.
+Do not use this skill to coordinate Swarm or multi-agent runs. A leaf agent may
+use it only when a coordinator gives it exclusive ownership of one worktree,
+branch, and PR. The repo-level Swarm ban on `isolation: "worktree"` still
+applies; this workflow uses a persistent manual git worktree.
 
 ## Preconditions
 
@@ -31,17 +30,14 @@ coordinator-assigned worktree, branch, and PR. The repo-level ban on Agent-tool
 
 - If neither the requester nor a coordinator explicitly assigned a worktree,
   follow the current branch workflow instead.
-- Keep the primary checkout on its existing branch and preserve unrelated work.
-- Resolve the primary checkout's absolute path and, unless repository
-  instructions specify another location, use the canonical sibling path
-  `<primary-checkout-parent>/<repo-name>.worktrees/<slug>`. For example, a
-  primary checkout at `/home/deploy/matrix-os` uses
-  `/home/deploy/matrix-os.worktrees/<slug>`. Never reuse another agent's path.
+- Keep `/home/deploy/matrix-os` on `main`.
+- Put feature work in `/home/deploy/matrix-os.worktrees/<slug>`. A leaf agent
+  must use its coordinator-assigned worktree path instead.
 - Use a semantic branch and PR title. Do not prefix titles with agent/tool tags.
 - Stage only files in scope.
 - Do not merge unless explicitly asked.
 - If Greptile has reviewed the PR, the loop is complete only when the latest
-  trusted Greptile result is `5/5` for the current PR head.
+  trusted Greptile result is `5/5`.
 - Add the `ready-for-ci` label only after the latest trusted Greptile result is
   `5/5`; this label triggers the broader PR CI workflows.
 - If the repository label `ready-for-ci` is missing, report the blocker instead
@@ -65,11 +61,10 @@ coordinator-assigned worktree, branch, and PR. The repo-level ban on Agent-tool
 2. Create or enter the worktree.
    - Slug: concise task slug, e.g. `fix-canvas-terminal-clicks`.
    - Branch: `codex/<slug>` unless the requester named a branch.
-   - Path: the coordinator-assigned path for a leaf agent. Otherwise use the
-     canonical absolute sibling path above unless repository instructions
-     explicitly require another location.
+   - Path: `/home/deploy/matrix-os.worktrees/<slug>`, or the exact path assigned
+     by the coordinator for a leaf agent.
    - Command shape:
-     `git worktree add -b codex/<slug> /absolute/path/to/matrix-os.worktrees/<slug> origin/main`
+     `git worktree add -b codex/<slug> /home/deploy/matrix-os.worktrees/<slug> origin/main`
 
 3. Implement.
    - Follow TDD where practical: add a failing focused regression before the
@@ -97,23 +92,16 @@ coordinator-assigned worktree, branch, and PR. The repo-level ban on Agent-tool
      - `Review/Monitoring`
      - `Invariants` when backend code changed
 
-7. Mark completed drafts ready for review.
-   - Keep an incomplete PR in draft state.
-   - After implementation and applicable local validation finish, inspect the
-     PR state and run `gh pr ready` if it is still a draft.
-   - Marking the PR ready may trigger baseline CI. Monitor those checks, but do
-     not treat them as a substitute for the later `ready-for-ci` gate.
-
-8. Monitor review feedback until Greptile is complete.
+7. Monitor review feedback until Greptile is complete.
    - Use `gh pr checks --watch` or equivalent GitHub API status reads for
      already-running checks.
    - Use thread-aware review inspection for unresolved GitHub review threads.
    - Inspect issue comments for Codex reviews.
-   - Inspect Greptile feedback and rating for the current PR head. If the latest
-     trusted result is stale or below `5/5`, implement fixes, rerun relevant
-     checks, commit, push, and continue monitoring.
+   - Inspect Greptile feedback and rating. If the latest trusted Greptile
+     result is below `5/5`, implement fixes, rerun relevant checks, commit,
+     push, and continue monitoring.
 
-9. Trigger and monitor label-gated CI.
+8. Trigger and monitor label-gated CI.
    - Before labeling, verify that the repository label exists:
      `gh label list --search ready-for-ci --json name`. If the exact
      `ready-for-ci` label is missing, stop and report the blocker.
@@ -128,7 +116,7 @@ coordinator-assigned worktree, branch, and PR. The repo-level ban on Agent-tool
      Do not re-add `ready-for-ci` until Greptile is again `5/5` on the latest
      commit.
 
-10. Ping completion.
+9. Ping completion.
    - Reply with:
      - PR URL
      - branch and worktree path
@@ -144,13 +132,12 @@ coordinator-assigned worktree, branch, and PR. The repo-level ban on Agent-tool
 ```sh
 git status --short --branch
 git worktree list
-git worktree add -b codex/<slug> /absolute/path/to/matrix-os.worktrees/<slug> origin/main
+git worktree add -b codex/<slug> /home/deploy/matrix-os.worktrees/<slug> origin/main
 bun run typecheck
 bun run check:patterns
 bun run test
 git push -u origin HEAD
 gh pr view --json number,url,title,state,headRefName,baseRefName
-gh pr ready
 gh label list --search ready-for-ci --json name
 gh pr edit --add-label ready-for-ci
 gh pr edit --remove-label ready-for-ci
