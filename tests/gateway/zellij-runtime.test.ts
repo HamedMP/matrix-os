@@ -146,7 +146,9 @@ describe("zellij-runtime", () => {
     expect(shell).toContain('exec "$matrix_zsh" -d -i');
     expect(shell).toContain("exec bash --noprofile --rcfile");
     expect(shell).toContain(`node '${promptLabelPath}'`);
+    expect(shell).toContain('if [ -z "${MATRIX_TERMINAL_PROMPT:-}" ] && command -v node >/dev/null 2>&1; then');
     expect(zshrc).toContain('PROMPT="${MATRIX_TERMINAL_PROMPT}"');
+    expect(zshrc).toContain('$HOME/.zshenv');
     expect(promptLabel).toContain("handle.json");
     expect(config).toContain('theme "default"');
     expect(config).not.toContain("matrix-dark {");

@@ -40,6 +40,14 @@ fi
 `;
 
 export const MATRIX_TERMINAL_ZSHRC = `# Matrix OS generated terminal rcfile.
+if [ -r "$HOME/.zshenv" ]; then
+  matrix_terminal_zdotdir="$ZDOTDIR"
+  ZDOTDIR="$HOME"
+  . "$HOME/.zshenv"
+  ZDOTDIR="$matrix_terminal_zdotdir"
+  unset matrix_terminal_zdotdir
+fi
+
 if [ -r "$HOME/.zshrc" ]; then
   matrix_terminal_zdotdir="$ZDOTDIR"
   ZDOTDIR="$HOME"
@@ -174,7 +182,7 @@ export HOME="\${HOME:-$MATRIX_HOME}"
 ${MATRIX_TERMINAL_PATH_BOOTSTRAP}
 
 matrix_prompt_label=""
-if command -v node >/dev/null 2>&1; then
+if [ -z "\${MATRIX_TERMINAL_PROMPT:-}" ] && command -v node >/dev/null 2>&1; then
   matrix_prompt_label="$(node ${shellSingleQuote(promptLabelPath)} 2>/dev/null || true)"
 fi
 
