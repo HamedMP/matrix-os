@@ -187,13 +187,23 @@ if [ -z "\${MATRIX_TERMINAL_PROMPT:-}" ] && command -v node >/dev/null 2>&1; the
   matrix_prompt_label="$(node ${shellSingleQuote(promptLabelPath)} 2>/dev/null || true)"
 fi
 
+matrix_zsh="$(command -v zsh 2>/dev/null || true)"
+matrix_bash=""
+if [ -n "$matrix_zsh" ]; then
+  export SHELL="$matrix_zsh"
+else
+  matrix_bash="$(command -v bash 2>/dev/null || true)"
+  if [ -n "$matrix_bash" ]; then
+    export SHELL="$matrix_bash"
+  fi
+fi
+
 if [ "$#" -gt 0 ]; then
   set +e
   ( "$@" )
   set -e
 fi
 
-matrix_zsh="$(command -v zsh 2>/dev/null || true)"
 if [ -n "$matrix_zsh" ]; then
   if [ -z "\${MATRIX_TERMINAL_PROMPT:-}" ]; then
     if [ -n "$matrix_prompt_label" ]; then
@@ -203,7 +213,6 @@ if [ -n "$matrix_zsh" ]; then
     fi
   fi
   export ZDOTDIR=${shellSingleQuote(zshConfigDir)}
-  export SHELL="$matrix_zsh"
   exec "$matrix_zsh" -d -i
 fi
 
