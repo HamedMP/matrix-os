@@ -1,0 +1,218 @@
+/*
+ * macOS Launchpad (macos-glass design): full-screen frosted launcher.
+ * The glass tokens (--glass-blur, --glass-surface, ...) are scoped to
+ * [data-theme-style="macos-glass"] in globals.css; Launchpad only renders
+ * under that design, so the var() fallbacks below are just safety nets.
+ * Cell px sizes must stay in sync with launchpad-utils.ts.
+ */
+
+.launchpad-root {
+  --launchpad-cell-w: 132px;
+  --launchpad-cell-h: 152px;
+  position: fixed;
+  inset: 0;
+}
+
+/* Heavy frosted blur over the whole desktop, with a slight dark vibrancy
+   tint so white labels stay legible on any wallpaper. */
+.launchpad-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(24, 26, 34, 0.32);
+  backdrop-filter: var(--glass-blur, blur(40px) saturate(180%));
+  -webkit-backdrop-filter: var(--glass-blur, blur(40px) saturate(180%));
+  opacity: 0;
+  transition: opacity 240ms ease-out;
+}
+
+.launchpad-root[data-visible="true"] .launchpad-backdrop {
+  opacity: 1;
+}
+
+.launchpad-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  opacity: 0;
+  transform: scale(1.05);
+  transition: opacity 240ms ease-out, transform 240ms ease-out;
+}
+
+.launchpad-root[data-visible="true"] .launchpad-content {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* ── Search ─────────────────────────────────────────────── */
+
+.launchpad-search-row {
+  display: flex;
+  justify-content: center;
+  padding: 34px 24px 26px;
+}
+
+.launchpad-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 260px;
+  padding: 5px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.launchpad-search:focus-within {
+  background: rgba(255, 255, 255, 0.26);
+  border-color: rgba(255, 255, 255, 0.45);
+}
+
+.launchpad-search-icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.launchpad-search-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #fff;
+}
+
+.launchpad-search-input::placeholder {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* ── Icon grid ──────────────────────────────────────────── */
+
+.launchpad-grid-area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 32px;
+}
+
+.launchpad-grid {
+  display: grid;
+  gap: 26px 10px;
+  justify-items: center;
+}
+
+.launchpad-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  width: var(--launchpad-cell-w);
+  padding: 6px 0;
+  background: none;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+
+.launchpad-tile:hover,
+.launchpad-tile:focus-visible {
+  transform: scale(1.05);
+}
+
+.launchpad-tile:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.8);
+  outline-offset: 2px;
+}
+
+.launchpad-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 68px;
+  height: 68px;
+  border-radius: 16px;
+  overflow: hidden;
+  font-size: 30px;
+  font-weight: 600;
+  color: rgba(20, 22, 30, 0.85);
+  background: var(--glass-surface, rgba(255, 255, 255, 0.6));
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.32);
+}
+
+.launchpad-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.launchpad-icon-fallback {
+  line-height: 1;
+}
+
+.launchpad-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  line-height: 1.2;
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+}
+
+.launchpad-empty {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.75);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+/* ── Page dots ──────────────────────────────────────────── */
+
+.launchpad-dots-row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 12px 0 30px;
+  box-sizing: border-box;
+}
+
+.launchpad-dot {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: none;
+  border-radius: 9999px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.45);
+  transition: background 150ms ease, transform 150ms ease;
+}
+
+.launchpad-dot:hover {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.launchpad-dot--active {
+  background: #fff;
+  transform: scale(1.2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .launchpad-backdrop,
+  .launchpad-content,
+  .launchpad-search,
+  .launchpad-tile,
+  .launchpad-dot {
+    transition: none !important;
+  }
+}

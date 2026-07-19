@@ -6,9 +6,11 @@ import { useDesktopConfigStore, type DockConfig } from "../../shell/src/stores/d
 import { DEFAULT_PINNED_APPS } from "../../shell/src/lib/builtin-apps";
 import {
   buildMeshGradient,
+  resetDesktopConfigRuntimeCacheForTests,
   saveDesktopConfig,
   saveDesktopConfigPatch,
   useDesktopConfig,
+  wallpaperUrl,
   type DesktopConfig,
 } from "../../shell/src/hooks/useDesktopConfig";
 import { createShellSnapshotScope, loadShellSnapshot, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache";
@@ -39,6 +41,9 @@ describe("Desktop config", () => {
       pinnedApps: [...DEFAULT_PINNED_APPS],
     });
     vi.restoreAllMocks();
+    resetDesktopConfigRuntimeCacheForTests();
+    window.history.replaceState({}, "", "/");
+    document.body.removeAttribute("style");
   });
 
   it("default dock config has position left, size 56", () => {
@@ -86,6 +91,23 @@ describe("Desktop config", () => {
     expect(gradient).toMatch(/var\(--gradient-/);
   });
 
+  it("wallpaperUrl routes bundled OS wallpapers through the gateway files route", () => {
+    // The shell-public /wallpapers path is unreliable through the platform
+    // session-routing proxy, so bundled names must not be special-cased.
+    const gatewayUrl = "https://gateway.example.com";
+    for (const name of ["moraine-lake.jpg", "xp-bliss.jpg", "win11-bloom.jpg", "macos-light.svg"]) {
+      expect(wallpaperUrl(name, gatewayUrl)).toBe(
+        `${gatewayUrl}/files/system/wallpapers/${name}`,
+      );
+    }
+  });
+
+  it("wallpaperUrl routes user-uploaded wallpapers through the gateway files route", () => {
+    expect(wallpaperUrl("custom-upload.png", "https://gateway.example.com")).toBe(
+      "https://gateway.example.com/files/system/wallpapers/custom-upload.png",
+    );
+  });
+
   it("saveDesktopConfig calls fetch with PUT method", async () => {
     const mockFetch = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal("fetch", mockFetch);
@@ -111,46 +133,79 @@ describe("Desktop config", () => {
       iconStyle: "custom founder icon style",
       futureImportantField: { keep: true },
     };
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(existingConfig),
-      })
-      .mockResolvedValueOnce({ ok: true });
+    const nextConfig = {
+      ...existingConfig,
+      background: { type: "wallpaper", name: "moraine-lake.jpg" },
+      dock: { ...existingConfig.dock, position: "left" },
+    };
+    const mockFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ config: nextConfig }),
+    });
     vi.stubGlobal("fetch", mockFetch);
 
     await saveDesktopConfigPatch({
       background: { type: "wallpaper", name: "moraine-lake.jpg" },
+      dock: { position: "left" },
     });
 
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-    const [putUrl, putOpts] = mockFetch.mock.calls[1];
-    expect(putUrl).toContain("/api/settings/desktop");
-    expect(putOpts.method).toBe("PUT");
-    expect(JSON.parse(putOpts.body)).toEqual({
-      ...existingConfig,
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [patchUrl, patchOpts] = mockFetch.mock.calls[0];
+    expect(patchUrl).toContain("/api/settings/desktop");
+    expect(patchOpts.method).toBe("PATCH");
+    expect(JSON.parse(patchOpts.body)).toEqual({
       background: { type: "wallpaper", name: "moraine-lake.jpg" },
+      dock: { position: "left" },
     });
   });
 
-  it("saveDesktopConfigPatch still writes when the current config cannot be loaded", async () => {
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: false, status: 404 })
-      .mockResolvedValueOnce({ ok: true });
-    vi.stubGlobal("fetch", mockFetch);
+  it("applies a saved OS wallpaper immediately without waiting for the file watcher", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        config: {
+          background: { type: "wallpaper", name: "xp-bliss.jpg" },
+          dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
+          pinnedApps: [],
+        },
+      }),
+    }));
 
     await saveDesktopConfigPatch({
-      background: { type: "wallpaper", name: "moraine-lake.jpg" },
+      background: { type: "wallpaper", name: "xp-bliss.jpg" },
     });
 
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-    const [, putOpts] = mockFetch.mock.calls[1];
-    expect(putOpts.method).toBe("PUT");
-    expect(JSON.parse(putOpts.body)).toEqual({
-      background: { type: "wallpaper", name: "moraine-lake.jpg" },
+    expect(document.body.style.backgroundImage).toContain("xp-bliss.jpg");
+  });
+
+  it("keeps the saved dock auto-hide value in the live store", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        config: {
+          background: { type: "wallpaper", name: "moraine-lake.jpg" },
+          dock: { position: "bottom", size: 64, iconSize: 48, autoHide: true },
+          pinnedApps: [],
+        },
+      }),
+    }));
+
+    await saveDesktopConfigPatch({
+      dock: { position: "bottom", size: 64, iconSize: 48, autoHide: true },
     });
+
+    expect(useDesktopConfigStore.getState().dock.autoHide).toBe(true);
+  });
+
+  it("saveDesktopConfigPatch refuses to overwrite preferences when the current config cannot be loaded", async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce({ ok: false, status: 503 });
+    vi.stubGlobal("fetch", mockFetch);
+
+    await expect(saveDesktopConfigPatch({
+      background: { type: "wallpaper", name: "moraine-lake.jpg" },
+    })).rejects.toThrow("PATCH /api/settings/desktop 503");
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it("hook exports are defined", () => {
@@ -225,6 +280,37 @@ describe("Desktop config", () => {
     expect(useDesktopConfigStore.getState().dock.position).toBe("bottom");
     await waitFor(() => expect(result.current.background).toEqual({ type: "wallpaper", name: "fresh-wallpaper.jpg" }));
     expect(loadShellSnapshot(scope)?.desktopConfig?.pinnedApps).toEqual(["apps/fresh/index.html"]);
+  });
+
+  it("keeps the active OS wallpaper when a second desktop-config consumer mounts", async () => {
+    let keepSecondFetchPending: ((value: never) => void) | undefined;
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          background: { type: "wallpaper", name: "xp-bliss.jpg" },
+          dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
+          pinnedApps: [],
+        }),
+      })
+      .mockReturnValueOnce(new Promise((resolve) => {
+        keepSecondFetchPending = resolve;
+      })));
+
+    const root = renderHook(() => useDesktopConfig());
+    await waitFor(() => expect(root.result.current.background).toEqual({
+      type: "wallpaper",
+      name: "xp-bliss.jpg",
+    }));
+    expect(document.body.style.backgroundImage).toContain("xp-bliss.jpg");
+
+    const settings = renderHook(() => useDesktopConfig());
+
+    expect(settings.result.current.background).toEqual({ type: "wallpaper", name: "xp-bliss.jpg" });
+    expect(document.body.style.backgroundImage).toContain("xp-bliss.jpg");
+    settings.unmount();
+    root.unmount();
+    expect(keepSecondFetchPending).toBeTypeOf("function");
   });
 
   it("updates the scoped shell snapshot only after desktop config saves succeed", async () => {

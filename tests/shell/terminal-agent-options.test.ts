@@ -9,6 +9,7 @@ import { matrixTerminalShellScript } from "../../packages/gateway/src/shell/zell
 import {
   TERMINAL_AGENT_OPTIONS,
   parseTerminalAgentStatuses,
+  resolveTerminalAgentMenuState,
   terminalAgentInstallCommand,
   terminalAgentVisibleInstallCommand,
 } from "../../shell/src/components/terminal/terminal-agent-options.js";
@@ -16,19 +17,45 @@ import {
 const execFileAsync = promisify(execFile);
 
 describe("terminal agent options", () => {
-  it("parses only allowlisted agent install statuses", () => {
+  it("parses explicit install states and retains the legacy boolean during migration", () => {
     expect(parseTerminalAgentStatuses({
       agents: [
-        { id: "claude", installed: true },
-        { id: "codex", installed: false },
+        { id: "claude", installState: "installed", installed: true },
+        { id: "codex", installState: "missing", installed: false },
+        { id: "opencode", installState: "unknown", installed: null },
+        { id: "pi", installed: true },
         { id: "unknown", installed: true },
-        { id: "pi", installed: "yes" },
         null,
       ],
     })).toEqual([
-      { id: "claude", installed: true },
-      { id: "codex", installed: false },
+      { id: "claude", installState: "installed" },
+      { id: "codex", installState: "missing" },
+      { id: "opencode", installState: "unknown" },
+      { id: "pi", installState: "installed" },
     ]);
+  });
+
+  it("only offers installation for an explicitly missing executable", () => {
+    expect(resolveTerminalAgentMenuState("installed", false, false)).toEqual({
+      action: "launch",
+      statusLabel: null,
+    });
+    expect(resolveTerminalAgentMenuState("missing", false, false)).toEqual({
+      action: "install",
+      statusLabel: "Install",
+    });
+    expect(resolveTerminalAgentMenuState("unknown", true, false)).toEqual({
+      action: "launch",
+      statusLabel: "Checking…",
+    });
+    expect(resolveTerminalAgentMenuState("unknown", false, true)).toEqual({
+      action: "launch",
+      statusLabel: "Status unavailable",
+    });
+    expect(resolveTerminalAgentMenuState("unknown", false, false)).toEqual({
+      action: "launch",
+      statusLabel: "Status unavailable",
+    });
   });
 
   it("builds foreground install commands with the runtime node prefix", () => {

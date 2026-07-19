@@ -6,10 +6,13 @@ import { chmod, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { z } from "zod/v4";
 import { shellError, type ShellSafeError } from "./errors.js";
 import {
   MATRIX_TERMINAL_BASHRC,
   MATRIX_TERMINAL_PROMPT_LABEL_SCRIPT,
+  MATRIX_TERMINAL_ZSHENV,
+  MATRIX_TERMINAL_ZSHRC,
   MATRIX_ZELLIJ_LAYOUT,
   matrixTerminalShellScript,
   matrixZellijConfigPaths,
@@ -88,6 +91,7 @@ export interface AttachOptions {
 export interface ZellijAdapter {
   health(): Promise<{ ok: boolean; code: "ok" | "zellij_failed" }>;
   listSessions(): Promise<string[]>;
+  focusedPaneCwd(name: string): Promise<string | null>;
   createSession(options: CreateSessionOptions): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
   renameSession(name: string, nextName: string): Promise<void>;
@@ -105,12 +109,23 @@ export interface ZellijAdapter {
   setShellTheme(themeId: MatrixZellijShellThemeId): Promise<void>;
 }
 
+const ZellijTabInfoSchema = z.object({
+  tab_id: z.number().int().nonnegative(),
+}).passthrough();
+const ZellijPaneListSchema = z.array(z.object({
+  is_plugin: z.boolean(),
+  is_focused: z.boolean(),
+  tab_id: z.number().int().nonnegative(),
+  pane_cwd: z.string().min(1).max(4096).nullable().optional(),
+}).passthrough()).max(256);
+
 const SAFE_ATTACH_ENV_KEYS = new Set([
   "COLORTERM",
   "DISPLAY",
   "HOME",
   "LANG",
   "LOGNAME",
+  "MATRIX_HOME",
   "MATRIX_APP_DIR",
   "MATRIX_INSTALL_TOOL_PACK",
   "MATRIX_NODE_PREFIX",
@@ -134,6 +149,8 @@ const ZELLIJ_CONTEXT_ENV_KEYS = new Set([
 const DEFAULT_STARTUP_DELAY_MS = 500;
 const DEFAULT_RETAINED_PTY_TTL_MS = 4 * 60 * 60 * 1000;
 const DEFAULT_MAX_RETAINED_PTYS = 128;
+const FOCUSED_PANE_CWD_CACHE_TTL_MS = 15_000;
+const MAX_FOCUSED_PANE_CWD_CACHE_ENTRIES = 128;
 type RetainedCreatePty = {
   process: ShellAttachProcess;
   startedAtMs: number;
@@ -144,6 +161,7 @@ type RetainedCreatePty = {
 function attachEnv(
   source: NodeJS.ProcessEnv = process.env,
   configPaths: MatrixZellijConfigPaths | null = null,
+  homePath?: string,
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(source)) {
@@ -154,6 +172,10 @@ function attachEnv(
     }
   }
   env.LANG = env.LANG || "en_US.UTF-8";
+  if (homePath) {
+    env.HOME = homePath;
+    env.MATRIX_HOME = homePath;
+  }
   if (configPaths) {
     env.ZELLIJ_CONFIG_DIR = configPaths.dir;
     env.ZELLIJ_CONFIG_FILE = configPaths.file;
@@ -262,6 +284,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
   const cwd = deps.cwd ?? process.cwd();
   const spawnPty = deps.spawnPty ?? defaultPtySpawn();
   const retainedCreatePtys = new Map<string, RetainedCreatePty>();
+  const focusedPaneCwdCache = new Map<string, { expiresAt: number; value: string | null }>();
   const zellijConfigPaths = deps.homePath ? matrixZellijConfigPaths(deps.homePath) : null;
   let ensureConfigPromise: Promise<void> | null = null;
   let shellThemeId: MatrixZellijShellThemeId = "dark";
@@ -276,9 +299,15 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         await mkdir(zellijConfigPaths.layoutDir, { recursive: true });
         await atomicWriteText(
           zellijConfigPaths.shellFile,
-          matrixTerminalShellScript(zellijConfigPaths.bashrcFile, zellijConfigPaths.promptLabelFile),
+          matrixTerminalShellScript(
+            zellijConfigPaths.zshrcFile,
+            zellijConfigPaths.bashrcFile,
+            zellijConfigPaths.promptLabelFile,
+          ),
         );
         await chmod(zellijConfigPaths.shellFile, 0o700);
+        await atomicWriteText(zellijConfigPaths.zshenvFile, MATRIX_TERMINAL_ZSHENV);
+        await atomicWriteText(zellijConfigPaths.zshrcFile, MATRIX_TERMINAL_ZSHRC);
         await atomicWriteText(zellijConfigPaths.bashrcFile, MATRIX_TERMINAL_BASHRC);
         await atomicWriteText(zellijConfigPaths.promptLabelFile, MATRIX_TERMINAL_PROMPT_LABEL_SCRIPT);
         await atomicWriteText(zellijConfigPaths.file, renderMatrixZellijConfig(zellijConfigPaths, shellThemeId));
@@ -338,7 +367,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
           timeout,
           signal: controller.signal,
           cwd: runCwd,
-          env: attachEnv(deps.env, zellijConfigPaths),
+          env: attachEnv(deps.env, zellijConfigPaths, deps.homePath),
         },
         (err, stdout, stderr) => {
           if (err) {
@@ -358,7 +387,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       cols: options.size?.cols ?? 120,
       rows: options.size?.rows ?? 40,
       cwd,
-      env: attachEnv(deps.env, zellijConfigPaths),
+      env: attachEnv(deps.env, zellijConfigPaths, deps.homePath),
     });
     const abort = () => {
       pty.kill();
@@ -403,6 +432,44 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         .map((line) => line.trim().split(/\s+/)[0])
         .filter(Boolean);
     },
+    async focusedPaneCwd(name) {
+      const cached = focusedPaneCwdCache.get(name);
+      if (cached && cached.expiresAt > nowMs()) {
+        focusedPaneCwdCache.delete(name);
+        focusedPaneCwdCache.set(name, cached);
+        return cached.value;
+      }
+      if (cached) focusedPaneCwdCache.delete(name);
+      try {
+        const [tabJson, panesJson] = await Promise.all([
+          run(["--session", name, "action", "current-tab-info", "--json"]),
+          run(["--session", name, "action", "list-panes", "--all", "--json"]),
+        ]);
+        const tab = ZellijTabInfoSchema.safeParse(JSON.parse(tabJson));
+        const panes = ZellijPaneListSchema.safeParse(JSON.parse(panesJson));
+        const value = tab.success && panes.success ? panes.data.find((pane) => (
+          !pane.is_plugin && pane.is_focused && pane.tab_id === tab.data.tab_id && pane.pane_cwd
+        ))?.pane_cwd ?? null : null;
+        while (focusedPaneCwdCache.size >= MAX_FOCUSED_PANE_CWD_CACHE_ENTRIES) {
+          const oldest = focusedPaneCwdCache.keys().next().value as string | undefined;
+          if (!oldest) break;
+          focusedPaneCwdCache.delete(oldest);
+        }
+        focusedPaneCwdCache.set(name, { expiresAt: nowMs() + FOCUSED_PANE_CWD_CACHE_TTL_MS, value });
+        return value;
+      } catch (err: unknown) {
+        if (!(err instanceof Error && "code" in err && (err as { code?: unknown }).code === "zellij_failed")) {
+          console.warn("[shell] focused pane cwd unavailable:", err instanceof Error ? err.message : String(err));
+        }
+        while (focusedPaneCwdCache.size >= MAX_FOCUSED_PANE_CWD_CACHE_ENTRIES) {
+          const oldest = focusedPaneCwdCache.keys().next().value as string | undefined;
+          if (!oldest) break;
+          focusedPaneCwdCache.delete(oldest);
+        }
+        focusedPaneCwdCache.set(name, { expiresAt: nowMs() + FOCUSED_PANE_CWD_CACHE_TTL_MS, value: null });
+        return null;
+      }
+    },
     async createSession(options) {
       await ensureMatrixZellijConfig();
       sweepRetainedCreatePtys();
@@ -430,7 +497,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
           cols: 120,
           rows: 40,
           cwd: options.cwd ?? cwd,
-          env: attachEnv(deps.env, zellijConfigPaths),
+          env: attachEnv(deps.env, zellijConfigPaths, deps.homePath),
         });
 
         const startup = { exited: null as PtyExitEvent | null };

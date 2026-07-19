@@ -346,7 +346,109 @@ export const RETRO_THEME: Theme = {
   radius: "0.5rem",
 };
 
-THEME_PRESETS.push(RETRO_THEME);
+export const MACOS_GLASS_THEME: Theme = {
+  name: "macos-glass",
+  mode: "light",
+  style: "macos-glass",
+  colors: {
+    background: "#F5F5F7",
+    foreground: "#1D1D1F",
+    card: "#FFFFFF",
+    "card-foreground": "#1D1D1F",
+    popover: "#FFFFFF",
+    "popover-foreground": "#1D1D1F",
+    primary: "#0A84FF",
+    "primary-foreground": "#FFFFFF",
+    secondary: "#E8E8ED",
+    "secondary-foreground": "#3A3A3C",
+    muted: "#F2F2F7",
+    "muted-foreground": "#6E6E73",
+    accent: "#E8E8ED",
+    "accent-foreground": "#1D1D1F",
+    destructive: "#FF3B30",
+    success: "#34C759",
+    warning: "#FF9500",
+    border: "#D1D1D6",
+    input: "#D1D1D6",
+    ring: "#0A84FF",
+  },
+  fonts: {
+    mono: "SF Mono, Menlo, monospace",
+    sans: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif',
+  },
+  radius: "0.875rem", // 14px
+};
+
+export const WINXP_THEME: Theme = {
+  name: "winxp",
+  mode: "light",
+  style: "winxp",
+  colors: {
+    background: "#ECE9D8",
+    foreground: "#1F1F1F",
+    card: "#FFFFFF",
+    "card-foreground": "#1F1F1F",
+    popover: "#FFFFFF",
+    "popover-foreground": "#1F1F1F",
+    primary: "#0058E6",
+    "primary-foreground": "#FFFFFF",
+    secondary: "#ECE9D8",
+    "secondary-foreground": "#3B3B3B",
+    muted: "#ECE9D8",
+    "muted-foreground": "#716F64",
+    accent: "#316AC5",
+    "accent-foreground": "#FFFFFF",
+    destructive: "#C42B1C",
+    success: "#3A7D44",
+    warning: "#B88A00",
+    border: "#7F9DB9",
+    input: "#7F9DB9",
+    ring: "#0058E6",
+  },
+  fonts: {
+    mono: "Courier New, monospace",
+    sans: 'Tahoma, Geneva, "Segoe UI", sans-serif',
+  },
+  radius: "0.1875rem", // 3px
+};
+
+export const WIN11_THEME: Theme = {
+  name: "win11",
+  mode: "light",
+  style: "win11",
+  colors: {
+    background: "#F3F3F3",
+    foreground: "#1B1B1B",
+    card: "#FAFAFA",
+    "card-foreground": "#1B1B1B",
+    popover: "#FAFAFA",
+    "popover-foreground": "#1B1B1B",
+    primary: "#0067C0",
+    "primary-foreground": "#FFFFFF",
+    secondary: "#EAEAEA",
+    "secondary-foreground": "#3A3A3A",
+    muted: "#EAEAEA",
+    "muted-foreground": "#616161",
+    accent: "#EAEAEA",
+    "accent-foreground": "#1B1B1B",
+    destructive: "#C42B1C",
+    success: "#0F7B0F",
+    warning: "#9D5D00",
+    border: "#D6D6D6",
+    input: "#D6D6D6",
+    ring: "#0067C0",
+  },
+  fonts: {
+    mono: "Cascadia Code, Consolas, monospace",
+    sans: '"Segoe UI Variable", "Segoe UI", system-ui, sans-serif',
+  },
+  radius: "0.5rem", // 8px
+};
+
+/** Design-system presets — full OS chrome restyles keyed on Theme.style. */
+export const DESIGN_SYSTEM_PRESETS: Theme[] = [MACOS_GLASS_THEME, WINXP_THEME, WIN11_THEME];
+
+THEME_PRESETS.push(RETRO_THEME, ...DESIGN_SYSTEM_PRESETS);
 
 export function getPreset(name: string): Theme | undefined {
   return THEME_PRESETS.find((p) => p.name === name);

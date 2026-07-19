@@ -12,3 +12,4 @@ export { TrashView } from "./TrashView";
 export { StatusBar } from "./StatusBar";
 export { InlineRename } from "./InlineRename";
 export { FileContextMenu } from "./FileContextMenu";
+export { XpExplorer } from "./XpExplorer";

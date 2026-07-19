@@ -9,9 +9,9 @@ Use this skill only when the requester explicitly asks for the manual git
 worktree -> PR -> monitor workflow. It keeps `/home/deploy/matrix-os` on `main`
 while implementation happens in `/home/deploy/matrix-os.worktrees/<slug>`.
 
-Do not use this skill for Swarm or multi-agent runs. The repo-level Swarm ban on
-`isolation: "worktree"` still applies; this workflow is a user-requested manual
-git worktree flow for isolated PR publication.
+This skill does not coordinate Swarm or multi-agent runs. The repo-level Swarm
+ban on `isolation: "worktree"` still applies; this workflow is a user-requested
+manual git worktree flow for isolated PR publication.
 
 ## Preconditions
 

@@ -5,6 +5,7 @@ import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { usePreviewWindow } from "@/hooks/usePreviewWindow";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
+import { useThemeStyle } from "../window/useThemeStyle";
 import { FileBrowserToolbar } from "./FileBrowserToolbar";
 import { FileBrowserSidebar } from "./FileBrowserSidebar";
 import { FileBrowserContent } from "./FileBrowserContent";
@@ -14,6 +15,7 @@ import { TrashView } from "./TrashView";
 import { StatusBar } from "./StatusBar";
 import { FileContextMenu } from "./FileContextMenu";
 import { QuickLook } from "./QuickLook";
+import { XpExplorer } from "./XpExplorer";
 
 interface FileBrowserProps {
   windowId: string;
@@ -48,6 +50,10 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
   const wmWindows = useWindowManager((s) => s.windows);
   const wmOpenWindow = useWindowManager((s) => s.openWindow);
   const wmFocusWindow = useWindowManager((s) => s.focusWindow);
+  const themeStyle = useThemeStyle();
+  // Windows XP gets a faithful Explorer layout; every other design style
+  // (flat/neumorphic/macos-glass/win11) keeps the classic chrome below.
+  const isXpExplorer = themeStyle === "winxp" && !mobile;
 
   const openFile = (path: string) => {
     openFileTab(path);
@@ -256,6 +262,7 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
   return (
     <div
       ref={containerRef}
+      data-file-browser
       className="flex flex-col h-full outline-none"
       // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- generic grouping landmark for the file-browser keyboard surface; no native HTML element maps to the ARIA group role on this layout container.
       role="group"
@@ -264,35 +271,48 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
-      <FileBrowserToolbar mobile={mobile} />
-      <div className="flex flex-1 min-h-0">
-        {!mobile && (
-          <FileBrowserSidebar
-            onTrashClick={() => setShowingTrash(!showingTrash)}
-            showingTrash={showingTrash}
-          />
-        )}
-        <FileContextMenu onOpenFile={openFile}>
-          {/* ph-no-capture: the listing renders file names from the user home;
-              PostHog session replay blocks this element natively. */}
-          <div className="ph-no-capture flex-1 min-w-0 overflow-auto">
-            {showingTrash ? (
-              <TrashView />
-            ) : searchResults ? (
-              <SearchResults onOpenFile={openFile} />
-            ) : (
-              <FileBrowserContent
-                renamingPath={renamingPath}
-                onStartRename={setRenamingPath}
-                onCancelRename={() => setRenamingPath(null)}
-                onOpenFile={openFile}
+      {isXpExplorer ? (
+        <XpExplorer
+          renamingPath={renamingPath}
+          onStartRename={setRenamingPath}
+          onCancelRename={() => setRenamingPath(null)}
+          onOpenFile={openFile}
+          showingTrash={showingTrash}
+          onTrashClick={() => setShowingTrash(!showingTrash)}
+        />
+      ) : (
+        <>
+          <FileBrowserToolbar mobile={mobile} />
+          <div className="flex flex-1 min-h-0">
+            {!mobile && (
+              <FileBrowserSidebar
+                onTrashClick={() => setShowingTrash(!showingTrash)}
+                showingTrash={showingTrash}
               />
             )}
+            <FileContextMenu onOpenFile={openFile}>
+              {/* ph-no-capture: the listing renders file names from the user home;
+                  PostHog session replay blocks this element natively. */}
+              <div className="ph-no-capture flex-1 min-w-0 overflow-auto">
+                {showingTrash ? (
+                  <TrashView />
+                ) : searchResults ? (
+                  <SearchResults onOpenFile={openFile} />
+                ) : (
+                  <FileBrowserContent
+                    renamingPath={renamingPath}
+                    onStartRename={setRenamingPath}
+                    onCancelRename={() => setRenamingPath(null)}
+                    onOpenFile={openFile}
+                  />
+                )}
+              </div>
+            </FileContextMenu>
+            {!mobile && <PreviewPanel />}
           </div>
-        </FileContextMenu>
-        {!mobile && <PreviewPanel />}
-      </div>
-      {!mobile && <StatusBar />}
+          {!mobile && <StatusBar />}
+        </>
+      )}
       <QuickLook />
     </div>
   );

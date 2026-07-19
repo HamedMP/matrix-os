@@ -27,6 +27,13 @@ import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { UserButton as AccountButton } from "./UserButton";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { isSelfHostedRuntime } from "@/lib/self-host-mode";
+import { useThemeStyle } from "./window/useThemeStyle";
+import {
+  designTitleBarContainerStyle,
+  resolveTitleBarVariant,
+  usesCaptionButtons,
+} from "./window/title-bar-variant";
+import { DesignCaptionButtons } from "./window/DesignCaptionButtons";
 
 
 const sections = [
@@ -176,6 +183,7 @@ function SettingsFrame({
   // react-doctor-disable-next-line react-doctor/no-derived-useState -- not a mirror of `open`: `mounted` stays true through the ~320ms exit window after `open` flips to false so the close animation can play, then unmounts via the timer below
   const [mounted, setMounted] = useState(open);
   const [visible, setVisible] = useState(false);
+  const themeStyle = useThemeStyle();
 
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- delayed-unmount animation primitive: mount immediately on open, defer visible/unmount via timers so the enter/exit transitions can play; these setStates are timer-sequenced, not a cascade
   useEffect(() => {
@@ -221,6 +229,7 @@ function SettingsFrame({
 
   if (!mounted) return null;
 
+  const titleBarVariant = resolveTitleBarVariant(themeStyle);
   const transitionEase = "cubic-bezier(0.22, 1, 0.36, 1)";
   return (
     <div className="fixed inset-0" style={{ zIndex: SHELL_Z_INDEX.settings }}>
@@ -247,10 +256,26 @@ function SettingsFrame({
             transition: `opacity 320ms ${transitionEase}, transform 320ms ${transitionEase}`,
           }}
         >
-          <header className="flex items-center gap-3 px-4 py-3 border-b border-border/40 select-none">
-            <TrafficLights closeDisabled={closeDisabled} onClose={() => onOpenChange(false)} />
-            <h1 className="text-xs font-medium text-center flex-1">Settings</h1>
-            <div className="w-[42px]" />
+          <header
+            className="flex items-center gap-3 px-4 py-3 border-b border-border/40 select-none"
+            style={designTitleBarContainerStyle(titleBarVariant)}
+          >
+            {usesCaptionButtons(titleBarVariant) ? (
+              <>
+                <h1 className="text-xs font-medium flex-1">Settings</h1>
+                <DesignCaptionButtons
+                  variant={titleBarVariant}
+                  onClose={() => onOpenChange(false)}
+                  closeDisabled={closeDisabled}
+                />
+              </>
+            ) : (
+              <>
+                <TrafficLights closeDisabled={closeDisabled} onClose={() => onOpenChange(false)} />
+                <h1 className="text-xs font-medium text-center flex-1">Settings</h1>
+                <div className="w-[42px]" />
+              </>
+            )}
           </header>
 
           <div className="flex min-h-0 flex-1 flex-col sm:flex-row">

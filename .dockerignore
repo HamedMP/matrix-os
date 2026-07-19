@@ -15,7 +15,6 @@ tests
 specs
 docs
 spike
-www
 .specify
 .claude
 *.md

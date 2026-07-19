@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="base" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f9fbfe"/>
+      <stop offset="1" stop-color="#f2f6fb"/>
+    </linearGradient>
+    <filter id="blurXL" x="-70%" y="-70%" width="240%" height="240%">
+      <feGaussianBlur stdDeviation="110"/>
+    </filter>
+    <filter id="blurL" x="-70%" y="-70%" width="240%" height="240%">
+      <feGaussianBlur stdDeviation="70"/>
+    </filter>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#base)"/>
+
+  <!-- flowing pastel bands -->
+  <g>
+    <ellipse cx="500" cy="210" rx="760" ry="230" fill="#bcd7f7" opacity="0.85" transform="rotate(-13 500 210)" filter="url(#blurXL)"/>
+    <ellipse cx="1420" cy="330" rx="680" ry="215" fill="#d9cdf2" opacity="0.8" transform="rotate(-13 1420 330)" filter="url(#blurXL)"/>
+    <ellipse cx="900" cy="600" rx="620" ry="180" fill="#cfe3f9" opacity="0.6" transform="rotate(-13 900 600)" filter="url(#blurXL)"/>
+    <ellipse cx="1660" cy="800" rx="600" ry="215" fill="#f7dcc8" opacity="0.85" transform="rotate(-13 1660 800)" filter="url(#blurXL)"/>
+    <ellipse cx="380" cy="900" rx="620" ry="205" fill="#cdeede" opacity="0.8" transform="rotate(-13 380 900)" filter="url(#blurXL)"/>
+  </g>
+
+  <!-- gentle highlights for airiness -->
+  <g>
+    <ellipse cx="1060" cy="180" rx="520" ry="120" fill="#ffffff" opacity="0.55" transform="rotate(-13 1060 180)" filter="url(#blurL)"/>
+    <ellipse cx="760" cy="760" rx="480" ry="110" fill="#ffffff" opacity="0.45" transform="rotate(-13 760 760)" filter="url(#blurL)"/>
+  </g>
+</svg>
