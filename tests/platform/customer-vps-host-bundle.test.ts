@@ -92,6 +92,8 @@ describe('customer VPS host bundle', () => {
 
     expect(script).toContain('matrix-install-tool-pack');
     expect(script).toContain('matrix-owner-env');
+    expect(hermesInstaller).toContain('setpriv --reuid "$MATRIX_RUNTIME_USER"');
+    expect(installer).toContain('setpriv --reuid "$MATRIX_RUNTIME_USER"');
     expect(script).not.toContain('curl --fail --location --max-time 180 "$CODE_SERVER_URL"');
     expect(script).not.toContain('tar -xzf "$DIST_DIR/$CODE_SERVER_ARCHIVE"');
     expect(script).not.toContain('"$STAGE_DIR/runtime/node/bin/npm" install -g --prefix "$STAGE_DIR/runtime/node"');

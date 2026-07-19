@@ -514,6 +514,8 @@ exit 99
     expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip');
     expect(cloudInit).toContain('install -d -o root -g root -m 0750 /etc/sudoers.d');
     expect(cloudInit).toContain("printf 'matrix ALL=(ALL) NOPASSWD:ALL\\n' >/etc/sudoers.d/matrix");
+    expect(cloudInit).toContain('chage -d now -M -1 -E -1 root');
+    expect(cloudInit).toContain('chage -d now -M -1 -E -1 matrix');
     expect(cloudInit).toContain('chmod 0440 /etc/sudoers.d/matrix');
     expect(cloudInit).toContain('visudo -cf /etc/sudoers.d/matrix');
     expect(cloudInit).toContain('loginctl enable-linger matrix');
