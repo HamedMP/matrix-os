@@ -10,4 +10,12 @@ describe("Windows taskbar CSS", () => {
     expect(gridRule).toContain("overflow-y: auto");
     expect(gridRule).toContain("overscroll-behavior: contain");
   });
+
+  it("keeps keyboard focus visible in the Win11 power flyout", async () => {
+    const source = await readFile("shell/src/components/taskbar/taskbar.css", "utf8");
+    const focusRule = source.match(/\.win11-power-flyout-item:focus-visible\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(focusRule).toContain("outline:");
+    expect(focusRule).toContain("outline-offset:");
+  });
 });
