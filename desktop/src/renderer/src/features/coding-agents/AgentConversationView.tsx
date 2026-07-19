@@ -524,7 +524,8 @@ function ConversationComposer({
   const turnError = useCodingAgentWorkspace((state) => state.turnError);
   const send = useCodingAgentWorkspace((state) => state.sendThreadMessage);
   const submitting = turnStatus === "submitting" && turnThreadId === threadId;
-  // Abort support follows the typed operator preload bridge.
+  // Stop renders while the thread is busy and the preload bridge carries the
+  // "runtime:abort-thread" channel (see abort-thread.ts).
   const abortSupported = agentThreadAbortSupported();
 
   async function submit() {

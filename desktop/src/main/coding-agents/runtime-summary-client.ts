@@ -342,10 +342,9 @@ export async function createCodingAgentTurn(
   throw new Error("conversation turn unavailable");
 }
 
-// Aborts one running thread. The gateway returns the authoritative aborted
-// snapshot; callers apply it so the composer unblocks even when the event
-// stream is down. Error text stays generic -- provider detail must not reach
-// client surfaces.
+// Aborts one running thread and returns the authoritative aborted snapshot,
+// so callers can settle the conversation even when the event stream is down.
+// Error text stays generic -- provider detail must not reach client surfaces.
 export async function abortCodingAgentThread(
   auth: AuthService,
   request: { threadId: string },
@@ -371,8 +370,12 @@ export async function abortCodingAgentThread(
     body: JSON.stringify({ clientRequestId: `req_${crypto.randomUUID()}` }),
     signal: AbortSignal.timeout(THREAD_TURN_TIMEOUT_MS),
   });
-  if (!res.ok) throw new Error("thread abort unavailable");
-  const parsed = AgentThreadSnapshotSchema.safeParse(await res.json());
+  if (!res.ok) {
+    throw new Error("thread abort unavailable");
+  }
+
+  const body = await res.json();
+  const parsed = AgentThreadSnapshotSchema.safeParse(body);
   if (!parsed.success || parsed.data.thread.id !== parsedThreadId.data) {
     throw new Error("thread abort unavailable");
   }

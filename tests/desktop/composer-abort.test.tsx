@@ -87,7 +87,7 @@ describe("AgentConversationView abort control", () => {
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith(
         "runtime:abort-thread",
-        expect.objectContaining({ threadId: "thread_alpha" }),
+        { threadId: "thread_alpha" },
       ),
     );
   });

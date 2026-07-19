@@ -35,6 +35,15 @@ const PanelLayoutsSchema = z.record(z.string().max(256), PanelLayoutSchema);
 
 const RecentsSchema = z.array(z.string().max(512)).max(50);
 
+const ProviderPreferencesSchema = z
+  .object({
+    defaultProviderId: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9_-]{0,79}$/)
+      .nullable(),
+  })
+  .strict();
+
 const ProfileSchema = z
   .object({
     handle: z.string().min(1).max(64),
@@ -55,6 +64,7 @@ const KEY_SCHEMAS = {
   appearance: AppearanceSchema,
   recents: RecentsSchema,
   projectViews: ProjectViewsStateSchema,
+  providerPreferences: ProviderPreferencesSchema,
 } as const;
 
 export type LocalStoreKey = keyof typeof KEY_SCHEMAS;

@@ -1,9 +1,9 @@
-// Default coding-agent provider preference for new chats (renderer-local UI
-// state). Persistence rides the desktop local-state bridge under the
-// "providerPreferences" key. The shared IPC contract does not list that key
-// yet, so the preload currently rejects these calls and the preference lives
-// in memory for the session; once STATE_KEYS/KEY_SCHEMAS gain the key this
-// store becomes durable with no further renderer changes.
+// Default coding-agent provider preference for new chats. Persistence rides
+// the desktop local-state bridge under the "providerPreferences" key (listed
+// in STATE_KEYS in desktop/src/shared/ipc-contract.ts and validated by
+// ProviderPreferencesSchema in desktop/src/main/persistence/local-store.ts);
+// if the bridge rejects the key the preference degrades to in-memory for the
+// session with a console warning.
 import "../../lib/operator";
 import { create } from "zustand";
 

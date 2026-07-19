@@ -17,7 +17,7 @@ import RuntimeSection from "./sections/RuntimeSection";
 import AgentSection from "./sections/AgentSection";
 import BillingSection from "./sections/BillingSection";
 import ChannelsSection from "./sections/ChannelsSection";
-import IntegrationsSection from "./sections/IntegrationsSection";
+import IntegrationsSettingsSection from "../integrations";
 import CronSection from "./sections/CronSection";
 import ProvidersSection from "./sections/ProvidersSection";
 import SystemSection from "./sections/SystemSection";
@@ -110,7 +110,7 @@ export default function SettingsView() {
           {section === "agent" ? <AgentSection /> : null}
           {section === "providers" ? <ProvidersSection /> : null}
           {section === "channels" ? <ChannelsSection /> : null}
-          {section === "integrations" ? <IntegrationsSection /> : null}
+          {section === "integrations" ? <IntegrationsSettingsSection /> : null}
           {section === "cron" ? <CronSection /> : null}
           {section === "system" ? <SystemSection /> : null}
         </div>

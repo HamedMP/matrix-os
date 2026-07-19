@@ -1207,10 +1207,12 @@ describe("ProjectChatsView", () => {
     const conversationSnapshot = {
       ...threadSnapshotFixture(),
       // The composer only accepts turns while the thread is not waiting on an
-      // approval or input answer, matching the gateway acceptTurn rule.
+      // approval or input answer, matching the gateway acceptTurn rule. A
+      // running thread shows the Stop (abort) control instead of Send, so this
+      // composer-path test uses a settled thread.
       thread: {
         ...threadSnapshotFixture().thread,
-        status: "running",
+        status: "completed",
         attention: "none",
       },
       events: {
@@ -1317,7 +1319,9 @@ describe("ProjectChatsView", () => {
       if (channel === "runtime:get-thread-snapshot") {
         return Promise.resolve({
           ...threadSnapshotFixture(),
-          thread: { ...threadSnapshotFixture().thread, status: "running", attention: "none" },
+          // A settled thread keeps Send visible (running shows Stop instead);
+          // the stale 409 below simulates the server-side busy race.
+          thread: { ...threadSnapshotFixture().thread, status: "completed", attention: "none" },
         });
       }
       if (channel === "runtime:create-turn") {

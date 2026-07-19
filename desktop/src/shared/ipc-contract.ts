@@ -86,6 +86,7 @@ const STATE_KEYS = [
   "appearance",
   "recents",
   "projectViews",
+  "providerPreferences",
 ] as const;
 
 const MAX_STATE_VALUE_BYTES = 64 * 1024;

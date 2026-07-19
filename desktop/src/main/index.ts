@@ -5,6 +5,7 @@ import { createCredentialStore } from "./auth/credential-store";
 import { installGatewayCors, installHeaderInjection } from "./auth/header-injection";
 import { EmbedService } from "./embeds/embed-service";
 import {
+  abortCodingAgentThread,
   createCodingAgentSourcePullRequest,
   createCodingAgentThread,
   abortCodingAgentThread,
