@@ -1,8 +1,9 @@
-import { ArrowUp, ChevronDown, CircleStop, Mic, Plus, Settings2 } from "lucide-react";
+import { ArrowUp, CircleStop } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 
-// AI-Elements-style PromptInput: a card with a growing textarea, a left action
-// row (add context, model/effort selectors) and a submit/stop control.
+// AI-Elements-style PromptInput: a card with a growing textarea and a
+// submit/stop control. Decorative action buttons were removed — every
+// rendered control must have a working handler.
 export function PromptInput({
   value,
   onChange,
@@ -61,21 +62,8 @@ export function PromptInput({
           }
         }}
       />
-      <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
-        <div className="flex items-center gap-1">
-          <button type="button" aria-label="Add context" className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]" style={{ color: "var(--text-tertiary)" }}>
-            <Plus size={16} />
-          </button>
-          <button type="button" className="flex h-7 items-center gap-1.5 rounded-md px-2 text-sm hover:bg-[var(--bg-hover)]" style={{ color: "var(--text-secondary)" }}>
-            <Settings2 size={13} />
-            Custom
-            <ChevronDown size={12} style={{ color: "var(--text-tertiary)" }} />
-          </button>
-        </div>
+      <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5">
         <div className="flex items-center gap-1.5">
-          <button type="button" aria-label="Voice input" className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]" style={{ color: "var(--text-tertiary)" }}>
-            <Mic size={15} />
-          </button>
           {busy && onAbort ? (
             <button
               type="button"
