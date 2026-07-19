@@ -111,6 +111,18 @@ BUILD_TIME="${BUILD_TIME:-$PUBLISHED}"
 BUNDLE_KEY="system-bundles/$VERSION/matrix-host-bundle.tar.gz"
 CHECKSUM_KEY="system-bundles/$VERSION/matrix-host-bundle.tar.gz.sha256"
 INCREMENTAL_MANIFEST_KEY="system-bundles/$VERSION/incremental-manifest.json"
+if [ "${GOLDEN_SNAPSHOT_ELIGIBLE+x}" = "x" ]; then
+  SNAPSHOT_ELIGIBLE="$GOLDEN_SNAPSHOT_ELIGIBLE"
+else
+  case "$CHANNEL" in
+    dev|canary|beta|stable) SNAPSHOT_ELIGIBLE="true" ;;
+    *) SNAPSHOT_ELIGIBLE="false" ;;
+  esac
+fi
+if [ "$SNAPSHOT_ELIGIBLE" != "true" ] && [ "$SNAPSHOT_ELIGIBLE" != "false" ]; then
+  echo "GOLDEN_SNAPSHOT_ELIGIBLE must be true or false" >&2
+  exit 1
+fi
 
 REGISTRATION_BODY=$(python3 -c "
 import json, sys
@@ -128,9 +140,10 @@ print(json.dumps({
     'severity': sys.argv[11],
     'updateType': sys.argv[12],
     'changelog': sys.argv[13] or None,
+    'snapshotEligible': sys.argv[15] == 'true',
     **({} if sys.argv[14] == 'none' else {'channel': sys.argv[14]}),
 }, indent=2))
-" "$VERSION" "$GIT_COMMIT" "$GIT_REF" "$BUILD_TIME" "$BUNDLE_KEY" "$CHECKSUM_KEY" "$INCREMENTAL_MANIFEST_KEY" "$INCREMENTAL_MANIFEST_SHA256" "$SHA256" "$SIZE" "$SEVERITY" "$UPDATE_TYPE" "$CHANGELOG" "$CHANNEL")
+" "$VERSION" "$GIT_COMMIT" "$GIT_REF" "$BUILD_TIME" "$BUNDLE_KEY" "$CHECKSUM_KEY" "$INCREMENTAL_MANIFEST_KEY" "$INCREMENTAL_MANIFEST_SHA256" "$SHA256" "$SIZE" "$SEVERITY" "$UPDATE_TYPE" "$CHANGELOG" "$CHANNEL" "$SNAPSHOT_ELIGIBLE")
 
 incremental_object_count() {
   python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('files', [])))" "$INCREMENTAL_MANIFEST"

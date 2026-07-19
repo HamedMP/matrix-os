@@ -286,6 +286,22 @@ describe('CI workflows', () => {
     }
   });
 
+  it('preflights and binds distinct golden snapshot operator secrets for platform revisions', () => {
+    const root = process.cwd();
+    const production = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+    const preview = readFileSync(join(root, '.github/workflows/preview-platform.yml'), 'utf8');
+
+    expect(production).toContain('Verify golden snapshot operator secret');
+    expect(production).toContain('GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret:latest');
+    expect(production).toContain('gcloud secrets versions access latest --secret "$snapshot_operator_secret_name"');
+    expect(production).toContain('roles/secretmanager.secretAccessor');
+
+    expect(preview).toContain('Verify preview golden snapshot operator secret');
+    expect(preview).toContain('GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest');
+    expect(preview).toContain('gcloud secrets versions access latest --secret "$snapshot_operator_secret_name"');
+    expect(preview).toContain('roles/secretmanager.secretAccessor');
+  });
+
   it('does not require add-on prices or focused portal configurations for platform deployment', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
@@ -453,7 +469,9 @@ describe('CI workflows', () => {
     expect(workflow).toContain("github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name == 'main'");
     expect(workflow).toContain('|| inputs.deploy_after_publish');
     expect(workflow).not.toContain("|| inputs.severity == 'security'");
-    expect(workflow).toContain('VERSION="${{ needs.build.outputs.version }}"');
+    expect(workflow).toContain('PUBLISH_VERSION: ${{ needs.build.outputs.version }}');
+    expect(workflow).toContain('VERSION="$PUBLISH_VERSION"');
+    expect(workflow).not.toContain('VERSION="${{ needs.build.outputs.version }}"');
     expect(workflow).toContain('DEPLOY_RESPONSE="$(curl --fail --silent --show-error --max-time 30 \\');
     expect(workflow).toContain('failed="$(printf \'%s\' "$DEPLOY_RESPONSE" | jq -r \'.failed // 0\')"');
     expect(workflow).toContain('triggered="$(printf \'%s\' "$DEPLOY_RESPONSE" | jq -r \'.triggered // 0\')"');

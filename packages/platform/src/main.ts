@@ -463,6 +463,8 @@ export function createApp(deps: {
     getHostBundleObjectStore: () => deps.hostBundleObjectStore ?? (allowHostBundleSyncStoreFallback ? deps.customerVpsObjectStore : undefined),
     capturePlatformEvent,
     logRouteError: logPlatformRouteError,
+    goldenSnapshotCompatibility: deps.goldenSnapshotConfig?.compatibility,
+    goldenSnapshotFreshnessMaxAgeMs: deps.goldenSnapshotConfig?.freshnessMaxAgeMs,
   }));
 
   // OAuth 2.0 Device Flow (RFC 8628) -- mounted before any host-based routing

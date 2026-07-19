@@ -113,6 +113,8 @@ interface HostBundleReleasesTable {
   channel: string | null;
   git_commit: string;
   git_ref: string | null;
+  snapshot_eligible: boolean;
+  snapshot_eligibility_source: string;
   build_time: string;
   bundle_key: string;
   checksum_key: string | null;
@@ -675,6 +677,7 @@ export interface HostBundleReleaseRecord {
   channel: string | null;
   gitCommit: string;
   gitRef: string | null;
+  snapshotEligible: boolean;
   buildTime: string;
   bundleKey: string;
   checksumKey: string | null;
@@ -693,6 +696,7 @@ export interface NewHostBundleRelease {
   channel?: string | null;
   gitCommit: string;
   gitRef?: string | null;
+  snapshotEligible?: boolean;
   buildTime: string;
   bundleKey: string;
   checksumKey?: string | null;
@@ -1286,6 +1290,9 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       channel TEXT,
       git_commit TEXT NOT NULL,
       git_ref TEXT,
+      snapshot_eligible BOOLEAN NOT NULL DEFAULT FALSE,
+      snapshot_eligibility_source TEXT NOT NULL DEFAULT 'legacy'
+        CHECK (snapshot_eligibility_source IN ('legacy', 'explicit')),
       build_time TEXT NOT NULL,
       bundle_key TEXT NOT NULL,
       checksum_key TEXT,
@@ -1300,6 +1307,22 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     )
   `.execute(db);
   await sql`ALTER TABLE host_bundle_releases ADD COLUMN IF NOT EXISTS channel TEXT`.execute(db);
+  await sql`ALTER TABLE host_bundle_releases ADD COLUMN IF NOT EXISTS snapshot_eligible BOOLEAN NOT NULL DEFAULT FALSE`.execute(db);
+  await sql`ALTER TABLE host_bundle_releases ADD COLUMN IF NOT EXISTS snapshot_eligibility_source TEXT NOT NULL DEFAULT 'legacy'`.execute(db);
+  await sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'host_bundle_releases'::regclass
+          AND conname = 'host_bundle_releases_snapshot_eligibility_source_check'
+      ) THEN
+        ALTER TABLE host_bundle_releases
+          ADD CONSTRAINT host_bundle_releases_snapshot_eligibility_source_check
+          CHECK (snapshot_eligibility_source IN ('legacy', 'explicit'));
+      END IF;
+    END $$
+  `.execute(db);
   await sql`ALTER TABLE host_bundle_releases ADD COLUMN IF NOT EXISTS incremental_manifest_key TEXT`.execute(db);
   await sql`ALTER TABLE host_bundle_releases ADD COLUMN IF NOT EXISTS incremental_manifest_sha256 TEXT`.execute(db);
   await sql`ALTER TABLE host_bundle_releases ALTER COLUMN size TYPE BIGINT`.execute(db);
@@ -1330,6 +1353,17 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     FROM host_bundle_releases
     WHERE channel IS NOT NULL
     ON CONFLICT (channel, version) DO NOTHING
+  `.execute(db);
+  await sql`
+    UPDATE host_bundle_releases AS release
+    SET snapshot_eligible = TRUE
+    WHERE release.snapshot_eligible = FALSE
+      AND release.snapshot_eligibility_source = 'legacy'
+      AND EXISTS (
+        SELECT 1 FROM host_bundle_channels AS channel
+        WHERE channel.version = release.version
+          AND channel.channel IN ('dev', 'canary', 'beta', 'stable')
+      )
   `.execute(db);
   await sql`
     INSERT INTO host_bundle_release_channels(channel, version, promoted_at)
@@ -2077,6 +2111,7 @@ function mapHostBundleRelease(row: HostBundleReleasesTable): HostBundleReleaseRe
     channel: row.channel,
     gitCommit: row.git_commit,
     gitRef: row.git_ref,
+    snapshotEligible: row.snapshot_eligible,
     buildTime: row.build_time,
     bundleKey: row.bundle_key,
     checksumKey: row.checksum_key,
@@ -2098,6 +2133,8 @@ function toHostBundleReleaseRow(record: NewHostBundleRelease): HostBundleRelease
     channel: record.channel ?? null,
     git_commit: record.gitCommit,
     git_ref: record.gitRef ?? null,
+    snapshot_eligible: record.snapshotEligible ?? false,
+    snapshot_eligibility_source: record.snapshotEligible === undefined ? 'legacy' : 'explicit',
     build_time: HostBundleTimestampSchema.parse(record.buildTime),
     bundle_key: record.bundleKey,
     checksum_key: record.checksumKey ?? null,
@@ -3271,8 +3308,7 @@ export async function upsertHostBundleRelease(
 ): Promise<HostBundleReleaseRecord> {
   await db.ready;
   const row = toHostBundleReleaseRow(record);
-  return db.executor.transaction().execute(async (trx) => {
-    const saved = await trx
+  const saved = await db.executor
       .insertInto('host_bundle_releases')
       .values(row)
       .onConflict((oc) =>
@@ -3282,6 +3318,11 @@ export async function upsertHostBundleRelease(
           changelog: row.changelog,
           incremental_manifest_key: row.incremental_manifest_key,
           incremental_manifest_sha256: row.incremental_manifest_sha256,
+          snapshot_eligible: sql<boolean>`host_bundle_releases.snapshot_eligible OR ${row.snapshot_eligible}`,
+          snapshot_eligibility_source: sql<string>`CASE
+            WHEN ${row.snapshot_eligibility_source} = 'explicit' THEN 'explicit'
+            ELSE host_bundle_releases.snapshot_eligibility_source
+          END`,
         })
           .where(sql<boolean>`host_bundle_releases.bundle_key = ${row.bundle_key}`)
           .where(sql<boolean>`host_bundle_releases.git_commit = ${row.git_commit}`)
@@ -3295,11 +3336,10 @@ export async function upsertHostBundleRelease(
       )
       .returningAll()
       .executeTakeFirst();
-    if (!saved) {
-      throw new HostBundleReleaseConflictError(row.version);
-    }
-    return mapHostBundleRelease(saved);
-  });
+  if (!saved) {
+    throw new HostBundleReleaseConflictError(row.version);
+  }
+  return mapHostBundleRelease(saved);
 }
 
 export async function getHostBundleRelease(
@@ -3348,8 +3388,16 @@ export async function promoteHostBundleChannel(
   updatedAt = new Date().toISOString(),
 ): Promise<HostBundleChannelRecord> {
   await db.ready;
-  return db.executor.transaction().execute(async (trx) => {
-    const release = await trx
+  return db.transaction((trx) => promoteHostBundleChannelInTransaction(trx, channel, version, updatedAt));
+}
+
+async function promoteHostBundleChannelInTransaction(
+  db: PlatformDB,
+  channel: string,
+  version: string,
+  updatedAt: string,
+): Promise<HostBundleChannelRecord> {
+    const release = await db.executor
       .selectFrom('host_bundle_releases')
       .selectAll()
       .where('version', '=', version)
@@ -3358,7 +3406,7 @@ export async function promoteHostBundleChannel(
     if (!release) {
       throw new Error('Cannot promote unknown host bundle release');
     }
-    const row = await trx
+    const row = await db.executor
       .insertInto('host_bundle_channels')
       .values({ channel, version, updated_at: updatedAt })
       .onConflict((oc) =>
@@ -3369,7 +3417,7 @@ export async function promoteHostBundleChannel(
       )
       .returningAll()
       .executeTakeFirstOrThrow();
-    await trx
+    await db.executor
       .insertInto('host_bundle_release_channels')
       .values({ channel, version, promoted_at: updatedAt })
       .onConflict((oc) => oc.columns(['channel', 'version']).doUpdateSet({
@@ -3377,6 +3425,23 @@ export async function promoteHostBundleChannel(
       }))
       .executeTakeFirst();
     return mapHostBundleChannel(row);
+}
+
+export async function registerHostBundleRelease(
+  db: PlatformDB,
+  record: NewHostBundleRelease,
+  channel?: string,
+): Promise<{ release: HostBundleReleaseRecord; channel?: HostBundleChannelRecord }> {
+  await db.ready;
+  return db.transaction(async (trx) => {
+    const release = await upsertHostBundleRelease(trx, record);
+    if (!channel) return { release };
+    return {
+      release,
+      channel: await promoteHostBundleChannelInTransaction(
+        trx, channel, release.version, new Date().toISOString(),
+      ),
+    };
   });
 }
 
