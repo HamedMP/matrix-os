@@ -3,10 +3,12 @@
 import { useEffect, useEffectEvent, useState, useRef } from "react";
 import { useTaskBoard } from "@/hooks/useTaskBoard";
 import { nameToSlug } from "@/lib/utils";
-import { isMainSectionApp, isGameApp, applyOrder } from "@/lib/dock-sections";
+import { groupLauncherApps } from "@/lib/dock-sections";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { AppTile } from "./AppTile";
+import { useThemeStyle } from "./window/useThemeStyle";
+import { Launchpad } from "./launchpad/Launchpad";
 import {
   XIcon,
   Loader2Icon,
@@ -45,6 +47,7 @@ export function MissionControl({
   onRemoveFromCanvas,
 }: MissionControlProps) {
   const { provision } = useTaskBoard();
+  const themeStyle = useThemeStyle();
   const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
   const closingRef = useRef(false);
@@ -87,6 +90,15 @@ export function MissionControl({
 
   if (!mounted) return null;
 
+  // macOS design: the launcher is a full-screen Launchpad take-over instead
+  // of the classic panel. Mount/visible timing and the global Escape handler
+  // above stay shared, so open/close behavior is identical across variants.
+  if (themeStyle === "macos-glass") {
+    return (
+      <Launchpad apps={apps} visible={visible} onOpenApp={onOpenApp} onClose={onClose} />
+    );
+  }
+
   return (
     <div data-mission-control className="fixed inset-0 z-[45]">
       {/* react-doctor-disable-next-line react-doctor/click-events-have-key-events, react-doctor/no-static-element-interactions -- light-dismiss backdrop: a pure pointer convenience that closes the launcher only when the empty area itself is clicked. Keyboard dismiss is already provided by the global Escape handler above, and the launcher's real controls are focusable buttons. */}
@@ -118,6 +130,7 @@ export function MissionControl({
           <button
             type="button"
             onClick={onClose}
+            aria-label="Close launcher"
             className="size-8 flex items-center justify-center rounded-lg hover:bg-muted transition-colors"
           >
             <XIcon className="size-4" />
@@ -195,21 +208,7 @@ function LauncherGrid({
   const dockOrder = useDesktopConfigStore((s) => s.dockOrder);
   const appLaunchTimes = useWindowManager((s) => s.appLaunchTimes);
 
-  const { mainApps, generatedApps, gameApps } = (() => {
-    const main: AppEntry[] = [];
-    const gen: AppEntry[] = [];
-    const games: AppEntry[] = [];
-    for (const app of apps) {
-      if (isMainSectionApp(app.path)) main.push(app);
-      else if (isGameApp(app.path)) games.push(app);
-      else gen.push(app);
-    }
-    return {
-      mainApps: applyOrder(main, dockOrder?.systemApps, appLaunchTimes),
-      generatedApps: applyOrder(gen, dockOrder?.userApps, appLaunchTimes),
-      gameApps: applyOrder(games, dockOrder?.userApps, appLaunchTimes),
-    };
-  })();
+  const { mainApps, generatedApps, gameApps } = groupLauncherApps(apps, dockOrder, appLaunchTimes);
 
   // Launcher is an overview — dock (Desktop.tsx) is the reorder surface, which
   // uses a single-row flex layout where framer-motion Reorder's axis math works.
