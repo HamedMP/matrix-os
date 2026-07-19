@@ -32,6 +32,7 @@ import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
 import { MenuBar } from "./MenuBar";
 import { WindowsTaskbar } from "./taskbar/WindowsTaskbar";
+import { XpDesktopIcons } from "./desktop/XpDesktopIcons";
 import { useThemeStyle } from "./window/useThemeStyle";
 import { useIsClient } from "@/hooks/useIsClient";
 import { OsBootScreen } from "./os-session/OsBootScreen";
@@ -1131,6 +1132,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     />
   ) : null;
 
+  // Shared by the Windows taskbar (start menu, quick launch) and the XP
+  // desktop icons: open the app window or focus the existing one.
+  const openAppOrFocus = (path: string, name?: string) =>
+    focusOrOpen(name ?? apps.find((a) => a.path === path)?.name ?? "App", path);
+
   if (firstRunStatus === "checking") {
     return (
       <TooltipProvider delayDuration={300}>
@@ -1157,7 +1163,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           themeStyle={themeStyle}
           apps={apps}
           windows={windows}
-          onOpenApp={(path, name) => focusOrOpen(name ?? apps.find((a) => a.path === path)?.name ?? "App", path)}
+          onOpenApp={openAppOrFocus}
           onFocusWindow={(id) => { wmRestoreAndFocusWindow(id); focusCanvasWindow(id); }}
           onMinimizeWindow={animateMinimize}
           onOpenSettings={() => { setSettingsOpen(true); setTaskBoardOpen(false); setChatOpen(false); }}
@@ -1585,6 +1591,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
         <div className="relative flex-1 min-h-0 overflow-hidden">
           <DotGrid />
+          {/* XP desktop icons: above the wallpaper, below app windows. The
+              component self-gates to the winxp design and renders null
+              otherwise. */}
+          <XpDesktopIcons onOpenApp={openAppOrFocus} />
           <MissionControl
             open={taskBoardOpen}
             apps={apps}

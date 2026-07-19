@@ -1,9 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useEffectEvent, useRef, useState, type KeyboardEvent, type SetStateAction } from "react";
+import { useCallback, useEffect, useEffectEvent, useId, useMemo, useRef, useState, type KeyboardEvent, type SetStateAction } from "react";
 import { countPanes as countPanesFromStore, getAllPaneIds, type TerminalCompatMode } from "@/stores/terminal-store";
 import { PaneGrid } from "./PaneGrid";
 import { useTheme } from "@/hooks/useTheme";
+import { useThemeStyle } from "../window/useThemeStyle";
+import { applyTerminalDesignTheme, resolveTerminalDesign } from "./terminal-design";
+import { TerminalDesignTabStrip } from "./TerminalDesignTabStrip";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
@@ -229,12 +232,21 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const appChromeTheme = getTerminalAppChromeTheme(appThemeOption.id);
   const appChromeCssVars = getTerminalAppChromeCssVars(appChromeTheme);
 
+  // OS-design-native terminal interior: winxp/win11/macos-glass restyle the
+  // tab strip and content tokens; flat/neumorphic stay on the default chrome.
+  const terminalDesign = resolveTerminalDesign(useThemeStyle());
+  // Per-instance suffix for the tab/panel ARIA ids: multiple terminal windows
+  // under an OS design must not emit duplicate DOM ids or cross-wire controls.
+  const tabStripInstanceId = useId().replace(/:/g, "");
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: designTheme flows through PaneGrid into TerminalPane's xterm options-sync effect deps; a fresh object each render would re-apply the terminal appearance on every render
+  const designTheme = useMemo(() => applyTerminalDesignTheme(theme, terminalDesign), [theme, terminalDesign]);
+
   // Keep terminal content aligned with the active shell theme. App chrome is
   // intentionally terminal-scoped and uses the separate app theme below.
   const terminalPreset = themeId === "system" ? null : getTerminalThemePreset(themeId);
   const terminalContentBackground =
     themeId === "system"
-      ? (theme.colors.background || "var(--background)")
+      ? (designTheme.colors.background || "var(--background)")
       : terminalPreset?.background ?? "var(--background)";
   const terminalChromeBackground = appChromeTheme.chromeBackground;
   const terminalChromeForeground = appChromeTheme.chromeForeground;
@@ -903,11 +915,13 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       }}
       role="application"
       aria-label="Terminal"
+      data-terminal-design={terminalDesign ?? "default"}
       data-terminal-input-active={mobileInputActive ? "true" : "false"}
       onKeyDown={handleKeyDown}
     >
       <TerminalAppContext.Provider value={storeApi}>
         {mobile ? (embeddedChrome ? <TerminalEmbeddedToolbar /> : <TerminalWorkspaceChrome />) : null}
+        {terminalDesign && !mobile ? <TerminalDesignTabStrip design={terminalDesign} instanceId={tabStripInstanceId} /> : null}
         <div
           className={mobile ? "relative flex flex-1 min-h-0 flex-col" : "relative flex flex-1 min-h-0"}
           style={{ background: "var(--terminal-app-body-bg)" }}
@@ -923,10 +937,22 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                 minHeight: mobile ? 0 : undefined,
               }}
             >
-              <div className="flex flex-1 min-h-0 min-w-0 flex-col">
+              <div
+                className="flex flex-1 min-h-0 min-w-0 flex-col"
+                // Tab linkage only exists while the design tab strip renders
+                // (OS designs, desktop); ids are per-instance so multiple
+                // terminal windows never cross-wire ARIA associations.
+                {...(terminalDesign && !mobile
+                  ? {
+                      role: "tabpanel",
+                      id: `terminal-tabpanel-${tabStripInstanceId}`,
+                      "aria-labelledby": `terminal-tab-${tabStripInstanceId}-${activeTab.id}`,
+                    }
+                  : {})}
+              >
                 <PaneGrid
                   paneTree={activeTab.paneTree}
-                  theme={theme}
+                  theme={designTheme}
                   focusedPaneId={focusedPaneId}
                   onFocusPane={setFocusedPaneId}
                   onSessionAttached={handleSessionAttached}

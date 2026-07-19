@@ -369,6 +369,14 @@ export const TERMINAL_THEME_OPTIONS: TerminalThemeOption[] = [
 ];
 
 function inferMode(bg: string): "light" | "dark" {
+  const rgbMatch = /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/.exec(bg.trim());
+  if (rgbMatch) {
+    const r = Number(rgbMatch[1]);
+    const g = Number(rgbMatch[2]);
+    const b = Number(rgbMatch[3]);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance < 0.5 ? "dark" : "light";
+  }
   const hex = bg.replace("#", "");
   if (hex.length < 6) return "dark";
   const r = parseInt(hex.substring(0, 2), 16);

@@ -11,6 +11,7 @@ describe("dock icon resolution", () => {
     expect(source).toContain(
       "fetch(`${GATEWAY_URL}/api/apps`, { signal: AbortSignal.timeout(10_000) })",
     );
+    expect(source).toContain("reconcileDesignApps");
     expect(source).not.toContain("/files/system/modules.json");
   });
 

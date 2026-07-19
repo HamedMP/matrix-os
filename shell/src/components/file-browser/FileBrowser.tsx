@@ -45,6 +45,8 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
   const quickLookPath = useFileBrowser((s) => s.quickLookPath);
   const setQuickLookPath = useFileBrowser((s) => s.setQuickLookPath);
   const togglePreviewPanel = useFileBrowser((s) => s.togglePreviewPanel);
+  const pendingView = useFileBrowser((s) => s.pendingView);
+  const consumeViewRequest = useFileBrowser((s) => s.consumeViewRequest);
   const searchResults = useFileBrowser((s) => s.searchResults);
   const openFileTab = usePreviewWindow((s) => s.openFile);
   const wmWindows = useWindowManager((s) => s.windows);
@@ -70,6 +72,20 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
     navigate("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigate]);
+
+  // Outside-in view requests (XP desktop icons: Recycle Bin / My Computer)
+  // arrive through the shared store. Consume them here so the trash toggle
+  // stays owned by this component, like the sidebar/task-pane Trash links.
+  // Only the focused Files window honors a request: with several Files
+  // windows open, an unfocused one must not jump views.
+  const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
+  useEffect(() => {
+    if (!pendingView) return;
+    if (focusedWindowId !== windowId) return;
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- consumes a one-shot cross-component view request from the shared file-browser store; the trash flag is local UI state that cannot be derived from the store value in render
+    setShowingTrash(pendingView === "trash");
+    consumeViewRequest();
+  }, [pendingView, focusedWindowId, windowId, consumeViewRequest]);
 
   // File watcher integration
   const onFileChange = (path: string, _event: "add" | "change" | "unlink") => {
