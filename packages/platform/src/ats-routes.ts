@@ -105,6 +105,15 @@ async function readJson<T>(c: { req: { json(): Promise<unknown> } }, schema: z.Z
   return parsed.success ? parsed.data : null;
 }
 
+function parseJsonFormField(value: FormDataEntryValue | null, fallback: string): unknown {
+  try {
+    return JSON.parse(String(value ?? fallback));
+  } catch (err: unknown) {
+    if (err instanceof SyntaxError) return undefined;
+    throw err;
+  }
+}
+
 function getActorId(headers: { get(name: string): string | null }): string {
   const raw = headers.get('x-ats-actor-id')?.trim();
   return raw && raw.length <= 200 ? raw : 'site-admin';
@@ -144,8 +153,8 @@ export function createAtsRoutes(options: {
     try {
       const form = await c.req.formData();
       const roleSlug = String(form.get('roleSlug') ?? '');
-      const linksParsed = LinksSchema.safeParse(JSON.parse(String(form.get('links') ?? '{}')));
-      const answersParsed = AnswersSchema.safeParse(JSON.parse(String(form.get('answers') ?? '[]')));
+      const linksParsed = LinksSchema.safeParse(parseJsonFormField(form.get('links'), '{}'));
+      const answersParsed = AnswersSchema.safeParse(parseJsonFormField(form.get('answers'), '[]'));
       const fields = z.object({
         submissionKey: z.uuid(),
         candidateName: z.string().trim().min(1).max(200),

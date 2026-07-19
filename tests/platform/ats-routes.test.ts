@@ -86,6 +86,19 @@ describe('platform ATS routes', () => {
     expect(await res.json()).toEqual({ error: 'Invalid application' });
   });
 
+  it('returns a validation error for malformed application JSON fields', async () => {
+    const invalid = validApplicationForm();
+    invalid.set('links', '{not-json');
+    const res = await routes().request('/api/ats/applications', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${INGEST_SECRET}` },
+      body: invalid,
+    });
+
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: 'Invalid application' });
+  });
+
   it('keeps candidate lists and CV downloads behind the admin secret', async () => {
     const submitted = await routes().request('/api/ats/applications', {
       method: 'POST',
