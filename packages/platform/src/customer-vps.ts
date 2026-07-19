@@ -48,13 +48,16 @@ import {
   renderCloudInitTemplate,
   type CustomerHostConfig,
 } from './customer-vps-cloud-init.js';
-import { PublicIPv4Schema, type CustomerVpsStatus } from './customer-vps-schema.js';
-import type {
-  PreviewProvisionRequest,
-  ProvisionRequest,
-  RegisterRequest,
-  RecoverRequest,
-  ResizeMachineRequest,
+import {
+  PreviewProvisionRequestSchema,
+  PublicIPv4Schema,
+  type CustomerVpsStatus,
+  type PreviewProvisionInput,
+  type PreviewProvisionRequest,
+  type ProvisionRequest,
+  type RegisterRequest,
+  type RecoverRequest,
+  type ResizeMachineRequest,
 } from './customer-vps-schema.js';
 import { assertPreviewProvisioningCapacity, isPreviewMachine } from './customer-vps-preview.js';
 import { selectCustomerVpsDeployMachines } from './customer-vps-deploy-selection.js';
@@ -143,7 +146,7 @@ export interface DeployTarget {
 
 export interface CustomerVpsService {
   provision(input: ProvisionRequest): Promise<ProvisionResponse>;
-  provisionPreview(input: PreviewProvisionRequest): Promise<ProvisionResponse>;
+  provisionPreview(input: PreviewProvisionInput): Promise<ProvisionResponse>;
   register(token: string | undefined, input: RegisterRequest): Promise<RegisterResponse>;
   recover(input: RecoverRequest): Promise<RecoverResponse>;
   resize(input: ResizeMachineRequest & { machineId: string }): Promise<ResizeResponse>;
@@ -843,13 +846,26 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
   }
 
   async function provision(
-    input: ProvisionRequest,
+    input: ProvisionRequest | PreviewProvisionRequest,
     provisioningClass: UserMachineProvisioningClass,
   ): Promise<ProvisionResponse> {
     const request = {
       ...input,
       runtimeSlot: input.runtimeSlot ?? 'primary',
       developerTools: canonicalizeDeveloperTools(input.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
+      accessClerkUserIds: provisioningClass === 'preview' && 'accessClerkUserIds' in input
+        ? input.accessClerkUserIds
+        : [],
+    };
+    const reconcilePreviewAccess = async (
+      db: PlatformDB,
+      machine: UserMachineRecord,
+    ): Promise<UserMachineRecord> => {
+      if (provisioningClass !== 'preview') return machine;
+      await updateUserMachine(db, machine.machineId, {
+        accessClerkUserIds: request.accessClerkUserIds,
+      });
+      return { ...machine, accessClerkUserIds: request.accessClerkUserIds };
     };
     const currentTime = now();
     const machineId = machineIdFactory();
@@ -878,11 +894,12 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       && !(provisioningClass === 'preview' && existingBeforeBundleResolve.runtimeSlot !== request.runtimeSlot)
       && (provisioningClass === 'customer' || existingBeforeBundleResolve.provisioningClass === 'preview')
     ) {
+      const reconciled = await reconcilePreviewAccess(deps.db, existingBeforeBundleResolve);
       const existingJob = await getProvisioningJobByMachineId(deps.db, existingBeforeBundleResolve.machineId);
       if (existingJob && (existingJob.status === 'queued' || existingJob.status === 'running')) {
         await dispatchProvisioningJobBestEffort(existingJob.jobId);
       }
-      return activeProvisionResponse(existingBeforeBundleResolve, deps.config.provisionEtaSeconds);
+      return activeProvisionResponse(reconciled, deps.config.provisionEtaSeconds);
     }
 
     const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
@@ -924,10 +941,19 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           if (provisioningClass === 'preview' && existing.provisioningClass !== 'preview') {
             const retainedMachines = await listNonDeletedUserMachinesByClerkId(trx, request.clerkUserId);
             assertPreviewProvisioningCapacity(retainedMachines, deps.config.previewProvisioningLimit);
-            await updateUserMachine(trx, existing.machineId, { provisioningClass: 'preview' });
-            return { existing: { ...existing, provisioningClass: 'preview' as const } };
+            await updateUserMachine(trx, existing.machineId, {
+              provisioningClass: 'preview',
+              accessClerkUserIds: request.accessClerkUserIds,
+            });
+            return {
+              existing: {
+                ...existing,
+                provisioningClass: 'preview' as const,
+                accessClerkUserIds: request.accessClerkUserIds,
+              },
+            };
           }
-          return { existing };
+          return { existing: await reconcilePreviewAccess(trx, existing) };
         }
         // The active slot is held by a failed attempt. Retire it, enqueue its
         // server for reaping, and provision a fresh one — all in one
@@ -970,6 +996,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         handle: request.handle,
         runtimeSlot: request.runtimeSlot,
         provisioningClass,
+        accessClerkUserIds: request.accessClerkUserIds,
         status: 'provisioning',
         imageVersion: bundleRef.imageVersion,
         serverType: billingContext?.serverType ?? deps.config.serverType,
@@ -1017,11 +1044,12 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         && !(provisioningClass === 'preview' && concurrent.runtimeSlot !== request.runtimeSlot)
         && (provisioningClass === 'customer' || concurrent.provisioningClass === 'preview')
       ) {
+        const reconciled = await reconcilePreviewAccess(deps.db, concurrent);
         const concurrentJob = await getProvisioningJobByMachineId(deps.db, concurrent.machineId);
         if (concurrentJob && (concurrentJob.status === 'queued' || concurrentJob.status === 'running')) {
           await dispatchProvisioningJobBestEffort(concurrentJob.jobId);
         }
-        return activeProvisionResponse(concurrent, deps.config.provisionEtaSeconds);
+        return activeProvisionResponse(reconciled, deps.config.provisionEtaSeconds);
       }
       throw err;
     }
@@ -1051,9 +1079,10 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async provisionPreview(input) {
+      const request = PreviewProvisionRequestSchema.parse(input);
       return withLocalProvisionLock(
-        `${input.clerkUserId}:${input.runtimeSlot ?? 'primary'}`,
-        () => provision(input, 'preview'),
+        `${request.clerkUserId}:${request.runtimeSlot}`,
+        () => provision(request, 'preview'),
       );
     },
 

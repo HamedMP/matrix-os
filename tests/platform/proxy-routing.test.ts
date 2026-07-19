@@ -1129,6 +1129,62 @@ describe("platform proxy routing", () => {
     expect(browserForwardHeaders.get("x-matrix-platform-session")).toBeNull();
   });
 
+  it("issues an app session for a collaborator whose only accessible runtime is a preview", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff141",
+      clerkUserId: "user_bob",
+      handle: "pr-1055",
+      runtimeSlot: "pr-1055",
+      provisioningClass: "preview",
+      accessClerkUserIds: ["user_alice"],
+      status: "running",
+      hetznerServerId: 123485,
+      publicIPv4: "203.0.113.55",
+      imageVersion: "v2026.07.19-pr1055",
+      serverType: "cpx22",
+      provisionedAt: "2026-07-19T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("shared preview", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const exchange = await app.request("/api/auth/app-session", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ redirectTo: "/vm/pr-1055" }),
+    });
+
+    expect(exchange.status).toBe(200);
+    await expect(exchange.json()).resolves.toEqual({ redirectTo: "/vm/pr-1055" });
+    const appSession = cookieHeaderFromSetCookie(exchange.headers, ["matrix_app_session"]);
+    const shell = await app.request("/vm/pr-1055", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: appSession,
+      },
+    });
+
+    expect(shell.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.55:443/");
+    const forwardedHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers as HeadersInit);
+    expect(forwardedHeaders.get("x-platform-user-id")).toBe("user_alice");
+    expect(forwardedHeaders.get("x-platform-verified")).toMatch(/^[0-9a-f]{64}$/);
+  });
+
   it("exchanges a native sync JWT for an app session cookie before continuing", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     const issued = await issueSyncJwt({
@@ -3537,6 +3593,80 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("routes an explicitly shared preview to a collaborator but never shares customer machines", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff137",
+      clerkUserId: "user_bob",
+      handle: "pr-1037",
+      runtimeSlot: "pr-1037",
+      provisioningClass: "preview",
+      accessClerkUserIds: ["user_alice"],
+      status: "running",
+      hetznerServerId: 123481,
+      publicIPv4: "203.0.113.37",
+      imageVersion: "v2026.07.19-pr1037",
+      provisionedAt: "2026-07-19T12:00:00.000Z",
+    });
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff138",
+      clerkUserId: "user_bob",
+      handle: "bob-private",
+      runtimeSlot: "primary",
+      accessClerkUserIds: ["user_alice"],
+      status: "running",
+      hetznerServerId: 123482,
+      publicIPv4: "203.0.113.38",
+      imageVersion: "v2026.07.19",
+      provisionedAt: "2026-07-19T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("shared preview", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const shared = await app.request("/vm/pr-1037", {
+      headers: { host: "app.matrix-os.com", authorization: "Bearer clerk-session" },
+    });
+    expect(shared.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.37:443/");
+
+    const routeCookies = shared.headers.get("set-cookie") ?? "";
+    fetchMock.mockClear();
+    const followUp = await app.request("/api/projects", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        cookie: routeCookies,
+      },
+    });
+    expect(followUp.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.37:443/api/projects");
+
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValueOnce(new Response("react-runtime-manager", { status: 200 }));
+    const runtimeManager = await app.request("/runtime", {
+      headers: { host: "app.matrix-os.com", authorization: "Bearer clerk-session" },
+    });
+    expect(runtimeManager.status).toBe(200);
+    expect(await runtimeManager.text()).toBe("react-runtime-manager");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:3200/runtime");
+
+    fetchMock.mockClear();
+    const privateMachine = await app.request("/vm/bob-private", {
+      headers: { host: "app.matrix-os.com", authorization: "Bearer clerk-session" },
+    });
+    expect(privateMachine.status).toBe(404);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

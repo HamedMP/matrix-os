@@ -1,12 +1,13 @@
 import type { ClerkAuth } from './clerk-auth.js';
 import {
   type PlatformDB,
-  getActiveUserMachineByClerkId,
+  getAccessibleActiveUserMachineByClerkId,
   getActiveUserMachineByHandle,
   getContainer,
   getContainerByClerkId,
   getRunningUserMachineByHandle,
 } from './db.js';
+import { canClerkUserAccessMachine } from './customer-vps-preview.js';
 import { verifySyncJwt } from './sync-jwt.js';
 import { isAppDomainGatewayPath } from './request-routing.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
@@ -239,10 +240,10 @@ export async function resolveSyncBearerIdentity(opts: {
   }
 
   const machine = await getActiveUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
-  if (!machine || machine.clerkUserId !== claims.sub) return null;
+  if (!machine || !canClerkUserAccessMachine(machine, claims.sub)) return null;
   return {
     handle: machine.handle,
-    userId: machine.clerkUserId,
+    userId: claims.sub,
     runtimeSlot: machine.runtimeSlot,
     expiresAt: claims.exp,
   };
@@ -283,7 +284,8 @@ export async function resolveAppDomainIdentity(opts: {
       const runtimeSlot = RuntimeSlotSchema.safeParse(claims.runtime_slot).success
         ? claims.runtime_slot
         : undefined;
-      // Browser app sessions establish the owner; shell cookies select that owner's active computer.
+      // Browser app sessions establish the principal; shell cookies may select
+      // an owned computer or an explicitly shared preview for that principal.
       if (bearerToken === appSessionToken && opts.requestedHandle && !opts.clerkPrincipalOnly) {
         let requestedMachine = await getActiveUserMachineByHandle(
           opts.db,
@@ -293,10 +295,10 @@ export async function resolveAppDomainIdentity(opts: {
         if (!requestedMachine && opts.runtimeSlot === 'primary') {
           requestedMachine = await getActiveUserMachineByHandle(opts.db, opts.requestedHandle);
         }
-        if (requestedMachine?.clerkUserId === claims.sub) {
+        if (requestedMachine && canClerkUserAccessMachine(requestedMachine, claims.sub)) {
           return {
             handle: requestedMachine.handle,
-            userId: requestedMachine.clerkUserId,
+            userId: claims.sub,
             runtimeSlot: requestedMachine.runtimeSlot,
             source: 'auth',
           };
@@ -321,21 +323,21 @@ export async function resolveAppDomainIdentity(opts: {
         };
       }
       const machine = await getRunningUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
-      if (machine?.clerkUserId === claims.sub) {
+      if (machine && canClerkUserAccessMachine(machine, claims.sub)) {
         return {
           handle: machine.handle,
-          userId: machine.clerkUserId,
+          userId: claims.sub,
           runtimeSlot: machine.runtimeSlot,
           source: 'auth',
         };
       }
       const activeMachine = await getActiveUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
-      if (!activeMachine || activeMachine.clerkUserId !== claims.sub) {
+      if (!activeMachine || !canClerkUserAccessMachine(activeMachine, claims.sub)) {
         return null;
       }
       return {
         handle: activeMachine.handle,
-        userId: activeMachine.clerkUserId,
+        userId: claims.sub,
         runtimeSlot: activeMachine.runtimeSlot,
         source: 'auth',
       };
@@ -377,7 +379,7 @@ export async function resolveAppDomainIdentity(opts: {
     if (!requestedMachine && opts.runtimeSlot === 'primary') {
       requestedMachine = await getActiveUserMachineByHandle(opts.db, opts.requestedHandle);
     }
-    if (requestedMachine && requestedMachine.clerkUserId === result.userId) {
+    if (requestedMachine && canClerkUserAccessMachine(requestedMachine, result.userId)) {
       return {
         handle: requestedMachine.handle,
         userId: result.userId,
@@ -396,10 +398,10 @@ export async function resolveAppDomainIdentity(opts: {
     };
   }
   let machine = opts.runtimeSlot !== 'primary'
-    ? await getActiveUserMachineByClerkId(opts.db, result.userId, opts.runtimeSlot)
+    ? await getAccessibleActiveUserMachineByClerkId(opts.db, result.userId, opts.runtimeSlot)
     : undefined;
   if (!machine) {
-    machine = await getActiveUserMachineByClerkId(opts.db, result.userId);
+    machine = await getAccessibleActiveUserMachineByClerkId(opts.db, result.userId);
   }
   if (!machine) {
     if (opts.allowUnroutedClerkIdentity) {

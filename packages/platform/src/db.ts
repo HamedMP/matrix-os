@@ -52,6 +52,7 @@ interface UserMachinesTable {
   handle: string;
   runtime_slot: string;
   provisioning_class: string;
+  access_clerk_user_ids: string[];
   developer_tools: string;
   hetzner_server_id: number | null;
   public_ipv4: string | null;
@@ -396,6 +397,7 @@ export interface UserMachineRecord {
   handle: string;
   runtimeSlot: string;
   provisioningClass: UserMachineProvisioningClass;
+  accessClerkUserIds: string[];
   developerTools: DeveloperToolId[];
   hetznerServerId: number | null;
   publicIPv4: string | null;
@@ -589,6 +591,7 @@ export interface NewUserMachine {
   handle: string;
   runtimeSlot?: string;
   provisioningClass?: UserMachineProvisioningClass;
+  accessClerkUserIds?: string[];
   developerTools?: DeveloperToolId[];
   hetznerServerId?: number | null;
   publicIPv4?: string | null;
@@ -685,6 +688,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       handle TEXT NOT NULL,
       runtime_slot TEXT NOT NULL DEFAULT 'primary',
       provisioning_class TEXT NOT NULL DEFAULT 'customer',
+      access_clerk_user_ids TEXT[] NOT NULL DEFAULT '{}',
       developer_tools TEXT NOT NULL DEFAULT '["codex","claude-code","opencode","pi"]',
       hetzner_server_id INTEGER,
       public_ipv4 TEXT,
@@ -706,6 +710,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   `.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS runtime_slot TEXT NOT NULL DEFAULT 'primary'`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS provisioning_class TEXT NOT NULL DEFAULT 'customer'`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS access_clerk_user_ids TEXT[] NOT NULL DEFAULT '{}'`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS developer_tools TEXT NOT NULL DEFAULT '["codex","claude-code","opencode","pi"]'`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS server_type TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS resize_started_at TEXT`.execute(db);
@@ -730,6 +735,11 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     WHERE deleted_at IS NULL
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_clerk_slot_status ON user_machines(clerk_user_id, runtime_slot, status)`.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_user_machines_preview_access
+    ON user_machines USING GIN(access_clerk_user_ids)
+    WHERE deleted_at IS NULL AND provisioning_class = 'preview'
+  `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_hetzner ON user_machines(hetzner_server_id)`.execute(db);
 
   await sql`
@@ -1204,6 +1214,7 @@ function mapUserMachine(row: UserMachinesTable): UserMachineRecord {
     handle: row.handle,
     runtimeSlot: row.runtime_slot,
     provisioningClass: UserMachineProvisioningClassSchema.parse(row.provisioning_class),
+    accessClerkUserIds: row.access_clerk_user_ids,
     developerTools: parseDeveloperToolsJson(row.developer_tools),
     hetznerServerId: row.hetzner_server_id,
     publicIPv4: row.public_ipv4,
@@ -1231,6 +1242,7 @@ function toUserMachineRow(record: NewUserMachine): UserMachinesTable {
     handle: record.handle,
     runtime_slot: record.runtimeSlot ?? 'primary',
     provisioning_class: record.provisioningClass ?? 'customer',
+    access_clerk_user_ids: record.accessClerkUserIds ?? [],
     developer_tools: serializeDeveloperTools(record.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
     hetzner_server_id: record.hetznerServerId ?? null,
     public_ipv4: record.publicIPv4 ?? null,
@@ -1258,6 +1270,7 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
   if (values.handle !== undefined) update.handle = values.handle;
   if (values.runtimeSlot !== undefined) update.runtime_slot = values.runtimeSlot;
   if (values.provisioningClass !== undefined) update.provisioning_class = values.provisioningClass;
+  if (values.accessClerkUserIds !== undefined) update.access_clerk_user_ids = values.accessClerkUserIds;
   if (values.developerTools !== undefined) update.developer_tools = serializeDeveloperTools(values.developerTools);
   if (values.hetznerServerId !== undefined) update.hetzner_server_id = values.hetznerServerId;
   if (values.publicIPv4 !== undefined) update.public_ipv4 = values.publicIPv4;
@@ -1897,6 +1910,40 @@ export async function getActiveUserMachineByClerkId(
   return row ? mapUserMachine(row) : undefined;
 }
 
+export function accessibleUserMachinePredicate(clerkUserId: string) {
+  return sql<boolean>`(
+    clerk_user_id = ${clerkUserId}
+    OR (
+      provisioning_class = 'preview'
+      AND handle ~ '^pr-[1-9][0-9]{0,9}$'
+      AND (runtime_slot = handle OR runtime_slot = 'preview')
+      AND access_clerk_user_ids @> ARRAY[${clerkUserId}]::TEXT[]
+    )
+  )`;
+}
+
+export async function getAccessibleActiveUserMachineByClerkId(
+  db: PlatformDB,
+  clerkUserId: string,
+  runtimeSlot?: string,
+): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  let query = db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where(accessibleUserMachinePredicate(clerkUserId))
+    .where('deleted_at', 'is', null);
+  if (runtimeSlot) {
+    query = query.where('runtime_slot', '=', runtimeSlot);
+  } else {
+    query = query
+      .orderBy(sql`CASE WHEN clerk_user_id = ${clerkUserId} AND runtime_slot = 'primary' THEN 0 ELSE 1 END`)
+      .orderBy('provisioned_at', 'desc');
+  }
+  const row = await query.executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
 export async function getActiveUserMachineByHandle(
   db: PlatformDB,
   handle: string,
@@ -1959,6 +2006,23 @@ export async function getRunningUserMachineByClerkId(
   return row ? mapUserMachine(row) : undefined;
 }
 
+export async function getAccessibleRunningUserMachineByClerkId(
+  db: PlatformDB,
+  clerkUserId: string,
+  runtimeSlot: string,
+): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where(accessibleUserMachinePredicate(clerkUserId))
+    .where('runtime_slot', '=', runtimeSlot)
+    .where('status', '=', 'running')
+    .where('deleted_at', 'is', null)
+    .executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
 export async function getRunningUserMachineByClerkIdForUpdate(
   db: PlatformDB,
   clerkUserId: string,
@@ -2005,6 +2069,23 @@ export async function listActiveUserMachinesByClerkId(
     .where('deleted_at', 'is', null)
     .where('status', 'in', ['running', 'provisioning', 'recovering', 'resizing'])
     .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
+    .orderBy('provisioned_at', 'desc')
+    .execute();
+  return rows.map(mapUserMachine);
+}
+
+export async function listAccessibleActiveUserMachinesByClerkId(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<UserMachineRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where(accessibleUserMachinePredicate(clerkUserId))
+    .where('deleted_at', 'is', null)
+    .where('status', 'in', ['running', 'provisioning', 'recovering', 'resizing'])
+    .orderBy(sql`CASE WHEN clerk_user_id = ${clerkUserId} AND runtime_slot = 'primary' THEN 0 ELSE 1 END`)
     .orderBy('provisioned_at', 'desc')
     .execute();
   return rows.map(mapUserMachine);

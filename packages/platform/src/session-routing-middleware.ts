@@ -7,13 +7,14 @@ import type { ClerkAuth } from './clerk-auth.js';
 import {
   type PlatformDB,
   type UserMachineRecord,
-  getActiveUserMachineByClerkId,
+  getAccessibleActiveUserMachineByClerkId,
   getActiveUserMachineByHandle,
   getContainer,
-  getRunningUserMachineByClerkId,
+  getAccessibleRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
   updateLastActive,
 } from './db.js';
+import { canClerkUserAccessMachine } from './customer-vps-preview.js';
 import { issueSyncJwt } from './sync-jwt.js';
 import {
   buildCustomerVpsProxyUrl,
@@ -495,7 +496,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         explicitVmRoute.handle,
         runtimeSelection.source === 'query' ? requestRuntimeSlot : undefined,
       );
-      if (!machine || (identity.userId && machine.clerkUserId !== identity.userId)) {
+      if (!machine || (identity.userId && !canClerkUserAccessMachine(machine, identity.userId))) {
         applyNoStoreHeaders(c);
         return c.text('Matrix OS computer unavailable', 404);
       }
@@ -628,13 +629,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
     let requestedActiveMachine: UserMachineRecord | undefined;
     let runningMachine = identity.userId
-      ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
+      ? await getAccessibleRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
       : await getRunningUserMachineByHandle(db, identity.handle);
     if (!runningMachine && identity.userId) {
-      requestedActiveMachine = await getActiveUserMachineByClerkId(db, identity.userId, runtimeSlot);
+      requestedActiveMachine = await getAccessibleActiveUserMachineByClerkId(db, identity.userId, runtimeSlot);
       if (!requestedActiveMachine) {
         const handleMachine = await getRunningUserMachineByHandle(db, identity.handle);
-        if (handleMachine?.clerkUserId === identity.userId) {
+        if (handleMachine && canClerkUserAccessMachine(handleMachine, identity.userId)) {
           runningMachine = handleMachine;
         }
       }
@@ -775,7 +776,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     }
 
     const activeMachine = requestedActiveMachine ?? (identity.userId
-      ? await getActiveUserMachineByClerkId(db, identity.userId, runtimeSlot)
+      ? await getAccessibleActiveUserMachineByClerkId(db, identity.userId, runtimeSlot)
       : await getActiveUserMachineByHandle(db, identity.handle));
     if (activeMachine) {
       if (

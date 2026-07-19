@@ -1,8 +1,9 @@
 import { sql } from 'kysely';
 
-import type {
-  PlatformDB,
-  UserMachineProvisioningClass,
+import {
+  accessibleUserMachinePredicate,
+  type PlatformDB,
+  type UserMachineProvisioningClass,
 } from './db.js';
 import { HANDLE_PATTERN_SOURCE } from './platform-route-utils.js';
 
@@ -25,7 +26,7 @@ export async function listUserRuntimeComputersByClerkId(
   let query = db.executor
     .selectFrom('user_machines')
     .select(['handle', 'runtime_slot', 'provisioning_class', 'status', 'image_version'])
-    .where('clerk_user_id', '=', clerkUserId)
+    .where(accessibleUserMachinePredicate(clerkUserId))
     .where('deleted_at', 'is', null)
     .where('provisioning_class', 'in', ['customer', 'preview'])
     .where(sql<boolean>`${sql.ref('handle')} ~ ${HANDLE_PATTERN_SOURCE}`)

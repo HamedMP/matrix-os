@@ -275,11 +275,13 @@ describe('platform/customer-vps', () => {
       clerkUserId: 'user_123',
       handle: 'pr-897',
       runtimeSlot: 'pr-897',
+      accessClerkUserIds: ['user_456'],
     });
     const repeated = await service.provisionPreview({
       clerkUserId: 'user_123',
       handle: 'pr-897',
       runtimeSlot: 'pr-897',
+      accessClerkUserIds: ['user_789'],
     });
 
     expect(repeated).toEqual(preview);
@@ -300,6 +302,7 @@ describe('platform/customer-vps', () => {
     expect(resolveBillingEntitlement).toHaveBeenCalledOnce();
     await expect(getUserMachine(db, preview.machineId)).resolves.toMatchObject({
       provisioningClass: 'preview',
+      accessClerkUserIds: ['user_789'],
     });
   });
 
