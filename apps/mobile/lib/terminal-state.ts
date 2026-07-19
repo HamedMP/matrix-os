@@ -20,6 +20,16 @@ export interface MobileTerminalSession {
   // Shell-sessions model (aligned with desktop, so tabs are continuable across clients).
   /** Live UI status from the gateway: running | waiting (needs input) | finished | idle. */
   visualStatus?: ShellVisualStatus;
+  agent?: "claude" | "codex" | "opencode" | "pi";
+  subtitle?: string;
+  lastAction?: string;
+  agentUpdatedAt?: string;
+  model?: string;
+  strength?: string;
+  project?: string;
+  repository?: string;
+  branch?: string;
+  pullRequest?: { number: number; url?: string };
   updatedAt?: string;
   unread?: boolean;
   tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
@@ -222,6 +232,26 @@ export function parseShellSessions(value: unknown): MobileTerminalSession[] {
     }
     if (typeof c.updatedAt === "string") session.updatedAt = c.updatedAt;
     if (typeof c.unread === "boolean") session.unread = c.unread;
+    if (c.agent === "claude" || c.agent === "codex" || c.agent === "opencode" || c.agent === "pi") {
+      session.agent = c.agent;
+    }
+    if (typeof c.subtitle === "string") session.subtitle = c.subtitle;
+    if (typeof c.lastAction === "string") session.lastAction = c.lastAction;
+    if (typeof c.agentUpdatedAt === "string") session.agentUpdatedAt = c.agentUpdatedAt;
+    if (typeof c.model === "string") session.model = c.model;
+    if (typeof c.strength === "string") session.strength = c.strength;
+    if (typeof c.project === "string") session.project = c.project;
+    if (typeof c.repository === "string") session.repository = c.repository;
+    if (typeof c.branch === "string") session.branch = c.branch;
+    if (c.pullRequest && typeof c.pullRequest === "object") {
+      const pullRequest = c.pullRequest as Record<string, unknown>;
+      if (Number.isSafeInteger(pullRequest.number) && (pullRequest.number as number) > 0) {
+        session.pullRequest = {
+          number: pullRequest.number as number,
+          ...(typeof pullRequest.url === "string" ? { url: pullRequest.url } : {}),
+        };
+      }
+    }
     if (Array.isArray(c.tabs)) {
       const tabs: NonNullable<MobileTerminalSession["tabs"]> = [];
       for (const tab of c.tabs) {

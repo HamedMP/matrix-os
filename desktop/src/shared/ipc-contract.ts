@@ -216,13 +216,10 @@ export const INVOKE_CHANNELS = {
     response: AgentThreadSnapshotSchema,
   },
   "runtime:submit-input-answer": {
-    request: z
-      .object({
-        threadId: ThreadIdSchema,
-        inputRequestId: RequestIdSchema,
-      })
-      .extend(UserInputAnswerRequestSchema.shape)
-      .strict(),
+    request: UserInputAnswerRequestSchema.safeExtend({
+      threadId: ThreadIdSchema,
+      inputRequestId: RequestIdSchema,
+    }),
     response: AgentThreadSnapshotSchema,
   },
   "runtime:create-thread": {

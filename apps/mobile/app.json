@@ -3,7 +3,7 @@
     "name": "Matrix OS",
     "slug": "matrix-os-mobile",
     "version": "0.2.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/icon.png",
     "scheme": "matrixos",
     "userInterfaceStyle": "automatic",
@@ -20,7 +20,11 @@
         "ITSAppUsesNonExemptEncryption": false
       },
       "appleTeamId": "PX4JL74Y2K",
-      "icon": "./assets/app.icon"
+      "icon": {
+        "light": "./assets/ios-light.png",
+        "dark": "./assets/ios-dark.png",
+        "tinted": "./assets/ios-tinted.png"
+      }
     },
     "android": {
       "adaptiveIcon": {

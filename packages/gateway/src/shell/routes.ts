@@ -14,6 +14,7 @@ import {
   type ShellPreferencesStore,
 } from "./preferences.js";
 import type { ShellCommandRunner } from "./command-runner.js";
+import { AgentKindSchema, type AgentKind } from "./agent-session-state.js";
 
 interface SessionRegistryRoutes {
   list(): Promise<unknown[]>;
@@ -23,6 +24,7 @@ interface SessionRegistryRoutes {
     cwd?: string;
     layout?: string;
     cmd?: string;
+    agent?: AgentKind;
   }): Promise<unknown>;
   delete(name: string, options?: { force?: boolean }): Promise<void>;
   rename?(name: string, nextName: string): Promise<unknown>;
@@ -105,6 +107,7 @@ const CreateSessionBodySchema = z.object({
   cwd: safeCwdSchema().optional(),
   layout: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/).optional(),
   cmd: z.string().min(1).max(4096).optional(),
+  agent: AgentKindSchema.optional(),
 });
 const SafeNameSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/);
 const SafeSessionNameSchema = z.string().regex(SESSION_NAME_PATTERN);
@@ -281,9 +284,10 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     try {
       if (!deps.registry.updateUiState) return unavailable(c, "session_ui_state_unavailable");
       const body = SessionUiStateBodySchema.parse(await c.req.json());
+      const { visualStatus: _legacyVisualStatus, ...gatewayOwnedPatch } = body;
       const session = await deps.registry.updateUiState(
         SafeSessionNameSchema.parse(c.req.param("name")),
-        body,
+        gatewayOwnedPatch,
       );
       return c.json({ session });
     } catch (err) {

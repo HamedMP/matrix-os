@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { ChevronsLeftIcon, PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
+import { ChevronsLeftIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 
 import { getGatewayUrl } from "@/lib/gateway";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { NewSessionMenu } from "./NewSessionMenu";
+import { NewSessionSplitButton } from "./NewSessionSplitButton";
 import { ShellCloseConfirmation } from "./ShellCloseConfirmation";
 import { useTerminalAppContext } from "./TerminalAppContext";
 import { ThemePickerButton } from "./TerminalThemePicker";
@@ -16,11 +18,11 @@ import {
   hasPaneId,
 } from "./terminal-layout";
 import {
-  parseTerminalAgentStatuses,
   terminalAgentVisibleInstallCommand,
-  type TerminalAgentId,
+  type TerminalAgentMenuAction,
   type TerminalAgentOption,
 } from "./terminal-agent-options";
+import { useTerminalAgentStatuses } from "./useTerminalAgentStatuses";
 import {
   applyShellRefreshFailure,
   applyShellRefreshSilentFailure,
@@ -43,6 +45,7 @@ import {
   type TreeNode,
   type WorkspaceSessionSummary,
 } from "./TerminalSidebarItems";
+import { TERMINAL_MONO_FONT_FAMILY } from "./terminal-typography";
 
 const SHELL_NEW_BUTTON_BASE_STYLE: CSSProperties = {
   height: 28,
@@ -70,16 +73,121 @@ const SHELL_STATUS_DOT_CSS = `
 @keyframes terminal-refresh-spin {
   to { transform: rotate(360deg); }
 }
+@keyframes terminal-new-session-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
 .terminal-session-status-dot--running {
   animation: terminal-session-status-pulse 1.35s ease-in-out infinite;
 }
 .terminal-refresh-icon--loading {
   animation: terminal-refresh-spin 0.9s linear infinite;
 }
+.terminal-drawer-primary-control {
+  background: var(--terminal-drawer-primary-button-bg);
+  border: 1px solid color-mix(in srgb, var(--terminal-drawer-primary-button-bg) 78%, var(--terminal-drawer-primary-button-fg));
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--terminal-drawer-primary-button-fg) 14%, transparent) inset;
+  color: var(--terminal-drawer-primary-button-fg);
+}
+.terminal-new-session-split-button {
+  align-items: stretch;
+  border-radius: 10px;
+  display: inline-flex;
+  height: 40px;
+  overflow: hidden;
+  transition: box-shadow 160ms ease, transform 160ms ease;
+}
+.terminal-new-session-split-button:focus-within {
+  box-shadow:
+    0 0 0 2px var(--terminal-drawer-bg),
+    0 0 0 4px color-mix(in srgb, var(--terminal-drawer-primary-button-bg) 68%, var(--terminal-drawer-primary-button-fg));
+}
+.terminal-new-session-primary-action,
+.terminal-new-session-dropdown-trigger {
+  background: var(--terminal-drawer-primary-button-bg);
+  border: 0;
+  color: var(--terminal-drawer-primary-button-fg);
+  cursor: pointer;
+  padding: 0;
+  transition: background-color 150ms ease, filter 150ms ease, transform 120ms ease;
+}
+.terminal-new-session-primary-action {
+  width: 38px;
+}
+.terminal-new-session-dropdown-trigger {
+  border-left: 1px solid color-mix(in srgb, var(--terminal-drawer-primary-button-fg) 24%, transparent);
+  width: 24px;
+}
+.terminal-new-session-primary-action:hover:not(:disabled),
+.terminal-new-session-dropdown-trigger:hover:not(:disabled),
+.terminal-new-session-dropdown-trigger[data-state="open"] {
+  filter: brightness(1.1);
+}
+.terminal-new-session-primary-action:active:not(:disabled),
+.terminal-new-session-dropdown-trigger:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.terminal-new-session-primary-action:focus-visible,
+.terminal-new-session-dropdown-trigger:focus-visible {
+  outline: none;
+}
+.terminal-new-session-primary-action:disabled,
+.terminal-new-session-dropdown-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+.terminal-drawer-primary-icon-button {
+  border-radius: 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+  height: 40px;
+  padding: 0;
+  transition: box-shadow 160ms ease, filter 150ms ease, transform 120ms ease;
+  width: 40px;
+}
+.terminal-drawer-primary-icon-button:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.terminal-drawer-primary-icon-button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.terminal-drawer-primary-icon-button:focus-visible {
+  box-shadow:
+    0 0 0 2px var(--terminal-drawer-bg),
+    0 0 0 4px color-mix(in srgb, var(--terminal-drawer-primary-button-bg) 68%, var(--terminal-drawer-primary-button-fg));
+  outline: none;
+}
+.terminal-drawer-primary-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+.terminal-new-session-dropdown-chevron {
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.terminal-new-session-dropdown-trigger[data-state="open"] .terminal-new-session-dropdown-chevron {
+  transform: rotate(180deg);
+}
+.terminal-new-session-menu {
+  animation: terminal-new-session-menu-in 170ms cubic-bezier(0.22, 1, 0.36, 1);
+}
 @media (prefers-reduced-motion: reduce) {
   .terminal-session-status-dot--running,
-  .terminal-refresh-icon--loading {
+  .terminal-refresh-icon--loading,
+  .terminal-new-session-menu {
     animation: none;
+  }
+  .terminal-new-session-split-button,
+  .terminal-new-session-primary-action,
+  .terminal-new-session-dropdown-trigger,
+  .terminal-drawer-primary-icon-button,
+  .terminal-new-session-dropdown-chevron {
+    transition: none;
   }
 }
 `;
@@ -170,7 +278,12 @@ export function LocalTerminalSidebar() {
   const [sessions, setSessions] = useState<WorkspaceSessionSummary[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
-  const [agentStatuses, setAgentStatuses] = useState<Record<TerminalAgentId, boolean> | null>(null);
+  const {
+    statuses: agentStatuses,
+    checking: agentStatusesChecking,
+    statusUnavailable: agentStatusesUnavailable,
+    refresh: refreshAgentStatuses,
+  } = useTerminalAgentStatuses();
   const [rootPath, setRootPath] = useState("projects");
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [filter, setFilter] = useState("");
@@ -210,31 +323,6 @@ export function LocalTerminalSidebar() {
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-event-handler -- async network load of the projects list when the Projects tab becomes active; `tab` is live derived state that can change from many sources (restore, programmatic nav, deep link), not a single DOM click handler, so the fetch belongs in the effect and cannot be hoisted to one parent handler
     if (tab === "projects") void fetchProjects();
   }, [tab, fetchProjects]);
-
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for mount-time agent status loading and explicit refresh from the new-session menu lifecycle.
-  const fetchAgentStatuses = useCallback(async () => {
-    try {
-      const res = await fetch(`${getGatewayUrl()}/api/agents`, {
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) {
-        console.warn(`Failed to load terminal agent status: ${res.status}`);
-        return;
-      }
-      const parsed = parseTerminalAgentStatuses(await res.json());
-      if (parsed.length === 0) return;
-      setAgentStatuses(Object.fromEntries(
-        parsed.map((agent) => [agent.id, agent.installed]),
-      ) as Record<TerminalAgentId, boolean>);
-    } catch (err: unknown) {
-      console.warn("Failed to load terminal agent status:", err instanceof Error ? err.message : String(err));
-    }
-  }, []);
-
-  useEffect(() => {
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-fetch-in-effect -- owner-scoped local gateway status probe; it is timeout-guarded and falls back to the Paper default menu state if unavailable.
-    void fetchAgentStatuses();
-  }, [fetchAgentStatuses]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchShells` is in the dependency array of the shells-tab load useEffect below and command handlers.
   const fetchShells = useCallback(async (options: { silent?: boolean; signal?: AbortSignal; preserveOrderDuringReorder?: boolean } = {}) => {
@@ -810,13 +898,12 @@ export function LocalTerminalSidebar() {
   const openNewSessionMenu = (anchor: NewSessionMenuAnchor) => {
     if (creatingShell) return;
     if (newSessionMenuAnchor !== anchor) {
-      setAgentStatuses(null);
-      void fetchAgentStatuses();
+      refreshAgentStatuses();
     }
     setNewSessionMenuAnchor((current) => current === anchor ? null : anchor);
   };
 
-  const createAgentSession = async (option: TerminalAgentOption, installed: boolean) => {
+  const createAgentSession = async (option: TerminalAgentOption, action: TerminalAgentMenuAction) => {
     if (creatingShellRef.current) return;
     setNewSessionMenuAnchor(null);
     creatingShellRef.current = true;
@@ -824,13 +911,14 @@ export function LocalTerminalSidebar() {
     setShellsError(null);
     const cwd = ctx.sidebarSelectedPath ?? DEFAULT_CWD;
     try {
-      const label = installed ? option.label : `Install ${option.label}`;
-      const cmd = installed
+      const label = action === "launch" ? option.label : `Install ${option.label}`;
+      const cmd = action === "launch"
         ? option.launchCommand ?? (option.claudeMode ? "claude" : undefined)
         : terminalAgentVisibleInstallCommand(option);
       const name = await ctx.createShellSessionTab(label, cwd, {
         cmd,
-        ...(installed && option.id === "codex" ? { compatMode: "codex-tui" } : {}),
+        ...(action === "launch" ? { agent: option.id } : {}),
+        ...(action === "launch" && option.id === "codex" ? { compatMode: "codex-tui" } : {}),
       });
       if (name) {
         await fetchShells({ silent: true });
@@ -876,6 +964,7 @@ export function LocalTerminalSidebar() {
   const statusDotStyles = <style>{SHELL_STATUS_DOT_CSS}</style>;
 
   if (!ctx.sidebarOpen && !ctx.mobile) {
+    const railMenuOpen = newSessionMenuAnchor === "rail";
     return (
       <>
         {statusDotStyles}
@@ -886,10 +975,12 @@ export function LocalTerminalSidebar() {
             display: "flex",
             minHeight: 0,
             opacity: 1,
-            overflow: "visible",
+            overflow: railMenuOpen ? "visible" : "hidden",
+            position: railMenuOpen ? "relative" : undefined,
             transform: "translateX(0)",
             transition: TERMINAL_SIDEBAR_TRANSITION,
             width: 76,
+            zIndex: railMenuOpen ? SHELL_Z_INDEX.terminalCollapsedRailMenu : undefined,
           }}
         >
           <CollapsedSessionsRail
@@ -904,6 +995,8 @@ export function LocalTerminalSidebar() {
             onCreateShell={() => void createManagedShell()}
             onCreateAgent={createAgentSession}
             agentStatuses={agentStatuses}
+            agentStatusesChecking={agentStatusesChecking}
+            agentStatusesUnavailable={agentStatusesUnavailable}
             onOpen={makeShellActive}
           />
         </div>
@@ -988,11 +1081,14 @@ export function LocalTerminalSidebar() {
               />
             </div>
             <div className="min-w-0">
-              <div style={{ color: "var(--terminal-drawer-fg)", fontFamily: "var(--font-sans), system-ui, sans-serif", fontSize: 20, fontWeight: 600, letterSpacing: "-0.01em", lineHeight: "24px" }}>
-                matrix os
+              <div
+                data-testid="terminal-expanded-wordmark"
+                style={{ color: "#FFFFFF", fontFamily: "var(--font-orbitron), Orbitron, sans-serif", fontSize: 20, fontWeight: 600, letterSpacing: 0, lineHeight: "24px" }}
+              >
+                Matrix OS
               </div>
               {!ctx.mobile ? (
-                <div className="truncate" style={{ color: "var(--terminal-drawer-muted)", fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 13, lineHeight: "17px" }}>
+                <div className="truncate" style={{ color: "var(--terminal-drawer-muted)", fontFamily: TERMINAL_MONO_FONT_FAMILY, fontSize: 12, lineHeight: "17px" }}>
                   {ctx.sidebarSelectedPath ? formatCwd(ctx.sidebarSelectedPath) : "~/projects"}
                 </div>
               ) : null}
@@ -1000,40 +1096,17 @@ export function LocalTerminalSidebar() {
           </div>
           <div className="flex shrink-0 items-center" style={{ gap: 10 }}>
             {!ctx.mobile ? (
-              <div style={{ position: "relative" }}>
-                <button
-                  type="button"
-                  aria-label="New session"
-                  aria-haspopup="menu"
-                  aria-expanded={newSessionMenuAnchor === "drawer"}
-                  onClick={() => openNewSessionMenu("drawer")}
-                  disabled={creatingShell}
-                  className="flex items-center justify-center"
-                  style={{
-                    background: "var(--terminal-drawer-primary-button-bg)",
-                    border: 0,
-                    borderRadius: 10,
-                    color: "var(--terminal-drawer-primary-button-fg)",
-                    cursor: creatingShell ? "not-allowed" : "pointer",
-                    fontSize: 25,
-                    height: 40,
-                    lineHeight: "28px",
-                    opacity: creatingShell ? 0.72 : 1,
-                    width: 40,
-                  }}
-                >
-                  <PlusIcon aria-hidden="true" size={18} strokeWidth={2.5} />
-                </button>
-                {newSessionMenuAnchor === "drawer" ? (
-                  <NewSessionMenu
-                    align="right"
-                    onClose={() => setNewSessionMenuAnchor(null)}
-                    onCreateShell={() => void createManagedShell()}
-                    onCreateAgent={createAgentSession}
-                    agentStatuses={agentStatuses}
-                  />
-                ) : null}
-              </div>
+              <NewSessionSplitButton
+                creatingShell={creatingShell}
+                menuOpen={newSessionMenuAnchor === "drawer"}
+                onCreateShell={() => void createManagedShell()}
+                onToggleMenu={() => openNewSessionMenu("drawer")}
+                onCloseMenu={() => setNewSessionMenuAnchor(null)}
+                onCreateAgent={createAgentSession}
+                agentStatuses={agentStatuses}
+                agentStatusesChecking={agentStatusesChecking}
+                agentStatusesUnavailable={agentStatusesUnavailable}
+              />
             ) : null}
             {!ctx.mobile && (
               <>
@@ -1043,17 +1116,7 @@ export function LocalTerminalSidebar() {
                   aria-label="Refresh sessions"
                   onClick={() => void fetchShells()}
                   disabled={shellsLoading}
-                  className="flex items-center justify-center"
-                  style={{
-                    background: "var(--terminal-drawer-button-bg)",
-                    border: "1px solid var(--terminal-drawer-button-border)",
-                    borderRadius: 10,
-                    color: "var(--terminal-drawer-button-fg)",
-                    cursor: shellsLoading ? "not-allowed" : "pointer",
-                    height: 40,
-                    opacity: shellsLoading ? 0.72 : 1,
-                    width: 40,
-                  }}
+                  className="terminal-drawer-primary-control terminal-drawer-primary-icon-button flex items-center justify-center"
                 >
                   <RefreshCwIcon
                     className={shellsLoading ? "terminal-refresh-icon--loading" : undefined}
@@ -1066,16 +1129,7 @@ export function LocalTerminalSidebar() {
                   type="button"
                   aria-label="Hide sessions drawer"
                   onClick={() => ctx.setSidebarOpen(false)}
-                  className="flex items-center justify-center"
-                  style={{
-                    background: "var(--terminal-drawer-button-bg)",
-                    border: "1px solid var(--terminal-drawer-button-border)",
-                    borderRadius: 10,
-                    color: "var(--terminal-drawer-button-fg)",
-                    cursor: "pointer",
-                    height: 40,
-                    width: 40,
-                  }}
+                  className="terminal-drawer-primary-control terminal-drawer-primary-icon-button flex items-center justify-center"
                 >
                   <ChevronsLeftIcon data-testid="terminal-drawer-collapse-icon" size={17} strokeWidth={2} />
                 </button>

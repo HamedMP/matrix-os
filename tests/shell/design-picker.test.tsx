@@ -7,6 +7,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 const shared = vi.hoisted(() => ({
   saveThemeMock: vi.fn(),
   saveDesktopConfigPatchMock: vi.fn(),
+  beginBootMock: vi.fn(),
   theme: {
     name: "default",
     style: "flat",
@@ -36,6 +37,12 @@ vi.mock("@/hooks/useDesktopConfig", () => ({
   saveDesktopConfigPatch: shared.saveDesktopConfigPatchMock,
 }));
 
+vi.mock("@/components/os-session/os-session-store", () => ({
+  useOsSessionStore: {
+    getState: () => ({ beginBoot: shared.beginBootMock }),
+  },
+}));
+
 import { DesignPicker } from "../../shell/src/components/settings/DesignPicker.js";
 import {
   MACOS_GLASS_THEME,
@@ -56,6 +63,7 @@ describe("DesignPicker", () => {
     shared.saveThemeMock.mockResolvedValue(undefined);
     shared.saveDesktopConfigPatchMock.mockReset();
     shared.saveDesktopConfigPatchMock.mockResolvedValue(undefined);
+    shared.beginBootMock.mockReset();
     resetTheme("flat");
   });
 
@@ -123,6 +131,15 @@ describe("DesignPicker", () => {
     expect(shared.saveThemeMock).toHaveBeenLastCalledWith({ ...WIN11_THEME });
   });
 
+  it("starts an OS boot beat only after an explicit design selection", async () => {
+    const { getByRole } = render(<DesignPicker />);
+    expect(shared.beginBootMock).not.toHaveBeenCalled();
+
+    fireEvent.click(getByRole("button", { name: /Windows XP/ }));
+    await waitFor(() => expect(shared.saveThemeMock).toHaveBeenCalledTimes(1));
+    expect(shared.beginBootMock).toHaveBeenCalledWith("winxp");
+  });
+
   it("saves the flat default preset when Default is selected", async () => {
     resetTheme("win11");
     const { getByRole } = render(<DesignPicker />);
@@ -174,15 +191,15 @@ describe("DesignPicker", () => {
     });
   });
 
-  it("applies the macOS wallpaper and moves the dock to the bottom when macOS 27 is selected", async () => {
+  it("applies the first bundled wallpaper and moves the dock to the bottom when macOS 27 is selected", async () => {
     const { getByRole } = render(<DesignPicker />);
 
     fireEvent.click(getByRole("button", { name: /macOS 27/ }));
 
     await waitFor(() => expect(shared.saveDesktopConfigPatchMock).toHaveBeenCalledTimes(1));
     expect(shared.saveDesktopConfigPatchMock).toHaveBeenCalledWith({
-      background: { type: "wallpaper", name: "macos-light.svg" },
-      dock: { ...shared.desktopConfig.dock, position: "bottom" },
+      background: { type: "wallpaper", name: "moraine-lake.jpg" },
+      dock: { position: "bottom" },
     });
   });
 
@@ -210,7 +227,7 @@ describe("DesignPicker", () => {
     );
   });
 
-  it("shows a generic error when the desktop-config save fails after the theme saved", async () => {
+  it("reports partial success when desktop defaults fail after the theme saved", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     shared.saveDesktopConfigPatchMock.mockRejectedValueOnce(new Error("PUT /api/settings/desktop 500"));
     const { getByRole } = render(<DesignPicker />);
@@ -219,7 +236,9 @@ describe("DesignPicker", () => {
 
     await waitFor(() => {
       const alert = getByRole("alert");
-      expect(alert.textContent).toContain("try again");
+      expect(alert.textContent).toContain("Design applied");
+      expect(alert.textContent).toContain("wallpaper");
+      expect(alert.textContent).not.toContain("Couldn't apply that design");
       expect(alert.textContent).not.toContain("500");
     });
     // Theme save stays primary and is not rolled back.

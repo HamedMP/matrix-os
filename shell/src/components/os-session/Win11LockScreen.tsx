@@ -20,18 +20,13 @@ function Win11LockClock() {
   const [tick, setTick] = useState(0);
   const now = isClient ? new Date() : null;
 
-  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- setTick only fires from setTimeout/setInterval callbacks (never a synchronous cascade); depending on [tick] re-aligns the next timeout to the upcoming minute boundary after each update.
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- setTick only fires from the setTimeout callback (never a synchronous cascade); depending on [tick] re-arms the timeout to the upcoming minute boundary after each update, so a single timer is enough — a parallel interval would double-fire on the boundary.
   useEffect(() => {
     if (!isClient) return;
     const stamp = new Date();
     const ms = (60 - stamp.getSeconds()) * 1000 - stamp.getMilliseconds();
-    const bump = () => setTick((t) => t + 1);
-    const timeout = setTimeout(bump, ms);
-    const interval = setInterval(bump, 60_000);
-    return () => {
-      clearTimeout(timeout);
-      clearInterval(interval);
-    };
+    const timeout = setTimeout(() => setTick((t) => t + 1), ms);
+    return () => clearTimeout(timeout);
   }, [isClient, tick]);
 
   return (

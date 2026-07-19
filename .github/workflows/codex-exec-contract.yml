@@ -1,0 +1,117 @@
+name: Codex Provider Contracts
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 5 * * *"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/codex-exec-contract.yml"
+      - "packages/gateway/src/coding-agents/codex-exec-contract.json"
+      - "packages/gateway/src/coding-agents/codex-app-server-contract.json"
+      - "packages/gateway/src/coding-agents/codex-app-server-version.ts"
+      - "packages/gateway/src/coding-agents/codex-app-server-runner.mjs"
+      - "packages/gateway/src/coding-agents/codex-contract-version.ts"
+      - "packages/gateway/src/coding-agents/codex-events.ts"
+      - "packages/gateway/src/coding-agents/codex-event-bridge.ts"
+      - "packages/gateway/src/coding-agents/codex-executable.ts"
+      - "packages/gateway/src/coding-agents/codex-provider-version-check.mjs"
+      - "packages/gateway/src/coding-agents/codex-runner.mjs"
+      - "packages/gateway/src/coding-agents/codex-version.ts"
+      - "packages/gateway/src/coding-agents/workspace-provider.ts"
+      - "packages/gateway/src/agent-launcher.ts"
+      - "packages/contracts/src/index.ts"
+      - "shell/src/components/terminal/terminal-agent-options.ts"
+      - "distro/customer-vps/host-bin/matrix-install-developer-tools"
+      - "distro/customer-vps/host-bin/matrix-install-tool-pack"
+      - "Dockerfile"
+      - "Dockerfile.dev"
+      - "scripts/check-codex-exec-contract.mjs"
+      - "scripts/lib/codex-provider-contract-check.mjs"
+      - "tests/scripts/check-codex-provider-contracts.test.ts"
+  pull_request:
+    paths:
+      - ".github/workflows/codex-exec-contract.yml"
+      - "packages/gateway/src/coding-agents/codex-exec-contract.json"
+      - "packages/gateway/src/coding-agents/codex-app-server-contract.json"
+      - "packages/gateway/src/coding-agents/codex-app-server-version.ts"
+      - "packages/gateway/src/coding-agents/codex-app-server-runner.mjs"
+      - "packages/gateway/src/coding-agents/codex-contract-version.ts"
+      - "packages/gateway/src/coding-agents/codex-events.ts"
+      - "packages/gateway/src/coding-agents/codex-event-bridge.ts"
+      - "packages/gateway/src/coding-agents/codex-executable.ts"
+      - "packages/gateway/src/coding-agents/codex-provider-version-check.mjs"
+      - "packages/gateway/src/coding-agents/codex-runner.mjs"
+      - "packages/gateway/src/coding-agents/codex-version.ts"
+      - "packages/gateway/src/coding-agents/workspace-provider.ts"
+      - "packages/gateway/src/agent-launcher.ts"
+      - "packages/contracts/src/index.ts"
+      - "shell/src/components/terminal/terminal-agent-options.ts"
+      - "distro/customer-vps/host-bin/matrix-install-developer-tools"
+      - "distro/customer-vps/host-bin/matrix-install-tool-pack"
+      - "Dockerfile"
+      - "Dockerfile.dev"
+      - "scripts/check-codex-exec-contract.mjs"
+      - "scripts/lib/codex-provider-contract-check.mjs"
+      - "tests/scripts/check-codex-provider-contracts.test.ts"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-exec-contract
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify latest Codex provider contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Resolve latest published version
+        id: latest
+        run: |
+          set -euo pipefail
+          version="$(pnpm view @openai/codex version --json | node -e 'let value=""; process.stdin.on("data", chunk => value += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(value)))')"
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch tagged JSONL schema
+        env:
+          CODEX_VERSION: ${{ steps.latest.outputs.version }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --max-time 30 \
+            "https://raw.githubusercontent.com/openai/codex/rust-v${CODEX_VERSION}/codex-rs/exec/src/exec_events.rs" \
+            --output /tmp/codex-exec-events.rs
+          test -s /tmp/codex-exec-events.rs
+
+      - name: Generate published app-server schema
+        env:
+          CODEX_VERSION: ${{ steps.latest.outputs.version }}
+        run: |
+          set -euo pipefail
+          installed_version="$(pnpm dlx "@openai/codex@${CODEX_VERSION}" --version | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p' | head -1)"
+          test "$installed_version" = "$CODEX_VERSION"
+          pnpm dlx "@openai/codex@${CODEX_VERSION}" app-server generate-json-schema \
+            --experimental \
+            --out /tmp/codex-app-server-schema
+          test -s /tmp/codex-app-server-schema/codex_app_server_protocol.schemas.json
+
+      - name: Verify published version and protocol digests
+        env:
+          CODEX_VERSION: ${{ steps.latest.outputs.version }}
+        run: |
+          node scripts/check-codex-exec-contract.mjs \
+            "$CODEX_VERSION" \
+            /tmp/codex-exec-events.rs \
+            /tmp/codex-app-server-schema/codex_app_server_protocol.schemas.json

@@ -5,8 +5,8 @@ import { CheckIcon } from "lucide-react";
 import { DEFAULT_THEME, saveTheme, useTheme, type Theme } from "@/hooks/useTheme";
 import {
   saveDesktopConfigPatch,
-  useDesktopConfig,
   type DesktopConfig,
+  type DesktopConfigPatch,
 } from "@/hooks/useDesktopConfig";
 import {
   getPreset,
@@ -14,6 +14,8 @@ import {
   WIN11_THEME,
   WINXP_THEME,
 } from "@/lib/theme-presets";
+import { useOsSessionStore } from "@/components/os-session/os-session-store";
+import { isBootDesign } from "@/components/os-session/os-session-utils";
 
 /* ── Design options ────────────────────────────── */
 
@@ -42,7 +44,9 @@ const DESIGN_OPTIONS: DesignOption[] = [
 /** Bundled wallpapers applied when a design is picked. Designs missing from
     this map leave the user's background (and dock) untouched. */
 const DESIGN_BACKGROUNDS: Partial<Record<DesignStyle, DesktopConfig["background"]>> = {
-  "macos-glass": { type: "wallpaper", name: "macos-light.svg" },
+  // Product default: macOS deliberately starts on the first image shown in
+  // Appearance. macos-light.svg remains available as a user-selectable image.
+  "macos-glass": { type: "wallpaper", name: "moraine-lake.jpg" },
   winxp: { type: "wallpaper", name: "xp-bliss.svg" },
   win11: { type: "wallpaper", name: "win11-bloom.svg" },
 };
@@ -201,8 +205,6 @@ const PREVIEWS: Record<DesignStyle, () => React.ReactElement> = {
 export function DesignPicker() {
   const theme = useTheme();
   const activeId: DesignStyle = theme?.style ?? "flat";
-  const desktopConfig = useDesktopConfig();
-
   const [pendingId, setPendingId] = useState<DesignStyle | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -227,15 +229,22 @@ export function DesignPicker() {
     if (background) {
       try {
         const dockPosition = DESIGN_DOCK_POSITIONS[option.id];
-        const patch: Partial<DesktopConfig> = { background };
+        const patch: DesktopConfigPatch = { background };
         if (dockPosition) {
-          patch.dock = { ...desktopConfig.dock, position: dockPosition };
+          patch.dock = { position: dockPosition };
         }
         await saveDesktopConfigPatch(patch);
       } catch (err) {
         console.warn("[appearance] Failed to apply design desktop defaults:", err);
-        setError("Couldn't apply that design. Please try again.");
+        setError(
+          DESIGN_DOCK_POSITIONS[option.id]
+            ? "Design applied, but its wallpaper or Dock position couldn't be updated. Try those settings again below."
+            : "Design applied, but its wallpaper couldn't be updated. Try choosing it again below.",
+        );
       }
+    }
+    if (option.id !== activeId && isBootDesign(option.id)) {
+      useOsSessionStore.getState().beginBoot(option.id);
     }
     // No `finally` — React Compiler cannot lower TryStatement with a finalizer.
     setPendingId(null);

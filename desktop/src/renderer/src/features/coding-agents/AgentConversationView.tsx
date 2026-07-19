@@ -1,17 +1,29 @@
+import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
 import {
-  SafeAssistantPreviewSourceTextSchema,
-  SafeAssistantPreviewTextSchema,
-  type AgentThreadEvent,
-  type AgentThreadSnapshot,
-} from "@matrix-os/contracts";
-import { Bot, GitPullRequest, Send, UserRound, Wrench } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+  Check,
+  Copy,
+  Eye,
+  GitPullRequest,
+  Minus,
+  SquarePen,
+  SquareTerminal,
+  Wrench,
+  X,
+} from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import rehypeHighlight from "rehype-highlight";
+import remarkGfm from "remark-gfm";
+import { useMemo, useState } from "react";
 import { Button } from "../../design/primitives";
+import { redactCredentialsForDisplay } from "../../lib/transcript-redaction";
 import {
   codingAgentApprovalActionKey,
   codingAgentInputActionKey,
   useCodingAgentWorkspace,
 } from "../../stores/coding-agent-workspace";
+import { safeUrlTransform } from "../editor/MarkdownPreview";
+import { Conversation, ConversationContent } from "../chat/elements/conversation";
+import { PromptInput } from "../chat/elements/prompt-input";
 
 type ConversationStatus = "idle" | "loading" | "ready" | "error";
 type AssistantEvent = Extract<AgentThreadEvent, { type: "assistant.text.delta" | "assistant.text.completed" }>;
@@ -20,8 +32,21 @@ type ConversationItem =
   | { kind: "assistant"; key: string; events: AssistantEvent[]; order: number }
   | { kind: "tool"; key: string; events: ToolEvent[]; order: number }
   | { kind: "event"; event: AgentThreadEvent; order: number };
+type TimelineItem =
+  | Exclude<ConversationItem, { kind: "tool" }>
+  | { kind: "tool-run"; key: string; runs: Array<Extract<ConversationItem, { kind: "tool" }>>; order: number };
 
-const PREVIEW_MAX_CHARS = 240;
+// Defensive ceiling for one rendered message; each delta is already bounded by
+// the event schema (4,000 chars / 16KB), so this only guards runaway joins.
+const ASSISTANT_RENDER_MAX_CHARS = 64_000;
+const COLLAPSED_USER_MAX_CHARS = 600;
+const COLLAPSED_USER_MAX_LINES = 8;
+// Consecutive tool chips beyond this collapse behind a "+N earlier" toggle.
+const TOOL_RUN_COLLAPSE_THRESHOLD = 5;
+const TOOL_RUN_VISIBLE_TAIL = 3;
+
+const TRANSCRIPT_MARKDOWN_CLASS =
+  "prose-sm max-w-none text-sm leading-relaxed [&_a]:text-[var(--highlight)] [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--border-default)] [&_blockquote]:pl-3 [&_blockquote]:text-[var(--text-secondary)] [&_code]:rounded [&_code]:bg-[var(--bg-sunken)] [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[12px] [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:text-md [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:mb-1 [&_h3]:font-semibold [&_hr]:my-4 [&_hr]:border-[var(--border-subtle)] [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-[var(--border-subtle)] [&_pre]:bg-[var(--bg-sunken)] [&_pre]:p-3 [&_pre_code]:bg-transparent [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-[var(--border-subtle)] [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-[var(--border-subtle)] [&_th]:bg-[var(--bg-sunken)] [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_ul]:list-disc [&_ul]:pl-5";
 
 function conversationItems(events: AgentThreadEvent[]): ConversationItem[] {
   const assistants = new Map<string, AssistantEvent[]>();
@@ -53,109 +78,260 @@ function conversationItems(events: AgentThreadEvent[]): ConversationItem[] {
   return items.sort((left, right) => left.order - right.order);
 }
 
-function assistantCopy(events: AssistantEvent[]) {
+/** Batches consecutive tool items into one run so long runs can collapse. */
+function timelineItems(items: ConversationItem[]): TimelineItem[] {
+  const timeline: TimelineItem[] = [];
+  for (const item of items) {
+    if (item.kind !== "tool") {
+      timeline.push(item);
+      continue;
+    }
+    const previous = timeline.at(-1);
+    if (previous?.kind === "tool-run") {
+      previous.runs.push(item);
+      continue;
+    }
+    timeline.push({ kind: "tool-run", key: `run:${item.key}`, runs: [item], order: item.order });
+  }
+  return timeline;
+}
+
+function assistantText(events: AssistantEvent[]): { text: string; completed: boolean } {
   const deltas = events.filter(
     (event): event is Extract<AssistantEvent, { type: "assistant.text.delta" }> => event.type === "assistant.text.delta",
   );
   const completed = events.some((event) => event.type === "assistant.text.completed");
-  const source = deltas.map((event) => event.delta).join("").trim();
-  const safeSource = source && SafeAssistantPreviewSourceTextSchema.safeParse(source).success ? source : null;
-  const previewCandidate = safeSource && safeSource.length > PREVIEW_MAX_CHARS
-    ? `${safeSource.slice(0, PREVIEW_MAX_CHARS).trimEnd()}...`
-    : safeSource;
-  const preview = previewCandidate && SafeAssistantPreviewTextSchema.safeParse(previewCandidate).success
-    ? previewCandidate
-    : null;
-  const updates = `${deltas.length} ${deltas.length === 1 ? "text update" : "text updates"} received`;
-  const status = completed ? `${updates}, complete` : updates;
-  return {
-    title: completed ? "Assistant message" : deltas.length === 1 ? "Assistant update" : "Assistant updates",
-    status,
-    preview,
-    displayText: safeSource && safeSource.length <= PREVIEW_MAX_CHARS ? safeSource : preview,
-  };
+  // Redact BEFORE the defensive tail slice: truncation can sever a credential
+  // prefix (e.g. password=) while its value survives in the retained tail.
+  let text = redactCredentialsForDisplay(deltas.map((event) => event.delta).join(""));
+  if (text.length > ASSISTANT_RENDER_MAX_CHARS) {
+    text = `_Earlier content truncated._\n\n${text.slice(text.length - ASSISTANT_RENDER_MAX_CHARS)}`;
+  }
+  return { text, completed };
 }
 
-function AssistantBubble({ events }: { events: AssistantEvent[] }) {
-  const copy = assistantCopy(events);
+function occurredAtLabel(occurredAt: string): string {
+  const parsed = new Date(occurredAt);
+  return Number.isNaN(parsed.getTime())
+    ? ""
+    : parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function copyText(text: string): void {
+  const clipboard = navigator.clipboard;
+  if (!clipboard?.writeText) return;
+  clipboard.writeText(text).catch((err: unknown) => {
+    console.warn("[coding-agents] copy failed:", err instanceof Error ? err.message : String(err));
+  });
+}
+
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
   return (
-    <div className="flex max-w-[min(760px,92%)] items-start gap-2">
-      <span className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full" style={{ background: "var(--accent-muted)", color: "var(--accent)" }}>
-        <Bot size={15} aria-hidden="true" />
-      </span>
-      <article className="min-w-0 rounded-2xl rounded-tl-md border px-4 py-3" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <h3 className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>{copy.title}</h3>
-          <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>{events[0]?.occurredAt}</span>
-        </div>
-        {copy.displayText ? <p className="sr-only">{copy.preview ? `${copy.status}. ${copy.preview}` : copy.status}</p> : null}
-        {copy.displayText ? (
-          <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6" style={{ color: "var(--text-primary)" }}>
-            {copy.displayText}
-          </p>
-        ) : (
-          <p className="mt-1 text-xs" style={{ color: "var(--text-secondary)" }}>{copy.status}</p>
-        )}
-      </article>
+    <button
+      type="button"
+      aria-label={label}
+      className="flex h-6 w-6 items-center justify-center rounded hover:bg-[var(--bg-hover)]"
+      style={{ color: "var(--text-tertiary)" }}
+      onClick={() => {
+        copyText(text);
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1200);
+      }}
+    >
+      {copied ? <Check size={12} /> : <Copy size={12} />}
+    </button>
+  );
+}
+
+// Assistant messages render full-width markdown — no bubble — with a
+// hover-revealed meta row, matching the reference chat anatomy.
+function AssistantRow({ events }: { events: AssistantEvent[] }) {
+  const { text, completed } = useMemo(() => assistantText(events), [events]);
+  if (!text) {
+    return completed ? (
+      <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>(empty response)</p>
+    ) : null;
+  }
+  return (
+    <div className="group/assistant flex min-w-0 flex-col">
+      <div className={TRANSCRIPT_MARKDOWN_CLASS} style={{ color: "var(--text-primary)" }} data-selectable>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}
+          urlTransform={safeUrlTransform}
+          components={{
+            // Never auto-fetch remote images: a transcript image would fire a
+            // request to an arbitrary host the moment the thread opens
+            // (tracking pixel / exfiltration channel). Degrade to inert text.
+            img: ({ alt, src: imageSrc }) => (
+              <span
+                className="rounded border px-1.5 py-0.5 font-mono text-[11px]"
+                style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)" }}
+              >
+                image: {alt || "untitled"}{typeof imageSrc === "string" && imageSrc ? ` (${imageSrc})` : ""}
+              </span>
+            ),
+          }}
+        >
+          {text}
+        </ReactMarkdown>
+      </div>
+      <div className="mt-1 flex items-center gap-2 opacity-0 transition-opacity group-hover/assistant:opacity-100">
+        <CopyButton text={text} label="Copy assistant message" />
+        <span className="text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+          {occurredAtLabel(events[0]?.occurredAt ?? "")}
+        </span>
+      </div>
     </div>
   );
 }
 
-function UserBubble({ event }: { event: Extract<AgentThreadEvent, { type: "user.message" }> }) {
-  return (
-    <div className="ml-auto flex max-w-[min(720px,88%)] flex-row-reverse items-start gap-2">
-      <span className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full" style={{ background: "var(--bg-tertiary)", color: "var(--text-secondary)" }}>
-        <UserRound size={14} aria-hidden="true" />
-      </span>
-      <article className="min-w-0 rounded-2xl rounded-tr-md px-4 py-3" style={{ background: "var(--accent-muted)" }}>
-        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
-          <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>{event.occurredAt}</span>
-          <h3 className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>You</h3>
-        </div>
-        <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6" style={{ color: "var(--text-primary)" }}>{event.text}</p>
-      </article>
-    </div>
-  );
-}
-
-function ToolActivity({ events }: { events: ToolEvent[] }) {
+function UserRow({ event }: { event: Extract<AgentThreadEvent, { type: "user.message" }> }) {
   const [expanded, setExpanded] = useState(false);
+  const lines = event.text.split("\n").length;
+  const collapsible = event.text.length > COLLAPSED_USER_MAX_CHARS || lines > COLLAPSED_USER_MAX_LINES;
+  return (
+    <div className="group/user flex flex-col items-end gap-1">
+      <div
+        className="relative max-w-[80%] overflow-hidden rounded-2xl rounded-br-md border px-3.5 py-2 text-sm whitespace-pre-wrap"
+        style={{
+          borderColor: "var(--border-subtle)",
+          background: "var(--bg-sunken)",
+          color: "var(--text-primary)",
+          ...(collapsible && !expanded
+            ? { maxHeight: 176, maskImage: "linear-gradient(to bottom, black 60%, transparent 100%)" }
+            : {}),
+        }}
+        data-selectable
+      >
+        {event.text}
+      </div>
+      <div className="flex max-w-[80%] items-center gap-2">
+        {collapsible ? (
+          <button
+            type="button"
+            className="text-[11px]"
+            style={{ color: "var(--text-tertiary)" }}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? "Show less" : "Show full message"}
+          </button>
+        ) : null}
+        <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover/user:opacity-100">
+          <CopyButton text={event.text} label="Copy your message" />
+          <span className="text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+            {occurredAtLabel(event.occurredAt)}
+          </span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function toolKindIcon(displayName: string) {
+  if (/shell|command|terminal|bash|exec|run/i.test(displayName)) return SquareTerminal;
+  if (/write|edit|apply|patch|create/i.test(displayName)) return SquarePen;
+  if (/read|view|open|list|search|glob|grep/i.test(displayName)) return Eye;
+  return Wrench;
+}
+
+// A tool call renders as a one-line chip: kind icon, heading, muted preview,
+// and a trailing status glyph. Expansion reveals the same bounded detail copy
+// the old cards showed — no raw payloads.
+function ToolChip({ events }: { events: ToolEvent[] }) {
+  const [open, setOpen] = useState(false);
   const started = events.find((event): event is Extract<ToolEvent, { type: "tool.started" }> => event.type === "tool.started");
   const outputs = events.filter((event): event is Extract<ToolEvent, { type: "tool.output" }> => event.type === "tool.output");
   const completed = events.find((event): event is Extract<ToolEvent, { type: "tool.completed" }> => event.type === "tool.completed");
   const name = started?.displayName ?? "Tool";
-  const outcome = completed?.outcome === "success" ? "successfully"
-    : completed?.outcome === "failed" ? "with errors"
-      : completed?.outcome === "cancelled" ? "cancelled"
-        : "";
+  const failed = completed?.outcome === "failed";
   const detail = completed
-    ? `${name} completed ${outcome}${outputs.length ? outputs.some((event) => event.truncated) ? " after receiving partial output" : " after receiving output" : " without captured output"}`
+    ? `${name} completed ${completed.outcome === "success" ? "successfully" : completed.outcome === "failed" ? "with errors" : "cancelled"}${outputs.length ? (outputs.some((event) => event.truncated) ? " after receiving partial output" : " after receiving output") : " without captured output"}`
     : `${name} running${outputs.length ? " with output received" : ""}`;
+  const KindIcon = toolKindIcon(name);
+  const StatusIcon = completed ? (failed ? X : Check) : Minus;
   return (
-    <div className="mx-auto w-full max-w-[760px] rounded-lg border px-3 py-2" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}>
-      <div className="flex items-start gap-2">
-        <Wrench size={14} className="mt-0.5 shrink-0" style={{ color: "var(--text-tertiary)" }} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>Tool activity</h3>
-            <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>{events[0]?.occurredAt}</span>
-          </div>
-          <p className="mt-0.5 text-xs" style={{ color: "var(--text-secondary)" }}>{detail}</p>
-          <p className="mt-1 text-[11px] font-medium" style={{ color: "var(--text-tertiary)" }}>
-            {outputs.length} {outputs.length === 1 ? "output" : "outputs"}
-          </p>
-          <button type="button" className="mt-1 text-[11px] font-medium" style={{ color: "var(--accent)" }} aria-label={`${expanded ? "Collapse" : "Expand"} tool activity Tool activity`} onClick={() => setExpanded((value) => !value)}>
-            {expanded ? "Hide details" : "Show details"}
-          </button>
-          {expanded ? (
-            <div className="mt-2 grid gap-1 text-xs" style={{ color: "var(--text-secondary)" }}>
-              {started ? <div><p>Started {started.kind}</p><p>Tool run started</p></div> : null}
-              {outputs.map((output, index) => <div key={output.eventId}><p>Output {index + 1}</p><p>{output.truncated ? "Output received, partial" : "Output received"}</p></div>)}
-              {completed ? <div><p>Completed</p><p>{completed.outcome === "success" ? "Completed successfully" : completed.outcome === "failed" ? "Failed" : "Cancelled"}</p></div> : null}
-            </div>
-          ) : null}
+    <div className="flex min-w-0 flex-col">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left hover:bg-[var(--bg-hover)]"
+        aria-label={`Tool call ${name}`}
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <KindIcon size={14} className="shrink-0" style={{ color: "var(--text-tertiary)" }} />
+        <span
+          className="min-w-0 shrink truncate text-[12px] font-medium"
+          style={{ color: failed ? "var(--danger)" : "var(--text-primary)" }}
+        >
+          {name}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[12px]" style={{ color: "var(--text-tertiary)" }}>
+          {detail}
+        </span>
+        <StatusIcon
+          size={13}
+          className="shrink-0"
+          style={{ color: failed ? "var(--danger)" : completed ? "var(--success)" : "var(--text-tertiary)" }}
+          aria-label={completed ? (failed ? "Failed" : "Completed") : "Running"}
+        />
+      </button>
+      {open ? (
+        <div className="mt-1 ml-7 border-l pl-3" style={{ borderColor: "var(--border-subtle)" }}>
+          <pre className="max-h-64 overflow-auto font-mono text-[11px] leading-relaxed whitespace-pre-wrap" style={{ color: "var(--text-secondary)" }} data-selectable>
+            {detail}
+            {outputs.some((event) => event.truncated) ? "\nOutput was truncated for display." : ""}
+          </pre>
         </div>
-      </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ToolRun({ runs }: { runs: Array<Extract<ConversationItem, { kind: "tool" }>> }) {
+  const [showAll, setShowAll] = useState(false);
+  const collapsed = !showAll && runs.length > TOOL_RUN_COLLAPSE_THRESHOLD;
+  const visible = collapsed ? runs.slice(runs.length - TOOL_RUN_VISIBLE_TAIL) : runs;
+  const hiddenCount = runs.length - visible.length;
+  return (
+    <section aria-label={`${runs.length} tool ${runs.length === 1 ? "call" : "calls"}`} className="flex flex-col gap-0.5">
+      {collapsed ? (
+        <button
+          type="button"
+          className="self-start rounded-md px-1 py-0.5 text-[11px] hover:bg-[var(--bg-hover)]"
+          style={{ color: "var(--text-tertiary)" }}
+          onClick={() => setShowAll(true)}
+        >
+          +{hiddenCount} earlier tool {hiddenCount === 1 ? "call" : "calls"}
+        </button>
+      ) : null}
+      {!collapsed && runs.length > TOOL_RUN_COLLAPSE_THRESHOLD ? (
+        <button
+          type="button"
+          className="self-start rounded-md px-1 py-0.5 text-[11px] hover:bg-[var(--bg-hover)]"
+          style={{ color: "var(--text-tertiary)" }}
+          onClick={() => setShowAll(false)}
+        >
+          Show fewer tool calls
+        </button>
+      ) : null}
+      {visible.map((run) => (
+        <ToolChip key={run.key} events={run.events} />
+      ))}
+    </section>
+  );
+}
+
+function WorkingRow() {
+  return (
+    <div className="flex items-center gap-2" role="status" aria-label="Agent is working">
+      <span className="flex items-center gap-1">
+        <span className="h-1 w-1 animate-pulse rounded-full" style={{ background: "var(--text-tertiary)" }} />
+        <span className="h-1 w-1 animate-pulse rounded-full [animation-delay:200ms]" style={{ background: "var(--text-tertiary)" }} />
+        <span className="h-1 w-1 animate-pulse rounded-full [animation-delay:400ms]" style={{ background: "var(--text-tertiary)" }} />
+      </span>
+      <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Working…</span>
     </div>
   );
 }
@@ -211,10 +387,10 @@ function SystemEvent({ event, answeredInputs, resolvedApprovals }: {
   const approvalKey = approval ? codingAgentApprovalActionKey(approval.threadId, approval.approvalId) : null;
   const inputKey = input ? codingAgentInputActionKey(input.threadId, input.requestId) : null;
   return (
-    <div className="mx-auto w-full max-w-[760px] rounded-lg border px-3 py-2" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}>
+    <div className="w-full rounded-lg border px-3 py-2" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}>
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>{copy.title}</h3>
-        <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>{event.occurredAt}</span>
+        <span className="text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>{occurredAtLabel(event.occurredAt)}</span>
       </div>
       <p className="mt-0.5 text-xs" style={{ color: "var(--text-secondary)" }}>{copy.detail}</p>
       {approval && approvalKey && !resolvedApprovals.has(approvalKey) ? (
@@ -256,7 +432,6 @@ function ConversationComposer({ threadId, waitingForAction }: { threadId: string
   const turnError = useCodingAgentWorkspace((state) => state.turnError);
   const send = useCodingAgentWorkspace((state) => state.sendThreadMessage);
   const submitting = turnStatus === "submitting" && turnThreadId === threadId;
-  useEffect(() => setMessage(""), [threadId]);
 
   async function submit() {
     if (!message.trim() || submitting || waitingForAction) return;
@@ -265,20 +440,23 @@ function ConversationComposer({ threadId, waitingForAction }: { threadId: string
   }
 
   return (
-    <div className="shrink-0 border-t p-3" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
-      <div className="mx-auto max-w-[820px] rounded-xl border p-2" style={{ borderColor: turnError && turnThreadId === threadId ? "var(--danger)" : "var(--border-default)", background: "var(--bg-overlay)" }}>
-        <textarea aria-label="Message conversation" className="min-h-[72px] w-full resize-none bg-transparent px-2 py-1 text-sm leading-6 outline-none" maxLength={24_000} disabled={waitingForAction} placeholder={waitingForAction ? "Respond to the pending request above to continue" : "Ask a follow-up…"} style={{ color: "var(--text-primary)" }} value={message} onChange={(event) => setMessage(event.currentTarget.value)} onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
-            event.preventDefault();
-            void submit();
-          }
-        }} />
-        <div className="flex items-center justify-between gap-3 px-1 pt-1">
-          <p className="min-h-4 text-xs" style={{ color: "var(--danger)" }}>{turnThreadId === threadId ? turnError : null}</p>
-          <Button variant="primary" aria-label="Send message" disabled={submitting || waitingForAction || !message.trim()} onClick={() => void submit()}>
-            <Send size={14} /> {submitting ? "Sending" : "Send"}
-          </Button>
-        </div>
+    <div className="shrink-0 px-4 pb-4">
+      <div className="mx-auto w-full max-w-[760px]">
+        {turnThreadId === threadId && turnError ? (
+          <p className="mb-1 px-1 text-xs" style={{ color: "var(--danger)" }}>{turnError}</p>
+        ) : null}
+        <PromptInput
+          value={message}
+          onChange={setMessage}
+          onSubmit={() => void submit()}
+          busy={submitting}
+          disabled={waitingForAction || submitting}
+          // Matches the CreateAgentTurnRequestSchema message cap so oversized
+          // drafts are prevented client-side instead of failing generically.
+          maxLength={24_000}
+          ariaLabel="Message conversation"
+          placeholder={waitingForAction ? "Respond to the pending request above to continue" : "Ask a follow-up…"}
+        />
       </div>
     </div>
   );
@@ -295,8 +473,7 @@ export function AgentConversationView({
   error: string | null;
   canSendTurns: boolean;
 }) {
-  const endRef = useRef<HTMLDivElement | null>(null);
-  const items = useMemo(() => conversationItems(snapshot?.events.items ?? []), [snapshot?.events.items]);
+  const items = useMemo(() => timelineItems(conversationItems(snapshot?.events.items ?? [])), [snapshot?.events.items]);
   const answeredInputs = useMemo(() => new Set((snapshot?.events.items ?? [])
     .filter((event) => event.type === "user_input.answered")
     .map((event) => codingAgentInputActionKey(event.threadId, event.requestId))), [snapshot?.events.items]);
@@ -306,14 +483,16 @@ export function AgentConversationView({
   const resolvedApprovals = useMemo(() => new Set((snapshot?.events.items ?? [])
     .filter((event) => event.type === "approval.resolved")
     .map((event) => codingAgentApprovalActionKey(event.threadId, event.approvalId))), [snapshot?.events.items]);
-  useEffect(() => {
-    const target = endRef.current as (HTMLDivElement & { scrollIntoView?: (options?: ScrollIntoViewOptions) => void }) | null;
-    target?.scrollIntoView?.({ block: "end" });
-  }, [items.length, snapshot?.thread.id]);
 
   if (status === "loading") return <div className="flex min-h-[360px] items-center justify-center text-sm" style={{ color: "var(--text-secondary)" }}>Loading conversation…</div>;
   if (status === "error") return <div className="flex min-h-[360px] items-center justify-center p-6 text-sm" style={{ color: "var(--danger)" }}>{error ?? "Thread state unavailable"}</div>;
   if (!snapshot) return <div className="flex min-h-[360px] items-center justify-center p-6 text-center text-sm" style={{ color: "var(--text-secondary)" }}>Choose a conversation from the project navigator, or start a new chat.</div>;
+
+  const running = snapshot.thread.status === "running" || snapshot.thread.status === "starting" || snapshot.thread.status === "queued";
+  const lastItem = items.at(-1);
+  const streamingAssistant = lastItem?.kind === "assistant"
+    && !lastItem.events.some((event) => event.type === "assistant.text.completed");
+  const showWorking = running && !streamingAssistant;
 
   return (
     <section aria-label={`Conversation ${snapshot.thread.title}`} className="ph-no-capture flex min-h-[460px] min-w-0 flex-1 flex-col overflow-hidden" style={{ background: "var(--bg-primary)" }}>
@@ -327,23 +506,27 @@ export function AgentConversationView({
         </div>
         {snapshot.thread.attention !== "none" ? <span className="rounded-full px-2 py-1 text-[10px] font-semibold capitalize" style={{ background: "var(--warning-muted)", color: "var(--warning)" }}>{snapshot.thread.attention.replaceAll("_", " ")}</span> : null}
       </header>
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-5">
-        {items.map((item) => item.kind === "assistant" ? <AssistantBubble key={item.key} events={item.events} />
-          : item.kind === "tool" ? <ToolActivity key={item.key} events={item.events} />
-            : item.event.type === "user.message" ? <UserBubble key={item.event.eventId} event={item.event} />
-              : <SystemEvent key={item.event.eventId} event={item.event} answeredInputs={answeredInputs} resolvedApprovals={resolvedApprovals} />)}
-        {items.length === 0 ? (
-          <p className="py-12 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>
-            {canSendTurns ? "This conversation is ready. Send a message to continue." : "No messages yet."}
-          </p>
-        ) : null}
-        <div ref={endRef} />
-      </div>
+      <Conversation key={`transcript:${snapshot.thread.id}`}>
+        <ConversationContent>
+          {items.map((item) =>
+            item.kind === "assistant" ? <AssistantRow key={item.key} events={item.events} />
+              : item.kind === "tool-run" ? <ToolRun key={item.key} runs={item.runs} />
+                : item.event.type === "user.message" ? <UserRow key={item.event.eventId} event={item.event} />
+                  : <SystemEvent key={item.event.eventId} event={item.event} answeredInputs={answeredInputs} resolvedApprovals={resolvedApprovals} />)}
+          {showWorking ? <WorkingRow /> : null}
+          {items.length === 0 && !showWorking ? (
+            <p className="py-12 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>
+              {canSendTurns ? "Send a message to start the conversation." : "No messages yet."}
+            </p>
+          ) : null}
+        </ConversationContent>
+      </Conversation>
       {canSendTurns ? (
         // The gateway rejects turns while the thread waits for an approval or
         // input answer, so the composer is disabled rather than offering a
         // doomed send.
         <ConversationComposer
+          key={`composer:${snapshot.thread.id}`}
           threadId={snapshot.thread.id}
           waitingForAction={snapshot.thread.status === "waiting_for_approval" || snapshot.thread.status === "waiting_for_input"}
         />

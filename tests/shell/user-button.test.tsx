@@ -57,6 +57,7 @@ describe("UserButton", () => {
       }),
     );
     replaceMock.mockReset();
+    delete document.documentElement.dataset.matrixSelfHosted;
     Object.defineProperty(window, "location", {
       configurable: true,
       value: {
@@ -100,6 +101,27 @@ describe("UserButton", () => {
 
     expect(menu).toBeTruthy();
     expect((menu as HTMLElement).style.zIndex).toBe(String(SHELL_Z_INDEX.popover));
+  });
+
+  it("offers hosted users both computer-management actions", async () => {
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+
+    expect(screen.getByRole("menuitem", { name: "Switch computer" }).getAttribute("href")).toBe("/runtime");
+    expect(screen.getByRole("menuitem", { name: "Get another computer" }).getAttribute("href")).toBe("/runtime?new=1");
+  });
+
+  it("excludes hosted computer actions in self-hosted mode", async () => {
+    document.documentElement.dataset.matrixSelfHosted = "1";
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+
+    expect(screen.getByRole("button", { name: "Self-hosted Matrix OS" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "Switch computer" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Get another computer" })).toBeNull();
   });
 
   it("clears the Matrix app session before signing out through Clerk", async () => {

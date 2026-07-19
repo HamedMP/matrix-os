@@ -10,6 +10,7 @@ export type NativeAppRoute =
   | "/(tabs)/chat"
   | "/(tabs)/mission-control"
   | "/(tabs)/apps"
+  | "/(tabs)/workspaces"
   | "/(tabs)/settings"
   | "/canvas"
   | "/agents"
@@ -25,7 +26,7 @@ const NATIVE_ROUTE_BY_SLUG: Record<string, NativeAppRoute> = {
   "mission-control": "/(tabs)/mission-control",
   apps: "/(tabs)/apps",
   files: "/files",
-  ...(CODING_AGENTS_MOBILE_WORKSPACE ? { agents: "/agents" as const } : {}),
+  ...(CODING_AGENTS_MOBILE_WORKSPACE ? { agents: "/(tabs)/workspaces" as const } : {}),
   settings: "/(tabs)/settings",
   canvas: "/canvas",
   whiteboard: "/canvas",

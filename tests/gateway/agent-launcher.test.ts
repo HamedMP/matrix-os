@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
 import {
   buildAgentLaunch,
   createAgentLauncher,
@@ -6,55 +7,179 @@ import {
 } from "../../packages/gateway/src/agent-launcher.js";
 
 describe("agent-launcher", () => {
+  function commandError(code: string, message = code): Error & { code: string } {
+    return Object.assign(new Error(message), { code });
+  }
+
   function claudeSettings(args: string[]): Record<string, unknown> {
     const settingsIndex = args.indexOf("--settings");
     expect(settingsIndex).toBeGreaterThanOrEqual(0);
     return JSON.parse(args[settingsIndex + 1]!) as Record<string, unknown>;
   }
 
-  it("detects installed, missing, and auth-needed agents without leaking raw command errors", async () => {
-    const runCommand = vi.fn(async (command: string, args: string[]) => {
-      if (args[0] === "--version" && command !== "opencode") {
-        return { stdout: `${command} 1.0.0\n`, stderr: "" };
-      }
-      if (args[0] === "--version" && command === "opencode") {
-        throw new Error("ENOENT: opencode missing from /usr/bin");
-      }
-      if (args[0] === "login" && args[1] === "status" && command === "codex") {
-        throw new Error("not logged in: token sk-secret");
-      }
-      return { stdout: "ok\n", stderr: "" };
+  it("starts all four installation probes before any finishes and keeps stable order", async () => {
+    const started: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const runCommand = vi.fn(async (command: string, args: string[], options: { timeout: number }) => {
+      expect(args).toEqual(["--version"]);
+      expect(options.timeout).toBe(5_000);
+      started.push(command);
+      await gate;
+      return {
+        stdout: command === "codex" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : `${command} 1.0.0\n`,
+        stderr: "",
+      };
     });
     const launcher = createAgentLauncher({ runCommand });
 
-    const result = await launcher.detectAgents();
+    const resultPromise = launcher.detectAgentInstallations();
+    await vi.waitFor(() => {
+      expect(started).toEqual(["claude", "codex", "opencode", "pi"]);
+    });
+    release();
+
+    const result = await resultPromise;
+    expect(result.agents.map((agent) => agent.id)).toEqual(["claude", "codex", "opencode", "pi"]);
+  });
+
+  it("isolates missing and timed-out installation probes without discarding successful results", async () => {
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      expect(args).toEqual(["--version"]);
+      if (command === "opencode") throw commandError("ENOENT", "private missing path");
+      if (command === "codex") throw commandError("ETIMEDOUT", "private timeout detail");
+      return { stdout: `${command} 1.0.0\n`, stderr: "" };
+    });
+    const launcher = createAgentLauncher({ runCommand });
+
+    const result = await launcher.detectAgentInstallations();
 
     expect(result.agents.find((agent) => agent.id === "claude")).toMatchObject({
+      installState: "installed",
       installed: true,
-      authState: "ok",
+      authState: "unknown",
+      errorCode: null,
     });
     expect(result.agents.find((agent) => agent.id === "codex")).toMatchObject({
-      installed: true,
-      authState: "required",
-      errorCode: "agent_auth_required",
+      installState: "unknown",
+      installed: null,
+      errorCode: "agent_check_failed",
     });
     expect(result.agents.find((agent) => agent.id === "opencode")).toMatchObject({
+      installState: "missing",
       installed: false,
       authState: "unknown",
       errorCode: "agent_missing",
     });
-    expect(JSON.stringify(result)).not.toContain("sk-secret");
+    expect(result.agents.find((agent) => agent.id === "pi")).toMatchObject({
+      installState: "installed",
+      installed: true,
+      errorCode: null,
+    });
+    expect(JSON.stringify(result)).not.toContain("private");
+  });
+
+  it("never invokes authentication commands during installation detection", async () => {
+    const runCommand = vi.fn(async (command: string) => ({
+      stdout: command === "codex" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : `${command} 1.0.0\n`,
+      stderr: "",
+    }));
+    const launcher = createAgentLauncher({ runCommand });
+
+    await launcher.detectAgentInstallations();
+
+    expect(runCommand).toHaveBeenCalledTimes(4);
+    expect(runCommand.mock.calls.every(([, args]) => args[0] === "--version")).toBe(true);
+  });
+
+  it("checks Claude and Codex credentials concurrently after each version probe", async () => {
+    const started: string[] = [];
+    let releaseVersions!: () => void;
+    let releaseAuth!: () => void;
+    const versionGate = new Promise<void>((resolve) => {
+      releaseVersions = resolve;
+    });
+    const authGate = new Promise<void>((resolve) => {
+      releaseAuth = resolve;
+    });
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      const key = `${command}:${args.join(" ")}`;
+      started.push(key);
+      if (args[0] === "--version") {
+        await versionGate;
+        return {
+          stdout: command === "codex" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : `${command} 1.0.0\n`,
+          stderr: "",
+        };
+      }
+      await authGate;
+      return { stdout: "ok\n", stderr: "" };
+    });
+    const launcher = createAgentLauncher({ runCommand });
+
+    const resultPromise = launcher.detectAgentCredentials();
+    await vi.waitFor(() => {
+      expect(started).toEqual(["claude:--version", "codex:--version"]);
+    });
+    releaseVersions();
+    await vi.waitFor(() => {
+      expect(started).toEqual([
+        "claude:--version",
+        "codex:--version",
+        "claude:auth status",
+        "codex:login status",
+      ]);
+    });
+    releaseAuth();
+
+    const result = await resultPromise;
+    expect(result.agents.map((agent) => agent.id)).toEqual(["claude", "codex"]);
+    expect(result.agents.every((agent) => agent.authState === "ok")).toBe(true);
+  });
+
+  it("distinguishes auth-required exits from credential check failures", async () => {
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (args[0] === "--version") {
+        return {
+          stdout: command === "codex" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : `${command} 1.0.0\n`,
+          stderr: "",
+        };
+      }
+      if (command === "claude") throw Object.assign(new Error("not logged in"), { code: 1 });
+      throw commandError("ETIMEDOUT", "credential probe timed out");
+    });
+    const launcher = createAgentLauncher({ runCommand });
+
+    const result = await launcher.detectAgentCredentials();
+
+    expect(result.agents.find((agent) => agent.id === "claude")).toMatchObject({
+      installState: "installed",
+      authState: "required",
+      errorCode: "agent_auth_required",
+    });
+    expect(result.agents.find((agent) => agent.id === "codex")).toMatchObject({
+      installState: "installed",
+      authState: "error",
+      errorCode: "agent_check_failed",
+    });
   });
 
   it("checks auth with the Matrix runtime home so terminal logins are reused", async () => {
-    const runCommand = vi.fn(async () => ({ stdout: "ok\n", stderr: "" }));
+    const runCommand = vi.fn(async (command: string, args: string[]) => ({
+      stdout: command === "codex" && args[0] === "--version"
+        ? `codex-cli ${CODEX_VERIFIED_VERSION}\n`
+        : "ok\n",
+      stderr: "",
+    }));
     const launcher = createAgentLauncher({
       runCommand,
       cwd: "/home/matrix/home",
       runtimeHome: "/home/matrix/home",
     });
 
-    await launcher.detectAgents();
+    await launcher.detectAgentCredentials();
 
     expect(runCommand).toHaveBeenCalledWith("codex", ["login", "status"], expect.objectContaining({
       cwd: "/home/matrix/home",
@@ -78,7 +203,7 @@ describe("agent-launcher", () => {
     });
 
     try {
-      await launcher.detectAgents();
+      await launcher.detectAgentInstallations();
     } finally {
       if (originalPath === undefined) {
         delete process.env.PATH;
@@ -99,6 +224,102 @@ describe("agent-launcher", () => {
     }));
   });
 
+  it("uses one configured absolute Codex executable for detection and launch", async () => {
+    const codexExecutable = "/opt/matrix/runtime/node/bin/codex";
+    const runCommand = vi.fn(async (command: string, args: string[]) => ({
+      stdout: command === codexExecutable && args[0] === "--version"
+        ? `codex-cli ${CODEX_VERIFIED_VERSION}\n`
+        : "ok\n",
+      stderr: "",
+    }));
+    const launcher = createAgentLauncher({ runCommand, codexExecutable });
+
+    await launcher.detectAgentCredentials();
+    const launch = launcher.buildLaunch({
+      agent: "codex",
+      cwd: "/home/matrix/home/projects/repo",
+      prompt: "fix tests",
+      sandbox: { enabled: true, mode: "workspace-write" },
+      providerEventPath: "/home/matrix/home/system/coding-agents/provider-events/sess_bound.jsonl",
+    });
+
+    expect(runCommand).toHaveBeenCalledWith(codexExecutable, ["--version"], expect.any(Object));
+    expect(runCommand).toHaveBeenCalledWith(codexExecutable, ["login", "status"], expect.any(Object));
+    expect(launch.command).toBe(process.execPath);
+    expect(launch.args.slice(1, 4)).toEqual([
+      "/home/matrix/home/system/coding-agents/provider-events/sess_bound.jsonl",
+      CODEX_VERIFIED_VERSION,
+      codexExecutable,
+    ]);
+  });
+
+  it("keeps an unverified configured Codex version installed but workspace-incompatible", async () => {
+    const codexExecutable = "/opt/matrix/runtime/node/bin/codex";
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === codexExecutable && args[0] === "--version") {
+        return { stdout: "codex-cli 0.144.1\n", stderr: "" };
+      }
+      return { stdout: `${command} 1.0.0\n`, stderr: "" };
+    });
+    const launcher = createAgentLauncher({ runCommand, codexExecutable });
+
+    const result = await launcher.detectAgentInstallations();
+
+    expect(result.agents.find((agent) => agent.id === "codex")).toMatchObject({
+      installState: "installed",
+      installed: true,
+      authState: "unknown",
+      workspaceCompatibility: "unsupported",
+      errorCode: "agent_version_unsupported",
+      version: "codex-cli 0.144.1",
+    });
+    expect(runCommand).not.toHaveBeenCalledWith(codexExecutable, ["login", "status"], expect.any(Object));
+  });
+
+  it("reports unsupported Codex credentials without running the authentication probe", async () => {
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === "codex" && args[0] === "--version") {
+        return { stdout: "codex-cli 0.144.1\n", stderr: "" };
+      }
+      return { stdout: `${command} 1.0.0\n`, stderr: "" };
+    });
+    const launcher = createAgentLauncher({ runCommand });
+
+    const result = await launcher.detectAgentCredentials();
+
+    expect(result.agents.find((agent) => agent.id === "codex")).toMatchObject({
+      installState: "installed",
+      installed: true,
+      authState: "error",
+      workspaceCompatibility: "unsupported",
+      errorCode: "agent_version_unsupported",
+    });
+    expect(runCommand).not.toHaveBeenCalledWith("codex", ["login", "status"], expect.any(Object));
+  });
+
+  it("deduplicates overlapping installation scans and expires the five-second cache", async () => {
+    let now = 1_000;
+    const runCommand = vi.fn(async (command: string) => ({
+      stdout: command === "codex" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : `${command} 1.0.0\n`,
+      stderr: "",
+    }));
+    const launcher = createAgentLauncher({ runCommand, now: () => now });
+
+    const [first, overlapping] = await Promise.all([
+      launcher.detectAgentInstallations(),
+      launcher.detectAgentInstallations(),
+    ]);
+    expect(overlapping).toBe(first);
+    expect(runCommand).toHaveBeenCalledTimes(4);
+
+    expect(await launcher.detectAgentInstallations()).toBe(first);
+    expect(runCommand).toHaveBeenCalledTimes(4);
+
+    now += 5_001;
+    expect(await launcher.detectAgentInstallations()).not.toBe(first);
+    expect(runCommand).toHaveBeenCalledTimes(8);
+  });
+
   it("constructs non-interactive Codex exec argv without shell interpolation", () => {
     const launch = buildAgentLaunch({
       agent: "codex",
@@ -112,12 +333,12 @@ describe("agent-launcher", () => {
       args: [
         "--ask-for-approval",
         "never",
-        "exec",
-        "--skip-git-repo-check",
         "--sandbox",
         "workspace-write",
         "--add-dir",
         "/tmp/matrixos-codex",
+        "exec",
+        "--skip-git-repo-check",
         "--",
         "fix tests; rm -rf /",
       ],
@@ -157,12 +378,12 @@ describe("agent-launcher", () => {
         expect(launch.args).toEqual([
           "--ask-for-approval",
           "never",
-          "exec",
-          "--skip-git-repo-check",
           "--sandbox",
           "workspace-write",
           "--add-dir",
           "/tmp/sandbox",
+          "exec",
+          "--skip-git-repo-check",
           "--",
           "--dangerously-bypass-sandbox",
         ]);
@@ -191,20 +412,21 @@ describe("agent-launcher", () => {
     expect(launchEmpty.args).not.toContain("--");
   });
 
-  it("places Codex exec controls before sandbox flags and the prompt last", () => {
+  it("places Codex security controls before exec and the prompt last", () => {
     const launch = buildAgentLaunch({
       agent: "codex",
       cwd: "/home/matrixos/home/projects/repo",
       prompt: "--help",
       sandbox: { enabled: true, writableRoots: ["/tmp/sandbox"] },
     });
-    expect(launch.args.slice(0, 4)).toEqual(["--ask-for-approval", "never", "exec", "--skip-git-repo-check"]);
     const sandboxIndex = launch.args.indexOf("--sandbox");
     const writableRootIndex = launch.args.indexOf("--add-dir");
+    const execIndex = launch.args.indexOf("exec");
     const dashDashIndex = launch.args.indexOf("--");
-    expect(sandboxIndex).toBeGreaterThan(3);
+    expect(sandboxIndex).toBeGreaterThan(1);
     expect(writableRootIndex).toBeGreaterThan(sandboxIndex);
-    expect(dashDashIndex).toBeGreaterThan(writableRootIndex);
+    expect(execIndex).toBeGreaterThan(writableRootIndex);
+    expect(dashDashIndex).toBeGreaterThan(execIndex);
     expect(launch.args.at(-1)).toBe("--help");
   });
 
@@ -220,10 +442,10 @@ describe("agent-launcher", () => {
     expect(launch.args).toEqual([
       "--ask-for-approval",
       "on-request",
-      "exec",
-      "--skip-git-repo-check",
       "--sandbox",
       "read-only",
+      "exec",
+      "--skip-git-repo-check",
       "--",
       "review only",
     ]);
@@ -241,10 +463,10 @@ describe("agent-launcher", () => {
     expect(reviewLaunch.args).toEqual([
       "--ask-for-approval",
       "never",
-      "exec",
-      "--skip-git-repo-check",
       "--sandbox",
       "read-only",
+      "exec",
+      "--skip-git-repo-check",
       "review",
       "--",
       "check this PR",
@@ -274,7 +496,7 @@ describe("agent-launcher", () => {
       cwd: "/home/matrixos/home/projects/repo",
       prompt: "work",
       sandbox: { enabled: false, adminOverride: true },
-    }).args).toEqual(["--ask-for-approval", "never", "exec", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "--", "work"]);
+    }).args).toEqual(["--ask-for-approval", "never", "--dangerously-bypass-approvals-and-sandbox", "exec", "--skip-git-repo-check", "--", "work"]);
   });
 
   it("constructs a strict workspace-scoped Claude launch policy", () => {
