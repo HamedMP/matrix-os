@@ -170,7 +170,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     if (!active || selectedThreadId || !typeToStartEnabled || composerOpen) return;
     typeToStartInFlightRef.current = false;
     function onKeyDown(event: KeyboardEvent) {
-      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
       if (event.key.length !== 1) return;
       const target = event.target as HTMLElement | null;
       if (
