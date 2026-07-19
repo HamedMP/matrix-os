@@ -79,6 +79,8 @@ export interface ShellWsHandlerOptions {
   maxAttachedClients?: number;
   staleAttachTtlMs?: number;
   idleAttachGraceMs?: number;
+  /** Briefly observe a new PTY for asynchronous zellij startup failures. */
+  attachStartupGraceMs?: number;
   flowControl?: ShellWsFlowControlOptions;
 }
 
@@ -148,6 +150,8 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
   const maxAttachedClients = options.maxAttachedClients ?? 8;
   const staleAttachTtlMs = options.staleAttachTtlMs ?? 60_000;
   const idleAttachGraceMs = options.idleAttachGraceMs ?? 2_000;
+  const attachStartupGraceMs = options.attachStartupGraceMs ?? 75;
+  const earlyAttachOutputLimit = Math.min(options.maxReplayBytes ?? 1024 * 1024, 64 * 1024);
   const highWaterMark = options.flowControl?.highWaterMark ?? 1024 * 1024;
 
   const runtimes = new Map<string, SessionRuntime>();
@@ -376,7 +380,6 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           child = options.adapter.attachSession(safeName, {
             signal: abortController.signal,
           });
-          break;
         } catch (err: unknown) {
           child = null;
           if (attempt >= maxAttachAttempts || !canUseAttachPromise(runtime, attachPromise)) {
@@ -391,27 +394,81 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
             err instanceof Error ? err.message : String(err),
           );
           await new Promise((resolve) => setTimeout(resolve, 400));
+          continue;
         }
-      }
-      if (!child) {
-        return false;
-      }
 
-      if (!canUseAttachPromise(runtime, attachPromise)) {
-        child.kill();
-        return false;
-      }
+        let committed = false;
+        let earlyOutputLength = 0;
+        const earlyOutput: string[] = [];
+        let resolveEarlyExit!: (event: { exitCode: number; signal?: number }) => void;
+        const earlyExit = new Promise<{ exitCode: number; signal?: number }>((resolve) => {
+          resolveEarlyExit = resolve;
+        });
+        const dataDisposable = child.onData((data: string) => {
+          if (committed) {
+            const transformed = runtime.outputCompat?.write(data) ?? data;
+            emitOutput(runtime, transformed);
+            return;
+          }
+          const remaining = earlyAttachOutputLimit - earlyOutputLength;
+          if (remaining <= 0) return;
+          const buffered = data.slice(0, remaining);
+          earlyOutput.push(buffered);
+          earlyOutputLength += buffered.length;
+        });
+        const exitDisposable = child.onExit((event: { exitCode: number; signal?: number }) => {
+          if (committed) {
+            handleSharedExit(runtime, event);
+          } else {
+            resolveEarlyExit(event);
+          }
+        });
+        let startupTimer: ReturnType<typeof setTimeout> | undefined;
+        const startupExit = attachStartupGraceMs <= 0
+          ? null
+          : await Promise.race([
+              earlyExit,
+              new Promise<null>((resolve) => {
+                startupTimer = setTimeout(() => resolve(null), attachStartupGraceMs);
+              }),
+            ]);
+        if (startupTimer !== undefined) clearTimeout(startupTimer);
 
-      runtime.abortController = abortController;
-      runtime.child = child;
-      runtime.dataDisposable = child.onData((data: string) => {
-        const transformed = runtime.outputCompat?.write(data) ?? data;
-        emitOutput(runtime, transformed);
-      });
-      runtime.exitDisposable = child.onExit((event: { exitCode: number; signal?: number }) => {
-        handleSharedExit(runtime, event);
-      });
-      return true;
+        if (startupExit) {
+          dataDisposable.dispose();
+          exitDisposable.dispose();
+          child = null;
+          if (attempt >= maxAttachAttempts || !canUseAttachPromise(runtime, attachPromise)) {
+            if (canUseAttachPromise(runtime, attachPromise)) runtime.outputCompat = null;
+            console.warn(`[shell] zellij attach exited during startup with code ${startupExit.exitCode}`);
+            return false;
+          }
+          console.warn(
+            `[shell] zellij attach attempt ${attempt} exited during startup, retrying: code ${startupExit.exitCode}`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 400));
+          continue;
+        }
+
+        if (!canUseAttachPromise(runtime, attachPromise)) {
+          dataDisposable.dispose();
+          exitDisposable.dispose();
+          child.kill();
+          return false;
+        }
+
+        runtime.abortController = abortController;
+        runtime.child = child;
+        runtime.dataDisposable = dataDisposable;
+        runtime.exitDisposable = exitDisposable;
+        committed = true;
+        for (const data of earlyOutput) {
+          const transformed = runtime.outputCompat?.write(data) ?? data;
+          emitOutput(runtime, transformed);
+        }
+        return true;
+      }
+      return false;
     })();
 
     runtime.attachPromise = attachPromise;

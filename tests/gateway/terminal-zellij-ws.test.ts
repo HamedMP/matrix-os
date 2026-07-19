@@ -360,6 +360,7 @@ describe("zellij terminal WebSocket", () => {
       adapter: { attachSession },
       maxReplayBytes: 4096,
       idleAttachGraceMs: 50,
+      attachStartupGraceMs: 0,
     });
 
     const first = await handler.open({ ws: socket(), session: "main", fromSeq: 0 });
@@ -595,6 +596,30 @@ describe("zellij terminal WebSocket", () => {
 
     expect(attempts).toBe(3);
     expect(ws.sent).toContainEqual(expect.objectContaining({ type: "attached", session: "main" }));
+  }, 15_000);
+
+  it("retries when zellij exits asynchronously during the attach startup window", async () => {
+    const firstPty = new FakePty();
+    const secondPty = new FakePty();
+    const ws = socket();
+    const attachSession = vi.fn()
+      .mockImplementationOnce(() => {
+        queueMicrotask(() => firstPty.emitExit({ exitCode: 1 }));
+        return firstPty;
+      })
+      .mockReturnValueOnce(secondPty);
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: { attachSession },
+    });
+
+    await handler.open({ ws, session: "main", fromSeq: 0 });
+
+    expect(attachSession).toHaveBeenCalledTimes(2);
+    expect(ws.sent).toContainEqual(expect.objectContaining({ type: "attached", session: "main" }));
+    expect(ws.sent).not.toContainEqual(expect.objectContaining({ type: "exit" }));
   }, 15_000);
 
   it("rejects missing sessions with a stable error", async () => {

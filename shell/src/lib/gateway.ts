@@ -32,10 +32,10 @@ export function getGatewayWs(): string {
 
 /** The `/vm/<handle>` prefix of the current explicit vm route, or "" at the root. */
 function getExplicitVmPrefix(): string {
-  const pathname = window.location?.pathname ?? "";
+  const pathname = window.location.pathname ?? "";
   const match = pathname.match(/^\/vm\/([A-Za-z0-9_-]{1,64})(?:\/|$)/);
   if (!match) return "";
-  const runtimeSlot = new URLSearchParams(window.location?.search ?? "").get("runtime");
+  const runtimeSlot = new URLSearchParams(window.location.search ?? "").get("runtime");
   return runtimeSlot && /^[A-Za-z0-9_-]{1,32}$/.test(runtimeSlot)
     ? `/vm/${match[1]}/~runtime/${runtimeSlot}`
     : `/vm/${match[1]}`;

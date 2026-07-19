@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getGatewayUrl } from "@/lib/gateway";
 import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 
 export type OnboardingStage =
@@ -334,7 +335,7 @@ export function useOnboarding(): OnboardingHook {
   const refreshReadiness = useCallback(() => {
     const requestSeq = readinessRefreshSeqRef.current + 1;
     readinessRefreshSeqRef.current = requestSeq;
-    void fetch("/api/onboarding/readiness", {
+    void fetch(`${getGatewayUrl()}/api/onboarding/readiness`, {
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(10_000),
     })
@@ -649,7 +650,7 @@ export function useOnboarding(): OnboardingHook {
     const normalizedGoalIds = nextGoalIds.length > 0 ? nextGoalIds : [goalId];
     readinessRefreshSeqRef.current += 1;
     setSelectedGoalIds(normalizedGoalIds);
-    void fetch("/api/onboarding/goals", {
+    void fetch(`${getGatewayUrl()}/api/onboarding/goals`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ goalIds: normalizedGoalIds }),

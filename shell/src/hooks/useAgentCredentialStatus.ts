@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getGatewayUrl } from "@/lib/gateway";
 
 export type AgentId = "claude" | "codex" | "hermes";
 
@@ -28,7 +29,7 @@ export function useAgentCredentialStatus() {
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const refresh = useCallback(() => {
-    void fetch("/api/agents/credentials/status", {
+    void fetch(`${getGatewayUrl()}/api/agents/credentials/status`, {
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(10_000),
     })
@@ -49,7 +50,7 @@ export function useAgentCredentialStatus() {
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const verify = useCallback((agent: Exclude<AgentId, "hermes">) => {
-    void fetch(`/api/agents/credentials/${agent}/verify`, {
+    void fetch(`${getGatewayUrl()}/api/agents/credentials/${agent}/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({}),
