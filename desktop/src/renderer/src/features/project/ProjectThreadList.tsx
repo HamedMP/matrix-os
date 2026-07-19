@@ -1,4 +1,5 @@
 import { AlertCircle, MessageSquare, Plus } from "lucide-react";
+import { useEffect, useState } from "react";
 import type {
   AgentThreadSummary,
   ProjectAgentWorkspace,
@@ -15,20 +16,54 @@ export interface ProjectThreadListModel {
   truncated: boolean;
 }
 
-function statusLabel(thread: AgentThreadSummary): string {
-  switch (thread.attention) {
-    case "approval_required":
-      return "Approval";
-    case "input_required":
-      return "Input";
-    case "failed":
-      return "Failed";
-    case "completed":
-      return "Done";
-    default:
-      return thread.status === "running" ? "Working" : thread.status.replaceAll("_", " ");
+export type ThreadRailTone = "running" | "waiting" | "done" | "failed";
+
+// Status pill for a rail row. Attention states win because they carry the
+// actionable state; inactive threads (aborted/stale/archived) get no pill.
+export function threadRailStatus(thread: AgentThreadSummary): { tone: ThreadRailTone; label: string } | null {
+  if (thread.attention === "approval_required" || thread.attention === "input_required") {
+    return { tone: "waiting", label: "Waiting" };
   }
+  if (thread.attention === "failed" || thread.status === "failed") {
+    return { tone: "failed", label: "Failed" };
+  }
+  if (thread.attention === "completed") {
+    return { tone: "done", label: "Done" };
+  }
+  if (thread.status === "waiting_for_approval" || thread.status === "waiting_for_input") {
+    return { tone: "waiting", label: "Waiting" };
+  }
+  if (thread.status === "queued" || thread.status === "starting" || thread.status === "running") {
+    return { tone: "running", label: "Running" };
+  }
+  if (thread.status === "completed") {
+    return { tone: "done", label: "Done" };
+  }
+  return null;
 }
+
+// Small local relative-time helper ("just now", "5m ago", "3h ago", "2d ago",
+// then a short date) — deliberately no new dependency.
+export function formatRelativeTime(iso: string, nowMs: number): string {
+  const parsed = Date.parse(iso);
+  if (Number.isNaN(parsed)) return "";
+  const deltaMs = Math.max(0, nowMs - parsed);
+  const minutes = Math.floor(deltaMs / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(parsed).toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+const RAIL_TONE_STYLES: Record<ThreadRailTone, { background: string; color: string }> = {
+  running: { background: "var(--accent-muted)", color: "var(--status-running)" },
+  waiting: { background: "var(--warning-muted)", color: "var(--warning)" },
+  done: { background: "var(--success-muted)", color: "var(--success)" },
+  failed: { background: "var(--danger-muted)", color: "var(--danger)" },
+};
 
 /**
  * Builds the Chats list model for one project: the workspace pages grouped per
@@ -94,13 +129,17 @@ function ThreadRow({
   thread,
   providerLabel,
   selected,
+  nowMs,
   onSelect,
 }: {
   thread: AgentThreadSummary;
   providerLabel: string;
   selected: boolean;
+  nowMs: number;
   onSelect: () => void;
 }) {
+  const pill = threadRailStatus(thread);
+  const relative = formatRelativeTime(thread.updatedAt, nowMs);
   return (
     <button
       type="button"
@@ -123,10 +162,22 @@ function ThreadRow({
         <span className="block truncate text-xs font-medium">{thread.title}</span>
         <span className="flex items-center gap-1 truncate text-[10px]" style={{ color: "var(--text-tertiary)" }}>
           <span className="truncate">{providerLabel}</span>
-          <span aria-hidden="true">·</span>
-          <span className="capitalize">{statusLabel(thread)}</span>
+          {relative ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="shrink-0 tabular-nums">{relative}</span>
+            </>
+          ) : null}
         </span>
       </span>
+      {pill ? (
+        <span
+          className="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold"
+          style={{ background: RAIL_TONE_STYLES[pill.tone].background, color: RAIL_TONE_STYLES[pill.tone].color }}
+        >
+          {pill.label}
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -162,6 +213,13 @@ export function ProjectThreadList({
   const isEmpty = model.projectThreads.length === 0
     && model.taskGroups.every((group) => group.threads.length === 0)
     && model.otherThreads.length === 0;
+  // Relative timestamps tick once a minute so "2m ago" ages while the rail
+  // stays open; rows also re-render on any workspace/summary update.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   return (
     <nav
@@ -215,6 +273,7 @@ export function ProjectThreadList({
               thread={thread}
               providerLabel={providerLabel(thread)}
               selected={thread.id === selectedThreadId}
+              nowMs={nowMs}
               onSelect={() => onSelectThread(thread.id)}
             />
           ))}
@@ -248,6 +307,7 @@ export function ProjectThreadList({
                     thread={thread}
                     providerLabel={providerLabel(thread)}
                     selected={thread.id === selectedThreadId}
+                    nowMs={nowMs}
                     onSelect={() => onSelectThread(thread.id)}
                   />
                 ))}
@@ -269,6 +329,7 @@ export function ProjectThreadList({
                     thread={thread}
                     providerLabel={providerLabel(thread)}
                     selected={thread.id === selectedThreadId}
+                    nowMs={nowMs}
                     onSelect={() => onSelectThread(thread.id)}
                   />
                 ))}
