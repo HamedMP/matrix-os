@@ -644,12 +644,16 @@ export function createApp(deps: {
       }
 
       const record = await getContainer(db, handle);
-      if (!record?.clerkUserId) {
+      const runningMachine = record?.clerkUserId
+        ? undefined
+        : await getRunningUserMachineByHandle(db, handle);
+      const clerkUserId = record?.clerkUserId ?? runningMachine?.clerkUserId;
+      if (!clerkUserId) {
         return c.json({ error: 'Unknown handle' }, 404);
       }
 
       c.set('internalContainerHandle', handle);
-      c.set('internalContainerClerkUserId', record.clerkUserId);
+      c.set('internalContainerClerkUserId', clerkUserId);
       return next();
     });
     internalIntegrationApp.route('/', deps.internalIntegrationRoutes);
