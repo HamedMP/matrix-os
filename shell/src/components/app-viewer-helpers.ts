@@ -45,8 +45,9 @@ export function injectBridgeIntoAppHtml(
   appName: string,
   themeVars: ThemeVars,
   baseHref: string,
+  design?: string,
 ): string {
-  const bridgeScript = buildBridgeScript(appName, themeVars)
+  const bridgeScript = buildBridgeScript(appName, themeVars, design)
     + `\n;if(window.MatrixOS&&window.MatrixOS.db){useDb=true;}if(typeof loadData==="function"){loadData();}\n`;
   const escapedBaseHref = baseHref.replace(/"/g, "&quot;");
   const injection = [

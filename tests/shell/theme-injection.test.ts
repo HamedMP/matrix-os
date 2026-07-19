@@ -179,6 +179,56 @@ describe("Theme Variable Injection (T2070)", () => {
   });
 });
 
+describe("Design System Propagation (T2072)", () => {
+  describe("buildBridgeScript design id", () => {
+    it("tags the iframe document with the design id at bootstrap", () => {
+      const script = buildBridgeScript("test-app", { "--matrix-bg": "#fff" }, "winxp");
+      expect(script).toContain("dataset.matrixDesign");
+      expect(script).toContain("winxp");
+    });
+
+    it("exposes the design id on window.MatrixOS.design", () => {
+      const script = buildBridgeScript("test-app", { "--matrix-bg": "#fff" }, "macos-glass");
+      expect(script).toContain("design: currentDesign");
+    });
+
+    it("includes --matrix-design in the injected theme style block", () => {
+      const script = buildBridgeScript("test-app", { "--matrix-bg": "#fff" }, "win11");
+      expect(script).toContain("--matrix-design: win11");
+    });
+
+    it("defaults to the flat design when no design id is passed", () => {
+      const script = buildBridgeScript("test-app", { "--matrix-bg": "#fff" });
+      expect(script).toContain("--matrix-design: flat");
+      expect(script).toContain('"flat"');
+    });
+
+    it("sanitizes unsafe design ids to flat", () => {
+      const script = buildBridgeScript("test-app", { "--matrix-bg": "#fff" }, 'x";alert(1);//');
+      expect(script).toContain('"flat"');
+      expect(script).not.toContain('x";alert(1);//');
+    });
+  });
+
+  describe("os:theme-update design handling", () => {
+    it("re-reads the design id from theme-update messages", () => {
+      const script = buildBridgeScript("test-app");
+      expect(script).toContain("e.data.design");
+    });
+
+    it("updates the data-matrix-design attribute on theme-update", () => {
+      const script = buildBridgeScript("test-app");
+      expect(script).toContain("os:theme-update");
+      expect(script).toContain("dataset.matrixDesign");
+    });
+
+    it("updates MatrixOS.design on theme-update", () => {
+      const script = buildBridgeScript("test-app");
+      expect(script).toContain("window.MatrixOS.design = currentDesign");
+    });
+  });
+});
+
 describe("Dynamic Theme Updates (T2071)", () => {
   describe("buildBridgeScript", () => {
     it("includes os:theme-update message listener", () => {

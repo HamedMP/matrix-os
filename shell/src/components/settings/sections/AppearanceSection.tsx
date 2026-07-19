@@ -7,6 +7,7 @@ import { useDesktopConfigStore, type DockConfig } from "@/stores/desktop-config"
 import { getGatewayUrl } from "@/lib/gateway";
 import { UploadIcon, XIcon, ImageIcon, PaletteIcon } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
+import { DesignPicker } from "@/components/settings/DesignPicker";
 
 /* ── Background Type ───────────────────────────── */
 
@@ -151,6 +152,9 @@ export function AppearanceSection() {
   return (
     <div className="max-w-2xl mx-auto p-6 space-y-8">
       <h2 className="text-lg font-semibold">Appearance</h2>
+
+      {/* ── Design ───────────────────────────── */}
+      <DesignPicker />
 
       {/* ── Background ─────────────────────────── */}
       <section className="space-y-3">

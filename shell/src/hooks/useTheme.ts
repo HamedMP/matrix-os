@@ -12,7 +12,7 @@ import {
 export interface Theme {
   name: string;
   mode?: "light" | "dark";
-  style?: "flat" | "neumorphic";
+  style?: "flat" | "neumorphic" | "macos-glass" | "winxp" | "win11";
   colors: Record<string, string>;
   fonts: Record<string, string>;
   radius: string;
@@ -67,7 +67,11 @@ export function normalizeTheme(value: unknown, fallbackTheme: Theme = DEFAULT_TH
   return {
     name: typeof value.name === "string" && value.name.trim() ? value.name : fallbackTheme.name,
     ...(value.mode === "light" || value.mode === "dark" ? { mode: value.mode } : {}),
-    ...(value.style === "flat" || value.style === "neumorphic"
+    ...(value.style === "flat" ||
+      value.style === "neumorphic" ||
+      value.style === "macos-glass" ||
+      value.style === "winxp" ||
+      value.style === "win11"
       ? { style: value.style }
       : fallbackTheme.style
         ? { style: fallbackTheme.style }
@@ -106,7 +110,7 @@ function applyTheme(theme: Theme) {
 
   root.style.setProperty("--radius", theme.radius);
 
-  // Set theme style attribute for CSS neumorphic overrides
+  // Set theme style attribute for CSS design-system overrides
   root.setAttribute("data-theme-style", theme.style ?? "flat");
 }
 
@@ -132,13 +136,39 @@ export interface ShellCacheHookOptions {
   cacheScope?: ShellSnapshotScope | null;
 }
 
+interface ThemeRuntimeCache {
+  gatewayUrl: string;
+  theme: Theme;
+}
+
+let themeRuntimeCache: ThemeRuntimeCache | null = null;
+
+function rememberTheme(gatewayUrl: string, theme: Theme): void {
+  themeRuntimeCache = { gatewayUrl, theme };
+}
+
+function initialTheme(
+  cacheScope: ShellSnapshotScope | null,
+  fallbackTheme: Theme,
+  gatewayUrl: string,
+): Theme {
+  // A scoped root never borrows another user's/runtime's module snapshot.
+  // Nested consumers without a scope may reuse only the current gateway's
+  // already-applied value, avoiding a transient reset to the default design.
+  if (cacheScope) {
+    return normalizeTheme(loadShellSnapshot(cacheScope)?.theme, fallbackTheme);
+  }
+  return themeRuntimeCache?.gatewayUrl === gatewayUrl
+    ? themeRuntimeCache.theme
+    : fallbackTheme;
+}
+
 export function useTheme(options: ShellCacheHookOptions = {}) {
   const fallbackTheme = getThemeFallback();
   const cacheScope = options.cacheScope ?? null;
   const cacheKey = cacheScope?.storageKey;
-  const [theme, setTheme] = useState<Theme>(() => (
-    cacheScope ? normalizeTheme(loadShellSnapshot(cacheScope)?.theme, fallbackTheme) : fallbackTheme
-  ));
+  const gatewayUrl = getGatewayUrl();
+  const [theme, setTheme] = useState<Theme>(() => initialTheme(cacheScope, fallbackTheme, gatewayUrl));
 
   useEffect(() => {
     if (!cacheScope) return;
@@ -159,8 +189,9 @@ export function useTheme(options: ShellCacheHookOptions = {}) {
   }, [fallbackTheme, cacheKey, cacheScope]);
 
   useEffect(() => {
+    rememberTheme(gatewayUrl, theme);
     applyTheme(theme);
-  }, [theme]);
+  }, [gatewayUrl, theme]);
 
   useFileWatcher((path, event) => {
     if (path === "system/theme.json" && event !== "unlink") {
@@ -191,9 +222,15 @@ export async function saveTheme(
     throw new Error("Failed to save theme");
   }
   saveShellSnapshot(options.cacheScope, { theme });
+  rememberTheme(gatewayUrl, theme);
   if (typeof document !== "undefined") {
     applyTheme(theme);
   }
+}
+
+/** Test hook: clear the module-local current-runtime theme snapshot. */
+export function resetThemeRuntimeCacheForTests(): void {
+  themeRuntimeCache = null;
 }
 
 function settingsFetchSignal(signal?: AbortSignal): AbortSignal {

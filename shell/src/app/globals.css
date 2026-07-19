@@ -998,3 +998,650 @@ pre {
   -webkit-backdrop-filter: none;
   background: var(--card);
 }
+
+/* ═══════════════════════════════════════════════
+   macOS 27 glass overrides — active only when
+   data-theme-style="macos-glass" is on :root.
+   Dark-leaning frosted glass: deep blur, specular
+   top highlights, vibrant accent tinting.
+   ═══════════════════════════════════════════════ */
+
+/* --- Shared glass recipe (vars scoped to this style) --- */
+[data-theme-style="macos-glass"] {
+  --glass-blur: blur(40px) saturate(180%);
+  --glass-surface: color-mix(in srgb, var(--card) 62%, transparent);
+  --glass-surface-strong: color-mix(in srgb, var(--card) 78%, transparent);
+  --glass-edge: rgba(255, 255, 255, 0.16);
+  --glass-specular: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  --glass-shadow: 0 16px 48px rgba(0, 0, 0, 0.42);
+}
+
+/* --- Cards: frosted panel --- */
+[data-theme-style="macos-glass"] [data-slot="card"] {
+  background: var(--glass-surface);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--glass-specular), var(--glass-shadow);
+}
+
+/* --- Buttons: tinted glass, accent glow on primary --- */
+[data-theme-style="macos-glass"] [data-slot="button"][data-variant="default"] {
+  background: color-mix(in srgb, var(--primary) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary) 60%, rgba(255, 255, 255, 0.5));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 4px 16px color-mix(in srgb, var(--primary) 35%, transparent);
+}
+
+[data-theme-style="macos-glass"] [data-slot="button"][data-variant="secondary"],
+[data-theme-style="macos-glass"] [data-slot="button"][data-variant="outline"] {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--glass-specular);
+}
+
+[data-theme-style="macos-glass"] [data-slot="button"][data-variant="ghost"]:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* --- Inputs: dark glass well --- */
+[data-theme-style="macos-glass"] [data-slot="input"],
+[data-theme-style="macos-glass"] [data-slot="textarea"] {
+  background: rgba(0, 0, 0, 0.24);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+[data-theme-style="macos-glass"] [data-slot="input"]:focus-visible,
+[data-theme-style="macos-glass"] [data-slot="textarea"]:focus-visible {
+  border-color: var(--ring);
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.35),
+    0 0 0 3px color-mix(in srgb, var(--ring) 35%, transparent);
+}
+
+/* --- Panels & dropdowns: frosted glass --- */
+[data-theme-style="macos-glass"] [data-slot="select-content"],
+[data-theme-style="macos-glass"] [data-slot="context-menu-content"],
+[data-theme-style="macos-glass"] [data-slot="dialog-content"],
+[data-theme-style="macos-glass"] [data-slot="popover-content"],
+[data-theme-style="macos-glass"] [data-slot="tooltip-content"] {
+  background: var(--glass-surface-strong);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--glass-specular), var(--glass-shadow);
+}
+
+/* --- Menu items: vibrant accent selection --- */
+[data-theme-style="macos-glass"] [data-menu-dropdown] button:hover,
+[data-theme-style="macos-glass"] [data-slot="context-menu-item"]:hover,
+[data-theme-style="macos-glass"] [data-slot="context-menu-item"][data-highlighted] {
+  background: color-mix(in srgb, var(--primary) 75%, transparent) !important;
+  color: var(--primary-foreground) !important;
+  border-radius: 6px;
+}
+
+/* --- Window containers (canvas windows): glass over the wallpaper --- */
+[data-theme-style="macos-glass"] .rounded-lg.bg-card {
+  background: var(--glass-surface) !important;
+  backdrop-filter: var(--glass-blur) !important;
+  -webkit-backdrop-filter: var(--glass-blur) !important;
+  border: 1px solid var(--glass-edge) !important;
+  box-shadow: var(--glass-specular), var(--glass-shadow) !important;
+}
+
+/* --- Dock: floating glass tray --- */
+[data-theme-style="macos-glass"] [data-dock] {
+  background: color-mix(in srgb, var(--card) 55%, transparent) !important;
+  backdrop-filter: var(--glass-blur) !important;
+  -webkit-backdrop-filter: var(--glass-blur) !important;
+  border: 1px solid var(--glass-edge) !important;
+  border-radius: 22px !important;
+  box-shadow: var(--glass-specular), 0 18px 44px rgba(0, 0, 0, 0.45) !important;
+}
+
+[data-theme-style="macos-glass"] [data-dock] button {
+  border-radius: 14px !important;
+  transition: transform 0.12s ease, background-color 0.12s ease;
+}
+
+[data-theme-style="macos-glass"] [data-dock] button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+[data-theme-style="macos-glass"] [data-dock] button img {
+  border-radius: 10px !important;
+}
+
+/* --- Menu Bar: vibrant frosted strip --- */
+[data-theme-style="macos-glass"] [data-menu-bar] {
+  background: color-mix(in srgb, var(--card) 48%, transparent) !important;
+  backdrop-filter: var(--glass-blur) !important;
+  -webkit-backdrop-filter: var(--glass-blur) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.25) !important;
+}
+
+[data-theme-style="macos-glass"] [data-menu-bar] button:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border-radius: 6px;
+}
+
+/* --- Menu dropdowns: frosted panel --- */
+[data-theme-style="macos-glass"] [data-menu-dropdown] {
+  background: var(--glass-surface-strong) !important;
+  backdrop-filter: var(--glass-blur) !important;
+  -webkit-backdrop-filter: var(--glass-blur) !important;
+  border: 1px solid var(--glass-edge) !important;
+  border-radius: 12px !important;
+  box-shadow: var(--glass-specular), var(--glass-shadow) !important;
+}
+
+/* --- App tiles: rounded glass icons --- */
+[data-theme-style="macos-glass"] [data-app-tile] {
+  border-radius: 12px !important;
+}
+
+[data-theme-style="macos-glass"] [data-app-icon] {
+  border-radius: 18px !important;
+  border: 1px solid var(--glass-edge) !important;
+  box-shadow: var(--glass-specular), 0 8px 20px rgba(0, 0, 0, 0.35) !important;
+}
+
+[data-theme-style="macos-glass"] [data-app-icon] img {
+  border-radius: 16px !important;
+}
+
+[data-theme-style="macos-glass"] [data-app-tile]:hover [data-app-icon] {
+  filter: brightness(1.08);
+}
+
+/* --- Mission Control: deep vibrancy scrim --- */
+[data-theme-style="macos-glass"] [data-mission-backdrop] {
+  background: rgba(10, 10, 22, 0.45) !important;
+  opacity: 1 !important;
+  backdrop-filter: blur(28px) saturate(150%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(150%) !important;
+}
+
+/* --- Selection: vibrant accent tint --- */
+[data-theme-style="macos-glass"] ::selection {
+  background: color-mix(in srgb, var(--primary) 55%, transparent);
+  color: var(--primary-foreground);
+}
+
+/* --- Scrollbars: translucent glass thumb --- */
+[data-theme-style="macos-glass"] ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 3px;
+}
+
+/* ═══════════════════════════════════════════════
+   Windows XP (Luna) overrides — active only when
+   data-theme-style="winxp" is on :root.
+   Glossy blue title-bar gradients, beige-silver
+   chrome, hard 3D bevels. No translucency.
+   ═══════════════════════════════════════════════ */
+
+/* --- Luna tokens --- */
+[data-theme-style="winxp"] {
+  --xp-blue-dark: #0058e6;
+  --xp-blue-light: #3a93ff;
+  --xp-titlebar: linear-gradient(to bottom, #0058e6 0%, #3a93ff 50%, #0058e6 100%);
+  --xp-chrome: #ece9d8;
+  --xp-bevel-light: #ffffff;
+  --xp-bevel-dark: #716f64;
+  --xp-field-line: #7f9db9;
+}
+
+/* --- No glass anywhere in XP --- */
+[data-theme-style="winxp"] .backdrop-blur-xl,
+[data-theme-style="winxp"] .backdrop-blur-md,
+[data-theme-style="winxp"] .backdrop-blur-sm {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+[data-theme-style="winxp"] .surface-glass,
+[data-theme-style="winxp"] .surface-glass-strong,
+[data-theme-style="winxp"] .surface-glass-deep {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: var(--xp-chrome);
+}
+
+/* --- Cards: flat white content areas --- */
+[data-theme-style="winxp"] [data-slot="card"] {
+  background: #ffffff;
+  border: 1px solid var(--xp-field-line);
+  border-radius: 3px;
+  box-shadow: 2px 2px 3px rgba(0, 0, 0, 0.12);
+}
+
+/* --- Buttons: Luna silver bevels --- */
+[data-theme-style="winxp"] [data-slot="button"][data-variant="default"],
+[data-theme-style="winxp"] [data-slot="button"][data-variant="secondary"],
+[data-theme-style="winxp"] [data-slot="button"][data-variant="outline"] {
+  background: var(--xp-chrome);
+  color: #1f1f1f;
+  border: 1px solid var(--xp-bevel-dark);
+  border-radius: 3px;
+  box-shadow:
+    inset 1px 1px 0 var(--xp-bevel-light),
+    inset -1px -1px 0 #b5b2a1;
+}
+
+[data-theme-style="winxp"] [data-slot="button"][data-variant="default"]:active,
+[data-theme-style="winxp"] [data-slot="button"][data-variant="secondary"]:active,
+[data-theme-style="winxp"] [data-slot="button"][data-variant="outline"]:active {
+  box-shadow:
+    inset 1px 1px 0 var(--xp-bevel-dark),
+    inset -1px -1px 0 var(--xp-bevel-light);
+}
+
+[data-theme-style="winxp"] [data-slot="button"]:focus-visible {
+  outline: 1px dotted #1f1f1f;
+  outline-offset: -4px;
+}
+
+[data-theme-style="winxp"] [data-slot="button"][data-variant="ghost"]:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* --- Inputs: flat white fields, blue-gray frame --- */
+[data-theme-style="winxp"] [data-slot="input"],
+[data-theme-style="winxp"] [data-slot="textarea"] {
+  background: #ffffff;
+  border: 1px solid var(--xp-field-line);
+  border-radius: 0;
+  box-shadow: inset 1px 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme-style="winxp"] [data-slot="input"]:focus-visible,
+[data-theme-style="winxp"] [data-slot="textarea"]:focus-visible {
+  border-color: var(--xp-blue-dark);
+  box-shadow: inset 1px 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* --- Panels, flyouts & menu dropdowns: beige chrome with bevel --- */
+[data-theme-style="winxp"] [data-slot="select-content"],
+[data-theme-style="winxp"] [data-slot="context-menu-content"],
+[data-theme-style="winxp"] [data-slot="dialog-content"],
+[data-theme-style="winxp"] [data-slot="popover-content"],
+[data-theme-style="winxp"] [data-menu-dropdown] {
+  background: var(--xp-chrome) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 1px solid var(--xp-bevel-dark) !important;
+  border-radius: 2px !important;
+  box-shadow:
+    inset 1px 1px 0 var(--xp-bevel-light),
+    2px 2px 4px rgba(0, 0, 0, 0.25) !important;
+}
+
+/* --- Tooltips: XP yellow balloon hint --- */
+[data-theme-style="winxp"] [data-slot="tooltip-content"] {
+  background: #ffffe1 !important;
+  color: #1f1f1f !important;
+  border: 1px solid #1f1f1f !important;
+  border-radius: 0 !important;
+  box-shadow: 2px 2px 2px rgba(0, 0, 0, 0.2);
+}
+
+/* --- Menu items: XP selection blue --- */
+[data-theme-style="winxp"] [data-menu-dropdown] button:hover,
+[data-theme-style="winxp"] [data-slot="context-menu-item"]:hover,
+[data-theme-style="winxp"] [data-slot="context-menu-item"][data-highlighted] {
+  background: var(--accent) !important;
+  color: var(--accent-foreground) !important;
+  border-radius: 0 !important;
+}
+
+[data-theme-style="winxp"] [data-slot="context-menu-separator"] {
+  border-color: var(--xp-bevel-dark) !important;
+  box-shadow: 0 1px 0 var(--xp-bevel-light);
+}
+
+/* --- Window containers (canvas windows): blue frame --- */
+[data-theme-style="winxp"] .rounded-lg.bg-card {
+  border: 1px solid var(--xp-blue-dark) !important;
+  box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* --- Dock: XP taskbar --- */
+[data-theme-style="winxp"] [data-dock] {
+  background: var(--xp-titlebar) !important;
+  backdrop-filter: none !important;
+  border: none !important;
+  border-top: 1px solid var(--xp-blue-light) !important;
+  border-radius: 0 !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
+}
+
+[data-theme-style="winxp"] [data-dock] button {
+  border-radius: 3px !important;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.05));
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.3);
+  transition: none;
+}
+
+[data-theme-style="winxp"] [data-dock] button:hover {
+  transform: none !important;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.12));
+}
+
+[data-theme-style="winxp"] [data-dock] button:active {
+  box-shadow: inset 1px 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+[data-theme-style="winxp"] [data-dock] button img {
+  border-radius: 2px !important;
+}
+
+/* Dock active indicator: XP taskbar tab */
+[data-theme-style="winxp"] [data-dock] button .rounded-full.bg-foreground {
+  background: var(--xp-blue-light) !important;
+  border-radius: 1px !important;
+  width: 8px !important;
+  height: 3px !important;
+}
+
+/* Dock separator: taskbar bevel line */
+[data-theme-style="winxp"] [data-dock] .border-l,
+[data-theme-style="winxp"] [data-dock] .border-t {
+  border-color: rgba(0, 0, 0, 0.35) !important;
+  box-shadow: 1px 0 0 rgba(255, 255, 255, 0.25);
+}
+
+/* --- Menu Bar: Luna title-bar strip --- */
+[data-theme-style="winxp"] [data-menu-bar] {
+  background: var(--xp-titlebar) !important;
+  backdrop-filter: none !important;
+  border: none !important;
+  border-bottom: 1px solid #003c9e !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 1px 3px rgba(0, 0, 0, 0.35) !important;
+  color: #ffffff;
+}
+
+[data-theme-style="winxp"] [data-menu-bar] button,
+[data-theme-style="winxp"] [data-menu-bar] .text-foreground,
+[data-theme-style="winxp"] [data-menu-bar] .text-muted-foreground {
+  color: #ffffff !important;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.45);
+}
+
+[data-theme-style="winxp"] [data-menu-bar] button:hover {
+  background: rgba(255, 255, 255, 0.18) !important;
+}
+
+/* --- App tiles: XP desktop icons --- */
+[data-theme-style="winxp"] [data-app-tile] {
+  border-radius: 2px !important;
+}
+
+[data-theme-style="winxp"] [data-app-icon] {
+  border-radius: 3px !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+[data-theme-style="winxp"] [data-app-tile]:hover [data-app-icon] {
+  background: color-mix(in srgb, var(--xp-blue-dark) 45%, transparent);
+  outline: 1px dotted #ffffff;
+  outline-offset: 1px;
+}
+
+[data-theme-style="winxp"] [data-app-icon] img {
+  border-radius: 2px !important;
+}
+
+/* --- Mission Control: solid scrim, no blur --- */
+[data-theme-style="winxp"] [data-mission-backdrop] {
+  background: var(--background) !important;
+  opacity: 0.94 !important;
+  backdrop-filter: none !important;
+}
+
+/* --- Global: flatten radii to XP chrome --- */
+[data-theme-style="winxp"] .rounded-2xl,
+[data-theme-style="winxp"] .rounded-xl {
+  border-radius: 3px !important;
+}
+
+[data-theme-style="winxp"] .rounded-lg,
+[data-theme-style="winxp"] .rounded-md,
+[data-theme-style="winxp"] .rounded-full {
+  border-radius: 2px !important;
+}
+
+/* Except where circular shape is semantic (avatars, indicators) */
+[data-theme-style="winxp"] .cl-avatarBox,
+[data-theme-style="winxp"] [data-slot="switch"] span {
+  border-radius: 9999px !important;
+}
+
+/* --- Disable hover scale animations for XP chrome --- */
+[data-theme-style="winxp"] .hover\:scale-105:hover,
+[data-theme-style="winxp"] .active\:scale-95:active {
+  transform: none !important;
+}
+
+/* --- Scrollbars: silver XP thumb --- */
+[data-theme-style="winxp"] ::-webkit-scrollbar-thumb {
+  background: #c8c5b4;
+  border: 1px solid var(--xp-bevel-dark);
+  border-radius: 2px;
+  box-shadow: inset 1px 1px 0 var(--xp-bevel-light);
+}
+
+/* ═══════════════════════════════════════════════
+   Windows 11 (Fluent/Mica) overrides — active only
+   when data-theme-style="win11" is on :root.
+   Light acrylic surfaces, soft elevation, pill
+   hover states, #0067c0 accent interactions.
+   ═══════════════════════════════════════════════ */
+
+/* --- Fluent tokens --- */
+[data-theme-style="win11"] {
+  --win11-acrylic: rgba(249, 249, 249, 0.85);
+  --win11-acrylic-strong: rgba(249, 249, 249, 0.93);
+  --win11-blur: blur(30px) saturate(150%);
+  --win11-stroke: rgba(0, 0, 0, 0.06);
+  --win11-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  --win11-hover: rgba(0, 0, 0, 0.05);
+}
+
+/* --- Cards: Mica surface with soft elevation --- */
+[data-theme-style="win11"] [data-slot="card"] {
+  background: var(--win11-acrylic);
+  backdrop-filter: var(--win11-blur);
+  -webkit-backdrop-filter: var(--win11-blur);
+  border: 1px solid var(--win11-stroke);
+  border-radius: var(--radius);
+  box-shadow: var(--win11-shadow);
+}
+
+/* --- Buttons: Fluent rest/hover/press --- */
+[data-theme-style="win11"] [data-slot="button"][data-variant="default"] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-bottom-color: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius);
+}
+
+[data-theme-style="win11"] [data-slot="button"][data-variant="default"]:hover {
+  background: color-mix(in srgb, var(--primary) 92%, #ffffff);
+}
+
+[data-theme-style="win11"] [data-slot="button"][data-variant="default"]:active {
+  background: color-mix(in srgb, var(--primary) 85%, #000000);
+}
+
+[data-theme-style="win11"] [data-slot="button"][data-variant="secondary"],
+[data-theme-style="win11"] [data-slot="button"][data-variant="outline"] {
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--win11-stroke);
+  border-bottom-color: rgba(0, 0, 0, 0.16);
+  border-radius: var(--radius);
+}
+
+[data-theme-style="win11"] [data-slot="button"][data-variant="secondary"]:hover,
+[data-theme-style="win11"] [data-slot="button"][data-variant="outline"]:hover {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+[data-theme-style="win11"] [data-slot="button"][data-variant="ghost"] {
+  border-radius: var(--radius);
+}
+
+[data-theme-style="win11"] [data-slot="button"][data-variant="ghost"]:hover {
+  background: var(--win11-hover);
+}
+
+/* --- Inputs: Fluent field, accent underline on focus --- */
+[data-theme-style="win11"] [data-slot="input"],
+[data-theme-style="win11"] [data-slot="textarea"] {
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--win11-stroke);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.35);
+  border-radius: var(--radius);
+}
+
+[data-theme-style="win11"] [data-slot="input"]:focus-visible,
+[data-theme-style="win11"] [data-slot="textarea"]:focus-visible {
+  background: #ffffff;
+  border-bottom: 2px solid var(--primary);
+}
+
+/* --- Panels, flyouts & menu dropdowns: acrylic --- */
+[data-theme-style="win11"] [data-slot="select-content"],
+[data-theme-style="win11"] [data-slot="context-menu-content"],
+[data-theme-style="win11"] [data-slot="dialog-content"],
+[data-theme-style="win11"] [data-slot="popover-content"],
+[data-theme-style="win11"] [data-slot="tooltip-content"],
+[data-theme-style="win11"] [data-menu-dropdown] {
+  background: var(--win11-acrylic-strong) !important;
+  backdrop-filter: var(--win11-blur) !important;
+  -webkit-backdrop-filter: var(--win11-blur) !important;
+  border: 1px solid var(--win11-stroke) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: var(--win11-shadow) !important;
+}
+
+/* --- Menu items: subtle gray pill hover --- */
+[data-theme-style="win11"] [data-menu-dropdown] button:hover,
+[data-theme-style="win11"] [data-slot="context-menu-item"]:hover,
+[data-theme-style="win11"] [data-slot="context-menu-item"][data-highlighted] {
+  background: var(--win11-hover) !important;
+  color: var(--foreground) !important;
+  border-radius: 6px !important;
+}
+
+/* --- Window containers (canvas windows): Mica window --- */
+[data-theme-style="win11"] .rounded-lg.bg-card {
+  border: 1px solid var(--win11-stroke) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: var(--win11-shadow) !important;
+}
+
+/* --- Dock: centered acrylic taskbar --- */
+[data-theme-style="win11"] [data-dock] {
+  background: var(--win11-acrylic) !important;
+  backdrop-filter: var(--win11-blur) !important;
+  -webkit-backdrop-filter: var(--win11-blur) !important;
+  border: 1px solid var(--win11-stroke) !important;
+  border-radius: 12px !important;
+  box-shadow: var(--win11-shadow) !important;
+}
+
+[data-theme-style="win11"] [data-dock] button {
+  border-radius: 9999px !important;
+  transition: background-color 0.12s ease;
+}
+
+[data-theme-style="win11"] [data-dock] button:hover {
+  background: var(--win11-hover);
+  transform: none !important;
+}
+
+[data-theme-style="win11"] [data-dock] button img {
+  border-radius: 6px !important;
+}
+
+/* Dock active indicator: short accent pill */
+[data-theme-style="win11"] [data-dock] button .rounded-full.bg-foreground {
+  background: var(--primary) !important;
+  border-radius: 9999px !important;
+  width: 12px !important;
+  height: 3px !important;
+}
+
+/* --- Menu Bar: Mica strip --- */
+[data-theme-style="win11"] [data-menu-bar] {
+  background: var(--win11-acrylic) !important;
+  backdrop-filter: var(--win11-blur) !important;
+  -webkit-backdrop-filter: var(--win11-blur) !important;
+  border-bottom: 1px solid var(--win11-stroke) !important;
+  box-shadow: none !important;
+}
+
+[data-theme-style="win11"] [data-menu-bar] button {
+  border-radius: 6px;
+}
+
+[data-theme-style="win11"] [data-menu-bar] button:hover {
+  background: var(--win11-hover) !important;
+}
+
+/* --- App tiles: pill hover, Fluent icon rounding --- */
+[data-theme-style="win11"] [data-app-tile] {
+  border-radius: var(--radius) !important;
+}
+
+[data-theme-style="win11"] [data-app-tile]:hover {
+  background: var(--win11-hover);
+}
+
+[data-theme-style="win11"] [data-app-icon] {
+  border-radius: 10px !important;
+  border: 1px solid var(--win11-stroke) !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06) !important;
+}
+
+[data-theme-style="win11"] [data-app-icon] img {
+  border-radius: 8px !important;
+}
+
+/* App tile open indicator: accent pill */
+[data-theme-style="win11"] [data-app-tile] .rounded-full.bg-primary {
+  border-radius: 9999px !important;
+  width: 12px !important;
+  height: 3px !important;
+}
+
+/* --- Mission Control: acrylic scrim --- */
+[data-theme-style="win11"] [data-mission-backdrop] {
+  background: rgba(243, 243, 243, 0.7) !important;
+  opacity: 1 !important;
+  backdrop-filter: blur(24px) !important;
+  -webkit-backdrop-filter: blur(24px) !important;
+}
+
+/* --- Selection: accent tint --- */
+[data-theme-style="win11"] ::selection {
+  background: color-mix(in srgb, var(--primary) 30%, transparent);
+}
+
+/* --- Scrollbars: Fluent gray thumb --- */
+[data-theme-style="win11"] ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 3px;
+}
