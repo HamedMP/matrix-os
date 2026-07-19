@@ -133,6 +133,42 @@ describe('platform ATS routes', () => {
     });
   });
 
+  it('returns controlled not-found responses for missing admin mutation targets', async () => {
+    const missingApplicationId = '550e8400-e29b-41d4-a716-446655440099';
+    const missingTaskId = '550e8400-e29b-41d4-a716-446655440098';
+    const headers = {
+      authorization: `Bearer ${ADMIN_SECRET}`,
+      'content-type': 'application/json',
+    };
+    const requests = [
+      routes().request(`/api/ats/admin/applications/${missingApplicationId}`, {
+        method: 'PATCH', headers, body: JSON.stringify({ baseRevision: 1, ownerId: null, tags: [], nextActionAt: null }),
+      }),
+      routes().request(`/api/ats/admin/applications/${missingApplicationId}/notes`, {
+        method: 'POST', headers, body: JSON.stringify({ body: 'Review note' }),
+      }),
+      routes().request(`/api/ats/admin/applications/${missingApplicationId}/scorecards`, {
+        method: 'PUT', headers, body: JSON.stringify({
+          interviewType: 'technical', recommendation: 'yes', ratings: { systems: 5 }, strengths: 'Strong', concerns: null,
+        }),
+      }),
+      routes().request(`/api/ats/admin/applications/${missingApplicationId}/interviews`, {
+        method: 'POST', headers, body: JSON.stringify({ interviewType: 'intro', interviewerIds: ['user_founder'] }),
+      }),
+      routes().request(`/api/ats/admin/applications/${missingApplicationId}/tasks`, {
+        method: 'POST', headers, body: JSON.stringify({ title: 'Review', assigneeId: null, dueAt: null }),
+      }),
+      routes().request(`/api/ats/admin/applications/${missingApplicationId}/tasks/${missingTaskId}/complete`, {
+        method: 'POST', headers,
+      }),
+    ];
+
+    for (const response of await Promise.all(requests)) {
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: 'Not found' });
+    }
+  });
+
   it('redirects a valid candidate booking token without exposing the provider URL in ATS records', async () => {
     const submitted = await routes().request('/api/ats/applications', {
       method: 'POST', headers: { authorization: `Bearer ${INGEST_SECRET}` }, body: validApplicationForm(),

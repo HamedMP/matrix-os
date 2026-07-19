@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
 import {
@@ -108,6 +108,14 @@ async function readJson<T>(c: { req: { json(): Promise<unknown> } }, schema: z.Z
 function getActorId(headers: { get(name: string): string | null }): string {
   const raw = headers.get('x-ats-actor-id')?.trim();
   return raw && raw.length <= 200 ? raw : 'site-admin';
+}
+
+function adminRouteError(c: Context, operation: string, err: unknown) {
+  if (err instanceof AtsApplicationNotFoundError) {
+    return c.json({ error: 'Not found' }, 404);
+  }
+  console.error(`[ats] ${operation} failed:`, err instanceof Error ? err.message : String(err));
+  return c.json({ error: 'ATS operation failed' }, 503);
 }
 
 export function createAtsRoutes(options: {
@@ -244,23 +252,31 @@ export function createAtsRoutes(options: {
   app.get('/api/ats/admin/applications/:id', async (c) => {
     const id = z.uuid().safeParse(c.req.param('id'));
     if (!id.success) return c.json({ error: 'Invalid application' }, 422);
-    const detail = await getAtsApplication(options.db, id.data);
-    return detail ? c.json({ application: detail }) : c.json({ error: 'Not found' }, 404);
+    try {
+      const detail = await getAtsApplication(options.db, id.data);
+      return detail ? c.json({ application: detail }) : c.json({ error: 'Not found' }, 404);
+    } catch (err: unknown) {
+      return adminRouteError(c, 'Candidate detail read', err);
+    }
   });
 
   app.get('/api/ats/admin/applications/:id/resume', async (c) => {
     const id = z.uuid().safeParse(c.req.param('id'));
     if (!id.success) return c.json({ error: 'Invalid application' }, 422);
-    const resume = await getAtsApplicationResume(options.db, id.data);
-    if (!resume) return c.json({ error: 'Not found' }, 404);
-    return new Response(resume.bytes as BodyInit, {
-      headers: {
-        'cache-control': 'no-store, private',
-        'content-type': resume.contentType,
-        'content-disposition': `attachment; filename="${safeFilename(resume.filename)}"`,
-        'x-content-type-options': 'nosniff',
-      },
-    });
+    try {
+      const resume = await getAtsApplicationResume(options.db, id.data);
+      if (!resume) return c.json({ error: 'Not found' }, 404);
+      return new Response(resume.bytes as BodyInit, {
+        headers: {
+          'cache-control': 'no-store, private',
+          'content-type': resume.contentType,
+          'content-disposition': `attachment; filename="${safeFilename(resume.filename)}"`,
+          'x-content-type-options': 'nosniff',
+        },
+      });
+    } catch (err: unknown) {
+      return adminRouteError(c, 'Candidate resume read', err);
+    }
   });
 
   app.patch('/api/ats/admin/applications/:id', bodyLimit({ maxSize: ADMIN_BODY_LIMIT }), async (c) => {
@@ -277,8 +293,7 @@ export function createAtsRoutes(options: {
       return c.json({ application });
     } catch (err: unknown) {
       if (err instanceof AtsRevisionConflictError) return c.json({ error: 'Revision conflict' }, 409);
-      console.error('[ats] Candidate metadata update failed:', err instanceof Error ? err.message : String(err));
-      return c.json({ error: 'Candidate update failed' }, 503);
+      return adminRouteError(c, 'Candidate metadata update', err);
     }
   });
 
@@ -306,26 +321,34 @@ export function createAtsRoutes(options: {
     const id = z.uuid().safeParse(c.req.param('id'));
     const body = await readJson(c, NoteSchema);
     if (!id.success || !body) return c.json({ error: 'Invalid note' }, 422);
-    const note = await addAtsNote(options.db, {
-      applicationId: id.data,
-      authorId: getActorId(c.req.raw.headers),
-      body: body.body,
-      at: now().toISOString(),
-    });
-    return c.json({ note }, 201);
+    try {
+      const note = await addAtsNote(options.db, {
+        applicationId: id.data,
+        authorId: getActorId(c.req.raw.headers),
+        body: body.body,
+        at: now().toISOString(),
+      });
+      return c.json({ note }, 201);
+    } catch (err: unknown) {
+      return adminRouteError(c, 'Candidate note create', err);
+    }
   });
 
   app.put('/api/ats/admin/applications/:id/scorecards', bodyLimit({ maxSize: ADMIN_BODY_LIMIT }), async (c) => {
     const id = z.uuid().safeParse(c.req.param('id'));
     const body = await readJson(c, ScorecardSchema);
     if (!id.success || !body) return c.json({ error: 'Invalid scorecard' }, 422);
-    const scorecard = await upsertAtsScorecard(options.db, {
-      applicationId: id.data,
-      interviewerId: getActorId(c.req.raw.headers),
-      ...body,
-      at: now().toISOString(),
-    });
-    return c.json({ scorecard });
+    try {
+      const scorecard = await upsertAtsScorecard(options.db, {
+        applicationId: id.data,
+        interviewerId: getActorId(c.req.raw.headers),
+        ...body,
+        at: now().toISOString(),
+      });
+      return c.json({ scorecard });
+    } catch (err: unknown) {
+      return adminRouteError(c, 'Candidate scorecard update', err);
+    }
   });
 
   app.post('/api/ats/admin/applications/:id/interviews', bodyLimit({ maxSize: ADMIN_BODY_LIMIT }), async (c) => {
@@ -334,36 +357,44 @@ export function createAtsRoutes(options: {
     if (!id.success || !body || !options.bookingBaseUrl) {
       return c.json({ error: options.bookingBaseUrl ? 'Invalid interview' : 'Booking not configured' }, options.bookingBaseUrl ? 422 : 503);
     }
-    const token = randomBytes(32).toString('base64url');
-    const bookingTokenHash = createHash('sha256').update(token).digest('hex');
-    const providerUrl = new URL(options.bookingBaseUrl);
-    providerUrl.searchParams.set('ats_interview', bookingTokenHash.slice(0, 16));
-    const interview = await createAtsInterview(options.db, {
-      applicationId: id.data,
-      ...body,
-      bookingTokenHash,
-      bookingUrl: providerUrl.toString(),
-      actorId: getActorId(c.req.raw.headers),
-      at: now().toISOString(),
-    });
-    const siteUrl = options.publicSiteUrl ?? 'https://matrix-os.com';
-    return c.json({
-      interview,
-      candidateBookingUrl: new URL(`/careers/schedule/${token}`, siteUrl).toString(),
-    }, 201);
+    try {
+      const token = randomBytes(32).toString('base64url');
+      const bookingTokenHash = createHash('sha256').update(token).digest('hex');
+      const providerUrl = new URL(options.bookingBaseUrl);
+      providerUrl.searchParams.set('ats_interview', bookingTokenHash.slice(0, 16));
+      const interview = await createAtsInterview(options.db, {
+        applicationId: id.data,
+        ...body,
+        bookingTokenHash,
+        bookingUrl: providerUrl.toString(),
+        actorId: getActorId(c.req.raw.headers),
+        at: now().toISOString(),
+      });
+      const siteUrl = options.publicSiteUrl ?? 'https://matrix-os.com';
+      return c.json({
+        interview,
+        candidateBookingUrl: new URL(`/careers/schedule/${token}`, siteUrl).toString(),
+      }, 201);
+    } catch (err: unknown) {
+      return adminRouteError(c, 'Candidate interview create', err);
+    }
   });
 
   app.post('/api/ats/admin/applications/:id/tasks', bodyLimit({ maxSize: ADMIN_BODY_LIMIT }), async (c) => {
     const id = z.uuid().safeParse(c.req.param('id'));
     const body = await readJson(c, TaskSchema);
     if (!id.success || !body) return c.json({ error: 'Invalid task' }, 422);
-    const task = await createAtsTask(options.db, {
-      applicationId: id.data,
-      ...body,
-      actorId: getActorId(c.req.raw.headers),
-      at: now().toISOString(),
-    });
-    return c.json({ task }, 201);
+    try {
+      const task = await createAtsTask(options.db, {
+        applicationId: id.data,
+        ...body,
+        actorId: getActorId(c.req.raw.headers),
+        at: now().toISOString(),
+      });
+      return c.json({ task }, 201);
+    } catch (err: unknown) {
+      return adminRouteError(c, 'Candidate task create', err);
+    }
   });
 
   app.post('/api/ats/admin/applications/:id/tasks/:taskId/complete', bodyLimit({ maxSize: ADMIN_BODY_LIMIT }), async (c) => {
@@ -372,12 +403,16 @@ export function createAtsRoutes(options: {
       taskId: c.req.param('taskId'),
     });
     if (!ids.success) return c.json({ error: 'Invalid task' }, 422);
-    const task = await completeAtsTask(options.db, {
-      ...ids.data,
-      actorId: getActorId(c.req.raw.headers),
-      at: now().toISOString(),
-    });
-    return c.json({ task });
+    try {
+      const task = await completeAtsTask(options.db, {
+        ...ids.data,
+        actorId: getActorId(c.req.raw.headers),
+        at: now().toISOString(),
+      });
+      return c.json({ task });
+    } catch (err: unknown) {
+      return adminRouteError(c, 'Candidate task complete', err);
+    }
   });
 
   return app;

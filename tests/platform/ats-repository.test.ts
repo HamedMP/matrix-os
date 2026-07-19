@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  AtsApplicationNotFoundError,
   AtsRevisionConflictError,
   addAtsNote,
   completeAtsTask,
@@ -100,6 +101,13 @@ describe('platform ATS repository', () => {
     expect([...resume!.bytes]).toEqual([0x25, 0x50, 0x44, 0x46]);
   });
 
+  it('searches candidate names case-insensitively', async () => {
+    await createAtsApplication(db, applicationInput(), NOW);
+
+    expect(await listAtsApplications(db, { search: 'ada' })).toHaveLength(1);
+    expect(await listAtsApplications(db, { search: 'LOVELACE' })).toHaveLength(1);
+  });
+
   it('enforces optimistic concurrency in the stage update and records one event', async () => {
     const { application } = await createAtsApplication(db, applicationInput(), NOW);
 
@@ -160,6 +168,18 @@ describe('platform ATS repository', () => {
       at: NOW,
     })).rejects.toBeInstanceOf(AtsRevisionConflictError);
     expect((await getAtsApplication(db, application.id))?.events[0]?.eventType).toBe('application_metadata_updated');
+  });
+
+  it('distinguishes a missing metadata target from a stale revision', async () => {
+    await expect(updateAtsApplicationMetadata(db, {
+      applicationId: '550e8400-e29b-41d4-a716-446655440099',
+      baseRevision: 1,
+      ownerId: null,
+      tags: [],
+      nextActionAt: null,
+      actorId: 'user_founder',
+      at: NOW,
+    })).rejects.toBeInstanceOf(AtsApplicationNotFoundError);
   });
 
   it('resolves a candidate booking token and records its first use once', async () => {

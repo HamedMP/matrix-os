@@ -59,6 +59,15 @@ async function insertEvent(
   }).execute();
 }
 
+async function requireAtsApplication(db: AtsDB, applicationId: string): Promise<void> {
+  const application = await db.executor.selectFrom('ats_applications')
+    .select('id')
+    .where('id', '=', applicationId)
+    .where('deleted_at', 'is', null)
+    .executeTakeFirst();
+  if (!application) throw new AtsApplicationNotFoundError();
+}
+
 export async function createAtsApplication(
   db: AtsDB,
   input: {
@@ -146,7 +155,7 @@ export async function listAtsApplications(
     const search = `%${filters.search.trim().toLowerCase()}%`;
     query = query.where((eb) => eb.or([
       eb('candidate_email', 'like', search),
-      eb('candidate_name', 'like', search),
+      eb(eb.fn<string>('lower', ['candidate_name']), 'like', search),
     ]));
   }
   return (await query.orderBy('updated_at', 'desc').limit(200).execute()).map(mapApplication);
@@ -253,6 +262,7 @@ export async function updateAtsApplicationMetadata(
 ): Promise<AtsApplicationSummary> {
   await db.ready;
   return db.transaction(async (trx) => {
+    await requireAtsApplication(trx, input.applicationId);
     const updated = await trx.executor.updateTable('ats_applications').set({
       owner_id: input.ownerId,
       tags: JSON.stringify(input.tags),
@@ -281,6 +291,7 @@ export async function addAtsNote(db: AtsDB, input: {
 }): Promise<AtsNote> {
   await db.ready;
   return db.transaction(async (trx) => {
+    await requireAtsApplication(trx, input.applicationId);
     const row = await trx.executor.insertInto('ats_notes').values({
       id: randomUUID(), application_id: input.applicationId, author_id: input.authorId,
       body: input.body, created_at: input.at, updated_at: input.at,
@@ -297,6 +308,7 @@ export async function upsertAtsScorecard(db: AtsDB, input: {
 }): Promise<AtsScorecard> {
   await db.ready;
   return db.transaction(async (trx) => {
+    await requireAtsApplication(trx, input.applicationId);
     const id = randomUUID();
     const row = await trx.executor.insertInto('ats_scorecards').values({
       id, application_id: input.applicationId, interviewer_id: input.interviewerId,
@@ -321,6 +333,7 @@ export async function createAtsInterview(db: AtsDB, input: {
 }): Promise<AtsInterview> {
   await db.ready;
   return db.transaction(async (trx) => {
+    await requireAtsApplication(trx, input.applicationId);
     const row = await trx.executor.insertInto('ats_interviews').values({
       id: randomUUID(), application_id: input.applicationId,
       interview_type: input.interviewType, status: 'awaiting_booking',
@@ -373,6 +386,7 @@ export async function createAtsTask(db: AtsDB, input: {
 }): Promise<AtsTask> {
   await db.ready;
   return db.transaction(async (trx) => {
+    await requireAtsApplication(trx, input.applicationId);
     const row = await trx.executor.insertInto('ats_tasks').values({
       id: randomUUID(), application_id: input.applicationId, title: input.title,
       assignee_id: input.assigneeId, due_at: input.dueAt, status: 'open',
