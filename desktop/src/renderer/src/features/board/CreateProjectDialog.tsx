@@ -1,12 +1,12 @@
 import { ArrowLeft, FolderOpen, FolderPlus, Github } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Dialog } from "../../design/primitives";
-import { AppError, toUserMessage } from "../../lib/errors";
+import { toUserMessage } from "../../lib/errors";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
-import ComputerFileBrowser from "../files/ComputerFileBrowser";
-import { cloneProject } from "./clone-project";
+import { CloneStepFields, ExistingFolderStepFields, NewFolderStepFields } from "./AddProjectStepFields";
+import { submitClone, submitExistingFolder, submitNewFolder } from "./add-project-submit";
 import {
   isValidBranchName,
   isValidProjectSlug,
@@ -32,17 +32,6 @@ function scopedPath(selection: ScopedPath | null, slot: string, authGeneration: 
     ? selection.path
     : "";
 }
-
-const FIELD_STYLE: React.CSSProperties = {
-  background: "var(--bg-raised)",
-  color: "var(--text-primary)",
-  border: "1px solid var(--border-default)",
-  borderRadius: "var(--radius)",
-  padding: "8px 10px",
-  fontSize: "var(--text-sm)",
-  width: "100%",
-  outline: "none",
-};
 
 function ModeCard({
   icon,
@@ -167,16 +156,6 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
     return false;
   })();
 
-  // Shared success path for every mode: make the new project active and open
-  // its project tab, same as the previous single-mode dialog.
-  const finish = async (project: { slug: string; name: string }, submitGeneration: number) => {
-    if (!api) return;
-    await selectProject(api, project.slug);
-    if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
-    closeFromUser();
-    openTab({ kind: "project", projectSlug: project.slug, title: project.name || project.slug });
-  };
-
   const submit = async () => {
     if (!api || step === "pick" || !canSubmit || submitting) return;
     if (step === "github") {
@@ -191,83 +170,30 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
     const submitGeneration = dialogGenerationRef.current;
     setSubmitting(true);
     setError(null);
+    const isCurrent = () => !dialogClosedRef.current && dialogGenerationRef.current === submitGeneration;
+    const ctx = {
+      api,
+      runtimeSlot,
+      createProject,
+      selectProject,
+      loadProjects,
+      openTab,
+      isCurrent,
+      setError,
+      close: closeFromUser,
+    };
     try {
       if (step === "folder") {
-        const project = await createProject(api, { name: name.trim(), mode: "folder", path: folderPath });
-        if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
-        if (!project) {
-          setError("Couldn't connect that folder. Check that it exists on this computer.");
-          return;
-        }
-        await finish(project, submitGeneration);
-        return;
+        await submitExistingFolder(ctx, { name: name.trim(), path: folderPath });
+      } else if (step === "github") {
+        await submitClone(ctx, { url: url.trim(), name: effectiveFolderName, branch: trimmedBranch || undefined });
+      } else {
+        await submitNewFolder(ctx, { name: name.trim(), parentPath });
       }
-      if (step === "github") {
-        const result = await cloneProject({
-          baseUrl: api.baseUrl,
-          runtimeSlot,
-          url: url.trim(),
-          name: effectiveFolderName,
-          branch: trimmedBranch || undefined,
-        });
-        if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
-        if (!result.ok) {
-          setError(result.message);
-          return;
-        }
-        // The board store only refreshes on its own create path, so pull the
-        // new clone into the sidebar list explicitly.
-        await loadProjects(api);
-        if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
-        await finish(result.project, submitGeneration);
-        return;
-      }
-      // scratch: a new folder in the projects root, or under a chosen parent
-      // via the mkdir route followed by a folder bind.
-      const slug = slugifyProjectName(name.trim());
-      if (!parentPath) {
-        const project = await createProject(api, { name: name.trim(), mode: "scratch" });
-        if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
-        if (!project) {
-          setError("Couldn't create the project. Check the name.");
-          return;
-        }
-        await finish(project, submitGeneration);
-        return;
-      }
-      let createdPath: string;
-      try {
-        const created = await api.post<{ path?: unknown }>("/api/projects/mkdir", { name: slug, parent: parentPath });
-        if (typeof created.path !== "string" || created.path.length === 0) {
-          setError("Couldn't create the folder. Try again.");
-          return;
-        }
-        createdPath = created.path;
-      } catch (err: unknown) {
-        if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
-        setError(
-          err instanceof AppError && err.detail === "folder_conflict"
-            ? "A folder with that name already exists there."
-            : toUserMessage(err),
-        );
-        return;
-      }
-      if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
-      const project = await createProject(api, { name: name.trim(), mode: "folder", path: createdPath });
-      if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
-      if (!project) {
-        setError("The folder was created but couldn't be connected. Add it with “Existing folder”.");
-        return;
-      }
-      await finish(project, submitGeneration);
     } catch (err: unknown) {
-      if (!dialogClosedRef.current && dialogGenerationRef.current === submitGeneration) {
-        setError(toUserMessage(err));
-      }
+      if (isCurrent()) setError(toUserMessage(err));
     } finally {
-      if (!dialogClosedRef.current && dialogGenerationRef.current === submitGeneration) {
-        setSubmitting(false);
-      }
+      if (isCurrent()) setSubmitting(false);
     }
   };
 
@@ -330,130 +256,51 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
       </div>
 
       {step === "github" ? (
-        <>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Repository URL</span>
-            <input
-              autoFocus
-              value={url}
-              disabled={submitting}
-              onChange={(e) => setUrl(e.target.value)}
-              onBlur={() => setUrlAttempted(true)}
-              placeholder="https://github.com/owner/repo"
-              style={FIELD_STYLE}
-            />
-          </label>
-          {(urlAttempted || url.length > 0) && urlInvalid ? (
-            <span className="text-xs" style={{ color: "var(--danger)" }}>
-              Enter a GitHub URL like https://github.com/owner/repo.
-            </span>
-          ) : null}
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Folder name</span>
-            <input
-              value={effectiveFolderName}
-              disabled={submitting}
-              onChange={(e) => {
-                setFolderName(e.target.value);
-                setFolderNameTouched(true);
-              }}
-              placeholder="Folder name"
-              style={FIELD_STYLE}
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Branch (optional)</span>
-            <input
-              value={branch}
-              disabled={submitting}
-              onChange={(e) => setBranch(e.target.value)}
-              onBlur={() => setBranchAttempted(true)}
-              placeholder="Default branch"
-              style={FIELD_STYLE}
-            />
-          </label>
-          {branchAttempted && branchInvalid ? (
-            <span className="text-xs" style={{ color: "var(--danger)" }}>That branch name isn't valid.</span>
-          ) : null}
-          {submitting ? (
-            <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-              Cloning the repository. Large repos can take a few minutes.
-            </span>
-          ) : null}
-        </>
+        <CloneStepFields
+          url={url}
+          onUrlChange={setUrl}
+          onUrlBlur={() => setUrlAttempted(true)}
+          showUrlError={(urlAttempted || url.length > 0) && urlInvalid}
+          folderName={effectiveFolderName}
+          onFolderNameChange={(value) => {
+            setFolderName(value);
+            setFolderNameTouched(true);
+          }}
+          branch={branch}
+          onBranchChange={setBranch}
+          onBranchBlur={() => setBranchAttempted(true)}
+          showBranchError={branchAttempted && branchInvalid}
+          submitting={submitting}
+        />
       ) : null}
 
       {step === "folder" ? (
-        <>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Name</span>
-            <input
-              autoFocus
-              value={name}
-              disabled={submitting}
-              onChange={(e) => {
-                setName(e.target.value);
-                setNameTouched(true);
-              }}
-              placeholder="Project name"
-              style={FIELD_STYLE}
-            />
-          </label>
-          <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Choose a folder on this computer</span>
-            <ComputerFileBrowser compact mode="folder-picker" onChooseFolder={chooseFolder} />
-            <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-              {folderPath ? `Selected: ${folderPath}` : "Select a folder. It stays in place and remains yours."}
-            </span>
-          </div>
-        </>
+        <ExistingFolderStepFields
+          name={name}
+          onNameChange={(value) => {
+            setName(value);
+            setNameTouched(true);
+          }}
+          folderPath={folderPath}
+          onChooseFolder={chooseFolder}
+          submitting={submitting}
+        />
       ) : null}
 
       {step === "scratch" ? (
-        <>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Name</span>
-            <input
-              autoFocus
-              value={name}
-              disabled={submitting}
-              onChange={(e) => {
-                setName(e.target.value);
-                setNameTouched(true);
-              }}
-              placeholder="Project name"
-              style={FIELD_STYLE}
-            />
-          </label>
-          <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Location</span>
-            {parentPath ? (
-              <div
-                className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
-                style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
-              >
-                <span className="min-w-0 truncate text-xs" style={{ color: "var(--text-secondary)" }} title={parentPath}>
-                  Create in: {parentPath}
-                </span>
-                <Button variant="subtle" disabled={submitting} onClick={() => setParentSelection(null)}>
-                  Use Projects instead
-                </Button>
-              </div>
-            ) : parentPickerOpen ? (
-              <ComputerFileBrowser compact mode="folder-picker" onChooseFolder={chooseParent} />
-            ) : (
-              <div
-                className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
-                style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
-              >
-                <span className="text-xs" style={{ color: "var(--text-secondary)" }}>Projects (default)</span>
-                <Button variant="subtle" disabled={submitting} onClick={() => setParentPickerOpen(true)}>
-                  Choose a different folder…
-                </Button>
-              </div>
-            )}
-          </div>
-        </>
+        <NewFolderStepFields
+          name={name}
+          onNameChange={(value) => {
+            setName(value);
+            setNameTouched(true);
+          }}
+          parentPath={parentPath}
+          parentPickerOpen={parentPickerOpen}
+          onOpenParentPicker={() => setParentPickerOpen(true)}
+          onChooseParent={chooseParent}
+          onResetParent={() => setParentSelection(null)}
+          submitting={submitting}
+        />
       ) : null}
 
       {error ? <span className="text-xs" style={{ color: "var(--danger)" }}>{error}</span> : null}
