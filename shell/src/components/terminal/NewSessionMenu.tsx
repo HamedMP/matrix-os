@@ -5,7 +5,10 @@ import { TerminalIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, type CSSProperties, type ReactNode, type RefObject } from "react";
 import {
   TERMINAL_AGENT_OPTIONS,
+  resolveTerminalAgentMenuState,
   type TerminalAgentId,
+  type TerminalAgentInstallState,
+  type TerminalAgentMenuAction,
   type TerminalAgentOption,
 } from "./terminal-agent-options";
 
@@ -42,13 +45,17 @@ export function NewSessionMenu({
   onCreateShell,
   onCreateAgent,
   agentStatuses,
+  agentStatusesChecking,
+  agentStatusesUnavailable,
   ignoreLightDismissRef,
 }: {
   align: "left" | "right" | "mobile";
   onClose: () => void;
   onCreateShell: () => void;
-  onCreateAgent: (option: TerminalAgentOption, installed: boolean) => void;
-  agentStatuses: Record<TerminalAgentId, boolean> | null;
+  onCreateAgent: (option: TerminalAgentOption, action: TerminalAgentMenuAction) => void;
+  agentStatuses: Record<TerminalAgentId, TerminalAgentInstallState>;
+  agentStatusesChecking: boolean;
+  agentStatusesUnavailable: boolean;
   ignoreLightDismissRef?: RefObject<HTMLElement | null>;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -128,14 +135,19 @@ export function NewSessionMenu({
         onClick={onCreateShell}
       />
       {TERMINAL_AGENT_OPTIONS.map((option) => {
-        const installed = agentStatuses?.[option.id] === true;
+        const installState = agentStatuses[option.id];
+        const menuState = resolveTerminalAgentMenuState(
+          installState,
+          agentStatusesChecking,
+          agentStatusesUnavailable,
+        );
         return (
           <NewSessionMenuItem
             key={option.id}
             label={option.label}
-            install={!installed}
-            icon={<TerminalAgentLogo muted={!installed} option={option} />}
-            onClick={() => onCreateAgent(option, installed)}
+            statusLabel={menuState.statusLabel}
+            icon={<TerminalAgentLogo muted={installState !== "installed"} option={option} />}
+            onClick={() => onCreateAgent(option, menuState.action)}
           />
         );
       })}
@@ -171,15 +183,16 @@ function NewSessionMenuItem({
   label,
   icon,
   active = false,
-  install = false,
+  statusLabel = null,
   onClick,
 }: {
   label: string;
   icon: ReactNode;
   active?: boolean;
-  install?: boolean;
+  statusLabel?: "Install" | "Checking…" | "Status unavailable" | null;
   onClick: () => void;
 }) {
+  const install = statusLabel === "Install";
   return (
     <button
       type="button"
@@ -221,7 +234,7 @@ function NewSessionMenuItem({
       >
         {label}
       </span>
-      {install ? (
+      {statusLabel ? (
         <span
           style={{
             alignItems: "center",
@@ -231,7 +244,7 @@ function NewSessionMenuItem({
           }}
         >
           <span
-            data-testid="terminal-agent-install-pill"
+            data-testid={statusLabel === "Install" ? "terminal-agent-install-pill" : "terminal-agent-status-pill"}
             style={{
               alignItems: "center",
               background: "var(--terminal-drawer-action-bg)",
@@ -241,14 +254,14 @@ function NewSessionMenuItem({
               color: "var(--terminal-drawer-action-fg)",
               display: "flex",
               fontFamily: "Inter, system-ui, sans-serif",
-              fontSize: 12,
+              fontSize: statusLabel === "Status unavailable" ? 10 : 12,
               fontWeight: 700,
               height: 18,
               lineHeight: "14px",
               padding: "0 6px",
             }}
           >
-            Install
+            {statusLabel}
           </span>
         </span>
       ) : null}

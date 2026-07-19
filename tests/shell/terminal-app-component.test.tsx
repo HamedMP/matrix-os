@@ -142,6 +142,16 @@ function mockJsonResponse(body: unknown, status = 200): Response {
   } as Response;
 }
 
+function completeAgentStatusResponse(installState: "installed" | "missing" | "unknown" = "unknown") {
+  return {
+    agents: (["claude", "codex", "opencode", "pi"] as const).map((id) => ({
+      id,
+      installState,
+      installed: installState === "installed" ? true : installState === "missing" ? false : null,
+    })),
+  };
+}
+
 function createDragDataTransfer(): DataTransfer {
   const data = new Map<string, string>();
   return {
@@ -195,6 +205,9 @@ describe("TerminalApp", () => {
     vi.stubGlobal("ResizeObserver", ResizeObserverMock as unknown as typeof ResizeObserver);
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/api/agents")) {
+        return Promise.resolve({ ok: true, json: async () => completeAgentStatusResponse() });
+      }
       if (url.includes("/api/files/tree")) {
         return Promise.resolve({ ok: true, json: async () => [] });
       }
@@ -1958,8 +1971,9 @@ describe("TerminalApp", () => {
     const menu = screen.getByRole("menu", { name: "New session menu" });
     expect(within(menu).getByText("NEW TAB")).toBeTruthy();
     expect(within(menu).getByRole("menuitem", { name: /^Shell(?:\s+⌘T)?$/i })).toBeTruthy();
-    expect(within(menu).getByRole("menuitem", { name: /Claude Code.*Install/i })).toBeTruthy();
-    expect(within(menu).getByRole("menuitem", { name: /Codex.*Install/i })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /Claude Code.*Status unavailable/i })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /Codex.*Status unavailable/i })).toBeTruthy();
+    expect(within(menu).queryByText("Install")).toBeNull();
     expect(fetchMock.mock.calls.some(([input, init]) => (
       String(input).endsWith("/api/terminal/sessions") &&
       init?.method === "POST"
@@ -2012,6 +2026,10 @@ describe("TerminalApp", () => {
     expect(menu.style.width).toBe("244px");
     expect(menu.style.left).toBe("calc(100% + 8px)");
     expect(menu.style.top).toBe("0px");
+    await vi.waitFor(() => {
+      expect(within(menu).getAllByText("Status unavailable")).toHaveLength(4);
+    });
+    expect(within(menu).queryByText("Install")).toBeNull();
   });
 
   it("opens two-word shell sessions from the new-session menu", async () => {
@@ -3698,7 +3716,7 @@ describe("TerminalApp", () => {
     expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-pi"), "/agent-logos/pi-coding-agent.png");
   });
 
-  it("shows install actions while agent install status is unknown", async () => {
+  it("shows status unavailable without install actions when agent status cannot be resolved", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/agents")) {
@@ -3729,11 +3747,92 @@ describe("TerminalApp", () => {
     });
 
     const menu = screen.getByRole("menu", { name: "New session menu" });
-    expect(within(menu).getByRole("menuitem", { name: /Claude Code.*Install/ })).toBeTruthy();
-    expect(within(menu).getByRole("menuitem", { name: /Codex.*Install/ })).toBeTruthy();
-    expect(within(menu).getByRole("menuitem", { name: /OpenCode.*Install/ })).toBeTruthy();
-    expect(within(menu).getByRole("menuitem", { name: /Pi.*Install/ })).toBeTruthy();
-    expect(within(menu).getAllByTestId("terminal-agent-install-pill")).toHaveLength(4);
+    await vi.waitFor(() => {
+      expect(within(menu).getAllByText("Status unavailable")).toHaveLength(4);
+    });
+    expect(within(menu).queryByText("Install")).toBeNull();
+  });
+
+  it("launches an agent directly when status is unavailable instead of running npm install", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/agents")) {
+        return Promise.reject(new Error("gateway unavailable"));
+      }
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body ?? "{}")) as { name?: string };
+        return Promise.resolve({ ok: true, status: 201, json: async () => ({ name: body.name, created: true }) });
+      }
+      if (url.includes("/api/terminal/sessions")) {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await chooseNewSessionMenuItemAfterStatus(/Claude Code.*Status unavailable/);
+
+    expectTerminalCreatePayloadForCommand("claude");
+    expect(terminalSessionPostPayloads().some((payload) => String(payload.cmd).includes("npm install"))).toBe(false);
+  });
+
+  it("keeps a known installed agent launchable while a refresh is still checking", async () => {
+    let agentStatusCalls = 0;
+    const pendingRefresh = new Promise<Response>(() => {});
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/agents")) {
+        agentStatusCalls += 1;
+        if (agentStatusCalls > 1) return pendingRefresh;
+        return Promise.resolve(mockJsonResponse({
+          agents: [
+            { id: "claude", installState: "installed", installed: true },
+            { id: "codex", installState: "installed", installed: true },
+            { id: "opencode", installState: "installed", installed: true },
+            { id: "pi", installState: "installed", installed: true },
+          ],
+        }));
+      }
+      if (url.includes("/api/files/tree")) return Promise.resolve(mockJsonResponse([]));
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") return Promise.resolve(mockJsonResponse({ ok: true }));
+      if (url.includes("/api/terminal/layout")) return Promise.resolve(mockJsonResponse({}));
+      if (url.includes("/api/terminal/sessions") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body ?? "{}")) as { name?: string };
+        return Promise.resolve(mockJsonResponse({ name: body.name, created: true }, 201));
+      }
+      if (url.includes("/api/terminal/sessions")) return Promise.resolve(mockJsonResponse({ sessions: [] }));
+      return Promise.resolve(mockJsonResponse({}));
+    }));
+
+    render(<TerminalApp />);
+    await vi.waitFor(() => expect(agentStatusCalls).toBe(1));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await openNewSessionMenu();
+    const menu = screen.getByRole("menu", { name: "New session menu" });
+    expect(within(menu).getByRole("menuitem", { name: /^Claude Code$/ })).toBeTruthy();
+    expect(within(menu).queryByText("Install")).toBeNull();
+
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /^Claude Code$/ }));
+    await vi.waitFor(() => expectTerminalCreatePayloadForCommand("claude"));
   });
 
   it("refreshes agent install state when opening the new-session menu", async () => {
@@ -3786,6 +3885,54 @@ describe("TerminalApp", () => {
     });
     expect(within(menu).getByRole("menuitem", { name: /^OpenCode$/ })).toBeTruthy();
     expect(within(menu).getByRole("menuitem", { name: /^Pi$/ })).toBeTruthy();
+  });
+
+  it("ignores an older agent-status response that arrives after a newer refresh", async () => {
+    let resolveFirst!: (response: Response) => void;
+    const firstResponse = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
+    let agentStatusCalls = 0;
+    const installedBody = {
+      agents: [
+        { id: "claude", installState: "installed", installed: true },
+        { id: "codex", installState: "installed", installed: true },
+        { id: "opencode", installState: "installed", installed: true },
+        { id: "pi", installState: "installed", installed: true },
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/agents")) {
+        agentStatusCalls += 1;
+        return agentStatusCalls === 1 ? firstResponse : Promise.resolve(mockJsonResponse(installedBody));
+      }
+      if (url.includes("/api/files/tree")) return Promise.resolve(mockJsonResponse([]));
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") return Promise.resolve(mockJsonResponse({ ok: true }));
+      if (url.includes("/api/terminal/layout")) return Promise.resolve(mockJsonResponse({}));
+      return Promise.resolve(mockJsonResponse({ sessions: [] }));
+    }));
+
+    render(<TerminalApp />);
+    await vi.waitFor(() => expect(agentStatusCalls).toBe(1));
+    await openNewSessionMenu();
+
+    const menu = screen.getByRole("menu", { name: "New session menu" });
+    await vi.waitFor(() => {
+      expect(within(menu).getByRole("menuitem", { name: /^Claude Code$/ })).toBeTruthy();
+    });
+
+    resolveFirst(mockJsonResponse({
+      agents: (["claude", "codex", "opencode", "pi"] as const)
+        .map((id) => ({ id, installState: "missing", installed: false })),
+    }));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(within(menu).getByRole("menuitem", { name: /^Claude Code$/ })).toBeTruthy();
+    expect(within(menu).queryByText("Install")).toBeNull();
   });
 
   it("starts installed agents directly from the new-session menu", async () => {

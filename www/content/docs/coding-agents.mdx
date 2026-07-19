@@ -82,6 +82,8 @@ Four coding agents are supported:
 
 The Terminal `+` menu shows all four agents and whether each one is installed on your Matrix computer. If an agent is missing, clicking it opens a new shell tab and runs the npm installer there so you can watch the output.
 
+Matrix runs the four executable checks together. Only a confirmed missing executable shows **Install**. While a check is still running, the menu shows **Checking…**; if the check cannot complete, it shows **Status unavailable**. Both states still let you launch the CLI directly, so a temporary gateway or probe failure never triggers an unintended reinstall.
+
 The install command that runs is:
 
 ```bash
@@ -99,6 +101,8 @@ Each agent maps to an npm package:
 | Pi | `@earendil-works/pi-coding-agent@latest` |
 
 Matrix pins Codex to the newest version whose structured event and approval protocols have passed compatibility checks. A scheduled check detects new Codex releases; Matrix advances the pinned version only after both protocols pass together.
+
+Any Codex version that answers `codex --version` remains available for an interactive Terminal session. A version outside Matrix's verified compatibility contract is marked unsupported only for structured workspace sessions, which continue to require the pinned version.
 
 The default node prefix is `/opt/matrix/runtime/node`. Set `MATRIX_NODE_PREFIX` in your environment to use a different location.
 
