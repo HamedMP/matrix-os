@@ -184,6 +184,8 @@ describe("RuntimeManager", () => {
     installFetchRouter();
     await renderManager();
 
+    expect(await screen.findByRole("heading", { name: "Choose your Matrix OS computer", level: 1 })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Matrix OS logo" })).toBeTruthy();
     expect(await screen.findByRole("heading", { name: "Your computers" })).toBeTruthy();
     expect(screen.getByText("Matrix OS member")).toBeTruthy();
     expect(screen.getByText("neo@example.com")).toBeTruthy();

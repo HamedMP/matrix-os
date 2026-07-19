@@ -258,6 +258,7 @@ function activeCustomerCount(inventory: MatrixComputerList): number {
   return inventory.items.filter((computer) => computer.kind === "customer").length;
 }
 
+// react-doctor-disable-next-line react-doctor/no-giant-component -- This finite-state orchestration root delegates every screen to focused view components; keeping shared billing and provisioning transitions together avoids duplicated or divergent flow state.
 export function RuntimeManager({
   onExternalNavigate,
   billingPollIntervalMs = DEFAULT_BILLING_POLL_INTERVAL_MS,
@@ -553,34 +554,45 @@ export function RuntimeManager({
   return (
     <main
       className="h-dvh overflow-y-auto bg-page-bg text-deep"
-      style={{ background: `radial-gradient(circle at 12% 0%, ${brand.cream} 0, transparent 38%), ${brand.pageBg}` }}
+      style={{
+        background: `radial-gradient(circle at 8% -8%, ${brand.cream} 0, transparent 34%), radial-gradient(circle at 94% 6%, rgba(208, 111, 37, 0.10) 0, transparent 25%), linear-gradient(180deg, #FAFAF5 0%, ${brand.pageBg} 52%, #E7E6D8 100%)`,
+      }}
     >
       <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col px-4 py-5 sm:px-7 sm:py-8 lg:px-10">
-        <header className="flex flex-col gap-4 border-b border-forest/10 pb-6 sm:flex-row sm:items-center sm:justify-between">
-          <Link href="/" className="inline-flex items-center gap-2 text-sm font-semibold text-forest no-underline">
-            <span className="grid size-8 place-items-center rounded-xl bg-forest text-white">M</span>
-            Matrix OS
+        <header className="flex flex-col gap-4 border-b border-forest/10 pb-5 sm:flex-row sm:items-center sm:justify-between">
+          <Link href="/" className="inline-flex w-fit items-center gap-3 text-forest no-underline">
+            <span className="grid size-11 place-items-center rounded-2xl border border-forest/10 bg-white/65 shadow-[0_10px_35px_rgba(50,53,46,0.08)] backdrop-blur-xl">
+              <Image src="/matrix-logo.svg" alt="Matrix OS logo" width={22} height={29} priority className="h-7 w-auto" />
+            </span>
+            <span>
+              <strong className="block text-sm font-semibold tracking-[0.12em]">MATRIX OS</strong>
+              <span className="block text-[10px] font-medium uppercase tracking-[0.16em] text-forest/45">Computer manager</span>
+            </span>
           </Link>
-          <section className="flex min-w-0 flex-wrap items-center gap-3" aria-label="Account">
-            <span className="grid size-11 shrink-0 place-items-center overflow-hidden rounded-full bg-forest text-white">
-              {avatarUrl ? (
-                <Image src={avatarUrl} alt="" width={44} height={44} className="size-full object-cover" unoptimized />
-              ) : (
-                <UserIcon className="size-5" aria-hidden="true" />
-              )}
-            </span>
-            <span className="min-w-0 grow sm:grow-0">
-              <strong className="block truncate text-sm">{displayName}</strong>
-              <span className="block truncate text-xs text-forest/55">{email}</span>
-            </span>
-            <button type="button" onClick={() => clerk.openUserProfile()} className="account-action">Manage account</button>
-            <button type="button" onClick={() => void handleSignOut()} className="account-action">
-              <LogOutIcon className="size-3.5" aria-hidden="true" /> Sign out
-            </button>
+          <section className="flex min-w-0 flex-col gap-2 rounded-2xl border border-forest/10 bg-white/55 p-2 shadow-[0_14px_40px_rgba(50,53,46,0.06)] backdrop-blur-xl sm:flex-row sm:items-center sm:gap-3" aria-label="Account">
+            <div className="flex min-w-0 items-center gap-3 px-1 sm:px-0">
+              <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-full bg-forest text-white ring-2 ring-white/80">
+                {avatarUrl ? (
+                  <Image src={avatarUrl} alt="" width={40} height={40} className="size-full object-cover" unoptimized />
+                ) : (
+                  <UserIcon className="size-5" aria-hidden="true" />
+                )}
+              </span>
+              <span className="min-w-0 grow sm:grow-0">
+                <strong className="block truncate text-sm">{displayName}</strong>
+                <span className="block truncate text-xs text-forest/55">{email}</span>
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => clerk.openUserProfile()} className="account-action flex-1">Manage account</button>
+              <button type="button" onClick={() => void handleSignOut()} className="account-action flex-1">
+                <LogOutIcon className="size-3.5" aria-hidden="true" /> Sign out
+              </button>
+            </div>
           </section>
         </header>
 
-        <section className="flex flex-1 flex-col py-8 sm:py-12">
+        <section className="flex flex-1 flex-col py-6 sm:py-9">
           {step === "list" ? (
             <ComputerInventory overview={overview} onRetry={() => setOverviewRefresh((value) => value + 1)} onAdd={beginAddComputer} />
           ) : null}
