@@ -8,6 +8,7 @@ const shared = vi.hoisted(() => ({
   saveDesktopConfigMock: vi.fn(),
   saveDesktopConfigPatchMock: vi.fn(),
   setDockMock: vi.fn(),
+  storeDock: { position: "left", size: 56, iconSize: 40, autoHide: false },
   config: {
     background: { type: "wallpaper", name: "forest.png" } as const,
     dock: { position: "left", size: 56, iconSize: 40, autoHide: false } as const,
@@ -33,8 +34,11 @@ vi.mock("@/hooks/useDesktopConfig", () => ({
 }));
 
 vi.mock("@/stores/desktop-config", () => ({
-  useDesktopConfigStore: (selector: (store: { setDock: typeof shared.setDockMock }) => unknown) => (
-    selector({ setDock: shared.setDockMock })
+  useDesktopConfigStore: Object.assign(
+    (selector: (store: { dock: typeof shared.storeDock; setDock: typeof shared.setDockMock }) => unknown) => (
+      selector({ dock: shared.storeDock, setDock: shared.setDockMock })
+    ),
+    { getState: () => ({ dock: shared.storeDock, setDock: shared.setDockMock }) },
   ),
 }));
 
@@ -63,6 +67,10 @@ describe("AppearanceSection warning logs", () => {
     shared.saveDesktopConfigPatchMock.mockReset();
     shared.saveDesktopConfigPatchMock.mockResolvedValue(undefined);
     shared.setDockMock.mockReset();
+    shared.storeDock = { position: "left", size: 56, iconSize: 40, autoHide: false };
+    shared.setDockMock.mockImplementation((dock) => {
+      shared.storeDock = dock;
+    });
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
       ok: true,
       json: async () => ({ wallpapers: ["forest.png"] }),
@@ -115,9 +123,27 @@ describe("AppearanceSection warning logs", () => {
       background: { type: "wallpaper", name: "forest.png" },
     });
     expect(shared.saveDesktopConfigPatchMock).toHaveBeenNthCalledWith(2, {
-      dock: { position: "bottom", size: 56, iconSize: 40, autoHide: false },
+      dock: { position: "bottom" },
     });
     expect(shared.saveDesktopConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("patches only the edited Dock field after a design changes the live Dock", async () => {
+    const { getByRole } = render(<AppearanceSection />);
+
+    await waitFor(() => expect(getByRole("slider", { name: "Dock size" })).toBeTruthy());
+    shared.storeDock = { position: "bottom", size: 56, iconSize: 40, autoHide: false };
+    fireEvent.change(getByRole("slider", { name: "Dock size" }), { target: { value: "60" } });
+
+    await waitFor(() => expect(shared.saveDesktopConfigPatchMock).toHaveBeenCalledWith({
+      dock: { size: 60 },
+    }));
+    expect(shared.setDockMock).toHaveBeenCalledWith({
+      position: "bottom",
+      size: 60,
+      iconSize: 40,
+      autoHide: false,
+    });
   });
 
   it("logs upload failures when the wallpaper POST fails", async () => {

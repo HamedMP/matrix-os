@@ -20,6 +20,7 @@ type BgMode = "pattern" | "solid" | "image";
 export function AppearanceSection() {
   useTheme(); // keep theme applied
   const config = useDesktopConfig();
+  const dock = useDesktopConfigStore((s) => s.dock);
   const setDock = useDesktopConfigStore((s) => s.setDock);
   const solidColorId = useId();
   const dockSizeId = useId();
@@ -42,8 +43,6 @@ export function AppearanceSection() {
     light: "#B8C4A8",
     accent: "#6a8a7a",
   }));
-
-  const dock = config.dock;
 
   // Bundled defaults ship with the shell, so they are always selectable in the
   // grid even when the gateway's wallpaper directory doesn't list them (e.g.
@@ -91,9 +90,10 @@ export function AppearanceSection() {
     }
   }
 
-  async function saveDock(next: DockConfig) {
+  async function saveDock(patch: Partial<DockConfig>) {
+    const next = { ...useDesktopConfigStore.getState().dock, ...patch };
     setDock(next);
-    await saveDesktopConfigPatch({ dock: next });
+    await saveDesktopConfigPatch({ dock: patch });
   }
 
   const saveBg = async (background: DesktopConfig["background"]) => {
@@ -322,7 +322,7 @@ export function AppearanceSection() {
             <button
               key={pos}
               type="button"
-              onClick={() => saveDock({ ...dock, position: pos })}
+              onClick={() => saveDock({ position: pos })}
               className={`flex-1 rounded-md px-3 py-1.5 text-sm capitalize transition-colors ${
                 dock.position === pos
                   ? "bg-background text-foreground font-medium shadow-sm"
@@ -344,7 +344,7 @@ export function AppearanceSection() {
             max={64}
             step={2}
             value={dock.size}
-            onChange={(e) => saveDock({ ...dock, size: Number(e.target.value) })}
+            onChange={(e) => saveDock({ size: Number(e.target.value) })}
             aria-label="Dock size"
             className="flex-1 h-1 accent-primary cursor-pointer"
           />
