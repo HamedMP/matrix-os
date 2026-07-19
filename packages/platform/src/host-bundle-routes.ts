@@ -32,7 +32,8 @@ const HostBundleReleaseBodySchema = z.object({
   version: z.string().regex(HOST_BUNDLE_IMAGE_VERSION_PATTERN),
   gitCommit: z.string().min(7).max(64),
   gitRef: z.string().max(256).nullable().optional(),
-  buildTime: z.string().min(1).max(128),
+  buildTime: z.string().datetime({ offset: true })
+    .transform((value) => new Date(value).toISOString()),
   bundleKey: z.string().regex(/^system-bundles\/[A-Za-z0-9._-]{1,128}\/matrix-host-bundle\.tar\.gz$/),
   checksumKey: z.string().regex(/^system-bundles\/[A-Za-z0-9._-]{1,128}\/matrix-host-bundle\.tar\.gz\.sha256$/).nullable().optional(),
   incrementalManifestKey: z.string().regex(/^system-bundles\/[A-Za-z0-9._-]{1,128}\/incremental-manifest\.json$/).nullable().optional(),

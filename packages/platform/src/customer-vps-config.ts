@@ -1,3 +1,8 @@
+import {
+  GoldenSnapshotRuntimeConfigSchema,
+  type GoldenSnapshotRuntimeConfig,
+} from './golden-snapshot-schema.js';
+
 export interface CustomerVpsConfig {
   hetznerApiToken: string;
   location: string;
@@ -26,6 +31,7 @@ export interface CustomerVpsConfig {
   reconciliationStaleAfterMs: number;
   maxProvisionAttempts: number;
   previewProvisioningLimit: number;
+  goldenSnapshots: GoldenSnapshotRuntimeConfig;
 }
 
 const DEFAULT_POSTHOG_PUBLIC_HOST = 'https://eu.posthog.com';
@@ -42,6 +48,16 @@ function boundedIntegerFromEnv(value: string | undefined, fallback: number, maxi
   if (value === undefined || value === '') return fallback;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= maximum ? parsed : fallback;
+}
+
+function boundedInteger(value: string | undefined, fallback: number, minimum: number, maximum: number): number {
+  if (value === undefined || value === '') return fallback;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback;
+}
+
+function enabledFromEnv(value: string | undefined): boolean {
+  return value === 'true';
 }
 
 export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): CustomerVpsConfig {
@@ -87,5 +103,30 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
       DEFAULT_PREVIEW_PROVISIONING_LIMIT,
       MAX_PREVIEW_PROVISIONING_LIMIT,
     ),
+    goldenSnapshots: GoldenSnapshotRuntimeConfigSchema.parse({
+      enabled: enabledFromEnv(env.GOLDEN_SNAPSHOTS_ENABLED),
+      buildsEnabled: enabledFromEnv(env.GOLDEN_SNAPSHOT_BUILDS_ENABLED),
+      rolloutPercent: boundedInteger(env.GOLDEN_SNAPSHOT_ROLLOUT_PERCENT, 0, 0, 100),
+      compatibility: {
+        provider: 'hetzner',
+        architecture: env.GOLDEN_SNAPSHOT_ARCHITECTURE ?? 'x86',
+        region: env.GOLDEN_SNAPSHOT_REGION ?? 'eu-central',
+        baseImage: env.GOLDEN_SNAPSHOT_BASE_IMAGE || env.HETZNER_IMAGE || 'ubuntu-24.04',
+        baseGeneration: env.GOLDEN_SNAPSHOT_BASE_GENERATION ?? 'ubuntu-24.04-v1',
+        bootMode: env.GOLDEN_SNAPSHOT_BOOT_MODE ?? 'bios',
+        activationAbi: env.GOLDEN_SNAPSHOT_ACTIVATION_ABI ?? 'host-v1',
+        minimumDiskGb: boundedInteger(env.GOLDEN_SNAPSHOT_MINIMUM_DISK_GB, 40, 1, 2_048),
+      },
+      maxBuildAttempts: boundedInteger(env.GOLDEN_SNAPSHOT_MAX_BUILD_ATTEMPTS, 5, 1, 10),
+      maxConcurrentBuilds: boundedInteger(env.GOLDEN_SNAPSHOT_MAX_CONCURRENT_BUILDS, 2, 1, 10),
+      buildLeaseMs: boundedInteger(env.GOLDEN_SNAPSHOT_BUILD_LEASE_MS, 5 * 60 * 1000, 60_000, 30 * 60 * 1000),
+      provisioningLeaseMs: boundedInteger(
+        env.GOLDEN_SNAPSHOT_PROVISIONING_LEASE_MS,
+        10 * 60 * 1000,
+        60_000,
+        30 * 60 * 1000,
+      ),
+      reconciliationBatchSize: boundedInteger(env.GOLDEN_SNAPSHOT_RECONCILIATION_BATCH_SIZE, 25, 1, 100),
+    }),
   };
 }
