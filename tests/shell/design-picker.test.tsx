@@ -7,6 +7,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 const shared = vi.hoisted(() => ({
   saveThemeMock: vi.fn(),
   saveDesktopConfigPatchMock: vi.fn(),
+  beginBootMock: vi.fn(),
   theme: {
     name: "default",
     style: "flat",
@@ -36,6 +37,12 @@ vi.mock("@/hooks/useDesktopConfig", () => ({
   saveDesktopConfigPatch: shared.saveDesktopConfigPatchMock,
 }));
 
+vi.mock("@/components/os-session/os-session-store", () => ({
+  useOsSessionStore: {
+    getState: () => ({ beginBoot: shared.beginBootMock }),
+  },
+}));
+
 import { DesignPicker } from "../../shell/src/components/settings/DesignPicker.js";
 import {
   MACOS_GLASS_THEME,
@@ -56,6 +63,7 @@ describe("DesignPicker", () => {
     shared.saveThemeMock.mockResolvedValue(undefined);
     shared.saveDesktopConfigPatchMock.mockReset();
     shared.saveDesktopConfigPatchMock.mockResolvedValue(undefined);
+    shared.beginBootMock.mockReset();
     resetTheme("flat");
   });
 
@@ -121,6 +129,15 @@ describe("DesignPicker", () => {
     fireEvent.click(getByRole("button", { name: /Windows 11/ }));
     await waitFor(() => expect(shared.saveThemeMock).toHaveBeenCalledTimes(3));
     expect(shared.saveThemeMock).toHaveBeenLastCalledWith({ ...WIN11_THEME });
+  });
+
+  it("starts an OS boot beat only after an explicit design selection", async () => {
+    const { getByRole } = render(<DesignPicker />);
+    expect(shared.beginBootMock).not.toHaveBeenCalled();
+
+    fireEvent.click(getByRole("button", { name: /Windows XP/ }));
+    await waitFor(() => expect(shared.saveThemeMock).toHaveBeenCalledTimes(1));
+    expect(shared.beginBootMock).toHaveBeenCalledWith("winxp");
   });
 
   it("saves the flat default preset when Default is selected", async () => {

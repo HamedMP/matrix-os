@@ -14,6 +14,8 @@ import {
   WIN11_THEME,
   WINXP_THEME,
 } from "@/lib/theme-presets";
+import { useOsSessionStore } from "@/components/os-session/os-session-store";
+import { isBootDesign } from "@/components/os-session/os-session-utils";
 
 /* ── Design options ────────────────────────────── */
 
@@ -236,6 +238,9 @@ export function DesignPicker() {
         console.warn("[appearance] Failed to apply design desktop defaults:", err);
         setError("Couldn't apply that design. Please try again.");
       }
+    }
+    if (option.id !== activeId && isBootDesign(option.id)) {
+      useOsSessionStore.getState().beginBoot(option.id);
     }
     // No `finally` — React Compiler cannot lower TryStatement with a finalizer.
     setPendingId(null);

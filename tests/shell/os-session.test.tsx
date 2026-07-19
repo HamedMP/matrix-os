@@ -123,39 +123,29 @@ describe("design-switch boot beat", () => {
     vi.useFakeTimers();
   });
 
-  it("shows the new design's boot screen briefly on a data-theme-style switch, then auto-dismisses", async () => {
+  it("does not mistake a theme re-apply from mounting Settings for an OS boot", async () => {
     setDesign("winxp");
     render(<OsSessionHost />);
     await flush();
-    // Baseline: the design already applied at mount is not a "switch".
     expect(screen.queryByRole("status", { name: /boot screen/ })).toBeNull();
 
     act(() => setDesign("win11"));
     await flush();
-    expect(screen.getByRole("status", { name: "Windows 11 boot screen" })).toBeTruthy();
+    expect(screen.queryByRole("status", { name: /boot screen/ })).toBeNull();
+  });
+
+  it("shows an explicitly requested OS boot beat and auto-dismisses it", async () => {
+    setDesign("flat");
+    render(<OsSessionHost />);
+    await flush();
+
+    act(() => useOsSessionStore.getState().beginBoot("macos-glass"));
+    expect(screen.getByRole("status", { name: "macOS boot screen" })).toBeTruthy();
 
     act(() => {
       vi.advanceTimersByTime(BOOT_BEAT_MS);
     });
     expect(screen.queryByRole("status", { name: /boot screen/ })).toBeNull();
-  });
-
-  it("does not boot-beat when switching to flat or neumorphic, and beats again on the next OS design", async () => {
-    setDesign("win11");
-    render(<OsSessionHost />);
-    await flush();
-
-    act(() => setDesign("flat"));
-    await flush();
-    expect(screen.queryByRole("status", { name: /boot screen/ })).toBeNull();
-
-    act(() => setDesign("neumorphic"));
-    await flush();
-    expect(screen.queryByRole("status", { name: /boot screen/ })).toBeNull();
-
-    act(() => setDesign("macos-glass"));
-    await flush();
-    expect(screen.getByRole("status", { name: "macOS boot screen" })).toBeTruthy();
   });
 
   it("locks body scroll while the boot screen is up and restores it after", async () => {
@@ -164,12 +154,7 @@ describe("design-switch boot beat", () => {
     await flush();
     expect(document.body.style.overflow).toBe("");
 
-    act(() => setDesign("winxp") /* same value: no beat */);
-    await flush();
-    expect(document.body.style.overflow).toBe("");
-
-    act(() => setDesign("win11"));
-    await flush();
+    act(() => useOsSessionStore.getState().beginBoot("win11"));
     expect(document.body.style.overflow).toBe("hidden");
 
     act(() => {
