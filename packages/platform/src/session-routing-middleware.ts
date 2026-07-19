@@ -226,6 +226,28 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     }
   }
 
+  async function issueWebSocketTokenResponse(
+    c: Context,
+    target: { clerkUserId: string; handle: string; runtimeSlot?: string },
+  ): Promise<Response> {
+    applyNoStoreHeaders(c);
+    if (!platformJwtSecret) {
+      return c.json({ error: 'WebSocket auth unavailable' }, 503);
+    }
+    const issued = await issueSyncJwt({
+      secret: platformJwtSecret,
+      clerkUserId: target.clerkUserId,
+      handle: target.handle,
+      gatewayUrl: getGatewayUrlForHandle(target.handle),
+      runtimeSlot: target.runtimeSlot,
+      expiresInSec: wsTokenExpiresInSec,
+    });
+    return c.json({
+      token: issued.token,
+      expiresAt: issued.expiresAt,
+    });
+  }
+
   return async (c, next) => {
     const host = getTrustedSessionRouteHost(
       c.req.header('host'),
@@ -512,6 +534,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         return c.html(getVpsBootPage({ status: machine.status }), 503);
       }
+      if (explicitVmRoute.upstreamPath === '/api/auth/ws-token') {
+        return issueWebSocketTokenResponse(c, {
+          clerkUserId: machine.clerkUserId,
+          handle: machine.handle,
+          runtimeSlot: machine.runtimeSlot,
+        });
+      }
       const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
       const targetUrl = buildCustomerVpsProxyUrl(machine, explicitVmRoute.upstreamPath, qs);
       if (!targetUrl) {
@@ -588,20 +617,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     }
 
     if (isAppDomain && path === '/api/auth/ws-token') {
-      if (!platformJwtSecret) {
-        return c.json({ error: 'WebSocket auth unavailable' }, 503);
-      }
-      const issued = await issueSyncJwt({
-        secret: platformJwtSecret,
+      return issueWebSocketTokenResponse(c, {
         clerkUserId: identity.userId,
         handle: identity.handle,
-        gatewayUrl: getGatewayUrlForHandle(identity.handle),
         runtimeSlot: identity.runtimeSlot ?? requestRuntimeSlot,
-        expiresInSec: wsTokenExpiresInSec,
-      });
-      return c.json({
-        token: issued.token,
-        expiresAt: issued.expiresAt,
       });
     }
 
