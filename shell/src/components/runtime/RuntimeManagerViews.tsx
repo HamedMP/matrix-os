@@ -48,11 +48,13 @@ export function ComputerInventory({
   onAdd: () => void;
 }) {
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center py-7 sm:py-12">
-      <header className="text-center">
-        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-forest/45">Where do you want to work?</p>
-        <h1 className="mt-3 text-[clamp(2.15rem,6vw,3.5rem)] font-medium tracking-[-0.055em] text-deep">Choose a computer</h1>
-        <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-forest/55">
+    <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col justify-center py-7 sm:py-12">
+      <header>
+        <p className="text-xs font-extrabold uppercase tracking-[0.22em] text-forest/60">Switch Computer</p>
+        <h1 className="mt-3 bg-[linear-gradient(90deg,#2f392c_0%,#2f392c_24%,#c4a265_50%,#2f392c_76%,#2f392c_100%)] bg-clip-text text-[clamp(2rem,6vw,4rem)] font-medium uppercase leading-[0.98] text-transparent [animation:onboard-shimmer_8s_ease-in-out_infinite,onboard-glow_8s_ease-in-out_infinite] [background-size:300%_100%] motion-reduce:animate-none">
+          Choose your Matrix OS computer
+        </h1>
+        <p className="mt-3 max-w-xl text-sm leading-6 text-forest/65 sm:text-base sm:leading-7">
           Each one is a private Matrix OS workspace with its own files and data.
         </p>
       </header>

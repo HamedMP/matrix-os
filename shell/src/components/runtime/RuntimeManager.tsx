@@ -552,12 +552,22 @@ export function RuntimeManager({
   }
 
   return (
-    <main
-      className="relative isolate h-dvh overflow-y-auto bg-page-bg text-deep"
-      style={{
-        background: "radial-gradient(circle at 50% 42%, rgba(255,255,255,0.92) 0, rgba(248,248,241,0.72) 34%, transparent 66%), linear-gradient(145deg, #F5F4EC 0%, #ECECE1 100%)",
-      }}
-    >
+    <main className="relative isolate h-dvh overflow-y-auto bg-[#DFE0D8] text-deep">
+      <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden="true">
+        <Image
+          src="/runtime-shell-backdrop.webp"
+          alt=""
+          fill
+          priority
+          sizes="100vw"
+          data-testid="runtime-shell-backdrop"
+          className="scale-[1.08] select-none object-cover blur-[18px] brightness-[0.78] saturate-[0.85]"
+        />
+      </div>
+      <div
+        className="pointer-events-none fixed inset-0 z-[1] bg-[rgba(244,242,232,0.58)]"
+        aria-hidden="true"
+      />
       <Image
         src="/logo-rabbit.png"
         alt=""
@@ -565,7 +575,7 @@ export function RuntimeManager({
         height={666}
         priority
         aria-hidden="true"
-        className="pointer-events-none fixed -bottom-28 -right-24 z-0 w-[min(78vw,34rem)] select-none opacity-[0.045] blur-[0.4px] sm:-bottom-36 sm:-right-20"
+        className="pointer-events-none fixed -bottom-28 -right-24 z-[2] w-[min(78vw,34rem)] select-none opacity-[0.045] blur-[0.4px] sm:-bottom-36 sm:-right-20"
       />
       <div className="relative z-10 mx-auto flex min-h-full w-full max-w-6xl flex-col px-5 py-5 sm:px-8 sm:py-7 lg:px-10">
         <header className="flex items-center justify-between">

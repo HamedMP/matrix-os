@@ -184,9 +184,17 @@ describe("RuntimeManager", () => {
     installFetchRouter();
     await renderManager();
 
-    expect(await screen.findByRole("heading", { name: "Choose a computer", level: 1 })).toBeTruthy();
+    expect(await screen.findByText("Switch Computer")).toBeTruthy();
+    const heading = await screen.findByRole("heading", { name: "Choose your Matrix OS computer", level: 1 });
+    expect(heading.className).toContain("uppercase");
+    expect(heading.className).toContain("bg-clip-text");
+    expect(heading.className).toContain("text-transparent");
+    expect(heading.className).toContain("onboard-shimmer");
+    const shellBackdrop = screen.getByTestId("runtime-shell-backdrop");
+    expect(shellBackdrop.getAttribute("src")).toContain("runtime-shell-backdrop.webp");
+    expect(shellBackdrop.className).toContain("blur-[18px]");
     expect(screen.getByRole("img", { name: "Matrix OS logo" })).toBeTruthy();
-    expect(await screen.findByText("Where do you want to work?")).toBeTruthy();
+    expect(await screen.findByText("Each one is a private Matrix OS workspace with its own files and data.")).toBeTruthy();
     expect(screen.getByText("Matrix OS member")).toBeTruthy();
     expect(screen.getByText("neo@example.com")).toBeTruthy();
     expect(screen.getByRole("link", { name: /Switch to Studio/i }).getAttribute("href")).toBe(
