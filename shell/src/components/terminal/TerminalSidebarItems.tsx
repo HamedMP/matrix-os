@@ -772,6 +772,8 @@ function ShellCard({
   const renameInputRef = useRef<HTMLInputElement>(null);
   const renameCommittingRef = useRef(false);
   const copiedTimerRef = useRef<number | null>(null);
+  const mouseHoverTimerRef = useRef<number | null>(null);
+  const lastTouchAtRef = useRef(0);
   const restoreFocusAfterMenuCloseRef = useRef(false);
   const showActions = actionsVisible || copyFeedback !== null || contextMenuOpen;
   const showRenameControl = actionsVisible && !renaming;
@@ -781,6 +783,20 @@ function ShellCard({
   const agentName = shell.agent ? formatTerminalAgentName(shell.agent) : null;
   const liveState = getShellVisualStatus(shell);
   const hoverSuppressed = contextMenuOpen || renaming || dragging || Boolean(deleting);
+  const scheduleHoverCardOpen = () => {
+    if (hoverCardOpen || mouseHoverTimerRef.current !== null) return;
+    mouseHoverTimerRef.current = window.setTimeout(() => {
+      mouseHoverTimerRef.current = null;
+      setHoverCardOpen(true);
+    }, 300);
+  };
+  const cancelHoverCardOpen = () => {
+    if (mouseHoverTimerRef.current !== null) {
+      window.clearTimeout(mouseHoverTimerRef.current);
+      mouseHoverTimerRef.current = null;
+    }
+    setHoverCardOpen(false);
+  };
   const getContextMenuItems = () => Array.from(
     contextMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [],
   );
@@ -818,6 +834,9 @@ function ShellCard({
   useEffect(() => () => {
     if (copiedTimerRef.current !== null) {
       window.clearTimeout(copiedTimerRef.current);
+    }
+    if (mouseHoverTimerRef.current !== null) {
+      window.clearTimeout(mouseHoverTimerRef.current);
     }
   }, []);
 
@@ -952,14 +971,34 @@ function ShellCard({
         event.preventDefault();
         onDrop();
       }}
-      onMouseEnter={() => setActionsVisible(true)}
+      onMouseEnter={() => {
+        setActionsVisible(true);
+        if (Date.now() - lastTouchAtRef.current < 1_000) return;
+        scheduleHoverCardOpen();
+      }}
       onMouseMove={() => setActionsVisible(true)}
       onMouseOver={() => setActionsVisible(true)}
-      onMouseLeave={() => setActionsVisible(false)}
-      onPointerEnter={() => setActionsVisible(true)}
-      onPointerMove={() => setActionsVisible(true)}
+      onMouseLeave={() => {
+        setActionsVisible(false);
+        cancelHoverCardOpen();
+      }}
+      onTouchStart={() => {
+        lastTouchAtRef.current = Date.now();
+        setHoverCardOpen(false);
+      }}
+      onPointerEnter={(event) => {
+        setActionsVisible(true);
+        if (event.pointerType !== "touch") scheduleHoverCardOpen();
+      }}
+      onPointerMove={(event) => {
+        setActionsVisible(true);
+        if (event.pointerType !== "touch") scheduleHoverCardOpen();
+      }}
       onPointerOver={() => setActionsVisible(true)}
-      onPointerLeave={() => setActionsVisible(false)}
+      onPointerLeave={() => {
+        setActionsVisible(false);
+        cancelHoverCardOpen();
+      }}
       onFocus={() => setActionsVisible(true)}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
@@ -1310,10 +1349,9 @@ function ShellCard({
     </div>
   );
 
-  if (!shell.agent || !agentName) return card;
   return (
     <TerminalSessionHoverCard
-      shell={shell as ShellSessionSummary & { agent: NonNullable<ShellSessionSummary["agent"]> }}
+      shell={shell}
       displayName={displayName}
       cardRef={cardRef}
       open={hoverCardOpen}

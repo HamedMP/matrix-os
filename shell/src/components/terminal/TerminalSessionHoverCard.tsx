@@ -1,6 +1,6 @@
 "use client";
 
-import type { CSSProperties, ReactElement, RefObject } from "react";
+import { useEffect, useState, type CSSProperties, type ReactElement, type RefObject } from "react";
 import { HoverCard as HoverCardPrimitive } from "radix-ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { getShellVisualStatus, type ShellSessionSummary } from "./terminal-session-state";
@@ -8,12 +8,26 @@ import { getShellVisualStatus, type ShellSessionSummary } from "./terminal-sessi
 const HOVER_CARD_WIDTH = 288;
 const HOVER_CARD_GAP = 12;
 
-const HOVER_CARD_STYLE: CSSProperties = {
-  background: "var(--terminal-drawer-card-bg)",
-  border: "1px solid var(--terminal-drawer-card-border)",
+interface TerminalHoverCardTheme {
+  background: string;
+  border: string;
+  foreground: string;
+  muted: string;
+  shadow: string;
+  subtle: string;
+}
+
+const FALLBACK_HOVER_CARD_THEME: TerminalHoverCardTheme = {
+  background: "#1c2019",
+  border: "rgba(240, 239, 229, 0.16)",
+  foreground: "#f0efe5",
+  muted: "#a4a69a",
+  shadow: "rgba(0, 0, 0, 0.42)",
+  subtle: "#7d8176",
+};
+
+const HOVER_CARD_BASE_STYLE: CSSProperties = {
   borderRadius: 8,
-  boxShadow: "0 18px 42px var(--terminal-drawer-card-shadow)",
-  color: "var(--terminal-drawer-fg)",
   display: "grid",
   gap: 12,
   maxHeight: "calc(100vh - 24px)",
@@ -23,6 +37,20 @@ const HOVER_CARD_STYLE: CSSProperties = {
   width: HOVER_CARD_WIDTH,
   zIndex: SHELL_Z_INDEX.popover,
 };
+
+function readHoverCardTheme(card: HTMLElement | null): TerminalHoverCardTheme {
+  if (!card || typeof window === "undefined") return FALLBACK_HOVER_CARD_THEME;
+  const style = window.getComputedStyle(card);
+  const read = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
+  return {
+    background: read("--terminal-drawer-card-bg", FALLBACK_HOVER_CARD_THEME.background),
+    border: read("--terminal-drawer-card-border", FALLBACK_HOVER_CARD_THEME.border),
+    foreground: read("--terminal-drawer-fg", FALLBACK_HOVER_CARD_THEME.foreground),
+    muted: read("--terminal-drawer-muted", FALLBACK_HOVER_CARD_THEME.muted),
+    shadow: read("--terminal-drawer-card-shadow", FALLBACK_HOVER_CARD_THEME.shadow),
+    subtle: read("--terminal-drawer-subtle", FALLBACK_HOVER_CARD_THEME.subtle),
+  };
+}
 
 export function formatTerminalAgentName(agent: NonNullable<ShellSessionSummary["agent"]>): string {
   if (agent === "claude") return "Claude";
@@ -46,7 +74,6 @@ function formatAgentUpdatedAt(value: string | undefined): string {
 
 function canOpenToRight(card: HTMLElement | null): boolean {
   if (!card || typeof window === "undefined") return false;
-  if (!window.matchMedia?.("(hover: hover) and (pointer: fine)").matches) return false;
   return card.getBoundingClientRect().right + HOVER_CARD_GAP + HOVER_CARD_WIDTH <= window.innerWidth - 12;
 }
 
@@ -59,7 +86,7 @@ export function TerminalSessionHoverCard({
   onOpenChange,
   children,
 }: {
-  shell: ShellSessionSummary & { agent: NonNullable<ShellSessionSummary["agent"]> };
+  shell: ShellSessionSummary;
   displayName: string;
   cardRef: RefObject<HTMLDivElement | null>;
   open: boolean;
@@ -67,12 +94,22 @@ export function TerminalSessionHoverCard({
   onOpenChange: (open: boolean) => void;
   children: ReactElement;
 }) {
-  const agentName = formatTerminalAgentName(shell.agent);
+  const [theme, setTheme] = useState(FALLBACK_HOVER_CARD_THEME);
+  const agentName = shell.agent ? formatTerminalAgentName(shell.agent) : "Terminal";
   const liveState = getShellVisualStatus(shell);
+  const updatedAt = shell.agent ? shell.agentUpdatedAt : shell.updatedAt;
+  const canDisplay = open && !suppressed && canOpenToRight(cardRef.current);
+  useEffect(() => {
+    if (canDisplay) setTheme(readHoverCardTheme(cardRef.current));
+  }, [canDisplay, cardRef]);
   return (
     <HoverCardPrimitive.Root
-      open={open && !suppressed}
-      onOpenChange={(nextOpen) => onOpenChange(nextOpen && canOpenToRight(cardRef.current))}
+      open={canDisplay}
+      onOpenChange={(nextOpen) => {
+        const canOpen = nextOpen && canOpenToRight(cardRef.current);
+        if (canOpen) setTheme(readHoverCardTheme(cardRef.current));
+        onOpenChange(canOpen);
+      }}
       openDelay={300}
       closeDelay={100}
     >
@@ -80,18 +117,24 @@ export function TerminalSessionHoverCard({
       <HoverCardPrimitive.Portal>
         <HoverCardPrimitive.Content
           data-testid={`terminal-session-hover-card-${shell.name}`}
-          aria-label={`Agent details for ${displayName}`}
+          aria-label={`${shell.agent ? "Agent" : "Session"} details for ${displayName}`}
           side="right"
           align="start"
           sideOffset={HOVER_CARD_GAP}
           collisionPadding={12}
           avoidCollisions={false}
           onPointerDown={(event) => event.stopPropagation()}
-          style={HOVER_CARD_STYLE}
+          style={{
+            ...HOVER_CARD_BASE_STYLE,
+            background: theme.background,
+            border: `1px solid ${theme.border}`,
+            boxShadow: `0 18px 42px ${theme.shadow}`,
+            color: theme.foreground,
+          }}
         >
           <div style={{ alignItems: "center", display: "flex", justifyContent: "space-between", gap: 12 }}>
             <strong style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12 }}>{agentName}</strong>
-            <span style={{ color: "var(--terminal-drawer-muted)", fontSize: 11, textTransform: "capitalize" }}>
+            <span style={{ color: theme.muted, fontSize: 11, textTransform: "capitalize" }}>
               {liveState}
             </span>
           </div>
@@ -100,19 +143,26 @@ export function TerminalSessionHoverCard({
               {shell.subtitle}
             </p>
           ) : null}
-          {shell.lastAction ? (
+          {!shell.agent ? (
             <div style={{ display: "grid", gap: 3 }}>
-              <span style={{ color: "var(--terminal-drawer-subtle)", fontSize: 10, fontWeight: 750 }}>Last action</span>
+              <span style={{ color: theme.subtle, fontSize: 10, fontWeight: 750 }}>Shell status</span>
+              <span style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, textTransform: "capitalize" }}>
+                {shell.status ?? "active"}
+              </span>
+            </div>
+          ) : shell.lastAction ? (
+            <div style={{ display: "grid", gap: 3 }}>
+              <span style={{ color: theme.subtle, fontSize: 10, fontWeight: 750 }}>Last action</span>
               <span style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, lineHeight: "17px", overflowWrap: "anywhere" }}>
                 {shell.lastAction}
               </span>
             </div>
           ) : null}
           <time
-            dateTime={shell.agentUpdatedAt}
-            style={{ color: "var(--terminal-drawer-subtle)", fontFamily: "Inter, system-ui, sans-serif", fontSize: 10 }}
+            dateTime={updatedAt}
+            style={{ color: theme.subtle, fontFamily: "Inter, system-ui, sans-serif", fontSize: 10 }}
           >
-            {formatAgentUpdatedAt(shell.agentUpdatedAt)}
+            {formatAgentUpdatedAt(updatedAt)}
           </time>
         </HoverCardPrimitive.Content>
       </HoverCardPrimitive.Portal>

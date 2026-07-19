@@ -252,7 +252,7 @@ describe("TerminalApp", () => {
 
   it("renders agent session metadata with an unobscured right-side hover card", async () => {
     vi.stubGlobal("matchMedia", vi.fn(() => ({
-      matches: true,
+      matches: false,
       media: "(hover: hover) and (pointer: fine)",
       onchange: null,
       addListener: vi.fn(),
@@ -317,12 +317,15 @@ describe("TerminalApp", () => {
     expect(within(nameRow).getByRole("button", { name: "Rename calm-otter" })).toBeTruthy();
     expect(screen.getByTestId("terminal-session-actions-calm-otter").style.right).toBe("8px");
 
-    fireEvent.pointerEnter(agentCard, { pointerType: "mouse" });
+    fireEvent.mouseEnter(agentCard);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(400);
     });
     const hoverCard = screen.getByTestId("terminal-session-hover-card-calm-otter");
     expect(hoverCard.getAttribute("data-side")).toBe("right");
+    expect(hoverCard.style.background).not.toContain("var(");
+    expect(hoverCard.style.background).not.toBe("");
+    expect(hoverCard.style.color).not.toContain("var(");
     expect(hoverCard.textContent).toContain("waiting");
     expect(hoverCard.textContent).toContain("Requested approval");
 
@@ -345,6 +348,21 @@ describe("TerminalApp", () => {
       await vi.advanceTimersByTimeAsync(400);
     });
     expect(screen.queryByTestId("terminal-session-hover-card-calm-otter")).toBeNull();
+
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1200 });
+    fireEvent.pointerLeave(agentCard, { pointerType: "mouse" });
+    const plainCard = screen.getByTestId("terminal-session-card-main");
+    Object.defineProperty(plainCard, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 20, right: 300, top: 110, bottom: 162, width: 280, height: 52, x: 20, y: 110, toJSON: () => ({}) }),
+    });
+    fireEvent.pointerEnter(plainCard, { pointerType: "mouse" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    const plainHoverCard = screen.getByTestId("terminal-session-hover-card-main");
+    expect(plainHoverCard.textContent).toContain("Terminal");
+    expect(plainHoverCard.textContent).toContain("active");
   });
 
   it("marks restored codex-* shell sessions for Codex TUI compatibility", async () => {

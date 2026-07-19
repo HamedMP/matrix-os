@@ -8,6 +8,7 @@ export const AgentKindSchema = z.enum(["claude", "codex", "opencode", "pi"]);
 export type AgentKind = z.infer<typeof AgentKindSchema>;
 
 export const AgentEventTypeSchema = z.enum([
+  "session-started",
   "turn-started",
   "attention-requested",
   "turn-completed",
@@ -17,7 +18,7 @@ export const AgentEventTypeSchema = z.enum([
 ]);
 export type AgentEventType = z.infer<typeof AgentEventTypeSchema>;
 
-const AgentSessionPhaseSchema = z.enum(["running", "waiting", "completed", "ended"]);
+const AgentSessionPhaseSchema = z.enum(["started", "running", "waiting", "completed", "ended"]);
 export type AgentSessionPhase = z.infer<typeof AgentSessionPhaseSchema>;
 
 export const NormalizedAgentEventSchema = z.object({
@@ -77,6 +78,7 @@ export function deriveAgentVisualStatus(
   unread: boolean,
 ): AgentDerivedVisualStatus | null {
   if (!snapshot) return null;
+  if (snapshot.phase === "started") return "idle";
   if (snapshot.phase === "waiting") return "waiting";
   if (snapshot.phase === "running") return "running";
   return unread ? "finished" : "idle";
@@ -295,6 +297,7 @@ export class AgentSessionStateStore {
 }
 
 function phaseForEvent(type: AgentEventType, current?: AgentSessionPhase): AgentSessionPhase {
+  if (type === "session-started") return "started";
   if (type === "turn-started") return "running";
   if (type === "attention-requested") return "waiting";
   if (type === "turn-completed") return "completed";

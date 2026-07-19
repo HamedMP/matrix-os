@@ -37,6 +37,16 @@ function event(
 }
 
 describe("agent session state", () => {
+  it("records agent identity without marking a newly started session as running or finished", async () => {
+    const root = await tempRoot();
+    const store = new AgentSessionStateStore({ homePath: root });
+
+    const snapshot = await store.apply(event("session-started", "2026-07-18T10:00:00.000Z"));
+
+    expect(snapshot.phase).toBe("started");
+    expect(deriveAgentVisualStatus(snapshot, true)).toBe("idle");
+  });
+
   it("applies lifecycle precedence without exposing semantic tool states", async () => {
     const root = await tempRoot();
     const store = new AgentSessionStateStore({ homePath: root });

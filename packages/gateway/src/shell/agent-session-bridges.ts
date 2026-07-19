@@ -1,5 +1,6 @@
 import { chmod, mkdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod/v4";
 import { writeUtf8FileAtomic } from "./atomic-write.js";
 import {
@@ -51,6 +52,7 @@ function normalizedType(
   payload: JsonObject,
 ): NormalizedAgentEvent["type"] | null {
   if (agent === "claude" || agent === "codex") {
+    if (eventName === "SessionStart") return "session-started";
     if (eventName === "UserPromptSubmit") return "turn-started";
     if (eventName === "PermissionRequest" || eventName === "Elicitation") return "attention-requested";
     if (eventName === "Notification" && isAttentionNotification(payload)) return "attention-requested";
@@ -166,6 +168,34 @@ export interface AgentBridgeRegistrationReport {
   failed: AgentKind[];
 }
 
+export interface ResolveAgentBridgeCommandOptions {
+  environment?: NodeJS.ProcessEnv;
+  execPath?: string;
+  sourceCliPath?: string;
+  tsxLoaderPath?: string;
+}
+
+export function resolveAgentBridgeCommand(
+  options: ResolveAgentBridgeCommandOptions = {},
+): string {
+  const environment = options.environment ?? process.env;
+  if (environment.MATRIX_AGENT_BRIDGE_COMMAND) return environment.MATRIX_AGENT_BRIDGE_COMMAND;
+  if (environment.NODE_ENV === "production") return "/opt/matrix/bin/matrix-agent-bridge";
+
+  const execPath = options.execPath ?? process.execPath;
+  const sourceCliPath = options.sourceCliPath
+    ?? fileURLToPath(new URL("./agent-session-bridge-cli.ts", import.meta.url));
+  const tsxLoaderPath = options.tsxLoaderPath
+    ?? fileURLToPath(import.meta.resolve("tsx"));
+  return `${shellQuote(execPath)} --import=${shellQuote(tsxLoaderPath)} ${shellQuote(sourceCliPath)}`;
+}
+
+function shellQuote(value: string): string {
+  return /^[A-Za-z0-9_./:=+-]+$/.test(value)
+    ? value
+    : `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
 export async function registerAgentBridges(
   options: RegisterAgentBridgesOptions,
 ): Promise<AgentBridgeRegistrationReport> {
@@ -174,6 +204,7 @@ export async function registerAgentBridges(
     {
       agent: "claude",
       register: () => registerJsonHooks(join(options.homePath, ".claude", "settings.json"), "claude", command, [
+        "SessionStart",
         "UserPromptSubmit",
         "PermissionRequest",
         "Elicitation",
@@ -187,6 +218,7 @@ export async function registerAgentBridges(
     {
       agent: "codex",
       register: () => registerJsonHooks(join(options.homePath, ".codex", "hooks.json"), "codex", command, [
+        "SessionStart",
         "UserPromptSubmit",
         "PermissionRequest",
         "PostToolUse",

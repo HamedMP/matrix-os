@@ -111,6 +111,7 @@ const SAFE_ATTACH_ENV_KEYS = new Set([
   "HOME",
   "LANG",
   "LOGNAME",
+  "MATRIX_HOME",
   "MATRIX_APP_DIR",
   "MATRIX_INSTALL_TOOL_PACK",
   "MATRIX_NODE_PREFIX",
@@ -144,6 +145,7 @@ type RetainedCreatePty = {
 function attachEnv(
   source: NodeJS.ProcessEnv = process.env,
   configPaths: MatrixZellijConfigPaths | null = null,
+  homePath?: string,
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(source)) {
@@ -154,6 +156,10 @@ function attachEnv(
     }
   }
   env.LANG = env.LANG || "en_US.UTF-8";
+  if (homePath) {
+    env.HOME = homePath;
+    env.MATRIX_HOME = homePath;
+  }
   if (configPaths) {
     env.ZELLIJ_CONFIG_DIR = configPaths.dir;
     env.ZELLIJ_CONFIG_FILE = configPaths.file;
@@ -338,7 +344,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
           timeout,
           signal: controller.signal,
           cwd: runCwd,
-          env: attachEnv(deps.env, zellijConfigPaths),
+          env: attachEnv(deps.env, zellijConfigPaths, deps.homePath),
         },
         (err, stdout, stderr) => {
           if (err) {
@@ -358,7 +364,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       cols: options.size?.cols ?? 120,
       rows: options.size?.rows ?? 40,
       cwd,
-      env: attachEnv(deps.env, zellijConfigPaths),
+      env: attachEnv(deps.env, zellijConfigPaths, deps.homePath),
     });
     const abort = () => {
       pty.kill();
@@ -430,7 +436,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
           cols: 120,
           rows: 40,
           cwd: options.cwd ?? cwd,
-          env: attachEnv(deps.env, zellijConfigPaths),
+          env: attachEnv(deps.env, zellijConfigPaths, deps.homePath),
         });
 
         const startup = { exited: null as PtyExitEvent | null };

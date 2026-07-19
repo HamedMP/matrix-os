@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   normalizeAgentBridgeEvents,
   registerAgentBridges,
+  resolveAgentBridgeCommand,
 } from "../../packages/gateway/src/shell/agent-session-bridges.js";
 import {
   ingestAgentBridgePayload,
@@ -26,6 +27,20 @@ afterEach(async () => {
 });
 
 describe("agent session bridge adapters", () => {
+  it("recognizes a manually started Codex session before its first prompt", () => {
+    expect(normalizeAgentBridgeEvents({
+      agent: "codex",
+      eventName: "SessionStart",
+      sessionName: "calm-otter",
+      occurredAt: "2026-07-18T10:00:00.000Z",
+      payload: { source: "startup" },
+    })).toEqual([expect.objectContaining({
+      type: "session-started",
+      agent: "codex",
+      sessionName: "calm-otter",
+    })]);
+  });
+
   it("normalizes Claude lifecycle, permission, subtitle, and tool events", () => {
     expect(normalizeAgentBridgeEvents({
       agent: "claude",
@@ -140,6 +155,24 @@ describe("agent session bridge adapters", () => {
 });
 
 describe("agent session bridge registration", () => {
+  it("uses the source bridge CLI during local development", () => {
+    expect(resolveAgentBridgeCommand({
+      environment: { NODE_ENV: "development" },
+      execPath: "/opt/node/bin/node",
+      sourceCliPath: "/workspace/packages/gateway/src/shell/agent-session-bridge-cli.ts",
+      tsxLoaderPath: "/workspace/node_modules/tsx/dist/loader.mjs",
+    })).toBe(
+      "/opt/node/bin/node --import=/workspace/node_modules/tsx/dist/loader.mjs "
+      + "/workspace/packages/gateway/src/shell/agent-session-bridge-cli.ts",
+    );
+  });
+
+  it("uses the installed bridge wrapper in production", () => {
+    expect(resolveAgentBridgeCommand({
+      environment: { NODE_ENV: "production" },
+    })).toBe("/opt/matrix/bin/matrix-agent-bridge");
+  });
+
   it("registers all providers additively, privately, and idempotently", async () => {
     const root = await tempRoot();
     await mkdir(join(root, ".claude"), { recursive: true });
@@ -174,6 +207,7 @@ describe("agent session bridge registration", () => {
       hooks: [expect.objectContaining({ command: "/user/start.sh" })],
     }));
     expect(codex.hooks.Stop.filter((entry: unknown) => JSON.stringify(entry).includes(command))).toHaveLength(1);
+    expect(codex.hooks.SessionStart.filter((entry: unknown) => JSON.stringify(entry).includes(command))).toHaveLength(1);
     const codexBridgeConfig = JSON.stringify(codex.hooks);
     expect(codexBridgeConfig).not.toContain('"async":true');
     expect(codex.hooks).not.toHaveProperty("PostToolUseFailure");

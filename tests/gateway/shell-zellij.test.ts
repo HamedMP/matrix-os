@@ -221,6 +221,33 @@ describe("zellij adapter", () => {
     expect(env).not.toHaveProperty("SECRET_TOKEN");
   });
 
+  it("uses the Matrix owner home for shells when a home path is configured", () => {
+    const pty = ptyProcess();
+    const spawnPty = vi.fn(() => pty);
+    const adapter = createZellijAdapter({
+      execFile: vi.fn(),
+      spawnPty,
+      homePath: "/srv/matrix/home",
+      env: {
+        HOME: "/Users/developer",
+        PATH: "/opt/matrix/bin",
+      },
+    });
+
+    adapter.attachSession("main");
+
+    expect(spawnPty).toHaveBeenCalledWith(
+      "zellij",
+      ["attach", "main"],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          HOME: "/srv/matrix/home",
+          MATRIX_HOME: "/srv/matrix/home",
+        }),
+      }),
+    );
+  });
+
   it("kills attach PTYs when the caller aborts", () => {
     const pty = ptyProcess();
     const spawnPty = vi.fn(() => pty);
