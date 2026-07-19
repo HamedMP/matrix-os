@@ -176,6 +176,25 @@ describe("Desktop config", () => {
     expect(document.body.style.backgroundImage).toContain("xp-bliss.jpg");
   });
 
+  it("keeps the saved dock auto-hide value in the live store", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          background: { type: "wallpaper", name: "moraine-lake.jpg" },
+          dock: { position: "bottom", size: 64, iconSize: 48, autoHide: false },
+          pinnedApps: [],
+        }),
+      })
+      .mockResolvedValueOnce({ ok: true }));
+
+    await saveDesktopConfigPatch({
+      dock: { position: "bottom", size: 64, iconSize: 48, autoHide: true },
+    });
+
+    expect(useDesktopConfigStore.getState().dock.autoHide).toBe(true);
+  });
+
   it("saveDesktopConfigPatch still writes when the current config cannot be loaded", async () => {
     const mockFetch = vi
       .fn()
