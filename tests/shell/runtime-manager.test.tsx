@@ -214,8 +214,14 @@ describe("RuntimeManager", () => {
     expect(brandLockup.className).toContain("justify-center");
     expect(brandLockup.className).toContain("mx-auto");
     expect(screen.getByRole("img", { name: "Matrix OS logo" })).toBeTruthy();
-    expect(screen.getByText("MATRIX OS").style.fontFamily).toBe("var(--font-orbitron), Orbitron, sans-serif");
-    expect(screen.getByText("MATRIX OS").style.color).toBe("rgb(50, 53, 46)");
+    const wordmark = screen.getByText("Matrix OS");
+    expect(screen.queryByText("MATRIX OS")).toBeNull();
+    expect(wordmark.className).toContain("inline-flex");
+    expect(wordmark.className).toContain("h-9");
+    expect(wordmark.className).toContain("items-center");
+    expect(wordmark.className).toContain("leading-none");
+    expect(wordmark.style.fontFamily).toBe("var(--font-orbitron), Orbitron, sans-serif");
+    expect(wordmark.style.color).toBe("rgb(50, 53, 46)");
     expect(screen.queryByText("Each one is a private Matrix OS workspace with its own files and data.")).toBeNull();
     expect(screen.getByText("Matrix OS member").className).toContain("font-medium");
     expect(screen.getByText("neo@example.com")).toBeTruthy();

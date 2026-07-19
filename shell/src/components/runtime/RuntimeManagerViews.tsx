@@ -58,14 +58,14 @@ export function ComputerInventory({
         <Link
           href="/"
           aria-label="Matrix OS home"
-          className="mx-auto mb-7 inline-flex w-fit items-center justify-center gap-3.5 text-forest no-underline sm:mb-8"
+          className="mx-auto mb-7 inline-flex w-fit flex-row items-center justify-center gap-3.5 text-forest no-underline sm:mb-8"
         >
-          <Image src="/matrix-logo.svg" alt="Matrix OS logo" width={27} height={36} priority className="h-9 w-[27px]" />
+          <Image src="/matrix-logo.svg" alt="Matrix OS logo" width={27} height={36} priority className="h-9 w-[27px] shrink-0" />
           <span
-            className="text-[15px] font-semibold tracking-[0.2em] sm:text-base"
+            className="inline-flex h-9 items-center text-[15px] font-semibold leading-none tracking-[0.16em] sm:text-base"
             style={{ color: "#32352E", fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}
           >
-            MATRIX OS
+            Matrix OS
           </span>
         </Link>
         <h1
