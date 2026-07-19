@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { MATRIX_OS_APP_THEME_OPTIONS, THEME_PRESETS, getPreset } from "../../shell/src/lib/theme-presets";
+import {
+  DESIGN_SYSTEM_PRESETS,
+  MATRIX_OS_APP_THEME_OPTIONS,
+  THEME_PRESETS,
+  getPreset,
+} from "../../shell/src/lib/theme-presets";
 
 const REQUIRED_COLOR_KEYS = [
   "background",
@@ -25,12 +30,17 @@ const REQUIRED_COLOR_KEYS = [
 ];
 
 describe("theme presets", () => {
-  it("includes the legacy presets plus the three Paper Matrix OS app themes", () => {
-    expect(THEME_PRESETS).toHaveLength(10);
+  it("includes the legacy presets, the Paper Matrix OS app themes, and the design systems", () => {
+    expect(THEME_PRESETS).toHaveLength(13);
     expect(MATRIX_OS_APP_THEME_OPTIONS.map((option) => option.id)).toEqual([
       "light",
       "matrix-dark",
       "matrix",
+    ]);
+    expect(DESIGN_SYSTEM_PRESETS.map((preset) => preset.name)).toEqual([
+      "macos-glass",
+      "winxp",
+      "win11",
     ]);
   });
 
@@ -125,5 +135,62 @@ describe("getPreset", () => {
   it("returns undefined for unknown name", () => {
     expect(getPreset("nonexistent")).toBeUndefined();
     expect(getPreset("")).toBeUndefined();
+  });
+});
+
+describe("design system presets", () => {
+  const DESIGN_SYSTEMS = [
+    {
+      name: "macos-glass",
+      style: "macos-glass",
+      mode: "dark",
+      radius: "0.875rem",
+      fontFragment: "SF Pro Text",
+      primary: "#0A84FF",
+    },
+    {
+      name: "winxp",
+      style: "winxp",
+      mode: "light",
+      radius: "0.1875rem",
+      fontFragment: "Tahoma",
+      primary: "#0058E6",
+    },
+    {
+      name: "win11",
+      style: "win11",
+      mode: "light",
+      radius: "0.5rem",
+      fontFragment: "Segoe UI",
+      primary: "#0067C0",
+    },
+  ] as const;
+
+  it.each(DESIGN_SYSTEMS)(
+    "$name is registered with its design-system style, mode, fonts, and radius",
+    ({ name, style, mode, radius, fontFragment, primary }) => {
+      const preset = getPreset(name);
+      expect(preset).toBeDefined();
+      expect(preset!.style).toBe(style);
+      expect(preset!.mode).toBe(mode);
+      expect(preset!.radius).toBe(radius);
+      expect(preset!.fonts.sans).toContain(fontFragment);
+      expect(preset!.colors.primary).toBe(primary);
+    },
+  );
+
+  it.each(DESIGN_SYSTEMS)("$name has all required color keys", ({ name }) => {
+    const preset = getPreset(name);
+    expect(preset).toBeDefined();
+    for (const key of REQUIRED_COLOR_KEYS) {
+      expect(preset!.colors[key], `missing color key: ${key}`).toBeDefined();
+    }
+  });
+
+  it("exposes exactly the three design-system presets in DESIGN_SYSTEM_PRESETS", () => {
+    expect(DESIGN_SYSTEM_PRESETS).toHaveLength(3);
+    for (const preset of DESIGN_SYSTEM_PRESETS) {
+      expect(THEME_PRESETS).toContain(preset);
+    }
   });
 });

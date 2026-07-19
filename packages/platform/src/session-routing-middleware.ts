@@ -12,7 +12,6 @@ import {
   getContainer,
   getAccessibleRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
-  listAccessibleActiveUserMachinesByClerkId,
   updateLastActive,
 } from './db.js';
 import { canClerkUserAccessMachine } from './customer-vps-preview.js';
@@ -46,7 +45,6 @@ import {
   CLERK_SCRIPT_ORIGIN,
   getAuthPage,
   getNoContainerPage,
-  getRuntimePickerPage,
   getVpsBootPage,
 } from './auth-pages.js';
 import { appDomainServiceWorkerResponse } from './app-domain-service-worker.js';
@@ -56,9 +54,6 @@ import {
   NATIVE_APP_SESSION_PROXY_HEADER,
   buildCodeSessionCookie,
 } from './session-cookies.js';
-import {
-  buildRuntimePickerMachines,
-} from './runtime-probes.js';
 import { HANDLE_PATTERN, describeError } from './platform-route-utils.js';
 import {
   APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS,
@@ -76,6 +71,7 @@ import {
   shouldForwardProxyHeader,
 } from './session-routing-proxy.js';
 import {
+  type AppDomainIdentity,
   buildAppRouteCookie,
   buildShellRouteCookie,
   buildShellRuntimeSlotCookie,
@@ -97,6 +93,21 @@ import {
 import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
+
+export function shouldServeRuntimeManager(input: {
+  isAppDomain: boolean;
+  path: string;
+  userId: string;
+  identitySource?: AppDomainIdentity['source'];
+}): boolean {
+  return Boolean(
+    input.isAppDomain &&
+    input.userId &&
+    input.path === '/runtime' &&
+    input.identitySource !== 'mobile-session' &&
+    input.identitySource !== 'static-route'
+  );
+}
 
 interface CreateSessionRoutingMiddlewareOpts {
   db: PlatformDB;
@@ -361,14 +372,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const requestRuntimeSlot = runtimeSelection.source === 'query'
       ? runtimeSelection.slot
       : cookieRuntimeSlot ?? runtimeSelection.slot;
-    let singleMachineRuntimeSlot: string | null = null;
 
     const isGatewayPath = isAppDomain && isAppDomainGatewayPath(path);
-    const allowAuthShellUnroutedIdentity = !legacyContainerRoutingEnabled && shouldProxyAuthShellForUnroutedUser({
+    const allowAuthShellUnroutedIdentity = shouldProxyAuthShellForUnroutedUser({
       isAppDomain,
       method: c.req.method,
       path,
-    });
+    }) && (!legacyContainerRoutingEnabled || path === '/runtime');
     const publishableKey = appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
     const authMode = path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
     const requestedRouteHandle = !explicitVmRoute && isAppDomain
@@ -606,30 +616,17 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       });
     }
 
-    const shouldOfferRuntimePicker =
-      isAppDomain &&
-      identity.userId &&
-      identity.source !== 'mobile-session' &&
-      identity.source !== 'static-route' &&
-      path === '/runtime';
-    if (shouldOfferRuntimePicker) {
-      const machines = await listAccessibleActiveUserMachinesByClerkId(db, identity.userId);
-      if (machines.length === 0 && path === '/runtime') {
-        return c.redirect('/');
-      }
-      if (path === '/runtime' || machines.length > 1) {
-        const pickerMachines = await buildRuntimePickerMachines(machines, platformSecret, customerVpsProxyDispatcher);
-        applyNoStoreHeaders(c);
-        c.header('X-Frame-Options', 'DENY');
-        c.header('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'none'");
-        return c.html(getRuntimePickerPage({ machines: pickerMachines, selectedHandle: identity.handle }));
-      }
-      if (machines.length === 1 && runtimeSelection.source === 'default') {
-        singleMachineRuntimeSlot = machines[0]!.runtimeSlot;
-      }
+    const serveRuntimeManager = shouldServeRuntimeManager({
+      isAppDomain,
+      path,
+      userId: identity.userId,
+      identitySource: identity.source,
+    });
+    if (serveRuntimeManager) {
+      return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
     }
 
-    let runtimeSlot = identity.runtimeSlot ?? singleMachineRuntimeSlot ?? requestRuntimeSlot;
+    let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
     let requestedActiveMachine: UserMachineRecord | undefined;
     let runningMachine = identity.userId
       ? await getAccessibleRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)

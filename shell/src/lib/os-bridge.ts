@@ -147,14 +147,33 @@ export function withCredentialedAssets(html: string): string {
     .replace(/<link\b[^>]*>/gi, credentialStylesheet);
 }
 
-export function buildBridgeScript(appName: string, themeVars?: ThemeVars): string {
+const DEFAULT_DESIGN_ID = "flat";
+const DESIGN_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+/**
+ * Clamp the active shell design id before embedding it in the injected bridge
+ * script and theme CSS. Unknown or unsafe ids fall back to the flat design.
+ */
+function sanitizeDesignId(design: string | undefined): string {
+  return design && DESIGN_ID_PATTERN.test(design) ? design : DEFAULT_DESIGN_ID;
+}
+
+export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design?: string): string {
+  const designId = sanitizeDesignId(design);
   const themeJson = JSON.stringify(themeVars ?? {});
-  const initialCss = themeVars ? buildThemeStyleBlock(themeVars) : "";
+  const initialCss = themeVars
+    ? buildThemeStyleBlock({ ...themeVars, "--matrix-design": designId })
+    : "";
 
   return `
 (function() {
   var app = ${JSON.stringify(appName)};
   var currentTheme = ${themeJson};
+  var currentDesign = ${JSON.stringify(designId)};
+
+  // Tag the document with the active shell design system so app CSS can adapt
+  // via :root[data-matrix-design="<id>"] selectors.
+  document.documentElement.dataset.matrixDesign = currentDesign;
 
 	  function post(type, payload) {
 	    window.parent.postMessage({ type: type, app: app, payload: payload }, "*");
@@ -200,13 +219,21 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
 
     if (e.data.type === "os:theme-update" && e.data.payload) {
       currentTheme = e.data.payload;
+      if (typeof e.data.design === "string" && /^[a-z0-9][a-z0-9-]{0,31}$/.test(e.data.design)) {
+        currentDesign = e.data.design;
+      }
       var css = ":root {\\n";
       for (var k in currentTheme) {
         if (currentTheme[k]) css += "    " + k + ": " + currentTheme[k] + ";\\n";
       }
+      css += "    --matrix-design: " + currentDesign + ";\\n";
       css += "  }";
       themeStyle.textContent = css;
-      if (window.MatrixOS) window.MatrixOS.theme = currentTheme;
+      document.documentElement.dataset.matrixDesign = currentDesign;
+      if (window.MatrixOS) {
+        window.MatrixOS.theme = currentTheme;
+        window.MatrixOS.design = currentDesign;
+      }
     }
 
     if (e.data.type === "os:data-change" && e.data.payload) {
@@ -265,6 +292,8 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
     },
 
     theme: currentTheme,
+
+    design: currentDesign,
 
     app: { name: app },
 

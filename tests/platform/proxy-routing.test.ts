@@ -20,6 +20,7 @@ import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { buildBillingSetupTarget } from "../../packages/platform/src/auth-pages.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import * as syncJwt from "../../packages/platform/src/sync-jwt.js";
+import { shouldServeRuntimeManager } from "../../packages/platform/src/session-routing-middleware.js";
 import type { CustomerVpsService } from "../../packages/platform/src/customer-vps.js";
 import {
   JWT_SECRET,
@@ -64,6 +65,27 @@ describe("platform proxy routing", () => {
     expect(buildPostAuthRedirectPath("https://app.matrix-os.com/sign-in/sso-callback?runtime=staging&session=secret")).toBe(
       "/?runtime=staging",
     );
+  });
+
+  it("serves runtime management only for authenticated browser identities", () => {
+    expect(shouldServeRuntimeManager({
+      isAppDomain: true,
+      path: "/runtime",
+      userId: "user_alice",
+      identitySource: "auth",
+    })).toBe(true);
+    expect(shouldServeRuntimeManager({
+      isAppDomain: true,
+      path: "/runtime",
+      userId: "user_alice",
+      identitySource: "mobile-session",
+    })).toBe(false);
+    expect(shouldServeRuntimeManager({
+      isAppDomain: true,
+      path: "/runtime",
+      userId: "user_alice",
+      identitySource: "static-route",
+    })).toBe(false);
   });
 
   it("adds a timeout and a derived platform verification token on app-domain proxy fetches", async () => {
@@ -890,7 +912,7 @@ describe("platform proxy routing", () => {
     expect(html).not.toContain("window.location.replace(redirectTarget)");
   });
 
-  it("shows a switch-computer picker with explicit VM links", async () => {
+  it("serves authenticated runtime management from the platform app shell", async () => {
     await deleteContainer(db, "alice");
     await insertUserMachine(db, {
       machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff128",
@@ -916,13 +938,9 @@ describe("platform proxy routing", () => {
       serverType: "cpx22",
       provisionedAt: "2026-05-25T11:23:51.076Z",
     });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
-      const version = String(url).includes("203.0.113.26")
-        ? "v082-login-shell-8935a7cd"
-        : "matrix-os-host-2026.04.26-1";
-      return Response.json({ release: { version }, startedAt: "2026-05-25T11:25:00.000Z" });
-    });
-    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("react-runtime-manager", { status: 200, headers: { "content-type": "text/html" } }),
+    );
     const app = createApp({
       db,
       orchestrator: stubOrchestrator(),
@@ -940,27 +958,33 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(res.headers.get("x-frame-options")).toBe("DENY");
-    expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
-      "https://203.0.113.25:443/api/system/info",
-      "https://203.0.113.26:443/api/system/info",
-    ]);
-    for (const [, init] of fetchMock.mock.calls) {
-      expect((init?.headers as Headers).get("host")).toBe("app.matrix-os.com");
-      expect((init?.headers as Headers).get("x-forwarded-host")).toBe("app.matrix-os.com");
-    }
-    expect(timeoutSpy).toHaveBeenCalledWith(2500);
-    const html = await res.text();
-    expect(html).toContain("Choose your Matrix OS computer");
-    expect(html).toContain("href=\"/vm/alice\"");
-    expect(html).toContain("href=\"/vm/alice-staging\"");
-    expect(html).toContain("v082-login-shell-8935a7cd");
-    expect(html).not.toContain("stale-db-staging-version");
-    expect(html).toContain("2 vCPU");
-    expect(html).toContain("4 GB RAM");
-    expect(html).toContain("background: linear-gradient(90deg, #2f392c");
+    expect(await res.text()).toBe("react-runtime-manager");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:3200/runtime");
+    const forwardedHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(forwardedHeaders.get("host")).toBe("127.0.0.1:3200");
+    expect(forwardedHeaders.get("x-forwarded-host")).toBe("app.matrix-os.com");
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("serves signed-out runtime management from the app shell for Clerk authentication", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("clerk-runtime-sign-in", { status: 200, headers: { "content-type": "text/html" } }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({ verifyToken: vi.fn().mockResolvedValue(null) }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const response = await app.request("/runtime?new=1", {
+      headers: { host: "app.matrix-os.com" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("clerk-runtime-sign-in");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:3200/runtime?new=1");
   });
 
   it("does not show the runtime picker for unauthenticated root visits", async () => {
@@ -2965,12 +2989,9 @@ describe("platform proxy routing", () => {
       serverType: "cpx22",
       provisionedAt: "2026-05-25T11:23:51.076Z",
     });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
-      const version = String(url).includes("203.0.113.28")
-        ? "v082-login-shell-8935a7cd"
-        : "matrix-os-host-2026.04.26-1";
-      return Response.json({ release: { version }, startedAt: "2026-05-25T11:25:00.000Z" });
-    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("react-runtime-manager", { status: 200 }),
+    );
     const app = createApp({
       db,
       orchestrator: stubOrchestrator(),
@@ -2989,10 +3010,9 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const html = await res.text();
-    expect(html).toContain("Choose your Matrix OS computer");
-    expect(html).toContain("href=\"/vm/alice-staging\"");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:3200/runtime");
+    expect(await res.text()).toBe("react-runtime-manager");
   });
 
   it("routes explicit VM URLs to the named computer and keeps API calls on that computer", async () => {
@@ -3634,14 +3654,13 @@ describe("platform proxy routing", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.37:443/api/projects");
 
     fetchMock.mockClear();
-    fetchMock.mockResolvedValueOnce(Response.json({ release: { version: "v2026.07.19-pr1037" } }));
-    const picker = await app.request("/runtime", {
+    fetchMock.mockResolvedValueOnce(new Response("react-runtime-manager", { status: 200 }));
+    const runtimeManager = await app.request("/runtime", {
       headers: { host: "app.matrix-os.com", authorization: "Bearer clerk-session" },
     });
-    expect(picker.status).toBe(200);
-    const pickerHtml = await picker.text();
-    expect(pickerHtml).toContain('href="/vm/pr-1037"');
-    expect(pickerHtml).not.toContain("bob-private");
+    expect(runtimeManager.status).toBe(200);
+    expect(await runtimeManager.text()).toBe("react-runtime-manager");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:3200/runtime");
 
     fetchMock.mockClear();
     const privateMachine = await app.request("/vm/bob-private", {
@@ -3651,7 +3670,7 @@ describe("platform proxy routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("shows unknown CPU and RAM for legacy machines without stored server type", async () => {
+  it("does not probe legacy machine resources while serving runtime management", async () => {
     process.env.HETZNER_SERVER_TYPE = "cpx22";
     await deleteContainer(db, "alice");
     await insertUserMachine(db, {
@@ -3673,8 +3692,8 @@ describe("platform proxy routing", () => {
       }),
       platformSecret: "platform-secret-123",
     });
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({ release: { version: "matrix-os-host-2026.04.26-1" } }),
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("react-runtime-manager", { status: 200 }),
     );
 
     const res = await app.request("/runtime", {
@@ -3685,13 +3704,12 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(200);
-    const html = await res.text();
-    expect(html).toContain("CPU/RAM unavailable");
-    expect(html).toContain("Unknown plan");
-    expect(html).not.toContain("2 vCPU");
+    expect(await res.text()).toBe("react-runtime-manager");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:3200/runtime");
   });
 
-  it("redirects the runtime picker when the user has no active VPS machines", async () => {
+  it("serves runtime management when the user has no active VPS machines", async () => {
     await deleteContainer(db, "alice");
     await insertUserMachine(db, {
       machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff135",
@@ -3713,6 +3731,9 @@ describe("platform proxy routing", () => {
       }),
       platformSecret: "platform-secret-123",
     });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("react-runtime-manager", { status: 200 }),
+    );
 
     const res = await app.request("/runtime", {
       headers: {
@@ -3722,8 +3743,9 @@ describe("platform proxy routing", () => {
       redirect: "manual",
     });
 
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("react-runtime-manager");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:3200/runtime");
   });
 
   it("does not show the runtime picker for a failed secondary VPS on cold root visits", async () => {

@@ -361,3 +361,288 @@ button { cursor: pointer; }
     grid-template-columns: 1fr;
   }
 }
+
+/* ==========================================================================
+   Per-design overrides
+   The shell bridge tags the iframe document with the active design system id
+   (:root[data-matrix-design="<id>"]); these sections retune the shared
+   --app-* tokens and concrete chrome classes per OS design language.
+   flat and neumorphic keep the sandy-glass defaults above.
+   ========================================================================== */
+
+/* ----- macOS Glass: dark frosted glass with specular highlight ----- */
+:root[data-matrix-design="macos-glass"] {
+  color-scheme: dark;
+  --app-bg: #17171a;
+  --app-fg: #f5f5f7;
+  --app-card: rgba(44,44,48,0.55);
+  --app-muted: rgba(60,60,66,0.6);
+  --app-muted-fg: #a1a1a8;
+  --app-border: rgba(255,255,255,0.14);
+  --app-primary: #0a84ff;
+  --app-primary-fg: #ffffff;
+  --app-accent: #0a84ff;
+  --app-accent-fg: #ffffff;
+  --app-secondary: rgba(58,58,64,0.65);
+  --app-radius: 14px;
+  --app-radius-input: 10px;
+  --app-radius-sm: 8px;
+  --app-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+  --app-glass: rgba(36,36,40,0.55);
+  --app-glass-strong: rgba(52,52,58,0.65);
+  --app-border-light: rgba(255,255,255,0.1);
+  --app-border-mid: rgba(255,255,255,0.14);
+  --app-border-interactive: rgba(255,255,255,0.2);
+  --app-shadow-sm: 0 4px 16px rgba(0,0,0,0.32);
+  --app-shadow-md: 0 12px 40px rgba(0,0,0,0.42);
+  --app-primary-subtle: rgba(10,132,255,0.16);
+  --app-primary-glow: rgba(10,132,255,0.35);
+}
+:root[data-matrix-design="macos-glass"] body {
+  background:
+    radial-gradient(1000px 600px at 20% 0%, rgba(90,110,160,0.35), transparent 60%),
+    radial-gradient(900px 700px at 85% 100%, rgba(60,70,110,0.4), transparent 65%),
+    var(--app-bg);
+}
+:root[data-matrix-design="macos-glass"] .app-header h1 {
+  font-weight: 700;
+  letter-spacing: 0;
+}
+:root[data-matrix-design="macos-glass"] .card,
+:root[data-matrix-design="macos-glass"] .metric {
+  background: var(--app-glass);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--app-border-light);
+  border-radius: 14px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.14),
+    var(--app-shadow-sm);
+}
+:root[data-matrix-design="macos-glass"] .card:hover {
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.14),
+    var(--app-shadow-md);
+}
+:root[data-matrix-design="macos-glass"] .toolbar,
+:root[data-matrix-design="macos-glass"] .segmented {
+  background: var(--app-glass);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-color: var(--app-border-light);
+  border-radius: 12px;
+}
+:root[data-matrix-design="macos-glass"] .segmented button { border-radius: 8px; }
+:root[data-matrix-design="macos-glass"] .btn {
+  border-color: var(--app-border-interactive);
+  border-radius: 10px;
+  background: var(--app-glass-strong);
+}
+:root[data-matrix-design="macos-glass"] .btn-icon { border-radius: 10px; }
+:root[data-matrix-design="macos-glass"] .input {
+  border-color: var(--app-border-interactive);
+  border-radius: 10px;
+  background: rgba(28,28,32,0.7);
+}
+:root[data-matrix-design="macos-glass"] .input:focus {
+  border-color: var(--app-primary);
+  background: rgba(28,28,32,0.85);
+  box-shadow: 0 0 0 3px var(--app-primary-subtle);
+}
+:root[data-matrix-design="macos-glass"] .app-mark {
+  border-radius: 12px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 10px 24px rgba(0,0,0,0.4);
+}
+
+/* ----- Windows XP: #ece9d8 chrome, raised bevels, sunken fields ----- */
+:root[data-matrix-design="winxp"] {
+  color-scheme: light;
+  --app-bg: #ece9d8;
+  --app-fg: #1f1f1f;
+  --app-card: #ffffff;
+  --app-muted: #f4f2e4;
+  --app-muted-fg: #5a5646;
+  --app-border: #aca899;
+  --app-primary: #0058e6;
+  --app-primary-fg: #ffffff;
+  --app-accent: #0058e6;
+  --app-accent-fg: #ffffff;
+  --app-secondary: #ece9d8;
+  --app-radius: 3px;
+  --app-radius-input: 2px;
+  --app-radius-sm: 2px;
+  --app-font: "Tahoma", "MS Sans Serif", Geneva, Verdana, sans-serif;
+  --app-glass: #ffffff;
+  --app-glass-strong: #ece9d8;
+  --app-border-light: #d4d0c8;
+  --app-border-mid: #aca899;
+  --app-border-interactive: #716f64;
+  --app-shadow-sm: 2px 2px 4px rgba(0,0,0,0.18);
+  --app-shadow-md: 3px 3px 8px rgba(0,0,0,0.24);
+  --app-primary-subtle: rgba(0,88,230,0.1);
+  --app-primary-glow: rgba(0,88,230,0.25);
+}
+:root[data-matrix-design="winxp"] body {
+  background: var(--app-bg);
+}
+:root[data-matrix-design="winxp"] .app-header h1 {
+  font-weight: 700;
+  letter-spacing: 0;
+}
+:root[data-matrix-design="winxp"] .card,
+:root[data-matrix-design="winxp"] .metric {
+  background: #ffffff;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid var(--app-border-mid);
+  border-radius: 3px;
+  box-shadow: none;
+}
+:root[data-matrix-design="winxp"] .card:hover {
+  transform: none;
+  box-shadow: none;
+}
+:root[data-matrix-design="winxp"] .toolbar,
+:root[data-matrix-design="winxp"] .segmented {
+  background: #ece9d8;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid var(--app-border-mid);
+  border-radius: 3px;
+}
+:root[data-matrix-design="winxp"] .segmented button {
+  border-radius: 3px;
+  font-weight: 400;
+}
+:root[data-matrix-design="winxp"] .segmented button:first-child { box-shadow: none; }
+:root[data-matrix-design="winxp"] .btn {
+  min-height: 26px;
+  padding: 0 12px;
+  border: 1px solid;
+  border-color: #ffffff #716f64 #716f64 #ffffff;
+  border-radius: 3px;
+  background: #ece9d8;
+  box-shadow: inset 1px 1px 0 #f1efe2, inset -1px -1px 0 #aca899;
+  font-weight: 400;
+}
+:root[data-matrix-design="winxp"] .btn:hover {
+  transform: none;
+  box-shadow: inset 1px 1px 0 #f1efe2, inset -1px -1px 0 #aca899, 0 0 0 1px rgba(0,88,230,0.35);
+}
+:root[data-matrix-design="winxp"] .btn:active {
+  border-color: #716f64 #ffffff #ffffff #716f64;
+  box-shadow: inset 1px 1px 2px rgba(0,0,0,0.15);
+}
+:root[data-matrix-design="winxp"] .btn-primary {
+  border-color: #003c9e #002a70 #002a70 #003c9e;
+  background: linear-gradient(180deg, #3c81f3 0%, #0058e6 100%);
+  box-shadow: inset 1px 1px 0 rgba(255,255,255,0.35);
+}
+:root[data-matrix-design="winxp"] .btn-accent {
+  border-color: #7a4a12 #5c3608 #5c3608 #7a4a12;
+  background: linear-gradient(180deg, #f5a53c 0%, #d97b16 100%);
+  box-shadow: inset 1px 1px 0 rgba(255,255,255,0.35);
+}
+:root[data-matrix-design="winxp"] .btn-ghost { box-shadow: none; }
+:root[data-matrix-design="winxp"] .btn-icon { border-radius: 3px; }
+:root[data-matrix-design="winxp"] .input {
+  min-height: 24px;
+  border: 1px solid #7f9db9;
+  border-radius: 2px;
+  background: #ffffff;
+  box-shadow: inset 1px 1px 2px rgba(0,0,0,0.12);
+}
+:root[data-matrix-design="winxp"] .input:focus {
+  border-color: #0058e6;
+  background: #ffffff;
+  box-shadow: inset 1px 1px 2px rgba(0,0,0,0.12);
+}
+:root[data-matrix-design="winxp"] .app-mark {
+  border-radius: 3px;
+  box-shadow: inset 1px 1px 0 rgba(255,255,255,0.4), inset -1px -1px 0 rgba(0,0,0,0.2);
+}
+:root[data-matrix-design="winxp"] .badge { border-radius: 3px; }
+
+/* ----- Windows 11: light acrylic (mica) ----- */
+:root[data-matrix-design="win11"] {
+  color-scheme: light;
+  --app-bg: #f3f3f3;
+  --app-fg: #1b1b1b;
+  --app-card: rgba(249,249,249,0.85);
+  --app-muted: rgba(243,243,243,0.9);
+  --app-muted-fg: #605e5c;
+  --app-border: rgba(0,0,0,0.08);
+  --app-primary: #0067c0;
+  --app-primary-fg: #ffffff;
+  --app-accent: #0067c0;
+  --app-accent-fg: #ffffff;
+  --app-secondary: rgba(230,230,230,0.9);
+  --app-radius: 8px;
+  --app-radius-input: 6px;
+  --app-radius-sm: 4px;
+  --app-font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --app-glass: rgba(249,249,249,0.85);
+  --app-glass-strong: rgba(255,255,255,0.9);
+  --app-border-light: rgba(0,0,0,0.06);
+  --app-border-mid: rgba(0,0,0,0.08);
+  --app-border-interactive: rgba(0,0,0,0.14);
+  --app-shadow-sm: 0 2px 8px rgba(0,0,0,0.06);
+  --app-shadow-md: 0 8px 24px rgba(0,0,0,0.08);
+  --app-primary-subtle: rgba(0,103,192,0.08);
+  --app-primary-glow: rgba(0,103,192,0.2);
+}
+:root[data-matrix-design="win11"] body {
+  background:
+    radial-gradient(1100px 640px at 15% -10%, rgba(0,120,215,0.08), transparent 55%),
+    var(--app-bg);
+}
+:root[data-matrix-design="win11"] .app-header h1 {
+  font-weight: 600;
+  letter-spacing: 0;
+}
+:root[data-matrix-design="win11"] .card,
+:root[data-matrix-design="win11"] .metric {
+  background: var(--app-glass);
+  backdrop-filter: blur(30px);
+  -webkit-backdrop-filter: blur(30px);
+  border: 1px solid var(--app-border-light);
+  border-radius: 8px;
+  box-shadow: var(--app-shadow-sm);
+}
+:root[data-matrix-design="win11"] .card:hover {
+  transform: none;
+  box-shadow: var(--app-shadow-md);
+}
+:root[data-matrix-design="win11"] .toolbar,
+:root[data-matrix-design="win11"] .segmented {
+  background: var(--app-glass);
+  backdrop-filter: blur(30px);
+  -webkit-backdrop-filter: blur(30px);
+  border-color: var(--app-border-light);
+  border-radius: 8px;
+}
+:root[data-matrix-design="win11"] .segmented button { border-radius: 6px; }
+:root[data-matrix-design="win11"] .btn {
+  border-color: var(--app-border-interactive);
+  border-radius: 6px;
+  background: var(--app-glass-strong);
+}
+:root[data-matrix-design="win11"] .btn:hover {
+  transform: none;
+  box-shadow: var(--app-shadow-sm);
+}
+:root[data-matrix-design="win11"] .btn-icon { border-radius: 6px; }
+:root[data-matrix-design="win11"] .input {
+  border-color: var(--app-border-interactive);
+  border-radius: 6px;
+  background: rgba(255,255,255,0.9);
+}
+:root[data-matrix-design="win11"] .input:focus {
+  border-color: #0067c0;
+  background: #ffffff;
+  box-shadow: none;
+}
+:root[data-matrix-design="win11"] .app-mark {
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+}

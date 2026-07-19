@@ -2,7 +2,7 @@
 
 import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, it, expect, vi } from "vitest";
-import { DEFAULT_THEME, getThemeFallback, normalizeTheme, saveTheme, useTheme, type Theme } from "../../shell/src/hooks/useTheme";
+import { DEFAULT_THEME, getThemeFallback, normalizeTheme, resetThemeRuntimeCacheForTests, saveTheme, useTheme, type Theme } from "../../shell/src/hooks/useTheme";
 import { createShellSnapshotScope, loadShellSnapshot, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache";
 
 vi.mock("../../shell/src/hooks/useFileWatcher", () => ({
@@ -43,6 +43,9 @@ describe("theme system", () => {
       configurable: true,
     });
     vi.restoreAllMocks();
+    resetThemeRuntimeCacheForTests();
+    window.history.replaceState({}, "", "/");
+    document.documentElement.removeAttribute("data-theme-style");
   });
 
   const REQUIRED_COLOR_KEYS = [
@@ -245,6 +248,30 @@ describe("theme system", () => {
     expect(loadShellSnapshot(scope)?.theme?.name).toBe("fresh-light");
   });
 
+  it("keeps the active OS design when a second theme consumer mounts", async () => {
+    let keepSecondFetchPending: ((value: never) => void) | undefined;
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ...DEFAULT_THEME, name: "xp", style: "winxp" }),
+      })
+      .mockReturnValueOnce(new Promise((resolve) => {
+        keepSecondFetchPending = resolve;
+      })));
+
+    const root = renderHook(() => useTheme());
+    await waitFor(() => expect(root.result.current.style).toBe("winxp"));
+    expect(document.documentElement.getAttribute("data-theme-style")).toBe("winxp");
+
+    const settings = renderHook(() => useTheme());
+
+    expect(settings.result.current.style).toBe("winxp");
+    expect(document.documentElement.getAttribute("data-theme-style")).toBe("winxp");
+    settings.unmount();
+    root.unmount();
+    expect(keepSecondFetchPending).toBeTypeOf("function");
+  });
+
   it("updates the scoped shell snapshot only after theme saves succeed", async () => {
     const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
     expect(scope).not.toBeNull();
@@ -253,5 +280,34 @@ describe("theme system", () => {
     await saveTheme({ ...DEFAULT_THEME, name: "saved-theme" }, { cacheScope: scope });
 
     expect(loadShellSnapshot(scope)?.theme?.name).toBe("saved-theme");
+  });
+
+  describe("theme style validation", () => {
+    it.each(["flat", "neumorphic", "macos-glass", "winxp", "win11"])(
+      "accepts the %s style during normalization",
+      (style) => {
+        const theme = normalizeTheme({ name: "styled", style });
+        expect(theme.style).toBe(style);
+      },
+    );
+
+    it("drops unknown styles when the fallback has no style", () => {
+      const theme = normalizeTheme({ name: "bad-style", style: "skeuomorphic" });
+      expect(theme.style).toBeUndefined();
+    });
+
+    it("falls back to the fallback theme style for unknown styles", () => {
+      const fallback: Theme = { ...DEFAULT_THEME, style: "win11" };
+      const theme = normalizeTheme({ name: "bad-style", style: "aero" }, fallback);
+      expect(theme.style).toBe("win11");
+    });
+
+    it("applies design-system styles to the root element on save", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+
+      await saveTheme({ ...DEFAULT_THEME, name: "xp", style: "winxp" });
+
+      expect(document.documentElement.getAttribute("data-theme-style")).toBe("winxp");
+    });
   });
 });

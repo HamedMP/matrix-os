@@ -97,6 +97,41 @@ describe('platform/stripe-billing', () => {
     });
   });
 
+  it('creates a focused subscription-update flow with a completion redirect', async () => {
+    const portalCreate = vi.fn().mockResolvedValue({ url: 'https://billing.stripe.test/session' });
+    const client = createStripeBillingClient({
+      secretKey: 'sk_test_123',
+      stripe: fakeStripe({ billingPortal: { sessions: { create: portalCreate } } }),
+    });
+
+    await client.createPortalSession({
+      customerId: 'cus_123',
+      returnUrl: 'https://app.matrix-os.com/runtime?new=1',
+      flow: {
+        type: 'subscription_update',
+        subscriptionId: 'sub_123',
+        priceId: 'price_extra_runtime_monthly',
+        interval: 'monthly',
+        configurationId: 'bpc_extra_monthly',
+        afterCompletionReturnUrl: 'https://app.matrix-os.com/runtime?new=1',
+      },
+    });
+
+    expect(portalCreate).toHaveBeenCalledWith({
+      customer: 'cus_123',
+      return_url: 'https://app.matrix-os.com/runtime?new=1',
+      configuration: 'bpc_extra_monthly',
+      flow_data: {
+        type: 'subscription_update',
+        subscription_update: { subscription: 'sub_123' },
+        after_completion: {
+          type: 'redirect',
+          redirect: { return_url: 'https://app.matrix-os.com/runtime?new=1' },
+        },
+      },
+    });
+  });
+
   it('uses the newest mature Stripe API version allowed by package policy', () => {
     expect(MATRIX_STRIPE_API_VERSION).toBe('2026-04-22.dahlia');
   });
