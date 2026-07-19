@@ -56,13 +56,13 @@ export function Win11StartMenu({ ref, apps, onOpenApp, onOpenSettings, onClose }
   useEffect(() => {
     if (!powerOpen) return;
     powerWrapRef.current
-      ?.querySelector<HTMLButtonElement>(".win11-power-flyout-item")
+      ?.querySelector<HTMLElement>(".win11-power-flyout-item")
       ?.focus();
   }, [powerOpen]);
   useEffect(() => {
     if (!accountOpen) return;
     accountWrapRef.current
-      ?.querySelector<HTMLButtonElement>(".win11-power-flyout-item")
+      ?.querySelector<HTMLElement>(".win11-power-flyout-item")
       ?.focus();
   }, [accountOpen]);
 
@@ -81,10 +81,10 @@ export function Win11StartMenu({ ref, apps, onOpenApp, onOpenSettings, onClose }
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     event.preventDefault();
     const items = Array.from(
-      wrapRef.current?.querySelectorAll<HTMLButtonElement>(".win11-power-flyout-item") ?? [],
+      wrapRef.current?.querySelectorAll<HTMLElement>(".win11-power-flyout-item") ?? [],
     );
     if (items.length === 0) return;
-    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    const current = items.indexOf(document.activeElement as HTMLElement);
     const next =
       event.key === "ArrowDown"
         ? (current + 1) % items.length

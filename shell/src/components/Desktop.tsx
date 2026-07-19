@@ -40,7 +40,7 @@ import { OsSessionHost } from "./os-session/OsSessionHost";
 import { isBootDesign, readPersistedThemeStyle } from "./os-session/os-session-utils";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
-import { getGatewayUrl } from "@/lib/gateway";
+import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { ChatPopover } from "./ChatPopover";
 import { SetupChecklist } from "./onboarding/SetupChecklist";
@@ -555,7 +555,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
       const iconForSlug = (slug: string | undefined): string | undefined => {
         if (!slug) return undefined;
-        return bootstrap.icons?.[slug]?.versionedUrl ?? iconUrlForSlug(slug);
+        return gatewayAssetUrl(bootstrap.icons?.[slug]?.versionedUrl) ?? iconUrlForSlug(slug);
       };
 
       const savedLayout: { windows?: LayoutWindow[] } =
@@ -1419,7 +1419,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                       onClick={() => focusOrOpen("Terminal", "__terminal__")}
                       iconSize={dock.iconSize}
                       tooltipSide={tooltipSide}
-                      iconUrl={terminalApp?.iconUrl ?? "/icons/terminal.png"}
+                      iconUrl={terminalApp?.iconUrl ?? iconUrlForSlug("terminal")}
                     />
                   );
                 })()}

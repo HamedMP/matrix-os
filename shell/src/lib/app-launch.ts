@@ -1,3 +1,5 @@
+import { gatewayAssetUrl } from "./gateway";
+
 export const SAFE_APP_SLUG = /^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/;
 const SAFE_ICON_SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
@@ -65,7 +67,7 @@ export function iconUrlForSlug(slug: string | undefined): string | undefined {
   if (!slug || !SAFE_ICON_SLUG.test(slug)) return undefined;
   const iconSlug = ICON_SLUG_ALIASES.get(slug) ?? slug;
   const extension = APP_RASTER_ICON_SLUGS.has(iconSlug) || !SHIPPED_SVG_ICON_SLUGS.has(iconSlug) ? "png" : "svg";
-  return `/icons/${encodeURIComponent(iconSlug)}.${extension}`;
+  return gatewayAssetUrl(`/icons/${encodeURIComponent(iconSlug)}.${extension}`);
 }
 
 function slugFromLaunchUrl(launchUrl: string | undefined): string | null {
