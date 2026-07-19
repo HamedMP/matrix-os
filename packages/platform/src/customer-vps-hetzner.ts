@@ -103,6 +103,31 @@ const ProviderImageSchema = z.object({
   labels: ProviderLabelsSchema.default({}),
   protection: z.object({ delete: z.boolean() }),
 }).passthrough();
+const ProviderErrorSchema = z.object({
+  error: z.object({
+    code: z.string().min(1).max(128),
+    details: z.object({
+      fields: z.array(z.object({
+        name: z.string().min(1).max(128),
+      }).passthrough()).max(32),
+    }).passthrough().optional(),
+  }).passthrough(),
+}).passthrough();
+
+async function isSnapshotImageRejection(res: Response): Promise<boolean> {
+  let body: unknown;
+  try {
+    body = await res.clone().json();
+  } catch (err: unknown) {
+    if (!(err instanceof SyntaxError)) {
+      logCustomerVpsError('hetzner createServer rejection classification', err);
+    }
+    return false;
+  }
+  const parsed = ProviderErrorSchema.safeParse(body);
+  if (!parsed.success) return false;
+  return parsed.data.error.details?.fields.some((field) => field.name === 'image') ?? false;
+}
 
 function providerUnavailable(): CustomerVpsError {
   return new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
@@ -248,7 +273,11 @@ export function createHetznerClient(
         throw new CustomerVpsError(429, 'quota_exceeded', 'Provisioning capacity unavailable');
       }
       if (!res.ok) {
+        const snapshotImageRejected = input.image !== undefined && await isSnapshotImageRejection(res);
         await logProviderRejection('createServer', res);
+        if (snapshotImageRejected) {
+          throw new CustomerVpsError(500, 'snapshot_clone_rejected', 'Provisioning provider unavailable');
+        }
         throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
       }
       return parseServer(await parseJson(res));

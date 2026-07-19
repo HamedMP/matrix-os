@@ -65,7 +65,9 @@ export const RegisterRequestSchema = z.object({
   publicIPv4: PublicIPv4Schema,
   publicIPv6: z.ipv6().optional(),
   imageVersion: z.string().min(1).max(128),
-});
+  bundleSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  healthy: z.boolean().optional(),
+}).strict();
 
 export const RecoverRequestSchema = z.object({
   clerkUserId: ClerkUserIdSchema,

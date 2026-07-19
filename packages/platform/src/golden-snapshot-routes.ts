@@ -9,6 +9,9 @@ import {
   GoldenSnapshotBuildRequiresRetryError,
   getGoldenSnapshot,
   getGoldenSnapshotBuild,
+  listGoldenSnapshotOperationalStatus,
+  retryGoldenSnapshotBuild,
+  revokeGoldenSnapshot,
 } from './golden-snapshot-repository.js';
 import type { GoldenSnapshotRuntimeConfig } from './golden-snapshot-schema.js';
 import { GoldenSnapshotBundleVersionSchema } from './golden-snapshot-schema.js';
@@ -20,7 +23,12 @@ import {
 
 const SNAPSHOT_ENQUEUE_BODY_LIMIT = 8 * 1024;
 const SNAPSHOT_CALLBACK_BODY_LIMIT = 64 * 1024;
+const SNAPSHOT_RETRY_BODY_LIMIT = 1024;
+const SNAPSHOT_REVOKE_BODY_LIMIT = 4 * 1024;
 const BuildIdSchema = z.string().uuid();
+const SnapshotIdSchema = z.string().uuid();
+const StatusQuerySchema = z.coerce.number().int().min(1).max(100).default(25);
+const RevokeSchema = z.object({ reason: z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9._-]*$/) }).strict();
 const EnqueueSchema = z.object({
   bundleVersion: GoldenSnapshotBundleVersionSchema,
   testMode: z.boolean().optional().default(false),
@@ -118,6 +126,46 @@ export function createGoldenSnapshotRoutes(deps: GoldenSnapshotRoutesDeps): Hono
       state: snapshot.state,
       failureCode: build.lastErrorCode ?? snapshot.failureCode,
     });
+  });
+
+  routes.get('/snapshots', async (c) => {
+    const authError = requireBearerAuth(c, deps.operatorSecret);
+    if (authError) return authError;
+    const limit = StatusQuerySchema.safeParse(c.req.query('limit'));
+    if (!limit.success) return c.json({ error: 'Invalid request' }, 400);
+    try {
+      return c.json({ snapshots: await listGoldenSnapshotOperationalStatus(deps.db, limit.data) });
+    } catch (err: unknown) {
+      console.error(`[golden-snapshot] status failed: ${err instanceof Error ? err.name : typeof err}`);
+      return c.json({ error: 'Snapshot status unavailable' }, 500);
+    }
+  });
+
+  routes.post('/snapshot-builds/:buildId/retry', bodyLimit({ maxSize: SNAPSHOT_RETRY_BODY_LIMIT }), async (c) => {
+    const authError = requireBearerAuth(c, deps.operatorSecret);
+    if (authError) return authError;
+    const buildId = BuildIdSchema.safeParse(c.req.param('buildId'));
+    if (!buildId.success) return c.json({ error: 'Invalid request' }, 400);
+    try {
+      return c.json({ retried: await retryGoldenSnapshotBuild(deps.db, buildId.data, now()) });
+    } catch (err: unknown) {
+      console.error(`[golden-snapshot] retry failed: ${err instanceof Error ? err.name : typeof err}`);
+      return c.json({ error: 'Snapshot retry unavailable' }, 500);
+    }
+  });
+
+  routes.post('/snapshots/:snapshotId/revoke', bodyLimit({ maxSize: SNAPSHOT_REVOKE_BODY_LIMIT }), async (c) => {
+    const authError = requireBearerAuth(c, deps.operatorSecret);
+    if (authError) return authError;
+    const snapshotId = SnapshotIdSchema.safeParse(c.req.param('snapshotId'));
+    const body = RevokeSchema.safeParse(await readJson(c));
+    if (!snapshotId.success || !body.success) return c.json({ error: 'Invalid request' }, 400);
+    try {
+      return c.json({ revoked: await revokeGoldenSnapshot(deps.db, snapshotId.data, body.data.reason, now()) });
+    } catch (err: unknown) {
+      console.error(`[golden-snapshot] revocation failed: ${err instanceof Error ? err.name : typeof err}`);
+      return c.json({ error: 'Snapshot revocation unavailable' }, 500);
+    }
   });
 
   routes.post('/snapshot-builds/:buildId/callback', bodyLimit({ maxSize: SNAPSHOT_CALLBACK_BODY_LIMIT }), async (c) => {

@@ -20,6 +20,8 @@ describe('golden snapshot worker wiring', () => {
     );
     expect(worker).toContain("logPlatformRouteError('golden snapshot reconciliation', err)");
     expect(worker.indexOf('try {')).toBeLessThan(worker.indexOf('claimGoldenSnapshotBuildBatch'));
+    expect(worker.indexOf('const retention = await enforceGoldenSnapshotRetention'))
+      .toBeLessThan(worker.indexOf("logPlatformRouteError('golden snapshot reconciliation', err)"));
   });
 
   it('pauses build claims while keeping cleanup enabled when builds are disabled', async () => {
@@ -42,6 +44,9 @@ describe('golden snapshot worker wiring', () => {
       .toBeGreaterThan(worker.indexOf('listRunnableGoldenSnapshotBuildIds'));
     expect(worker.indexOf('listCallbackWaitGoldenSnapshotBuildIds'))
       .toBeLessThan(worker.indexOf('listUnresolvedGoldenSnapshotBuildIds'));
+    expect(worker).toContain("err.code === 'snapshot_quota_exceeded'");
+    expect(worker).toContain('quotaPressure = true');
+    expect(worker).toContain('quotaPressure,');
   });
 
   it('mounts snapshot status routes before the generic bundle catch-all', async () => {
