@@ -138,23 +138,56 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     void workspace.loadThreadSnapshot(selectedThreadId);
   }, [active, selectedThreadId, activeThreadId, threadSnapshot?.thread.id, projectId, setSelectedThread]);
 
-  async function openNewChat(taskId?: string) {
-    if (!summary) return;
+  async function openNewChat(taskId?: string, initialPrompt?: string): Promise<boolean> {
+    if (!summary) return false;
     const relation = await resolveNewChatTarget(projectId, taskId);
     if (!relation) {
       toast.error("Couldn't start a new chat here. Refresh the workspace and try again.");
-      return;
+      return false;
     }
     setComposerSeed({
       seedId: Date.now(),
       draft: {
         ...defaultAgentThreadComposerDraft(summary),
         ...relation,
+        ...(initialPrompt ? { prompt: initialPrompt } : {}),
       },
     });
     setComposerOpen(true);
     requestComposerFocus();
+    return true;
   }
+
+  // Type-to-start is computed before the early returns so the keydown effect
+  // stays hook-order safe; `canCreate` below is derived after them.
+  const typeToStartEnabled = summary
+    ? capabilityEnabled(summary, "codingAgentsThreadCreate") && projectWorkspaceEnabled
+    : false;
+  const openNewChatRef = useRef(openNewChat);
+  openNewChatRef.current = openNewChat;
+  const typeToStartInFlightRef = useRef(false);
+  useEffect(() => {
+    if (!active || selectedThreadId || !typeToStartEnabled || composerOpen) return;
+    typeToStartInFlightRef.current = false;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key.length !== 1) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target
+        && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)
+      ) {
+        return;
+      }
+      if (typeToStartInFlightRef.current) return;
+      typeToStartInFlightRef.current = true;
+      void openNewChatRef.current(undefined, event.key).then((started) => {
+        if (!started) typeToStartInFlightRef.current = false;
+      });
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [active, selectedThreadId, typeToStartEnabled, composerOpen]);
 
   useEffect(() => {
     if (!active || !composerRequest || composerRequest.projectId !== projectId) return;
@@ -260,14 +293,24 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
           canSendTurns={canSendTurns}
         />
       ) : (
-        <EmptyState
-          icon={<MessageSquare size={28} />}
-          headline="Select a chat"
-          description="Pick a conversation from the list, or start a new chat for this project."
-          action={canCreate && projectWorkspaceEnabled ? (
-            <Button variant="primary" onClick={() => void openNewChat()}>New chat</Button>
-          ) : undefined}
-        />
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <EmptyState
+            icon={<MessageSquare size={28} />}
+            headline="Select a chat"
+            description="Pick a conversation from the list, or start a new chat for this project."
+            action={canCreate && projectWorkspaceEnabled ? (
+              <Button variant="primary" onClick={() => void openNewChat()}>New chat</Button>
+            ) : undefined}
+          />
+          {typeToStartEnabled && !composerOpen ? (
+            <p
+              className="pointer-events-none absolute inset-x-0 bottom-5 text-center text-[11px]"
+              style={{ color: "var(--text-tertiary)" }}
+            >
+              Start typing to begin a new chat
+            </p>
+          ) : null}
+        </div>
       )}
     </div>
   );
