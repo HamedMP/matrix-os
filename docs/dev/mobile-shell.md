@@ -84,6 +84,40 @@ terminals the QR may not render; use the URL above, or generate a QR for the
 deep link and scan it from the dev-client launcher. If the phone cannot reach
 the Mac on LAN, retry Metro with `--host tunnel`.
 
+## Android Store Release
+
+Use a clean manual worktree based on the latest `origin/main`. From the mobile
+app directory, validate the production config and create the Play Store bundle:
+
+```bash
+cd apps/mobile
+eas project:info
+eas build --platform android --profile production
+```
+
+The production profile emits an Android App Bundle (`.aab`), increments the
+remote Android version code, and uses package name `com.matrixos.mobile`.
+Download the finished artifact from the EAS build page.
+
+Google Play requires the first bundle for a new app to be uploaded manually in
+Play Console. Create the app with the exact package name, enable Play App
+Signing, and upload the `.aab` to Internal testing before configuring API-based
+submissions. Add testers and complete the store listing, privacy policy, data
+safety, content rating, target audience, ads, and distribution declarations in
+Play Console.
+
+After the first manual upload, create a least-privilege Google Play service
+account with permission to release to testing tracks and attach its JSON key to
+the EAS project through `eas credentials`. Never commit the key. Subsequent
+internal-track submissions use:
+
+```bash
+eas submit --platform android --profile production --latest
+```
+
+Promote a verified internal release through Play Console rather than changing
+the default automated submission track directly to production.
+
 ### Clerk Redirects
 
 Google SSO depends on Clerk allowing the mobile redirect URI used by
