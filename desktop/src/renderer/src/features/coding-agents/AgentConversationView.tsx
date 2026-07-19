@@ -13,7 +13,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../design/primitives";
 import { redactCredentialsForDisplay } from "../../lib/transcript-redaction";
 import {
@@ -23,7 +23,9 @@ import {
 } from "../../stores/coding-agent-workspace";
 import { safeUrlTransform } from "../editor/MarkdownPreview";
 import { Conversation, ConversationContent } from "../chat/elements/conversation";
-import { PromptInput } from "../chat/elements/prompt-input";
+import { PromptInput, type PromptSubmitSource } from "../chat/elements/prompt-input";
+import { abortAgentThread, agentThreadAbortSupported } from "./abort-thread";
+import { EMPTY_QUEUED_MESSAGES, useCodingAgentMessageQueue } from "./message-queue-store";
 
 type ConversationStatus = "idle" | "loading" | "ready" | "error";
 type AssistantEvent = Extract<AgentThreadEvent, { type: "assistant.text.delta" | "assistant.text.completed" }>;
@@ -425,16 +427,86 @@ function SystemEvent({ event, answeredInputs, resolvedApprovals }: {
   );
 }
 
-function ConversationComposer({ threadId, waitingForAction }: { threadId: string; waitingForAction: boolean }) {
+function ConversationComposer({
+  threadId,
+  waitingForAction,
+  threadBusy,
+}: {
+  threadId: string;
+  waitingForAction: boolean;
+  threadBusy: boolean;
+}) {
   const [message, setMessage] = useState("");
+  const [queueNotice, setQueueNotice] = useState<string | null>(null);
   const turnStatus = useCodingAgentWorkspace((state) => state.turnStatus);
   const turnThreadId = useCodingAgentWorkspace((state) => state.turnThreadId);
   const turnError = useCodingAgentWorkspace((state) => state.turnError);
   const send = useCodingAgentWorkspace((state) => state.sendThreadMessage);
+  const queuedMessages = useCodingAgentMessageQueue((state) => state.queues[threadId] ?? EMPTY_QUEUED_MESSAGES);
+  const enqueue = useCodingAgentMessageQueue((state) => state.enqueue);
+  const removeQueued = useCodingAgentMessageQueue((state) => state.removeQueued);
   const submitting = turnStatus === "submitting" && turnThreadId === threadId;
+  const blocked = waitingForAction || submitting || threadBusy;
+  // The preload has no abort channel yet; the Stop button stays hidden until
+  // window.matrix.abortThread exists (see abort-thread.ts).
+  const abortSupported = agentThreadAbortSupported();
+  const drainingRef = useRef(false);
+  const pausedUntilBusyRef = useRef(false);
+  const blockedRef = useRef(blocked);
+  blockedRef.current = blocked;
 
-  async function submit() {
-    if (!message.trim() || submitting || waitingForAction) return;
+  // Drain the client-side follow-up queue FIFO while the thread is idle. The
+  // loop re-invokes itself after each send settles, because the effect alone
+  // cannot re-fire once the in-flight guard clears.
+  const drainQueueRef = useRef<() => void>(() => undefined);
+  drainQueueRef.current = () => {
+    if (blockedRef.current || drainingRef.current || pausedUntilBusyRef.current) return;
+    const head = useCodingAgentMessageQueue.getState().queues[threadId]?.[0];
+    if (!head) return;
+    drainingRef.current = true;
+    // Shift BEFORE sending so a strict-mode double effect cannot send it twice.
+    useCodingAgentMessageQueue.getState().removeQueued(threadId, head.id);
+    void send({ threadId, message: head.text })
+      .then((sent) => {
+        if (sent) return;
+        useCodingAgentMessageQueue.getState().requeueFront(threadId, head);
+        // The thread was busier than the local snapshot claimed; wait for a
+        // fresh busy→idle cycle before auto-draining again.
+        pausedUntilBusyRef.current = true;
+      })
+      .finally(() => {
+        drainingRef.current = false;
+        drainQueueRef.current();
+      });
+  };
+
+  useEffect(() => {
+    if (threadBusy) pausedUntilBusyRef.current = false;
+    drainQueueRef.current();
+  }, [blocked, threadBusy, threadId, queuedMessages.length]);
+
+  async function submit(source?: PromptSubmitSource) {
+    if (!message.trim() || waitingForAction) return;
+    if (submitting || threadBusy) {
+      // While the agent works, Enter queues the follow-up for automatic
+      // delivery once the turn completes. The Send button keeps direct-send
+      // semantics so a thread_busy conflict still surfaces the safe recovery
+      // copy instead of vanishing into the queue.
+      if (source !== "keyboard") {
+        if (submitting) return;
+        const sent = await send({ threadId, message });
+        if (sent) setMessage("");
+        return;
+      }
+      const queued = enqueue(threadId, message);
+      if (queued) {
+        setMessage("");
+        setQueueNotice(null);
+      } else {
+        setQueueNotice("Message queue is full for this chat.");
+      }
+      return;
+    }
     const sent = await send({ threadId, message });
     if (sent) setMessage("");
   }
@@ -442,20 +514,56 @@ function ConversationComposer({ threadId, waitingForAction }: { threadId: string
   return (
     <div className="shrink-0 px-4 pb-4">
       <div className="mx-auto w-full max-w-[760px]">
+        {queuedMessages.length > 0 ? (
+          <div aria-label="Queued follow-ups" className="mb-2 flex flex-col gap-1">
+            {queuedMessages.map((queued, index) => (
+              <div
+                key={queued.id}
+                className="flex items-center gap-2 rounded-md border px-2 py-1"
+                style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+              >
+                <span className="shrink-0 text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+                  {index + 1}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-xs" style={{ color: "var(--text-secondary)" }}>
+                  {queued.text}
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Remove queued follow-up ${index + 1}`}
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-[var(--bg-hover)]"
+                  style={{ color: "var(--text-tertiary)" }}
+                  onClick={() => removeQueued(threadId, queued.id)}
+                >
+                  <X size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
         {turnThreadId === threadId && turnError ? (
           <p className="mb-1 px-1 text-xs" style={{ color: "var(--danger)" }}>{turnError}</p>
+        ) : null}
+        {queueNotice ? (
+          <p className="mb-1 px-1 text-xs" style={{ color: "var(--warning)" }}>{queueNotice}</p>
         ) : null}
         <PromptInput
           value={message}
           onChange={setMessage}
-          onSubmit={() => void submit()}
-          busy={submitting}
-          disabled={waitingForAction || submitting}
+          onSubmit={(source) => void submit(source)}
+          onAbort={abortSupported ? () => void abortAgentThread(threadId) : undefined}
+          busy={submitting || threadBusy}
+          disabled={waitingForAction}
           // Matches the CreateAgentTurnRequestSchema message cap so oversized
           // drafts are prevented client-side instead of failing generically.
           maxLength={24_000}
           ariaLabel="Message conversation"
           placeholder={waitingForAction ? "Respond to the pending request above to continue" : "Ask a follow-up…"}
+          footer={
+            threadBusy && !waitingForAction ? (
+              <span className="text-xs">Agent is working — press Enter to queue a follow-up</span>
+            ) : undefined
+          }
         />
       </div>
     </div>
@@ -529,6 +637,7 @@ export function AgentConversationView({
           key={`composer:${snapshot.thread.id}`}
           threadId={snapshot.thread.id}
           waitingForAction={snapshot.thread.status === "waiting_for_approval" || snapshot.thread.status === "waiting_for_input"}
+          threadBusy={running}
         />
       ) : (
         <p
