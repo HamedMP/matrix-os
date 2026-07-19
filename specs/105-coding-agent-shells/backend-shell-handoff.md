@@ -17,6 +17,35 @@ This note is the stable integration boundary for desktop and mobile Conversation
 4. Treat `codingAgentsConversationView` and `codingAgentsKanbanView` as additive shell capability flags.
 5. Select a project from `summary.projects.items`, then fetch `GET /api/coding-agents/projects/:projectId/workspace`.
 
+Gateway publication invariant: when the corresponding project shell surfaces are configured,
+`GET /api/coding-agents/summary` emits `codingAgentsProjectWorkspace`,
+`codingAgentsConversationView`, and `codingAgentsKanbanView` with availability derived from the
+canonical project read model. Shells must not infer either view capability from the presence of
+projects or from another capability flag.
+
+### Mobile computer selection contract
+
+The web shell can render the authenticated `/runtime` machine picker, but native mobile sessions
+are intentionally excluded from that HTML response. Native shells consume an authenticated,
+bounded JSON projection of the current Clerk user's active Matrix computers:
+
+- `GET /api/auth/computers`, authenticated with the existing Clerk bearer token.
+- `MatrixComputerListSchema`, containing only bounded safe identifiers, display labels, runtime
+  slots, coarse lifecycle status, version labels, and same-origin `/vm/:handle` gateway paths.
+- No public IPs, platform credentials, provider credentials, or operator-only fleet metadata may
+  cross this boundary.
+
+The native client may persist the selected same-origin gateway path, but the platform list remains
+the source of truth. Switching computers must reuse the existing Clerk token provider and must
+rehydrate gateway-backed state instead of copying runtime data between computers.
+
+| Route | Auth method | Owner scope | Public |
+|---|---|---|---|
+| `GET /api/auth/computers` | Existing Clerk bearer token verified by the platform | Active computers owned by the authenticated Clerk user | No |
+
+The route accepts no request body or user-controlled query input, caps the projection at 20
+records, performs no external calls, and returns generic errors with `Cache-Control: no-store`.
+
 `ProjectAgentWorkspaceSchema` is the canonical bounded navigation projection. Its `projectThreads` and `taskThreads` lists are independent; a task may own several selectable threads. Canonical task status comes from `tasks.items` and must not be inferred from thread status.
 
 ## Mutations
@@ -38,6 +67,50 @@ Every persisted public thread change emits a bounded `coding-agent.thread.create
 - Keep the server-provided `threadId`, event cursor, and event IDs. Never store transcripts, terminal output, provider resume identity, approvals, file contents, or diffs in shell persistence.
 
 Workspace input delivery completes the accepted turn but does not complete a still-running thread. The canonical workspace session-stop path owns terminal thread completion/failure. Shell reducers should therefore render turn and thread lifecycle independently.
+
+### Provider-complete transcript contract gap
+
+`AgentThreadEventSchema` currently projects assistant text, tools, approvals, input requests, and
+turn/thread lifecycle, but it does not project the accepted user message. The runnable workspace
+provider also starts Codex as an interactive terminal and does not normalize the provider's
+structured thread/item notifications into canonical thread events. Therefore the current snapshot
+route cannot represent a complete user/assistant transcript for a real Codex session.
+
+Transcript parity requires a gateway-owned provider ingestion adapter that:
+
+- emits a bounded canonical user-message event when a create/turn command is accepted;
+- maps structured provider thread, turn, assistant-message, reasoning, tool, approval, and input
+  notifications into `AgentThreadEventSchema` without exposing raw provider payloads;
+- persists those events in the existing owner-scoped thread store and publishes them through the
+  existing snapshot, continuation, and WebSocket routes; and
+- defines backward pagination for history older than the latest bounded snapshot window.
+
+Until that adapter and schema extension exist, shells must label the current view as an activity
+timeline and must not claim provider-complete transcript support.
+
+### Project/chat terminal relation contract gap
+
+Canonical terminal sessions are currently projected as a flat bounded `RuntimeSummarySchema.terminalSessions`
+list. `AgentThreadSummarySchema` and the create-thread request expose only one optional
+`terminalSessionId`, while `TerminalSessionSummarySchema` carries no `projectId`, `taskId`, or
+`threadId`. A `terminal.bound` event can identify a terminal observed during one thread, but it is
+not an authoritative bounded one-to-many read model and cannot group existing TUI sessions under a
+project or conversation after replay truncation.
+
+Project and conversation shells therefore cannot truthfully represent the required relationships:
+
+- one project owning multiple shell or coding-agent TUI terminals;
+- one conversation being associated with multiple terminals over its lifetime; and
+- one terminal remaining project-scoped without being owned by a conversation.
+
+Parity requires a gateway-owned terminal-binding contract. Before shells render grouped terminal
+collections, the backend must define a bounded relation schema containing `terminalSessionId`,
+`projectId`, optional `taskId`, optional `threadId`, a safe display label, relation role, lifecycle
+timestamps, and attachability; expose those bindings in the project workspace read route (or a
+dedicated bounded project-terminal route); and define authenticated bind/unbind or terminal-create
+inputs that validate project/task/thread ownership. The gateway must remain the source of truth and
+emit a generic project refresh event after relation mutations. A shell must not infer these
+relations from terminal names, working directories, the selected chat, or local persistence.
 
 ## Error And Recovery Rules
 

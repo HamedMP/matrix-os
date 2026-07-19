@@ -262,6 +262,7 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
   return (
     <div
       ref={containerRef}
+      data-file-browser
       className="flex flex-col h-full outline-none"
       // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- generic grouping landmark for the file-browser keyboard surface; no native HTML element maps to the ARIA group role on this layout container.
       role="group"

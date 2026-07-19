@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   configuredWorkspaceProviderAgents,
+  resolveWorkspaceProviderRuntime,
 } from "../../packages/gateway/src/coding-agents/workspace-provider-config.js";
 
 describe("coding-agent workspace provider configuration", () => {
@@ -46,5 +47,22 @@ describe("coding-agent workspace provider configuration", () => {
     expect(() => configuredWorkspaceProviderAgents({
       MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER: "true",
     })).toThrowError("Invalid coding-agent workspace provider configuration");
+  });
+
+  it("does not resolve Codex-only runtime configuration for a Claude-only workspace", () => {
+    expect(resolveWorkspaceProviderRuntime({
+      MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS: "claude",
+      MATRIX_NODE_PREFIX: "invalid-relative-prefix",
+    })).toEqual({ agents: ["claude"], codexExecutable: undefined });
+  });
+
+  it("resolves the verified Codex executable once for Codex-enabled workspaces", () => {
+    expect(resolveWorkspaceProviderRuntime({
+      MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS: "claude,codex",
+      MATRIX_NODE_PREFIX: "/srv/matrix/node",
+    })).toEqual({
+      agents: ["claude", "codex"],
+      codexExecutable: "/srv/matrix/node/bin/codex",
+    });
   });
 });

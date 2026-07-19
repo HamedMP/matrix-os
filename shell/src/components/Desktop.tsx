@@ -830,6 +830,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         const res = await fetch(`${GATEWAY_URL}/api/apps`, { signal: AbortSignal.timeout(10_000) });
         if (!res.ok || cancelled) return;
         const apiApps = (await res.json()) as ApiAppEntry[];
+        if (cancelled) return;
         const { next, apiPaths } = reconcileDesignApps({
           current: useWindowManager.getState().apps,
           apiApps,
@@ -1153,6 +1154,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       </ShellNotificationStack>
       {isWindowsDesign ? (
         <WindowsTaskbar
+          themeStyle={themeStyle}
           apps={apps}
           windows={windows}
           onOpenApp={(path, name) => focusOrOpen(name ?? apps.find((a) => a.path === path)?.name ?? "App", path)}

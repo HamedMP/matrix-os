@@ -46,18 +46,15 @@ describe("DotGrid OS-design gating", () => {
   });
 
   it.each(["macos-glass", "winxp", "win11"])(
-    "renders nothing and detaches its listeners in the %s design",
+    "renders nothing and never attaches pointer listeners in the %s design",
     (style) => {
       setThemeStyle(style);
-      const removeSpy = vi.spyOn(window, "removeEventListener");
+      const addSpy = vi.spyOn(window, "addEventListener");
       const { container } = render(<DotGrid />);
 
       expect(container.firstChild).toBeNull();
-      // The theme style mirrors into React state from the DOM attribute in an
-      // effect, so the first commit may briefly attach listeners; the gate
-      // must have detached them again by the time effects settle.
-      expect(removeSpy).toHaveBeenCalledWith("mousemove", expect.any(Function));
-      expect(removeSpy).toHaveBeenCalledWith("mouseleave", expect.any(Function));
+      expect(addSpy).not.toHaveBeenCalledWith("mousemove", expect.any(Function));
+      expect(addSpy).not.toHaveBeenCalledWith("mouseleave", expect.any(Function));
     },
   );
 

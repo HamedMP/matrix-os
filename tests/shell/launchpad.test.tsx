@@ -3,6 +3,10 @@ import React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MissionControl } from "../../shell/src/components/MissionControl.js";
+import {
+  computeLaunchpadColumns,
+  computeLaunchpadRows,
+} from "../../shell/src/components/launchpad/launchpad-utils.js";
 
 vi.mock("@/hooks/useTaskBoard", () => ({
   useTaskBoard: () => ({
@@ -107,8 +111,18 @@ describe("Launchpad (macos-glass launcher)", () => {
     expect(screen.getByRole("button", { name: "Terminal" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Notes" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Chess" })).toBeTruthy();
+    expect(
+      (container.querySelector("[data-launchpad-grid]") as HTMLElement).style.gridTemplateColumns,
+    ).toContain("repeat(3,");
     // One page of apps: no page dots.
     expect(screen.queryByRole("button", { name: /go to page/i })).toBeNull();
+  });
+
+  it("reserves the grid padding and gaps so launchpad stays centered in the viewport", () => {
+    expect(computeLaunchpadColumns(560)).toBe(3);
+    expect(computeLaunchpadColumns(1024)).toBe(6);
+    expect(computeLaunchpadColumns(1440)).toBe(7);
+    expect(computeLaunchpadRows(500)).toBe(1);
   });
 
   it("filters the grid by app name via the search field", async () => {
@@ -167,8 +181,9 @@ describe("Launchpad (macos-glass launcher)", () => {
 
   it("paginates with dots when the grid overflows one page", async () => {
     setDesign("macos-glass");
-    // 4 columns x 2 rows = 8 tiles per page at this viewport.
-    setViewport(560, 500);
+    // 4 columns x 2 rows = 8 tiles per page at this viewport, including
+    // Launchpad's horizontal padding and row/column gaps.
+    setViewport(680, 600);
     const apps: TestApp[] = Array.from({ length: 10 }, (_, i) => ({
       name: `App ${i + 1}`,
       path: `apps/app-${i + 1}/index.html`,

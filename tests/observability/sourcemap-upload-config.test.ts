@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// PostHog exceptions from shell and www arrive minified unless production
+// PostHog exceptions from the shell arrive minified unless production
 // source maps are uploaded at build time. withPostHogConfig must only wrap
 // the Next.js config when both POSTHOG_API_KEY and POSTHOG_PROJECT_ID are
 // present so builds without credentials stay byte-identical to today.
@@ -52,32 +52,13 @@ describe("shell source-map upload config", () => {
   });
 });
 
-describe("www source-map upload config", () => {
-  const source = readFileSync(join(process.cwd(), "www/next.config.ts"), "utf8");
-
-  it("gates withPostHogConfig on both POSTHOG_API_KEY and POSTHOG_PROJECT_ID", () => {
-    expect(source).toContain("@posthog/nextjs-config");
-    expect(source).toMatch(/POSTHOG_API_KEY/);
-    expect(source).toMatch(/POSTHOG_PROJECT_ID/);
-    expect(source).toMatch(/sourcemaps:\s*\{\s*enabled:\s*true/);
-  });
-
-  it("keeps withPostHogConfig as the outermost wrapper around withMDX", () => {
-    // The package warns when another wrapper swallows its config function:
-    // PostHog must wrap withMDX(...), never the other way around.
-    expect(source).toMatch(/withSourcemapUpload\(withMDX\(/);
-    expect(source).not.toMatch(/withMDX\(\s*withPostHogConfig\(/);
-    expect(source).toMatch(/withPostHogConfig\(config/);
-  });
-});
-
 describe("runtime-safe sourcemap plugin loading", () => {
   // @posthog/nextjs-config is a devDependency. `next start` evaluates
   // next.config at runtime, and pruned production images (platform Cloud Run)
   // have no dev deps -- a top-level import crashes the auth shell and the
   // container never listens on its port. The plugin must load lazily behind
   // the credential gate.
-  const configs = ["shell/next.config.ts", "www/next.config.ts"];
+  const configs = ["shell/next.config.ts"];
 
   it.each(configs)("%s does not import @posthog/nextjs-config at top level", (file) => {
     const source = readFileSync(join(process.cwd(), file), "utf8");
@@ -98,10 +79,8 @@ describe("host bundle build wiring", () => {
     expect(workflow).toMatch(/POSTHOG_PROJECT_ID:\s*\$\{\{\s*vars\.POSTHOG_PROJECT_ID\s*\|\|\s*''\s*\}\}/);
   });
 
-  it("declares dev dependencies on @posthog/nextjs-config for shell and www", () => {
+  it("declares the shell dev dependency on @posthog/nextjs-config", () => {
     const shellPkg = JSON.parse(readFileSync(join(process.cwd(), "shell/package.json"), "utf8"));
-    const wwwPkg = JSON.parse(readFileSync(join(process.cwd(), "www/package.json"), "utf8"));
     expect(shellPkg.devDependencies["@posthog/nextjs-config"]).toBeDefined();
-    expect(wwwPkg.devDependencies["@posthog/nextjs-config"]).toBeDefined();
   });
 });

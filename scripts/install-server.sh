@@ -363,7 +363,7 @@ install_packages() {
     log "Writing apt output to ${MATRIX_INSTALL_LOG}"
     apt_get_update >>"$MATRIX_INSTALL_LOG" 2>&1 || fail "apt-get update failed"
     enable_ubuntu_universe
-    apt-get install -y bubblewrap ca-certificates curl docker.io git nginx openssl postgresql-client procps socat sudo tar >>"$MATRIX_INSTALL_LOG" 2>&1 \
+    apt-get install -y bubblewrap ca-certificates curl docker.io git nginx openssl postgresql-client procps socat sudo tar zsh >>"$MATRIX_INSTALL_LOG" 2>&1 \
       || fail "apt-get install failed"
     configure_bwrap_apparmor
     ok "OS packages installed"

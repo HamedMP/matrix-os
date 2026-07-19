@@ -48,7 +48,17 @@ curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
 chmod 0755 "$HERMES_INSTALLER_PATH"
 
 log "installing Hermes Agent for $MATRIX_RUNTIME_USER"
-sudo -H -u "$MATRIX_RUNTIME_USER" env \
+# setpriv avoids PAM account checks: sudo fails outright when the invoking or
+# target account has an expired password (Hetzner expires root's on servers
+# created without SSH keys), which left first-boot installs crash-looping.
+run_installer_as_runtime_user() {
+  if [ "$(id -u)" = "0" ] && command -v setpriv >/dev/null 2>&1; then
+    setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_USER" --init-groups "$@"
+    return
+  fi
+  sudo -H -u "$MATRIX_RUNTIME_USER" "$@"
+}
+run_installer_as_runtime_user env \
   HOME="$MATRIX_RUNTIME_HOME" \
   HERMES_HOME="$HERMES_HOME" \
   XDG_CONFIG_HOME="$MATRIX_RUNTIME_HOME/.config" \
@@ -65,7 +75,7 @@ done
 
 if [ -x "$MATRIX_RUNTIME_HOME/.local/bin/hermes" ] && [ -x "$MATRIX_APP_DIR/scripts/install-hermes-matrix-skills.sh" ]; then
   log "installing bundled Matrix Hermes skills"
-  sudo -H -u "$MATRIX_RUNTIME_USER" env \
+  run_installer_as_runtime_user env \
     HOME="$MATRIX_RUNTIME_HOME" \
     HERMES_HOME="$HERMES_HOME" \
     HERMES_BIN="$MATRIX_RUNTIME_HOME/.local/bin/hermes" \
@@ -75,7 +85,7 @@ if [ -x "$MATRIX_RUNTIME_HOME/.local/bin/hermes" ] && [ -x "$MATRIX_APP_DIR/scri
     PATH="$MATRIX_RUNTIME_HOME/.local/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
     bash -lc "cd '$MATRIX_APP_DIR' && ./scripts/install-hermes-matrix-skills.sh '$MATRIX_APP_DIR'"
 
-  sudo -H -u "$MATRIX_RUNTIME_USER" env \
+  run_installer_as_runtime_user env \
     HOME="$MATRIX_RUNTIME_HOME" \
     HERMES_HOME="$HERMES_HOME" \
     XDG_CONFIG_HOME="$MATRIX_RUNTIME_HOME/.config" \

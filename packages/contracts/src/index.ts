@@ -1,5 +1,8 @@
 import { z } from "zod/v4";
 
+export const CODEX_VERIFIED_VERSION = "0.144.6";
+export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
+
 const SAFE_ID_BODY = /^[A-Za-z0-9_-]+$/;
 const SAFE_SLUG = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const SAFE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
@@ -236,6 +239,47 @@ export type MatrixComputerVersionLabel = z.infer<typeof MatrixComputerVersionLab
 export type MatrixComputerCapabilityId = z.infer<typeof MatrixComputerCapabilityIdSchema>;
 export type MatrixComputer = z.infer<typeof MatrixComputerSchema>;
 export type MatrixComputerList = z.infer<typeof MatrixComputerListSchema>;
+
+export const KernelConversationIdSchema = z.string()
+  .min(1)
+  .max(256)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/, "Invalid conversation id")
+  .refine((value) => !value.includes(".."), { message: "Invalid conversation id" });
+
+export const KernelConversationHistoryQuerySchema = z.object({
+  cursor: z.coerce.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(50),
+}).strict();
+
+export const KernelConversationHistoryMessageSchema = z.object({
+  index: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  role: z.enum(["user", "assistant", "system"]),
+  content: z.string().max(32_000),
+  contentTruncated: z.boolean(),
+  timestamp: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  tool: z.string().min(1).max(128).optional(),
+}).strict();
+
+export const KernelConversationHistoryResponseSchema = z.object({
+  id: KernelConversationIdSchema,
+  createdAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  updatedAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  totalCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  messages: z.array(KernelConversationHistoryMessageSchema).max(50),
+  hasMore: z.boolean(),
+  nextCursor: z.string()
+    .min(1)
+    .max(16)
+    .regex(/^[1-9][0-9]*$/)
+    .refine((value) => Number.isSafeInteger(Number(value)), { message: "Invalid history cursor" })
+    .optional(),
+  limit: z.number().int().min(1).max(50),
+}).strict();
+
+export type KernelConversationId = z.infer<typeof KernelConversationIdSchema>;
+export type KernelConversationHistoryQuery = z.infer<typeof KernelConversationHistoryQuerySchema>;
+export type KernelConversationHistoryMessage = z.infer<typeof KernelConversationHistoryMessageSchema>;
+export type KernelConversationHistoryResponse = z.infer<typeof KernelConversationHistoryResponseSchema>;
 
 export const RuntimeSelectionRequestSchema = z.object({
   slot: MatrixComputerRuntimeSlotSchema,
@@ -560,6 +604,54 @@ export const ApprovalDecisionRequestSchema = z.object({
 
 export type ApprovalDecisionRequest = z.infer<typeof ApprovalDecisionRequestSchema>;
 
+export const UserInputOptionSchema = z.object({
+  label: SafeDisplayStringSchema,
+  description: boundedDisplayText(300, 1200),
+}).strict();
+
+const UserInputOptionListSchema = z.array(UserInputOptionSchema)
+  .min(1)
+  .max(10)
+  .superRefine((options, context) => {
+    const seenLabels = new Set<string>();
+    options.forEach((option, index) => {
+      if (seenLabels.has(option.label)) {
+        context.addIssue({
+          code: "custom",
+          message: "Option labels must be unique",
+          path: [index, "label"],
+        });
+      }
+      seenLabels.add(option.label);
+    });
+  });
+
+export const UserInputQuestionSchema = z.object({
+  questionId: referenceId(128),
+  header: SafeDisplayStringSchema,
+  question: boundedDisplayText(600, 2400),
+  options: UserInputOptionListSchema.optional(),
+  allowOther: z.boolean().default(false),
+  secret: z.boolean().default(false),
+}).strict();
+
+const UserInputQuestionListSchema = z.array(UserInputQuestionSchema)
+  .min(1)
+  .max(8)
+  .superRefine((questions, context) => {
+    const seen = new Set<string>();
+    questions.forEach((question, index) => {
+      if (seen.has(question.questionId)) {
+        context.addIssue({
+          code: "custom",
+          message: "Question ids must be unique",
+          path: [index, "questionId"],
+        });
+      }
+      seen.add(question.questionId);
+    });
+  });
+
 export const UserInputRequestSchema = z.object({
   requestId: RequestIdSchema,
   threadId: ThreadIdSchema,
@@ -567,15 +659,30 @@ export const UserInputRequestSchema = z.object({
   safeDescription: boundedDisplayText(600, 2400),
   placeholder: SafeDisplayStringSchema.optional(),
   required: z.boolean().default(true),
+  questions: UserInputQuestionListSchema.optional(),
+  autoResolutionMs: z.number().int().min(60_000).max(240_000).optional(),
   expiresAt: IsoTimestampSchema.optional(),
   correlationId: CorrelationIdSchema,
 }).strict();
 
+const StructuredUserInputAnswersSchema = z.record(
+  referenceId(128),
+  z.array(boundedText(400, 700)).min(1).max(4),
+).refine((answers) => Object.keys(answers).length > 0 && Object.keys(answers).length <= 8, {
+  message: "Structured answers must contain between one and eight questions",
+});
+
+export const USER_INPUT_ANSWER_BODY_LIMIT_BYTES = 40 * 1024;
+
 export const UserInputAnswerRequestSchema = z.object({
-  answer: boundedText(8000, 32 * 1024),
+  answer: boundedText(32_000, 32 * 1024),
+  structuredAnswers: StructuredUserInputAnswersSchema.optional(),
   clientRequestId: RequestIdSchema,
   correlationId: CorrelationIdSchema,
-}).strict();
+}).strict().refine(
+  (value) => byteLength(JSON.stringify(value)) <= USER_INPUT_ANSWER_BODY_LIMIT_BYTES,
+  { message: "Input answer exceeds request byte limit" },
+);
 
 export type UserInputAnswerRequest = z.infer<typeof UserInputAnswerRequestSchema>;
 
