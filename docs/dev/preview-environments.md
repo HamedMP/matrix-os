@@ -66,6 +66,13 @@ is skipped, and the job fails so the skip is visible. Manual deploy: `gh workflo
 Required repo secrets (beyond the existing release secrets):
 `PREVIEW_CLERK_USER_ID` — the Clerk user that owns preview VPSes.
 
+Preview provisioning uses the operator-only `/vps/preview/provision` route with the
+same `pr-<N>` value for the handle and runtime slot. A `202` is valid only when its
+machine ID is immediately visible as `provisioning` or `running` in `/vps/fleet`.
+Rerunning the workflow resumes that exact machine; an absent or failed preview is
+retried through the same idempotent route. The platform persists the machine and a
+durable provisioning job atomically before provider dispatch.
+
 To walk the full onboarding/billing flow against branch platform code — a
 four-slice split (staging slot for the shell, an IAM-proxied `preview-platform`
 revision for the journey/reliability API, a local `dev:platform` + Stripe CLI

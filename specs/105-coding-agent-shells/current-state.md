@@ -1,7 +1,7 @@
 # Current State: Coding Agent Shells
 
 **Branch stack**: implementation checkpoint merged to `main` through PR #869 (`056b3da668ed6d1753712120316d2d5accfafdcf`)
-**Updated**: 2026-07-12
+**Updated**: 2026-07-13
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
 For the evidence-based checkpoint audit, see [completion-audit.md](./completion-audit.md).
@@ -16,8 +16,9 @@ The landed checkpoint is not the confirmed final information architecture. Curre
 - Coding threads carry optional `projectId`/`taskId`; the read model quarantines stale cross-project task relations, and the shell-create path now requires an owned canonical project plus a same-project canonical task when provided. Legacy unassigned records remain read-compatible and can be adopted exactly once through an explicit idempotent owner-scoped mutation. Persisted public thread changes publish bounded project/task workspace activity events.
 - Existing task UI has one `linkedSessionId`; it cannot be used as the source of truth for coding conversations because one task must support several independent threads.
 - The current desktop `AgentWorkspace` is a sectioned dashboard. It does not provide the required persistent project/task/thread navigator or a segmented Conversation/Kanban mode over one selected project.
-- The pending mobile stack provides the attention-first cockpit, project-bound new-run composer, and thread detail, but not full project-first task/thread navigation or a Kanban mode.
-- Current desktop/mobile follow-up controls still seed a new thread with a structured reference. The gateway now supports same-thread turns and workspace-session resume, but shell clients have not switched to that route yet. Delivering input to a running workspace session settles that turn without marking the thread complete; canonical session-stop reconciliation owns terminal thread status.
+- Mobile now adds gateway-validated project/task/thread routes, multi-thread Conversation groups, and a capability-gated Kanban projection with phone/tablet layouts. SDK 57 device and cross-shell evidence remain outstanding.
+- Mobile now has a Cloud-authenticated computer chooser backed by a bounded platform projection. It can reconnect the same signed-in shell to main or preview `/vm/:handle` routes while persisting only the selected gateway reference; remote preview device evidence remains outstanding.
+- Desktop follow-up controls still seed a new thread with a structured reference. Mobile now uses the gateway same-thread turn route with transient drafts and exact retry idempotency; desktop and cross-shell confirmation remain outstanding. Delivering input to a running workspace session settles that turn without marking the thread complete; canonical session-stop reconciliation owns terminal thread status.
 - Existing desktop Kanban task routes/statuses are canonical and reusable, but coding-thread aggregates and multi-thread task navigation are not integrated into that board.
 
 The clarified target and required evidence are defined in `SPEC.md`, `ARCHITECTURE.md`, `plan.md`, `tasks.md`, and `acceptance-tests.md`. No implementation completion claim should treat the existing dashboard/create path as proof of those requirements.
@@ -53,6 +54,30 @@ checkpoints. The backend expansion remains based on `main` and will deploy to a
 separate disposable preview computer. Both clients will test against that same
 backend preview after Gate B2; no shell branch becomes the backend source of
 truth.
+
+### Kernel Chat History Contract Decision
+
+The mobile Chat tab uses the Matrix kernel conversation store, which is separate
+from coding-agent threads. WebSocket replay remains the source for live buffered
+run events, but it cannot hydrate a completed persisted conversation. The
+canonical persisted-history read contract is therefore an authenticated
+`GET /api/conversations/:id` route with shared Zod schemas:
+
+- `KernelConversationIdSchema` validates the bounded path identifier before any
+  owner-file read.
+- `KernelConversationHistoryQuerySchema` accepts a latest/older cursor and a
+  maximum page size of 50.
+- `KernelConversationHistoryResponseSchema` returns the newest page in
+  chronological order, stable message indexes, a cursor for older messages,
+  and at most 32,000 characters per message with an explicit truncation flag.
+- Raw tool inputs are never projected. Missing or unreadable history returns a
+  generic recovery-oriented error, and successful responses are `no-store`.
+
+Mobile must hydrate this route when switching to a completed conversation and
+may keep only bounded drafts and selected conversation references on device.
+Live WebSocket frames must remain bound to their originating conversation so a
+late frame cannot be appended after the user switches. This kernel-chat route
+does not replace or complete the coding-agent transcript work in Phase 26.
 
 ### Computer And Preview Contract Conflict
 
@@ -102,6 +127,7 @@ Post-merge checkpoint updates:
 
 - PR #868 confirmed mobile thread detail terminal handoff persists the bounded canonical terminal session reference needed by the Terminal route without persisting terminal output or transcript data.
 - PR #869 confirmed the desktop command-palette Agents entry still opens after terminal interaction, and menu-template tests cover the native Agents accelerator used to focus the same workspace.
+- PR #879 adds an opt-in real-runtime smoke helper at `scripts/coding-agents/real-runtime-smoke.mjs` that validates deployed `/api/coding-agents/summary`, `/threads`, `/reviews`, and `/notification-preferences` responses through bounded Zod schemas without writing runtime state. The stacked assertion slice keeps the helper read-only while adding optional capability, ready-provider, minimum summary count, minimum review count, and thread-snapshot assertions for deployed-runtime validation. This is rollout hardening only; deployed desktop/mobile visual smoke remains a separate manual validation step.
 
 ## Shared Contracts
 
@@ -232,7 +258,7 @@ Core files:
 Implemented providers:
 
 - Fake provider for deterministic gateway tests behind `MATRIX_CODING_AGENTS_FAKE_PROVIDER=1`.
-- Workspace-backed Claude/Codex registry projections behind the bounded `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` list. Codex is executable; Claude remains unavailable for thread creation until its launcher enforces the shared sandbox and approval contract. The legacy `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1` flag remains Codex-only when the explicit list is unset.
+- Workspace-backed Claude/Codex registry and execution adapters behind the bounded `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` list. Claude runs only after a bounded real-CLI preflight accepts a session-only policy with user/project/local settings disabled, strict OS sandbox failure, no unsandboxed command escape, canonical owner-worktree write scope, and a verified permission mode. Prompted coding-agent threads use the CLI's non-interactive print path so first-use workspace trust cannot stall the canonical terminal session. Read-only, plan, and review launches deny built-in edits and subprocess writes to both the checkout and shared Git directory; workspace-write `on_request` and `never` launches use `dontAsk` with canonical-root `Edit(...)` allow rules covering all built-in file editors, while unmatched paths auto-deny; stale unowned scratch directories older than the bounded TTL are reclaimed on a later preflight while active/degraded sessions are preserved; full access disables the OS sandbox only when explicitly requested. Claude `on_failure` approval requests fail closed because the CLI has no equivalent enforceable mode. The legacy `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1` flag remains Codex-only when the explicit list is unset.
 
 Provider registry behavior:
 
@@ -247,11 +273,13 @@ Workspace provider behavior:
 
 - Starts deterministic workspace agent sessions through `WorkspaceSessionOrchestrator`.
 - Builds one normalized registry adapter per validated configured Claude/Codex agent while sharing the same gateway-owned workspace runtime.
-- Adds only Codex to the executable provider set. Claude's registry adapter reports unavailable and rejects direct execution until [#893](https://github.com/HamedMP/matrix-os/issues/893) provides equivalent sandbox and approval enforcement.
+- Adds every explicitly configured Claude/Codex adapter to the executable provider set. Claude startup performs its strict sandbox and approval preflight before zellij launch or session persistence; failures become generic safe thread errors.
 - Emits fixed, schema-bounded foreground install and connect actions for Claude/Codex. Every action defaults the canonical runtime node prefix, prepends its `bin` directory to `PATH`, and keeps the terminal visible; no credential, owner path, or client-supplied command enters the action.
 - Passes through prompt, project, task, worktree, mode, approval policy, sandbox mode, and zellij runtime preference.
 - Passes bounded `structured_ref` attachments into the runtime launch prompt as safe reference metadata so review follow-up runs can inspect the selected file/hunk without client-side diff contents.
 - Binds coding-agent threads to canonical `terminalSessionId` from the workspace session.
+- Runs Codex through a Matrix-owned, shell-free subprocess wrapper that forces JSONL output, preserves the attachable Zellij terminal, queues bounded same-thread prompts, resumes the exact server-side provider thread id, suppresses raw provider stderr, and applies a ten-minute turn timeout.
+- Watches a dedicated bounded owner-local provider-event transcript through a capped registry with deterministic replay ids, symlink-safe reads, stale-file cleanup, shutdown drain, and durable-before-publish thread-store ingestion. Unverified installed Codex versions fail closed before the session starts.
 - Aborts through the deterministic workspace session id.
 - Keeps provider startup failures safe in the returned thread snapshot.
 
@@ -399,6 +427,7 @@ Gateway client:
 - `getCodingAgentNotificationPreferences()` calls `GET /api/coding-agents/notification-preferences`, validates the gateway `{ preferences }` envelope with `CodingAgentNotificationPreferencesSchema`, and returns the safe `"Notification settings unavailable"` error on failure.
 - `updateCodingAgentNotificationPreferences()` sends a full `CodingAgentNotificationPreferencesUpdateSchema` body to `PUT /api/coding-agents/notification-preferences`, validates the gateway `{ preferences }` envelope, and returns the safe `"Notification settings could not be saved. Try again."` error on failure.
 - `getCodingAgentThreadSnapshot()` calls `GET /api/coding-agents/threads/:threadId`, validates `AgentThreadSnapshotSchema`, and returns the safe `"Thread state unavailable"` error on failure.
+- `createCodingAgentTurn()` validates `ThreadIdSchema` and `CreateAgentTurnRequestSchema`, posts to `POST /api/coding-agents/threads/:threadId/turns`, validates the matching `CreateAgentTurnResponseSchema`, and maps busy or unavailable responses to bounded recovery copy.
 - `submitCodingAgentApprovalDecision()` posts bounded approval decisions to `POST /api/coding-agents/threads/:threadId/approvals/:approvalId/decision`, validates `AgentThreadSnapshotSchema`, and returns the safe `"Approval could not be sent. Try again."` error on failure.
 - `submitCodingAgentInputAnswer()` posts bounded answers to `POST /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer`, validates `AgentThreadSnapshotSchema`, and returns the safe `"Input could not be sent. Try again."` error on failure.
 - `getCodingAgentReviews()` calls `GET /api/coding-agents/reviews`, validates a bounded review summary list, and returns the safe `"Review state unavailable"` error on failure.
@@ -414,6 +443,8 @@ Screen:
 - `apps/mobile/app/agents/index.tsx`
 - `apps/mobile/app/agents/new.tsx`
 - `apps/mobile/app/agents/[threadId].tsx`
+- `apps/mobile/app/agents/projects/[projectId]/index.tsx`
+- `apps/mobile/app/agents/projects/[projectId]/board.tsx`
 - Read-only phone-first dashboard with Needs attention, Working, and a contract-bounded Recent section, plus providers and canonical terminal sessions.
 - The dashboard renders the shared mobile connection banner with agent-workspace labels for connecting, offline, and reconnecting states; the banner can retry the existing gateway client connection and does not hide the last hydrated gateway summary.
 - The cockpit is derived only from the bounded `RuntimeSummarySchema.activeThreads` and `attentionThreads` lists. Approval, input, and failed states sort into Needs attention; queued, starting, and running states sort into Working; every completed attention plus completed, aborted, recoverable stale, and archived status supplied by those bounded lists remains reachable in Recent. Duplicate thread ids are projected once and sorted by gateway timestamps.
@@ -431,6 +462,8 @@ Screen:
 - When the runtime advertises `codingAgentsSourceControl`, review details can prepare a local source-control commit for bounded reviewed file paths through the authenticated gateway client with a mobile-generated idempotency request id. Mobile stores no commit payloads, diffs, file bytes, credentials, or raw errors.
 - When a source-control pull request is created or found, review details can open the returned HTTPS pull request URL through the OS browser opener. Mobile still stores no pull request payloads beyond transient component state.
 - Safe generic review error state if review summaries are unavailable; review failures do not drop the runtime summary dashboard.
+- Project routes hydrate only the authenticated gateway `RuntimeSummarySchema` and `ProjectAgentWorkspaceSchema` projections. Conversation mode separates project-level chats from canonical task groups and exposes every attached thread as an independent route.
+- When `codingAgentsKanbanView` is enabled, the selected project can switch between Conversation and Kanban without changing its valid selected task/thread references. The board uses canonical visible task columns, hides archived tasks, renders gateway-projected thread/active/attention aggregates, and never infers or mutates task status from thread state. Phones use vertically grouped sections and tablets wrap the same columns into a wider board.
 - Composer route for creating accepted project-bound coding-agent threads. The mobile composer is keyboard-aware, selects one available canonical runtime-summary project, preserves an optional validated task route reference, and includes the selected project id plus optional task id in `CreateAgentThreadRequestSchema`.
 - When the runtime has no available projects, including summaries containing only missing or stale rows, the composer offers scratch creation or GitHub import through canonical `POST /api/coding-agents/projects`. It validates requests and responses with the shared Zod 4 schemas, reuses one idempotency request id for retries of the same create, refreshes `RuntimeSummarySchema`, and enables thread creation only after the returned project id appears as an available canonical project. Explicit stale project routes remain unselected instead of being remapped to an unrelated project. Project mutation details and repository URLs stay transient.
 - Active thread rows navigate to `/agents/:threadId`; the thread route hydrates a bounded thread snapshot, shows provider/status/terminal metadata, event counts, loading, tap refresh, pull-to-refresh, safe generic error states, a pinned current-action panel for the newest unresolved approval or input request, and an event timeline for gateway-bounded snapshot events with a local jump-to-latest control. After the initial snapshot, the route subscribes to `/ws/coding-agents/thread/:threadId` through the authenticated gateway client, validates all stream frames with Zod 4 schemas, merges same-thread live events without duplicating replayed snapshot events, refreshes the bounded snapshot when the app returns to the foreground, and detaches on unmount. Assistant text lifecycle events are grouped by bounded `messageId`; normal assistant prose can render as a capped transient preview after local safe-display filtering, while sensitive-looking content falls back to update counts plus completion state. Message ids are never rendered. File-change events render generic summaries instead of raw paths. Tool activity events are grouped by bounded `toolCallId` and render only safe display metadata, coarse output presence/truncation, output counts, collapsible safe detail rows, and completion outcome, never raw tool output.
@@ -439,8 +472,10 @@ Screen:
 - User-input request events render a transient bounded answer composer in the mobile thread route. Answers use mobile-generated idempotency request ids, go through the authenticated gateway client, and replace local thread details with the gateway-returned bounded snapshot. Failed submissions show a generic recovery-oriented message.
 - Successful mobile approval decisions and user-input answers trigger local success haptics only after the gateway-returned bounded snapshot is accepted; haptic failures are logged and do not block the thread state update.
 - Mobile approval/input action state is isolated in `apps/mobile/lib/agent-thread-actions.ts`; the route owns hydration, streaming, and composition while the hook owns transient pending ids, safe per-action errors, bounded input drafts, idempotency request ids, and accepted-snapshot haptic guards.
+- When `codingAgentsSameThreadTurns` is enabled for the current authenticated runtime client, thread details render a transient same-thread composer. It posts only `CreateAgentTurnRequestSchema` to the selected thread, retains failed/offline drafts in memory, reuses the exact idempotency key for a retry, rejects duplicate pending submits, refreshes the bounded snapshot after acceptance/reconnect/foreground, and fails closed across auth/runtime client changes until capabilities are revalidated.
 - Thread details and terminal rows can open the existing `/terminal` tab after persisting only the safe canonical shell-session reference in `mobile-shell-state`; terminal output and transcripts remain outside AsyncStorage.
 - Thread details can open the existing mobile composer for a follow-up run with only bounded source thread id/title/provider route params. The composer validates those params with shared contract schemas and sends a `structured_ref` attachment for the source thread through the normal authenticated create-thread gateway client.
+- Creating a separate related conversation remains a distinct create-thread action; normal Conversation follow-up never leaves the selected thread or calls create-thread.
 - Review-ready events in the mobile thread timeline can open the Agents review section with only a bounded `reviewId` route param. The Agents screen validates that route param with `ReviewIdSchema`, rehydrates the review snapshot through the authenticated gateway client, and ignores invalid values without persisting review or diff content.
 - Push notification tap routing accepts coding-agent attention payloads with a bounded `threadId`, validates that id with `ThreadIdSchema`, opens `/agents/:threadId` for valid thread ids, and falls back to `/agents` for invalid or missing thread references.
 - Preview rows navigate to `/agents/preview` with only the bounded preview id. The route rehydrates the current authenticated runtime summary, validates the matching `PreviewSessionSummarySchema`, renders only currently running HTTPS origins through the existing `AppRuntimeFrame`, offers a safe OS-browser open action for that same authoritative HTTPS origin, and rejects missing, unavailable, non-running, or non-HTTPS previews without rendering raw URLs or persisting preview state.
@@ -448,9 +483,10 @@ Screen:
 
 Persisted UI references:
 
-- `apps/mobile/lib/agent-workspace-state.ts` stores only `selectedThreadId`, `selectedTerminalSessionId`, and `updatedAt`.
+- `apps/mobile/lib/agent-workspace-state.ts` stores only bounded selected runtime/project/task/thread IDs, `viewMode`, and `updatedAt`, and removes the superseded v1 safe-reference key during hydration.
 - `apps/mobile/lib/mobile-shell-state.ts` stores only the current shell mode plus safe bounded app or terminal session references, including canonical named shell sessions such as `main` or `matrix-abc1234`.
 - Agent workspace state reconciles stale references against runtime summary items.
+- Child task/thread references remain pending through summary hydration and are retained or dropped only after the matching project workspace validates them.
 - Does not store transcripts, terminal output, file contents, diffs, credentials, approvals payloads, file write payloads, or launch tokens.
 - The project selector/empty-state flow does not use AsyncStorage; project names, repository URLs, mutation responses, and runtime summaries remain transient.
 
@@ -462,6 +498,9 @@ Focused tests:
 - `apps/mobile/__tests__/agents-preview-screen.test.tsx`
 - `apps/mobile/__tests__/agent-thread-screen.test.tsx`
 - `apps/mobile/__tests__/agent-workspace-state.test.ts`
+- `apps/mobile/__tests__/agent-project-workspace-screen.test.tsx`
+- `apps/mobile/__tests__/agent-project-route.test.tsx`
+- `apps/mobile/__tests__/agent-project-board-route.test.tsx`
 - `apps/mobile/__tests__/push.test.ts`
 
 ## Browser Shell State
@@ -493,6 +532,10 @@ Defined capabilities in `RuntimeSummary`:
 - `codingAgentsPreview`
 - `codingAgentsNativeMobileTerminal`
 - `codingAgentsSourceControl`
+- `codingAgentsProjectWorkspace`
+- `codingAgentsSameThreadTurns`
+- `codingAgentsConversationView`
+- `codingAgentsKanbanView`
 
 Client flags:
 
@@ -502,8 +545,8 @@ Client flags:
 Server flags:
 
 - Fake provider: `MATRIX_CODING_AGENTS_FAKE_PROVIDER=1`.
-- Workspace provider projections: `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex` (bounded explicit list; Codex executable, Claude registry-only).
-- Customer host bundles set the legacy Codex-only workspace provider flag so thread routes are registered on fresh runtimes. Provider readiness still requires the installed and authenticated Codex CLI. An explicit `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` value overrides this default.
+- Workspace providers: `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex` (bounded explicit list; both adapters are executable through the gateway-owned workspace runtime).
+- Customer host bundles set the legacy Codex-only workspace provider flag so thread routes are registered on fresh runtimes. Provider readiness still requires the installed and authenticated provider CLI. An explicit `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` value overrides this default.
 
 Current behavior:
 
@@ -547,6 +590,13 @@ Mobile diagnostics:
 pnpm --filter matrix-os-mobile exec jest __tests__/coding-agent-diagnostics.test.ts __tests__/gateway-client.test.ts --runInBand
 ```
 
+Real-runtime smoke helper:
+
+```bash
+MATRIX_RUNTIME_URL="https://app.matrix-os.com/vm/<handle>" MATRIX_RUNTIME_TOKEN="<short-lived runtime token>" node scripts/coding-agents/real-runtime-smoke.mjs
+MATRIX_RUNTIME_URL="https://app.matrix-os.com/vm/<handle>" MATRIX_RUNTIME_TOKEN="<short-lived runtime token>" node scripts/coding-agents/real-runtime-smoke.mjs --require-capability codingAgentsRuntimeSummary --require-ready-provider --min-terminal-sessions 1
+```
+
 Desktop typecheck:
 
 ```bash
@@ -575,10 +625,10 @@ git diff --check
 
 ## Open Questions And Deferred Work
 
-- Claude workspace execution: registry and owner credential projection are implemented, but thread creation remains fail-closed until [#893](https://github.com/HamedMP/matrix-os/issues/893) enforces the shared sandbox and approval contract in the launcher and runtime preflight.
+- Codex structured thread events: the gateway now has a strict external JSONL normalizer for assistant, tool, file, provider identity, and turn-outcome records plus an owner-scoped, durable-before-publish ingestion method that deduplicates replayed event ids and rejects cross-thread or reserved lifecycle events. The contract pins the verified `0.144.0` through `0.144.6` range and tagged schema digest, with a scheduled published-version drift check. Runtime transcript capture and live watcher wiring remain in the next stacked backend slice; until then, existing workspace sessions still emit only their startup projection.
 - Session completion reconciliation: implemented for workspace `session.stopped` events that carry owner id, workspace session id, and bound `terminalSessionId`; the gateway thread store marks matching active coding-agent threads completed or failed server-side without matching unrelated owners or reused terminal ids. Startup recovery now returns degraded/closed agent sessions from the runtime session manager and routes them through the same workspace `session.stopped` publisher path, so coding-agent thread completion reconciliation also runs after autonomous startup/runtime degradation recovery.
 - File/review/preview/source-control shell surfaces: read-only review summaries now have coding-agent contracts/routes/desktop IPC/mobile clients plus desktop and mobile read-only review panels. A read-only review snapshot route now exposes bounded diff hunk metadata and capped hunk line bodies from safe owner worktrees plus partial findings-derived fallback metadata for shell diff panels. Runtime summaries now include safe preview summary rows from existing workspace preview records, and the desktop/mobile Agents workspaces render those rows read-only. Desktop also has a read-only preview inspector with HTTPS-only external launch through the existing safe IPC path, mobile has an HTTPS-only preview route using the existing app runtime frame, and the browser Workspace preview panel renders validated active-project coding-agent preview origin/status rows with direct launch limited to HTTPS origins. Gateway now has bounded browse/search/read and conflict-safe write routes for owner worktree files, desktop/mobile review details can render one selected bounded file snapshot through trusted clients, desktop/mobile review details can prepare a local source-control commit through trusted clients, the gateway can create or return a GitHub pull request from a validated owner worktree without exposing credentials, and desktop/mobile review details can trigger that PR creation through trusted clients with generic safe error states and safe HTTPS open actions for the returned pull request URL. Browser Workspace can open an existing Canvas PR workspace from bounded worktree PR metadata, but commit and pull-request creation remain outside browser Workspace.
-- Approval/input shell actions: desktop and mobile approval decisions plus user-input answers now use trusted gateway clients, bounded UI controls, idempotent request ids, and focused tests. Desktop selected-thread details now subscribe through a trusted main-process thread-event bridge and merge live approval/input resolution events without exposing bearer credentials to the renderer; mobile thread details subscribe through the authenticated gateway client, pin the newest unresolved approval/input request above the timeline for phone-first action, and rehydrate the bounded snapshot on foreground resume so cross-shell approval/input decisions reconcile. Remaining work: broader end-to-end device validation.
+- Approval/input shell actions: desktop and mobile approval decisions plus user-input answers now use trusted gateway clients, bounded UI controls, idempotent request ids, and focused tests. Shared input contracts add up to eight uniquely identified bounded questions, bounded options, free-form/secret flags, an optional auto-resolution window, and a bounded structured answer map while retaining the required legacy text answer. Answer text is not included in durable resolution events. Desktop selected-thread details now subscribe through a trusted main-process thread-event bridge and merge live approval/input resolution events without exposing bearer credentials to the renderer; mobile thread details subscribe through the authenticated gateway client, pin the newest unresolved approval/input request above the timeline for phone-first action, and rehydrate the bounded snapshot on foreground resume so cross-shell approval/input decisions reconcile. Provider request-id matching and structured shell rendering remain part of the app-server control-runtime slice; broader end-to-end device validation remains open.
 - Browser shell entry point: Canvas-first read-only placement is implemented in Workspace for active-project coding-agent threads and previews, plus a bounded handoff from existing worktree PR metadata to the Canvas PR workspace. Browser Workspace still does not create source-control commits or pull requests.
 - Notifications/attention routing: desktop notification IPC exists and notification clicks focus the coding-agent workspace thread in the Agents tab with a visible current-thread marker. Gateway runtime summaries expose bounded `attentionThreads` separately from `activeThreads`, allowing failed or waiting attention to be surfaced without reclassifying terminal threads as active. Desktop and mobile dashboards now render the `attentionThreads` list directly, and desktop badge counts include that gateway-owned attention count, using the badge overflow cap when the bounded list is truncated. Gateway thread-event sinks can emit safe push-channel payloads for approval-required, input-required, failed, and successful-completion attention events through a capped TTL dedupe registry, per-owner notification preferences can disable approval/input/failed/completed attention push delivery before channel send, mobile push notification taps can route bounded coding-agent `threadId` payloads into the existing thread detail route, desktop/mobile Agents workspaces expose transient controls for the four owner-scoped attention push preferences, and gateway push delivery now applies an explicit bounded cross-device policy for the newest active registered owner devices without cross-owner token eviction.
 - Public docs: public Matrix OS docs and the internal operator runbook are present. Remaining work is keeping them synchronized with later write/source-control, provider setup, and browser entry slices.

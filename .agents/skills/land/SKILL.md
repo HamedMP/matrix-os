@@ -41,7 +41,8 @@ description:
 8. If checks fail, pull logs, fix the issue, commit with the `commit` skill,
    push with the `push` skill, and re-run checks.
 9. When all checks are green and review feedback is addressed, squash-merge and
-   delete the branch using the PR title/body for the merge subject/body.
+   delete the branch using the repository default for the merge subject and the
+   PR body for the merge body.
 10. **Context guard:** Before implementing review feedback, confirm it does not
     conflict with the user’s stated intent or task context. If it conflicts,
     respond inline with a justification and ask the user before changing code.
@@ -64,7 +65,6 @@ description:
 # Ensure branch and PR context
 branch=$(git branch --show-current)
 pr_number=$(gh pr view --json number -q .number)
-pr_title=$(gh pr view --json title -q .title)
 pr_body=$(gh pr view --json body -q .body)
 
 # Check mergeability and conflicts
@@ -98,7 +98,7 @@ if ! gh pr checks --watch; then
 fi
 
 # Squash-merge (remote branches auto-delete on merge in this repo)
-gh pr merge --squash --subject "$pr_title" --body "$pr_body"
+gh pr merge --squash --body "$pr_body"
 ```
 
 ## Async Watch Helper

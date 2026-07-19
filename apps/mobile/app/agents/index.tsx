@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -7,8 +7,10 @@ import type { RuntimeSummary } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { AgentCockpit } from "@/components/agent-cockpit";
+import { AgentProjectList } from "@/components/agents/agent-project-workspace-screen";
 import { AGENT_WORKSPACE_CONNECTION_LABELS, capabilityEnabled } from "@/components/agents/agent-workspace-shared";
 import { useRuntimeSummary } from "@/lib/use-runtime-summary";
+import { loadAgentWorkspaceState } from "@/lib/agent-workspace-state";
 import { capture } from "@/lib/analytics";
 import { routedReviewIdParam } from "./reviews";
 
@@ -57,6 +59,42 @@ export default function AgentsScreen() {
   const routedReviewId = routedReviewIdParam(routeParams.reviewId);
   const { client, connectionState } = useGateway();
   const { state, refreshing, onRefresh } = useRuntimeSummary();
+  const projectEntryRuntimeRef = useRef<string | null>(null);
+
+  // Project-first entry: when the runtime advertises the project workspace and
+  // conversation views, forward /agents to the saved (or first) project route.
+  useEffect(() => {
+    if (
+      routedReviewId
+      || state.status !== "ready"
+      || !capabilityEnabled(state.summary, "codingAgentsProjectWorkspace")
+      || !capabilityEnabled(state.summary, "codingAgentsConversationView")
+      || state.summary.projects.items.length === 0
+      || projectEntryRuntimeRef.current === state.summary.runtime.id
+    ) return;
+
+    let cancelled = false;
+    projectEntryRuntimeRef.current = state.summary.runtime.id;
+    void loadAgentWorkspaceState().then((saved) => {
+      if (cancelled) return;
+      const selectedProject = state.summary.projects.items.find(
+        (project) => project.id === saved.selectedProjectId,
+      ) ?? state.summary.projects.items[0];
+      if (!selectedProject) return;
+      router.replace({
+        pathname: "/agents/projects/[projectId]",
+        params: { projectId: selectedProject.id },
+      } as never);
+    }).catch((error: unknown) => {
+      console.warn("[mobile] agent project selection could not be restored", {
+        name: error instanceof Error ? error.name : "Unknown",
+      });
+      projectEntryRuntimeRef.current = null;
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [routedReviewId, router, state]);
 
   // Existing notification links target /agents?reviewId=<id>; the reviews UI now
   // lives on a dedicated screen, so forward valid review deep links there.
@@ -117,13 +155,33 @@ export default function AgentsScreen() {
       <AgentCockpit
         summary={summary}
         canCreate={canCreate}
-        onCreate={() => router.push("/agents/new")}
+        onCreate={() => {
+          const defaultProjectId = summary.projects.items[0]?.id;
+          if (defaultProjectId) {
+            router.push({ pathname: "/agents/new", params: { projectId: defaultProjectId } } as never);
+            return;
+          }
+          router.push("/agents/new");
+        }}
         onCreateInProject={(projectId) => router.push({ pathname: "/agents/new", params: { projectId } } as never)}
         onOpenThread={(thread) => {
           capture("agent_thread_opened");
           router.push(`/agents/${thread.id}` as any);
         }}
       />
+
+      {capabilityEnabled(summary, "codingAgentsProjectWorkspace")
+        && capabilityEnabled(summary, "codingAgentsConversationView") ? (
+          <AgentProjectList
+            summary={summary}
+            onOpenProject={(projectId) => {
+              router.push({
+                pathname: "/agents/projects/[projectId]",
+                params: { projectId },
+              } as never);
+            }}
+          />
+        ) : null}
 
       <View style={styles.navRow}>
         {navCards.map((card) => (

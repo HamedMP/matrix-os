@@ -1,8 +1,8 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="www/public/rabbit-white.svg">
-    <source media="(prefers-color-scheme: light)" srcset="www/public/rabbit.svg">
-    <img src="www/public/rabbit.svg" alt="Matrix OS" width="118">
+    <source media="(prefers-color-scheme: dark)" srcset="https://matrix-os.com/rabbit-white.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://matrix-os.com/rabbit.svg">
+    <img src="https://matrix-os.com/rabbit.svg" alt="Matrix OS" width="118">
   </picture>
 </p>
 
@@ -36,7 +36,7 @@ Matrix OS gives you a hosted cloud computer: browser desktop, files, terminal se
 It is not a chat box beside your software. The AI is the kernel. The shell, gateway, files, apps, terminal, channels, and agents are one operating environment.
 
 <p align="center">
-  <img src="www/public/images/app-screenshot.jpg" alt="Matrix OS browser desktop with generated apps" width="900">
+  <img src="https://matrix-os.com/images/app-screenshot.jpg" alt="Matrix OS browser desktop with generated apps" width="900">
 </p>
 
 ---
@@ -157,7 +157,6 @@ bun run dev:gateway    # Hono gateway
 bun run dev:shell      # Next.js shell
 bun run dev:proxy      # Shared API proxy
 bun run dev:platform   # Multi-tenant platform
-bun run dev:www        # matrix-os.com website
 ```
 
 ---
@@ -257,12 +256,14 @@ packages/platform/   Hosted control plane, auth, provisioning, routing
 packages/proxy/      Shared API proxy and usage tracking
 packages/ui/         Shared UI components
 shell/               Next.js desktop and canvas shell
-www/                 matrix-os.com and public docs
 home/                Matrix home template copied on first boot
 specs/               Architecture and feature specs
 tests/               Vitest suites
 docs/                Developer and operations docs
 ```
+
+The public website and docs are maintained separately in the private
+[`FinnaAI/matrix-os-site`](https://github.com/FinnaAI/matrix-os-site) repository.
 
 ---
 

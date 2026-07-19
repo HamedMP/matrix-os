@@ -7,7 +7,7 @@ Target: $ARGUMENTS
 ## Steps
 
 1. Resolve the target to test file(s):
-   - **Package name** (kernel, gateway, platform, proxy, shell, www): map to `tests/<package>/`
+   - **Package name** (kernel, gateway, platform, proxy, shell): map to `tests/<package>/`
    - **Feature keyword** (onboarding, channels, cron, hooks, social, dispatcher, etc.): grep test filenames and test descriptions to find matching files
    - **File path**: use directly
    - **No argument**: run all tests
@@ -38,6 +38,5 @@ Target: $ARGUMENTS
 - platform -> tests/platform/
 - proxy -> tests/proxy/
 - shell -> tests/shell/
-- www -> tests/www/
 - e2e -> vitest.e2e.config.ts
 - integration -> vitest.integration.config.ts

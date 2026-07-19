@@ -152,7 +152,6 @@ export async function getSelectedGatewayConnection(): Promise<GatewayConnection>
     return {
       id: typeof parsed.id === "string" ? parsed.id : CUSTOM_GATEWAY_ID,
       url,
-      token: typeof parsed.token === "string" && parsed.token.trim() ? parsed.token : undefined,
       name: typeof parsed.name === "string" && parsed.name.trim() ? parsed.name : "Self-hosted Matrix OS",
       addedAt: typeof parsed.addedAt === "number" ? parsed.addedAt : Date.now(),
     };

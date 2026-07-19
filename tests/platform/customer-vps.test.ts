@@ -2256,14 +2256,4 @@ describe('platform/customer-vps', () => {
     expect(quickstart).toContain('Non-production smoke commands');
   });
 
-  it('publishes VPS-per-user deployment docs through the docs navigation', () => {
-    const meta = JSON.parse(readFileSync('www/content/docs/developer/deployment/meta.json', 'utf8')) as { pages: string[] };
-    const page = readFileSync('www/content/docs/developer/deployment/vps-per-user.mdx', 'utf8');
-
-    expect(meta.pages).toContain('vps-per-user');
-    expect(page).toContain('## Production Scope');
-    expect(page).toContain('## Backup Retention');
-    expect(page).toContain('## Manual Recovery');
-    expect(page).toContain('## Rollback');
-  });
 });

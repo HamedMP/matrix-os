@@ -66,6 +66,16 @@ describe("useShellSessions", () => {
               lastSeenSeq: 2,
               unread: true,
               visualStatus: "running",
+              agent: "codex",
+              subtitle: "Implement agent-aware terminal sessions",
+              lastAction: "Edited registry.ts",
+              agentUpdatedAt: "2026-07-18T10:00:00.000Z",
+              model: "gpt-5.4",
+              strength: "high",
+              project: "Matrix OS",
+              repository: "HamedMP/matrix-os",
+              branch: "codex/session-context",
+              pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
               attachCommand: "matrix shell connect matrix-main",
               tabs: [{ idx: 0, name: "main", focused: true }],
             },
@@ -84,6 +94,18 @@ describe("useShellSessions", () => {
     expect(get).toHaveBeenCalledWith("/api/terminal/sessions");
     expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-main"]);
     expect(useShellSessions.getState().sessions[0]?.tabs).toEqual([{ idx: 0, name: "main", focused: true }]);
+    expect(useShellSessions.getState().sessions[0]).toMatchObject({
+      agent: "codex",
+      subtitle: "Implement agent-aware terminal sessions",
+      lastAction: "Edited registry.ts",
+      agentUpdatedAt: "2026-07-18T10:00:00.000Z",
+      model: "gpt-5.4",
+      strength: "high",
+      project: "Matrix OS",
+      repository: "HamedMP/matrix-os",
+      branch: "codex/session-context",
+      pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
+    });
   });
 
   it("ignores stale load results with a resettable store sequence", async () => {

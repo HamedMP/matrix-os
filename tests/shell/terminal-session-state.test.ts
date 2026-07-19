@@ -5,6 +5,7 @@ import {
   applyShellRefreshSuccess,
   applyShellUiStatePatch,
   rollbackShellUiStatePatch,
+  shellSessionsEqual,
   type ShellRefreshState,
   type ShellSessionSummary,
 } from "../../shell/src/components/terminal/terminal-session-state.js";
@@ -21,6 +22,24 @@ const mainShell: ShellSessionSummary = {
 };
 
 describe("terminal session state helpers", () => {
+  it("treats additive agent metadata as refresh-relevant state", () => {
+    const agentShell = {
+      ...mainShell,
+      agent: "codex" as const,
+      subtitle: "Implement agent-aware sessions",
+      lastAction: "Edited TerminalSidebarItems.tsx",
+      agentUpdatedAt: "2026-07-18T10:00:00.000Z",
+      model: "gpt-5.4",
+      strength: "high",
+      project: "Matrix OS",
+      repository: "HamedMP/matrix-os",
+      branch: "codex/session-context",
+      pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
+    };
+    expect(shellSessionsEqual([mainShell], [agentShell])).toBe(false);
+    expect(shellSessionsEqual([agentShell], [{ ...agentShell }])).toBe(true);
+  });
+
   it("rolls back only optimistic fields that still match the failed patch", () => {
     const optimistic = applyShellUiStatePatch(mainShell, {
       placement: "background",

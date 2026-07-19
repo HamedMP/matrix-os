@@ -190,6 +190,18 @@ function recentWorkSummaryFixture() {
 
   return {
     ...summary,
+    projects: {
+      items: [{
+        id: "matrix-os",
+        label: "Matrix OS",
+        status: "available",
+        taskCount: 1,
+        threadCount: 3,
+        attentionCount: 1,
+      }],
+      hasMore: false,
+      limit: 20,
+    },
     activeThreads: {
       ...summary.activeThreads,
       items: [
@@ -491,7 +503,10 @@ describe("AgentsScreen", () => {
     await act(async () => {
       fireEvent.press(screen.getByLabelText("Start a new agent run"));
     });
-    expect(mockRouterPush).toHaveBeenCalledWith("/agents/new");
+    expect(mockRouterPush).toHaveBeenCalledWith({
+      pathname: "/agents/new",
+      params: { projectId: "matrix-os" },
+    });
   });
 
   it("presents a deduplicated attention-first mobile cockpit", async () => {
@@ -524,7 +539,10 @@ describe("AgentsScreen", () => {
     await act(async () => {
       fireEvent.press(screen.getByLabelText("Start a new agent run"));
     });
-    expect(mockRouterPush).toHaveBeenCalledWith("/agents/new");
+    expect(mockRouterPush).toHaveBeenCalledWith({
+      pathname: "/agents/new",
+      params: { projectId: "matrix-os" },
+    });
   });
 
   it("keeps completed and recoverable stale threads reachable", async () => {

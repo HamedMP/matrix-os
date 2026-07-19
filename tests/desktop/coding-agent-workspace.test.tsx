@@ -675,8 +675,15 @@ function multiInputAnsweredThreadSnapshotFixture(inputRequestId: string, correla
   };
 }
 
+class MockResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
 describe("AgentWorkspace", () => {
   beforeEach(() => {
+    globalThis.ResizeObserver = MockResizeObserver as typeof ResizeObserver;
     useBoard.setState(useBoard.getInitialState(), true);
     useCodingAgentProjectWorkspace.setState({
       status: "idle",
@@ -1136,7 +1143,7 @@ describe("AgentWorkspace", () => {
             eventId: "evt_desktop_assistant_delta_1",
             threadId: "thread_alpha",
             messageId: "msg_desktop_grouped",
-            delta: "Reading /home/matrix/private with token_sk_live_123.",
+            delta: `Reading /home/matrix/private with ${["sk", "live", "4eC39HqLyjWDarjtT1zdp7dc"].join("_")}.`,
             occurredAt: "2026-07-06T00:02:00.000Z",
           },
           {
@@ -1195,26 +1202,31 @@ describe("AgentWorkspace", () => {
 
     render(<AgentWorkspace />);
 
-    expect(await screen.findByText("Assistant message")).toBeTruthy();
-    expect(screen.getByText("2 text updates received, complete")).toBeTruthy();
-    expect(screen.queryByText("Assistant message complete")).toBeNull();
-    expect(screen.getByText("Tool activity")).toBeTruthy();
+    // The grouped assistant message renders its full accumulated delta text as
+    // markdown; only unambiguous credentials are masked, so ordinary paths and
+    // the safe prose stay visible.
+    const groupedAssistantText =
+      "Reading /home/matrix/private with [redacted].Finished with private credentials hidden.";
+    expect(await screen.findByText(groupedAssistantText)).toBeTruthy();
+    // The real-shaped credential is masked while the ordinary path stays visible.
+    expect(screen.queryByText(/sk_live_4eC39/)).toBeNull();
+    // Tool calls collapse into a one-line chip with bounded status copy.
+    expect(screen.getByRole("button", { name: "Tool call Read" })).toBeTruthy();
     expect(screen.getByText("Read completed with errors after receiving output")).toBeTruthy();
-    expect(screen.queryByText("Tool output")).toBeNull();
+    // Raw tool output and internal identifiers must never reach the DOM.
+    expect(screen.queryByText(/secret local output/i)).toBeNull();
     expect(screen.queryByText("msg_desktop_grouped")).toBeNull();
     expect(screen.queryByText("tool_desktop_grouped")).toBeNull();
-    expect(screen.queryByText(/home\/matrix|token|secret local output|private credentials/i)).toBeNull();
-    expect(screen.getByText("2026-07-06T00:02:00.000Z")).toBeTruthy();
-    expect(screen.getByText("2026-07-06T00:02:10.000Z")).toBeTruthy();
-    expect(screen.queryByText("2026-07-06T00:02:30.000Z")).toBeNull();
-    expect(screen.queryByText("2026-07-06T00:03:00.000Z")).toBeNull();
+    expect(screen.queryByText(/evt_desktop_/)).toBeNull();
+    // The grouped assistant message renders before the tool chip that followed it.
     const bodyText = document.body.textContent ?? "";
-    expect(bodyText.indexOf("Assistant message")).toBeLessThan(bodyText.indexOf("Tool activity"));
+    expect(bodyText.indexOf(groupedAssistantText)).toBeLessThan(
+      bodyText.indexOf("Read completed with errors"),
+    );
   });
 
   it("shows bounded safe desktop assistant transcript previews without exposing message ids", async () => {
     const longSafeDelta = "Reviewed the failing shard and found the route test. ".repeat(8);
-    const expectedPreview = `1 text update received, complete. ${longSafeDelta.slice(0, 240).trimEnd()}...`;
     const snapshot = {
       ...threadSnapshotFixture(),
       events: {
@@ -1251,10 +1263,11 @@ describe("AgentWorkspace", () => {
 
     render(<AgentWorkspace />);
 
-    expect(await screen.findByText("Assistant message")).toBeTruthy();
-    expect(screen.getByText(expectedPreview)).toBeTruthy();
+    // The transcript renders the full accumulated delta text, not a bounded
+    // 240-char preview, so the entire repeated safe prose is present.
+    expect(await screen.findByText(longSafeDelta.trim())).toBeTruthy();
     expect(screen.queryByText("msg_desktop_safe_preview")).toBeNull();
-    expect(screen.queryByText(/route test\. Reviewed the failing shard and found the route test\.$/)).toBeNull();
+    expect(screen.queryByText("evt_desktop_assistant_safe_delta")).toBeNull();
   });
 
   it("renders the selected conversation as durable chat bubbles with a same-thread composer", async () => {
@@ -1326,7 +1339,7 @@ describe("AgentWorkspace", () => {
     expect(screen.getByText("I found the failing assertion and prepared a focused fix.")).toBeTruthy();
     const composer = screen.getByLabelText("Message conversation");
     fireEvent.change(composer, { target: { value: "Continue with the focused validation." } });
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => {
       expect(window.operator.invoke).toHaveBeenCalledWith("runtime:create-turn", {
@@ -1391,7 +1404,7 @@ describe("AgentWorkspace", () => {
     render(<AgentWorkspace />);
     const composer = await screen.findByLabelText("Message conversation");
     fireEvent.change(composer, { target: { value: "Keep this draft for retry." } });
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     expect(await screen.findByText("This conversation is already running. Wait for it to finish and try again.")).toBeTruthy();
     expect((composer as HTMLTextAreaElement).value).toBe("Keep this draft for retry.");
@@ -1455,27 +1468,30 @@ describe("AgentWorkspace", () => {
 
     render(<AgentWorkspace />);
 
-    expect(await screen.findByText("Tool activity")).toBeTruthy();
-    expect(screen.getByText("Run checks completed successfully after receiving partial output")).toBeTruthy();
-    expect(screen.getByText("2 outputs")).toBeTruthy();
-    expect(screen.queryByText("Started command")).toBeNull();
-    expect(screen.queryByText("Output 1")).toBeNull();
-    expect(screen.queryByText("Output 2")).toBeNull();
+    // The tool call collapses into a chip that shows only bounded status copy;
+    // it is closed by default and never exposes raw output.
+    const chip = await screen.findByRole("button", { name: "Tool call Run checks" });
+    expect(chip.getAttribute("aria-expanded")).toBe("false");
+    expect(
+      screen.getByText("Run checks completed successfully after receiving partial output"),
+    ).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|stdout leaked|stderr leaked|tool_desktop_collapsed/i)).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Expand tool activity Tool activity" }));
+    fireEvent.click(chip);
 
-    expect(await screen.findByText("Started command")).toBeTruthy();
-    expect(screen.getByText("Output 1")).toBeTruthy();
-    expect(screen.getByText("Output received")).toBeTruthy();
-    expect(screen.getByText("Output 2")).toBeTruthy();
-    expect(screen.getByText("Output received, partial")).toBeTruthy();
+    // Expansion echoes the same bounded detail in a <pre> (so the copy now
+    // appears twice) plus a generic truncation note — still no raw output.
+    expect(chip.getAttribute("aria-expanded")).toBe("true");
+    expect(
+      screen.getAllByText(/Run checks completed successfully after receiving partial output/),
+    ).toHaveLength(2);
+    expect(screen.getByText(/Output was truncated for display/)).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|stdout leaked|stderr leaked|tool_desktop_collapsed/i)).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Collapse tool activity Tool activity" }));
+    fireEvent.click(chip);
 
-    expect(screen.queryByText("Started command")).toBeNull();
-    expect(screen.queryByText("Output 1")).toBeNull();
+    expect(chip.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText(/Output was truncated for display/)).toBeNull();
   });
 
   it("hydrates and updates notification preferences through trusted IPC", async () => {

@@ -77,6 +77,11 @@ if [ -x "$APP_DIR/scripts/sync-matrix-agent-skills.sh" ] && [ -d "$APP_DIR/skill
     MATRIX_HOME="$MATRIX_HOME" \
     bash "$APP_DIR/scripts/sync-matrix-agent-skills.sh"
 fi
+if [ -f "$APP_DIR/packages/gateway/dist/shell/register-agent-bridges-cli.js" ]; then
+  MATRIX_AGENT_BRIDGE_COMMAND="${MATRIX_AGENT_BRIDGE_COMMAND:-/opt/matrix/bin/matrix-agent-bridge}" \
+    "$NODE_BIN" "$APP_DIR/packages/gateway/dist/shell/register-agent-bridges-cli.js" || \
+    echo "matrix-gateway: agent bridge registration skipped" >&2
+fi
 cd "$APP_DIR"
 if [ -f "$APP_DIR/packages/gateway/dist/main.js" ]; then
   "$NODE_BIN" "$APP_DIR/packages/gateway/dist/main.js" &
