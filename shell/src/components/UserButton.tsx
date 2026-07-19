@@ -8,7 +8,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Loader2Icon, LogOutIcon, ServerIcon, SettingsIcon, UserIcon } from "lucide-react";
+import { Loader2Icon, LogOutIcon, PlusCircleIcon, ServerIcon, SettingsIcon, UserIcon } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
@@ -288,6 +288,12 @@ function MountedUserButton({
               <Link className={itemClass} href="/runtime">
                 <ServerIcon className="size-4 text-muted-foreground" aria-hidden="true" />
                 Switch computer
+              </Link>
+            </DropdownMenuPrimitive.Item>
+            <DropdownMenuPrimitive.Item asChild>
+              <Link className={itemClass} href="/runtime?new=1">
+                <PlusCircleIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+                Get another computer
               </Link>
             </DropdownMenuPrimitive.Item>
           </div>

@@ -96,7 +96,14 @@ STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly
 STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual
 STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY=stripe-price-extra-runtime-monthly
 STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL=stripe-price-extra-runtime-annual
+STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_MONTHLY=stripe-portal-configuration-extra-runtime-monthly
+STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_ANNUAL=stripe-portal-configuration-extra-runtime-annual
 ```
+
+The two portal configurations are required for the customer-facing add-computer
+flow. Configure each for subscription updates and expose only the extra-runtime
+choices matching that configuration's monthly or annual interval. The platform
+fails closed instead of falling back to a general portal when one is missing.
 
 The `Platform Cloud Run` workflow preflights these secrets, mounts them into
 the deployed revision, smokes `/sign-in` for the pre-VPS billing shell, and
