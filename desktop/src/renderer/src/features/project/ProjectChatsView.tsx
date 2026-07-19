@@ -21,6 +21,7 @@ import {
   AgentConversationInspector,
   type AgentConversationInspectorTab,
 } from "../coding-agents/AgentConversationInspector";
+import { InspectorFilesPanel } from "../panels/InspectorFilesPanel";
 import { InspectorTerminalPanel } from "../panels/InspectorTerminalPanel";
 import { toast } from "sonner";
 import { AgentComposer, type ComposerSeed } from "../coding-agents/AgentComposer";
@@ -344,6 +345,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         ) : (
           <InspectorEmptyState message="Change review is not available on this computer." />
         )}
+        files={<InspectorFilesPanel />}
         terminal={(
           <InspectorTerminalPanel
             summary={summary}
