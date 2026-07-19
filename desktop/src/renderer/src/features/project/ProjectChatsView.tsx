@@ -15,9 +15,13 @@ import {
   MIN_INSPECTOR_WIDTH_PCT,
   useInspectorLayout,
 } from "../panels/inspector-layout-store";
-import { AgentPreviewList, AgentTerminalList } from "../coding-agents/AgentWorkspaceContext";
+import { AgentPreviewList } from "../coding-agents/AgentWorkspaceContext";
 import { AgentConversationView } from "../coding-agents/AgentConversationView";
-import { AgentConversationInspector } from "../coding-agents/AgentConversationInspector";
+import {
+  AgentConversationInspector,
+  type AgentConversationInspectorTab,
+} from "../coding-agents/AgentConversationInspector";
+import { InspectorTerminalPanel } from "../panels/InspectorTerminalPanel";
 import { toast } from "sonner";
 import { AgentComposer, type ComposerSeed } from "../coding-agents/AgentComposer";
 import {
@@ -70,6 +74,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const inspectorEntry = useInspectorLayout((s) => s.entries[projectId]);
   const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [inspectorTabOverride, setInspectorTabOverride] = useState<AgentConversationInspectorTab | null>(null);
 
   // Runtime-scope reconciliation + self-sufficiency bootstrap: the first
   // mounted view claims the scope (clearing the previous account's data),
@@ -230,6 +235,12 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const inspectorWidthPct = inspectorEntry?.widthPct ?? DEFAULT_INSPECTOR_WIDTH_PCT;
   const inspectorRegionId = `project-${projectId}-inspector`;
 
+  // The inspector tab is controlled so live surfaces can gate on visibility:
+  // the embedded terminal releases the single app-wide socket attachment
+  // while another surface (or a background project tab) is showing.
+  const inspectorDefaultTab: AgentConversationInspectorTab = reviewEnabled ? "changes" : "terminal";
+  const inspectorTab = inspectorTabOverride ?? inspectorDefaultTab;
+
   const handleSplitLayout = (layout: SplitLayout) => {
     const pct = layout["inspector"];
     if (typeof pct !== "number" || !Number.isFinite(pct)) return;
@@ -268,7 +279,9 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
       style={{ background: "var(--bg-secondary)" }}
     >
       <AgentConversationInspector
-        defaultTab={reviewEnabled ? "changes" : "terminal"}
+        defaultTab={inspectorDefaultTab}
+        selectedTab={inspectorTab}
+        onTabChange={setInspectorTabOverride}
         changesFocusRequestId={reviewFocusRequestId}
         changesFocusConsumedId={reviewFocusConsumedId}
         onChangesFocusConsumed={consumeReviewFocusRequest}
@@ -331,7 +344,12 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         ) : (
           <InspectorEmptyState message="Change review is not available on this computer." />
         )}
-        terminal={<AgentTerminalList summary={summary} />}
+        terminal={(
+          <InspectorTerminalPanel
+            summary={summary}
+            active={inspectorTab === "terminal" && active && !inspectorCollapsed}
+          />
+        )}
         preview={previewEnabled ? (
           <AgentPreviewList summary={summary} />
         ) : (
