@@ -93,6 +93,7 @@ import {
 import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
+import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
 
 export function shouldServeRuntimeManager(input: {
   isAppDomain: boolean;
@@ -640,6 +641,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         shouldReleaseRuntimeProxyTimeout(c.req.method, explicitVmRoute.upstreamPath));
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        scopeExplicitVmAppSessionCookie(responseHeaders, explicitVmRoute);
         applySandboxedAppAssetCorsHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.header('origin'));
         applyAppDomainRuntimeAssetCacheHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.url);
         responseHeaders.append('set-cookie', buildShellRouteCookie(machine.handle));

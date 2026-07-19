@@ -27,5 +27,14 @@ describe("explicit computer API isolation", () => {
 
     expect(source).not.toContain("await fetch(url,");
     expect(source).toContain("await fetch(`${getGatewayUrl()}${url}`,");
+    expect(source).toContain('const baseHref = `${GATEWAY_URL}/apps/${slug}/`;');
+    expect(source).not.toContain('const baseHref = `/apps/${slug}/`;');
+  });
+
+  it("uses the uncapped streaming route when opening PDFs in the browser", () => {
+    const source = readFileSync("shell/src/components/preview-window/PreviewTab.tsx", "utf8");
+
+    expect(source).toContain("href={fileMediaUrl(path)}");
+    expect(source).not.toContain("href={fileBlobUrl(path)}");
   });
 });

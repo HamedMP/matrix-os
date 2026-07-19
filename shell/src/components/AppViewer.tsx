@@ -269,7 +269,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     }
 
     let cancelled = false;
-    const baseHref = `/apps/${slug}/`;
+    const baseHref = `${GATEWAY_URL}/apps/${slug}/`;
     fetch(baseHref, { signal: AbortSignal.timeout(BRIDGE_FETCH_TIMEOUT_MS) })
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
