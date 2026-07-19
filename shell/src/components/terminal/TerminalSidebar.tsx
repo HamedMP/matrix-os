@@ -63,6 +63,7 @@ export const DEFAULT_TERMINAL_SIDEBAR_WIDTH = 392;
 const MIN_TERMINAL_SIDEBAR_WIDTH = 280;
 const MAX_TERMINAL_SIDEBAR_WIDTH = 560;
 const TERMINAL_SIDEBAR_TRANSITION = "opacity 140ms ease, transform 180ms ease";
+const TERMINAL_SIDEBAR_MENU_Z_INDEX = 3;
 const SHELL_STATUS_DOT_CSS = `
 @keyframes terminal-session-status-pulse {
   0%, 100% { box-shadow: 0 0 0 4px rgba(95, 184, 95, 0.24); }
@@ -87,12 +88,15 @@ const SHELL_STATUS_DOT_CSS = `
 .terminal-refresh-icon--loading {
   animation: terminal-refresh-spin 0.9s linear infinite;
 }
-.terminal-new-session-split-button {
-  align-items: stretch;
+.terminal-drawer-primary-control {
   background: var(--terminal-drawer-primary-button-bg);
   border: 1px solid color-mix(in srgb, var(--terminal-drawer-primary-button-bg) 78%, var(--terminal-drawer-primary-button-fg));
-  border-radius: 10px;
   box-shadow: 0 1px 0 color-mix(in srgb, var(--terminal-drawer-primary-button-fg) 14%, transparent) inset;
+  color: var(--terminal-drawer-primary-button-fg);
+}
+.terminal-new-session-split-button {
+  align-items: stretch;
+  border-radius: 10px;
   display: inline-flex;
   height: 40px;
   overflow: hidden;
@@ -137,6 +141,31 @@ const SHELL_STATUS_DOT_CSS = `
   cursor: not-allowed;
   opacity: 0.72;
 }
+.terminal-drawer-primary-icon-button {
+  border-radius: 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+  height: 40px;
+  padding: 0;
+  transition: box-shadow 160ms ease, filter 150ms ease, transform 120ms ease;
+  width: 40px;
+}
+.terminal-drawer-primary-icon-button:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.terminal-drawer-primary-icon-button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.terminal-drawer-primary-icon-button:focus-visible {
+  box-shadow:
+    0 0 0 2px var(--terminal-drawer-bg),
+    0 0 0 4px color-mix(in srgb, var(--terminal-drawer-primary-button-bg) 68%, var(--terminal-drawer-primary-button-fg));
+  outline: none;
+}
+.terminal-drawer-primary-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
 .terminal-new-session-dropdown-chevron {
   transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -155,6 +184,7 @@ const SHELL_STATUS_DOT_CSS = `
   .terminal-new-session-split-button,
   .terminal-new-session-primary-action,
   .terminal-new-session-dropdown-trigger,
+  .terminal-drawer-primary-icon-button,
   .terminal-new-session-dropdown-chevron {
     transition: none;
   }
@@ -932,6 +962,7 @@ export function LocalTerminalSidebar() {
   const statusDotStyles = <style>{SHELL_STATUS_DOT_CSS}</style>;
 
   if (!ctx.sidebarOpen && !ctx.mobile) {
+    const railMenuOpen = newSessionMenuAnchor === "rail";
     return (
       <>
         {statusDotStyles}
@@ -942,10 +973,12 @@ export function LocalTerminalSidebar() {
             display: "flex",
             minHeight: 0,
             opacity: 1,
-            overflow: newSessionMenuAnchor === "rail" ? "visible" : "hidden",
+            overflow: railMenuOpen ? "visible" : "hidden",
+            position: railMenuOpen ? "relative" : undefined,
             transform: "translateX(0)",
             transition: TERMINAL_SIDEBAR_TRANSITION,
             width: 76,
+            zIndex: railMenuOpen ? TERMINAL_SIDEBAR_MENU_Z_INDEX : undefined,
           }}
         >
           <CollapsedSessionsRail
@@ -1078,17 +1111,7 @@ export function LocalTerminalSidebar() {
                   aria-label="Refresh sessions"
                   onClick={() => void fetchShells()}
                   disabled={shellsLoading}
-                  className="flex items-center justify-center"
-                  style={{
-                    background: "var(--terminal-drawer-button-bg)",
-                    border: "1px solid var(--terminal-drawer-button-border)",
-                    borderRadius: 10,
-                    color: "var(--terminal-drawer-button-fg)",
-                    cursor: shellsLoading ? "not-allowed" : "pointer",
-                    height: 40,
-                    opacity: shellsLoading ? 0.72 : 1,
-                    width: 40,
-                  }}
+                  className="terminal-drawer-primary-control terminal-drawer-primary-icon-button flex items-center justify-center"
                 >
                   <RefreshCwIcon
                     className={shellsLoading ? "terminal-refresh-icon--loading" : undefined}
@@ -1101,16 +1124,7 @@ export function LocalTerminalSidebar() {
                   type="button"
                   aria-label="Hide sessions drawer"
                   onClick={() => ctx.setSidebarOpen(false)}
-                  className="flex items-center justify-center"
-                  style={{
-                    background: "var(--terminal-drawer-button-bg)",
-                    border: "1px solid var(--terminal-drawer-button-border)",
-                    borderRadius: 10,
-                    color: "var(--terminal-drawer-button-fg)",
-                    cursor: "pointer",
-                    height: 40,
-                    width: 40,
-                  }}
+                  className="terminal-drawer-primary-control terminal-drawer-primary-icon-button flex items-center justify-center"
                 >
                   <ChevronsLeftIcon data-testid="terminal-drawer-collapse-icon" size={17} strokeWidth={2} />
                 </button>
