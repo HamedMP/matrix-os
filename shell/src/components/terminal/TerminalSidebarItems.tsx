@@ -1323,7 +1323,7 @@ function ShellCard({
               style={{
                 color: "var(--terminal-drawer-muted)",
                 fontFamily: TERMINAL_UI_FONT_FAMILY,
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 500,
                 lineHeight: "16px",
                 overflow: "hidden",
