@@ -3,7 +3,8 @@ import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { randomUUID } from "node:crypto";
 import { z } from "zod/v4";
-import { createProjectManager, PROJECT_SLUG_REGEX } from "./project-manager.js";
+import { createProjectManager, GitBranchSchema, PROJECT_SLUG_REGEX } from "./project-manager.js";
+import { createProjectFolders } from "./project-folders.js";
 import { createGitLog, COMMIT_SHA_REGEX } from "./git-log.js";
 import { createWorktreeManager } from "./worktree-manager.js";
 import { createStateOps, type OwnerScope } from "./state-ops.js";
@@ -25,6 +26,7 @@ import { createWorkspaceSessionOrchestrator, type WorkspaceSessionOrchestrator }
 import { requestHasBody } from "./http-body.js";
 
 type ProjectManager = ReturnType<typeof createProjectManager>;
+type ProjectFolders = ReturnType<typeof createProjectFolders>;
 type GitLog = ReturnType<typeof createGitLog>;
 type WorktreeManager = ReturnType<typeof createWorktreeManager>;
 type AgentLauncher = ReturnType<typeof createAgentLauncher>;
@@ -44,6 +46,7 @@ const CreateProjectSchema = z.object({
   slug: z.string().min(1).max(63).optional(),
   name: z.string().trim().min(1).max(128).optional(),
   path: z.string().min(1).max(4096).optional(),
+  branch: GitBranchSchema.optional(),
   mode: z.enum(["scratch", "github", "folder"]).optional(),
   ownerScope: z.object({
     type: z.enum(["user", "org"]),
@@ -72,6 +75,23 @@ const CreateProjectSchema = z.object({
       message: "Folder projects require a name and path",
     });
   }
+});
+
+// Desktop add-project clone flow. Stricter than the generic create route:
+// https GitHub URLs only (no ssh, no userinfo, no other hosts — the anchored
+// regex rejects credentials by construction) and the target folder name must
+// already be a safe slug.
+const CloneProjectSchema = z.object({
+  url: z.string().trim().min(1).max(512).regex(
+    /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?(\.git)?\/?$/,
+  ),
+  name: z.string().trim().regex(PROJECT_SLUG_REGEX).optional(),
+  branch: GitBranchSchema.optional(),
+});
+
+const MkdirFolderSchema = z.object({
+  name: z.string().trim().regex(PROJECT_SLUG_REGEX),
+  parent: z.string().trim().min(1).max(1024).optional(),
 });
 
 const CreateWorktreeSchema = z.object({
@@ -194,6 +214,7 @@ async function parseJson<T>(c: Context, schema: z.ZodType<T>): Promise<
 export function createWorkspaceRoutes(options: {
   homePath: string;
   projectManager?: ProjectManager;
+  projectFolders?: ProjectFolders;
   gitLog?: GitLog;
   worktreeManager?: WorktreeManager;
   agentLauncher?: AgentLauncher;
@@ -211,6 +232,7 @@ export function createWorkspaceRoutes(options: {
 }) {
   const app = new Hono();
   const projectManager = options.projectManager ?? createProjectManager({ homePath: options.homePath });
+  const projectFolders = options.projectFolders ?? createProjectFolders({ homePath: options.homePath });
   const gitLog = options.gitLog ?? createGitLog({ homePath: options.homePath });
   const worktreeManager = options.worktreeManager ?? createWorktreeManager({ homePath: options.homePath });
   const agentLauncher = options.agentLauncher ?? createAgentLauncher({ cwd: options.homePath, runtimeHome: options.homePath });
@@ -308,11 +330,51 @@ export function createWorkspaceRoutes(options: {
       slug: body.value.slug,
       name: body.value.name,
       path: body.value.path,
+      branch: body.value.branch,
       mode: body.value.mode ?? (body.value.url ? "github" : "scratch"),
       ownerScope,
     });
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ project: result.project }, 201);
+  });
+
+  // Purpose-specific add-project endpoints used by the desktop dialog. Both
+  // delegate to the same managers as the generic routes so locking,
+  // idempotency, and conflict semantics stay in one place.
+  app.post("/api/projects/clone", limited, async (c) => {
+    const body = await parseJson(c, CloneProjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    let ownerScope: OwnerScope;
+    try {
+      ownerScope = getOwnerScope(c);
+    } catch (err: unknown) {
+      return principalError(c, err);
+    }
+    const result = await projectManager.createProject({
+      mode: "github",
+      url: body.value.url,
+      slug: body.value.name,
+      branch: body.value.branch,
+      ownerScope,
+    });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ project: result.project }, 201);
+  });
+
+  app.post("/api/projects/mkdir", limited, async (c) => {
+    const body = await parseJson(c, MkdirFolderSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    try {
+      getOwnerScope(c);
+    } catch (err: unknown) {
+      return principalError(c, err);
+    }
+    const result = await projectFolders.createFolder({
+      name: body.value.name,
+      parent: body.value.parent,
+    });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ path: result.path }, 201);
   });
 
   app.get("/api/workspace/projects", async (c) => {
