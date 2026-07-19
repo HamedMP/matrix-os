@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+expected_version="${MATRIX_EXPECTED_BUNDLE_VERSION:?MATRIX_EXPECTED_BUNDLE_VERSION is required}"
+expected_sha256="${MATRIX_EXPECTED_BUNDLE_SHA256:?MATRIX_EXPECTED_BUNDLE_SHA256 is required}"
+callback_event_id="${MATRIX_CALLBACK_EVENT_ID:?MATRIX_CALLBACK_EVENT_ID is required}"
+builder_machine_id_sha256="${MATRIX_BUILDER_MACHINE_ID_SHA256:?MATRIX_BUILDER_MACHINE_ID_SHA256 is required}"
+builder_ssh_host_key_sha256="${MATRIX_BUILDER_SSH_HOST_KEY_SHA256:?MATRIX_BUILDER_SSH_HOST_KEY_SHA256 is required}"
+version_file="/opt/matrix/app/BUNDLE_VERSION"
+sha256_file="/opt/matrix/app/BUNDLE_SHA256"
+
+exact_bundle=false
+if [ -f "$version_file" ] && [ "$(tr -d '\r\n' < "$version_file")" = "$expected_version" ] \
+  && [ -f "$sha256_file" ] && [ "$(tr -d '\r\n' < "$sha256_file")" = "$expected_sha256" ]; then
+  exact_bundle=true
+fi
+
+healthy=false
+if systemctl is-active --quiet matrix-gateway.service \
+  && systemctl is-active --quiet matrix-shell.service \
+  && systemctl is-active --quiet matrix-sync-agent.service; then
+  healthy=true
+fi
+
+machine_id_sha256="$(sha256sum /etc/machine-id 2>/dev/null | awk '{print $1}' || true)"
+unique_machine_id=false
+if [ -n "$machine_id_sha256" ] && [ "$machine_id_sha256" != "$builder_machine_id_sha256" ]; then
+  unique_machine_id=true
+fi
+
+unique_ssh_host_key=false
+ssh_host_key_sha256=""
+if [ -s /etc/ssh/ssh_host_ed25519_key.pub ]; then
+  ssh_host_key_sha256="$(sha256sum /etc/ssh/ssh_host_ed25519_key.pub | awk '{print $1}')"
+  if [ "$ssh_host_key_sha256" != "$builder_ssh_host_key_sha256" ]; then
+    unique_ssh_host_key=true
+  fi
+fi
+
+fresh_activation=false
+if [ -f /var/lib/matrix/activation-complete ] && [ ! -f /var/lib/matrix/golden-snapshot-sanitized ]; then
+  fresh_activation=true
+fi
+
+forbidden_state_absent=false
+preactivation_evidence=/run/matrix-golden-preactivation-clean
+required_clean_evidence=(
+  /etc/matrix
+  /opt/matrix/env
+  /opt/matrix/config
+  /opt/matrix/secrets
+  /opt/matrix/tls
+  /opt/matrix/restore-complete
+  /var/lib/matrix
+  /home/matrix/home
+  /home/matrix/.hermes
+  /home/matrix/.config
+  /home/matrix/.cache
+  /home/matrix/.local
+  /home/matrix/.ssh
+  /home/matrix/.bash_history
+  /home/matrix/.zsh_history
+  /home/matrix/.npmrc
+  /home/matrix/.netrc
+  /root/.ssh
+  /root/.bash_history
+  /root/.zsh_history
+  /root/.npmrc
+  /root/.netrc
+  /var/lib/systemd/random-seed
+  /var/lib/cloud
+  /var/lib/dhcp
+  /var/lib/NetworkManager
+  /run/systemd/netif/leases
+  /etc/netplan/50-cloud-init.yaml
+  /etc/systemd/system/matrix-restore.service.d/golden.conf
+  /run/matrix
+  /var/lib/docker
+  /var/lib/docker/volumes
+  /var/lib/containerd
+  /var/log/matrix
+  /var/log/journal
+  /var/log/cloud-init.log
+  /var/log/cloud-init-output.log
+  /var/log/matrix-builder.log
+  /tmp
+  /var/tmp
+  '/etc/ssh/ssh_host_*'
+  /etc/machine-id
+  /var/lib/dbus/machine-id
+  /var/lib/systemd/network
+  /etc/udev/rules.d/70-persistent-net.rules
+)
+if [ -f "$preactivation_evidence" ]; then
+  forbidden_state_absent=true
+  for required in "${required_clean_evidence[@]}"; do
+    if ! grep -Fqx -- "clean:$required" "$preactivation_evidence"; then
+      forbidden_state_absent=false
+    fi
+  done
+fi
+
+# These locations must remain absent after synthetic activation. Locations
+# intentionally recreated with fresh validation identity are covered by the
+# preactivation evidence above and the unique-identity checks.
+for forbidden in \
+  /etc/matrix \
+  /opt/matrix/config \
+  /opt/matrix/secrets \
+  /opt/matrix/tls \
+  /run/matrix/bootstrap-token \
+  /home/matrix/.hermes \
+  /home/matrix/.config \
+  /home/matrix/.cache \
+  /home/matrix/.local \
+  /home/matrix/.ssh \
+  /home/matrix/.bash_history \
+  /home/matrix/.zsh_history \
+  /home/matrix/.npmrc \
+  /home/matrix/.netrc \
+  /root/.ssh \
+  /root/.bash_history \
+  /root/.zsh_history \
+  /root/.npmrc \
+  /root/.netrc \
+  /var/log/matrix \
+  /var/log/matrix-builder.log
+do
+  if [ -e "$forbidden" ] || [ -L "$forbidden" ]; then forbidden_state_absent=false; fi
+done
+cloud_instance_id="$(cloud-init query instance_id 2>/dev/null | tr -d '\r\n' || true)"
+if ! [[ "$cloud_instance_id" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] \
+  || [ ! -d "/var/lib/cloud/instances/$cloud_instance_id" ] \
+  || [ -n "$(find /var/lib/cloud/instances -mindepth 1 -maxdepth 1 ! -name "$cloud_instance_id" -print -quit 2>/dev/null)" ]; then
+  forbidden_state_absent=false
+fi
+
+python3 - "$callback_event_id" "$expected_version" "$expected_sha256" "$machine_id_sha256" "$ssh_host_key_sha256" \
+  "$exact_bundle" "$healthy" "$fresh_activation" "$unique_machine_id" "$unique_ssh_host_key" \
+  "$forbidden_state_absent" <<'PY'
+import json
+import sys
+
+event_id, version, sha256, machine_id_sha256, ssh_host_key_sha256, *checks = sys.argv[1:]
+keys = (
+    "exactBundle", "healthy", "freshActivation", "uniqueMachineId",
+    "uniqueSshHostKey", "forbiddenStateAbsent",
+)
+print(json.dumps({
+    "eventId": event_id,
+    "phase": "validated",
+    "bundleVersion": version,
+    "bundleSha256": sha256,
+    "validationMachineIdSha256": machine_id_sha256,
+    "validationSshHostKeySha256": ssh_host_key_sha256,
+    "evidence": dict(zip(keys, (value == "true" for value in checks), strict=True)),
+}, separators=(",", ":")))
+PY
+
+[ "$exact_bundle" = true ] && [ "$healthy" = true ] && [ "$fresh_activation" = true ] \
+  && [ "$unique_machine_id" = true ] && [ "$unique_ssh_host_key" = true ] \
+  && [ "$forbidden_state_absent" = true ]

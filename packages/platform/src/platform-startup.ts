@@ -7,6 +7,8 @@ import type { Hono, Context } from 'hono';
 import type { Server } from 'node:http';
 import type Dockerode from 'dockerode';
 import type { Agent } from 'undici';
+import { randomBytes } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import {
   createPlatformDb,
   getContainer,
@@ -22,6 +24,8 @@ import type { ClerkAuth } from './clerk-auth.js';
 import { createClerkAuth, createClerkSessionRevoker } from './clerk-auth.js';
 import type { MatrixProvisioner } from './matrix-provisioning.js';
 import type { CustomerVpsService } from './customer-vps.js';
+import type { GoldenSnapshotService } from './golden-snapshot-service.js';
+import type { GoldenSnapshotRuntimeConfig } from './golden-snapshot-schema.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
 import type { EntitlementAccessDecision } from './profile-routing.js';
 import type { BillingEntitlement } from './billing.js';
@@ -44,6 +48,12 @@ interface GatewayPlatformUser {
   email: string;
   containerId: string;
   pipedreamExternalId?: string;
+}
+
+export function parseGoldenSnapshotReconciliationInterval(raw: string | undefined): number | undefined {
+  const value = Number(raw ?? 15_000);
+  if (!Number.isSafeInteger(value) || value < 1_000 || value > 3_600_000) return undefined;
+  return value;
 }
 
 interface GatewayPlatformDb {
@@ -135,6 +145,8 @@ type CreatePlatformApp = (deps: {
   internalIntegrationRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
   customerVpsService?: CustomerVpsService;
+  goldenSnapshotService?: GoldenSnapshotService;
+  goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
   customerVpsObjectStore?: CustomerVpsObjectStore;
   hostBundleObjectStore?: CustomerVpsObjectStore;
   env?: NodeJS.ProcessEnv;
@@ -409,8 +421,12 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
   }
 
   let customerVpsService: CustomerVpsService | undefined;
+  let goldenSnapshotService: GoldenSnapshotService | undefined;
+  let goldenSnapshotConfig: GoldenSnapshotRuntimeConfig | undefined;
   let customerVpsReconciliationInterval: ReturnType<typeof setInterval> | undefined;
   let customerVpsReconciliationPromise: Promise<void> | undefined;
+  let goldenSnapshotInterval: ReturnType<typeof setInterval> | undefined;
+  let goldenSnapshotPromise: Promise<void> | undefined;
   if (runtimeConfig.customerVpsEnabled) {
     const [
       { createCustomerVpsService },
@@ -427,10 +443,11 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
     ]);
     const customerVpsConfig = loadCustomerVpsConfig();
     const cloudInitTemplate = await loadCustomerVpsCloudInitTemplate();
+    const hetzner = createHetznerClient(customerVpsConfig);
     customerVpsService = createCustomerVpsService({
       db,
       config: customerVpsConfig,
-      hetzner: createHetznerClient(customerVpsConfig),
+      hetzner,
       systemStore: customerVpsObjectStore
         ? createCustomerVpsSystemStore({
             r2: customerVpsObjectStore,
@@ -443,6 +460,107 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
         ? (clerkUserId) => resolveEffectiveBillingEntitlement(db, clerkUserId)
         : undefined,
     });
+    goldenSnapshotConfig = customerVpsConfig.goldenSnapshots;
+    {
+      const [
+        { createGoldenSnapshotService },
+        {
+          claimGoldenSnapshotBuildBatch,
+          listCallbackWaitGoldenSnapshotBuildIds,
+          listPendingGoldenSnapshotCleanup,
+          listRunnableGoldenSnapshotBuildIds,
+          listUnresolvedGoldenSnapshotBuildIds,
+        },
+      ] = await Promise.all([
+        import('./golden-snapshot-service.js'),
+        import('./golden-snapshot-repository.js'),
+      ]);
+      const builderTemplate = await readFile(
+        process.env.GOLDEN_SNAPSHOT_BUILDER_CLOUD_INIT_PATH
+          ?? 'distro/customer-vps/golden-snapshot-builder-cloud-init.yaml',
+        'utf8',
+      );
+      goldenSnapshotService = createGoldenSnapshotService({
+        db,
+        config: goldenSnapshotConfig,
+        hetzner,
+        builderCloudInitTemplate: builderTemplate,
+        bundleBaseUrl: process.env.MATRIX_HOST_BUNDLE_BASE_URL ?? process.env.PLATFORM_PUBLIC_URL ?? `http://localhost:${port}`,
+        callbackBaseUrl: process.env.PLATFORM_PUBLIC_URL ?? `http://localhost:${port}`,
+        tokenFactory: () => randomBytes(32).toString('base64url'),
+      });
+      const runGoldenSnapshotWorker = async () => {
+        if (goldenSnapshotPromise || !goldenSnapshotService || !goldenSnapshotConfig) return;
+        goldenSnapshotPromise = (async () => {
+          try {
+            const workerNow = new Date().toISOString();
+            if (goldenSnapshotConfig.buildsEnabled) {
+              await claimGoldenSnapshotBuildBatch(
+                db,
+                workerNow,
+                new Date(new Date(workerNow).getTime() + goldenSnapshotConfig.buildLeaseMs).toISOString(),
+                goldenSnapshotConfig.maxBuildAttempts,
+                goldenSnapshotConfig.reconciliationBatchSize,
+                goldenSnapshotConfig.maxConcurrentBuilds,
+              );
+              const runnable = await listRunnableGoldenSnapshotBuildIds(
+                db, new Date().toISOString(), goldenSnapshotConfig.reconciliationBatchSize,
+              );
+              for (const buildId of runnable) {
+                try {
+                  await goldenSnapshotService!.runBuildStep(buildId);
+                } catch (err: unknown) {
+                  console.error(`[golden-snapshot] worker step failed: ${err instanceof Error ? err.name : typeof err}`);
+                }
+              }
+              const callbackWaits = await listCallbackWaitGoldenSnapshotBuildIds(
+                db, goldenSnapshotConfig.reconciliationBatchSize,
+              );
+              for (const buildId of callbackWaits) {
+                try {
+                  await goldenSnapshotService!.runBuildStep(buildId);
+                } catch (err: unknown) {
+                  console.error(`[golden-snapshot] callback wait failed: ${err instanceof Error ? err.name : typeof err}`);
+                }
+              }
+            }
+            const unresolvedBuilds = await listUnresolvedGoldenSnapshotBuildIds(
+              db, goldenSnapshotConfig.reconciliationBatchSize,
+            );
+            for (const buildId of unresolvedBuilds) {
+              try {
+                await goldenSnapshotService!.runOrphanReconciliationStep(buildId);
+              } catch (err: unknown) {
+                console.error(`[golden-snapshot] orphan reconciliation failed: ${err instanceof Error ? err.name : typeof err}`);
+              }
+            }
+            const cleanup = await listPendingGoldenSnapshotCleanup(
+              db, new Date().toISOString(), goldenSnapshotConfig.reconciliationBatchSize,
+            );
+            for (const item of cleanup) {
+              try {
+                await goldenSnapshotService!.runCleanupStep(item.cleanupId);
+              } catch (err: unknown) {
+                console.error(`[golden-snapshot] cleanup step failed: ${err instanceof Error ? err.name : typeof err}`);
+              }
+            }
+          } catch (err: unknown) {
+            logPlatformRouteError('golden snapshot reconciliation', err);
+          }
+        })().finally(() => {
+          goldenSnapshotPromise = undefined;
+        });
+        await goldenSnapshotPromise;
+      };
+      const intervalMs = parseGoldenSnapshotReconciliationInterval(
+        process.env.GOLDEN_SNAPSHOT_RECONCILIATION_INTERVAL_MS,
+      );
+      if (intervalMs !== undefined) {
+        void runGoldenSnapshotWorker();
+        goldenSnapshotInterval = setInterval(runGoldenSnapshotWorker, intervalMs);
+        goldenSnapshotInterval.unref();
+      }
+    }
     const reconciliationIntervalMs = Number(process.env.CUSTOMER_VPS_RECONCILIATION_INTERVAL_MS ?? 60_000);
     if (reconciliationIntervalMs > 0) {
       let reconciliationRunning = false;
@@ -523,6 +641,8 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
     internalIntegrationRoutes,
     internalSyncRoutes,
     customerVpsService,
+    goldenSnapshotService,
+    goldenSnapshotConfig,
     customerVpsObjectStore,
     hostBundleObjectStore,
     env: appEnv,
@@ -547,6 +667,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
     if (customerVpsReconciliationInterval) {
       clearInterval(customerVpsReconciliationInterval);
     }
+    if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval);
     const shutdownTimer = setTimeout(() => {
       console.error('[platform] Graceful shutdown timed out');
       process.exit(1);
@@ -563,6 +684,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
         if (customerVpsReconciliationPromise) {
           await customerVpsReconciliationPromise;
         }
+        if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),

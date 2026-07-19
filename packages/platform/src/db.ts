@@ -168,6 +168,9 @@ export interface GoldenSnapshotBuildsTable {
   callback_outcome: unknown | null;
   builder_machine_id_sha256: string | null;
   builder_ssh_host_key_sha256: string | null;
+  validation_clone_ordinal: number;
+  first_validation_machine_id_sha256: string | null;
+  first_validation_ssh_host_key_sha256: string | null;
   provider_builder_id: number | null;
   provider_builder_action_id: number | null;
   provider_snapshot_action_id: number | null;
@@ -1145,6 +1148,9 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       callback_outcome JSONB,
       builder_machine_id_sha256 TEXT CHECK (builder_machine_id_sha256 IS NULL OR builder_machine_id_sha256 ~ '^[a-f0-9]{64}$'),
       builder_ssh_host_key_sha256 TEXT CHECK (builder_ssh_host_key_sha256 IS NULL OR builder_ssh_host_key_sha256 ~ '^[a-f0-9]{64}$'),
+      validation_clone_ordinal INTEGER NOT NULL DEFAULT 1 CHECK (validation_clone_ordinal IN (1, 2)),
+      first_validation_machine_id_sha256 TEXT CHECK (first_validation_machine_id_sha256 IS NULL OR first_validation_machine_id_sha256 ~ '^[a-f0-9]{64}$'),
+      first_validation_ssh_host_key_sha256 TEXT CHECK (first_validation_ssh_host_key_sha256 IS NULL OR first_validation_ssh_host_key_sha256 ~ '^[a-f0-9]{64}$'),
       provider_builder_id BIGINT,
       provider_builder_action_id BIGINT,
       provider_snapshot_action_id BIGINT,
@@ -1180,6 +1186,37 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   await sql`
     ALTER TABLE golden_snapshot_builds
     ADD COLUMN IF NOT EXISTS callback_outcome JSONB
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    ADD COLUMN IF NOT EXISTS validation_clone_ordinal INTEGER NOT NULL DEFAULT 1
+    CHECK (validation_clone_ordinal IN (1, 2))
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    ADD COLUMN IF NOT EXISTS first_validation_machine_id_sha256 TEXT
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    ADD COLUMN IF NOT EXISTS first_validation_ssh_host_key_sha256 TEXT
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    DROP CONSTRAINT IF EXISTS golden_snapshot_builds_first_validation_machine_id_sha256_check
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    ADD CONSTRAINT golden_snapshot_builds_first_validation_machine_id_sha256_check
+    CHECK (first_validation_machine_id_sha256 IS NULL OR first_validation_machine_id_sha256 ~ '^[a-f0-9]{64}$')
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    DROP CONSTRAINT IF EXISTS golden_snapshot_builds_first_validation_ssh_host_key_sha256_check
+  `.execute(db);
+  await sql`
+    ALTER TABLE golden_snapshot_builds
+    ADD CONSTRAINT golden_snapshot_builds_first_validation_ssh_host_key_sha256_check
+    CHECK (first_validation_ssh_host_key_sha256 IS NULL OR first_validation_ssh_host_key_sha256 ~ '^[a-f0-9]{64}$')
   `.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_golden_snapshot_builds_dispatch

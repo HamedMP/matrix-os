@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod/v4';
 
+export const GoldenSnapshotBundleVersionSchema = z.string()
+  .min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._+-]*$/);
+
 const SAFE_COMPATIBILITY_VALUE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 export const GoldenSnapshotBaseGenerationSchema = z.string()

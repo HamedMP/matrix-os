@@ -1,0 +1,41 @@
+#cloud-config
+# Synthetic builder only. Customer/owner identity and credentials are forbidden.
+packages:
+  - docker.io
+  - postgresql-client
+
+write_files:
+  - path: /etc/matrix/golden-snapshot-builder
+    owner: root:root
+    permissions: '0600'
+    content: '1'
+  - path: /run/matrix/golden-snapshot-callback-token
+    owner: root:root
+    permissions: '0600'
+    content: '{{callbackToken}}'
+
+runcmd:
+  - |
+    set -eu
+    install -d -m 0755 /opt/matrix
+    curl --fail --location --retry 3 --retry-all-errors --connect-timeout 10 --max-time 900 '{{bundleUrl}}' -o /tmp/matrix-host.tgz
+    printf '%s  %s\n' '{{bundleSha256}}' /tmp/matrix-host.tgz | sha256sum -c -
+    tar -xzf /tmp/matrix-host.tgz -C /opt/matrix
+    printf '%s\n' '{{bundleVersion}}' >/opt/matrix/app/BUNDLE_VERSION
+    printf '%s\n' '{{bundleSha256}}' >/opt/matrix/app/BUNDLE_SHA256
+    test "$(tr -d '\r\n' < /opt/matrix/app/BUNDLE_VERSION)" = '{{bundleVersion}}'
+    chmod 0755 /opt/matrix/bin/matrix-golden-snapshot-activate /opt/matrix/bin/matrix-golden-snapshot-sanitize /opt/matrix/bin/matrix-golden-snapshot-validate
+    /opt/matrix/bin/matrix-golden-snapshot-activate builder
+    builderMachineIdSha256="$(sha256sum /etc/machine-id | awk '{print $1}')"
+    builderSshHostKeySha256="$(sha256sum /etc/ssh/ssh_host_ed25519_key.pub | awk '{print $1}')"
+    printf '{"eventId":"{{callbackEventId}}","phase":"sanitized","bundleVersion":"{{bundleVersion}}","bundleSha256":"{{bundleSha256}}","builderMachineIdSha256":"%s","builderSshHostKeySha256":"%s"}\n' "$builderMachineIdSha256" "$builderSshHostKeySha256" >/run/golden-snapshot-callback.json
+    systemctl stop matrix-sync-agent.service matrix-shell.service matrix-gateway.service matrix-restore.service
+    docker rm -f matrix-golden-postgres || true
+    systemctl stop docker.service containerd.service
+    systemctl disable docker.service containerd.service || true
+    callbackToken="$(cat /run/matrix-golden-snapshot-callback-token)"
+    MATRIX_GOLDEN_SNAPSHOT_ROOT=/ /opt/matrix/bin/matrix-golden-snapshot-sanitize
+    printf 'header = "authorization: Bearer %s"\n' "$callbackToken" |
+      curl --config - --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 60 --connect-timeout 10 --max-time 10 -H 'content-type: application/json' --data-binary @/run/golden-snapshot-callback.json '{{callbackUrl}}'
+    rm -f /run/golden-snapshot-callback.json /run/matrix-golden-snapshot-callback-token
+    shutdown -h now

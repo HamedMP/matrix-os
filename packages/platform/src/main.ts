@@ -76,6 +76,9 @@ import {
 } from './launch-readiness.js';
 import { createLaunchReadinessRoutes } from './launch-readiness-routes.js';
 import { createHostBundleRoutes } from './host-bundle-routes.js';
+import { createGoldenSnapshotRoutes } from './golden-snapshot-routes.js';
+import type { GoldenSnapshotService } from './golden-snapshot-service.js';
+import type { GoldenSnapshotRuntimeConfig } from './golden-snapshot-schema.js';
 import { createLegacyContainerRoutes } from './legacy-container-routes.js';
 import { createAppSessionRoutes } from './app-session-routes.js';
 import { createComputerRoutes } from './computer-routes.js';
@@ -311,6 +314,8 @@ export function createApp(deps: {
   internalIntegrationRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
   customerVpsService?: CustomerVpsService;
+  goldenSnapshotService?: GoldenSnapshotService;
+  goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
   customerVpsObjectStore?: CustomerVpsObjectStore;
   hostBundleObjectStore?: CustomerVpsObjectStore;
   env?: NodeJS.ProcessEnv;
@@ -437,6 +442,15 @@ export function createApp(deps: {
 
   app.route('/', platformMetricsRoutes.routes);
 
+  if (deps.goldenSnapshotService && deps.goldenSnapshotConfig) {
+    app.route('/system-bundles', createGoldenSnapshotRoutes({
+      db,
+      service: deps.goldenSnapshotService,
+      config: deps.goldenSnapshotConfig,
+      platformSecret,
+      operatorSecret: process.env.GOLDEN_SNAPSHOT_OPERATOR_SECRET ?? '',
+    }));
+  }
   app.route('/system-bundles', createHostBundleRoutes({
     db,
     platformSecret,
