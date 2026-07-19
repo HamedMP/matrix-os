@@ -24,6 +24,16 @@ describe("gateway URL resolution", () => {
     expect(getGatewayUrl()).toBe(`${window.location.origin}/vm/alice-2`);
   });
 
+  it("keeps a runtime selector in the tab-scoped API and WebSocket route", () => {
+    window.history.replaceState({}, "", "/vm/alice-shared?runtime=review");
+    expect(getGatewayUrl()).toBe(
+      `${window.location.origin}/vm/alice-shared/~runtime/review`,
+    );
+    expect(getGatewayWs()).toBe(
+      `ws://${window.location.host}/vm/alice-shared/~runtime/review/ws`,
+    );
+  });
+
   it("does not prefix lookalike non-vm paths", () => {
     window.history.replaceState({}, "", "/settings/vmware");
     expect(getGatewayUrl()).toBe(window.location.origin);

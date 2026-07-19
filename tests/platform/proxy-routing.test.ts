@@ -2939,7 +2939,7 @@ describe("platform proxy routing", () => {
     expect(html).toContain("href=\"/vm/alice-staging\"");
   });
 
-  it("routes explicit VM URLs to the named computer and keeps API calls on that computer", async () => {
+  it("keeps another tab's bare API calls on primary after visiting an explicit VM URL", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     await deleteContainer(db, "alice");
     await insertUserMachine(db, {
@@ -2998,8 +2998,8 @@ describe("platform proxy routing", () => {
     expect(api.status).toBe(200);
     const body = await api.json() as { token: string };
     const claims = await syncJwt.verifySyncJwt(body.token, { secret: JWT_SECRET });
-    expect(claims.handle).toBe("alice-staging");
-    expect(claims.runtime_slot).toBe("staging");
+    expect(claims.handle).toBe("alice");
+    expect(claims.runtime_slot).toBe("primary");
   });
 
   it("issues websocket tokens for the explicit VM instead of proxying the token request", async () => {
@@ -3454,7 +3454,7 @@ describe("platform proxy routing", () => {
     expect(claims.runtime_slot).toBe("primary");
   });
 
-  it("returns a machine-unavailable error when a stale route cookie has no fallback machine", async () => {
+  it("ignores a stale route cookie when no authenticated machine exists", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     await deleteContainer(db, "alice");
     const app = createApp({
@@ -3474,11 +3474,8 @@ describe("platform proxy routing", () => {
       },
     });
 
-    expect(res.status).toBe(410);
-    expect(await res.json()).toEqual({
-      error: "Matrix computer unavailable",
-      code: "machine_unavailable",
-    });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Unauthorized" });
   });
 
   it("falls back to Clerk routing when the shell route cookie belongs to another user", async () => {

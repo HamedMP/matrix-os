@@ -4,9 +4,21 @@ import {
   hasExplicitVmNativeAppStreamCapability,
   isNativeAppStreamPath,
   readExplicitVmWebSocketRoute,
+  readExplicitVmRoute,
 } from "../../packages/platform/src/session-routing-identity.js";
 
 describe("native app capability routing", () => {
+  it("keeps a path-qualified runtime selector out of the upstream path", () => {
+    expect(readExplicitVmRoute("/vm/alice-shared/~runtime/review/api/projects")).toEqual({
+      handle: "alice-shared",
+      runtimeSlot: "review",
+      upstreamPath: "/api/projects",
+    });
+    expect(buildExplicitVmWebSocketUpstreamPath(
+      "/vm/alice-shared/~runtime/review/ws?token=secret",
+    )).toBe("/ws?token=secret");
+  });
+
   it("maps explicit VM native app WebSocket paths to the selected runtime", () => {
     const path = "/vm/alice-staging/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/stream_bbbbbbbbbbbbbbbbbbbbbbbb/";
 

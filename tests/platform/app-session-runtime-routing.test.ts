@@ -59,7 +59,7 @@ describe("browser app-session runtime routing", () => {
     return `${APP_SESSION_COOKIE}=${encodeURIComponent(issued.token)}`;
   }
 
-  it("keeps a selected same-owner computer when the app session names primary", async () => {
+  it("does not let another tab's route cookies move bare API calls off the signed app-session computer", async () => {
     await insertMachine(db, {
       handle: "alice-primary",
       runtimeSlot: "primary",
@@ -92,7 +92,7 @@ describe("browser app-session runtime routing", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.21:443/api/projects");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.20:443/api/projects");
   });
 
   it("does not let a route cookie move an app session to another owner", async () => {
