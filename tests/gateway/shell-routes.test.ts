@@ -161,6 +161,44 @@ describe("gateway shell routes", () => {
     expect(registry.create).toHaveBeenCalledWith({ name: "main", cwd: "~/projects" });
   });
 
+  it("accepts optional recognized agent identity during session creation", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async () => ({ name: "calm-otter" })),
+      delete: vi.fn(),
+    };
+    const app = appWithRegistry(registry);
+
+    const res = await app.request("/api/terminal/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "calm-otter", cmd: "codex", agent: "codex" }),
+    });
+
+    expect(res.status).toBe(201);
+    expect(registry.create).toHaveBeenCalledWith({ name: "calm-otter", cmd: "codex", agent: "codex" });
+  });
+
+  it("accepts but strips legacy client visualStatus patches", async () => {
+    const updateUiState = vi.fn(async () => ({ name: "calm-otter" }));
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(),
+      updateUiState,
+    };
+    const app = appWithRegistry(registry as never);
+
+    const res = await app.request("/api/terminal/sessions/calm-otter/ui-state", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ placement: "background", visualStatus: "waiting" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(updateUiState).toHaveBeenCalledWith("calm-otter", { placement: "background" });
+  });
+
   it("rate limits rapid shell session creation without imposing a live-session cap", async () => {
     const registry = {
       list: vi.fn(async () => []),
