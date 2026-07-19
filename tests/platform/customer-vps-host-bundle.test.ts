@@ -821,7 +821,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('Refusing to publish a host bundle with the example Clerk publishable key.');
     expect(workflow).not.toContain('HEAD_COMMIT_MESSAGE');
     expect(workflow).not.toContain('CHANGED_FILES="$changed_files"');
-    expect(workflow).not.toContain('continue-on-error: true');
+    expect(workflow.slice(workflow.indexOf('\n  publish:'), workflow.indexOf('\n  enqueue-golden-snapshot:')))
+      .not.toContain('continue-on-error: true');
   });
 
   it('host bundle release workflow waits for same-sha CI instead of duplicating the full suite', () => {

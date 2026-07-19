@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveReleaseSnapshotEligibility } from "./release-snapshot-eligibility.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const root = resolve(scriptDir, "..");
@@ -76,6 +77,12 @@ const incrementalManifestKey = `system-bundles/${version}/incremental-manifest.j
 const bucket = process.env.R2_BUCKET || "matrixos-sync";
 const platformPublicUrl = process.env.PLATFORM_PUBLIC_URL || "https://app.matrix-os.com";
 const updateType = severity === "security" ? "auto" : "manual";
+const snapshotEligible = resolveReleaseSnapshotEligibility(
+  channel,
+  Object.hasOwn(process.env, "GOLDEN_SNAPSHOT_ELIGIBLE")
+    ? process.env.GOLDEN_SNAPSHOT_ELIGIBLE
+    : undefined,
+);
 
 function required(name) {
   const value = process.env[name];
@@ -228,6 +235,7 @@ const registrationBody = {
   severity,
   updateType,
   changelog: changelog || null,
+  snapshotEligible,
   ...(channel === "none" ? {} : { channel }),
 };
 

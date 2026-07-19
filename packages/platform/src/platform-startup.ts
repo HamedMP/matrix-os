@@ -472,6 +472,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
           listPendingGoldenSnapshotCleanup,
           listRunnableGoldenSnapshotBuildIds,
           listUnresolvedGoldenSnapshotBuildIds,
+          reconcileMissingGoldenSnapshotBuilds,
         },
       ] = await Promise.all([
         import('./golden-snapshot-service.js'),
@@ -498,6 +499,15 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
             const workerNow = new Date().toISOString();
             let quotaPressure = false;
             if (goldenSnapshotConfig.buildsEnabled) {
+              try {
+                await reconcileMissingGoldenSnapshotBuilds(db, {
+                  compatibility: goldenSnapshotConfig.compatibility,
+                  now: workerNow,
+                  limit: goldenSnapshotConfig.reconciliationBatchSize,
+                });
+              } catch (err: unknown) {
+                logPlatformRouteError('golden snapshot release reconciliation', err);
+              }
               await claimGoldenSnapshotBuildBatch(
                 db,
                 workerNow,
