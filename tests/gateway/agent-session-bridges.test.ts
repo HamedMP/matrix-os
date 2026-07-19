@@ -214,7 +214,7 @@ describe("agent session bridge registration", () => {
     await mkdir(join(root, ".pi", "agent", "extensions"), { recursive: true });
     await writeFile(join(root, ".pi", "agent", "extensions", "user-extension.ts"), "export default () => {};\n");
 
-    const command = "/opt/matrix/bin/matrix-agent-bridge";
+    const command = "/opt/node/bin/node --import=/workspace/tsx /workspace/bridge.ts";
     await registerAgentBridges({ homePath: root, command });
     await registerAgentBridges({ homePath: root, command });
 
@@ -244,8 +244,13 @@ describe("agent session bridge registration", () => {
     const opencodeSource = await readFile(opencodeBridge, "utf8");
     const piSource = await readFile(piBridge, "utf8");
     expect(opencodeSource).toContain(command);
+    expect(opencodeSource).toContain('spawn("/bin/sh", [');
+    expect(opencodeSource).toContain('\'exec \' + command + \' "$@"\'');
+    expect(opencodeSource).not.toContain("spawn(command,");
     expect(opencodeSource).toContain('event.type !== "tool.execute.after"');
     expect(piSource).toContain(command);
+    expect(piSource).toContain('spawn("/bin/sh", [');
+    expect(piSource).not.toContain("spawn(command,");
     expect(piSource).not.toContain('"agent_start",');
     await expect(readFile(opencodeBridge, "utf8")).resolves.toContain(
       'Buffer.byteLength(encoded, "utf8") <= 65536',

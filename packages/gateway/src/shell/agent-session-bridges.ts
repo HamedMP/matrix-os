@@ -327,7 +327,7 @@ async function writeOwnedBridgeFile(path: string, content: string): Promise<void
 }
 
 function bridgeEmitterSource(agent: AgentKind, command: string): string {
-  return `import { spawn } from "node:child_process";\n\nconst command = ${JSON.stringify(command)};\nfunction emit(eventName, payload) {\n  if (!process.env.ZELLIJ_SESSION_NAME) return;\n  try {\n    const child = spawn(command, [${JSON.stringify(agent)}, eventName], {\n      env: process.env,\n      stdio: ["pipe", "ignore", "ignore"],\n      detached: true,\n    });\n    child.on("error", () => undefined);\n    child.stdin.on("error", () => undefined);\n    const encoded = JSON.stringify(payload);\n    child.stdin.end(Buffer.byteLength(encoded, "utf8") <= 65536 ? encoded : "{}");\n    child.unref();\n  } catch (error) {\n    void error;\n    return;\n  }\n}\n`;
+  return `import { spawn } from "node:child_process";\n\nconst command = ${JSON.stringify(command)};\nfunction emit(eventName, payload) {\n  if (!process.env.ZELLIJ_SESSION_NAME) return;\n  try {\n    const child = spawn("/bin/sh", ["-c", 'exec ' + command + ' "$@"', "matrix-agent-bridge", ${JSON.stringify(agent)}, eventName], {\n      env: process.env,\n      stdio: ["pipe", "ignore", "ignore"],\n      detached: true,\n    });\n    child.on("error", () => undefined);\n    child.stdin.on("error", () => undefined);\n    const encoded = JSON.stringify(payload);\n    child.stdin.end(Buffer.byteLength(encoded, "utf8") <= 65536 ? encoded : "{}");\n    child.unref();\n  } catch (error) {\n    void error;\n    return;\n  }\n}\n`;
 }
 
 function openCodePluginSource(command: string): string {
