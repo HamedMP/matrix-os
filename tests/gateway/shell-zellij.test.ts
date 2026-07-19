@@ -578,6 +578,28 @@ describe("zellij adapter", () => {
     }
   });
 
+  it("passes Codex to the generated layout as one argv token without shell fragments", async () => {
+    const pty = ptyProcess();
+    let layoutText = "";
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-shell-codex-home-"));
+    const spawnPty = vi.fn((_command, args) => {
+      layoutText = readFileSync(String(args[3]), "utf8");
+      return pty;
+    });
+    try {
+      const adapter = createZellijAdapter({ execFile: vi.fn(), spawnPty, timeoutMs: 25, startupDelayMs: 1, homePath });
+
+      await adapter.createSession({ name: "codex-fix", cmd: "codex" });
+
+      expect(layoutText).toContain(`command="${homePath}/system/zellij/matrix-terminal-shell"`);
+      expect(layoutText).toMatch(/^\s*args "codex"\s*$/m);
+      expect(layoutText).not.toMatch(/\b(?:export|exec)\b|[;&|]/);
+    } finally {
+      pty.emitExit(0);
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("rejects session creation when the retained PTY exits during startup", async () => {
     const pty = ptyProcess();
     const spawnPty = vi.fn(() => {

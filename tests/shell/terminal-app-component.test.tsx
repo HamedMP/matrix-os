@@ -431,6 +431,68 @@ describe("TerminalApp", () => {
     expect(plainHoverCard.textContent).toContain("active");
   });
 
+  it("compacts empty agent subtitles and expands when refreshed metadata adds one", async () => {
+    let sessionFetches = 0;
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve(mockJsonResponse({ ok: true }));
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve(mockJsonResponse({}));
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        sessionFetches += 1;
+        return Promise.resolve(mockJsonResponse({
+          sessions: [{
+            name: "codex-fix",
+            status: "active",
+            placement: "active",
+            visualStatus: "running",
+            agent: "codex",
+            subtitle: sessionFetches === 2 ? "Fix Terminal sessions" : "   ",
+            tabs: [],
+          }],
+        }));
+      }
+      return Promise.resolve(mockJsonResponse({}));
+    });
+
+    render(<TerminalApp />);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("terminal-session-card-codex-fix").style.height).toBe("60px");
+    });
+
+    const compactName = screen.getByTestId("terminal-session-name-codex-fix");
+    const compactMetadata = screen.getByTestId("terminal-session-agent-state-codex-fix");
+    expect(compactName.textContent).toBe("codex-fix");
+    expect(compactMetadata.textContent).toContain("Codex");
+    expect(compactMetadata.textContent).toContain("running");
+    expect(compactMetadata.style.textTransform).toBe("");
+    expect(screen.queryByTestId("terminal-session-subtitle-codex-fix")).toBeNull();
+    expect(screen.getByTestId("terminal-session-name-row-codex-fix").parentElement?.style.gridTemplateRows).toBe(
+      "18px 16px",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh sessions" }));
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("terminal-session-subtitle-codex-fix").textContent).toBe("Fix Terminal sessions");
+    });
+    expect(screen.getByTestId("terminal-session-card-codex-fix").style.height).toBe("78px");
+    expect(screen.getByTestId("terminal-session-name-row-codex-fix").parentElement?.style.gridTemplateRows).toBe(
+      "18px 16px 16px",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh sessions" }));
+    await vi.waitFor(() => {
+      expect(screen.queryByTestId("terminal-session-subtitle-codex-fix")).toBeNull();
+    });
+    expect(screen.getByTestId("terminal-session-card-codex-fix").style.height).toBe("60px");
+    expect(screen.getByTestId("terminal-session-name-row-codex-fix").parentElement?.style.gridTemplateRows).toBe(
+      "18px 16px",
+    );
+  });
+
   it("shows compact Git context only when it fits on the existing metadata line", () => {
     expect(doesCompactGitContextFit({ availableWidth: 360, primaryWidth: 190, contextWidth: 130 })).toBe(true);
     expect(doesCompactGitContextFit({ availableWidth: 280, primaryWidth: 190, contextWidth: 130 })).toBe(false);
@@ -4178,9 +4240,7 @@ describe("TerminalApp", () => {
 
     await chooseNewSessionMenuItemAfterStatus(/^Codex$/);
 
-    const codexPayload = expectTerminalCreatePayloadForCommand(
-      'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"; exec "$MATRIX_NODE_PREFIX/bin/codex"',
-    );
+    const codexPayload = expectTerminalCreatePayloadForCommand("codex");
     expect(codexPayload.agent).toBe("codex");
     await vi.waitFor(() => {
       expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
