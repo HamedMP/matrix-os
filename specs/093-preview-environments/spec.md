@@ -65,9 +65,11 @@ connect to, CLI betas need a paired shell), and today each is assembled by hand.
   release validation (`/^[A-Za-z0-9._-]{1,128}$/`).
 - Publish: `scripts/publish-release.sh` **without** `--channel` — the release is
   registered but never promoted; no channel pointer can ever select a PR bundle.
-- Provision: `POST /vps/provision` with `handle: pr-<N>`, a dedicated
-  `PREVIEW_CLERK_USER_ID` secret, `runtimeSlot: preview`. Idempotent: if the handle
-  already exists in `/vps/fleet`, skip provision and deploy only.
+- Provision: `POST /vps/preview/provision` with a dedicated
+  `PREVIEW_CLERK_USER_ID` secret and identical `handle` / `runtimeSlot` values of
+  `pr-<N>`. The platform commits the machine and its durable provisioning job in one
+  transaction before returning `202`; the workflow rejects an accepted response unless
+  that exact machine is immediately visible in `/vps/fleet`.
 - Deploy: `POST /vps/deploy {"version": "...", "handle": "pr-<N>"}` — version-pinned,
   single-handle. Never channel-wide.
 - Report: PR comment with the VM URL, bundle version, and log-query one-liner.
@@ -132,10 +134,13 @@ connect to, CLI betas need a paired shell), and today each is assembled by hand.
   billing slot enforcement. The authenticated operator path may adopt an existing
   matching row before excluding it from customer billing. Exact per-PR lookup falls
   back to the same owner's matching legacy `runtimeSlot: preview` row under the
-  owner lock, so migration cannot create a duplicate provider server. Exact slots
+  owner provisioning lock, so migration cannot create a duplicate provider server. Exact slots
   must match the requested handle or fail with a generic conflict, and a live
   matching legacy row wins over a failed exact row during migration. The failed
   duplicate is retired and queued for provider cleanup before capacity is checked.
+- Provisioning jobs use bounded Postgres rows with encrypted, size-limited bootstrap
+  payloads. A leased worker claim dispatches provider creation; completed and failed
+  jobs clear the payload. Expired claims are eligible for bounded reconciliation.
 - `matrix-install-logship`: URL must be `https://`, handle must match
   `^[a-z0-9][a-z0-9-]{1,62}$`, env must be one of `preview|prod|staging`; the Alloy
   binary download is pinned to an exact version and verified against a recorded
@@ -156,6 +161,9 @@ connect to, CLI betas need a paired shell), and today each is assembled by hand.
   deploy step retries once; on persistent failure the job fails loudly and the PR
   comment is replaced by a failure note with the handle so teardown still works.
   Orphan state is acceptable: the reaper deletes it within 72h regardless.
+- **Provision enqueue fails**: the machine insert rolls back with the job insert and
+  the route returns a generic non-success response. A successful response is never
+  allowed for a machine that is absent from the authoritative fleet read.
 - **Teardown fails on PR close**: the scheduled reaper is the backstop (same deletion
   code path). Reaper failures alert via workflow failure notifications.
 - **Two PRs race for a staging slot**: slot claim uses `O_EXCL` lock-file creation;

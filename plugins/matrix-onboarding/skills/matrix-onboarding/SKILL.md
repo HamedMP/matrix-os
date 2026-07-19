@@ -13,7 +13,7 @@ Guide the human through a complete developer onboarding path without collecting 
 - Treat the Matrix VPS as the human's computer. Ask before deleting files, resetting auth, installing global packages, or changing long-lived shell sessions.
 - Use Matrix shell sessions for interactive work. Do not invent SSH instructions.
 - Use Docker only when the target repo already needs containers or cannot run directly with its normal dev command. Production Matrix OS customer runtime is VPS-native, not Docker Compose.
-- If the current repo contains `www/public/skills.md`, read it first for the latest Matrix CLI commands. Otherwise use `https://matrix-os.com/skills.md` as the canonical command reference.
+- Use `https://matrix-os.com/skills.md` as the canonical Matrix CLI command reference. Its source lives in the private `FinnaAI/matrix-os-site` repository.
 - First-run hosted onboarding must use the cloud profile. Do not use `--dev`, `--profile local`, `matrix profile use local`, localhost URLs, `MATRIXOS_PLATFORM_URL`, or `MATRIXOS_GATEWAY_URL` unless the human explicitly asks for Matrix local-stack development.
 
 ## Workflow

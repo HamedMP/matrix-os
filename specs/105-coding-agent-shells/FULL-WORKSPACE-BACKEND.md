@@ -617,6 +617,15 @@ conversation. A compatibility adapter may ship with fewer controls, but it must
 still preserve canonical Matrix thread identity and return a safe unsupported
 state for unavailable operations.
 
+Provider stream contracts are versioned independently from shell contracts. For
+Codex, Matrix records an exact verified CLI range and the digest of the tagged
+exec JSONL schema. Runtime parsing accepts known bounded events and ignores
+unknown event kinds, while an installed version outside the verified range must
+remain capability-degraded until its schema fixtures and real-process smoke are
+updated. A scheduled check compares the newest published CLI patch and tagged
+schema against the committed contract so automatic tool updates cannot silently
+outpace normalization coverage.
+
 ### Terminals, Attachments, Repository, And Review
 
 - `POST /api/coding-agents/terminal-bindings`

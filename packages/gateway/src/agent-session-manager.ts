@@ -18,6 +18,7 @@ import { atomicWriteJson, readJsonFile } from "./state-ops.js";
 import type { createAgentLauncher } from "./agent-launcher.js";
 import type { createWorktreeManager, WorktreeRecord } from "./worktree-manager.js";
 import type { createZellijRuntime } from "./zellij-runtime.js";
+import { codexProviderEventPath } from "./coding-agents/codex-event-bridge.js";
 
 export type SessionKind = "shell" | "agent";
 export type RuntimeStatus = "starting" | "running" | "idle" | "waiting" | "exited" | "failed" | "degraded";
@@ -338,6 +339,9 @@ export function createAgentSessionManager(options: {
             mode: request.mode,
             sandbox: request.sandbox,
             approvalPolicy: toAgentApprovalPolicy(request.approvalPolicy),
+            ...(request.agent === "codex"
+              ? { providerEventPath: codexProviderEventPath(homePath, sessionId) }
+              : {}),
           })
           : { command: "bash", args: [], cwd, env: {} };
       } catch (err: unknown) {

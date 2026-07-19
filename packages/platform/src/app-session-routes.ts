@@ -3,7 +3,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
 
 import {
-  getActiveUserMachineByClerkId,
+  getAccessibleActiveUserMachineByClerkId,
   getContainerByClerkId,
   getSettlingCheckoutAttempt,
   type PlatformDB,
@@ -294,7 +294,12 @@ export function createAppSessionRoutes(opts: {
     const record = opts.legacyContainerRoutingEnabled
       ? await getContainerByClerkId(opts.db, result.userId)
       : undefined;
-    const machine = record ? undefined : await getActiveUserMachineByClerkId(opts.db, result.userId, requestedRuntimeSlot);
+    let machine = record
+      ? undefined
+      : await getAccessibleActiveUserMachineByClerkId(opts.db, result.userId, requestedRuntimeSlot);
+    if (!record && !machine && requestedRuntimeSlot === 'primary') {
+      machine = await getAccessibleActiveUserMachineByClerkId(opts.db, result.userId);
+    }
     const handle = record?.handle ?? machine?.handle;
     if (!handle) {
       opts.applyNoStoreHeaders(c);

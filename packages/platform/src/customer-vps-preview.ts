@@ -10,6 +10,14 @@ export function isPreviewMachine(
     && (machine.runtimeSlot === machine.handle || machine.runtimeSlot === 'preview');
 }
 
+export function canClerkUserAccessMachine(
+  machine: Pick<UserMachineRecord, 'clerkUserId' | 'handle' | 'runtimeSlot' | 'provisioningClass' | 'accessClerkUserIds'>,
+  clerkUserId: string,
+): boolean {
+  if (machine.clerkUserId === clerkUserId) return true;
+  return isPreviewMachine(machine) && machine.accessClerkUserIds.includes(clerkUserId);
+}
+
 export function assertPreviewProvisioningCapacity(
   activeMachines: ReadonlyArray<Pick<UserMachineRecord, 'handle' | 'runtimeSlot' | 'provisioningClass'>>,
   limit: number,

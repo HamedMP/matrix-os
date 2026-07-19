@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT_INSTALLS, PACKAGE_MANAGER_INSTALLS, terminalNpmInstallCommand } from "./agent-install-matrix";
+import { CODEX_VERIFIED_NPM_PACKAGE } from "../../packages/contracts/src/index.js";
 
 const root = process.cwd();
 
@@ -21,7 +22,11 @@ describe("agent CLI install matrix", () => {
     expect(terminalAgentOptions).toContain('export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"');
 
     for (const agent of AGENT_INSTALLS) {
-      expect(terminalAgentOptions).toContain(`installPackage: "${agent.npmPackage}"`);
+      if (agent.id === "codex") {
+        expect(terminalAgentOptions).toContain("installPackage: CODEX_VERIFIED_NPM_PACKAGE");
+      } else {
+        expect(terminalAgentOptions).toContain(`installPackage: "${agent.npmPackage}"`);
+      }
       expect(terminalNpmInstallCommand(agent)).toContain(`--prefix "$MATRIX_NODE_PREFIX" ${agent.npmPackage}`);
       if (agent.ignoreScripts) {
         expect(terminalNpmInstallCommand(agent)).toContain("npm install -g --ignore-scripts --prefix");
@@ -89,7 +94,9 @@ describe("agent CLI install matrix", () => {
     const installer = readFileSync(join(root, "distro/customer-vps/host-bin/matrix-install-tool-pack"), "utf8");
 
     expect(installer).toContain("@anthropic-ai/claude-code@latest");
-    expect(installer).toContain("@openai/codex@latest");
+    expect(installer).toContain('"@openai/codex@${CODEX_VERSION}"');
+    expect(AGENT_INSTALLS.find((agent) => agent.id === "codex")?.npmPackage)
+      .toBe(CODEX_VERIFIED_NPM_PACKAGE);
     expect(installer).toContain('"opencode-ai@${OPENCODE_AI_VERSION}"');
     expect(installer).toContain('"@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"');
     expect(installer).toContain("run_npm_install install -g --ignore-scripts --prefix");

@@ -3,7 +3,7 @@ import {
   DEFAULT_GATEWAY_FETCH_TIMEOUT_MS,
   assertSecureTokenTransport,
 } from "../lib/gateway-client";
-import type { AgentThreadEvent, CreateAgentThreadRequest } from "@matrix-os/contracts";
+import type { AgentThreadEvent, CreateAgentThreadRequest, CreateAgentTurnRequest } from "@matrix-os/contracts";
 import { jsonResponse } from "./mobile-shell-test-utils";
 
 function reviewSnapshotPayload(id = "rev_mobile_1") {
@@ -704,6 +704,33 @@ describe("GatewayClient", () => {
       ok: false,
       error: "Project could not be created. Try again.",
     });
+
+    fetchMock.mockRestore();
+  });
+
+  it("sends independent project workspace cursors", async () => {
+    const pagedWorkspace = {
+      project: { id: "matrix-os", label: "Matrix OS", status: "available", taskCount: 0, threadCount: 0, attentionCount: 0 },
+      tasks: { items: [], hasMore: false, limit: 25 },
+      projectThreads: { items: [], hasMore: false, limit: 30 },
+      taskThreads: { items: [], hasMore: false, limit: 35 },
+      updatedAt: "2026-07-10T13:30:00.000Z",
+    };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(pagedWorkspace));
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.getCodingAgentProjectWorkspace({
+      projectId: "matrix-os",
+      taskCursor: "task_auth",
+      taskLimit: 25,
+      projectThreadCursor: "thread_audit",
+      projectThreadLimit: 30,
+      taskThreadCursor: "thread_fix",
+      taskThreadLimit: 35,
+    })).resolves.toEqual({ ok: true, workspace: pagedWorkspace });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/projects/matrix-os/workspace?taskCursor=task_auth&taskLimit=25&projectThreadCursor=thread_audit&projectThreadLimit=30&taskThreadCursor=thread_fix&taskThreadLimit=35",
+      expect.any(Object),
+    );
     fetchMock.mockRestore();
   });
 
@@ -749,6 +776,143 @@ describe("GatewayClient", () => {
     }));
 
     fetchMock.mockRestore();
+  });
+
+  it("fetches bounded project workspace pages with validated independent cursors", async () => {
+    const pagedWorkspace = {
+      project: {
+        id: "matrix-os",
+        label: "Matrix OS",
+        status: "available",
+        taskCount: 0,
+        threadCount: 0,
+        attentionCount: 0,
+      },
+      tasks: { items: [], hasMore: false, limit: 25 },
+      projectThreads: { items: [], hasMore: false, limit: 30 },
+      taskThreads: { items: [], hasMore: false, limit: 35 },
+      updatedAt: "2026-07-10T13:30:00.000Z",
+    };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(pagedWorkspace));
+    const client = new GatewayClient("http://localhost:4000", "token");
+
+    await expect(client.getCodingAgentProjectWorkspace({
+      projectId: "matrix-os",
+      taskCursor: "task_auth",
+      taskLimit: 25,
+      projectThreadCursor: "thread_audit",
+      projectThreadLimit: 30,
+      taskThreadCursor: "thread_fix",
+      taskThreadLimit: 35,
+    })).resolves.toEqual({ ok: true, workspace: pagedWorkspace });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/projects/matrix-os/workspace?taskCursor=task_auth&taskLimit=25&projectThreadCursor=thread_audit&projectThreadLimit=30&taskThreadCursor=thread_fix&taskThreadLimit=35",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer token" }),
+        signal: expect.any(Object),
+      }),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("sends a validated turn to the selected coding agent thread", async () => {
+    const request: CreateAgentTurnRequest = {
+      message: "Continue with the mobile route tests.",
+      clientRequestId: "req_mobile_turn_1",
+    };
+    const turn = {
+      threadId: "thread_mobile",
+      turnId: "turn_mobile_1",
+      status: "accepted",
+      acceptedAt: "2026-07-06T00:02:00.000Z",
+    };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(turn, { status: 202 }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.createCodingAgentTurn({
+      threadId: "thread_mobile",
+      request,
+    })).resolves.toEqual({ ok: true, turn });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/threads/thread_mobile/turns",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify(request),
+        signal: expect.any(Object),
+      }),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("rejects invalid turn requests locally and maps busy responses to a safe retry state", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      error: {
+        code: "thread_busy",
+        safeMessage: "This conversation cannot accept a message right now. Refresh and try again.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    }, { status: 409 }));
+    const client = new GatewayClient("http://localhost:4000", "token");
+
+    await expect(client.createCodingAgentTurn({
+      threadId: "not-a-thread",
+      request: {
+        message: "Continue.",
+        clientRequestId: "req_mobile_turn_invalid",
+      },
+    })).resolves.toEqual({
+      ok: false,
+      error: "Message could not be sent. Refresh and try again.",
+      reason: "unavailable",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await expect(client.createCodingAgentTurn({
+      threadId: "thread_mobile",
+      request: {
+        message: "Continue.",
+        clientRequestId: "req_mobile_turn_busy",
+      },
+    })).resolves.toEqual({
+      ok: false,
+      error: "Conversation is busy. Refresh and try again.",
+      reason: "busy",
+    });
+
+    fetchMock.mockRestore();
+  });
+
+  it("rejects malformed turn success payloads without exposing server details", async () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      threadId: "thread_other",
+      turnId: "/home/matrix/turn-secret",
+      status: "accepted",
+      acceptedAt: "not-a-date",
+    }, { status: 202 }));
+    const client = new GatewayClient("http://localhost:4000", "token");
+
+    await expect(client.createCodingAgentTurn({
+      threadId: "thread_mobile",
+      request: {
+        message: "Continue.",
+        clientRequestId: "req_mobile_turn_malformed",
+      },
+    })).resolves.toEqual({
+      ok: false,
+      error: "Message could not be sent. Refresh and try again.",
+      reason: "unavailable",
+    });
+
+    fetchMock.mockRestore();
+    warnSpy.mockRestore();
   });
 
   it("fetches and updates coding agent notification preferences with the existing auth header", async () => {

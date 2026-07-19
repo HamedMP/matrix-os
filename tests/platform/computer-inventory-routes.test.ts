@@ -28,6 +28,7 @@ async function insertMachine(
     provisioningClass?: "customer" | "preview";
     provisionedAt?: string;
     publicIPv4?: string;
+    accessClerkUserIds?: string[];
   },
 ): Promise<void> {
   await insertUserMachine(db, {
@@ -37,6 +38,7 @@ async function insertMachine(
     runtimeSlot: input.runtimeSlot,
     status: input.status ?? "running",
     provisioningClass: input.provisioningClass,
+    accessClerkUserIds: input.accessClerkUserIds,
     hetznerServerId: 100,
     publicIPv4: input.publicIPv4 ?? "203.0.113.10",
     imageVersion: input.imageVersion,
@@ -198,6 +200,41 @@ describe("canonical computer inventory route", () => {
     expect(body.selectedSlot).toBe("review");
     expect(body.items.map((item) => item.handle)).toContain("alice-review");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("lists explicitly shared previews without exposing the owner's customer computers", async () => {
+    await insertMachine(db, {
+      clerkUserId: "user_bob",
+      handle: "bob-primary",
+      runtimeSlot: "primary",
+    });
+    await insertMachine(db, {
+      clerkUserId: "user_bob",
+      handle: "pr-1037",
+      runtimeSlot: "pr-1037",
+      provisioningClass: "preview",
+      accessClerkUserIds: ["user_alice"],
+    });
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const response = await app.request("/api/auth/computers", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(response.status).toBe(200);
+    const body = MatrixComputerListSchema.parse(await response.json());
+    expect(body.items.map((item) => item.handle)).toContain("pr-1037");
+    expect(body.items.map((item) => item.handle)).not.toContain("bob-primary");
   });
 
   it("routes a slot-qualified computer path without moving another tab's bare API calls", async () => {

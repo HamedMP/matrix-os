@@ -275,11 +275,13 @@ describe('platform/customer-vps', () => {
       clerkUserId: 'user_123',
       handle: 'pr-897',
       runtimeSlot: 'pr-897',
+      accessClerkUserIds: ['user_456'],
     });
     const repeated = await service.provisionPreview({
       clerkUserId: 'user_123',
       handle: 'pr-897',
       runtimeSlot: 'pr-897',
+      accessClerkUserIds: ['user_789'],
     });
 
     expect(repeated).toEqual(preview);
@@ -300,6 +302,7 @@ describe('platform/customer-vps', () => {
     expect(resolveBillingEntitlement).toHaveBeenCalledOnce();
     await expect(getUserMachine(db, preview.machineId)).resolves.toMatchObject({
       provisioningClass: 'preview',
+      accessClerkUserIds: ['user_789'],
     });
   });
 
@@ -2256,14 +2259,4 @@ describe('platform/customer-vps', () => {
     expect(quickstart).toContain('Non-production smoke commands');
   });
 
-  it('publishes VPS-per-user deployment docs through the docs navigation', () => {
-    const meta = JSON.parse(readFileSync('www/content/docs/developer/deployment/meta.json', 'utf8')) as { pages: string[] };
-    const page = readFileSync('www/content/docs/developer/deployment/vps-per-user.mdx', 'utf8');
-
-    expect(meta.pages).toContain('vps-per-user');
-    expect(page).toContain('## Production Scope');
-    expect(page).toContain('## Backup Retention');
-    expect(page).toContain('## Manual Recovery');
-    expect(page).toContain('## Rollback');
-  });
 });

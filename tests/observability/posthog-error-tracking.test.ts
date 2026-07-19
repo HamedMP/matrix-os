@@ -62,17 +62,13 @@ describe("PostHog error tracking", () => {
     );
 
     const shellClient = await readFile("shell/src/lib/posthog-client.ts", "utf8");
-    const wwwClient = await readFile("www/src/lib/posthog-client.ts", "utf8");
     const shellLayout = await readFile("shell/src/app/layout.tsx", "utf8");
-    const wwwLayout = await readFile("www/src/app/layout.tsx", "utf8");
     expect(shellClient).toContain("resolvePostHogClientApiHost");
     // The shell ships a same-origin /relay rewrite, so it opts into relative
     // API hosts to keep capture calls first-party on user subdomains.
     expect(shellClient).toContain("allowRelativeApiHost: true");
     expect(shellClient).toContain("buildPostHogCookieConsentInitOptions");
-    expect(wwwClient).toContain("buildPostHogCookieConsentInitOptions");
     expect(shellLayout).not.toContain("PostHogCookieBanner");
-    expect(wwwLayout).toContain("PostHogCookieBanner");
   });
 
   it("extracts visitor country from deployment geolocation headers", () => {
@@ -584,10 +580,7 @@ describe("PostHog error tracking", () => {
   });
 
   it("uses explicit public env references in Next client PostHog entrypoints", async () => {
-    const clientEntrypoints = [
-      "shell/src/lib/posthog-client.ts",
-      "www/src/lib/posthog-client.ts",
-    ];
+    const clientEntrypoints = ["shell/src/lib/posthog-client.ts"];
 
     for (const file of clientEntrypoints) {
       const source = await readFile(file, "utf8");
@@ -606,15 +599,6 @@ describe("PostHog error tracking", () => {
     expect(shellPostHogClient).toContain("buildPostHogCookieConsentInitOptions");
     expect(shellPostHogClient).not.toContain("__loaded");
 
-    const wwwPostHogClient = await readFile("www/src/lib/posthog-client.ts", "utf8");
-    expect(wwwPostHogClient).toContain("ensurePostHogInitialized(posthog, config)");
-    expect(wwwPostHogClient).toContain("posthog.init(currentConfig.token");
-    expect(wwwPostHogClient).toContain("buildPostHogCookieConsentInitOptions");
-    expect(wwwPostHogClient).not.toContain("__loaded");
-    expect(wwwPostHogClient).toContain('NEXT_PUBLIC_POSTHOG_API_HOST ?? "/relay"');
-
-    const wwwClient = await readFile("www/instrumentation-client.ts", "utf8");
-    expect(wwwClient).toContain("initializeWwwPostHog");
   });
 
   it("configures browser PostHog logs without console autocapture", async () => {
@@ -691,30 +675,6 @@ describe("PostHog error tracking", () => {
     expect(billingPanel).not.toContain("terminalData");
   });
 
-  it("tracks the landing to billing funnel before the shell handoff", async () => {
-    const [landingPage, siteHeader, ctaPrimitives, landingTelemetry, landingBilling, wwwPostHogClient] = await Promise.all([
-      readFile("www/src/app/page.tsx", "utf8"),
-      readFile("www/src/components/landing/SiteHeader.tsx", "utf8"),
-      readFile("www/src/components/landing/primitives.tsx", "utf8"),
-      readFile("www/src/components/landing/LandingTelemetry.tsx", "utf8"),
-      readFile("www/src/components/landing/LandingBilling.tsx", "utf8"),
-      readFile("www/src/lib/posthog-client.ts", "utf8"),
-    ]);
-
-    expect(wwwPostHogClient).toContain("capturePostHogEvent");
-    expect(landingPage).toContain("<LandingTelemetry />");
-    expect(landingPage).toContain("<SiteHeader />");
-    expect(siteHeader).toContain('data-ph-event="marketing_cta_clicked"');
-    expect(ctaPrimitives).toContain('"data-ph-event": "marketing_cta_clicked"');
-    expect(landingTelemetry).toContain("MATRIX_TELEMETRY_EVENTS.MARKETING_LANDING_VIEWED");
-    expect(landingTelemetry).toContain("MATRIX_TELEMETRY_EVENTS.MARKETING_SIGNUP_CLICKED");
-    expect(landingTelemetry).toContain("[data-ph-event]");
-    expect(landingBilling).toContain("MATRIX_TELEMETRY_EVENTS.MARKETING_BILLING_VIEWED");
-    expect(landingBilling).toContain("MATRIX_TELEMETRY_EVENTS.MARKETING_BILLING_PLAN_CLICKED");
-    expect(landingBilling).toContain('"marketing_billing_cta_clicked"');
-    expect(landingBilling).toContain('"stripe_static_plans"');
-  });
-
   it("tracks shell, gateway, and CLI/TUI product activity without content payloads", async () => {
     const [billingGate, gatewayServer, platformAuthRoutes, platformMain] = await Promise.all([
       readFile("shell/src/components/BillingGate.tsx", "utf8"),
@@ -740,10 +700,7 @@ describe("PostHog error tracking", () => {
   });
 
   it("queues Next server PostHog reporting off the request-error hook path", async () => {
-    const serverEntrypoints = [
-      "shell/instrumentation.ts",
-      "www/instrumentation.ts",
-    ];
+    const serverEntrypoints = ["shell/instrumentation.ts"];
 
     for (const file of serverEntrypoints) {
       const source = await readFile(file, "utf8");
@@ -756,28 +713,18 @@ describe("PostHog error tracking", () => {
   });
 
   it("exposes shutdown hooks for Next server reporters", async () => {
-    const [shellSource, wwwSource] = await Promise.all([
-      readFile("shell/instrumentation.ts", "utf8"),
-      readFile("www/instrumentation.ts", "utf8"),
-    ]);
+    const shellSource = await readFile("shell/instrumentation.ts", "utf8");
 
     expect(shellSource).toContain("export const shellPostHogReporter");
     expect(shellSource).toContain("export async function unregister()");
     expect(shellSource).toContain("await shellPostHogReporter.shutdown()");
-    expect(wwwSource).toContain("export async function unregister()");
-    expect(wwwSource).toContain("await shutdownPostHog()");
   });
 
   it("documents PostHog SDK timeout and warm-process shutdown behavior", async () => {
-    const [observabilitySource, wwwServer] = await Promise.all([
-      readFile("packages/observability/src/index.ts", "utf8"),
-      readFile("www/src/lib/posthog-server.ts", "utf8"),
-    ]);
+    const observabilitySource = await readFile("packages/observability/src/index.ts", "utf8");
 
     expect(observabilitySource).toContain("PostHog SDK does not expose an AbortSignal");
     expect(observabilitySource).toContain("bounds only the await");
-    expect(wwwServer).toContain("shutdownPostHog is also used as an action-level flush");
-    expect(wwwServer).toContain("allow later warm-process calls to recreate clients");
   });
 
   it("does not pass PostHog secrets to external Conduit containers", async () => {
@@ -874,7 +821,6 @@ describe("PostHog error tracking", () => {
       "packages/platform/package.json",
       "packages/proxy/package.json",
       "shell/package.json",
-      "www/package.json",
     ];
 
     for (const file of consumerPackages) {
@@ -905,14 +851,13 @@ describe("PostHog error tracking", () => {
   });
 
   it("wires shutdown for PostHog clients outside top-level Hono apps", async () => {
-    const [gatewaySocial, gatewayServer, platformSocialApi, platformMain, platformStartup, proxyMain, wwwServer] = await Promise.all([
+    const [gatewaySocial, gatewayServer, platformSocialApi, platformMain, platformStartup, proxyMain] = await Promise.all([
       readFile("packages/gateway/src/social.ts", "utf8"),
       readFile("packages/gateway/src/server.ts", "utf8"),
       readFile("packages/platform/src/social-api.ts", "utf8"),
       readFile("packages/platform/src/main.ts", "utf8"),
       readFile("packages/platform/src/platform-startup.ts", "utf8"),
       readFile("packages/proxy/src/main.ts", "utf8"),
-      readFile("www/src/lib/posthog-server.ts", "utf8"),
     ]);
 
     expect(gatewaySocial).toContain("shutdownPostHog");
@@ -930,7 +875,6 @@ describe("PostHog error tracking", () => {
     expect(proxyForcedExitIndex).toBeLessThan(proxyTelemetryDrainIndex);
     expect(proxyMain).not.toContain(".unref()");
     expect(proxyMain).toContain("clearTimeout(forceExit)");
-    expect(wwwServer).toContain("await postHogServerErrorReporter.shutdown()");
   });
 
   it("queues social route PostHog capture off the error response path", async () => {

@@ -563,6 +563,7 @@ describe("coding agent desktop runtime client", () => {
       inputRequestId: "req_input_desktop_1",
       request: {
         answer: "Run the focused desktop test.",
+        structuredAnswers: { implementation: ["Minimal"] },
         correlationId: "corr_input_desktop_1",
         clientRequestId: "req_desktop_1",
       },
@@ -579,6 +580,7 @@ describe("coding agent desktop runtime client", () => {
         }),
         body: JSON.stringify({
           answer: "Run the focused desktop test.",
+          structuredAnswers: { implementation: ["Minimal"] },
           correlationId: "corr_input_desktop_1",
           clientRequestId: "req_desktop_1",
         }),

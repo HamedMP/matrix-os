@@ -20,7 +20,11 @@ COPY scripts/fix-node-pty-perms.mjs scripts/fix-node-pty-perms.mjs
 
 FROM base AS deps
 
-RUN pnpm install --frozen-lockfile --ignore-scripts --filter '@matrix-os/platform...' --filter '@matrix-os/gateway...' --filter './shell...'
+# The repo-wide global virtual store (pnpm-workspace.yaml enableGlobalVirtualStore)
+# must stay off inside image builds: node_modules would symlink into the build
+# stage's home directory, which breaks webpack module resolution and does not
+# survive COPY into later stages.
+RUN pnpm install --frozen-lockfile --ignore-scripts --config.enableGlobalVirtualStore=false --filter '@matrix-os/platform...' --filter '@matrix-os/gateway...' --filter './shell...'
 
 FROM deps AS builder
 
@@ -52,7 +56,7 @@ RUN pnpm --dir shell exec next build --webpack
 
 FROM base AS prod-deps
 
-RUN pnpm install --frozen-lockfile --ignore-scripts --prod --filter '@matrix-os/platform...' --filter '@matrix-os/gateway...' --filter './shell...'
+RUN pnpm install --frozen-lockfile --ignore-scripts --prod --config.enableGlobalVirtualStore=false --filter '@matrix-os/platform...' --filter '@matrix-os/gateway...' --filter './shell...'
 
 FROM node:24-alpine AS runtime
 

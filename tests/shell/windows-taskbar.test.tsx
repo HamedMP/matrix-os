@@ -45,6 +45,7 @@ async function renderTaskbar(opts: { apps?: AppEntry[]; windows?: AppWindow[] } 
   await act(async () => {
     result = render(
       <WindowsTaskbar
+        themeStyle={document.documentElement.getAttribute("data-theme-style") ?? "flat"}
         apps={opts.apps ?? defaultApps}
         windows={opts.windows ?? []}
         {...handlers}

@@ -8,7 +8,7 @@
 
 Confirmed against `TerminalApp.tsx` (`TERMINAL_AGENT_OPTIONS`) and `matrix-install-tool-pack`:
 - `claude` / Claude Code — `@anthropic-ai/claude-code@latest`
-- `codex` / Codex — `@openai/codex@latest`
+- `codex` / Codex - Matrix-verified `@openai/codex` version
 - `opencode` / OpenCode — `opencode-ai@latest`
 - `pi` / Pi — `@earendil-works/pi-coding-agent@latest` (installed with `--ignore-scripts`)
 

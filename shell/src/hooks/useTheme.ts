@@ -136,13 +136,39 @@ export interface ShellCacheHookOptions {
   cacheScope?: ShellSnapshotScope | null;
 }
 
+interface ThemeRuntimeCache {
+  gatewayUrl: string;
+  theme: Theme;
+}
+
+let themeRuntimeCache: ThemeRuntimeCache | null = null;
+
+function rememberTheme(gatewayUrl: string, theme: Theme): void {
+  themeRuntimeCache = { gatewayUrl, theme };
+}
+
+function initialTheme(
+  cacheScope: ShellSnapshotScope | null,
+  fallbackTheme: Theme,
+  gatewayUrl: string,
+): Theme {
+  // A scoped root never borrows another user's/runtime's module snapshot.
+  // Nested consumers without a scope may reuse only the current gateway's
+  // already-applied value, avoiding a transient reset to the default design.
+  if (cacheScope) {
+    return normalizeTheme(loadShellSnapshot(cacheScope)?.theme, fallbackTheme);
+  }
+  return themeRuntimeCache?.gatewayUrl === gatewayUrl
+    ? themeRuntimeCache.theme
+    : fallbackTheme;
+}
+
 export function useTheme(options: ShellCacheHookOptions = {}) {
   const fallbackTheme = getThemeFallback();
   const cacheScope = options.cacheScope ?? null;
   const cacheKey = cacheScope?.storageKey;
-  const [theme, setTheme] = useState<Theme>(() => (
-    cacheScope ? normalizeTheme(loadShellSnapshot(cacheScope)?.theme, fallbackTheme) : fallbackTheme
-  ));
+  const gatewayUrl = getGatewayUrl();
+  const [theme, setTheme] = useState<Theme>(() => initialTheme(cacheScope, fallbackTheme, gatewayUrl));
 
   useEffect(() => {
     if (!cacheScope) return;
@@ -163,8 +189,9 @@ export function useTheme(options: ShellCacheHookOptions = {}) {
   }, [fallbackTheme, cacheKey, cacheScope]);
 
   useEffect(() => {
+    rememberTheme(gatewayUrl, theme);
     applyTheme(theme);
-  }, [theme]);
+  }, [gatewayUrl, theme]);
 
   useFileWatcher((path, event) => {
     if (path === "system/theme.json" && event !== "unlink") {
@@ -195,9 +222,15 @@ export async function saveTheme(
     throw new Error("Failed to save theme");
   }
   saveShellSnapshot(options.cacheScope, { theme });
+  rememberTheme(gatewayUrl, theme);
   if (typeof document !== "undefined") {
     applyTheme(theme);
   }
+}
+
+/** Test hook: clear the module-local current-runtime theme snapshot. */
+export function resetThemeRuntimeCacheForTests(): void {
+  themeRuntimeCache = null;
 }
 
 function settingsFetchSignal(signal?: AbortSignal): AbortSignal {

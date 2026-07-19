@@ -61,6 +61,9 @@ export function Launchpad({
   const activePage = Math.min(pageIndex, pages.length - 1);
   const columns = viewport ? computeLaunchpadColumns(viewport.width) : 7;
   const pageApps = pages[activePage] ?? [];
+  // A sparse or final page should center the apps themselves, not a wider
+  // invisible set of empty grid tracks.
+  const visibleColumns = Math.min(columns, pageApps.length);
 
   // Full-screen take-over: lock body scroll for the lifetime of the overlay.
   useEffect(() => {
@@ -135,7 +138,7 @@ export function Launchpad({
             <div
               data-launchpad-grid
               className="launchpad-grid"
-              style={{ gridTemplateColumns: `repeat(${columns}, var(--launchpad-cell-w))` }}
+              style={{ gridTemplateColumns: `repeat(${visibleColumns}, var(--launchpad-cell-w))` }}
               onClick={(e) => {
                 if (e.target === e.currentTarget) onClose();
               }}

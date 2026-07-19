@@ -16,7 +16,7 @@ import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-sett
 import { buildXtermTheme } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
-import { cacheTerminal, getCached, removeCached, type CachedTerminal } from "./terminal-cache";
+import { cacheTerminal, removeCached, takeCached, type CachedTerminal } from "./terminal-cache";
 import { discardStaleCachedTerminal, getCachedTerminalRestorePlan } from "./terminal-restore";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 import { applyTerminalAppearance } from "./terminal-appearance";
@@ -52,7 +52,6 @@ const TERMINAL_PASTE_MIME_BY_EXTENSION = new Map([
 const TERMINAL_SCROLLBACK_LINES = 10_000;
 const TERMINAL_SCROLL_SENSITIVITY = 1;
 const TERMINAL_FAST_SCROLL_SENSITIVITY = 5;
-const TERMINAL_LIVE_TAIL_FROM_SEQ = Number.MAX_SAFE_INTEGER;
 const IMAGE_ADDON_OPTIONS: IImageAddonOptions = {
   enableSizeReports: false,
   pixelLimit: 4_194_304,
@@ -337,6 +336,27 @@ function applyXtermScrollOptions(term: Terminal): void {
   term.options.scrollOnUserInput = true;
 }
 
+function refreshTerminalRenderer(term: Terminal): void {
+  if (term.rows <= 0) {
+    return;
+  }
+  term.refresh(0, term.rows - 1);
+}
+
+type DisposableWebglAddon = { dispose: () => void };
+type CanonicalReplayRequest = {
+  mode: "cold-replay" | "cursor-resume";
+  requestedSeq: number;
+};
+
+function toDisposableWebglAddon(addon: unknown): DisposableWebglAddon | null {
+  if (!addon || typeof addon !== "object") {
+    return null;
+  }
+  const dispose = (addon as { dispose?: unknown }).dispose;
+  return typeof dispose === "function" ? (addon as DisposableWebglAddon) : null;
+}
+
 function terminalTelemetry(event: string, properties: Record<string, string | number | boolean | undefined>): void {
   const payload = {
     source: "terminal-pane",
@@ -438,7 +458,7 @@ export function TerminalPane({
   const onSessionAttachedRef = useRef(onSessionAttached);
   const shouldCacheOnUnmountRef = useRef(shouldCacheOnUnmount);
   const shouldDestroyOnUnmountRef = useRef(shouldDestroyOnUnmount);
-  const webglAddonRef = useRef<{ dispose: () => void } | null>(null);
+  const webglAddonRef = useRef<DisposableWebglAddon | null>(null);
   const webglContextLossDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const webglRecreateAttemptedRef = useRef(false);
   const onDataDisposableRef = useRef<{ dispose: () => void } | null>(null);
@@ -811,9 +831,8 @@ export function TerminalPane({
       };
 
       // Tears down only the context-loss subscription (the closure that drives
-      // DOM-renderer fallback). Safe to call on every cleanup path: on a cache
-      // for tab-switch the WebGL addon itself stays loaded on the retained
-      // terminal, while on a destroy path term.dispose() disposes the addon.
+      // DOM-renderer fallback). Cache paths dispose WebGL before detaching the
+      // xterm element; destroy paths let term.dispose() dispose loaded addons.
       const teardownWebglSubscription = () => {
         webglContextLossDisposableRef.current?.dispose();
         webglContextLossDisposableRef.current = null;
@@ -840,7 +859,7 @@ export function TerminalPane({
       }
 
       // Check cache first — instant tab switch
-      const cachedRestore = getCachedTerminalRestorePlan(getCached(paneId));
+      const cachedRestore = getCachedTerminalRestorePlan(takeCached(paneId));
       const cached = cachedRestore.cached;
       const canReuseCachedTerminal = cachedRestore.reuseTerminal;
       const canReuseCachedSocket = cachedRestore.reuseSocket;
@@ -953,27 +972,10 @@ export function TerminalPane({
         applyXtermScrollOptions(term);
         fitAddon = cached.fitAddon;
         searchAddon = cached.searchAddon;
-        webglAddon = cached.webglAddon;
-        // The cached terminal kept its WebGL addon loaded, but the old
-        // context-loss subscription was torn down on cache. Re-wire it (or
-        // re-create the renderer if a prior context loss left it on the DOM
-        // renderer).
-        webglAddonRef.current = (cached.webglAddon as { dispose: () => void } | null) ?? null;
-        if (webglDisabled && webglAddonRef.current) {
-          disposeWebgl();
-          webglAddon = null;
-        } else if (webglAddonRef.current) {
-          wireWebglContextLoss(
-            webglAddonRef.current as unknown as {
-              onContextLoss: (cb: () => void) => { dispose: () => void };
-            },
-          );
-        } else if (!webglDisabled) {
-          void enableWebgl().then((addon) => {
-            webglAddon = addon;
-          });
-        }
-        fitAddon.fit();
+        webglAddon = null;
+        // Cached terminals intentionally never retain WebGL. Restore starts on
+        // the DOM renderer, then re-enables WebGL after attach + fit.
+        webglAddonRef.current = null;
         termRef.current = cached.terminal;
         fitAddonRef.current = cached.fitAddon;
         searchAddonRef.current = cached.searchAddon;
@@ -981,7 +983,21 @@ export function TerminalPane({
         sessionIdRef.current = cachedRestore.sessionId;
         lastSeqRef.current = cachedRestore.lastSeq;
         hasReplayCursorRef.current = cachedRestore.hasReplayCursor;
+        let restoredFitSucceeded = false;
+        try {
+          fitAddon.fit();
+          sendTerminalResize(wsRef.current, term, allowRemoteResizeRef.current);
+          restoredFitSucceeded = true;
+        } catch (err: unknown) {
+          log("fit-failed", { message: err instanceof Error ? err.message : String(err) });
+        }
+        refreshTerminalRenderer(term);
         scheduleStableFit();
+        if (!webglDisabled && restoredFitSucceeded) {
+          void enableWebgl().then((addon) => {
+            webglAddon = addon;
+          });
+        }
       } else {
         // Cache miss — create fresh terminal
         // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower dynamic import() expressions; lazy-loading xterm this way is intentional code-splitting, not a defect.
@@ -1135,7 +1151,11 @@ export function TerminalPane({
       function bindWs(
         ws: WebSocket,
         attachOnOpen: boolean,
-        options: { alreadyAttached?: boolean; generation?: number } = {},
+        options: {
+          alreadyAttached?: boolean;
+          generation?: number;
+          replayRequest?: CanonicalReplayRequest;
+        } = {},
       ) {
         const generation = options.generation ?? wsGenerationRef.current + 1;
         wsGenerationRef.current = generation;
@@ -1314,11 +1334,16 @@ export function TerminalPane({
                 attachedSessionId: msg.sessionId,
                 state: msg.state,
                 exitCode: msg.exitCode ?? null,
-                fromSeq: msg.fromSeq,
+                replayMode: options.replayRequest?.mode,
+                requestedSeq: options.replayRequest?.requestedSeq,
+                acceptedSeq: msg.fromSeq,
               });
               track("attached", {
                 state: msg.state,
                 hasExitCode: msg.exitCode != null,
+                replayMode: options.replayRequest?.mode,
+                requestedSeq: options.replayRequest?.requestedSeq,
+                acceptedSeq: msg.fromSeq ?? undefined,
               });
               sessionIdRef.current = msg.sessionId;
               if (msg.fromSeq !== null) {
@@ -1426,14 +1451,24 @@ export function TerminalPane({
         }
       }
 
+      function getCanonicalReplayRequest(): CanonicalReplayRequest | undefined {
+        const currentSessionId = sessionIdRef.current;
+        return currentSessionId && isCanonicalShellSessionId(currentSessionId)
+          ? {
+              mode: hasReplayCursorRef.current ? "cursor-resume" : "cold-replay",
+              requestedSeq: hasReplayCursorRef.current ? lastSeqRef.current : 0,
+            }
+          : undefined;
+      }
+
       function connectWs() {
         const generation = wsGenerationRef.current + 1;
         wsGenerationRef.current = generation;
         const currentSessionId = sessionIdRef.current;
         const wsPath = terminalWebSocketPathForSession(currentSessionId);
-        const fromSeq = hasReplayCursorRef.current ? lastSeqRef.current : TERMINAL_LIVE_TAIL_FROM_SEQ;
+        const replayRequest = getCanonicalReplayRequest();
         const query = currentSessionId && isCanonicalShellSessionId(currentSessionId)
-          ? { session: currentSessionId, fromSeq: String(fromSeq) }
+          ? { session: currentSessionId, fromSeq: String(replayRequest?.requestedSeq ?? 0) }
           : currentSessionId || !cwd
             ? undefined
             : { cwd };
@@ -1443,6 +1478,8 @@ export function TerminalPane({
           wsPath,
           queryCwd,
           querySession,
+          replayMode: replayRequest?.mode,
+          requestedSeq: replayRequest?.requestedSeq,
           reconnectAttempt: reconnectAttemptRef.current,
         });
 
@@ -1487,13 +1524,14 @@ export function TerminalPane({
               previousWs.close();
             }
             const ws = new WebSocket(wsUrl);
-            bindWs(ws, true, { generation });
+            bindWs(ws, true, { generation, replayRequest });
           });
       }
 
       if (cached && canReuseCachedSocket) {
         bindWs(cached.ws, cached.ws.readyState === WebSocket.CONNECTING, {
           alreadyAttached: cached.ws.readyState === WebSocket.OPEN,
+          replayRequest: getCanonicalReplayRequest(),
         });
       } else {
         if (cached && !canReuseCachedTerminal) {
@@ -1627,10 +1665,9 @@ export function TerminalPane({
         clearReconnectTimer();
         clearPendingReconnectBanner();
         heartbeatRef.current?.stop();
-        // Drop the context-loss subscription on every path. On a cache (tab
-        // switch) the WebGL addon stays loaded on the retained terminal and is
-        // re-wired on reattach; on a destroy path term.dispose() below disposes
-        // the addon along with the terminal.
+        // Drop the context-loss subscription on every path. Cache paths dispose
+        // the live WebGL renderer before detaching the retained xterm element;
+        // destroy paths let term.dispose() dispose loaded addons.
         teardownWebglSubscription();
         onDataDisposableRef.current?.dispose();
         onDataDisposableRef.current = null;
@@ -1666,6 +1703,13 @@ export function TerminalPane({
         } else if (wsRef.current) {
           // Tab switch — cache the terminal for instant restore
           log("cleanup-cache-terminal");
+          const retainedWebglAddon = webglAddonRef.current ?? toDisposableWebglAddon(webglAddon);
+          if (retainedWebglAddon && !webglAddonRef.current) {
+            webglAddonRef.current = retainedWebglAddon;
+          }
+          log("webgl-disposed-before-cache", { hadWebgl: Boolean(retainedWebglAddon) });
+          disposeWebgl();
+          webglAddon = null;
           const termElement = (term as { element?: HTMLElement }).element;
           if (termElement?.parentNode) {
             termElement.parentNode.removeChild(termElement);
@@ -1676,10 +1720,7 @@ export function TerminalPane({
           cacheTerminal(paneId, {
             terminal: term,
             fitAddon,
-            // The live addon ref is authoritative: it tracks the renderer
-            // through any context-loss re-create that may have replaced the
-            // addon captured in the local `webglAddon` binding.
-            webglAddon: webglAddonRef.current ?? webglAddon,
+            webglAddon: null,
             searchAddon,
             ws: wsRef.current,
             lastSeq: lastSeqRef.current,

@@ -63,14 +63,14 @@ bun run docker
 |-----|-----------------|---------|
 | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) | Kernel AI (Claude Agent SDK) |
 
-### Required for local shell/www development (outside Docker)
+### Required for local shell development (outside Docker)
 
 | Key | Where to get it | Used by |
 |-----|-----------------|---------|
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | [clerk.com](https://clerk.com) -- create a dev instance | Shell + www auth |
-| `CLERK_SECRET_KEY` | Same Clerk dashboard | Shell + www server-side auth |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | [clerk.com](https://clerk.com) -- create a dev instance | Shell auth |
+| `CLERK_SECRET_KEY` | Same Clerk dashboard | Shell server-side auth |
 
-The Docker image has Clerk baked in at build time, so you don't need Clerk keys for Docker-based development. You only need these if you run the shell or www locally with `bun run dev:shell` or `bun run dev:www`.
+The Docker image has Clerk baked in at build time, so you don't need Clerk keys for Docker-based development. You only need these if you run the shell locally with `bun run dev:shell`.
 
 ### Optional
 
@@ -87,7 +87,6 @@ The Docker image has Clerk baked in at build time, so you don't need Clerk keys 
 | `.env.docker` | Docker dev (created by `flox activate`, or copy from `.env.docker.example`) |
 | `.env` | Local dev without Docker (copy from `.env.example`) |
 | `shell/.env` | Shell-specific (Clerk keys, copy from `shell/.env.example`) |
-| `www/.env` | Website (Clerk keys, copy from `www/.env.example`) |
 
 ## Local Dev Without Docker
 
@@ -114,7 +113,6 @@ This starts the gateway (:4000) and shell (:3000) with HMR.
 | `packages/proxy/` | Shared API proxy, usage tracking |
 | `packages/ui/` | Shared UI components |
 | `shell/` | Next.js 16 desktop shell frontend |
-| `www/` | matrix-os.com website (Vercel) |
 | `home/` | File system template (copied to `~/matrixos/` on first boot) |
 | `specs/` | Architecture and feature specs |
 | `tests/` | Vitest test suites |

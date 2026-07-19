@@ -99,7 +99,12 @@ describe('platform/customer-vps-routes', () => {
     const accepted = await app.request('/vps/preview/provision', {
       method: 'POST',
       headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ clerkUserId: 'user_123', handle: 'pr-897', runtimeSlot: 'pr-897' }),
+      body: JSON.stringify({
+        clerkUserId: 'user_123',
+        handle: 'pr-897',
+        runtimeSlot: 'pr-897',
+        accessClerkUserIds: ['user_456'],
+      }),
     });
 
     expect(accepted.status).toBe(202);
@@ -108,6 +113,7 @@ describe('platform/customer-vps-routes', () => {
       clerkUserId: 'user_123',
       handle: 'pr-897',
       runtimeSlot: 'pr-897',
+      accessClerkUserIds: ['user_456'],
     });
     expect(provision).not.toHaveBeenCalled();
 
@@ -119,6 +125,31 @@ describe('platform/customer-vps-routes', () => {
     });
     expect(failed.status).toBe(500);
     expect(await failed.json()).toEqual({ error: 'Provisioning failed' });
+  });
+
+  it('rejects duplicate, owner, and oversized preview collaborator lists', async () => {
+    const app = createApp();
+    const headers = { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' };
+    const invalidAccessLists = [
+      ['user_456', 'user_456'],
+      ['user_123'],
+      Array.from({ length: 9 }, (_, index) => `user_${index + 200}`),
+    ];
+
+    for (const accessClerkUserIds of invalidAccessLists) {
+      const response = await app.request('/vps/preview/provision', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          clerkUserId: 'user_123',
+          handle: 'pr-897',
+          runtimeSlot: 'pr-897',
+          accessClerkUserIds,
+        }),
+      });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: 'Invalid request' });
+    }
   });
 
   it('rejects oversized preview provision bodies before parsing', async () => {

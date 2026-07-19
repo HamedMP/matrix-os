@@ -14,7 +14,7 @@ import { bodyLimit } from 'hono/body-limit';
 
 import type { ClerkAuth } from './clerk-auth.js';
 import {
-  getRunningUserMachineByClerkId,
+  getAccessibleRunningUserMachineByClerkId,
   type PlatformDB,
 } from './db.js';
 import {
@@ -336,7 +336,7 @@ export function createComputerRoutes(opts: {
     }
 
     try {
-      const machine = await getRunningUserMachineByClerkId(
+      const machine = await getAccessibleRunningUserMachineByClerkId(
         opts.db,
         identity.userId,
         parsedBody.data.slot,

@@ -15,6 +15,9 @@ import {
   CodingAgentNotificationPreferencesUpdateSchema,
   CodingAgentProjectCreateRequestSchema,
   CodingAgentProjectCreateResponseSchema,
+  CreateAgentTurnErrorSchema,
+  CreateAgentTurnRequestSchema,
+  CreateAgentTurnResponseSchema,
   CursorSchema,
   FileBrowseRequestSchema,
   FileBrowseResponseSchema,
@@ -24,6 +27,8 @@ import {
   FileSearchResponseSchema,
   FileWriteRequestSchema,
   FileWriteResponseSchema,
+  ProjectAgentWorkspaceSchema,
+  ProjectIdSchema,
   RequestIdSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
@@ -33,9 +38,12 @@ import {
   SourceControlCreatePullRequestResponseSchema,
   SourceControlPrepareCommitRequestSchema,
   SourceControlPrepareCommitResponseSchema,
+  TaskIdSchema,
   ThreadIdSchema,
   UserInputAnswerRequestSchema,
   type CreateAgentThreadRequest,
+  type CreateAgentTurnRequest,
+  type CreateAgentTurnResponse,
   type AgentThreadEvent,
   type CodingAgentNotificationPreferences,
   type CodingAgentNotificationPreferencesUpdate,
@@ -49,6 +57,7 @@ import {
   type FileSearchResponse,
   type FileWriteRequest,
   type FileWriteResponse,
+  type ProjectAgentWorkspace,
   type ReviewSnapshot,
   type RuntimeSummary,
   type SourceControlCreatePullRequestRequest,
@@ -149,6 +158,30 @@ export type ProjectCreateResult =
   | ({ ok: true } & CodingAgentProjectCreateResponse)
   | { ok: false; error: "Project could not be created. Try again." };
 
+export type CodingAgentProjectWorkspaceResult =
+  | { ok: true; workspace: ProjectAgentWorkspace }
+  | { ok: false; error: "Project workspace unavailable" };
+
+export interface CodingAgentProjectWorkspaceOptions {
+  projectId: string;
+  taskCursor?: string;
+  taskLimit?: number;
+  projectThreadCursor?: string;
+  projectThreadLimit?: number;
+  taskThreadCursor?: string;
+  taskThreadLimit?: number;
+}
+
+const CodingAgentProjectWorkspaceOptionsSchema = z.object({
+  projectId: ProjectIdSchema,
+  taskCursor: TaskIdSchema.optional(),
+  taskLimit: z.number().int().min(1).max(100).optional(),
+  projectThreadCursor: ThreadIdSchema.optional(),
+  projectThreadLimit: z.number().int().min(1).max(100).optional(),
+  taskThreadCursor: ThreadIdSchema.optional(),
+  taskThreadLimit: z.number().int().min(1).max(100).optional(),
+}).strict();
+
 const CodingAgentNotificationPreferencesRouteResponseSchema = z.object({
   preferences: CodingAgentNotificationPreferencesSchema,
 }).strict();
@@ -164,6 +197,14 @@ export type CodingAgentNotificationPreferencesUpdateResult =
 export type CodingAgentThreadCreateResult =
   | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
   | { ok: false; error: "Agent run could not be started. Try again." };
+
+export type CodingAgentTurnCreateResult =
+  | { ok: true; turn: CreateAgentTurnResponse }
+  | {
+    ok: false;
+    error: "Conversation is busy. Refresh and try again." | "Message could not be sent. Refresh and try again.";
+    reason: "busy" | "unavailable";
+  };
 
 export type CodingAgentThreadSnapshotResult =
   | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
@@ -932,6 +973,40 @@ export class GatewayClient {
     }
   }
 
+  async getCodingAgentProjectWorkspace(
+    options: CodingAgentProjectWorkspaceOptions,
+  ): Promise<CodingAgentProjectWorkspaceResult> {
+    try {
+      const parsedOptions = CodingAgentProjectWorkspaceOptionsSchema.safeParse(options);
+      if (!parsedOptions.success) {
+        return { ok: false, error: "Project workspace unavailable" };
+      }
+      const { projectId, ...pageOptions } = parsedOptions.data;
+      const query = new URLSearchParams();
+      for (const [key, value] of Object.entries(pageOptions)) {
+        if (value !== undefined) query.set(key, String(value));
+      }
+      const queryString = query.toString();
+      const res = await this.fetchGateway(
+        `/api/coding-agents/projects/${encodeURIComponent(projectId)}/workspace${queryString ? `?${queryString}` : ""}`,
+      );
+      if (!res.ok) {
+        logCodingAgentStatusWarning("/api/coding-agents/projects/:projectId/workspace unavailable", res.status);
+        return { ok: false, error: "Project workspace unavailable" };
+      }
+      const body = await res.json();
+      const parsed = ProjectAgentWorkspaceSchema.safeParse(body);
+      if (!parsed.success) {
+        logCodingAgentParseWarning("/api/coding-agents/projects/:projectId/workspace returned invalid payload");
+        return { ok: false, error: "Project workspace unavailable" };
+      }
+      return { ok: true, workspace: parsed.data };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/projects/:projectId/workspace unavailable", err);
+      return { ok: false, error: "Project workspace unavailable" };
+    }
+  }
+
   async getCodingAgentNotificationPreferences(): Promise<CodingAgentNotificationPreferencesResult> {
     try {
       const res = await this.fetchGateway("/api/coding-agents/notification-preferences");
@@ -1003,6 +1078,54 @@ export class GatewayClient {
     } catch (err: unknown) {
       logCodingAgentCatchWarning("/api/coding-agents/threads unavailable", err);
       return { ok: false, error: "Agent run could not be started. Try again." };
+    }
+  }
+
+  async createCodingAgentTurn(options: {
+    threadId: string;
+    request: CreateAgentTurnRequest;
+  }): Promise<CodingAgentTurnCreateResult> {
+    const unavailable = (): CodingAgentTurnCreateResult => ({
+      ok: false,
+      error: "Message could not be sent. Refresh and try again.",
+      reason: "unavailable",
+    });
+    try {
+      const parsedThreadId = ThreadIdSchema.safeParse(options.threadId);
+      const parsedRequest = CreateAgentTurnRequestSchema.safeParse(options.request);
+      if (!parsedThreadId.success || !parsedRequest.success) return unavailable();
+      const res = await this.fetchGateway(
+        `/api/coding-agents/threads/${encodeURIComponent(parsedThreadId.data)}/turns`,
+        {
+          method: "POST",
+          body: JSON.stringify(parsedRequest.data),
+        },
+      );
+      const body: unknown = await res.json();
+      if (!res.ok) {
+        const errorPayload = body && typeof body === "object" && "error" in body
+          ? (body as { error: unknown }).error
+          : body;
+        const parsedError = CreateAgentTurnErrorSchema.safeParse(errorPayload);
+        if (res.status === 409 && parsedError.success && parsedError.data.code === "thread_busy") {
+          return {
+            ok: false,
+            error: "Conversation is busy. Refresh and try again.",
+            reason: "busy",
+          };
+        }
+        logCodingAgentStatusWarning("/api/coding-agents/threads/:threadId/turns unavailable", res.status);
+        return unavailable();
+      }
+      const parsed = CreateAgentTurnResponseSchema.safeParse(body);
+      if (!parsed.success || parsed.data.threadId !== parsedThreadId.data) {
+        logCodingAgentParseWarning("/api/coding-agents/threads/:threadId/turns returned invalid payload");
+        return unavailable();
+      }
+      return { ok: true, turn: parsed.data };
+    } catch (err: unknown) {
+      logCodingAgentCatchWarning("/api/coding-agents/threads/:threadId/turns unavailable", err);
+      return unavailable();
     }
   }
 
