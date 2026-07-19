@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ShellRegistry } from "../../packages/gateway/src/shell/registry.js";
+import { inferAgentFromCommand, ShellRegistry } from "../../packages/gateway/src/shell/registry.js";
 import { AgentSessionStateStore } from "../../packages/gateway/src/shell/agent-session-state.js";
 
 const roots: string[] = [];
@@ -57,6 +57,43 @@ describe("shell registry", () => {
     await listPromise;
 
     expect(startedConcurrently).toBe(true);
+  });
+
+  it("bounds concurrent session decoration while preserving response order", async () => {
+    const root = await tempRoot();
+    const sessionNames = Array.from({ length: 12 }, (_, index) => `session-${String(index).padStart(2, "0")}`);
+    let activeLookups = 0;
+    let peakLookups = 0;
+    let releaseLookups = () => {};
+    const lookupGate = new Promise<void>((resolve) => {
+      releaseLookups = resolve;
+    });
+    const adapter = {
+      listSessions: vi.fn(async () => sessionNames),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+      focusedPaneCwd: vi.fn(async () => {
+        activeLookups += 1;
+        peakLookups = Math.max(peakLookups, activeLookups);
+        await lookupGate;
+        activeLookups -= 1;
+        return null;
+      }),
+    };
+    const registry = new ShellRegistry({
+      homePath: root,
+      adapter,
+      gitContextResolver: { resolve: vi.fn(async () => null) },
+    });
+
+    const listPromise = registry.list();
+    await vi.waitFor(() => expect(adapter.focusedPaneCwd).toHaveBeenCalledTimes(8));
+    expect(peakLookups).toBe(8);
+    releaseLookups();
+
+    const sessions = await listPromise;
+    expect(sessions.map((session) => session.name)).toEqual(sessionNames);
+    expect(adapter.focusedPaneCwd).toHaveBeenCalledTimes(sessionNames.length);
   });
 
   it("adds gateway-owned project and Git context while preserving the session cwd", async () => {
@@ -124,6 +161,7 @@ describe("shell registry", () => {
   it.each([
     ["claude --resume", "claude"],
     ["env FOO=bar codex --full-auto", "codex"],
+    ["/usr/bin/env --ignore-environment FOO=bar codex --full-auto", "codex"],
     ["opencode .", "opencode"],
     ["pi", "pi"],
   ] as const)("infers %s as a recognized agent launch", async (cmd, expectedAgent) => {
@@ -139,6 +177,10 @@ describe("shell registry", () => {
     await expect(registry.create({ name: "calm-otter", cmd })).resolves.toMatchObject({
       agent: expectedAgent,
     });
+  });
+
+  it("does not skip arbitrary leading command flags when inferring an agent", () => {
+    expect(inferAgentFromCommand("--unsafe codex")).toBeUndefined();
   });
 
   it("uses agent lifecycle evidence before a long-running outer CLI process", async () => {

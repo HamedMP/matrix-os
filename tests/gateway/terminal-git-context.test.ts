@@ -134,4 +134,21 @@ describe("terminal Git context", () => {
     await expect(resolver.resolve({ sessionName: "plain-shell", cwd })).resolves.toBeNull();
     expect(runCommand).toHaveBeenCalledTimes(1);
   });
+
+  it("retries a cache loader after an unexpected metadata read failure", async () => {
+    const homePath = await tempRoot();
+    const systemPath = join(homePath, "system");
+    const sessionsPath = join(systemPath, "sessions");
+    await mkdir(systemPath, { recursive: true });
+    await writeFile(sessionsPath, "not a directory");
+    const resolver = new TerminalGitContextResolver({ homePath, runCommand: vi.fn() });
+
+    await expect(resolver.resolve({ sessionName: "plain-shell" })).rejects.toMatchObject({
+      code: "ENOTDIR",
+    });
+
+    await rm(sessionsPath);
+    await mkdir(sessionsPath);
+    await expect(resolver.resolve({ sessionName: "plain-shell" })).resolves.toBeNull();
+  });
 });

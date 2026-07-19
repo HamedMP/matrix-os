@@ -112,7 +112,13 @@ class BoundedTtlCache<T> {
       if (!oldest) break;
       this.entries.delete(oldest);
     }
-    const value = loader();
+    const pending = Promise.resolve().then(loader);
+    const value = pending.catch((error: unknown) => {
+      if (this.entries.get(key)?.value === value) {
+        this.entries.delete(key);
+      }
+      throw error;
+    });
     this.entries.set(key, { expiresAt: this.now() + this.ttlMs, value });
     return value;
   }

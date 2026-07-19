@@ -27,6 +27,7 @@ const ShellSessionReferenceSchema = z.object({
   sessionName: z.string().regex(SESSION_NAME_PATTERN),
 });
 const SHELL_RUNNING_FALLBACK_WINDOW_MS = 12_000;
+const MAX_CONCURRENT_SESSION_DECORATIONS = 8;
 
 export interface ShellRegistryAdapter {
   listSessions(): Promise<string[]>;
@@ -640,7 +641,20 @@ export class ShellRegistry {
   }
 
   private async decorateSessions(sessions: PersistedShellSession[], file?: RegistryFile): Promise<ShellSession[]> {
-    return Promise.all(sessions.map((session) => this.decorateSession(session, file)));
+    const decorated: ShellSession[] = new Array(sessions.length);
+    let nextIndex = 0;
+    const workers = Array.from(
+      { length: Math.min(MAX_CONCURRENT_SESSION_DECORATIONS, sessions.length) },
+      async () => {
+        while (nextIndex < sessions.length) {
+          const index = nextIndex;
+          nextIndex += 1;
+          decorated[index] = await this.decorateSession(sessions[index], file);
+        }
+      },
+    );
+    await Promise.all(workers);
+    return decorated;
   }
 
   private withRecoverableReferences(
@@ -834,10 +848,11 @@ export function inferAgentFromCommand(command: string | undefined): AgentKind | 
     token.replace(/^(?:"(.*)"|'(.*)')$/, "$1$2")
   )) ?? [];
   let index = 0;
-  if (tokens[index] === "env") index += 1;
+  const usesEnv = tokens[index]?.split("/").pop() === "env";
+  if (usesEnv) index += 1;
   while (
     index < tokens.length &&
-    (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index]) || tokens[index].startsWith("-"))
+    (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index]) || (usesEnv && tokens[index].startsWith("-")))
   ) {
     index += 1;
   }
