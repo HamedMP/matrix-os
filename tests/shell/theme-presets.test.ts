@@ -143,7 +143,7 @@ describe("design system presets", () => {
     {
       name: "macos-glass",
       style: "macos-glass",
-      mode: "dark",
+      mode: "light",
       radius: "0.875rem",
       fontFragment: "SF Pro Text",
       primary: "#0A84FF",
@@ -192,5 +192,23 @@ describe("design system presets", () => {
     for (const preset of DESIGN_SYSTEM_PRESETS) {
       expect(THEME_PRESETS).toContain(preset);
     }
+  });
+
+  it("macos-glass is a faithful light macOS theme", () => {
+    const preset = getPreset("macos-glass");
+    expect(preset).toBeDefined();
+    expect(preset!.mode).toBe("light");
+    expect(preset!.colors).toMatchObject({
+      background: "#F5F5F7",
+      foreground: "#1D1D1F",
+      card: "#FFFFFF",
+      popover: "#FFFFFF",
+      primary: "#0A84FF",
+      "primary-foreground": "#FFFFFF",
+      "muted-foreground": "#6E6E73",
+      border: "#D1D1D6",
+      input: "#D1D1D6",
+      ring: "#0A84FF",
+    });
   });
 });

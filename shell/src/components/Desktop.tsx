@@ -31,6 +31,8 @@ import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
 import { MenuBar } from "./MenuBar";
+import { WindowsTaskbar } from "./taskbar/WindowsTaskbar";
+import { useThemeStyle } from "./window/useThemeStyle";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -788,6 +790,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const visibleModes = useDesktopMode((s) => s.visibleModes);
   const getModeConfig = useDesktopMode((s) => s.getModeConfig);
   const modeConfig = getModeConfig(desktopMode);
+  const themeStyle = useThemeStyle();
+  // Windows designs replace the mac menu bar + dock with a bottom taskbar.
+  const isWindowsDesign = themeStyle === "winxp" || themeStyle === "win11";
   const visibleWindowCount = windows.reduce((count, w) => count + (w.minimized ? 0 : 1), 0);
   // Developer Fast Path dashboard removed (off-brand + redundant with the
   // new Set up your workspace checklist). Dev mode opens to the terminal.
@@ -1064,6 +1069,13 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     return () => window.removeEventListener("keydown", onKey);
   }, [fullscreenWindowId, wmExitFullscreen]);
 
+  const canvasToolbarChild = desktopMode === "canvas" ? (
+    <CanvasToolbar
+      guideVisible={manualSetupVisible}
+      onOpenGuide={() => setManualSetupVisible(true)}
+    />
+  ) : null;
+
   if (firstRunStatus === "checking") {
     return (
       <TooltipProvider delayDuration={300}>
@@ -1081,17 +1093,27 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         <RuntimeIdentityBanner />
         <ConnectionIndicator />
       </ShellNotificationStack>
-      <MenuBar onOpenCommandPalette={onOpenCommandPalette ?? (() => {})} onNewWindow={() => openWindow("Terminal", "__terminal__")} onMinimizeWindow={animateMinimize} onOpenSettings={() => { setSettingsOpen(true); setTaskBoardOpen(false); setChatOpen(false); }}>
-        {desktopMode === "canvas" ? (
-          <CanvasToolbar
-            guideVisible={manualSetupVisible}
-            onOpenGuide={() => setManualSetupVisible(true)}
-          />
-        ) : null}
-      </MenuBar>
-      <div className="relative flex-1 flex flex-col md:flex-row md:pt-8">
+      {isWindowsDesign ? (
+        <WindowsTaskbar
+          themeStyle={themeStyle}
+          apps={apps}
+          windows={windows}
+          onOpenApp={(path, name) => focusOrOpen(name ?? apps.find((a) => a.path === path)?.name ?? "App", path)}
+          onFocusWindow={(id) => { wmRestoreAndFocusWindow(id); focusCanvasWindow(id); }}
+          onMinimizeWindow={animateMinimize}
+          onOpenSettings={() => { setSettingsOpen(true); setTaskBoardOpen(false); setChatOpen(false); }}
+          onOpenCommandPalette={onOpenCommandPalette ?? (() => {})}
+        >
+          {canvasToolbarChild}
+        </WindowsTaskbar>
+      ) : (
+        <MenuBar onOpenCommandPalette={onOpenCommandPalette ?? (() => {})} onNewWindow={() => openWindow("Terminal", "__terminal__")} onMinimizeWindow={animateMinimize} onOpenSettings={() => { setSettingsOpen(true); setTaskBoardOpen(false); setChatOpen(false); }}>
+          {canvasToolbarChild}
+        </MenuBar>
+      )}
+      <div className={isWindowsDesign ? "relative flex-1 flex flex-col md:flex-row" : "relative flex-1 flex flex-col md:flex-row md:pt-8"}>
         {/* Desktop dock -- hidden in ambient/conversational modes. */}
-        {modeConfig.showDock && <div
+        {modeConfig.showDock && !isWindowsDesign && <div
           className={[
             "hidden md:block fixed z-[55]",
             dock.position === "left" && "left-0 top-0 h-full",

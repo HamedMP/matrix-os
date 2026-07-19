@@ -4,14 +4,37 @@ import { useState, useEffect, useEffectEvent, useRef } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useIsClient } from "@/hooks/useIsClient";
-import { SearchIcon, UserIcon } from "lucide-react";
+import { BatteryFullIcon, SearchIcon, UserIcon, WifiIcon } from "lucide-react";
 import { AppSettingsDialog } from "./AppSettingsDialog";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { UserButton } from "./UserButton";
 import { ModeSwitcherBar } from "./ModeSwitcherBar";
 import { isSelfHostedDocument } from "@/lib/self-host-mode";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { useThemeStyle } from "./window/useThemeStyle";
 
 const FALLBACK_APP_ICON = "/icon-192.png";
+
+/** Apple glyph rendered in currentColor for the macOS-glass menu bar. */
+function AppleLogoIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+      <path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.03 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.702" />
+    </svg>
+  );
+}
+
+/** macOS Control Center glyph: two stacked toggle pills. */
+function ControlCenterIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true" className={className}>
+      <rect x="2.5" y="4.5" width="19" height="6.5" rx="3.25" />
+      <circle cx="7.5" cy="7.75" r="2" fill="currentColor" stroke="none" />
+      <rect x="2.5" y="13" width="19" height="6.5" rx="3.25" />
+      <circle cx="16.5" cy="16.25" r="2" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
 
 function getBaseAppPath(path: string | null | undefined): string | null {
   if (!path) {
@@ -35,7 +58,20 @@ function formatMenuBarClock(date: Date): string {
   return `${day} ${month} ${dayNum}  ${time}`;
 }
 
-function MenuBarClock() {
+/** macOS menu-bar clock: "Fri 17 Jul  21:45" (weekday, day, month, 24h time). */
+function formatMacMenuBarClock(date: Date): string {
+  const day = date.toLocaleDateString("en-US", { weekday: "short" });
+  const month = date.toLocaleDateString("en-US", { month: "short" });
+  const dayNum = date.getDate();
+  const time = date.toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return `${day} ${dayNum} ${month}  ${time}`;
+}
+
+function MenuBarClock({ format = formatMenuBarClock }: { format?: (date: Date) => string }) {
   // SSR-safe wall clock: useIsClient is false during SSR/hydration (so the server and the first
   // client render both emit the non-breaking-space placeholder) and true on the client. The
   // displayed time is derived during render from a `tick` counter that the interval bumps, so the
@@ -60,7 +96,7 @@ function MenuBarClock() {
   }, [isClient, tick]);
 
   return (
-    <span className="tabular-nums whitespace-pre">{now ? formatMenuBarClock(now) : "\u00A0"}</span>
+    <span className="tabular-nums whitespace-pre">{now ? format(now) : "\u00A0"}</span>
   );
 }
 
@@ -139,12 +175,16 @@ function MenuDropdown({
   open,
   onToggle,
   onClose,
+  bold,
+  ariaLabel,
 }: {
-  label: string;
+  label: React.ReactNode;
   items: MenuEntry[];
   open: boolean;
   onToggle: () => void;
   onClose: () => void;
+  bold?: boolean;
+  ariaLabel?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const onCloseEvent = useEffectEvent(onClose);
@@ -170,7 +210,8 @@ function MenuDropdown({
       <button
         type="button"
         onClick={onToggle}
-        className={`px-2 py-0.5 rounded text-foreground/60 ${open ? "bg-foreground/10 text-foreground/90" : "hover:bg-foreground/10"}`}
+        aria-label={ariaLabel}
+        className={`px-2 py-0.5 rounded ${bold ? "font-semibold text-foreground/80" : "text-foreground/60"} ${open ? "bg-foreground/10 text-foreground/90" : "hover:bg-foreground/10"}`}
       >
         {label}
       </button>
@@ -207,6 +248,8 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, o
   const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
   const closeWindow = useWindowManager((s) => s.closeWindow);
   const wmMinimize = useWindowManager((s) => s.minimizeWindow);
+  const themeStyle = useThemeStyle();
+  const isMacGlass = themeStyle === "macos-glass";
   const minimizeWindow = onMinimizeWindow ?? wmMinimize;
   const focusedWindow = focusedWindowId
     ? windows.find((w) => w.id === focusedWindowId && !w.minimized)
@@ -274,8 +317,93 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, o
     { label: "Command Palette", shortcut: "⌘K", action: onOpenCommandPalette },
   ];
 
+  /* macOS-glass only: Apple menu (system-level affordances), Window menu
+     (window management), Help menu (discoverability). Every item is wired to
+     an existing working handler — no decorative menus. */
+  const appleItems: MenuEntry[] = onOpenSettings
+    ? [
+        { label: "System Settings…", action: onOpenSettings },
+        { separator: true },
+        { label: "Command Palette", shortcut: "⌘K", action: onOpenCommandPalette },
+      ]
+    : [{ label: "Command Palette", shortcut: "⌘K", action: onOpenCommandPalette }];
+
+  const windowItems: MenuEntry[] = [
+    { label: "Minimize", shortcut: "⌘M", action: () => { if (focusedWindow) minimizeWindow(focusedWindow.id); } },
+    { label: "Zoom", action: () => {
+      if (!focusedWindow) return;
+      useWindowManager.getState().toggleFullscreen(focusedWindow.id);
+    }},
+  ];
+
+  const helpItems: MenuEntry[] = [
+    { label: "Matrix OS Help", shortcut: "⌘K", action: onOpenCommandPalette },
+  ];
+
+  const macGlassMenuBar = isMacGlass ? (
+    <header data-menu-bar className="fixed top-0 inset-x-0 hidden md:grid grid-cols-[1fr_auto_1fr] h-8 items-center px-3 text-[13px] leading-8 select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm" style={{ zIndex: SHELL_Z_INDEX.menuBar }}>
+      {/* Left: Apple menu + bold app menu + global menus */}
+      <div className="flex items-center gap-0.5 font-medium">
+        <MenuDropdown label={<AppleLogoIcon className="size-3.5" />} ariaLabel="Apple menu" items={appleItems} open={openMenu === "apple"} onToggle={() => toggleMenu("apple")} onClose={closeMenu} />
+        <MenuDropdown label={activeAppName} items={appItems} open={openMenu === "app"} onToggle={() => toggleMenu("app")} onClose={closeMenu} bold />
+        <MenuDropdown label="File" items={fileItems} open={openMenu === "file"} onToggle={() => toggleMenu("file")} onClose={closeMenu} />
+        <MenuDropdown label="Edit" items={editItems} open={openMenu === "edit"} onToggle={() => toggleMenu("edit")} onClose={closeMenu} />
+        <MenuDropdown label="View" items={viewItems} open={openMenu === "view"} onToggle={() => toggleMenu("view")} onClose={closeMenu} />
+        <MenuDropdown label="Window" items={windowItems} open={openMenu === "window"} onToggle={() => toggleMenu("window")} onClose={closeMenu} />
+        <MenuDropdown label="Help" items={helpItems} open={openMenu === "help"} onToggle={() => toggleMenu("help")} onClose={closeMenu} />
+      </div>
+
+      {/* Center: mode switcher + contextual toolbar controls — always centered via grid */}
+      <div className="flex items-center gap-0.5 text-foreground/70 [&_button]:text-foreground/60 [&_button:hover]:text-foreground/90 [&_button]:transition-colors [&_.w-px]:bg-foreground/10 [&_.w-px]:h-3">
+        <ModeSwitcherBar />
+        {children}
+      </div>
+
+      {/* Right: status icons + Control Center + clock + fast-user-switching avatar */}
+      <div className="flex items-center gap-0.5 justify-end text-foreground/70">
+        <span className="flex items-center px-1" aria-hidden="true">
+          <BatteryFullIcon className="size-4" />
+        </span>
+        <span className="flex items-center px-1" aria-hidden="true">
+          <WifiIcon className="size-3.5" />
+        </span>
+        <button
+          type="button"
+          className="px-1.5 py-0.5 rounded hover:bg-foreground/10"
+          onClick={onOpenCommandPalette}
+          title="Spotlight (Cmd+K)"
+          aria-label="Spotlight search"
+        >
+          <SearchIcon className="size-3.5" />
+        </button>
+        {onOpenSettings ? (
+          <button
+            type="button"
+            className="px-1.5 py-0.5 rounded hover:bg-foreground/10"
+            onClick={onOpenSettings}
+            title="Control Center"
+            aria-label="Control Center"
+          >
+            <ControlCenterIcon className="size-3.5" />
+          </button>
+        ) : (
+          <span className="flex items-center px-1" aria-hidden="true">
+            <ControlCenterIcon className="size-3.5" />
+          </span>
+        )}
+        <button type="button" className="px-2 py-0.5 rounded hover:bg-foreground/10 text-foreground/80">
+          <MenuBarClock format={formatMacMenuBarClock} />
+        </button>
+        <div className="pl-0.5">
+          <MenuBarUser onOpenSettings={onOpenSettings} />
+        </div>
+      </div>
+    </header>
+  ) : null;
+
   return (
     <>
+      {macGlassMenuBar ?? (
       <header data-menu-bar className="fixed top-0 inset-x-0 z-[60] hidden md:grid grid-cols-[1fr_auto_1fr] h-8 items-center px-3 text-[13px] leading-8 select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm">
         {/* Left: app icon + app menu + global menus */}
         <div className="flex items-center gap-0.5">
@@ -324,6 +452,7 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, o
           </div>
         </div>
       </header>
+      )}
       <AppSettingsDialog
         open={appSettingsOpen}
         onOpenChange={setAppSettingsOpen}

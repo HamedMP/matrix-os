@@ -4,6 +4,11 @@ import { useState } from "react";
 import { CheckIcon } from "lucide-react";
 import { DEFAULT_THEME, saveTheme, useTheme, type Theme } from "@/hooks/useTheme";
 import {
+  saveDesktopConfigPatch,
+  type DesktopConfig,
+  type DesktopConfigPatch,
+} from "@/hooks/useDesktopConfig";
+import {
   getPreset,
   MACOS_GLASS_THEME,
   RETRO_THEME,
@@ -33,6 +38,23 @@ const DESIGN_OPTIONS: DesignOption[] = [
   { id: "winxp", label: "Windows XP", theme: WINXP_THEME },
   { id: "win11", label: "Windows 11", theme: WIN11_THEME },
 ];
+
+/* ── Per-design desktop defaults ───────────────── */
+
+/** Bundled wallpapers applied when a design is picked. Designs missing from
+    this map leave the user's background (and dock) untouched. */
+const DESIGN_BACKGROUNDS: Partial<Record<DesignStyle, DesktopConfig["background"]>> = {
+  // Product default: macOS deliberately starts on the first image shown in
+  // Appearance. macos-light.svg remains available as a user-selectable image.
+  "macos-glass": { type: "wallpaper", name: "moraine-lake.jpg" },
+  winxp: { type: "wallpaper", name: "xp-bliss.svg" },
+  win11: { type: "wallpaper", name: "win11-bloom.svg" },
+};
+
+/** Designs that also move the dock to match their OS's real placement. */
+const DESIGN_DOCK_POSITIONS: Partial<Record<DesignStyle, DesktopConfig["dock"]["position"]>> = {
+  "macos-glass": "bottom",
+};
 
 /* ── Pure-CSS preview swatches ─────────────────── */
 
@@ -102,8 +124,8 @@ const GLASS_PANEL_STYLE: React.CSSProperties = {
   margin: "8px auto 0",
   width: "74%",
   height: "100%",
-  background: "rgba(255, 255, 255, 0.12)",
-  border: "1px solid rgba(255, 255, 255, 0.28)",
+  background: "rgba(255, 255, 255, 0.55)",
+  border: "1px solid rgba(0, 0, 0, 0.08)",
   borderRadius: 8,
   backdropFilter: "blur(6px)",
   padding: 5,
@@ -115,14 +137,14 @@ function trafficDot(color: string): React.CSSProperties {
 
 function MacosGlassPreview() {
   return (
-    <PreviewFrame style={{ background: "linear-gradient(135deg, #171724 0%, #2C2C44 60%, #3B3B55 100%)" }}>
+    <PreviewFrame style={{ background: "linear-gradient(135deg, #A8C0E8 0%, #C9BFE3 55%, #EFC7D3 100%)" }}>
       <div style={GLASS_PANEL_STYLE}>
         <div style={{ display: "flex", gap: 3 }}>
           <span style={trafficDot("#FF5F57")} />
           <span style={trafficDot("#FEBC2E")} />
           <span style={trafficDot("#28C840")} />
         </div>
-        <div style={{ height: 4, width: "55%", background: "rgba(255, 255, 255, 0.35)", borderRadius: 2, marginTop: 6 }} />
+        <div style={{ height: 4, width: "55%", background: "rgba(0, 0, 0, 0.3)", borderRadius: 2, marginTop: 6 }} />
       </div>
     </PreviewFrame>
   );
@@ -183,7 +205,6 @@ const PREVIEWS: Record<DesignStyle, () => React.ReactElement> = {
 export function DesignPicker() {
   const theme = useTheme();
   const activeId: DesignStyle = theme?.style ?? "flat";
-
   const [pendingId, setPendingId] = useState<DesignStyle | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -197,6 +218,30 @@ export function DesignPicker() {
     } catch (err) {
       console.warn("[appearance] Failed to save design theme:", err);
       setError("Couldn't apply that design. Please try again.");
+      // No `finally` — React Compiler cannot lower TryStatement with a finalizer.
+      setPendingId(null);
+      return;
+    }
+    // The theme is saved; apply the design's bundled wallpaper (and dock
+    // placement) as the second step. A failure here is surfaced but does not
+    // roll back the theme.
+    const background = DESIGN_BACKGROUNDS[option.id];
+    if (background) {
+      try {
+        const dockPosition = DESIGN_DOCK_POSITIONS[option.id];
+        const patch: DesktopConfigPatch = { background };
+        if (dockPosition) {
+          patch.dock = { position: dockPosition };
+        }
+        await saveDesktopConfigPatch(patch);
+      } catch (err) {
+        console.warn("[appearance] Failed to apply design desktop defaults:", err);
+        setError(
+          DESIGN_DOCK_POSITIONS[option.id]
+            ? "Design applied, but its wallpaper or Dock position couldn't be updated. Try those settings again below."
+            : "Design applied, but its wallpaper couldn't be updated. Try choosing it again below.",
+        );
+      }
     }
     // No `finally` — React Compiler cannot lower TryStatement with a finalizer.
     setPendingId(null);

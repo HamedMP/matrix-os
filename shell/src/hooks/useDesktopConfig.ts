@@ -31,8 +31,26 @@ export interface DesktopConfig {
   };
 }
 
-const BUNDLED_WALLPAPERS = new Set(["moraine-lake.jpg"]);
+export type DesktopConfigPatch = Omit<Partial<DesktopConfig>, "dock"> & {
+  dock?: Partial<DockConfig>;
+};
+
+export const BUNDLED_WALLPAPERS = new Set([
+  "moraine-lake.jpg",
+  "xp-bliss.svg",
+  "win11-bloom.svg",
+  "macos-light.svg",
+]);
 const SETTINGS_FETCH_TIMEOUT_MS = 10_000;
+
+// Bundled defaults live in shell/public/wallpapers and work even when the
+// gateway is unreachable. User-uploaded wallpapers are served by the gateway
+// under /files/system/wallpapers.
+export function wallpaperUrl(name: string, gatewayUrl: string): string {
+  return BUNDLED_WALLPAPERS.has(name)
+    ? `/wallpapers/${name}`
+    : `${gatewayUrl}/files/system/wallpapers/${name}`;
+}
 
 const DEFAULT_DESKTOP_CONFIG: DesktopConfig = {
   background: { type: "wallpaper", name: "moraine-lake.jpg" },
@@ -102,12 +120,7 @@ function applyBackground(config: DesktopConfig["background"], gatewayUrl: string
       body.style.background = `linear-gradient(${config.angle ?? 135}deg, ${config.from}, ${config.to})`;
       break;
     case "wallpaper": {
-      // Bundled defaults live in shell/public/wallpapers and work even when
-      // the gateway is unreachable. User-uploaded wallpapers are served by
-      // the gateway under /files/system/wallpapers.
-      const url = BUNDLED_WALLPAPERS.has(config.name)
-        ? `/wallpapers/${config.name}`
-        : `${gatewayUrl}/files/system/wallpapers/${config.name}`;
+      const url = wallpaperUrl(config.name, gatewayUrl);
       body.style.backgroundImage = `url(${url})`;
       body.style.backgroundSize = "cover";
       body.style.backgroundPosition = "center";
@@ -158,7 +171,7 @@ export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
     applyDesktopConfigSnapshot(cachedConfig, gatewayUrl, { setDock, setPinnedApps, setDockOrder });
   }, [cacheKey, cacheScope, gatewayUrl, setDock, setPinnedApps, setDockOrder]);
 
-  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the setConfig/setDock/setPinnedApps/setDockOrder calls all populate distinct stores from a single fetched desktop-config payload inside one async .then callback; they run together once the load resolves, not as a synchronous render-time cascade, and target separate Zustand slices that cannot be collapsed
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state, react-doctor/no-fetch-in-effect -- the setConfig/setDock/setPinnedApps/setDockOrder calls all populate distinct stores from a single fetched desktop-config payload inside one async .then callback; they run together once the mount-only gateway load resolves (guarded by AbortController), not as a synchronous render-time cascade, and target separate Zustand slices that cannot be collapsed
   useEffect(() => {
     const controller = new AbortController();
     fetchDesktopConfig(gatewayUrl, controller.signal).then((cfg) => {
@@ -235,30 +248,25 @@ export async function saveDesktopConfig(
 }
 
 export async function saveDesktopConfigPatch(
-  patch: Partial<DesktopConfig>,
+  patch: DesktopConfigPatch,
   options: DesktopConfigHookOptions = {},
 ): Promise<void> {
   const gatewayUrl = getGatewayUrl();
   const url = `${gatewayUrl}/api/settings/desktop`;
-  const getRes = await fetch(url, {
-    signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
-  });
-  const config = getRes.ok
-    ? (await getRes.json()) as Record<string, unknown>
-    : {};
-  const definedPatch = Object.fromEntries(
-    Object.entries(patch).filter(([, value]) => value !== undefined),
-  );
-  const nextConfig = { ...config, ...definedPatch };
-  const putRes = await fetch(url, {
-    method: "PUT",
+  const patchRes = await fetch(url, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
-    body: JSON.stringify(nextConfig),
+    body: JSON.stringify(patch),
   });
-  if (!putRes.ok) {
-    throw new Error(`PUT /api/settings/desktop ${putRes.status}`);
+  if (!patchRes.ok) {
+    throw new Error(`PATCH /api/settings/desktop ${patchRes.status}`);
   }
+  const payload = await patchRes.json() as { config?: unknown };
+  if (!payload.config || typeof payload.config !== "object" || Array.isArray(payload.config)) {
+    throw new Error("PATCH /api/settings/desktop returned an invalid config");
+  }
+  const nextConfig = payload.config as Record<string, unknown>;
   const dockValue = nextConfig.dock;
   const normalizedConfig = {
     ...DEFAULT_DESKTOP_CONFIG,

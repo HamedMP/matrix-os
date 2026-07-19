@@ -409,6 +409,9 @@
   "system/theme.json": "b92b4151493f93d865dcf5a30e19cb9f43dac80d4b91326316b4ac2fb03b37bb",
   "system/user.md": "e6e32a770ba0c7f272d18d55df3e0748cfd70f518fd0056c71660bdc684a3dff",
   "system/voice/calls.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "system/wallpapers/macos-light.svg": "068ceb644caa982e4a920299ef02a6639d1c4fb1d530eec5e18aa21cf76e9a49",
   "system/wallpapers/moraine-lake.jpg": "65426455d586cf27f7feb10bcb11096fbb15c7bb8780282797167191da23752d",
+  "system/wallpapers/win11-bloom.svg": "23d0e0135c7296009cf64e409aa0c0afe0c1bb1a35c6babee2aea3ab10f82b68",
+  "system/wallpapers/xp-bliss.svg": "070a085192c8e772e7c1f1a2805e891cf34e5ca70dab5eb5ea31a9bc47d637ed",
   "templates/sqlite-client.js": "1df2d962d2f3c97a5935cbd65c533010eea912d872cd210b9e86e6bd3e2ce688"
 }

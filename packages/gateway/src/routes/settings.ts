@@ -42,6 +42,41 @@ const KernelPatchSchema = z
   })
   .strict();
 
+const DesktopBackgroundSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("pattern") }).strict(),
+  z.object({ type: z.literal("solid"), color: z.string().min(1).max(128) }).strict(),
+  z.object({
+    type: z.literal("gradient"),
+    from: z.string().min(1).max(128),
+    to: z.string().min(1).max(128),
+    angle: z.number().finite().optional(),
+  }).strict(),
+  z.object({ type: z.literal("wallpaper"), name: z.string().min(1).max(255) }).strict(),
+  z.object({
+    type: z.literal("image"),
+    url: z.string().min(1).max(8192),
+    fit: z.string().min(1).max(64).optional(),
+  }).strict(),
+]);
+
+const DesktopDockPatchSchema = z.object({
+  position: z.enum(["left", "right", "bottom"]).optional(),
+  size: z.number().int().min(16).max(128).optional(),
+  iconSize: z.number().int().min(16).max(128).optional(),
+  autoHide: z.boolean().optional(),
+}).strict();
+
+const DesktopPatchSchema = z.object({
+  background: DesktopBackgroundSchema.optional(),
+  dock: DesktopDockPatchSchema.optional(),
+  pinnedApps: z.array(z.string().min(1).max(2048)).max(512).optional(),
+  iconStyle: z.string().min(1).max(128).optional(),
+  dockOrder: z.object({
+    userApps: z.array(z.string().min(1).max(2048)).max(512).optional(),
+    systemApps: z.array(z.string().min(1).max(2048)).max(512).optional(),
+  }).strict().optional(),
+}).strict().refine((patch) => Object.keys(patch).length > 0, "Patch cannot be empty");
+
 const WALLPAPER_FILE_EXTENSIONS = new Set([
   ".avif",
   ".gif",
@@ -292,6 +327,13 @@ export function createSettingsRoutes(opts: {
   // --- Desktop config ---
 
   const desktopPath = join(homePath, "system/desktop.json");
+  let desktopWriteQueue: Promise<void> = Promise.resolve();
+
+  function enqueueDesktopWrite<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = desktopWriteQueue.then(operation, operation);
+    desktopWriteQueue = pending.then(() => undefined, () => undefined);
+    return pending;
+  }
 
   app.get("/desktop", async (c) => {
     const config = await readJson<Record<string, unknown>>(desktopPath, {}, "desktop config");
@@ -308,8 +350,42 @@ export function createSettingsRoutes(opts: {
       }
       return c.json({ error: "Invalid JSON" }, 400);
     }
-    await writeJsonAtomic(desktopPath, body);
+    await enqueueDesktopWrite(() => writeJsonAtomic(desktopPath, body));
     return c.json({ ok: true });
+  });
+
+  app.patch("/desktop", bodyLimit({ maxSize: SETTINGS_BODY_LIMIT }), async (c) => {
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) {
+        console.warn("[settings] Failed to parse desktop config patch:", err);
+      }
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const parsed = DesktopPatchSchema.safeParse(raw);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid desktop config patch" }, 400);
+    }
+
+    const config = await enqueueDesktopWrite(async () => {
+      const current = await readJson<Record<string, unknown>>(desktopPath, {}, "desktop config");
+      const { dock: dockPatch, ...topLevelPatch } = parsed.data;
+      const currentDock = current.dock !== null
+        && typeof current.dock === "object"
+        && !Array.isArray(current.dock)
+        ? current.dock as Record<string, unknown>
+        : {};
+      const next: Record<string, unknown> = {
+        ...current,
+        ...topLevelPatch,
+        ...(dockPatch ? { dock: { ...currentDock, ...dockPatch } } : {}),
+      };
+      await writeJsonAtomic(desktopPath, next);
+      return mergeDesktopDefaults(next);
+    });
+    return c.json({ ok: true, config });
   });
 
   // --- Theme config ---

@@ -1,0 +1,824 @@
+/* ═══════════════════════════════════════════════════════════════
+   Windows shell chrome (taskbar + start menu) for the winxp and
+   win11 design styles. All styling for the components under
+   components/taskbar/ lives here so no other stylesheet needs to
+   change. The --xp-* / --win11-* tokens are defined in globals.css
+   and resolve only while the matching data-theme-style is active.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Shared bits ─────────────────────────────────────────────── */
+
+.taskbar-icon {
+  object-fit: contain;
+  flex: none;
+}
+
+.taskbar-icon-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  font-weight: 700;
+  line-height: 1;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #2a5fc9;
+}
+
+.taskbar-avatar {
+  border-radius: 50%;
+  object-fit: cover;
+  flex: none;
+}
+
+.taskbar-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: 50%;
+  font-weight: 700;
+  line-height: 1;
+  background: #ffffff;
+  color: #2a5fc9;
+}
+
+/* ═══ Windows XP taskbar ═══ */
+
+.xp-taskbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 30px;
+  /* Desktop chrome only (mirrors the MenuBar's `hidden md:grid`): the
+     mobile bottom tab bar owns small screens. */
+  display: none;
+  align-items: stretch;
+  background: var(--xp-titlebar);
+  border-top: 1px solid var(--xp-blue-light);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  font-family: Tahoma, "Segoe UI", sans-serif;
+  color: #ffffff;
+  user-select: none;
+}
+
+@media (min-width: 768px) {
+  .xp-taskbar {
+    display: flex;
+  }
+}
+
+.xp-start-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 18px 0 10px;
+  border: none;
+  border-radius: 0 8px 8px 0;
+  cursor: pointer;
+  background: linear-gradient(to bottom, #5eac56 0%, #3d9e3d 45%, #2e7d2e 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset -1px 0 0 rgba(0, 0, 0, 0.15);
+  color: #ffffff;
+}
+
+.xp-start-button:hover {
+  background: linear-gradient(to bottom, #66bb5e 0%, #46a846 45%, #358a35 100%);
+}
+
+.xp-start-button:active,
+.xp-start-button[aria-expanded="true"] {
+  background: linear-gradient(to bottom, #2e7d2e 0%, #256b25 100%);
+  box-shadow: inset 1px 1px 3px rgba(0, 0, 0, 0.45);
+}
+
+.xp-start-text {
+  font-size: 14px;
+  font-weight: 700;
+  font-style: italic;
+  letter-spacing: 0.5px;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.65);
+}
+
+.xp-quick-launch {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  margin-left: 8px;
+  border-left: 1px solid rgba(0, 0, 0, 0.25);
+  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.15);
+}
+
+.xp-quick-launch-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.xp-quick-launch-button:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.xp-task-buttons {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 0 4px;
+  margin-left: 8px;
+  overflow: hidden;
+  border-left: 1px solid rgba(0, 0, 0, 0.25);
+  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.15);
+}
+
+.xp-task-button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 1 160px;
+  min-width: 0;
+  max-width: 160px;
+  height: 23px;
+  padding: 0 8px;
+  font-family: Tahoma, "Segoe UI", sans-serif;
+  font-size: 11px;
+  color: #ffffff;
+  text-align: left;
+  background: linear-gradient(to bottom, #4c8df5 0%, #2f74e8 50%, #2a6ade 100%);
+  border: 1px solid rgba(0, 30, 90, 0.45);
+  border-radius: 3px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  cursor: pointer;
+}
+
+.xp-task-button:hover {
+  background: linear-gradient(to bottom, #5a99f7 0%, #3a80ee 50%, #3175e6 100%);
+}
+
+.xp-task-button[data-active] {
+  background: linear-gradient(to bottom, #1c4ead 0%, #2a5fc9 50%, #2456b8 100%);
+  border-color: rgba(0, 20, 70, 0.6);
+  box-shadow: inset 1px 1px 3px rgba(0, 0, 0, 0.45);
+}
+
+.xp-task-button-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xp-taskbar-toolbar {
+  display: flex;
+  align-items: center;
+  padding: 0 4px;
+}
+
+.xp-tray {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px 0 12px;
+  background: linear-gradient(to bottom, #1290e9 0%, #19b9f3 50%, #1290e9 100%);
+  border-left: 1px solid rgba(0, 40, 100, 0.4);
+  box-shadow:
+    inset 1px 1px 2px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.xp-tray-icon {
+  width: 13px;
+  height: 13px;
+  color: #ffffff;
+}
+
+.xp-tray-clock {
+  margin-left: 3px;
+  font-size: 11px;
+  color: #ffffff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.4);
+}
+
+/* ═══ Windows XP start menu ═══ */
+
+.xp-start-menu {
+  position: fixed;
+  left: 0;
+  bottom: 30px;
+  width: 380px;
+  max-width: 96vw;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--xp-titlebar);
+  border: 1px solid #0831d9;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  box-shadow: 4px -2px 12px rgba(0, 0, 0, 0.45);
+  font-family: Tahoma, "Segoe UI", sans-serif;
+  animation: xp-start-menu-in 150ms ease-out;
+}
+
+@keyframes xp-start-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.xp-start-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  background: linear-gradient(to bottom, #1d5ad9 0%, #3586f0 55%, #1d5ad9 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.xp-start-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.xp-start-user .taskbar-avatar,
+.xp-start-user .taskbar-avatar-fallback {
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.xp-start-user .taskbar-username {
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffffff;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.xp-start-body {
+  display: flex;
+  min-height: 320px;
+  margin: 0 4px;
+  background: #ffffff;
+}
+
+.xp-start-left {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 4px;
+  background: #ffffff;
+}
+
+.xp-pinned-programs {
+  display: flex;
+  flex-direction: column;
+}
+
+.xp-all-programs {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.xp-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
+  background: transparent;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  font-family: Tahoma, "Segoe UI", sans-serif;
+  font-size: 11px;
+  color: #0c0c0c;
+  text-align: left;
+}
+
+.xp-menu-item:hover {
+  background: #316ac5;
+  color: #ffffff;
+}
+
+.xp-menu-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xp-menu-item-primary .xp-menu-item-label {
+  font-weight: 700;
+}
+
+.xp-menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: #d4d0c8;
+}
+
+.xp-all-programs-row {
+  margin-top: auto;
+  padding-top: 4px;
+  border-top: 1px solid #d4d0c8;
+}
+
+.xp-all-programs-button {
+  justify-content: center;
+  gap: 4px;
+  font-weight: 700;
+}
+
+.xp-all-programs-arrow {
+  width: 14px;
+  height: 14px;
+  color: #2e7d2e;
+}
+
+.xp-all-programs-button:hover .xp-all-programs-arrow {
+  color: #ffffff;
+}
+
+.xp-start-right {
+  flex: 0 0 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 4px;
+  background: #d3e5fa;
+  border-left: 1px solid #95b3de;
+}
+
+.xp-start-right .xp-menu-item {
+  gap: 6px;
+  padding: 5px 6px;
+  color: #0b3d91;
+}
+
+.xp-start-right .xp-menu-item svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: #2a5fc9;
+}
+
+.xp-start-right .xp-menu-item:hover {
+  background: #316ac5;
+  color: #ffffff;
+}
+
+.xp-start-right .xp-menu-item:hover svg {
+  color: #ffffff;
+}
+
+.xp-menu-item-place .xp-menu-item-label {
+  font-weight: 700;
+}
+
+.xp-start-right .xp-menu-separator {
+  background: #95b3de;
+}
+
+.xp-start-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 6px 10px;
+  background: linear-gradient(to bottom, #1d5ad9 0%, #1648b8 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.xp-footer-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: Tahoma, "Segoe UI", sans-serif;
+  font-size: 11px;
+  color: #ffffff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.4);
+}
+
+.xp-footer-button:hover {
+  text-decoration: underline;
+}
+
+.xp-footer-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.xp-footer-chip svg {
+  width: 13px;
+  height: 13px;
+  color: #ffffff;
+}
+
+.xp-footer-chip-logoff {
+  background: linear-gradient(to bottom, #f6c243 0%, #d89b1e 100%);
+}
+
+.xp-footer-chip-power {
+  background: linear-gradient(to bottom, #e0694f 0%, #c03a2b 100%);
+}
+
+/* ═══ Windows 11 taskbar ═══ */
+
+.win11-taskbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 48px;
+  /* Desktop chrome only (mirrors the MenuBar's `hidden md:grid`): the
+     mobile bottom tab bar owns small screens. */
+  display: none;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 6px;
+  background: var(--win11-acrylic);
+  backdrop-filter: var(--win11-blur);
+  -webkit-backdrop-filter: var(--win11-blur);
+  border-top: 1px solid var(--win11-stroke);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  color: #1b1b1b;
+  user-select: none;
+}
+
+@media (min-width: 768px) {
+  .win11-taskbar {
+    display: flex;
+  }
+}
+
+.win11-taskbar .taskbar-icon-fallback {
+  background: rgba(0, 0, 0, 0.07);
+  color: #333333;
+}
+
+.win11-taskbar-center {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.win11-taskbar-icon-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #2b2b2b;
+}
+
+.win11-taskbar-icon-button:hover {
+  background: var(--win11-hover);
+}
+
+.win11-taskbar-icon-button:active {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.win11-taskbar-glyph {
+  width: 20px;
+  height: 20px;
+}
+
+.win11-task-pill {
+  position: absolute;
+  bottom: 1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 6px;
+  height: 3px;
+  border-radius: 999px;
+  background: #8a8a8a;
+}
+
+.win11-taskbar-icon-button[data-focused] .win11-task-pill {
+  width: 16px;
+  background: #0067c0;
+}
+
+.win11-tray {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.win11-taskbar-toolbar {
+  display: flex;
+  align-items: center;
+  padding: 0 4px;
+}
+
+.win11-tray-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 40px;
+  padding: 0 8px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  color: #1b1b1b;
+}
+
+.win11-tray-button:hover {
+  background: var(--win11-hover);
+}
+
+.win11-tray-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.win11-tray-clock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.3;
+  font-size: 12px;
+  color: #1b1b1b;
+}
+
+.win11-notification-dot {
+  width: 8px;
+  height: 8px;
+  margin: 0 4px 0 6px;
+  border-radius: 50%;
+  background: #0067c0;
+}
+
+/* ═══ Windows 11 start menu ═══ */
+
+.win11-start-menu {
+  position: fixed;
+  left: 50%;
+  bottom: 56px;
+  transform: translateX(-50%);
+  width: 620px;
+  max-width: 94vw;
+  overflow: hidden;
+  padding: 22px 28px 0;
+  background: var(--win11-acrylic-strong);
+  backdrop-filter: var(--win11-blur);
+  -webkit-backdrop-filter: var(--win11-blur);
+  border: 1px solid var(--win11-stroke);
+  border-radius: 24px;
+  box-shadow: var(--win11-shadow);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  color: #1b1b1b;
+  animation: win11-start-menu-in 150ms ease-out;
+}
+
+@keyframes win11-start-menu-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.win11-start-menu .taskbar-icon-fallback {
+  background: rgba(0, 0, 0, 0.07);
+  color: #333333;
+}
+
+.win11-start-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 14px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--win11-stroke);
+  border-bottom: 2px solid #0067c0;
+  border-radius: 18px;
+}
+
+.win11-start-search svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: #5b5b5b;
+}
+
+.win11-start-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  color: #1b1b1b;
+}
+
+.win11-start-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 16px 4px 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.win11-start-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 2px;
+  max-height: min(336px, 45vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.win11-start-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 84px;
+  padding: 6px 2px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+.win11-start-tile:hover {
+  background: var(--win11-hover);
+}
+
+.win11-start-tile-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: #1b1b1b;
+}
+
+.win11-start-empty {
+  grid-column: 1 / -1;
+  padding: 16px;
+  font-size: 12px;
+  color: #6b6b6b;
+  text-align: center;
+}
+
+.win11-start-recommended {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+}
+
+.win11-start-rec-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  text-align: left;
+}
+
+.win11-start-rec-item:hover {
+  background: var(--win11-hover);
+}
+
+.win11-start-rec-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.win11-start-rec-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #1b1b1b;
+}
+
+.win11-start-rec-caption {
+  font-size: 11px;
+  color: #6b6b6b;
+}
+
+.win11-start-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 16px -28px 0;
+  padding: 10px 28px;
+  background: rgba(0, 0, 0, 0.03);
+  border-top: 1px solid var(--win11-stroke);
+}
+
+.win11-start-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.win11-start-user .taskbar-username {
+  font-size: 12px;
+  color: #1b1b1b;
+}
+
+.win11-start-user .taskbar-avatar-fallback {
+  background: #e3e3e3;
+  color: #333333;
+}
+
+.win11-start-user-button {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  margin: -4px -8px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.win11-start-user-button:hover {
+  background: var(--win11-hover);
+}
+
+.win11-start-power {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #1b1b1b;
+}
+
+.win11-start-power:hover {
+  background: var(--win11-hover);
+}
+
+.win11-start-power svg {
+  width: 16px;
+  height: 16px;
+}

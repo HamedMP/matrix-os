@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { beforeAll, beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 
 let MenuBar: typeof import("../../shell/src/components/MenuBar.js").MenuBar;
@@ -96,5 +96,96 @@ describe("MenuBar focus display", () => {
       ctrlKey: false,
     });
     expect((await screen.findByRole("menuitem", { name: "Switch computer" })).getAttribute("href")).toBe("/runtime");
+  });
+});
+
+describe("MenuBar macOS-glass variant", () => {
+  beforeEach(() => {
+    resetStore();
+    document.documentElement.setAttribute("data-theme-style", "macos-glass");
+  });
+
+  afterEach(async () => {
+    // The attribute removal notifies useThemeStyle's MutationObserver on any
+    // still-mounted MenuBar; flush that update inside act.
+    await act(async () => {
+      document.documentElement.removeAttribute("data-theme-style");
+      await Promise.resolve();
+    });
+  });
+
+  // The useThemeStyle hook mirrors data-theme-style via an effect + a
+  // MutationObserver whose callbacks are microtasks; flush both inside act.
+  async function renderMenuBar(ui: React.ReactElement) {
+    let result!: ReturnType<typeof render>;
+    await act(async () => {
+      result = render(ui);
+      await Promise.resolve();
+    });
+    return result;
+  }
+
+  it("renders the Apple menu, mac menus, and status icons", async () => {
+    await renderMenuBar(
+      <MenuBar onOpenCommandPalette={() => {}} onNewWindow={() => {}} onOpenSettings={() => {}} />,
+    );
+
+    // Apple glyph menu, then the bold app menu, then the mac menu set.
+    expect(screen.getByRole("button", { name: "Apple menu" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Matrix OS" })).toBeTruthy();
+    for (const label of ["File", "Edit", "View", "Window", "Help"]) {
+      expect(screen.getByRole("button", { name: label })).toBeTruthy();
+    }
+    // Right side: spotlight + Control Center buttons (battery/wifi are decorative).
+    expect(screen.getByRole("button", { name: "Spotlight search" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Control Center" })).toBeTruthy();
+  });
+
+  it("keeps the flat structure when the design is not macos-glass", async () => {
+    document.documentElement.removeAttribute("data-theme-style");
+    await renderMenuBar(
+      <MenuBar onOpenCommandPalette={() => {}} onNewWindow={() => {}} />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Apple menu" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Window" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Help" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Spotlight search" })).toBeNull();
+  });
+
+  it("minimizes the focused window from the Window menu", async () => {
+    const onMinimizeWindow = vi.fn();
+    useWindowManager.getState().openWindow("Whiteboard", "apps/whiteboard", 80);
+    const windowId = useWindowManager.getState().windows[0]!.id;
+
+    await renderMenuBar(
+      <MenuBar onOpenCommandPalette={() => {}} onNewWindow={() => {}} onMinimizeWindow={onMinimizeWindow} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Window" }));
+    fireEvent.click(screen.getByRole("button", { name: /Minimize/ }));
+    expect(onMinimizeWindow).toHaveBeenCalledWith(windowId);
+  });
+
+  it("opens the command palette from the Help menu", async () => {
+    const onOpenCommandPalette = vi.fn();
+    await renderMenuBar(
+      <MenuBar onOpenCommandPalette={onOpenCommandPalette} onNewWindow={() => {}} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    fireEvent.click(screen.getByRole("button", { name: /Matrix OS Help/ }));
+    expect(onOpenCommandPalette).toHaveBeenCalled();
+  });
+
+  it("opens system settings from the Apple menu", async () => {
+    const onOpenSettings = vi.fn();
+    await renderMenuBar(
+      <MenuBar onOpenCommandPalette={() => {}} onNewWindow={() => {}} onOpenSettings={onOpenSettings} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Apple menu" }));
+    fireEvent.click(screen.getByRole("button", { name: /System Settings/ }));
+    expect(onOpenSettings).toHaveBeenCalled();
   });
 });
