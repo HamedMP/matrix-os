@@ -197,6 +197,10 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('command -v bwrap >/dev/null 2>&1 && command -v socat >/dev/null 2>&1');
     expect(installer).toContain('if ! ensure_terminal_runtime; then');
     expect(installer).toContain('WARN: zsh provisioning failed; terminal will use the Bash fallback');
+    const terminalModeGuard = installer.indexOf('if [ "$MODE" != "--sandbox-only" ]; then');
+    const terminalReconciliation = installer.indexOf('if ! ensure_terminal_runtime; then');
+    expect(terminalModeGuard).toBeGreaterThan(-1);
+    expect(terminalReconciliation).toBeGreaterThan(terminalModeGuard);
     expect(installer).toContain('if ! ensure_agent_sandbox_runtime; then');
     expect(installer).toContain('coding-agent sandbox provisioning failed');
     expect(installer).toContain('MODE="${1:-}"');

@@ -122,10 +122,12 @@ is_tool_installed() {
   fi
 }
 
-if [ "$MODE" != "--tools-only" ]; then
+if [ "$MODE" != "--sandbox-only" ]; then
   if ! ensure_terminal_runtime; then
     log "WARN: zsh provisioning failed; terminal will use the Bash fallback"
   fi
+fi
+if [ "$MODE" != "--tools-only" ]; then
   if ! ensure_agent_sandbox_runtime; then
     log "coding-agent sandbox provisioning failed"
     exit 1
