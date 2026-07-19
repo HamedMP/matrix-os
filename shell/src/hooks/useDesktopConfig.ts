@@ -268,7 +268,7 @@ export async function saveDesktopConfigPatch(
     && !Array.isArray(config.dock)
     ? config.dock as Record<string, unknown>
     : {};
-  const nextConfig = {
+  const nextConfig: Record<string, unknown> = {
     ...config,
     ...definedPatch,
     ...(dockPatch ? { dock: { ...existingDock, ...dockPatch } } : {}),
