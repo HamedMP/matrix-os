@@ -414,6 +414,27 @@ describe("RuntimeManager", () => {
     });
   });
 
+  it("lets users return to their computers after a non-retryable slot build failure", async () => {
+    installFetchRouter({
+      journey: {
+        phase: "provisioning_failed",
+        detail: "raw provider failure",
+        failure: { retryable: false, attempt: 1 },
+      },
+    });
+    await renderManager();
+    await beginNamedComputer("Research Lab");
+    fireEvent.click(screen.getByRole("button", { name: "Build computer" }));
+
+    const backButton = await screen.findByRole("button", { name: "Back to computers" });
+    expect(screen.queryByRole("button", { name: "Retry build" })).toBeNull();
+    expect(document.body.textContent).not.toMatch(/raw provider failure/i);
+    fireEvent.click(backButton);
+
+    expect(await screen.findByRole("heading", { name: "Choose your computer" })).toBeTruthy();
+    expect(window.sessionStorage.getItem("matrix:add-computer-draft:v1")).toBeNull();
+  });
+
   it("keeps polling after a malformed journey projection", async () => {
     let journeyReads = 0;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {

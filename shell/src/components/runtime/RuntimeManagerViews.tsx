@@ -287,7 +287,17 @@ export function BillingWait({ title }: { title: string }) {
   );
 }
 
-export function ProvisioningStep({ title, journey, onRetry }: { title: string; journey: JourneyState | null; onRetry: () => void }) {
+export function ProvisioningStep({
+  title,
+  journey,
+  onRetry,
+  onBack,
+}: {
+  title: string;
+  journey: JourneyState | null;
+  onRetry: () => void;
+  onBack: () => void;
+}) {
   const failed = journey?.phase === "provisioning_failed";
   return (
     <StepFrame>
@@ -298,8 +308,13 @@ export function ProvisioningStep({ title, journey, onRetry }: { title: string; j
           {journey?.detail ?? "Creating a private Matrix OS computer with its own files and data."}
         </p>
         {!failed ? <p className="mt-5 text-sm font-semibold text-forest">{journey?.progress ? journeyStageLabel(journey.progress.stage) : "Starting build"}</p> : null}
-        {failed && journey.failure?.retryable ? (
-          <button type="button" onClick={onRetry} className="primary-action mt-6"><RefreshCwIcon className="size-4" aria-hidden="true" /> Retry build</button>
+        {failed ? (
+          <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
+            {journey.failure?.retryable ? (
+              <button type="button" onClick={onRetry} className="primary-action"><RefreshCwIcon className="size-4" aria-hidden="true" /> Retry build</button>
+            ) : null}
+            <button type="button" onClick={onBack} className="secondary-action">Back to computers</button>
+          </div>
         ) : null}
       </BrandCard>
     </StepFrame>

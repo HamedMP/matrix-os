@@ -603,7 +603,18 @@ export function RuntimeManager({
           ) : null}
           {step === "billing_wait" ? <BillingWait title={title} /> : null}
           {step === "provisioning" ? (
-            <ProvisioningStep title={title} journey={journey} onRetry={() => void retryJourney()} />
+            <ProvisioningStep
+              title={title}
+              journey={journey}
+              onRetry={() => void retryJourney()}
+              onBack={() => {
+                safeClearDraft();
+                setDraft(null);
+                setJourney(null);
+                setStep("list");
+                setOverviewRefresh((value) => value + 1);
+              }}
+            />
           ) : null}
           {step === "ready" && draft ? (
             <ReadyStep
