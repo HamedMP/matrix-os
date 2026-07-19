@@ -351,6 +351,7 @@ export function createWorkspaceRoutes(options: {
       projectSlug: c.req.param("slug"),
       branch: body.value.branch,
       pr: body.value.pr,
+      createBranch: body.value.branch ? true : undefined,
     });
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ worktree: result.worktree }, result.status);
