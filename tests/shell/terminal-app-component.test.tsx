@@ -664,7 +664,10 @@ describe("TerminalApp", () => {
     });
 
     expect(screen.queryByRole("tablist", { name: "Terminal tabs" })).toBeNull();
-    expect(screen.getByText("matrix os")).toBeTruthy();
+    const wordmark = screen.getByTestId("terminal-expanded-wordmark");
+    expect(wordmark.textContent).toBe("matrix os");
+    expect(wordmark.style.color).toBe("rgb(50, 53, 46)");
+    expect(wordmark.style.fontFamily).toBe("var(--font-orbitron), Orbitron, sans-serif");
     expect(screen.getByPlaceholderText("Find a session...")).toBeTruthy();
     expect(screen.getByText("Active")).toBeTruthy();
     expect(screen.getByText("Background")).toBeTruthy();

@@ -970,7 +970,10 @@ export function LocalTerminalSidebar() {
               />
             </div>
             <div className="min-w-0">
-              <div style={{ color: "var(--terminal-drawer-fg)", fontFamily: "var(--font-sans), system-ui, sans-serif", fontSize: 20, fontWeight: 600, letterSpacing: "-0.01em", lineHeight: "24px" }}>
+              <div
+                data-testid="terminal-expanded-wordmark"
+                style={{ color: "#32352E", fontFamily: "var(--font-orbitron), Orbitron, sans-serif", fontSize: 20, fontWeight: 600, letterSpacing: "-0.01em", lineHeight: "24px" }}
+              >
                 matrix os
               </div>
               {!ctx.mobile ? (
