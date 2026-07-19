@@ -314,9 +314,9 @@ export function RuntimeManager({
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this bounded poll waits for the signed Stripe webhook projection; each iteration owns and clears its timer.
   useEffect(() => {
-    if (step !== "billing_wait" || !draft || overview.status !== "ready" || resumeProvisionStartedRef.current) return;
-    const currentMax = overview.billing.entitlement?.maxRuntimeSlots ?? 0;
-    if (currentMax > draft.baselineMaxRuntimeSlots) {
+    if (step !== "billing_wait" || !draft || resumeProvisionStartedRef.current) return;
+    const currentMax = overview.status === "ready" ? overview.billing.entitlement?.maxRuntimeSlots ?? 0 : 0;
+    if (overview.status === "ready" && currentMax > draft.baselineMaxRuntimeSlots) {
       resumeProvisionStartedRef.current = true;
       void provisionComputer(draft, setStep, setJourney, setSafeError, setJourneyRefresh, setErrorRetryAction);
       return;

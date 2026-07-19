@@ -438,6 +438,38 @@ describe("RuntimeManager", () => {
     expect(openLink.getAttribute("href")).toBe("/vm/machine-73fd?runtime=research-lab");
   });
 
+  it("ends billing wait safely when a projection refresh fails at the deadline", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    window.history.replaceState({}, "", "/runtime?new=1");
+    window.sessionStorage.setItem("matrix:add-computer-draft:v1", JSON.stringify({
+      name: "Research Lab",
+      slot: "research-lab",
+      developerTools: ["codex"],
+      baselineMaxRuntimeSlots: 2,
+      createdAt: 1_000,
+    }));
+    let billingReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/api/auth/computers") return json(inventory);
+      if (url === "/billing/status") {
+        billingReads += 1;
+        if (billingReads > 1) throw new Error("raw billing network failure");
+        return json(billingStatus(2));
+      }
+      throw new Error(`Unhandled test request: ${url}`);
+    });
+
+    await renderManager({ billingPollIntervalMs: 10 });
+    expect(await screen.findByRole("heading", { name: "Confirming computer capacity" })).toBeTruthy();
+    await waitFor(() => expect(billingReads).toBeGreaterThanOrEqual(2));
+    now.mockReturnValue(121_001);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/taking longer than expected/i);
+    expect(alert.textContent).not.toMatch(/network failure/i);
+  });
+
   it("resumes after a signed billing projection increases capacity", async () => {
     window.history.replaceState({}, "", "/runtime?new=1");
     window.sessionStorage.setItem("matrix:add-computer-draft:v1", JSON.stringify({
