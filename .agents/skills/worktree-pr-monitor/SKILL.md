@@ -1,19 +1,17 @@
 ---
 name: worktree-pr-monitor
-description: Create or continue an isolated Matrix OS worktree PR, validate it, push it, monitor CI and GitHub review feedback, iterate until the latest trusted Greptile result is 5/5, then add ready-for-ci and wait for triggered CI to pass before pinging completion. Use when asked to run a worktree to PR to monitor workflow, get a PR to Greptile 5/5 plus CI pass, publish changes while keeping main clean, or monitor one worktree, branch, and PR exclusively assigned to a leaf agent.
+description: Create or continue an isolated Matrix OS worktree PR, validate it, push it, monitor CI and GitHub review feedback, iterate until the latest trusted Greptile result is 5/5, then add ready-for-ci and wait for triggered CI to pass before pinging completion. Use when asked to run a worktree to PR to monitor workflow, get a PR to Greptile 5/5 plus CI pass, or publish changes while keeping main clean.
 ---
 
 # Worktree PR Monitor
 
 Use this skill only when the requester explicitly asks for the manual git
-worktree -> PR -> monitor workflow or a coordinator assigns that workflow to a
-leaf agent. It keeps `/home/deploy/matrix-os` on `main` while implementation
-happens in `/home/deploy/matrix-os.worktrees/<slug>`.
+worktree -> PR -> monitor workflow. It keeps `/home/deploy/matrix-os` on `main`
+while implementation happens in `/home/deploy/matrix-os.worktrees/<slug>`.
 
-Do not use this skill to coordinate Swarm or multi-agent runs. A leaf agent may
-use it only when a coordinator gives it exclusive ownership of one worktree,
-branch, and PR. The repo-level Swarm ban on `isolation: "worktree"` still
-applies; this workflow uses a persistent manual git worktree.
+This skill does not coordinate Swarm or multi-agent runs. The repo-level Swarm
+ban on `isolation: "worktree"` still applies; this workflow is a user-requested
+manual git worktree flow for isolated PR publication.
 
 ## Preconditions
 
@@ -21,18 +19,15 @@ applies; this workflow uses a persistent manual git worktree.
 - The current repository is `HamedMP/matrix-os`.
 - The repository has a label exactly named `ready-for-ci`; if it is missing,
   stop and report the blocker instead of creating the label silently.
-- The requester or coordinating workflow wants a PR in a worktree, not only a
-  local patch.
-- The requester explicitly asked for a worktree or a coordinator explicitly
-  assigned this leaf workflow.
+- The requester wants a PR in a worktree, not only a local patch.
+- The requester explicitly asked for a worktree or invoked this workflow.
 
 ## Rules
 
-- If neither the requester nor a coordinator explicitly assigned a worktree,
-  follow the current branch workflow instead.
+- If the requester did not explicitly ask for a worktree, follow the current
+  branch workflow instead.
 - Keep `/home/deploy/matrix-os` on `main`.
-- Put feature work in `/home/deploy/matrix-os.worktrees/<slug>`. A leaf agent
-  must use its coordinator-assigned worktree path instead.
+- Put feature work in `/home/deploy/matrix-os.worktrees/<slug>`.
 - Use a semantic branch and PR title. Do not prefix titles with agent/tool tags.
 - Stage only files in scope.
 - Do not merge unless explicitly asked.
@@ -61,8 +56,7 @@ applies; this workflow uses a persistent manual git worktree.
 2. Create or enter the worktree.
    - Slug: concise task slug, e.g. `fix-canvas-terminal-clicks`.
    - Branch: `codex/<slug>` unless the requester named a branch.
-   - Path: `/home/deploy/matrix-os.worktrees/<slug>`, or the exact path assigned
-     by the coordinator for a leaf agent.
+   - Path: `/home/deploy/matrix-os.worktrees/<slug>`.
    - Command shape:
      `git worktree add -b codex/<slug> /home/deploy/matrix-os.worktrees/<slug> origin/main`
 

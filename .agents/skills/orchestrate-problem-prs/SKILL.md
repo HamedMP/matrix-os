@@ -131,9 +131,9 @@ require React Doctor and current screenshot evidence. Record every skipped gate
 with its exact reason.
 
 After implementation and local validation, tell the owner to mark its draft PR
-ready for review and verify that it is no longer a draft. Then tell the owner
-to invoke `$worktree-pr-monitor` for its single assigned PR. The leaf owner
-must:
+ready for review and verify that it is no longer a draft. The same problem
+owner is personally responsible for invoking and completing
+`$worktree-pr-monitor` for its single assigned PR. The owner must:
 
 1. resolve current-head review feedback until Greptile reports `5/5`;
 2. add `ready-for-ci` only at the point required by that skill;
