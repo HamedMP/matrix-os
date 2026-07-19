@@ -31,6 +31,7 @@ export interface ShellClient {
     cwd?: string;
     layout?: string;
     cmd?: string;
+    agent?: "claude" | "codex" | "opencode" | "pi";
   }): Promise<Record<string, unknown>>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
   listTabs(name: string): Promise<unknown[]>;

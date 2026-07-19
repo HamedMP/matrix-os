@@ -2,9 +2,21 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
 import { writeUtf8FileAtomic } from "./atomic-write.js";
+import {
+  AgentKindSchema,
+  AgentSessionStateStore,
+  deriveAgentVisualStatus,
+  type AgentKind,
+  type AgentSessionSnapshot,
+} from "./agent-session-state.js";
 import { shellError } from "./errors.js";
 import { resolveShellCwd, SESSION_NAME_PATTERN, validateLayoutName, validateSessionName } from "./names.js";
 import type { ScrollbackActivity, ScrollbackStore } from "./scrollback-store.js";
+import {
+  TerminalGitContextResolver,
+  type TerminalGitContext,
+  type TerminalGitContextInput,
+} from "./terminal-git-context.js";
 
 const ShellPlacementSchema = z.enum(["active", "background"]);
 const ShellVisualStatusSchema = z.enum(["running", "finished", "idle", "waiting"]);
@@ -15,10 +27,11 @@ const ShellSessionReferenceSchema = z.object({
   sessionName: z.string().regex(SESSION_NAME_PATTERN),
 });
 const SHELL_RUNNING_FALLBACK_WINDOW_MS = 12_000;
-const SHELL_TRANSITIONAL_VISUAL_STATUS_WINDOW_MS = 12_000;
+const MAX_CONCURRENT_SESSION_DECORATIONS = 8;
 
 export interface ShellRegistryAdapter {
   listSessions(): Promise<string[]>;
+  focusedPaneCwd?(name: string): Promise<string | null>;
   createSession(options: { name: string; cwd?: string; layout?: string; cmd?: string }): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
   renameSession?(name: string, nextName: string): Promise<void>;
@@ -50,6 +63,8 @@ const ShellSessionSchema = z.object({
   }).optional(),
   visualStatus: ShellVisualStatusSchema.optional(),
   visualStatusUpdatedAt: z.string().optional(),
+  agent: AgentKindSchema.optional(),
+  cwd: z.string().max(4096).optional(),
 });
 
 const RegistryFileSchema = z.object({
@@ -70,7 +85,7 @@ export interface ShellSessionAlias {
   target: string;
   source: ShellSessionAliasSource;
 }
-export interface ShellSession extends PersistedShellSession {
+export type ShellSession = Omit<PersistedShellSession, "cwd"> & {
   canonicalName: string;
   latestSeq: number | null;
   unread: boolean;
@@ -80,16 +95,32 @@ export interface ShellSession extends PersistedShellSession {
   references: ShellSessionReference[];
   recoverable: boolean;
   recoveryReason?: "missing_runtime_session";
-}
+  agent?: AgentKind;
+  subtitle?: string;
+  lastAction?: string;
+  agentUpdatedAt?: string;
+  model?: string;
+  strength?: string;
+  project?: string;
+  repository?: string;
+  branch?: string;
+  pullRequest?: TerminalGitContext["pullRequest"];
+};
 
 export interface ShellSessionUiStatePatch {
   placement?: ShellPlacement;
   lastSeenSeq?: number | null;
+  /** @deprecated Accepted for one compatibility release and intentionally ignored. */
   visualStatus?: ShellVisualStatus;
 }
 
 export interface ShellNameScopedStore {
   rename(fromName: string, toName: string): Promise<void>;
+}
+
+export interface ShellAgentStateStore extends ShellNameScopedStore {
+  get(name: string): Promise<AgentSessionSnapshot | null>;
+  delete(name: string): Promise<void>;
 }
 
 export interface ShellRegistryOptions {
@@ -98,15 +129,21 @@ export interface ShellRegistryOptions {
   persistPath?: string;
   scrollbackStore?: ScrollbackStore;
   preferencesStore?: ShellNameScopedStore;
+  agentStateStore?: ShellAgentStateStore;
+  gitContextResolver?: { resolve(input: TerminalGitContextInput): Promise<TerminalGitContext | null> };
 }
 
 export class ShellRegistry {
   private readonly persistPath: string;
+  private readonly agentStateStore: ShellAgentStateStore;
+  private readonly gitContextResolver: { resolve(input: TerminalGitContextInput): Promise<TerminalGitContext | null> };
   private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: ShellRegistryOptions) {
     this.persistPath =
       options.persistPath ?? join(options.homePath, "system", "shell-sessions.json");
+    this.agentStateStore = options.agentStateStore ?? new AgentSessionStateStore({ homePath: options.homePath });
+    this.gitContextResolver = options.gitContextResolver ?? new TerminalGitContextResolver({ homePath: options.homePath });
   }
 
   async list(): Promise<ShellSession[]> {
@@ -171,11 +208,13 @@ export class ShellRegistry {
     cwd?: string;
     layout?: string;
     cmd?: string;
+    agent?: AgentKind;
   }): Promise<ShellSession> {
     return this.withMutationLock(async () => {
       const name = validateSessionName(input.name);
       const cwd = input.cwd ? await resolveShellCwd(input.cwd, this.options.homePath) : undefined;
       const layoutName = input.layout ? validateLayoutName(input.layout) : undefined;
+      const agent = input.agent ?? inferAgentFromCommand(input.cmd);
       const file = await this.read();
       const live = new Set(await this.options.adapter.listSessions());
 
@@ -188,6 +227,8 @@ export class ShellRegistry {
           status: "active",
           updatedAt: now,
           ...(layoutName ? { layoutName } : {}),
+          ...(agent ? { agent } : {}),
+          ...(cwd ? { cwd } : {}),
         };
         file.sessions[name] = session;
         await this.write(file);
@@ -209,6 +250,8 @@ export class ShellRegistry {
         placement: "active",
         lastSeenSeq: null,
         kind: "session",
+        ...(agent ? { agent } : {}),
+        ...(cwd ? { cwd } : {}),
       };
       file.sessions[name] = session;
       if (file.order) {
@@ -250,18 +293,14 @@ export class ShellRegistry {
         }
         existing = this.adoptSession(targetName, now);
       }
-      const existingVisualStatusUpdatedAt =
-        existing.visualStatusUpdatedAt ?? (existing.visualStatus ? existing.updatedAt : undefined);
-      const visualStatusIntent = patch.visualStatus !== undefined;
       const next: PersistedShellSession = {
         ...existing,
         updatedAt: now,
-        ...(existingVisualStatusUpdatedAt ? { visualStatusUpdatedAt: existingVisualStatusUpdatedAt } : {}),
         ...(patch.placement !== undefined ? { placement: patch.placement } : {}),
         ...(patch.lastSeenSeq !== undefined ? { lastSeenSeq: patch.lastSeenSeq } : {}),
-        ...(patch.visualStatus !== undefined ? { visualStatus: patch.visualStatus } : {}),
-        ...(visualStatusIntent ? { visualStatusUpdatedAt: now } : {}),
       };
+      delete next.visualStatus;
+      delete next.visualStatusUpdatedAt;
       file.sessions[targetName] = next;
       await this.write(file);
       return this.decorateSession(next, file);
@@ -324,11 +363,21 @@ export class ShellRegistry {
       await this.options.adapter.renameSession(targetName, safeNextName);
       let scrollbackRenamed = false;
       let preferencesRenamed = false;
+      let agentStateRenamed = false;
       try {
         await this.options.scrollbackStore?.rename(targetName, safeNextName);
         scrollbackRenamed = true;
         await this.options.preferencesStore?.rename(targetName, safeNextName);
         preferencesRenamed = true;
+        try {
+          await this.agentStateStore.rename(targetName, safeNextName);
+          agentStateRenamed = true;
+        } catch (err: unknown) {
+          console.warn(
+            "[shell] failed to rename agent session state:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
         if (file.order) {
           const nextLive = new Set(live);
           nextLive.delete(targetName);
@@ -355,6 +404,14 @@ export class ShellRegistry {
           await this.options.preferencesStore?.rename(safeNextName, targetName).catch((rollbackErr: unknown) => {
             console.warn(
               "[shell] failed to rollback renamed preferences:",
+              rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
+            );
+          });
+        }
+        if (agentStateRenamed) {
+          await this.agentStateStore.rename(safeNextName, targetName).catch((rollbackErr: unknown) => {
+            console.warn(
+              "[shell] failed to rollback renamed agent state:",
               rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
             );
           });
@@ -402,6 +459,7 @@ export class ShellRegistry {
       this.removeReferencesForTarget(file, targetName);
       this.removeAliasesForTarget(file, targetName);
       await this.cleanupScrollback(targetName);
+      await this.cleanupAgentState(targetName);
       await this.write(file);
     });
   }
@@ -460,15 +518,32 @@ export class ShellRegistry {
   }
 
   private async decorateSession(session: PersistedShellSession, file?: RegistryFile): Promise<ShellSession> {
-    const activity = await this.options.scrollbackStore?.latestActivity?.(session.name);
+    const [activity, agentSnapshot, focusedPaneCwd] = await Promise.all([
+      this.options.scrollbackStore?.latestActivity?.(session.name),
+      this.readAgentSnapshot(session.name),
+      this.readFocusedPaneCwd(session.name),
+    ]);
     const latestSeq = activity?.latestSeq ?? await this.options.scrollbackStore?.latestSeq(session.name) ?? null;
     const lastSeenSeq = session.lastSeenSeq ?? session.lastSeq ?? latestSeq;
     const unread = latestSeq !== null && lastSeenSeq !== null && latestSeq > lastSeenSeq;
     const references = file ? this.referencesForTarget(file, session.name) : [];
     const recoverable = session.status === "exited" && references.length > 0;
-    const visualStatus = this.deriveVisualStatus(session, unread, activity);
+    const gitContext = await this.readGitContext({ sessionName: session.name, cwd: focusedPaneCwd ?? session.cwd });
+    const visualStatus = deriveAgentVisualStatus(agentSnapshot, unread)
+      ?? this.deriveVisualStatus(session, unread, activity);
+    const { cwd: _internalCwd, ...publicSession } = session;
     return {
-      ...session,
+      ...publicSession,
+      ...(agentSnapshot?.agent ? { agent: agentSnapshot.agent } : {}),
+      ...(agentSnapshot?.subtitle ? { subtitle: agentSnapshot.subtitle } : {}),
+      ...(agentSnapshot?.lastAction ? { lastAction: agentSnapshot.lastAction } : {}),
+      ...(agentSnapshot?.agentUpdatedAt ? { agentUpdatedAt: agentSnapshot.agentUpdatedAt } : {}),
+      ...(agentSnapshot?.model ? { model: agentSnapshot.model } : {}),
+      ...(agentSnapshot?.strength ? { strength: agentSnapshot.strength } : {}),
+      ...(gitContext?.project ? { project: gitContext.project } : {}),
+      ...(gitContext?.repository ? { repository: gitContext.repository } : {}),
+      ...(gitContext?.branch ? { branch: gitContext.branch } : {}),
+      ...(gitContext?.pullRequest ? { pullRequest: gitContext.pullRequest } : {}),
       placement: session.placement ?? "active",
       lastSeenSeq: lastSeenSeq ?? null,
       latestSeq,
@@ -499,15 +574,6 @@ export class ShellRegistry {
     }
     if (activity?.latestOutputAt && isRecentShellOutput(activity.latestOutputAt)) {
       return "running";
-    }
-    if (
-      session.visualStatus === "waiting" &&
-      isRecentShellTimestamp(
-        session.visualStatusUpdatedAt ?? session.updatedAt,
-        SHELL_TRANSITIONAL_VISUAL_STATUS_WINDOW_MS,
-      )
-    ) {
-      return "waiting";
     }
     return unread ? "finished" : "idle";
   }
@@ -575,10 +641,19 @@ export class ShellRegistry {
   }
 
   private async decorateSessions(sessions: PersistedShellSession[], file?: RegistryFile): Promise<ShellSession[]> {
-    const decorated: ShellSession[] = [];
-    for (const session of sessions) {
-      decorated.push(await this.decorateSession(session, file));
-    }
+    const decorated: ShellSession[] = new Array(sessions.length);
+    let nextIndex = 0;
+    const workers = Array.from(
+      { length: Math.min(MAX_CONCURRENT_SESSION_DECORATIONS, sessions.length) },
+      async () => {
+        while (nextIndex < sessions.length) {
+          const index = nextIndex;
+          nextIndex += 1;
+          decorated[index] = await this.decorateSession(sessions[index], file);
+        }
+      },
+    );
+    await Promise.all(workers);
     return decorated;
   }
 
@@ -708,6 +783,55 @@ export class ShellRegistry {
     }
   }
 
+  private async cleanupAgentState(name: string): Promise<void> {
+    try {
+      await this.agentStateStore.delete(name);
+    } catch (err: unknown) {
+      console.warn(
+        "[shell] failed to clean agent session state:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  private async readAgentSnapshot(name: string): Promise<AgentSessionSnapshot | null> {
+    try {
+      return await this.agentStateStore.get(name);
+    } catch (err: unknown) {
+      console.warn(
+        "[shell] agent session state unavailable:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return null;
+    }
+  }
+
+  private async readFocusedPaneCwd(name: string): Promise<string | null> {
+    if (!this.options.adapter.focusedPaneCwd) return null;
+    try {
+      const cwd = await this.options.adapter.focusedPaneCwd(name);
+      return cwd ? await resolveShellCwd(cwd, this.options.homePath) : null;
+    } catch (err: unknown) {
+      console.warn(
+        "[shell] focused pane cwd unavailable:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return null;
+    }
+  }
+
+  private async readGitContext(input: TerminalGitContextInput): Promise<TerminalGitContext | null> {
+    try {
+      return await this.gitContextResolver.resolve(input);
+    } catch (err: unknown) {
+      console.warn(
+        "[shell] terminal Git context unavailable:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return null;
+    }
+  }
+
   private async withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
     const run = this.mutationQueue.then(fn, fn);
     this.mutationQueue = run.then(
@@ -716,6 +840,25 @@ export class ShellRegistry {
     );
     return run;
   }
+}
+
+export function inferAgentFromCommand(command: string | undefined): AgentKind | undefined {
+  if (!command) return undefined;
+  const tokens = command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)?.map((token) => (
+    token.replace(/^(?:"(.*)"|'(.*)')$/, "$1$2")
+  )) ?? [];
+  let index = 0;
+  const usesEnv = tokens[index]?.split("/").pop() === "env";
+  if (usesEnv) index += 1;
+  while (
+    index < tokens.length &&
+    (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index]) || (usesEnv && tokens[index].startsWith("-")))
+  ) {
+    index += 1;
+  }
+  const executable = tokens[index]?.split("/").pop();
+  const parsed = AgentKindSchema.safeParse(executable);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function inferAliasSource(name: string): ShellSessionAliasSource {
