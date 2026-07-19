@@ -87,20 +87,21 @@ describe("Desktop config", () => {
     expect(gradient).toMatch(/var\(--gradient-/);
   });
 
-  it("wallpaperUrl routes bundled OS wallpapers through the gateway files route", () => {
-    // The shell-public /wallpapers path is unreliable through the platform
-    // session-routing proxy, so bundled names must not be special-cased.
+  it("wallpaperUrl routes bundled OS wallpapers through the gateway blob route", () => {
+    // File content goes through /api/files/blob — the same authenticated /api
+    // path as the file listing APIs; raw /files/* URLs can 401/404 for
+    // signed-in users behind the platform session router.
     const gatewayUrl = "https://gateway.example.com";
     for (const name of ["moraine-lake.jpg", "xp-bliss.jpg", "win11-bloom.jpg", "macos-light.svg"]) {
       expect(wallpaperUrl(name, gatewayUrl)).toBe(
-        `${gatewayUrl}/files/system/wallpapers/${name}`,
+        `${gatewayUrl}/api/files/blob?path=${encodeURIComponent(`system/wallpapers/${name}`)}`,
       );
     }
   });
 
-  it("wallpaperUrl routes user-uploaded wallpapers through the gateway files route", () => {
+  it("wallpaperUrl routes user-uploaded wallpapers through the gateway blob route", () => {
     expect(wallpaperUrl("custom-upload.png", "https://gateway.example.com")).toBe(
-      "https://gateway.example.com/files/system/wallpapers/custom-upload.png",
+      "https://gateway.example.com/api/files/blob?path=system%2Fwallpapers%2Fcustom-upload.png",
     );
   });
 

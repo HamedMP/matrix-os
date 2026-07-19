@@ -555,15 +555,14 @@ describe("zellij terminal WebSocket", () => {
 
   it("returns a stable error frame if PTY attach throws before listeners are registered", async () => {
     const ws = socket();
+    const attachSession = vi.fn(() => {
+      throw new Error("spawn failed");
+    });
     const handler = createShellWsHandler({
       registry: {
         list: vi.fn(async () => [{ name: "main", status: "active" }]),
       },
-      adapter: {
-        attachSession: vi.fn(() => {
-          throw new Error("spawn failed");
-        }),
-      },
+      adapter: { attachSession },
     });
 
     await handler.open({ ws, session: "main", fromSeq: 0 });
@@ -572,7 +571,31 @@ describe("zellij terminal WebSocket", () => {
       { type: "error", code: "attach_failed", message: "Shell attach failed" },
     ]);
     expect(ws.closed).toBe(true);
-  });
+    // The transient-race retry gives up after three attempts.
+    expect(attachSession).toHaveBeenCalledTimes(3);
+  }, 15_000);
+
+  it("retries a transient attach failure and attaches on a later attempt", async () => {
+    const ws = socket();
+    let attempts = 0;
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => {
+          attempts += 1;
+          if (attempts < 3) throw new Error("zellij not ready");
+          return new FakePty();
+        }),
+      },
+    });
+
+    await handler.open({ ws, session: "main", fromSeq: 0 });
+
+    expect(attempts).toBe(3);
+    expect(ws.sent).toContainEqual(expect.objectContaining({ type: "attached", session: "main" }));
+  }, 15_000);
 
   it("rejects missing sessions with a stable error", async () => {
     const ws = socket();

@@ -8,6 +8,8 @@ import { resetOsSession } from "../../shell/src/components/os-session/os-session
 
 vi.mock("@clerk/nextjs", () => ({
   useUser: () => ({ user: { fullName: "Test User", imageUrl: undefined } }),
+  useAuth: () => ({ isLoaded: true, isSignedIn: true, signOut: vi.fn() }),
+  useClerk: () => ({ openUserProfile: vi.fn() }),
 }));
 
 const defaultApps: AppEntry[] = [
@@ -329,13 +331,23 @@ describe("WindowsTaskbar", () => {
     expect(document.activeElement).toBe(within(menu).getByRole("button", { name: "Power" }));
   });
 
-  it("opens Settings from the Win11 start menu user footer, like XP's Control Panel", async () => {
+  it("opens the account flyout from the Win11 start menu user footer, with Settings inside", async () => {
     setDesign("win11");
     const { container, handlers } = await renderTaskbar();
 
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
     const menu = container.querySelector("[data-win11-start-menu]") as HTMLElement;
-    fireEvent.click(within(menu).getByRole("button", { name: "Account settings" }));
+
+    // The footer user button opens the account flyout instead of jumping
+    // straight to Settings.
+    fireEvent.click(within(menu).getByRole("button", { name: "Account" }));
+    const flyout = within(menu).getByRole("menu", { name: "Account options" });
+    expect(within(flyout).getByRole("menuitem", { name: "Manage account" })).toBeTruthy();
+    expect(within(flyout).getByRole("menuitem", { name: "Switch computer" })).toBeTruthy();
+    expect(within(flyout).getByRole("menuitem", { name: "Sign out" })).toBeTruthy();
+    expect(handlers.onOpenSettings).not.toHaveBeenCalled();
+
+    fireEvent.click(within(flyout).getByRole("menuitem", { name: "Settings" }));
     expect(handlers.onOpenSettings).toHaveBeenCalledTimes(1);
     expect(container.querySelector("[data-win11-start-menu]")).toBeNull();
   });
