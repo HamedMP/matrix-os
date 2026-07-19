@@ -1,5 +1,6 @@
-import { MessageSquare, Server } from "lucide-react";
+import { MessageSquare, PanelRightClose, PanelRightOpen, Server } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Group, Panel, Separator, type Layout as SplitLayout } from "react-resizable-panels";
 import { defaultAgentThreadComposerDraft } from "@matrix-os/contracts";
 import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import { Button, EmptyState } from "../../design/primitives";
@@ -8,6 +9,12 @@ import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
 import { useProjectView } from "../../stores/project-view";
 import { useProjectWorkspaces } from "../../stores/project-workspaces";
+import {
+  DEFAULT_INSPECTOR_WIDTH_PCT,
+  MAX_INSPECTOR_WIDTH_PCT,
+  MIN_INSPECTOR_WIDTH_PCT,
+  useInspectorLayout,
+} from "../panels/inspector-layout-store";
 import { AgentPreviewList, AgentTerminalList } from "../coding-agents/AgentWorkspaceContext";
 import { AgentConversationView } from "../coding-agents/AgentConversationView";
 import { AgentConversationInspector } from "../coding-agents/AgentConversationInspector";
@@ -60,6 +67,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const setSelectedThread = useProjectView((s) => s.setSelectedThread);
   const composerRequest = useProjectChatLauncher((s) => s.composerRequest);
   const runtimeScope = useConnection(codingAgentRuntimeScope);
+  const inspectorEntry = useInspectorLayout((s) => s.entries[projectId]);
   const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
 
@@ -70,6 +78,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   useEffect(() => {
     const workspace = useCodingAgentWorkspace.getState();
     workspace.ensureRuntimeScope(runtimeScope);
+    void useInspectorLayout.getState().hydrate(runtimeScope);
     const current = useCodingAgentWorkspace.getState();
     if (current.status !== "idle" || current.summary) return;
     void current.refresh().then(() => {
@@ -214,6 +223,142 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     }
   };
 
+  // Slice 2 hero layout: the conversation and the tools inspector sit in a
+  // resizable split; collapsing the inspector yields a full-width hero
+  // transcript. Width and collapsed state persist per project.
+  const inspectorCollapsed = inspectorEntry?.collapsed ?? false;
+  const inspectorWidthPct = inspectorEntry?.widthPct ?? DEFAULT_INSPECTOR_WIDTH_PCT;
+  const inspectorRegionId = `project-${projectId}-inspector`;
+
+  const handleSplitLayout = (layout: SplitLayout) => {
+    const pct = layout["inspector"];
+    if (typeof pct !== "number" || !Number.isFinite(pct)) return;
+    const store = useInspectorLayout.getState();
+    if (Math.round(pct) === store.layoutFor(projectId).widthPct) return;
+    store.setWidthPct(projectId, pct);
+  };
+
+  const conversationColumn = (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      {selectedThreadId ? (
+        <AgentConversationView
+          status={activeThreadId === selectedThreadId ? threadSnapshotStatus : "loading"}
+          snapshot={snapshotMatches ? threadSnapshot : null}
+          error={activeThreadId === selectedThreadId ? threadSnapshotError : null}
+          canSendTurns={canSendTurns}
+        />
+      ) : (
+        <EmptyState
+          icon={<MessageSquare size={28} />}
+          headline="Select a chat"
+          description="Pick a conversation from the list, or start a new chat for this project."
+          action={canCreate && projectWorkspaceEnabled ? (
+            <Button variant="primary" onClick={() => void openNewChat()}>New chat</Button>
+          ) : undefined}
+        />
+      )}
+    </div>
+  );
+
+  const inspectorPanel = (
+    <aside
+      id={inspectorRegionId}
+      aria-label="Conversation tools"
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+      style={{ background: "var(--bg-secondary)" }}
+    >
+      <AgentConversationInspector
+        defaultTab={reviewEnabled ? "changes" : "terminal"}
+        changesFocusRequestId={reviewFocusRequestId}
+        changesFocusConsumedId={reviewFocusConsumedId}
+        onChangesFocusConsumed={consumeReviewFocusRequest}
+        counts={inspectorCounts}
+        toolbar={(
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Conversation tools</h2>
+              <p className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>Inspect the current project without leaving the chat</p>
+            </div>
+            {projectWorkspaceEnabled ? (
+              <Button
+                variant={composerOpen ? "subtle" : "primary"}
+                aria-label={composerOpen ? "Close new chat composer" : "New chat in selected project"}
+                onClick={() => {
+                  if (composerOpen) {
+                    setComposerOpen(false);
+                    setComposerSeed(null);
+                    return;
+                  }
+                  void openNewChat();
+                }}
+              >
+                {composerOpen ? "Cancel" : "New chat"}
+              </Button>
+            ) : null}
+          </div>
+        )}
+        composer={!projectWorkspaceEnabled || composerOpen ? (
+          <AgentComposer
+            summary={summary}
+            seed={composerSeed}
+            focusRequestId={composerFocusRequestId}
+            onCreated={() => {
+              // Surface the new chat in the list and select it, whatever
+              // the capability shape — a created conversation must never
+              // land on the empty state.
+              const createdId = useCodingAgentWorkspace.getState().activeThreadId;
+              if (createdId) setSelectedThread(projectId, createdId);
+              if (!projectWorkspaceEnabled) return;
+              setComposerOpen(false);
+              setComposerSeed(null);
+              void refreshWorkspace(projectId);
+            }}
+          />
+        ) : undefined}
+        changes={reviewEnabled ? (
+          <ReviewList
+            canReadFiles={capabilityEnabled(summary, "codingAgentsFiles")}
+            canPrepareCommit={capabilityEnabled(summary, "codingAgentsSourceControl")}
+            canCreateFollowUp={canCreate}
+            onAskHunkFollowUp={(snapshot, selected) => {
+              setComposerSeed({
+                seedId: Date.now(),
+                draft: reviewHunkFollowUpDraft(summary, snapshot, selected),
+              });
+              setComposerOpen(true);
+            }}
+          />
+        ) : (
+          <InspectorEmptyState message="Change review is not available on this computer." />
+        )}
+        terminal={<AgentTerminalList summary={summary} />}
+        preview={previewEnabled ? (
+          <AgentPreviewList summary={summary} />
+        ) : (
+          <InspectorEmptyState message="No preview capability is available for this project." />
+        )}
+        activity={(
+          <div className="space-y-4">
+            <AttentionThreadList
+              summary={summary}
+              onOpenThread={(thread) => openListedThread(thread.id, thread.projectId)}
+            />
+            <ThreadList
+              summary={summary}
+              onOpenThread={(thread) => openListedThread(thread.id, thread.projectId)}
+            />
+            <CreatedThreadHandleList
+              summary={summary}
+              onOpenThread={(thread) => openListedThread(thread.id, thread.projectId)}
+            />
+            <ProviderList summary={summary} />
+            <NotificationPreferencesPanel />
+          </div>
+        )}
+      />
+    </aside>
+  );
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
       <ProjectThreadList
@@ -229,122 +374,81 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         onNewChat={(taskId) => void openNewChat(taskId)}
         onRetry={() => void refreshWorkspace(projectId)}
       />
-      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(360px,1fr)_minmax(340px,clamp(340px,34vw,520px))] lg:overflow-hidden">
-        <div className="flex min-h-[460px] min-w-0 flex-col overflow-hidden border-b lg:min-h-0 lg:border-b-0 lg:border-r" style={{ borderColor: "var(--border-subtle)" }}>
-          {selectedThreadId ? (
-            <AgentConversationView
-              status={activeThreadId === selectedThreadId ? threadSnapshotStatus : "loading"}
-              snapshot={snapshotMatches ? threadSnapshot : null}
-              error={activeThreadId === selectedThreadId ? threadSnapshotError : null}
-              canSendTurns={canSendTurns}
-            />
-          ) : (
-            <EmptyState
-              icon={<MessageSquare size={28} />}
-              headline="Select a chat"
-              description="Pick a conversation from the list, or start a new chat for this project."
-              action={canCreate && projectWorkspaceEnabled ? (
-                <Button variant="primary" onClick={() => void openNewChat()}>New chat</Button>
-              ) : undefined}
-            />
-          )}
-        </div>
-        <aside
-          aria-label="Conversation tools"
-          className="flex min-h-[520px] min-w-0 flex-col overflow-hidden lg:min-h-0"
-          style={{ background: "var(--bg-secondary)" }}
-        >
-          <AgentConversationInspector
-            defaultTab={reviewEnabled ? "changes" : "terminal"}
-            changesFocusRequestId={reviewFocusRequestId}
-            changesFocusConsumedId={reviewFocusConsumedId}
-            onChangesFocusConsumed={consumeReviewFocusRequest}
-            counts={inspectorCounts}
-            toolbar={(
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Conversation tools</h2>
-                  <p className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>Inspect the current project without leaving the chat</p>
-                </div>
-                {projectWorkspaceEnabled ? (
-                  <Button
-                    variant={composerOpen ? "subtle" : "primary"}
-                    aria-label={composerOpen ? "Close new chat composer" : "New chat in selected project"}
-                    onClick={() => {
-                      if (composerOpen) {
-                        setComposerOpen(false);
-                        setComposerSeed(null);
-                        return;
-                      }
-                      void openNewChat();
-                    }}
-                  >
-                    {composerOpen ? "Cancel" : "New chat"}
-                  </Button>
-                ) : null}
-              </div>
-            )}
-            composer={!projectWorkspaceEnabled || composerOpen ? (
-              <AgentComposer
-                summary={summary}
-                seed={composerSeed}
-                focusRequestId={composerFocusRequestId}
-                onCreated={() => {
-                  // Surface the new chat in the list and select it, whatever
-                  // the capability shape — a created conversation must never
-                  // land on the empty state.
-                  const createdId = useCodingAgentWorkspace.getState().activeThreadId;
-                  if (createdId) setSelectedThread(projectId, createdId);
-                  if (!projectWorkspaceEnabled) return;
-                  setComposerOpen(false);
-                  setComposerSeed(null);
-                  void refreshWorkspace(projectId);
-                }}
-              />
-            ) : undefined}
-            changes={reviewEnabled ? (
-              <ReviewList
-                canReadFiles={capabilityEnabled(summary, "codingAgentsFiles")}
-                canPrepareCommit={capabilityEnabled(summary, "codingAgentsSourceControl")}
-                canCreateFollowUp={canCreate}
-                onAskHunkFollowUp={(snapshot, selected) => {
-                  setComposerSeed({
-                    seedId: Date.now(),
-                    draft: reviewHunkFollowUpDraft(summary, snapshot, selected),
-                  });
-                  setComposerOpen(true);
-                }}
-              />
-            ) : (
-              <InspectorEmptyState message="Change review is not available on this computer." />
-            )}
-            terminal={<AgentTerminalList summary={summary} />}
-            preview={previewEnabled ? (
-              <AgentPreviewList summary={summary} />
-            ) : (
-              <InspectorEmptyState message="No preview capability is available for this project." />
-            )}
-            activity={(
-              <div className="space-y-4">
-                <AttentionThreadList
-                  summary={summary}
-                  onOpenThread={(thread) => openListedThread(thread.id, thread.projectId)}
-                />
-                <ThreadList
-                  summary={summary}
-                  onOpenThread={(thread) => openListedThread(thread.id, thread.projectId)}
-                />
-                <CreatedThreadHandleList
-                  summary={summary}
-                  onOpenThread={(thread) => openListedThread(thread.id, thread.projectId)}
-                />
-                <ProviderList summary={summary} />
-                <NotificationPreferencesPanel />
-              </div>
-            )}
+      {inspectorCollapsed ? (
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+          {conversationColumn}
+          <InspectorToggle
+            collapsed
+            controls={inspectorRegionId}
+            onToggle={() => useInspectorLayout.getState().setCollapsed(projectId, false)}
           />
-        </aside>
-      </div>
+        </div>
+      ) : (
+        <Group
+          orientation="horizontal"
+          className="flex min-h-0 min-w-0 flex-1"
+          defaultLayout={{ conversation: 100 - inspectorWidthPct, inspector: inspectorWidthPct }}
+          onLayoutChange={handleSplitLayout}
+        >
+          <Panel id="conversation" minSize={100 - MAX_INSPECTOR_WIDTH_PCT} className="flex min-h-0 min-w-0 flex-col">
+            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+              {conversationColumn}
+              <InspectorToggle
+                collapsed={false}
+                controls={inspectorRegionId}
+                onToggle={() => useInspectorLayout.getState().setCollapsed(projectId, true)}
+              />
+            </div>
+          </Panel>
+          <Separator
+            className="group/sep relative w-px shrink-0 cursor-col-resize outline-none"
+            style={{ background: "var(--border-subtle)" }}
+          >
+            <span className="absolute inset-y-0 -left-1 -right-1 transition-colors duration-100 group-hover/sep:bg-[var(--accent-muted)]" />
+          </Separator>
+          <Panel
+            id="inspector"
+            minSize={MIN_INSPECTOR_WIDTH_PCT}
+            maxSize={MAX_INSPECTOR_WIDTH_PCT}
+            className="flex min-h-0 min-w-0 flex-col"
+          >
+            {inspectorPanel}
+          </Panel>
+        </Group>
+      )}
     </div>
+  );
+}
+
+// Collapse toggle for the tools inspector. Lives in the conversation pane's
+// top-right corner so the hero transcript keeps one persistent, keyboard-
+// reachable control in both states.
+function InspectorToggle({
+  collapsed,
+  controls,
+  onToggle,
+}: {
+  collapsed: boolean;
+  controls: string;
+  onToggle: () => void;
+}) {
+  const label = collapsed ? "Show conversation tools" : "Hide conversation tools";
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-expanded={!collapsed}
+      aria-controls={controls}
+      title={label}
+      onClick={onToggle}
+      className="no-drag absolute right-2.5 top-2.5 z-10 flex h-7 w-7 items-center justify-center rounded-md border outline-none transition-colors hover:brightness-105 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+      style={{
+        borderColor: "var(--border-subtle)",
+        background: "var(--bg-surface)",
+        color: "var(--text-tertiary)",
+      }}
+    >
+      {collapsed ? <PanelRightOpen size={14} /> : <PanelRightClose size={14} />}
+    </button>
   );
 }
