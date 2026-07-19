@@ -88,10 +88,8 @@ export const DeployRequestSchema = z.object({
 });
 
 export type ProvisionRequest = z.infer<typeof ProvisionRequestSchema>;
-type ParsedPreviewProvisionRequest = z.infer<typeof PreviewProvisionRequestSchema>;
-export type PreviewProvisionRequest = Omit<ParsedPreviewProvisionRequest, 'accessClerkUserIds'> & {
-  accessClerkUserIds?: string[];
-};
+export type PreviewProvisionInput = z.input<typeof PreviewProvisionRequestSchema>;
+export type PreviewProvisionRequest = z.output<typeof PreviewProvisionRequestSchema>;
 export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;
 export type RecoverRequest = z.infer<typeof RecoverRequestSchema>;
 export type ResizeMachineRequest = z.infer<typeof ResizeMachineRequestSchema>;

@@ -284,7 +284,6 @@ jobs:
                | (.[0] // {status: "absent", machineId: ""})
                | del(._preview_rank)')"
           status="$(jq -r '.status' <<< "$fleet_machine")"
-          accepted_machine_id="$(jq -r '.machineId // ""' <<< "$fleet_machine")"
           runtime_slot="$(jq -r '.runtimeSlot // ""' <<< "$fleet_machine")"
           echo "Fleet status for ${HANDLE}: ${status}"
 
