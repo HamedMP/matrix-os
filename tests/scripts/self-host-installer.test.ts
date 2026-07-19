@@ -131,7 +131,7 @@ describe("self-host server installer", () => {
     expect(script).toContain("apt_get_update >>\"$MATRIX_INSTALL_LOG\" 2>&1");
     expect(script).toContain("timeout 300 apt-get install -y software-properties-common");
     expect(script).toContain("timeout 60 add-apt-repository -y universe");
-    expect(script).toContain("apt-get install -y bubblewrap ca-certificates curl docker.io git nginx openssl postgresql-client procps socat sudo tar >>\"$MATRIX_INSTALL_LOG\" 2>&1");
+    expect(script).toContain("apt-get install -y bubblewrap ca-certificates curl docker.io git nginx openssl postgresql-client procps socat sudo tar zsh >>\"$MATRIX_INSTALL_LOG\" 2>&1");
     expect(script).toContain("configure_bwrap_apparmor");
     expect(script).toContain("dpkg --compare-versions \"$VERSION_ID\" ge 24.04");
     expect(script).toContain(

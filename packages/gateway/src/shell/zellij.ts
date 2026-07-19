@@ -10,6 +10,7 @@ import { shellError, type ShellSafeError } from "./errors.js";
 import {
   MATRIX_TERMINAL_BASHRC,
   MATRIX_TERMINAL_PROMPT_LABEL_SCRIPT,
+  MATRIX_TERMINAL_ZSHRC,
   MATRIX_ZELLIJ_LAYOUT,
   matrixTerminalShellScript,
   matrixZellijConfigPaths,
@@ -276,9 +277,14 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         await mkdir(zellijConfigPaths.layoutDir, { recursive: true });
         await atomicWriteText(
           zellijConfigPaths.shellFile,
-          matrixTerminalShellScript(zellijConfigPaths.bashrcFile, zellijConfigPaths.promptLabelFile),
+          matrixTerminalShellScript(
+            zellijConfigPaths.zshrcFile,
+            zellijConfigPaths.bashrcFile,
+            zellijConfigPaths.promptLabelFile,
+          ),
         );
         await chmod(zellijConfigPaths.shellFile, 0o700);
+        await atomicWriteText(zellijConfigPaths.zshrcFile, MATRIX_TERMINAL_ZSHRC);
         await atomicWriteText(zellijConfigPaths.bashrcFile, MATRIX_TERMINAL_BASHRC);
         await atomicWriteText(zellijConfigPaths.promptLabelFile, MATRIX_TERMINAL_PROMPT_LABEL_SCRIPT);
         await atomicWriteText(zellijConfigPaths.file, renderMatrixZellijConfig(zellijConfigPaths, shellThemeId));
