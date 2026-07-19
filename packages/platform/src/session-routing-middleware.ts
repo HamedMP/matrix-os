@@ -7,14 +7,14 @@ import type { ClerkAuth } from './clerk-auth.js';
 import {
   type PlatformDB,
   type UserMachineRecord,
-  getActiveUserMachineByClerkId,
+  getAccessibleActiveUserMachineByClerkId,
   getActiveUserMachineByHandle,
   getContainer,
-  getRunningUserMachineByClerkId,
+  getAccessibleRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
-  listActiveUserMachinesByClerkId,
   updateLastActive,
 } from './db.js';
+import { canClerkUserAccessMachine } from './customer-vps-preview.js';
 import { issueSyncJwt } from './sync-jwt.js';
 import {
   buildCustomerVpsProxyUrl,
@@ -45,7 +45,6 @@ import {
   CLERK_SCRIPT_ORIGIN,
   getAuthPage,
   getNoContainerPage,
-  getRuntimePickerPage,
   getVpsBootPage,
 } from './auth-pages.js';
 import { appDomainServiceWorkerResponse } from './app-domain-service-worker.js';
@@ -55,9 +54,6 @@ import {
   NATIVE_APP_SESSION_PROXY_HEADER,
   buildCodeSessionCookie,
 } from './session-cookies.js';
-import {
-  buildRuntimePickerMachines,
-} from './runtime-probes.js';
 import { HANDLE_PATTERN, describeError } from './platform-route-utils.js';
 import {
   APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS,
@@ -75,6 +71,7 @@ import {
   shouldForwardProxyHeader,
 } from './session-routing-proxy.js';
 import {
+  type AppDomainIdentity,
   buildAppRouteCookie,
   buildShellRouteCookie,
   buildShellRuntimeSlotCookie,
@@ -96,6 +93,22 @@ import {
 import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
+import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
+
+export function shouldServeRuntimeManager(input: {
+  isAppDomain: boolean;
+  path: string;
+  userId: string;
+  identitySource?: AppDomainIdentity['source'];
+}): boolean {
+  return Boolean(
+    input.isAppDomain &&
+    input.userId &&
+    input.path === '/runtime' &&
+    input.identitySource !== 'mobile-session' &&
+    input.identitySource !== 'static-route'
+  );
+}
 
 interface CreateSessionRoutingMiddlewareOpts {
   db: PlatformDB;
@@ -121,6 +134,40 @@ interface CreateSessionRoutingMiddlewareOpts {
   ) => Promise<EntitlementAccessDecision>;
   getGatewayUrlForHandle: (handle: string) => string;
   logRouteError: (context: string, err: unknown) => void;
+}
+
+/**
+ * Fetch a runtime response with a bounded header wait. Streaming responses can
+ * release that timer once the upstream headers arrive so the signal does not
+ * terminate a healthy, long-lived response body.
+ */
+export async function fetchRuntimeProxy(
+  targetUrl: string,
+  init: RequestInit,
+  timeoutMs: number,
+  releaseTimeoutAfterHeaders: boolean,
+): Promise<Response> {
+  if (!releaseTimeoutAfterHeaders) {
+    return fetch(targetUrl, {
+      ...init,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(targetUrl, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function shouldReleaseRuntimeProxyTimeout(method: string, path: string): boolean {
+  return method === 'GET' && path === '/api/files/media';
 }
 
 function logCodeDomainUpstreamFailure(opts: {
@@ -384,14 +431,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         ? runtimeSelection.slot
         : cookieRuntimeSlot ?? runtimeSelection.slot
     );
-    let singleMachineRuntimeSlot: string | null = null;
 
     const isGatewayPath = isAppDomain && isAppDomainGatewayPath(path);
-    const allowAuthShellUnroutedIdentity = !legacyContainerRoutingEnabled && shouldProxyAuthShellForUnroutedUser({
+    const allowAuthShellUnroutedIdentity = shouldProxyAuthShellForUnroutedUser({
       isAppDomain,
       method: c.req.method,
       path,
-    });
+    }) && (!legacyContainerRoutingEnabled || path === '/runtime');
     const publishableKey = appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
     const authMode = path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
     const requestedRouteHandle = !explicitVmRoute && isAppDomain
@@ -511,7 +557,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           runtimeSelection.source === 'query' ? requestRuntimeSlot : undefined
         ),
       );
-      if (!machine || (identity.userId && machine.clerkUserId !== identity.userId)) {
+      if (!machine || (identity.userId && !canClerkUserAccessMachine(machine, identity.userId))) {
         applyNoStoreHeaders(c);
         return c.text('Matrix OS computer unavailable', 404);
       }
@@ -585,16 +631,17 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
 
       try {
-        const upstream = await fetch(targetUrl, {
+        const upstream = await fetchRuntimeProxy(targetUrl, {
           method: c.req.method,
           headers,
           redirect: 'manual',
-          signal: AbortSignal.timeout(proxyTimeoutMs),
           body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
           dispatcher: customerVpsProxyDispatcher,
-        } as RequestInit & { dispatcher: Agent });
+        } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
+        shouldReleaseRuntimeProxyTimeout(c.req.method, explicitVmRoute.upstreamPath));
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        scopeExplicitVmAppSessionCookie(responseHeaders, explicitVmRoute);
         applySandboxedAppAssetCorsHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.header('origin'));
         applyAppDomainRuntimeAssetCacheHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.url);
         responseHeaders.append('set-cookie', buildShellRouteCookie(machine.handle));
@@ -628,39 +675,26 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       });
     }
 
-    const shouldOfferRuntimePicker =
-      isAppDomain &&
-      identity.userId &&
-      identity.source !== 'mobile-session' &&
-      identity.source !== 'static-route' &&
-      path === '/runtime';
-    if (shouldOfferRuntimePicker) {
-      const machines = await listActiveUserMachinesByClerkId(db, identity.userId);
-      if (machines.length === 0 && path === '/runtime') {
-        return c.redirect('/');
-      }
-      if (path === '/runtime' || machines.length > 1) {
-        const pickerMachines = await buildRuntimePickerMachines(machines, platformSecret, customerVpsProxyDispatcher);
-        applyNoStoreHeaders(c);
-        c.header('X-Frame-Options', 'DENY');
-        c.header('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'none'");
-        return c.html(getRuntimePickerPage({ machines: pickerMachines, selectedHandle: identity.handle }));
-      }
-      if (machines.length === 1 && runtimeSelection.source === 'default') {
-        singleMachineRuntimeSlot = machines[0]!.runtimeSlot;
-      }
+    const serveRuntimeManager = shouldServeRuntimeManager({
+      isAppDomain,
+      path,
+      userId: identity.userId,
+      identitySource: identity.source,
+    });
+    if (serveRuntimeManager) {
+      return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
     }
 
-    let runtimeSlot = identity.runtimeSlot ?? singleMachineRuntimeSlot ?? requestRuntimeSlot;
+    let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
     let requestedActiveMachine: UserMachineRecord | undefined;
     let runningMachine = identity.userId
-      ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
+      ? await getAccessibleRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
       : await getRunningUserMachineByHandle(db, identity.handle);
     if (!runningMachine && identity.userId) {
-      requestedActiveMachine = await getActiveUserMachineByClerkId(db, identity.userId, runtimeSlot);
+      requestedActiveMachine = await getAccessibleActiveUserMachineByClerkId(db, identity.userId, runtimeSlot);
       if (!requestedActiveMachine) {
         const handleMachine = await getRunningUserMachineByHandle(db, identity.handle);
-        if (handleMachine?.clerkUserId === identity.userId) {
+        if (handleMachine && canClerkUserAccessMachine(handleMachine, identity.userId)) {
           runningMachine = handleMachine;
         }
       }
@@ -735,14 +769,14 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
 
       try {
-        const upstream = await fetch(targetUrl, {
+        const upstream = await fetchRuntimeProxy(targetUrl, {
           method: c.req.method,
           headers,
           redirect: 'manual',
-          signal: AbortSignal.timeout(proxyTimeoutMs),
           body,
           dispatcher: customerVpsProxyDispatcher,
-        } as RequestInit & { dispatcher: Agent });
+        } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
+        shouldReleaseRuntimeProxyTimeout(c.req.method, path));
         if (isCodeDomain && upstream.status >= 500) {
           logCodeDomainUpstreamFailure({
             handle: runningMachine.handle,
@@ -801,7 +835,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     }
 
     const activeMachine = requestedActiveMachine ?? (identity.userId
-      ? await getActiveUserMachineByClerkId(db, identity.userId, runtimeSlot)
+      ? await getAccessibleActiveUserMachineByClerkId(db, identity.userId, runtimeSlot)
       : await getActiveUserMachineByHandle(db, identity.handle));
     if (activeMachine) {
       if (
@@ -926,14 +960,14 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
 
       const targetUrl = `http://${endpoint.host}:${targetPort}${path}${qs}`;
       try {
-        const upstream = await fetch(targetUrl, {
+        const upstream = await fetchRuntimeProxy(targetUrl, {
           method: c.req.method,
           headers,
           redirect: 'manual',
-          signal: AbortSignal.timeout(proxyTimeoutMs),
           body,
           dispatcher: containerProxyDispatcher,
-        } as RequestInit & { dispatcher: Agent });
+        } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
+        shouldReleaseRuntimeProxyTimeout(c.req.method, path));
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));

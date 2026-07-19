@@ -186,13 +186,13 @@ This principle exists because PR review discipline plus an automated quality flo
 - Test against real Agent SDK behavior, not just docs (docs may be incomplete)
 - Commit working increments -- each phase should produce a demoable state
 - Keep the system prompt under 7K tokens (3% of context budget)
-- **Documentation-driven development**: every new feature, spec, or plan must include a step to update the public docs at `www/content/docs/`. The docs site (matrix-os.com/docs, built with Fumadocs) is the canonical public reference. When planning a task or writing a spec, include documentation updates as an explicit deliverable alongside tests and implementation
+- **Documentation-driven development**: every new feature, spec, or plan must include a step to update the public docs in the private `FinnaAI/matrix-os-site` repository under `content/docs/`. The docs site (matrix-os.com/docs, built with Fumadocs) is the canonical public reference. When planning a task or writing a spec, include a separate site-repository documentation PR as an explicit deliverable alongside tests and implementation.
 
 ## Governance
 
 This constitution supersedes all other development practices for Matrix OS. Amendments require updating this file with rationale. If a principle conflicts with implementation reality (e.g., SDK limitation), document the deviation in SDK-VERIFICATION.md and propose the simplest workaround.
 
-**Version**: 2.2.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-05-27
+**Version**: 2.3.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-07-19
 
 ### Amendment Log
 
@@ -212,4 +212,5 @@ This constitution supersedes all other development practices for Matrix OS. Amen
   - **Principle IX** (was VIII): TDD renumbered.
   - **Tech constraints**: AI kernel marked model-agnostic, container-per-user flagged as current implementation (not principle), Postgres selected as the standard persistence layer.
 - **2.1.0** (2026-04-27): Database standard hardened. PostgreSQL via Kysely is the required persistence layer for platform, kernel durable state, per-user, app, social, and control-plane data. SQLite, Drizzle ORM, and better-sqlite3 are no longer accepted for new Matrix OS persistence.
+- **2.3.0** (2026-07-19): Moved the public website and Fumadocs source of truth from the monorepo's `www/` workspace to the private `FinnaAI/matrix-os-site` repository. Documentation-driven development now requires a separate PR in that repository instead of recreating or editing a local `www/` tree.
 - **2.2.0** (2026-05-27): Added Principle X — Worktree, PR, and Greptile 5/5 (NON-NEGOTIABLE). Codifies the canonical compound-engineering loop: manual `git worktree` + PR + Greptile 5/5 gate. Constitution must be re-read at the start of every session. Distinguished required manual `git worktree` from the banned Agent-tool `isolation: "worktree"` parameter. Motivated by positioning developers as the first ICP and the need for a scalable review discipline as the team and external developer community grow.

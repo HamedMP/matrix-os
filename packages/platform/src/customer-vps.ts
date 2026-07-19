@@ -48,13 +48,16 @@ import {
   renderCloudInitTemplate,
   type CustomerHostConfig,
 } from './customer-vps-cloud-init.js';
-import { PublicIPv4Schema, type CustomerVpsStatus } from './customer-vps-schema.js';
-import type {
-  PreviewProvisionRequest,
-  ProvisionRequest,
-  RegisterRequest,
-  RecoverRequest,
-  ResizeMachineRequest,
+import {
+  PreviewProvisionRequestSchema,
+  PublicIPv4Schema,
+  type CustomerVpsStatus,
+  type PreviewProvisionInput,
+  type PreviewProvisionRequest,
+  type ProvisionRequest,
+  type RegisterRequest,
+  type RecoverRequest,
+  type ResizeMachineRequest,
 } from './customer-vps-schema.js';
 import { assertPreviewProvisioningCapacity, isPreviewMachine } from './customer-vps-preview.js';
 import { selectCustomerVpsDeployMachines } from './customer-vps-deploy-selection.js';
@@ -67,6 +70,19 @@ import {
   canonicalizeDeveloperTools,
   developerToolsShellList,
 } from './developer-tools.js';
+import {
+  claimProvisioningJob,
+  completeProvisioningJob,
+  failProvisioningJob,
+  getProvisioningJob,
+  getProvisioningJobByMachineId,
+  insertProvisioningJob,
+  listDispatchableProvisioningJobs,
+  MAX_PROVISIONING_JOB_ATTEMPTS,
+  openProvisioningPayload,
+  sealProvisioningPayload,
+  type NewProvisioningJob,
+} from './customer-vps-provisioning-jobs.js';
 
 export interface ProvisionResponse {
   machineId: string;
@@ -130,7 +146,7 @@ export interface DeployTarget {
 
 export interface CustomerVpsService {
   provision(input: ProvisionRequest): Promise<ProvisionResponse>;
-  provisionPreview(input: PreviewProvisionRequest): Promise<ProvisionResponse>;
+  provisionPreview(input: PreviewProvisionInput): Promise<ProvisionResponse>;
   register(token: string | undefined, input: RegisterRequest): Promise<RegisterResponse>;
   recover(input: RecoverRequest): Promise<RecoverResponse>;
   resize(input: ResizeMachineRequest & { machineId: string }): Promise<ResizeResponse>;
@@ -138,6 +154,7 @@ export interface CustomerVpsService {
   delete(machineId: string): Promise<DeleteResponse>;
   deploy(target?: DeployTarget): Promise<DeployResult>;
   listAllMachines(): Promise<StatusResponse[]>;
+  dispatchProvisioningJobs(): Promise<{ checked: number; completed: number; failed: number }>;
   reconcileProvisioning(): Promise<{ checked: number; failed: number; running: number }>;
 }
 
@@ -151,6 +168,8 @@ export interface CustomerVpsServiceDeps {
   tokenFactory?: (now: Date, ttlMs: number) => RegistrationToken;
   postgresPasswordFactory?: () => string;
   now?: () => Date;
+  provisioningJobIdFactory?: () => string;
+  enqueueProvisioningJob?: (db: PlatformDB, job: NewProvisioningJob) => Promise<void>;
   fetchDispatcher?: import('undici').Dispatcher;
   resolveBillingEntitlement?: (clerkUserId: string) => Promise<BillingEntitlement | null | undefined>;
 }
@@ -206,6 +225,7 @@ const PROVIDER_DELETION_RETRY_BASE_MS = 60_000;
 const PROVIDER_DELETION_RETRY_MAX_MS = 60 * 60_000;
 const RESIZE_STATUS_POLL_INTERVAL_MS = 1_000;
 const RESIZE_STATUS_POLL_TIMEOUT_MS = 90_000;
+const PROVISIONING_JOB_LEASE_MS = 5 * 60_000;
 
 function activeProvisionResponse(row: UserMachineRecord, etaSeconds: number): ProvisionResponse {
   if (row.status !== 'provisioning' && row.status !== 'running') {
@@ -297,6 +317,8 @@ function buildHostConfig(
 }
 
 const HOST_BUNDLE_CHANNELS = new Set(['stable', 'canary', 'beta', 'dev']);
+const MAX_LOCAL_PROVISION_LOCKS = 1_024;
+const MAX_LOCAL_PROVISION_QUEUE_DEPTH = 20;
 
 interface HostBundleRef {
   imageVersion: string;
@@ -426,6 +448,41 @@ function sleep(ms: number): Promise<void> {
 
 export function createCustomerVpsService(deps: CustomerVpsServiceDeps): CustomerVpsService {
   const machineIdFactory = deps.machineIdFactory ?? randomUUID;
+  const provisioningJobIdFactory = deps.provisioningJobIdFactory ?? randomUUID;
+  const localProvisionLocks = new Map<string, { tail: Promise<void>; depth: number }>();
+
+  async function withLocalProvisionLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    let lock = localProvisionLocks.get(key);
+    if (!lock) {
+      if (localProvisionLocks.size >= MAX_LOCAL_PROVISION_LOCKS) {
+        throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
+      }
+      lock = { tail: Promise.resolve(), depth: 0 };
+      localProvisionLocks.set(key, lock);
+    }
+    if (lock.depth >= MAX_LOCAL_PROVISION_QUEUE_DEPTH) {
+      throw new CustomerVpsError(429, 'provider_unavailable', 'Try again later');
+    }
+
+    const predecessor = lock.tail;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    lock.tail = predecessor.then(() => gate);
+    lock.depth += 1;
+    await predecessor;
+    try {
+      return await fn();
+    } finally {
+      release();
+      lock.depth -= 1;
+      if (lock.depth === 0 && localProvisionLocks.get(key) === lock) {
+        localProvisionLocks.delete(key);
+      }
+    }
+  }
+  const enqueueProvisioningJob = deps.enqueueProvisioningJob ?? insertProvisioningJob;
   const tokenFactory = deps.tokenFactory ?? createRegistrationToken;
   const postgresPasswordFactory = deps.postgresPasswordFactory ?? (() => randomBytes(24).toString('base64url'));
   const now = deps.now ?? (() => new Date());
@@ -593,19 +650,232 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     }
   }
 
+  async function dispatchProvisioningJob(
+    jobId: string,
+    propagateFailure: boolean,
+  ): Promise<'completed' | 'failed' | 'skipped'> {
+    const claimedAt = now();
+    const pendingJob = await getProvisioningJob(deps.db, jobId);
+    if (
+      pendingJob?.status === 'running'
+      && pendingJob.attempts >= MAX_PROVISIONING_JOB_ATTEMPTS
+      && pendingJob.leaseExpiresAt
+      && pendingJob.leaseExpiresAt <= claimedAt.toISOString()
+    ) {
+      await runInPlatformTransaction(deps.db, async (trx) => {
+        await updateUserMachine(trx, pendingJob.machineId, {
+          status: 'failed',
+          failureCode: 'retry_exhausted',
+          failureAt: claimedAt.toISOString(),
+        });
+        await failProvisioningJob(
+          trx,
+          pendingJob.jobId,
+          claimedAt.toISOString(),
+          'retry_exhausted',
+        );
+      });
+      if (propagateFailure) {
+        throw new CustomerVpsError(500, 'retry_exhausted', 'Provisioning failed');
+      }
+      return 'failed';
+    }
+    const job = await claimProvisioningJob(
+      deps.db,
+      jobId,
+      claimedAt.toISOString(),
+      new Date(claimedAt.getTime() + PROVISIONING_JOB_LEASE_MS).toISOString(),
+    );
+    if (!job) return 'skipped';
+
+    const row = await getUserMachine(deps.db, job.machineId);
+    if (!row || row.deletedAt || row.status !== 'provisioning' || !job.encryptedPayload) {
+      const failedAt = now().toISOString();
+      await failProvisioningJob(deps.db, job.jobId, failedAt, 'invalid_state');
+      if (row && !row.deletedAt && row.status === 'provisioning') {
+        await updateUserMachine(deps.db, row.machineId, {
+          status: 'failed',
+          failureCode: 'invalid_state',
+          failureAt: failedAt,
+        });
+      }
+      if (propagateFailure) {
+        throw new CustomerVpsError(500, 'invalid_state', 'Provisioning failed');
+      }
+      return 'failed';
+    }
+
+    let serverIdForCompensation: number | null = null;
+    let adoptedExistingServer = false;
+    try {
+      const payload = openProvisioningPayload(job.encryptedPayload, deps.config.platformSecret);
+      const imageVersion = row.imageVersion ?? deps.config.imageVersion;
+      const hostConfig = buildHostConfig(
+        deps.config,
+        {
+          clerkUserId: row.clerkUserId,
+          handle: row.handle,
+          runtimeSlot: row.runtimeSlot,
+          developerTools: row.developerTools,
+        },
+        row.machineId,
+        payload.registrationToken,
+        payload.postgresPassword,
+        {
+          imageVersion,
+          hostBundleUrl: hostBundleUrlForImageVersion(deps.config, imageVersion),
+        },
+      );
+      const userData = renderCloudInitTemplate(
+        deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
+        hostConfig,
+      );
+      const existingServers = deps.hetzner.listServersByLabel
+        ? (await deps.hetzner.listServersByLabel(`machine_id=${row.machineId}`))
+          .toSorted((left, right) => left.id - right.id)
+        : [];
+      const existingServer = existingServers[0];
+      const server = existingServer ?? await deps.hetzner.createServer({
+          name: buildServerName(row.handle),
+          serverType: row.serverType ?? deps.config.serverType,
+          userData,
+          labels: {
+            app: 'matrix-os',
+            clerk_user_id: row.clerkUserId,
+            runtime_slot: row.runtimeSlot,
+            machine_id: row.machineId,
+          },
+        });
+      adoptedExistingServer = Boolean(existingServer);
+      if (!adoptedExistingServer) serverIdForCompensation = server.id;
+      for (const duplicate of existingServers.slice(1)) {
+        try {
+          await deps.hetzner.deleteServer(duplicate.id);
+        } catch (cleanupErr: unknown) {
+          logCustomerVpsError('duplicate provisioning server cleanup failed', cleanupErr);
+          await queueProviderDeletion({
+            providerServerId: duplicate.id,
+            reason: 'duplicate_provisioning_server',
+            machineId: row.machineId,
+            handle: row.handle,
+            err: cleanupErr,
+          });
+        }
+      }
+      const completedAt = now().toISOString();
+      await runInPlatformTransaction(deps.db, async (trx) => {
+        await updateUserMachine(trx, row.machineId, {
+          hetznerServerId: server.id,
+          publicIPv4: server.publicIPv4,
+          publicIPv6: server.publicIPv6,
+        });
+        const completed = await completeProvisioningJob(trx, job.jobId, completedAt);
+        if (!completed) {
+          throw new Error('Provisioning job completion lost its lease');
+        }
+      });
+      return 'completed';
+    } catch (err: unknown) {
+      const mapped = genericProviderError(err);
+      if (serverIdForCompensation !== null) {
+        try {
+          await deps.hetzner.deleteServer(serverIdForCompensation);
+        } catch (cleanupErr: unknown) {
+          logCustomerVpsError('provision compensation delete failed', cleanupErr);
+          await queueProviderDeletion({
+            providerServerId: serverIdForCompensation,
+            reason: 'provision_compensation',
+            machineId: row.machineId,
+            handle: row.handle,
+            err: cleanupErr,
+          });
+        }
+      }
+      if (adoptedExistingServer) {
+        logCustomerVpsError(`adopted provisioning server persistence failed machineId=${row.machineId}`, err);
+      }
+      const failedAt = now().toISOString();
+      try {
+        await runInPlatformTransaction(deps.db, async (trx) => {
+          await updateUserMachine(trx, row.machineId, {
+            status: 'failed',
+            failureCode: toFailureCode(err),
+            failureAt: failedAt,
+          });
+          await failProvisioningJob(trx, job.jobId, failedAt, toFailureCode(err));
+        });
+      } catch (statusErr: unknown) {
+        logCustomerVpsError('provision failure status update failed', statusErr);
+      }
+      if (propagateFailure) {
+        logCustomerVpsError(`provisioning job failed machineId=${row.machineId}`, err);
+        throw mapped;
+      }
+      logCustomerVpsError(`provisioning job failed machineId=${row.machineId}`, err);
+      return 'failed';
+    }
+  }
+
+  async function dispatchProvisioningJobs(): Promise<{ checked: number; completed: number; failed: number }> {
+    const jobs = await listDispatchableProvisioningJobs(
+      deps.db,
+      now().toISOString(),
+      deps.config.reconciliationBatchSize,
+    );
+    let completed = 0;
+    let failed = 0;
+    for (const job of jobs) {
+      const result = await dispatchProvisioningJob(job.jobId, false);
+      if (result === 'completed') completed += 1;
+      if (result === 'failed') failed += 1;
+    }
+    return { checked: jobs.length, completed, failed };
+  }
+
+  async function dispatchProvisioningJobBestEffort(jobId: string): Promise<void> {
+    try {
+      await dispatchProvisioningJob(jobId, true);
+    } catch (err: unknown) {
+      const code = err instanceof Error ? (err as Error & { code?: unknown }).code : undefined;
+      const message = err instanceof Error ? err.message : '';
+      if (code !== '25P02' && !message.includes('current transaction is aborted')) {
+        throw err;
+      }
+      logCustomerVpsError('durable provisioning job immediate dispatch unavailable', err);
+    }
+  }
+
   async function provision(
-    input: ProvisionRequest,
+    input: ProvisionRequest | PreviewProvisionRequest,
     provisioningClass: UserMachineProvisioningClass,
   ): Promise<ProvisionResponse> {
     const request = {
       ...input,
       runtimeSlot: input.runtimeSlot ?? 'primary',
       developerTools: canonicalizeDeveloperTools(input.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
+      accessClerkUserIds: provisioningClass === 'preview' && 'accessClerkUserIds' in input
+        ? input.accessClerkUserIds
+        : [],
+    };
+    const reconcilePreviewAccess = async (
+      db: PlatformDB,
+      machine: UserMachineRecord,
+    ): Promise<UserMachineRecord> => {
+      if (provisioningClass !== 'preview') return machine;
+      await updateUserMachine(db, machine.machineId, {
+        accessClerkUserIds: request.accessClerkUserIds,
+      });
+      return { ...machine, accessClerkUserIds: request.accessClerkUserIds };
     };
     const currentTime = now();
     const machineId = machineIdFactory();
+    const jobId = provisioningJobIdFactory();
     const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
     const postgresPassword = postgresPasswordFactory();
+    const encryptedPayload = sealProvisioningPayload({
+      registrationToken: registration.token,
+      postgresPassword,
+    }, deps.config.platformSecret);
     const billingContext = provisioningClass === 'preview'
       ? null
       : await resolveBillingProvisionContext(deps, request, currentTime);
@@ -624,20 +894,19 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       && !(provisioningClass === 'preview' && existingBeforeBundleResolve.runtimeSlot !== request.runtimeSlot)
       && (provisioningClass === 'customer' || existingBeforeBundleResolve.provisioningClass === 'preview')
     ) {
-      return activeProvisionResponse(existingBeforeBundleResolve, deps.config.provisionEtaSeconds);
+      const reconciled = await reconcilePreviewAccess(deps.db, existingBeforeBundleResolve);
+      const existingJob = await getProvisioningJobByMachineId(deps.db, existingBeforeBundleResolve.machineId);
+      if (existingJob && (existingJob.status === 'queued' || existingJob.status === 'running')) {
+        await dispatchProvisioningJobBestEffort(existingJob.jobId);
+      }
+      return activeProvisionResponse(reconciled, deps.config.provisionEtaSeconds);
     }
 
     const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
-    const hostConfig = buildHostConfig(
-      deps.config,
-      request,
-      machineId,
-      registration.token,
-      postgresPassword,
-      bundleRef,
-    );
 
-    const provisionRow = await runInPlatformTransaction(deps.db, async (trx) => {
+    let provisionRow: { existing: UserMachineRecord | null };
+    try {
+      provisionRow = await runInPlatformTransaction(deps.db, async (trx) => {
       // Preview capacity and customer entitlement checks share the owner lock
       // with insertion so concurrent platform instances cannot over-allocate.
       if (billingContext || provisioningClass === 'preview') {
@@ -672,10 +941,19 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           if (provisioningClass === 'preview' && existing.provisioningClass !== 'preview') {
             const retainedMachines = await listNonDeletedUserMachinesByClerkId(trx, request.clerkUserId);
             assertPreviewProvisioningCapacity(retainedMachines, deps.config.previewProvisioningLimit);
-            await updateUserMachine(trx, existing.machineId, { provisioningClass: 'preview' });
-            return { existing: { ...existing, provisioningClass: 'preview' as const } };
+            await updateUserMachine(trx, existing.machineId, {
+              provisioningClass: 'preview',
+              accessClerkUserIds: request.accessClerkUserIds,
+            });
+            return {
+              existing: {
+                ...existing,
+                provisioningClass: 'preview' as const,
+                accessClerkUserIds: request.accessClerkUserIds,
+              },
+            };
           }
-          return { existing };
+          return { existing: await reconcilePreviewAccess(trx, existing) };
         }
         // The active slot is held by a failed attempt. Retire it, enqueue its
         // server for reaping, and provision a fresh one — all in one
@@ -718,6 +996,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         handle: request.handle,
         runtimeSlot: request.runtimeSlot,
         provisioningClass,
+        accessClerkUserIds: request.accessClerkUserIds,
         status: 'provisioning',
         imageVersion: bundleRef.imageVersion,
         serverType: billingContext?.serverType ?? deps.config.serverType,
@@ -727,63 +1006,62 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         provisionedAt: currentTime.toISOString(),
         attempt,
       });
-      return { existing: null };
-    });
+      await enqueueProvisioningJob(trx, {
+        jobId,
+        machineId,
+        encryptedPayload,
+        availableAt: currentTime.toISOString(),
+        createdAt: currentTime.toISOString(),
+      });
+        return { existing: null };
+      });
+    } catch (err: unknown) {
+      const errorCode = err instanceof Error
+        ? (err as Error & { code?: unknown }).code
+        : undefined;
+      const errorMessage = err instanceof Error ? err.message : '';
+      const raceLookupAttempts = errorCode === '23505'
+        || errorMessage.includes('idx_user_machines_clerk_slot_active')
+        || errorMessage.includes('current transaction is aborted')
+        ? 3
+        : 1;
+      let concurrent: UserMachineRecord | undefined;
+      for (let attempt = 0; attempt < raceLookupAttempts; attempt += 1) {
+        try {
+          concurrent = await findExistingProvisioningMachine(deps.db, request, provisioningClass);
+        } catch (lookupErr: unknown) {
+          logCustomerVpsError('provisioning convergence lookup unavailable', lookupErr);
+          throw err;
+        }
+        if (concurrent?.status !== 'failed') break;
+        if (attempt + 1 < raceLookupAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      if (
+        concurrent
+        && concurrent.status !== 'failed'
+        && !(provisioningClass === 'preview' && concurrent.runtimeSlot !== request.runtimeSlot)
+        && (provisioningClass === 'customer' || concurrent.provisioningClass === 'preview')
+      ) {
+        const reconciled = await reconcilePreviewAccess(deps.db, concurrent);
+        const concurrentJob = await getProvisioningJobByMachineId(deps.db, concurrent.machineId);
+        if (concurrentJob && (concurrentJob.status === 'queued' || concurrentJob.status === 'running')) {
+          await dispatchProvisioningJobBestEffort(concurrentJob.jobId);
+        }
+        return activeProvisionResponse(reconciled, deps.config.provisionEtaSeconds);
+      }
+      throw err;
+    }
     if (provisionRow.existing) {
+      const existingJob = await getProvisioningJobByMachineId(deps.db, provisionRow.existing.machineId);
+      if (existingJob && (existingJob.status === 'queued' || existingJob.status === 'running')) {
+        await dispatchProvisioningJobBestEffort(existingJob.jobId);
+      }
       return activeProvisionResponse(provisionRow.existing, deps.config.provisionEtaSeconds);
     }
 
-    const userData = renderCloudInitTemplate(
-      deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
-      hostConfig,
-    );
-
-    let serverIdForCompensation: number | null = null;
-    try {
-      const server = await deps.hetzner.createServer({
-        name: buildServerName(request.handle),
-        serverType: billingContext?.serverType ?? deps.config.serverType,
-        userData,
-        labels: {
-          app: 'matrix-os',
-          clerk_user_id: request.clerkUserId,
-          runtime_slot: request.runtimeSlot,
-          machine_id: machineId,
-        },
-      });
-      serverIdForCompensation = server.id;
-      await updateUserMachine(deps.db, machineId, {
-        hetznerServerId: server.id,
-        publicIPv4: server.publicIPv4,
-        publicIPv6: server.publicIPv6,
-      });
-    } catch (err: unknown) {
-      const mapped = genericProviderError(err);
-      if (serverIdForCompensation !== null) {
-        try {
-          await deps.hetzner.deleteServer(serverIdForCompensation);
-        } catch (cleanupErr: unknown) {
-          logCustomerVpsError('provision compensation delete failed', cleanupErr);
-          await queueProviderDeletion({
-            providerServerId: serverIdForCompensation,
-            reason: 'provision_compensation',
-            machineId,
-            handle: request.handle,
-            err: cleanupErr,
-          });
-        }
-      }
-      try {
-        await updateUserMachine(deps.db, machineId, {
-          status: 'failed',
-          failureCode: toFailureCode(err),
-          failureAt: now().toISOString(),
-        });
-      } catch (statusErr: unknown) {
-        logCustomerVpsError('provision failure status update failed', statusErr);
-      }
-      throw mapped;
-    }
+    await dispatchProvisioningJobBestEffort(jobId);
 
     return {
       machineId,
@@ -794,11 +1072,18 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
 
   return {
     async provision(input) {
-      return provision(input, 'customer');
+      return withLocalProvisionLock(
+        `${input.clerkUserId}:${input.runtimeSlot ?? 'primary'}`,
+        () => provision(input, 'customer'),
+      );
     },
 
     async provisionPreview(input) {
-      return provision(input, 'preview');
+      const request = PreviewProvisionRequestSchema.parse(input);
+      return withLocalProvisionLock(
+        `${request.clerkUserId}:${request.runtimeSlot}`,
+        () => provision(request, 'preview'),
+      );
     },
 
     async register(token, input) {
@@ -1195,6 +1480,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       return machines.map(statusResponse);
     },
 
+    dispatchProvisioningJobs,
+
     async deploy(target?: DeployTarget): Promise<DeployResult> {
       const runningMachines = await listRunningUserMachines(
         deps.db,
@@ -1248,6 +1535,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async reconcileProvisioning() {
+      await dispatchProvisioningJobs();
       const staleBefore = new Date(now().getTime() - deps.config.reconciliationStaleAfterMs).toISOString();
       const rows = await listStaleUserMachines(
         deps.db,

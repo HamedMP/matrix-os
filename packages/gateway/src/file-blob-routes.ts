@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { lstat, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, posix } from "node:path";
+import { Readable } from "node:stream";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
@@ -11,6 +13,31 @@ import {
 } from "./path-security.js";
 
 const FILE_BLOB_BODY_LIMIT = 10 * 1024 * 1024;
+
+interface ByteRange {
+  start: number;
+  end: number;
+}
+
+function parseByteRange(value: string, size: number): ByteRange | null {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim());
+  if (!match || size <= 0) return null;
+  const rawStart = match[1] ?? "";
+  const rawEnd = match[2] ?? "";
+  if (rawStart === "" && rawEnd === "") return null;
+
+  if (rawStart === "") {
+    const suffixLength = Number(rawEnd);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return null;
+    return { start: Math.max(0, size - suffixLength), end: size - 1 };
+  }
+
+  const start = Number(rawStart);
+  if (!Number.isSafeInteger(start) || start < 0 || start >= size) return null;
+  const requestedEnd = rawEnd === "" ? size - 1 : Number(rawEnd);
+  if (!Number.isSafeInteger(requestedEnd) || requestedEnd < start) return null;
+  return { start, end: Math.min(requestedEnd, size - 1) };
+}
 
 const BoolQuerySchema = z
   .enum(["true", "false"])
@@ -85,6 +112,41 @@ export function createFileBlobRoutes(deps: FileBlobRouteDeps): Hono {
       "Content-Type": getMimeType(extname(basename(resolved))),
       "Content-Length": String(stats.size),
     });
+  });
+
+  app.get("/media", async (c) => {
+    const parsed = parseQuery(c);
+    if (!parsed) return invalidPath(c);
+
+    const resolved = resolveExistingFileApiPath(deps.homePath, parsed.path);
+    if (!resolved) return c.json({ error: "not_found" }, 404);
+
+    const stats = await stat(resolved);
+    if (!stats.isFile()) return c.json({ error: "not_file" }, 400);
+
+    const rangeHeader = c.req.header("range");
+    const range = rangeHeader ? parseByteRange(rangeHeader, stats.size) : null;
+    if (rangeHeader && !range) {
+      return c.body(null, 416, {
+        "Accept-Ranges": "bytes",
+        "Content-Range": `bytes */${stats.size}`,
+        "Cache-Control": "private, no-store",
+      });
+    }
+
+    const start = range?.start ?? 0;
+    const end = range?.end ?? Math.max(0, stats.size - 1);
+    const contentLength = stats.size === 0 ? 0 : end - start + 1;
+    const nodeStream = createReadStream(resolved, range ? { start, end } : undefined);
+    const body = Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>;
+    const headers: Record<string, string> = {
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "private, no-store",
+      "Content-Length": String(contentLength),
+      "Content-Type": getMimeType(extname(basename(resolved))),
+    };
+    if (range) headers["Content-Range"] = `bytes ${start}-${end}/${stats.size}`;
+    return new Response(body, { status: range ? 206 : 200, headers });
   });
 
   app.put("/blob", putBodyLimit, async (c) => {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { getGatewayUrl } from "@/lib/gateway";
 
 export type SetupStepId = "agent" | "github" | "repo";
 type Status = "done" | "active" | "pending";
@@ -17,15 +18,15 @@ export function useSetupChecklist() {
   const [dismissed, setDismissed] = useState(false);
 
   const refresh = useCallback(() => {
-    void fetch("/api/agents/credentials/status", { signal: AbortSignal.timeout(SETUP_STATUS_TIMEOUT_MS) })
+    void fetch(`${getGatewayUrl()}/api/agents/credentials/status`, { signal: AbortSignal.timeout(SETUP_STATUS_TIMEOUT_MS) })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => setAgentDone(Boolean(d?.agents?.some((a: any) => a.available))))
       .catch((err: unknown) => console.warn("[setup] agent status failed:", err instanceof Error ? err.name : typeof err));
-    void fetch("/api/github/status", { signal: AbortSignal.timeout(SETUP_STATUS_TIMEOUT_MS) })
+    void fetch(`${getGatewayUrl()}/api/github/status`, { signal: AbortSignal.timeout(SETUP_STATUS_TIMEOUT_MS) })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => setGithubDone(Boolean(d?.authenticated)))
       .catch((err: unknown) => console.warn("[setup] github status failed:", err instanceof Error ? err.name : typeof err));
-    void fetch("/api/workspace/projects", { signal: AbortSignal.timeout(SETUP_STATUS_TIMEOUT_MS) })
+    void fetch(`${getGatewayUrl()}/api/workspace/projects`, { signal: AbortSignal.timeout(SETUP_STATUS_TIMEOUT_MS) })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => setRepoDone(Array.isArray(d?.projects) ? d.projects.length > 0 : false))
       .catch((err: unknown) => console.warn("[setup] projects failed:", err instanceof Error ? err.name : typeof err));

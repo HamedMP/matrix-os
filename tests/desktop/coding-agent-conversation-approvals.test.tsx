@@ -2,7 +2,16 @@
 
 import React from "react";
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+beforeEach(() => {
+  class MockResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  globalThis.ResizeObserver = MockResizeObserver as typeof ResizeObserver;
+});
 import type { AgentThreadSnapshot } from "@matrix-os/contracts";
 import { AgentConversationView } from "../../desktop/src/renderer/src/features/coding-agents/AgentConversationView";
 
@@ -98,7 +107,7 @@ describe("AgentConversationView approvals", () => {
 
     const input = screen.getByLabelText("Message conversation") as HTMLTextAreaElement;
     expect(input.disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "Send message" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
     expect(input.placeholder).toMatch(/respond to the pending request/i);
   });
 

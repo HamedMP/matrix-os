@@ -6,6 +6,14 @@ export default function AgentsLayout() {
       <Stack.Screen name="index" options={{ title: "Agents" }} />
       <Stack.Screen name="new" options={{ title: "New Run" }} />
       <Stack.Screen name="[threadId]" options={{ title: "Agent Thread" }} />
+      <Stack.Screen
+        name="projects/[projectId]/index"
+        options={{ title: "Project Conversations" }}
+      />
+      <Stack.Screen
+        name="projects/[projectId]/board"
+        options={{ title: "Project Kanban" }}
+      />
     </Stack>
   );
 }

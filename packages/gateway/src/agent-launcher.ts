@@ -1,18 +1,27 @@
 import { execFile } from "node:child_process";
+import { isAbsolute } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
+import { CODEX_VERIFIED_VERSION } from "@matrix-os/contracts";
+import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
+import { codexExecContractStatus } from "./coding-agents/codex-version.js";
 
 export const SupportedAgentSchema = z.enum(["claude", "codex", "opencode", "pi"]);
 export type SupportedAgent = z.infer<typeof SupportedAgentSchema>;
 
 export type AgentAuthState = "unknown" | "ok" | "required" | "error";
+export type AgentInstallState = "installed" | "missing" | "unknown";
+export type AgentWorkspaceCompatibility = "compatible" | "unsupported" | "not_applicable" | "unknown";
 
 export interface AgentStatus {
   id: SupportedAgent;
   command: string;
   displayName: string;
-  installed: boolean;
+  installState: AgentInstallState;
+  installed: boolean | null;
   authState: AgentAuthState;
+  workspaceCompatibility: AgentWorkspaceCompatibility;
   version?: string;
   errorCode: string | null;
 }
@@ -33,6 +42,8 @@ export interface AgentLaunchInput {
   sandbox?: AgentLaunchSandbox;
   approvalPolicy?: "untrusted" | "on-request" | "on-failure" | "never";
   runtimeHome?: string;
+  providerEventPath?: string;
+  codexExecutable?: string;
 }
 
 export interface AgentLaunchSpec {
@@ -50,6 +61,22 @@ type CommandRunner = (
 
 const execFileAsync = promisify(execFile);
 const DETECT_TIMEOUT_MS = 5_000;
+const DETECT_CACHE_TTL_MS = 5_000;
+const ProviderEventPathSchema = z.string()
+  .trim()
+  .min(1)
+  .max(4096)
+  .refine(isAbsolute)
+  .regex(/^[^\u0000\r\n]+\.jsonl$/);
+const CODEX_APP_SERVER_RUNNER_PATH = fileURLToPath(
+  new URL("./coding-agents/codex-app-server-runner.mjs", import.meta.url),
+);
+const CodexAppServerConfigSchema = z.object({
+  prompt: z.string().trim().min(1).max(64 * 1024),
+  approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
+  sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
+  writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
+}).strict();
 
 const AGENTS: Record<SupportedAgent, { command: string; displayName: string }> = {
   claude: { command: "claude", displayName: "Claude" },
@@ -72,6 +99,12 @@ const defaultRunCommand: CommandRunner = async (command, args, options) => {
 function firstLine(value: string): string | undefined {
   const line = value.split("\n").map((part) => part.trim()).find(Boolean);
   return line || undefined;
+}
+
+function isExactVerifiedCodexVersion(version: string | undefined): boolean {
+  if (!version) return false;
+  const status = codexExecContractStatus(version);
+  return status.status === "verified" && status.version === CODEX_VERIFIED_VERSION;
 }
 
 function promptArgs(prompt?: string): string[] {
@@ -243,8 +276,45 @@ function claudeLaunchArgs(input: AgentLaunchInput): string[] {
   ];
 }
 
-function authStatusArgs(agent: SupportedAgent): string[] {
+function authStatusArgs(agent: Extract<SupportedAgent, "claude" | "codex">): string[] {
   return agent === "codex" ? ["login", "status"] : ["auth", "status"];
+}
+
+function commandErrorCode(err: unknown): unknown {
+  return err && typeof err === "object" ? (err as { code?: unknown }).code : undefined;
+}
+
+function isExecutableMissingError(err: unknown): boolean {
+  return commandErrorCode(err) === "ENOENT";
+}
+
+function isAuthenticationRequiredError(err: unknown): boolean {
+  return typeof commandErrorCode(err) === "number";
+}
+
+function workspaceCompatibility(
+  id: SupportedAgent,
+  version: string | undefined,
+): AgentWorkspaceCompatibility {
+  if (id !== "codex") return "not_applicable";
+  return isExactVerifiedCodexVersion(version) ? "compatible" : "unsupported";
+}
+
+function unavailableAgentStatus(
+  id: SupportedAgent,
+  state: Exclude<AgentInstallState, "installed">,
+): AgentStatus {
+  const config = AGENTS[id];
+  return {
+    id,
+    command: config.command,
+    displayName: config.displayName,
+    installState: state,
+    installed: state === "missing" ? false : null,
+    authState: "unknown",
+    workspaceCompatibility: id === "codex" ? "unknown" : "not_applicable",
+    errorCode: state === "missing" ? "agent_missing" : "agent_check_failed",
+  };
 }
 
 function codexModeArgs(mode?: AgentLaunchInput["mode"]): string[] {
@@ -257,28 +327,61 @@ function codexPrompt(prompt: string | undefined, mode?: AgentLaunchInput["mode"]
   return prompt ? `${planPrefix}\n\n${prompt}` : planPrefix;
 }
 
+function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppServerConfigSchema> {
+  codexSandboxArgs(input.sandbox);
+  const sandbox = input.sandbox;
+  const mode = sandbox?.enabled === false
+    ? "danger-full-access"
+    : sandbox?.mode ?? "workspace-write";
+  return CodexAppServerConfigSchema.parse({
+    prompt: codexPrompt(input.prompt, input.mode),
+    approvalPolicy: input.approvalPolicy === "on-failure"
+      ? "on-request"
+      : input.approvalPolicy ?? "never",
+    sandbox: mode,
+    writableRoots: mode === "workspace-write" ? sandbox?.writableRoots ?? [] : [],
+  });
+}
+
 export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
   const parsed = SupportedAgentSchema.parse(input.agent);
-  const command = AGENTS[parsed].command;
+  const command = parsed === "codex" && input.codexExecutable
+    ? CodexExecutableSchema.parse(input.codexExecutable)
+    : AGENTS[parsed].command;
   const env = agentRuntimeEnv(input.runtimeHome);
   switch (parsed) {
     case "claude":
       return { command, args: claudeLaunchArgs(input), cwd: input.cwd, env };
     case "codex":
-      return {
-        command,
-        args: [
+      {
+        const args = [
           "--ask-for-approval",
           input.approvalPolicy ?? "never",
+          ...codexSandboxArgs(input.sandbox),
           "exec",
           "--skip-git-repo-check",
-          ...codexSandboxArgs(input.sandbox),
           ...codexModeArgs(input.mode),
           ...promptArgs(codexPrompt(input.prompt, input.mode)),
-        ],
-        cwd: input.cwd,
-        env,
-      };
+        ];
+        if (!input.providerEventPath) return { command, args, cwd: input.cwd, env };
+        const providerEventPath = ProviderEventPathSchema.parse(input.providerEventPath);
+        const appServerConfig = Buffer.from(
+          JSON.stringify(codexAppServerConfig(input)),
+          "utf8",
+        ).toString("base64");
+        return {
+          command: process.execPath,
+          args: [
+            CODEX_APP_SERVER_RUNNER_PATH,
+            providerEventPath,
+            CODEX_VERIFIED_VERSION,
+            command,
+            appServerConfig,
+          ],
+          cwd: input.cwd,
+          env,
+        };
+      }
     case "opencode":
       return { command, args: ["run", ...promptArgs(input.prompt)], cwd: input.cwd, env };
     case "pi":
@@ -290,74 +393,128 @@ export function createAgentLauncher(options: {
   runCommand?: CommandRunner;
   cwd?: string;
   runtimeHome?: string;
+  codexExecutable?: string;
+  now?: () => number;
 } = {}) {
   const runCommand = options.runCommand ?? defaultRunCommand;
   const cwd = options.cwd ?? process.cwd();
   const detectEnv = agentRuntimeEnv(options.runtimeHome);
+  const now = options.now ?? Date.now;
+  type DetectionResult = { agents: AgentStatus[] };
+  let installationScanInFlight: Promise<DetectionResult> | null = null;
+  let installationScanCache: { result: DetectionResult; expiresAt: number } | null = null;
+  let credentialScanInFlight: Promise<DetectionResult> | null = null;
+  let credentialScanCache: { result: DetectionResult; expiresAt: number } | null = null;
+
+  function commandFor(id: SupportedAgent): string {
+    return id === "codex" && options.codexExecutable
+      ? CodexExecutableSchema.parse(options.codexExecutable)
+      : AGENTS[id].command;
+  }
+
+  async function probeInstallation(id: SupportedAgent): Promise<AgentStatus> {
+    const config = AGENTS[id];
+    try {
+      const result = await runCommand(commandFor(id), ["--version"], {
+        cwd,
+        timeout: DETECT_TIMEOUT_MS,
+        env: detectEnv,
+      });
+      const version = firstLine(result.stdout) ?? firstLine(result.stderr);
+      const compatibility = workspaceCompatibility(id, version);
+      return {
+        id,
+        command: config.command,
+        displayName: config.displayName,
+        installState: "installed",
+        installed: true,
+        authState: "unknown",
+        workspaceCompatibility: compatibility,
+        version,
+        errorCode: compatibility === "unsupported" ? "agent_version_unsupported" : null,
+      };
+    } catch (err: unknown) {
+      const state = isExecutableMissingError(err) ? "missing" : "unknown";
+      console.warn(`[agent-launcher] ${config.command} installation probe failed:`, state);
+      return unavailableAgentStatus(id, state);
+    }
+  }
+
+  async function probeCredentials(
+    id: Extract<SupportedAgent, "claude" | "codex">,
+  ): Promise<AgentStatus> {
+    const installation = await probeInstallation(id);
+    if (installation.installState !== "installed") return installation;
+    if (installation.workspaceCompatibility === "unsupported") {
+      return { ...installation, authState: "error" };
+    }
+
+    try {
+      await runCommand(commandFor(id), authStatusArgs(id), {
+        cwd,
+        timeout: DETECT_TIMEOUT_MS,
+        env: detectEnv,
+      });
+      return { ...installation, authState: "ok", errorCode: null };
+    } catch (err: unknown) {
+      if (isExecutableMissingError(err)) return unavailableAgentStatus(id, "missing");
+      if (isAuthenticationRequiredError(err)) {
+        console.warn(`[agent-launcher] ${AGENTS[id].command} credential probe failed: auth_required`);
+        return { ...installation, authState: "required", errorCode: "agent_auth_required" };
+      }
+      console.warn(`[agent-launcher] ${AGENTS[id].command} credential probe failed: check_failed`);
+      return { ...installation, authState: "error", errorCode: "agent_check_failed" };
+    }
+  }
+
+  async function detectAgentInstallations(): Promise<DetectionResult> {
+    const cached = installationScanCache;
+    if (cached && now() < cached.expiresAt) return cached.result;
+    if (installationScanInFlight) return installationScanInFlight;
+
+    const scan = Promise.all(SupportedAgentSchema.options.map(probeInstallation))
+      .then((agents) => ({ agents }));
+    installationScanInFlight = scan;
+    try {
+      const result = await scan;
+      installationScanCache = { result, expiresAt: now() + DETECT_CACHE_TTL_MS };
+      return result;
+    } finally {
+      if (installationScanInFlight === scan) installationScanInFlight = null;
+    }
+  }
+
+  async function detectAgentCredentials(): Promise<DetectionResult> {
+    const cached = credentialScanCache;
+    if (cached && now() < cached.expiresAt) return cached.result;
+    if (credentialScanInFlight) return credentialScanInFlight;
+
+    const scan = Promise.all([
+      probeCredentials("claude"),
+      probeCredentials("codex"),
+    ]).then((agents) => ({ agents }));
+    credentialScanInFlight = scan;
+    try {
+      const result = await scan;
+      credentialScanCache = { result, expiresAt: now() + DETECT_CACHE_TTL_MS };
+      return result;
+    } finally {
+      if (credentialScanInFlight === scan) credentialScanInFlight = null;
+    }
+  }
 
   return {
-    async detectAgents(): Promise<{ agents: AgentStatus[] }> {
-      const agents: AgentStatus[] = [];
-      for (const id of SupportedAgentSchema.options) {
-        const config = AGENTS[id];
-        let version: string | undefined;
-        try {
-          const result = await runCommand(config.command, ["--version"], {
-            cwd,
-            timeout: DETECT_TIMEOUT_MS,
-            env: detectEnv,
-          });
-          version = firstLine(result.stdout) ?? firstLine(result.stderr);
-        } catch (err: unknown) {
-          if (err instanceof Error) {
-            console.warn(`[agent-launcher] ${config.command} is unavailable:`, err.message);
-          }
-          agents.push({
-            id,
-            command: config.command,
-            displayName: config.displayName,
-            installed: false,
-            authState: "unknown",
-            errorCode: "agent_missing",
-          });
-          continue;
-        }
-
-        try {
-          await runCommand(config.command, authStatusArgs(id), {
-            cwd,
-            timeout: DETECT_TIMEOUT_MS,
-            env: detectEnv,
-          });
-          agents.push({
-            id,
-            command: config.command,
-            displayName: config.displayName,
-            installed: true,
-            authState: "ok",
-            version,
-            errorCode: null,
-          });
-        } catch (err: unknown) {
-          if (err instanceof Error) {
-            console.warn(`[agent-launcher] ${config.command} auth is unavailable:`, err.message);
-          }
-          agents.push({
-            id,
-            command: config.command,
-            displayName: config.displayName,
-            installed: true,
-            authState: "required",
-            version,
-            errorCode: "agent_auth_required",
-          });
-        }
-      }
-      return { agents };
-    },
+    detectAgentInstallations,
+    detectAgentCredentials,
+    /** @deprecated Use detectAgentInstallations for executable availability. */
+    detectAgents: detectAgentInstallations,
 
     buildLaunch(input: AgentLaunchInput): AgentLaunchSpec {
-      return buildAgentLaunch({ ...input, runtimeHome: input.runtimeHome ?? options.runtimeHome });
+      return buildAgentLaunch({
+        ...input,
+        runtimeHome: input.runtimeHome ?? options.runtimeHome,
+        codexExecutable: input.codexExecutable ?? options.codexExecutable,
+      });
     },
   };
 }

@@ -45,6 +45,7 @@ async function renderTaskbar(opts: { apps?: AppEntry[]; windows?: AppWindow[] } 
   await act(async () => {
     result = render(
       <WindowsTaskbar
+        themeStyle={document.documentElement.getAttribute("data-theme-style") ?? "flat"}
         apps={opts.apps ?? defaultApps}
         windows={opts.windows ?? []}
         {...handlers}
@@ -65,6 +66,7 @@ describe("WindowsTaskbar", () => {
   // outside act(). RTL's cleanup unmounts before the next beforeEach runs.
   beforeEach(() => {
     document.documentElement.removeAttribute("data-theme-style");
+    delete document.documentElement.dataset.matrixSelfHosted;
     resetOsSession();
   });
 
@@ -350,5 +352,40 @@ describe("WindowsTaskbar", () => {
     fireEvent.click(within(flyout).getByRole("menuitem", { name: "Settings" }));
     expect(handlers.onOpenSettings).toHaveBeenCalledTimes(1);
     expect(container.querySelector("[data-win11-start-menu]")).toBeNull();
+  });
+
+  it("includes the Switch computer link in account-flyout arrow navigation", async () => {
+    setDesign("win11");
+    const { container } = await renderTaskbar();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    const menu = container.querySelector("[data-win11-start-menu]") as HTMLElement;
+    fireEvent.click(within(menu).getByRole("button", { name: "Account" }));
+
+    const flyout = within(menu).getByRole("menu", { name: "Account options" });
+    const manageAccount = within(flyout).getByRole("menuitem", { name: "Manage account" });
+    const switchComputer = within(flyout).getByRole("menuitem", { name: "Switch computer" });
+    expect(document.activeElement).toBe(manageAccount);
+
+    fireEvent.keyDown(flyout, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(within(flyout).getByRole("menuitem", { name: "Sign out" }));
+    fireEvent.keyDown(flyout, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(switchComputer);
+  });
+
+  it("hides managed account actions and computer switching when self-hosted", async () => {
+    document.documentElement.dataset.matrixSelfHosted = "1";
+    setDesign("win11");
+    const { container } = await renderTaskbar();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    const menu = container.querySelector("[data-win11-start-menu]") as HTMLElement;
+    fireEvent.click(within(menu).getByRole("button", { name: "Account" }));
+
+    const flyout = within(menu).getByRole("menu", { name: "Account options" });
+    expect(within(flyout).queryByRole("menuitem", { name: "Manage account" })).toBeNull();
+    expect(within(flyout).queryByRole("menuitem", { name: "Sign out" })).toBeNull();
+    expect(within(flyout).queryByRole("menuitem", { name: "Switch computer" })).toBeNull();
+    expect(within(flyout).getByRole("menuitem", { name: "Settings" })).toBeTruthy();
   });
 });

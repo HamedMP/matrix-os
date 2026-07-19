@@ -76,7 +76,7 @@ async function renderWindowsShell(style: "winxp" | "win11", windows: AppWindow[]
   await act(async () => {
     result = render(
       <>
-        <WindowsTaskbar apps={defaultApps} windows={windows} {...taskbarHandlers()} />
+        <WindowsTaskbar themeStyle={style} apps={defaultApps} windows={windows} {...taskbarHandlers()} />
         <OsSessionHost />
       </>,
     );

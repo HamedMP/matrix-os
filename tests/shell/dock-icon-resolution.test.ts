@@ -2,15 +2,15 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 describe("dock icon resolution", () => {
-  it("boots Desktop from the shell bootstrap endpoint instead of separate app/layout fetches", async () => {
+  it("boots Desktop from shell bootstrap while allowing one design-switch app refresh", async () => {
     const source = await readFile("shell/src/components/Desktop.tsx", "utf8");
 
     expect(source).toContain("/api/shell/bootstrap");
     expect(source).not.toContain("/api/layout`,");
-    // The only sanctioned direct /api/apps fetch is the design-switch refresh
-    // effect (reconciles design-scoped apps mid-session); no other ad-hoc
-    // app-list fetches may creep back in.
-    expect(source.match(/\/api\/apps`,/g) ?? []).toHaveLength(1);
+    expect(source.match(/fetch\(`\$\{GATEWAY_URL\}\/api\/apps`,/g)).toHaveLength(1);
+    expect(source).toContain(
+      "fetch(`${GATEWAY_URL}/api/apps`, { signal: AbortSignal.timeout(10_000) })",
+    );
     expect(source).toContain("reconcileDesignApps");
     expect(source).not.toContain("/files/system/modules.json");
   });
@@ -22,7 +22,7 @@ describe("dock icon resolution", () => {
     expect(source).not.toContain("function iconUrlForSlug");
     expect(source).not.toContain("/icons/${encodeURIComponent(slug)}.png");
     expect(source).not.toContain("const iconPath = `/icons/${slug}.png`");
-    expect(source).toContain("bootstrap.icons?.[slug]?.versionedUrl ?? iconUrlForSlug(slug)");
+    expect(source).toContain("gatewayAssetUrl(bootstrap.icons?.[slug]?.versionedUrl) ?? iconUrlForSlug(slug)");
     expect(source).not.toContain("method: \"HEAD\"");
   });
 

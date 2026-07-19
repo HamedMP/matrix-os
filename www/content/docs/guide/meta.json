@@ -1,7 +1,0 @@
-{
-  "root": true,
-  "title": "Guide",
-  "description": "Learn how to use Matrix OS",
-  "icon": "BookOpen",
-  "pages": ["index", "getting-started", "mobile", "integrations", "apps", "app-store", "channels", "social", "storage", "agents", "file-system", "cloud-coding", "developer-workflow", "system-activity-monitor"]
-}

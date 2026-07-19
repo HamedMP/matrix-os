@@ -2,7 +2,6 @@
 
 import type { ReactNode } from "react";
 import type { AppEntry, AppWindow } from "@/hooks/useWindowManager";
-import { useThemeStyle } from "../window/useThemeStyle";
 import { XpTaskbar } from "./XpTaskbar";
 import { Win11Taskbar } from "./Win11Taskbar";
 import "./taskbar.css";
@@ -13,6 +12,7 @@ import "./taskbar.css";
  * desktop mode, where Desktop passes null).
  */
 export interface WindowsTaskbarProps {
+  themeStyle: string;
   apps: AppEntry[];
   windows: AppWindow[];
   onOpenApp: (path: string, name?: string) => void;
@@ -29,8 +29,7 @@ export interface WindowsTaskbarProps {
  * Renders nothing for every other design.
  */
 export function WindowsTaskbar(props: WindowsTaskbarProps) {
-  const themeStyle = useThemeStyle();
-  if (themeStyle === "winxp") return <XpTaskbar {...props} />;
-  if (themeStyle === "win11") return <Win11Taskbar {...props} />;
+  if (props.themeStyle === "winxp") return <XpTaskbar {...props} />;
+  if (props.themeStyle === "win11") return <Win11Taskbar {...props} />;
   return null;
 }

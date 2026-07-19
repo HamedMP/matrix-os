@@ -181,7 +181,8 @@ describe('platform/customer-vps reliability', () => {
       service.provision({ clerkUserId: 'user_123', handle: 'alice' }),
     ]);
 
-    expect(results.some((r) => r.status === 'fulfilled')).toBe(true);
+    const failures = results.flatMap((result) => result.status === 'rejected' ? [String(result.reason)] : []);
+    expect(results.some((r) => r.status === 'fulfilled'), failures.join('\n')).toBe(true);
     const live = (await listUserMachines(db)).filter(
       (m) => m.clerkUserId === 'user_123' && m.deletedAt === null,
     );
@@ -202,7 +203,8 @@ describe('platform/customer-vps reliability', () => {
       service.provision({ clerkUserId: 'user_123', handle: 'alice' }),
     ]);
 
-    expect(results.some((r) => r.status === 'fulfilled')).toBe(true);
+    const failures = results.flatMap((result) => result.status === 'rejected' ? [String(result.reason)] : []);
+    expect(results.some((r) => r.status === 'fulfilled'), failures.join('\n')).toBe(true);
     for (const r of results) {
       if (r.status === 'rejected') {
         expect(r.reason).toBeInstanceOf(Error);

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, lazy, Suspense } from "react";
 import { usePreviewWindow, type PreviewTab as PreviewTabType } from "@/hooks/usePreviewWindow";
-import { fileBlobUrl } from "@/lib/file-blob";
+import { fileBlobUrl, fileMediaUrl } from "@/lib/file-blob";
 import { FileIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -162,7 +162,7 @@ function PdfPlaceholder({ path }: { path: string }) {
         PDF rendering requires pdfjs-dist (planned for v2)
       </div>
       <a
-        href={fileBlobUrl(path)}
+        href={fileMediaUrl(path)}
         target="_blank"
         rel="noopener noreferrer"
         className="text-xs text-primary underline"

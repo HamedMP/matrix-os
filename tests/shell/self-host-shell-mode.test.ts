@@ -13,6 +13,7 @@ describe("self-host shell mode", () => {
     const billingAccess = readFileSync(join(root, "shell/src/hooks/useMatrixBillingAccess.ts"), "utf8");
     const settings = readFileSync(join(root, "shell/src/components/Settings.tsx"), "utf8");
     const selfHostMode = readFileSync(join(root, "shell/src/lib/self-host-mode.ts"), "utf8");
+    const win11StartMenu = readFileSync(join(root, "shell/src/components/taskbar/Win11StartMenu.tsx"), "utf8");
 
     expect(page).toContain('const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1"');
     expect(page).toContain("selfHostedMode || hasServerVerifiedMatrixSession");
@@ -30,5 +31,7 @@ describe("self-host shell mode", () => {
     expect(settings).toContain("showBillingSection={false}");
     expect(settings).toContain("function ManagedSettings");
     expect(selfHostMode).toContain('process.env.MATRIX_SELF_HOSTED === "1"');
+    expect(win11StartMenu).not.toContain("@clerk/nextjs");
+    expect(win11StartMenu).toContain("isSelfHostedDocument() ? null : <Win11ManagedAccountActions");
   });
 });

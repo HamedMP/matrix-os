@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { palette as c, fonts, radii, StatusPill } from "@matrix-os/brand";
+import { getGatewayUrl } from "@/lib/gateway";
 import { createTerminalLaunchPath } from "@/lib/terminal-launch";
 
 interface AgentRow {
@@ -68,7 +69,7 @@ export function AgentStep({
   const [agents, setAgents] = useState<AgentAvailability[]>([]);
 
   const fetchStatus = useCallback(() => {
-    void fetch("/api/agents/credentials/status", {
+    void fetch(`${getGatewayUrl()}/api/agents/credentials/status`, {
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(10_000),
     })

@@ -1,3 +1,5 @@
+import { CODEX_VERIFIED_NPM_PACKAGE } from "../../packages/contracts/src/index.js";
+
 export type AgentInstallId = "claude" | "codex" | "opencode" | "pi";
 
 export interface AgentInstallDefinition {
@@ -30,7 +32,7 @@ export const AGENT_INSTALLS: AgentInstallDefinition[] = [
     id: "codex",
     label: "Codex",
     binary: "codex",
-    npmPackage: "@openai/codex@latest",
+    npmPackage: CODEX_VERIFIED_NPM_PACKAGE,
     ignoreScripts: false,
     docsUrl: "https://github.com/openai/codex",
     curlInstall: {

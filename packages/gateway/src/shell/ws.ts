@@ -4,6 +4,7 @@ import { ShellReplayBuffer } from "./replay-buffer.js";
 import { PendingPersistQueue } from "./output-pipeline.js";
 import type { ScrollbackStore } from "./scrollback-store.js";
 import { validateSessionName } from "./names.js";
+import { createSessionSizing, type SessionSizing, type ShellClientClass, type TerminalSize } from "./sizing.js";
 import type { ShellAttachProcess } from "./zellij.js";
 import {
   createTerminalOutputCompatStream,
@@ -53,11 +54,11 @@ export interface ShellWsSocket {
 }
 
 interface ShellWsRegistry {
-  list(): Promise<Array<{ name: string; status?: "active" | "exited" }>>;
+  list(): Promise<Array<{ name: string; status?: "active" | "exited"; canonicalSize?: TerminalSize | null }>>;
 }
 
 interface ShellWsAdapter {
-  attachSession(name: string, options?: { signal?: AbortSignal }): ShellAttachProcess;
+  attachSession(name: string, options?: { signal?: AbortSignal; size?: TerminalSize }): ShellAttachProcess;
 }
 
 export interface ShellWsFlowControlOptions {
@@ -79,13 +80,21 @@ export interface ShellWsHandlerOptions {
   maxAttachedClients?: number;
   staleAttachTtlMs?: number;
   idleAttachGraceMs?: number;
+  /** Briefly observe a new PTY for asynchronous zellij startup failures. */
+  attachStartupGraceMs?: number;
   flowControl?: ShellWsFlowControlOptions;
+  sizingDebounceMs?: number;
+  defaultCanonicalSize?: TerminalSize;
+  persistCanonicalSize?: (name: string, size: TerminalSize) => void;
 }
 
 export interface ShellWsOpenOptions {
   ws: ShellWsSocket;
   session: string;
   fromSeq?: number;
+  /** Sizing class (spec 107 FR-007): absent = legacy (pre-upgrade client). */
+  clientClass?: Exclude<ShellClientClass, "legacy">;
+  declaredSize?: TerminalSize;
 }
 
 export interface ShellWsSession {
@@ -141,6 +150,7 @@ interface SessionRuntime {
   attachPromise: Promise<boolean> | null;
   idleCloseTimer: NodeJS.Timeout | null;
   disposed: boolean;
+  sizing: SessionSizing | null;
 }
 
 export function createShellWsHandler(options: ShellWsHandlerOptions) {
@@ -148,9 +158,12 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
   const maxAttachedClients = options.maxAttachedClients ?? 8;
   const staleAttachTtlMs = options.staleAttachTtlMs ?? 60_000;
   const idleAttachGraceMs = options.idleAttachGraceMs ?? 2_000;
+  const attachStartupGraceMs = options.attachStartupGraceMs ?? 75;
+  const earlyAttachOutputLimit = Math.min(options.maxReplayBytes ?? 1024 * 1024, 64 * 1024);
   const highWaterMark = options.flowControl?.highWaterMark ?? 1024 * 1024;
 
   const runtimes = new Map<string, SessionRuntime>();
+  let connCounter = 0;
 
   function createQueue(name: string): PendingPersistQueue | null {
     return options.scrollbackStore
@@ -204,6 +217,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       attachPromise: null,
       idleCloseTimer: null,
       disposed: false,
+      sizing: null,
     };
     runtimes.set(name, runtime);
     return runtime;
@@ -321,6 +335,12 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       sendJson(conn.ws, { type: "exit", code: event.exitCode });
     }
     runtime.conns.clear();
+    // Every connection was just cleared without running its detach path, so
+    // their sizing registrations would linger. Drop the arbiter so a later
+    // reconnect negotiates from fresh declarations instead of stale ones;
+    // the persisted canonical size reloads from the registry on next open.
+    runtime.sizing?.dispose();
+    runtime.sizing = null;
     void flushAndRotateQueue(runtime, "final scrollback flush failed", true);
   }
 
@@ -375,8 +395,8 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
         try {
           child = options.adapter.attachSession(safeName, {
             signal: abortController.signal,
+            size: runtime.sizing?.spawnSize(),
           });
-          break;
         } catch (err: unknown) {
           child = null;
           if (attempt >= maxAttachAttempts || !canUseAttachPromise(runtime, attachPromise)) {
@@ -391,27 +411,104 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
             err instanceof Error ? err.message : String(err),
           );
           await new Promise((resolve) => setTimeout(resolve, 400));
+          continue;
         }
-      }
-      if (!child) {
-        return false;
-      }
 
-      if (!canUseAttachPromise(runtime, attachPromise)) {
-        child.kill();
-        return false;
-      }
+        let committed = false;
+        let earlyOutputLength = 0;
+        const earlyOutput: string[] = [];
+        let earlyOutputPaused = false;
+        let earlyOutputOverflowed = false;
+        let resolveEarlyExit!: (event: { exitCode: number; signal?: number }) => void;
+        const earlyExit = new Promise<{ exitCode: number; signal?: number }>((resolve) => {
+          resolveEarlyExit = resolve;
+        });
+        const dataDisposable = child.onData((data: string) => {
+          if (committed) {
+            const transformed = runtime.outputCompat?.write(data) ?? data;
+            emitOutput(runtime, transformed);
+            return;
+          }
+          if (earlyOutputOverflowed) return;
+          earlyOutput.push(data);
+          earlyOutputLength += data.length;
+          if (earlyOutputLength < earlyAttachOutputLimit || earlyOutputPaused) return;
+          if (child?.pause) {
+            child.pause();
+            earlyOutputPaused = true;
+            return;
+          }
+          // A custom adapter without PTY flow control cannot preserve a
+          // bounded startup buffer. Fail this attach explicitly rather than
+          // acknowledge a connection after silently dropping output.
+          earlyOutputOverflowed = true;
+          child?.kill();
+        });
+        const exitDisposable = child.onExit((event: { exitCode: number; signal?: number }) => {
+          if (committed) {
+            handleSharedExit(runtime, event);
+          } else {
+            resolveEarlyExit(event);
+          }
+        });
+        let startupTimer: ReturnType<typeof setTimeout> | undefined;
+        const startupExit = attachStartupGraceMs <= 0
+          ? null
+          : await Promise.race([
+              earlyExit,
+              new Promise<null>((resolve) => {
+                startupTimer = setTimeout(() => resolve(null), attachStartupGraceMs);
+              }),
+            ]);
+        if (startupTimer !== undefined) clearTimeout(startupTimer);
 
-      runtime.abortController = abortController;
-      runtime.child = child;
-      runtime.dataDisposable = child.onData((data: string) => {
-        const transformed = runtime.outputCompat?.write(data) ?? data;
-        emitOutput(runtime, transformed);
-      });
-      runtime.exitDisposable = child.onExit((event: { exitCode: number; signal?: number }) => {
-        handleSharedExit(runtime, event);
-      });
-      return true;
+        if (startupExit || earlyOutputOverflowed) {
+          dataDisposable.dispose();
+          exitDisposable.dispose();
+          if (!startupExit) child.kill();
+          child = null;
+          if (attempt >= maxAttachAttempts || !canUseAttachPromise(runtime, attachPromise)) {
+            if (canUseAttachPromise(runtime, attachPromise)) runtime.outputCompat = null;
+            console.warn(
+              startupExit
+                ? `[shell] zellij attach exited during startup with code ${startupExit.exitCode}`
+                : "[shell] zellij attach exceeded the bounded startup buffer without flow control",
+            );
+            return false;
+          }
+          console.warn(
+            startupExit
+              ? `[shell] zellij attach attempt ${attempt} exited during startup, retrying: code ${startupExit.exitCode}`
+              : `[shell] zellij attach attempt ${attempt} exceeded the bounded startup buffer, retrying`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 400));
+          continue;
+        }
+
+        if (!canUseAttachPromise(runtime, attachPromise)) {
+          dataDisposable.dispose();
+          exitDisposable.dispose();
+          child.kill();
+          return false;
+        }
+
+        runtime.abortController = abortController;
+        runtime.child = child;
+        const canonicalSize = runtime.sizing?.current();
+        if (canonicalSize) {
+          child.resize(canonicalSize.cols, canonicalSize.rows);
+        }
+        runtime.dataDisposable = dataDisposable;
+        runtime.exitDisposable = exitDisposable;
+        committed = true;
+        for (const data of earlyOutput) {
+          const transformed = runtime.outputCompat?.write(data) ?? data;
+          emitOutput(runtime, transformed);
+        }
+        if (earlyOutputPaused) child.resume?.();
+        return true;
+      }
+      return false;
     })();
 
     runtime.attachPromise = attachPromise;
@@ -427,6 +524,8 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
   async function disposeRuntime(runtime: SessionRuntime, warnContext: string): Promise<void> {
     runtime.disposed = true;
     cancelIdleClose(runtime);
+    runtime.sizing?.dispose();
+    runtime.sizing = null;
     for (const conn of runtime.conns) {
       conn.closed = true;
       conn.ws.close?.();
@@ -464,7 +563,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     return false;
   }
 
-  async function open({ ws, session, fromSeq = 0 }: ShellWsOpenOptions): Promise<ShellWsSession> {
+  async function open({ ws, session, fromSeq = 0, clientClass: openOptionsClass, declaredSize }: ShellWsOpenOptions): Promise<ShellWsSession> {
     const safeName = validateSessionName(session);
     const sessions = await options.registry.list();
     const info = sessions.find((candidate) => candidate.name === safeName);
@@ -489,6 +588,20 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     }
 
     const replayBuffer = runtime.buffer;
+    if (!runtime.sizing) {
+      runtime.sizing = createSessionSizing({
+        initialSize: info.canonicalSize ?? null,
+        defaultSize: options.defaultCanonicalSize,
+        debounceMs: options.sizingDebounceMs,
+        onApply: (size) => {
+          runtime.child?.resize(size.cols, size.rows);
+        },
+        persist: (size) => {
+          options.persistCanonicalSize?.(safeName, size);
+        },
+      });
+    }
+    const sizing = runtime.sizing;
     await replayBuffer.ensureSeeded();
 
     // Re-check capacity: awaits since the first check (seeding, registry
@@ -497,7 +610,19 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       return { onMessage: () => undefined, onClose: () => undefined };
     }
 
+    // A hard declaration without a size cannot participate in negotiation;
+    // treat it as legacy so it does not disable legacy resize-follow while
+    // contributing nothing (review finding on spec 107 FR-007).
+    const clientClass: ShellClientClass =
+      openOptionsClass === "hard" && !declaredSize ? "legacy" : (openOptionsClass ?? "legacy");
+    const connId = `conn-${++connCounter}`;
+    // Register before the shared attach so the first client's pty spawns at
+    // its own declared size instead of the fallback corrected after the
+    // debounce.
+    sizing.attach(connId, clientClass, declaredSize ?? null);
+
     if (!(await ensureSharedAttach(runtime, safeName, replayBuffer))) {
+      sizing.detach(connId);
       sendJson(ws, {
         type: "error",
         code: "attach_failed",
@@ -510,6 +635,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     // One or more concurrent opens may have filled the final client slot while
     // this call awaited the shared attach startup.
     if (runtime.conns.size >= maxAttachedClients && !evictStaleOrReject(runtime, ws)) {
+      sizing.detach(connId);
       return { onMessage: () => undefined, onClose: () => undefined };
     }
 
@@ -558,6 +684,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
 
     const detachConn = () => {
       runtime.conns.delete(conn);
+      sizing.detach(connId);
       if (runtime.conns.size === 0) {
         scheduleIdleClose(runtime);
       }
@@ -577,6 +704,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           }
         }
         runtime.conns.delete(conn);
+        sizing.detach(connId);
         await closeSharedAttach(runtime);
         return;
       }
@@ -620,7 +748,24 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           return;
         }
         if (msg.type === "resize") {
-          runtime.child?.resize(msg.cols, msg.rows);
+          const requested = { cols: msg.cols, rows: msg.rows };
+          if (clientClass === "hard") {
+            // A hard client's terminal changed size: update its declaration
+            // and let the arbiter re-pin the shared attach pty (spec 107
+            // FR-008/9).
+            sizing.declared(connId, requested);
+            return;
+          }
+          if (clientClass === "soft") {
+            // Soft viewports render the canonical grid scaled; their resize
+            // frames are hints only and never touch the pty.
+            return;
+          }
+          // Legacy clients keep resize-follow behavior only while no
+          // classified client is attached (spec 107 FR-007).
+          if (sizing.legacyResizeAllowed()) {
+            runtime.child?.resize(msg.cols, msg.rows);
+          }
         }
       },
       onClose() {

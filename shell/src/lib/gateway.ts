@@ -30,12 +30,24 @@ export function getGatewayWs(): string {
   return process.env.NEXT_PUBLIC_GATEWAY_WS ?? "ws://localhost:4000/ws";
 }
 
+/**
+ * Bind a gateway-owned static asset path to the current explicit computer.
+ * The gateway bootstrap intentionally returns portable root-relative paths;
+ * browser consumers must add the tab-scoped gateway prefix before rendering
+ * them so `/vm/<handle>` tabs never fall back to the primary computer.
+ */
+export function gatewayAssetUrl(path: string | null | undefined): string | undefined {
+  if (!path) return undefined;
+  if (typeof window === "undefined" || !path.startsWith("/")) return path;
+  return `${getGatewayUrl()}${path}`;
+}
+
 /** The `/vm/<handle>` prefix of the current explicit vm route, or "" at the root. */
 function getExplicitVmPrefix(): string {
-  const pathname = window.location?.pathname ?? "";
+  const pathname = window.location.pathname ?? "";
   const match = pathname.match(/^\/vm\/([A-Za-z0-9_-]{1,64})(?:\/|$)/);
   if (!match) return "";
-  const runtimeSlot = new URLSearchParams(window.location?.search ?? "").get("runtime");
+  const runtimeSlot = new URLSearchParams(window.location.search ?? "").get("runtime");
   return runtimeSlot && /^[A-Za-z0-9_-]{1,32}$/.test(runtimeSlot)
     ? `/vm/${match[1]}/~runtime/${runtimeSlot}`
     : `/vm/${match[1]}`;

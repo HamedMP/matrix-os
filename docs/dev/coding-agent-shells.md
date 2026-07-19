@@ -92,9 +92,27 @@ Provider-specific behavior belongs behind the gateway provider adapter interface
 - Use foreground terminal setup actions when user interaction is required.
 - Avoid provider-specific branches in shell components unless the shared contract explicitly exposes safe metadata.
 
+Provider executable discovery does not imply protocol compatibility. Codex
+support uses checked-in exec JSONL and app-server manifests with one bounded
+installed-version range. The daily `Codex Provider Contracts` workflow resolves
+the latest published package, verifies both protocol digests, and fails on
+version or schema drift. Runtime capabilities must remain disabled for any
+installed version outside the verified range; do not silently fall back to raw
+terminal parsing for approvals or structured input.
+
+App-server requests must pass through the gateway's bounded request normalizer.
+Command, file-change, and permission requests use Matrix-authored generic copy;
+raw commands, paths, hosts, and permission payloads never enter thread events.
+Structured questions retain only validated display fields and Matrix-generated
+question ids. Native JSON-RPC ids and provider thread, turn, item, and question
+ids are control-runtime state and must never cross HTTP, WebSocket, IPC, push,
+or persisted shell contracts.
+
 The gateway provider registry owns shell-facing provider projections. It validates the bounded configured adapter set at startup, validates and bounds owner-scoped credential responses, combines adapter metadata with that credential state, and keeps credential-known non-system providers visible even before an execution adapter is registered. Credential-only projections preserve coarse install/auth state but remain unavailable for runs until an adapter exists. Credential-source failures fail closed to unavailable/unknown adapter projections without running setup or health reads. Adapter reads receive timeout signals, and only coarse health booleans enter a capped owner/provider TTL cache with LRU eviction. Invalid summaries or setup actions degrade to generic safe state; raw health output and credentials never enter the runtime summary.
 
-Workspace provider projections are configured with the bounded, comma-separated `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` setting. The supported rollout values are `claude` and `codex`; duplicates, unknown values, empty entries, and more than two entries fail startup with a generic configuration error. Customer host bundles enable the executable Codex adapter through the legacy `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1` setting so thread routes are present on a fresh runtime; provider readiness still fails closed until Codex is installed and connected. Claude remains registry-visible but unavailable for thread creation until its launcher passes the required sandbox smoke gate. Registry-only adapters also reject direct execution so later wiring changes fail closed. An explicitly empty provider list disables workspace providers even when the legacy setting is present.
+Workspace provider projections are configured with the bounded, comma-separated `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS` setting. The supported rollout values are `claude` and `codex`; duplicates, unknown values, empty entries, and more than two entries fail startup with a generic configuration error. Every explicitly configured Claude/Codex adapter enters both the registry and executable provider sets. Customer host bundles enable the executable Codex adapter through the legacy `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1` setting so thread routes are present on a fresh runtime; provider readiness still fails closed until the provider CLI is installed and connected. The legacy setting remains a Codex-only compatibility path when the explicit list is unset, and an explicitly empty provider list disables workspace providers even when the legacy setting is present.
+
+Claude execution uses a session-only inline policy and passes `--setting-sources ""`, so user, project, and local settings cannot broaden the gateway-owned launch policy. A bounded `--init-only` call with a five-second timeout verifies the real installed CLI and requested policy before zellij or session persistence. Prompted thread launches add `--print`, using the CLI's documented non-interactive path so a first-use workspace trust prompt cannot stall a remote run; no-prompt foreground terminal launches remain interactive. Sandboxed launches set `failIfUnavailable`, disable unsandboxed command escape, and scope writes to the canonical owner worktree plus session scratch directory. Read-only, plan, and review launches deny the built-in Edit, Write, and NotebookEdit tools and block subprocess writes to both the checkout and its shared Git metadata directory. Stale unowned scratch directories become reclaimable after 30 minutes on a later preflight, while active and degraded session state prevents reclamation. Explicit full-access launches disable the OS sandbox and retain the requested permission behavior. Sandboxed workspace `on_request` and `never` map to `dontAsk` with scoped `Edit(...)` allow rules that cover all built-in file-edit tools; unmatched paths are auto-denied. `untrusted` retains permission mode `default`, and `on_failure` fails closed because Claude has no equivalent enforceable mode. Managed and self-hosted runtime foundations install bubblewrap and socat. Ubuntu 24.04 and newer hosts also receive the required `bwrap` AppArmor profile; the developer-tools service reconciles these prerequisites after in-place host-bundle updates. Missing or incompatible dependencies return only a generic sandbox-unavailable error to shells.
 
 Claude and Codex workspace adapters expose only fixed server-owned foreground setup actions. Every setup action defaults `MATRIX_NODE_PREFIX` to the canonical `/opt/matrix/runtime/node` prefix and prepends `$MATRIX_NODE_PREFIX/bin` to `PATH` before invoking a provider command. Install actions run the existing npm package install in a visible terminal, connect actions launch the provider's interactive local login flow, and both leave an interactive shell open afterward. Commands are bounded by `SafeSetupActionSchema`; clients must not render command text, persist it, or accept client-supplied replacements.
 
@@ -130,6 +148,14 @@ Approval and input requests are gateway-owned lifecycle events.
 - A shell submits a decision or answer with a bounded `clientRequestId`.
 - Gateway applies the first valid decision idempotently, appends the resolution event, and broadcasts it.
 - Other shells update from the returned snapshot or stream event.
+
+Structured provider input may carry up to eight bounded questions with stable
+question ids, optional choices, and free-form or secret-entry metadata. New
+clients submit the bounded `structuredAnswers` map and also include the existing
+legacy `answer` fallback for wire compatibility. Provider adapters must prefer
+the structured map, verify every question id against the pending request, and
+must not append answer values to thread events, logs, notifications, or shell
+persistence.
 
 Client UI must disable duplicate submission while a decision is in flight and recover by rehydrating the thread snapshot on failure. User-facing errors should be generic and recovery-oriented.
 
@@ -298,6 +324,86 @@ Checks:
 4. Runtime or project switches should clear stale preview rows before new data loads.
 5. If a preview is stale, refresh the runtime summary rather than trusting a persisted client reference.
 
+### Desktop Validation
+
+Before enabling a desktop coding-agent shell change broadly:
+
+1. Run the touched desktop unit or renderer tests and `pnpm --filter desktop run typecheck`.
+2. When the slice touches shared shell, gateway, or contract behavior, also run the matching gateway Vitest tests, shell typecheck, and desktop operator smoke listed below.
+3. Confirm desktop renderer state and IPC payloads contain only validated summaries, snapshots, and bounded UI references. Bearer credentials, provider credentials, raw provider errors, terminal output, file contents beyond transient editor state, and unbounded transcripts must stay out of renderer persistence.
+4. Run the Manual Desktop Real-Runtime Smoke checklist below when the slice touches runtime switching, native menu or command-palette entry points, Agents workspace routing, provider setup actions, thread detail, approval/input controls, review/file/preview routes, notification click-through, desktop badge counts, or terminal binding.
+5. Confirm Terminal Shells, Apps, Settings, Chat, hosted shell embeds, updater entry points, deep links, and window/menu behavior still work after the Agents pass.
+
+#### Automated Desktop Preflight
+
+Use the smallest focused set for the touched surface first. These are the current desktop coding-agent gates:
+
+```bash
+pnpm exec vitest run tests/desktop/coding-agent-runtime-client.test.ts tests/desktop/coding-agent-thread-stream.test.ts tests/desktop/coding-agent-workspace.test.tsx tests/desktop/ipc-contract.test.ts
+pnpm exec vitest run tests/desktop/menu-template.test.ts tests/desktop/shortcuts.test.ts tests/desktop/command-palette.test.tsx
+pnpm --filter desktop run typecheck
+```
+
+If the slice changes the desktop end-to-end shell path, also run:
+
+```bash
+xvfb-run -a bun run test:e2e tests/e2e/desktop/operator.e2e.test.ts
+```
+
+For release-parity packaging or trusted main-process changes, add:
+
+```bash
+bun run build:desktop
+```
+
+### Manual Desktop Real-Runtime Smoke
+
+Use this checklist against a real Matrix computer before broad rollout of
+desktop coding-agent shell changes. Keep evidence public-safe: do not paste
+bearer tokens, provider credentials, private hostnames, VPS IPs, raw provider
+output, terminal output, transcripts, file contents, diffs, approval payloads,
+launch tokens, or customer identifiers.
+
+1. Launch the desktop app from the branch or packaged artifact under test, sign
+   in, and select the intended Matrix computer. If multiple runtimes are
+   available, switch runtimes once and confirm Agents rehydrates from the newly
+   selected runtime.
+2. Open Agents from the sidebar, command palette, and native menu or shortcut.
+   Confirm each entry point focuses the same gateway-backed workspace instead
+   of a legacy local composer.
+3. Confirm the workspace hydrates provider status, active threads, attention
+   threads, terminal summaries, review summaries, and preview summaries from
+   the gateway without raw errors.
+4. If a provider requires setup, use the foreground setup action. Confirm it
+   opens a canonical terminal session and does not expose setup commands,
+   credentials, or provider raw errors in renderer state or screenshots.
+5. Open an existing thread, or create a disposable test thread only when a
+   provider is ready. Confirm the detail snapshot loads, event grouping is
+   bounded, stream updates do not duplicate replayed events, and unresolved
+   approval/input controls stay idempotent while a request is in flight.
+6. Use a bound terminal action from Agents or thread detail. Confirm it opens
+   the existing Terminal tab/model for the canonical Matrix terminal session;
+   detaching or leaving the tab must not terminate the underlying process.
+7. Open review, file, and preview surfaces. Confirm review/file content loads
+   through trusted IPC, file edits remain transient until saved through the
+   gateway, large/partial data shows recoverable UI, HTTPS previews open through
+   safe desktop open paths, and failures remain generic.
+8. Trigger or simulate a coding-agent attention notification with a bounded
+   thread reference. Confirm clicking the native notification focuses the
+   Agents workspace and visibly selects the matching thread. Confirm the badge
+   count reflects bounded gateway-owned attention state and uses overflow
+   behavior when the list is truncated.
+9. Put the runtime in an unavailable or offline state, or switch away from it,
+   then return. Confirm stale thread, terminal, review, and preview references
+   are dropped or shown as recoverable, and the UI rehydrates from the gateway
+   instead of trusting local renderer state.
+10. Recheck Terminal Shells, Apps, Settings, Chat, hosted shell embeds, updater
+    entry points, deep links, native menus, shortcuts, and window restore after
+    the Agents pass.
+11. Record branch, commit, desktop app build type, selected validation commands,
+    pass/fail notes, and any deferred manual step with the automated or manual
+    coverage that still applies.
+
 ### Mobile Validation
 
 Before enabling a mobile coding-agent shell change broadly:
@@ -305,15 +411,45 @@ Before enabling a mobile coding-agent shell change broadly:
 1. Run the touched mobile Jest tests and `pnpm --filter matrix-os-mobile exec tsc --noEmit`.
 2. When the slice touches shared shell, gateway, or contract behavior, also run the matching gateway Vitest tests, shell typecheck, and the shell/mobile readiness tests listed in `docs/dev/mobile-shell.md`.
 3. Confirm mobile persisted state contains only bounded UI references.
-4. Open the Agents workspace, thread detail, approval/input controls, review/file detail, preview route, and bound terminal route in a dev client when the slice touches those surfaces.
+4. Run the Coding-Agent SDK 57 Device Smoke checklist in `docs/dev/mobile-shell.md` when the slice touches Agents workspace routing, thread detail, approval/input controls, review/file detail, preview routes, bound terminal routes, notification tap routing, offline/reconnect handling, or mobile persistence.
 5. Confirm Chat, Apps, Terminal, and Settings tabs still open.
 6. Keep the existing terminal fallback. Do not land native terminal replacement behavior without separate device validation.
+
+### Real Runtime Smoke
+
+Use the opt-in smoke helper after a coding-agent shell stack is deployed to a Matrix runtime and before treating desktop/mobile validation as complete:
+
+```bash
+MATRIX_RUNTIME_URL="https://app.matrix-os.com/vm/<handle>" \
+MATRIX_RUNTIME_TOKEN="<short-lived runtime token>" \
+node scripts/coding-agents/real-runtime-smoke.mjs
+```
+
+The helper performs read-only authenticated checks for `GET /api/coding-agents/summary`, `GET /api/coding-agents/threads`, `GET /api/coding-agents/reviews`, and `GET /api/coding-agents/notification-preferences`. It validates bounded response contracts with Zod 4, applies per-request timeouts, caps response bodies, and redacts bearer tokens from logs.
+
+Add read-only assertions when the deployed runtime is expected to expose specific coding-agent surfaces:
+
+```bash
+MATRIX_RUNTIME_URL="https://app.matrix-os.com/vm/<handle>" \
+MATRIX_RUNTIME_TOKEN="<short-lived runtime token>" \
+node scripts/coding-agents/real-runtime-smoke.mjs \
+  --require-capability codingAgentsRuntimeSummary \
+  --require-capability codingAgentsMobileWorkspace \
+  --require-ready-provider \
+  --min-active-threads 1 \
+  --min-terminal-sessions 1
+```
+
+Available assertion flags are `--require-capability <id>`, `--require-ready-provider`, `--require-thread-snapshot`, `--min-active-threads <count>`, `--min-terminal-sessions <count>`, `--min-preview-sessions <count>`, and `--min-reviews <count>`. The helper remains read-only; it follows review cursors only when a minimum review count is requested and validates a thread snapshot only when `--require-thread-snapshot` is passed.
+
+Do not paste live token values, raw response bodies, transcripts, terminal output, file contents, diffs, provider errors, private hostnames, or VPS IPs into PR comments. Record only the command shape, pass/fail status, and sanitized recovery notes.
 
 ## Validation Commands
 
 Run the smallest focused tests for the touched surface, then the shared gates that apply:
 
 ```bash
+pnpm exec vitest run tests/scripts/coding-agent-real-runtime-smoke.test.ts
 pnpm exec vitest run tests/contracts/coding-agents.test.ts tests/gateway/coding-agents-summary.test.ts
 pnpm --filter desktop run typecheck
 pnpm --dir apps/mobile exec jest --runInBand

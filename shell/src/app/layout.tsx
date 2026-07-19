@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
-import { Inter, Instrument_Sans, JetBrains_Mono, Cormorant_Garamond, Orbitron } from "next/font/google";
+import { Inter, Instrument_Sans, JetBrains_Mono, Cormorant_Garamond, Geist, Geist_Mono, Orbitron } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { getPostHogVisitorCountry } from "@matrix-os/observability/client";
 import { buildShellMetadata } from "@/lib/shell-metadata";
@@ -41,6 +41,16 @@ const orbitron = Orbitron({
   variable: "--font-orbitron",
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
+});
+
+const geistSans = Geist({
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
+});
+
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
 });
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -94,7 +104,7 @@ export default async function RootLayout({
       // replay without rebuilding the bundle.
       data-posthog-disable-replay={process.env.POSTHOG_DISABLE_REPLAY ? "1" : undefined}
     >
-      <body className={`${inter.variable} ${instrumentSans.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable}`}>
+      <body className={`${inter.variable} ${instrumentSans.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable} ${geistSans.variable} ${geistMono.variable}`}>
         {children}
         {includePostHogIdentify ? <PostHogIdentify /> : null}
         <PwaRegister />

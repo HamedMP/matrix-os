@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { getGatewayUrl, getGatewayWs } from "../../shell/src/lib/gateway";
 
@@ -37,5 +38,10 @@ describe("gateway URL resolution", () => {
   it("does not prefix lookalike non-vm paths", () => {
     window.history.replaceState({}, "", "/settings/vmware");
     expect(getGatewayUrl()).toBe(window.location.origin);
+  });
+
+  it("reads the browser location directly inside the browser-only helper", () => {
+    const source = readFileSync("shell/src/lib/gateway.ts", "utf8");
+    expect(source).not.toContain("window.location?.");
   });
 });
