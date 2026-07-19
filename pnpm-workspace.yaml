@@ -3,7 +3,6 @@ packages:
   - "apps/*"
   - "shell"
   - "desktop"
-  - "www"
   - "marketing"
   - "marketing/web"
 

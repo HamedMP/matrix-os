@@ -23,17 +23,17 @@ describe("delivery lane router", () => {
       changedPaths: ["pnpm-lock.yaml"],
     });
 
-    expect(decision.lanes).toEqual(["platform", "shell", "edge", "runtime", "www", "cli", "ops"]);
+    expect(decision.lanes).toEqual(["platform", "shell", "edge", "runtime", "cli", "ops"]);
     expect(decision.reason).toContain("root workspace metadata");
   });
 
   it("adds lanes from explicit deploy selectors", () => {
     const decision = resolveLaneDecision({
       changedPaths: [],
-      selectors: ["deploy/platform", "deploy/www"],
+      selectors: ["deploy/platform", "deploy/shell"],
     });
 
-    expect(decision.lanes).toEqual(["platform", "www"]);
+    expect(decision.lanes).toEqual(["platform", "shell"]);
     expect(decision.reason).toContain("manual dispatch");
   });
 

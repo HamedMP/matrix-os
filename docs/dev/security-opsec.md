@@ -23,7 +23,7 @@ private). Architecture risk: `specs/092-threat-model/`.
    (`pk_test_`, `sk_test_`, Stripe test mode, a Neon dev branch). Never pull a
    production secret onto your laptop.
 5. **Secrets live in exactly four places.** GCP Secret Manager (platform prod),
-   Vercel env (www/shell), per-VPS `0640` env files (customer runtime), local `.env`
+   Vercel env (matrix-os-site/shell), per-VPS `0640` env files (customer runtime), local `.env`
    (dev only). **Not** Slack, not a ticket, not a screenshot, not a code comment, not
    an AI chat. If a secret has been pasted into any of those, it's burned — rotate it.
 6. **Rotate on exposure, immediately.** A leaked key is leaked the instant it leaves
@@ -153,13 +153,13 @@ Each tool: the one rule that matters most, where the secret lives, and rotation.
 - **Rotate:** Pipedream dashboard → project settings → rotate client secret + webhook
   secret together.
 
-### Inngest (provisioning workflow, in `www`)
-- **Rule:** the signing key + event key authenticate the `www` ↔ Inngest channel that
+### Inngest (provisioning workflow, in `matrix-os-site`)
+- **Rule:** the signing key + event key authenticate the public site ↔ Inngest channel that
   drives user provisioning. Server-side only; never in the client bundle.
-- **Lives:** Vercel env (www).
+- **Lives:** Vercel env for the private `FinnaAI/matrix-os-site` repository.
 - **Rotate:** Inngest dashboard → keys; update Vercel env.
 
-### Vercel (www / shell hosting)
+### Vercel (public site / shell hosting)
 - **Rule:** set env per environment (Production / Preview / Development). **Preview
   deployments must not get production secrets** — use preview-scoped or test values.
   `NEXT_PUBLIC_*` vars are baked into the client bundle, so only publishable values go

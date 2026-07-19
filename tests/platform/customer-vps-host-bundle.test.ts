@@ -822,7 +822,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       GITHUB_REF_TYPE: 'branch',
       HEAD_COMMIT_MESSAGE: 'docs: update landing page',
       SKIP_DEV_BUNDLE_INPUT: 'false',
-      CHANGED_FILES: ['www/content/docs/index.mdx', 'docs/dev/releases.md', 'README.md', 'AGENTS.md'].join('\n'),
+      CHANGED_FILES: ['docs/dev/onboarding.md', 'docs/dev/releases.md', 'README.md', 'AGENTS.md'].join('\n'),
     });
 
     expect(result.output).toContain('should_build=true');
