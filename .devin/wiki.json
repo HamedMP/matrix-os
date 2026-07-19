@@ -210,7 +210,7 @@
           "content": ""
         }
       ],
-      "purpose": "Overview of the www/ Next.js application: landing page, authentication flow, user/admin dashboards",
+      "purpose": "Overview of the separately deployed Matrix OS public website, authentication flow, and user/admin dashboards",
       "title": "Public Website"
     },
     {

@@ -48,7 +48,6 @@ Set `ANTHROPIC_API_KEY` in your environment for kernel AI features.
 | `packages/platform/` | Multi-tenant orchestrator (Hono :9000, Kysely/Postgres, dockerode) |
 | `packages/proxy/` | Shared API proxy (Hono :8080, usage tracking) |
 | `shell/` | Next.js 16 frontend (desktop shell) |
-| `www/` | matrix-os.com (Next.js on Vercel, Clerk auth) |
 | `home/` | File system template (copied on first boot) |
 | `tests/` | Vitest test suites |
 | `specs/` | Architecture and feature specs |
@@ -134,7 +133,7 @@ See `CLAUDE.md` for development rules, and `specs/` for active architecture spec
 
 ## Deployment
 
-- **Website** (`www/`): Deployed on Vercel
+- **Website**: maintained and deployed from the private `FinnaAI/matrix-os-site` repository
 - **Self-hosted**: Docker image via `distro/docker-compose.platform.yml`
 - **Releases**: SemVer tags (`v0.X.0`), see `docs/dev/releases.md`
 - **VPS deployment**: see `docs/dev/vps-deployment.md`
