@@ -31,6 +31,10 @@ export interface DesktopConfig {
   };
 }
 
+export type DesktopConfigPatch = Omit<Partial<DesktopConfig>, "dock"> & {
+  dock?: Partial<DockConfig>;
+};
+
 export const BUNDLED_WALLPAPERS = new Set([
   "moraine-lake.jpg",
   "xp-bliss.jpg",
@@ -243,7 +247,7 @@ export async function saveDesktopConfig(
 }
 
 export async function saveDesktopConfigPatch(
-  patch: Partial<DesktopConfig>,
+  patch: DesktopConfigPatch,
   options: DesktopConfigHookOptions = {},
 ): Promise<void> {
   const gatewayUrl = getGatewayUrl();
@@ -251,13 +255,24 @@ export async function saveDesktopConfigPatch(
   const getRes = await fetch(url, {
     signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
   });
-  const config = getRes.ok
-    ? (await getRes.json()) as Record<string, unknown>
-    : {};
+  if (!getRes.ok) {
+    throw new Error(`GET /api/settings/desktop ${getRes.status}`);
+  }
+  const config = (await getRes.json()) as Record<string, unknown>;
+  const { dock: dockPatch, ...topLevelPatch } = patch;
   const definedPatch = Object.fromEntries(
-    Object.entries(patch).filter(([, value]) => value !== undefined),
+    Object.entries(topLevelPatch).filter(([, value]) => value !== undefined),
   );
-  const nextConfig = { ...config, ...definedPatch };
+  const existingDock = config.dock !== null
+    && typeof config.dock === "object"
+    && !Array.isArray(config.dock)
+    ? config.dock as Record<string, unknown>
+    : {};
+  const nextConfig = {
+    ...config,
+    ...definedPatch,
+    ...(dockPatch ? { dock: { ...existingDock, ...dockPatch } } : {}),
+  };
   const putRes = await fetch(url, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
