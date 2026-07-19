@@ -574,7 +574,8 @@ export function RuntimeManager({
         height={666}
         priority
         aria-hidden="true"
-        className="pointer-events-none fixed -bottom-28 -right-24 z-[2] w-[min(78vw,34rem)] select-none opacity-[0.045] blur-[0.4px] sm:-bottom-36 sm:-right-20"
+        data-testid="runtime-rabbit-shadow"
+        className="pointer-events-none fixed left-1/2 top-1/2 z-[2] w-[min(156vw,68rem)] -translate-x-1/2 -translate-y-1/2 select-none opacity-[0.045] blur-[0.4px]"
       />
       <div className="relative z-10 mx-auto flex min-h-full w-full max-w-6xl flex-col px-5 py-5 sm:px-8 sm:py-7 lg:px-10">
         <section className="flex flex-1 flex-col pb-28 pt-4 sm:pt-2">

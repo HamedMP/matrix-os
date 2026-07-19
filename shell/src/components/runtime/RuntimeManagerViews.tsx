@@ -23,6 +23,9 @@ import { DeveloperToolsSelector } from "@/components/onboarding/DefaultInstallsS
 import type { JourneyState, OverviewState } from "./RuntimeManager";
 import { runtimeSlotTitle } from "./runtime-name";
 
+const MATRIX_SHIMMER =
+  "linear-gradient(90deg, #2F392C 0%, #2F392C 24%, #C4A265 50%, #2F392C 76%, #2F392C 100%)";
+
 function journeyStageLabel(stage: NonNullable<JourneyState["progress"]>["stage"]): string {
   if (stage === "creating_server") return "Creating server";
   if (stage === "booting") return "Booting";
@@ -60,20 +63,28 @@ export function ComputerInventory({
           <Image src="/matrix-logo.svg" alt="Matrix OS logo" width={27} height={36} priority className="h-9 w-[27px]" />
           <span
             className="text-[15px] font-semibold tracking-[0.2em] sm:text-base"
-            style={{ fontFamily: "var(--font-inter), Inter, system-ui, sans-serif" }}
+            style={{ color: "#32352E", fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}
           >
             MATRIX OS
           </span>
         </Link>
-        <h1 className="bg-[linear-gradient(90deg,#2f392c_0%,#2f392c_24%,#c4a265_50%,#2f392c_76%,#2f392c_100%)] bg-clip-text text-[clamp(2.35rem,5vw,4.25rem)] font-medium leading-[0.98] tracking-[-0.055em] text-transparent [animation:onboard-shimmer_8s_ease-in-out_infinite,onboard-glow_8s_ease-in-out_infinite] [background-size:300%_100%] motion-reduce:animate-none">
+        <h1
+          className="mx-auto block w-fit bg-clip-text pb-[0.12em] text-[clamp(2.35rem,5vw,4.25rem)] font-medium leading-[1.08] tracking-[-0.055em] text-transparent [animation:onboard-shimmer_8s_ease-in-out_infinite,onboard-glow_8s_ease-in-out_infinite] motion-reduce:animate-none"
+          style={{
+            backgroundClip: "text",
+            WebkitBackgroundClip: "text",
+            backgroundImage: MATRIX_SHIMMER,
+            backgroundSize: "300% 100%",
+          }}
+        >
           Choose your computer
         </h1>
       </header>
 
       {overview.status === "loading" ? (
-        <div className="mt-10 grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-2 lg:grid-cols-4" aria-label="Loading computers" aria-busy="true">
+        <div className="mt-10 flex flex-wrap justify-center gap-x-4 gap-y-8 sm:gap-x-6" aria-label="Loading computers" aria-busy="true">
           {[0, 1, 2, 3].map((item) => (
-            <div key={item} className="flex animate-pulse flex-col items-center">
+            <div key={item} className="flex w-[calc(50%_-_0.5rem)] max-w-44 animate-pulse flex-col items-center sm:w-44">
               <span className="size-24 rounded-full bg-forest/[0.07]" />
               <span className="mt-4 h-4 w-24 rounded bg-forest/[0.07]" />
             </div>
@@ -92,7 +103,7 @@ export function ComputerInventory({
       ) : null}
       {overview.status === "ready" ? (
         overview.inventory.items.length > 0 ? (
-          <div className="mt-10 grid grid-cols-2 gap-x-4 gap-y-9 sm:grid-cols-2 lg:grid-cols-4" aria-label="Matrix OS computers">
+          <div className="mt-10 flex flex-wrap justify-center gap-x-4 gap-y-9 sm:gap-x-6" aria-label="Matrix OS computers">
             {overview.inventory.items.map((computer) => (
               <ComputerProfile key={computer.runtimeSlot} computer={computer} current={computer.runtimeSlot === overview.inventory.selectedSlot} />
             ))}
@@ -100,7 +111,7 @@ export function ComputerInventory({
               type="button"
               onClick={onAdd}
               aria-label="Get another computer"
-              className="group flex min-w-0 flex-col items-center rounded-3xl px-2 py-2 text-center outline-none transition focus-visible:ring-2 focus-visible:ring-ember focus-visible:ring-offset-4"
+              className="group flex w-[calc(50%_-_0.5rem)] max-w-44 min-w-0 flex-col items-center rounded-3xl px-2 py-2 text-center outline-none transition focus-visible:ring-2 focus-visible:ring-ember focus-visible:ring-offset-4 sm:w-44"
             >
               <span className="grid size-24 place-items-center rounded-full border border-dashed border-forest/20 bg-white/35 text-forest/45 transition duration-200 group-hover:scale-[1.03] group-hover:border-ember/40 group-hover:bg-white/70 group-hover:text-ember group-focus-visible:scale-[1.03]">
                 <PlusIcon className="size-7" aria-hidden="true" />
@@ -151,7 +162,7 @@ function ComputerProfile({ computer, current }: { computer: MatrixComputer; curr
       href={available ? computer.gatewayPath : undefined}
       aria-label={available ? `Switch to ${title}` : `${title} is ${status.toLowerCase()}`}
       aria-disabled={!available || undefined}
-      className={`group flex min-w-0 flex-col items-center rounded-3xl px-2 py-2 text-center no-underline outline-none transition focus-visible:ring-2 focus-visible:ring-ember focus-visible:ring-offset-4 ${available ? "cursor-pointer" : "cursor-default"}`}
+      className={`group flex w-[calc(50%_-_0.5rem)] max-w-44 min-w-0 flex-col items-center rounded-3xl px-2 py-2 text-center no-underline outline-none transition focus-visible:ring-2 focus-visible:ring-ember focus-visible:ring-offset-4 sm:w-44 ${available ? "cursor-pointer" : "cursor-default"}`}
     >
       <span className="relative">
         <span className={`grid size-24 place-items-center rounded-full border text-[2.7rem] shadow-[0_16px_40px_rgba(50,53,46,0.09)] transition duration-200 ${identity.tone} ${current ? "border-ember ring-4 ring-ember/10" : "border-white/65 group-hover:scale-[1.03] group-hover:border-white"}`}>

@@ -192,15 +192,30 @@ describe("RuntimeManager", () => {
     expect(heading.className).toContain("font-medium");
     expect(heading.className).toContain("bg-clip-text");
     expect(heading.className).toContain("text-transparent");
+    expect(heading.className).toContain("leading-[1.08]");
+    expect(heading.className).toContain("pb-[0.12em]");
+    expect(heading.className).toContain("block");
+    expect(heading.className).toContain("mx-auto");
+    expect(heading.style.backgroundImage).toBe(
+      "linear-gradient(90deg, rgb(47, 57, 44) 0%, rgb(47, 57, 44) 24%, rgb(196, 162, 101) 50%, rgb(47, 57, 44) 76%, rgb(47, 57, 44) 100%)",
+    );
+    expect(heading.style.backgroundSize).toBe("300% 100%");
     expect(heading.className).toContain("onboard-shimmer");
+    expect(heading.className).toContain("onboard-glow");
+    expect(heading.className).toContain("motion-reduce:animate-none");
     const shellBackdrop = screen.getByTestId("runtime-shell-backdrop");
     expect(shellBackdrop.getAttribute("src")).toContain("runtime-shell-backdrop.webp");
     expect(shellBackdrop.className).toContain("blur-[18px]");
+    const rabbitShadow = screen.getByTestId("runtime-rabbit-shadow");
+    expect(rabbitShadow.className).toContain("left-1/2");
+    expect(rabbitShadow.className).toContain("top-1/2");
+    expect(rabbitShadow.className).toContain("w-[min(156vw,68rem)]");
     const brandLockup = screen.getByRole("link", { name: "Matrix OS home" });
     expect(brandLockup.className).toContain("justify-center");
     expect(brandLockup.className).toContain("mx-auto");
     expect(screen.getByRole("img", { name: "Matrix OS logo" })).toBeTruthy();
-    expect(screen.getByText("MATRIX OS").style.fontFamily).toContain("var(--font-inter)");
+    expect(screen.getByText("MATRIX OS").style.fontFamily).toBe("var(--font-orbitron), Orbitron, sans-serif");
+    expect(screen.getByText("MATRIX OS").style.color).toBe("rgb(50, 53, 46)");
     expect(screen.queryByText("Each one is a private Matrix OS workspace with its own files and data.")).toBeNull();
     expect(screen.getByText("Matrix OS member").className).toContain("font-medium");
     expect(screen.getByText("neo@example.com")).toBeTruthy();
@@ -219,7 +234,7 @@ describe("RuntimeManager", () => {
     expect(signOut.className).toContain("size-9");
     expect(screen.queryByText("Manage account")).toBeNull();
     expect(screen.queryByText("Sign out")).toBeNull();
-    expect(screen.getByLabelText("Matrix OS computers").className).toMatch(/sm:grid-cols-2/);
+    expect(screen.getByLabelText("Matrix OS computers").className).toContain("justify-center");
     expect(screen.getByLabelText("Account").className).toMatch(/fixed/);
     expect(screen.getByLabelText("Account").className).toMatch(/w-fit/);
     expect(screen.getByRole("main").className).toMatch(/overflow-y-auto/);
