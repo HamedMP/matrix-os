@@ -144,7 +144,7 @@ function MatrixFirstRunLoading() {
 }
 
 async function markOnboardingComplete() {
-  const res = await fetch("/api/settings/onboarding-complete", {
+  const res = await fetch(`${getGatewayUrl()}/api/settings/onboarding-complete`, {
     method: "POST",
     signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
   });
@@ -235,7 +235,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     const controller = new AbortController();
     let cancelled = false;
     const timeout = window.setTimeout(() => controller.abort(), GATEWAY_FETCH_TIMEOUT_MS);
-    void fetch("/api/settings/onboarding-status", {
+    void fetch(`${getGatewayUrl()}/api/settings/onboarding-status`, {
       cache: "no-store",
       signal: controller.signal,
     })
