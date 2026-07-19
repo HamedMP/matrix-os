@@ -184,8 +184,9 @@ describe("RuntimeManager", () => {
     installFetchRouter();
     await renderManager();
 
-    expect(await screen.findByText("Switch Computer")).toBeTruthy();
-    const heading = await screen.findByRole("heading", { name: "Choose your Matrix OS computer", level: 1 });
+    expect(screen.queryByText("Switch Computer")).toBeNull();
+    const heading = await screen.findByRole("heading", { name: "Choose your computer", level: 1 });
+    expect(heading.parentElement?.className).toContain("text-center");
     expect(heading.className).toContain("uppercase");
     expect(heading.className).toContain("bg-clip-text");
     expect(heading.className).toContain("text-transparent");
@@ -194,7 +195,7 @@ describe("RuntimeManager", () => {
     expect(shellBackdrop.getAttribute("src")).toContain("runtime-shell-backdrop.webp");
     expect(shellBackdrop.className).toContain("blur-[18px]");
     expect(screen.getByRole("img", { name: "Matrix OS logo" })).toBeTruthy();
-    expect(await screen.findByText("Each one is a private Matrix OS workspace with its own files and data.")).toBeTruthy();
+    expect(screen.queryByText("Each one is a private Matrix OS workspace with its own files and data.")).toBeNull();
     expect(screen.getByText("Matrix OS member")).toBeTruthy();
     expect(screen.getByText("neo@example.com")).toBeTruthy();
     expect(screen.getByRole("link", { name: /Switch to Studio/i }).getAttribute("href")).toBe(
@@ -205,10 +206,15 @@ describe("RuntimeManager", () => {
     expect(screen.getByText("🧪")).toBeTruthy();
     expect(screen.getByText(/Preview Computer/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Get another computer" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Manage account" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
+    const manageAccount = screen.getByRole("button", { name: "Manage account" });
+    const signOut = screen.getByRole("button", { name: "Sign out" });
+    expect(manageAccount.className).toContain("size-9");
+    expect(signOut.className).toContain("size-9");
+    expect(screen.queryByText("Manage account")).toBeNull();
+    expect(screen.queryByText("Sign out")).toBeNull();
     expect(screen.getByLabelText("Matrix OS computers").className).toMatch(/sm:grid-cols-2/);
-    expect(screen.getByLabelText("Account").className).toMatch(/md:fixed/);
+    expect(screen.getByLabelText("Account").className).toMatch(/fixed/);
+    expect(screen.getByLabelText("Account").className).toMatch(/w-fit/);
     expect(screen.getByRole("main").className).toMatch(/overflow-y-auto/);
   });
 

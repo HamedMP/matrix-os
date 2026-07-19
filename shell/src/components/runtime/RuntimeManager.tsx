@@ -3,7 +3,7 @@
 import { RedirectToSignIn, useAuth, useClerk, useUser } from "@clerk/nextjs";
 import { MatrixComputerListSchema, type MatrixComputerList } from "@matrix-os/contracts";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
-import { LogOutIcon, UserIcon } from "lucide-react";
+import { LogOutIcon, SettingsIcon, UserIcon } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
@@ -645,7 +645,7 @@ export function RuntimeManager({
         </section>
 
         <section
-          className="fixed bottom-4 left-4 right-4 mt-0 flex min-w-0 flex-col gap-2 rounded-2xl border border-white/70 bg-white/55 p-2 shadow-[0_18px_55px_rgba(50,53,46,0.08)] backdrop-blur-xl sm:right-auto sm:w-fit sm:flex-row sm:items-center sm:gap-3 md:fixed md:bottom-7 md:left-7"
+          className="fixed bottom-4 left-4 mt-0 flex w-fit max-w-[calc(100vw-2rem)] min-w-0 flex-row items-center gap-3 rounded-2xl border border-white/70 bg-white/55 p-2 shadow-[0_18px_55px_rgba(50,53,46,0.08)] backdrop-blur-xl md:bottom-7 md:left-7"
           aria-label="Account"
         >
           <div className="flex min-w-0 items-center gap-3 px-1 sm:px-0">
@@ -656,15 +656,29 @@ export function RuntimeManager({
                 <UserIcon className="size-4" aria-hidden="true" />
               )}
             </span>
-            <span className="min-w-0 grow sm:max-w-44 sm:grow-0">
+            <span className="min-w-0 max-w-36 sm:max-w-44">
               <strong className="block truncate text-xs font-semibold">{displayName}</strong>
               <span className="block truncate text-[11px] text-forest/50">{email}</span>
             </span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <button type="button" onClick={() => clerk.openUserProfile()} className="account-action flex-1">Manage account</button>
-            <button type="button" onClick={() => void handleSignOut()} className="account-action flex-1">
-              <LogOutIcon className="size-3.5" aria-hidden="true" /> Sign out
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={() => clerk.openUserProfile()}
+              className="account-action size-9 min-h-0 shrink-0 p-0"
+              aria-label="Manage account"
+              title="Manage account"
+            >
+              <SettingsIcon className="size-3.5" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSignOut()}
+              className="account-action size-9 min-h-0 shrink-0 p-0"
+              aria-label="Sign out"
+              title="Sign out"
+            >
+              <LogOutIcon className="size-3.5" aria-hidden="true" />
             </button>
           </div>
         </section>
