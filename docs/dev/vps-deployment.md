@@ -55,6 +55,8 @@ system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz.sha256
 
 The per-user Docker image path is legacy/local-development only. It is not used for production customer VPSes.
 
+New customer and recovery creation may optionally use a validated golden VPS snapshot as a fail-closed acceleration layer. It never replaces the immutable host-bundle source of truth, owner backup flow, or clean Ubuntu fallback. See [Golden VPS Snapshots](golden-vps-snapshots.md) for lifecycle, sanitation, rollout gates, and disablement.
+
 ### Archived Legacy Shared-Container Mode
 
 This section is historical context for old deployments only. Do not use it for new production work.

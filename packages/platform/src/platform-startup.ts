@@ -470,9 +470,11 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
           listCallbackWaitGoldenSnapshotBuildIds,
           enforceGoldenSnapshotRetention,
           listPendingGoldenSnapshotCleanup,
+          listRevokedGoldenSnapshotBaseGenerations,
           listRunnableGoldenSnapshotBuildIds,
           listUnresolvedGoldenSnapshotBuildIds,
           reconcileMissingGoldenSnapshotBuilds,
+          reconcileRevokedGoldenSnapshotBaseGeneration,
         },
       ] = await Promise.all([
         import('./golden-snapshot-service.js'),
@@ -498,6 +500,21 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
           try {
             const workerNow = new Date().toISOString();
             let quotaPressure = false;
+            let revocationBudget = goldenSnapshotConfig.reconciliationBatchSize;
+            const revokedBaseGenerations = await listRevokedGoldenSnapshotBaseGenerations(
+              db, goldenSnapshotConfig.reconciliationBatchSize,
+            );
+            for (const baseGeneration of revokedBaseGenerations) {
+              if (revocationBudget <= 0) break;
+              try {
+                const reconciled = await reconcileRevokedGoldenSnapshotBaseGeneration(
+                  db, baseGeneration, workerNow, revocationBudget,
+                );
+                revocationBudget -= reconciled.processed;
+              } catch (err: unknown) {
+                console.error(`[golden-snapshot] revoked generation reconciliation failed: ${err instanceof Error ? err.name : typeof err}`);
+              }
+            }
             if (goldenSnapshotConfig.buildsEnabled) {
               try {
                 await reconcileMissingGoldenSnapshotBuilds(db, {
