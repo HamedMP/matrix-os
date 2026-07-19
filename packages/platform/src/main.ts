@@ -97,6 +97,7 @@ import {
   releaseVersionFromProbe,
 } from './runtime-probes.js';
 import { createPlatformMetricsRoutes } from './platform-metrics-routes.js';
+import { createAtsRoutes } from './ats-routes.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 import {
   APP_SESSION_COOKIE,
@@ -574,6 +575,18 @@ export function createApp(deps: {
     appOrigin: journeyAppOrigin,
     maxProvisionAttempts: Number(appEnv.CUSTOMER_VPS_MAX_PROVISION_ATTEMPTS) || 3,
     settlingWindowMs: Number(appEnv.BILLING_SETTLING_WINDOW_MS) || undefined,
+  }));
+
+  app.route('/', createAtsRoutes({
+    db,
+    ingestSecret: appEnv.ATS_INGEST_SECRET ?? '',
+    adminSecret: appEnv.ATS_ADMIN_SECRET ?? platformSecret,
+    allowedRoleSlugs: [
+      'founders-associate-gtm-operations',
+      'founding-engineer',
+    ],
+    bookingBaseUrl: appEnv.ATS_BOOKING_BASE_URL,
+    publicSiteUrl: appEnv.MATRIX_PUBLIC_SITE_URL ?? 'https://matrix-os.com',
   }));
 
   // Session-based routing:
