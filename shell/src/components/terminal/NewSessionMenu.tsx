@@ -84,6 +84,8 @@ export function NewSessionMenu({
       ref={menuRef}
       role="menu"
       aria-label="New session menu"
+      className="terminal-new-session-menu"
+      data-align={align}
       onPointerDown={(event) => event.stopPropagation()}
       onMouseDown={(event) => event.stopPropagation()}
       style={{
@@ -97,6 +99,7 @@ export function NewSessionMenu({
         gap: 4,
         padding: 8,
         position: "absolute",
+        transformOrigin: align === "mobile" ? "bottom left" : align === "right" ? "top right" : "top left",
         ...(align === "mobile"
           ? { bottom: "calc(100% + 8px)", left: 0 }
           : align === "right"
