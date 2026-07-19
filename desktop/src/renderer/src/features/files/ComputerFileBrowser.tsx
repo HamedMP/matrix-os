@@ -28,10 +28,14 @@ function fileIcon(name: string) {
 
 export default function ComputerFileBrowser({
   compact = false,
+  mode = "browse",
   onOpenFile,
   onChooseFolder,
 }: {
   compact?: boolean;
+  // "folder-picker" lists directories only, so picking a target folder never
+  // competes with files. The default "browse" mode is unchanged.
+  mode?: "browse" | "folder-picker";
   onOpenFile?: (path: string) => void;
   onChooseFolder?: (path: string) => void;
 }) {
@@ -53,7 +57,9 @@ export default function ComputerFileBrowser({
   const scoped = loadedScope === browserScope;
   const viewCurrentPath = scoped ? currentPath : "";
   const viewCandidatePath = scoped ? candidatePath : "";
-  const viewEntries = scoped ? entries : [];
+  const viewEntries = scoped
+    ? (mode === "folder-picker" ? entries.filter((entry) => entry.type === "directory") : entries)
+    : [];
   const viewStatus: BrowserStatus = scoped ? status : "loading";
   const viewError = scoped ? error : null;
 
@@ -143,7 +149,9 @@ export default function ComputerFileBrowser({
             <Button variant="subtle" onClick={() => void load(viewCurrentPath)}>Try again</Button>
           </div>
         ) : viewEntries.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-sm" style={{ color: "var(--text-tertiary)" }}>This folder is empty.</div>
+          <div className="flex h-full items-center justify-center text-sm" style={{ color: "var(--text-tertiary)" }}>
+            {mode === "folder-picker" ? "No subfolders here." : "This folder is empty."}
+          </div>
         ) : (
           <div className="grid grid-cols-1 gap-0.5">
             {viewEntries.map((entry) => {
