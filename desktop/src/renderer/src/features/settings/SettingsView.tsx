@@ -1,5 +1,6 @@
 import {
   Blocks,
+  Bot,
   Clock,
   CreditCard,
   Cpu,
@@ -18,6 +19,7 @@ import BillingSection from "./sections/BillingSection";
 import ChannelsSection from "./sections/ChannelsSection";
 import IntegrationsSection from "./sections/IntegrationsSection";
 import CronSection from "./sections/CronSection";
+import ProvidersSection from "./sections/ProvidersSection";
 import SystemSection from "./sections/SystemSection";
 import { useUi } from "../../stores/ui";
 
@@ -27,6 +29,7 @@ type SectionId =
   | "billing"
   | "runtime"
   | "agent"
+  | "providers"
   | "channels"
   | "integrations"
   | "cron"
@@ -37,6 +40,7 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode; group: st
   { id: "billing", label: "Billing", icon: <CreditCard size={15} />, group: "You" },
   { id: "appearance", label: "Appearance", icon: <Palette size={15} />, group: "You" },
   { id: "agent", label: "Agent (Hermes)", icon: <Sparkles size={15} />, group: "Machine" },
+  { id: "providers", label: "Providers", icon: <Bot size={15} />, group: "Machine" },
   { id: "runtime", label: "Computers", icon: <Server size={15} />, group: "Machine" },
   { id: "channels", label: "Channels", icon: <MonitorCog size={15} />, group: "Machine" },
   { id: "integrations", label: "Integrations", icon: <Blocks size={15} />, group: "Machine" },
@@ -104,6 +108,7 @@ export default function SettingsView() {
           {section === "appearance" ? <AppearanceSection /> : null}
           {section === "runtime" ? <RuntimeSection /> : null}
           {section === "agent" ? <AgentSection /> : null}
+          {section === "providers" ? <ProvidersSection /> : null}
           {section === "channels" ? <ChannelsSection /> : null}
           {section === "integrations" ? <IntegrationsSection /> : null}
           {section === "cron" ? <CronSection /> : null}
