@@ -49,9 +49,57 @@ describe('golden snapshot worker wiring', () => {
     expect(worker).toContain('quotaPressure,');
   });
 
+  it('claims builds through the transactionally enforced concurrent-infrastructure cap', async () => {
+    const source = await readFile('packages/platform/src/platform-startup.ts', 'utf8');
+    const worker = source.slice(
+      source.indexOf('const runGoldenSnapshotWorker = async () => {'),
+      source.indexOf('const reconciliationIntervalMs = Number'),
+    );
+    expect(worker).toContain('claimGoldenSnapshotBuildBatch(');
+    expect(worker).toContain('goldenSnapshotConfig.maxConcurrentBuilds');
+    expect(worker).not.toContain('listClaimableGoldenSnapshotBuildIds(');
+  });
+
+  it('reconciles durable base-generation revocations in bounded pages even when builds are disabled', async () => {
+    const source = await readFile('packages/platform/src/platform-startup.ts', 'utf8');
+    const worker = source.slice(
+      source.indexOf('const runGoldenSnapshotWorker = async () => {'),
+      source.indexOf('const reconciliationIntervalMs = Number'),
+    );
+    expect(worker).toContain('listRevokedGoldenSnapshotBaseGenerations');
+    expect(worker).toContain('reconcileRevokedGoldenSnapshotBaseGeneration');
+    expect(worker.indexOf('listRevokedGoldenSnapshotBaseGenerations'))
+      .toBeLessThan(worker.indexOf('if (goldenSnapshotConfig.buildsEnabled)'));
+    expect(worker.indexOf('listRevokedGoldenSnapshotBaseGenerations'))
+      .toBeLessThan(worker.indexOf('reconcileMissingGoldenSnapshotBuilds'));
+    expect(worker.indexOf('listRevokedGoldenSnapshotBaseGenerations'))
+      .toBeLessThan(worker.indexOf('claimGoldenSnapshotBuildBatch'));
+    expect(worker.indexOf('listRevokedGoldenSnapshotBaseGenerations'))
+      .toBeLessThan(worker.indexOf('listUnresolvedGoldenSnapshotBuildIds'));
+    expect(worker).toContain('goldenSnapshotConfig.reconciliationBatchSize');
+  });
+
   it('mounts snapshot status routes before the generic bundle catch-all', async () => {
     const source = await readFile('packages/platform/src/main.ts', 'utf8');
     expect(source.indexOf('createGoldenSnapshotRoutes({'))
       .toBeLessThan(source.indexOf('createHostBundleRoutes({'));
+  });
+
+  it('documents the dedicated operator credential as mandatory for customer VPS installs', async () => {
+    const [exampleEnv, deploymentGuide] = await Promise.all([
+      readFile('.env.example', 'utf8'),
+      readFile('docs/dev/vps-deployment.md', 'utf8'),
+    ]);
+
+    expect(exampleEnv).toContain(
+      '# Required when CUSTOMER_VPS_ENABLED=true. Generate independently with: openssl rand -hex 32',
+    );
+    expect(exampleEnv).toContain(
+      '# Never reuse PLATFORM_SECRET; the platform refuses to start when they match.',
+    );
+    expect(deploymentGuide).toContain('GOLDEN_SNAPSHOT_OPERATOR_SECRET=$(openssl rand -hex 32)');
+    expect(deploymentGuide).toContain(
+      '| `GOLDEN_SNAPSHOT_OPERATOR_SECRET` | platform | runtime | Required when `CUSTOMER_VPS_ENABLED=true`',
+    );
   });
 });

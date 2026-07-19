@@ -330,6 +330,13 @@ export function createApp(deps: {
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !deps.customerVpsService;
   const platformSecret = deps.platformSecret ?? appEnv.PLATFORM_SECRET ?? '';
+  const goldenSnapshotOperatorSecret = appEnv.GOLDEN_SNAPSHOT_OPERATOR_SECRET ?? '';
+  if (deps.goldenSnapshotService && deps.goldenSnapshotConfig
+    && (goldenSnapshotOperatorSecret.length < 16
+      || platformSecret.length < 16
+      || goldenSnapshotOperatorSecret === platformSecret)) {
+    throw new Error('Golden snapshot control-plane credentials are misconfigured');
+  }
   const allowHostBundleSyncStoreFallback = appEnv.CUSTOMER_VPS_ENABLED !== 'true';
   const app = new Hono<{
     Variables: {
@@ -453,7 +460,7 @@ export function createApp(deps: {
       service: deps.goldenSnapshotService,
       config: deps.goldenSnapshotConfig,
       platformSecret,
-      operatorSecret: appEnv.GOLDEN_SNAPSHOT_OPERATOR_SECRET ?? '',
+      operatorSecret: goldenSnapshotOperatorSecret,
     }));
   }
   app.route('/system-bundles', createHostBundleRoutes({
