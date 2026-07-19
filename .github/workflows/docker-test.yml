@@ -73,7 +73,7 @@ jobs:
           while IFS= read -r file; do
             [ -z "$file" ] && continue
             case "$file" in
-              docs/*|specs/*|www/*|*.md) ;;
+              docs/*|specs/*|*.md) ;;
               *) should_run=true; break ;;
             esac
           done <<EOF

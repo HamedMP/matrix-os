@@ -964,6 +964,8 @@ function describeThreadEvent(event: AgentThreadEvent): { icon: keyof typeof Ioni
       return { icon: "sparkles-outline", title: "Thread created", detail: event.thread.title };
     case "thread.status":
       return { icon: "pulse-outline", title: "Status changed", detail: event.status.replace(/_/g, " ") };
+    case "user.message":
+      return { icon: "chatbubble-outline", title: "User message", detail: "Message sent" };
     case "assistant.text.delta":
       return { icon: "chatbubble-ellipses-outline", title: "Assistant update", detail: "Text update received" };
     case "assistant.text.completed":

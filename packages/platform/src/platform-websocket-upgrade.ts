@@ -10,11 +10,12 @@ import type { ClerkAuth } from './clerk-auth.js';
 import {
   type PlatformDB,
   type UserMachineRecord,
-  getActiveUserMachineByClerkId,
+  getAccessibleActiveUserMachineByClerkId,
   getContainer,
-  getRunningUserMachineByClerkId,
+  getAccessibleRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
 } from './db.js';
+import { canClerkUserAccessMachine } from './customer-vps-preview.js';
 import type { EntitlementAccessDecision } from './profile-routing.js';
 import {
   getWebSocketUpgradeToken,
@@ -206,21 +207,21 @@ export function registerPlatformWebSocketUpgradeHandler(
     let runningMachine: UserMachineRecord | undefined;
     if (explicitVmRoute) {
       const explicitMachine = await getRunningUserMachineByHandle(db, explicitVmRoute.handle);
-      if (!explicitMachine || (identity.userId && explicitMachine.clerkUserId !== identity.userId)) {
+      if (!explicitMachine || (identity.userId && !canClerkUserAccessMachine(explicitMachine, identity.userId))) {
         socket.destroy();
         return;
       }
       runningMachine = explicitMachine;
     } else {
       runningMachine = identity.userId
-        ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
+        ? await getAccessibleRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
         : await getRunningUserMachineByHandle(db, identity.handle);
     }
     if (!runningMachine && identity.userId) {
-      requestedActiveMachine = await getActiveUserMachineByClerkId(db, identity.userId, runtimeSlot);
+      requestedActiveMachine = await getAccessibleActiveUserMachineByClerkId(db, identity.userId, runtimeSlot);
       if (!requestedActiveMachine) {
         const handleMachine = await getRunningUserMachineByHandle(db, identity.handle);
-        if (handleMachine?.clerkUserId === identity.userId) {
+        if (handleMachine && canClerkUserAccessMachine(handleMachine, identity.userId)) {
           runningMachine = handleMachine;
         }
       }

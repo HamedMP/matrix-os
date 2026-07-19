@@ -10,6 +10,10 @@ import {
   isPublicShellPath,
 } from "./lib/proxy-routes";
 import { getPublicOrigin } from "./lib/public-origin";
+import {
+  canPlatformUserAccessShell,
+  isPlatformBearerValid,
+} from "./lib/platform-preview-access";
 
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const authToken = process.env.MATRIX_AUTH_TOKEN;
@@ -56,17 +60,25 @@ function platformVerifiedResponse(request: ProxyRequestLike): NextResponse | nul
   const platformBearer = platformAuthHeader?.startsWith("Bearer ")
     ? platformAuthHeader.slice(7)
     : null;
-  if (!platformUpgradeToken || platformBearer !== platformUpgradeToken) {
+  if (!isPlatformBearerValid(platformBearer, platformUpgradeToken)) {
     return null;
   }
 
   const platformUserId = request.headers.get("x-platform-user-id");
+  const platformUserProof = request.headers.get("x-platform-verified");
   const mobileAppSessionRequest = isPlatformMobileAppSessionRequest(
     request.nextUrl.pathname,
     request.nextUrl.search,
     request.headers.get("cookie"),
   );
-  if (expectedClerkUserId && platformUserId !== expectedClerkUserId && !mobileAppSessionRequest) {
+  if (!mobileAppSessionRequest && !canPlatformUserAccessShell({
+    expectedOwnerId: expectedClerkUserId,
+    platformUserId,
+    platformUserProof,
+    platformToken: platformUpgradeToken,
+    handle: process.env.MATRIX_HANDLE,
+    runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+  })) {
     return new NextResponse("Forbidden: you do not own this instance", {
       status: 403,
     });

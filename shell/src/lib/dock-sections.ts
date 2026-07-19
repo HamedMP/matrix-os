@@ -35,6 +35,38 @@ export function isMainSectionApp(path: string): boolean {
   return MAIN_SECTION_USER_APP_SLUGS.has(slug);
 }
 
+export interface LauncherAppGroups {
+  mainApps: AppEntry[];
+  generatedApps: AppEntry[];
+  gameApps: AppEntry[];
+}
+
+/**
+ * Group + order the full app list into the launcher's Main / My Apps / Games
+ * sections. Shared by the classic MissionControl grid (sections with
+ * dividers) and the macOS Launchpad (one flattened grid) so both launchers
+ * always show apps in the same order.
+ */
+export function groupLauncherApps(
+  apps: AppEntry[],
+  dockOrder: { systemApps?: string[]; userApps?: string[] } | undefined,
+  launchTimes: Record<string, number>,
+): LauncherAppGroups {
+  const main: AppEntry[] = [];
+  const gen: AppEntry[] = [];
+  const games: AppEntry[] = [];
+  for (const app of apps) {
+    if (isMainSectionApp(app.path)) main.push(app);
+    else if (isGameApp(app.path)) games.push(app);
+    else gen.push(app);
+  }
+  return {
+    mainApps: applyOrder(main, dockOrder?.systemApps, launchTimes),
+    generatedApps: applyOrder(gen, dockOrder?.userApps, launchTimes),
+    gameApps: applyOrder(games, dockOrder?.userApps, launchTimes),
+  };
+}
+
 /**
  * Apply a persisted user order to a list of apps. Apps not in the
  * persisted order get prepended (in launch-time-desc order) so freshly-

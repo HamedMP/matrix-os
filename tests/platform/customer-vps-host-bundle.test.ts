@@ -92,6 +92,8 @@ describe('customer VPS host bundle', () => {
 
     expect(script).toContain('matrix-install-tool-pack');
     expect(script).toContain('matrix-owner-env');
+    expect(hermesInstaller).toContain('setpriv --reuid "$MATRIX_RUNTIME_USER"');
+    expect(installer).toContain('setpriv --reuid "$MATRIX_RUNTIME_USER"');
     expect(script).not.toContain('curl --fail --location --max-time 180 "$CODE_SERVER_URL"');
     expect(script).not.toContain('tar -xzf "$DIST_DIR/$CODE_SERVER_ARCHIVE"');
     expect(script).not.toContain('"$STAGE_DIR/runtime/node/bin/npm" install -g --prefix "$STAGE_DIR/runtime/node"');
@@ -183,14 +185,22 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"');
     expect(installer).not.toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS:-codex claude-code opencode pi}"');
     expect(installer).toContain('ensure_agent_sandbox_runtime()');
+    expect(installer).toContain('ensure_terminal_runtime()');
     expect(installer).toContain('apt-get install -y software-properties-common');
     expect(installer).toContain('add-apt-repository -y universe');
     expect(installer).toContain('apt-get install -y bubblewrap socat');
+    expect(installer).toContain('apt-get install -y zsh');
     expect(installer).toContain("cat >/etc/apparmor.d/bwrap <<'EOF'");
     expect(installer).toContain('systemctl reload apparmor');
     expect(installer).toContain('ensure_agent_sandbox_runtime');
     expect(installer.match(/\|\| return 1/g)?.length).toBeGreaterThanOrEqual(7);
     expect(installer).toContain('command -v bwrap >/dev/null 2>&1 && command -v socat >/dev/null 2>&1');
+    expect(installer).toContain('if ! ensure_terminal_runtime; then');
+    expect(installer).toContain('WARN: zsh provisioning failed; terminal will use the Bash fallback');
+    const terminalModeGuard = installer.indexOf('if [ "$MODE" != "--sandbox-only" ]; then');
+    const terminalReconciliation = installer.indexOf('if ! ensure_terminal_runtime; then');
+    expect(terminalModeGuard).toBeGreaterThan(-1);
+    expect(terminalReconciliation).toBeGreaterThan(terminalModeGuard);
     expect(installer).toContain('if ! ensure_agent_sandbox_runtime; then');
     expect(installer).toContain('coding-agent sandbox provisioning failed');
     expect(installer).toContain('MODE="${1:-}"');
@@ -289,6 +299,78 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       expect(readFileSync(join(homeDir, 'system', 'logs', 'template-sync.log'), 'utf8')).toContain(
         'Skipped: apps/notes/src/App.tsx (customized by user)',
       );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('bundled home sync ships OS wallpapers but keeps other wallpapers user-owned', () => {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-wallpapers-'));
+    const appDir = join(tempDir, 'app');
+    const homeDir = join(tempDir, 'home');
+    const templateWallpapers = join(appDir, 'home', 'system', 'wallpapers');
+    const homeWallpapers = join(homeDir, 'system', 'wallpapers');
+
+    try {
+      mkdirSync(templateWallpapers, { recursive: true });
+      mkdirSync(homeWallpapers, { recursive: true });
+
+      // The template ships all four OS wallpapers plus (hypothetically) an
+      // entry whose name collides with a user upload — the prefix must stay
+      // user-owned for everything except the four exact bundled filenames.
+      writeFileSync(join(appDir, 'home', '.template-manifest.json'), JSON.stringify({
+        'system/wallpapers/macos-light.svg': sha256('macos light v1'),
+        'system/wallpapers/moraine-lake.jpg': sha256('moraine v2'),
+        'system/wallpapers/win11-bloom.jpg': sha256('win11 bloom v2'),
+        'system/wallpapers/xp-bliss.jpg': sha256('xp bliss v1'),
+        'system/wallpapers/custom.jpg': sha256('template custom'),
+      }, null, 2));
+      // Existing VPS home: a stale tracked bloom, a user upload, and a
+      // user-modified file colliding with a template entry name.
+      writeFileSync(join(homeDir, '.template-manifest.json'), JSON.stringify({
+        'system/wallpapers/win11-bloom.jpg': sha256('win11 bloom v1'),
+      }, null, 2));
+      writeFileSync(join(templateWallpapers, 'macos-light.svg'), 'macos light v1');
+      writeFileSync(join(templateWallpapers, 'moraine-lake.jpg'), 'moraine v2');
+      writeFileSync(join(templateWallpapers, 'win11-bloom.jpg'), 'win11 bloom v2');
+      writeFileSync(join(templateWallpapers, 'xp-bliss.jpg'), 'xp bliss v1');
+      writeFileSync(join(templateWallpapers, 'custom.jpg'), 'template custom');
+      writeFileSync(join(homeWallpapers, 'win11-bloom.jpg'), 'win11 bloom v1');
+      writeFileSync(join(homeWallpapers, 'user-upload.jpg'), 'my own photo');
+      writeFileSync(join(homeWallpapers, 'custom.jpg'), 'user customized');
+      // A leftover from the superseded .svg wallpaper generation: no longer
+      // in the system-owned set, so the sync must leave it alone.
+      writeFileSync(join(homeWallpapers, 'xp-bliss.svg'), 'old svg from previous sync');
+      writeFileSync(join(homeWallpapers, 'win11-bloom.svg'), 'old bloom svg from previous sync');
+
+      const result = spawnSync('bash', [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          APP_DIR: appDir,
+          MATRIX_HOME: homeDir,
+        },
+      });
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      // Missing bundled wallpapers are added; tracked-but-stale ones update.
+      expect(readFileSync(join(homeWallpapers, 'xp-bliss.jpg'), 'utf8')).toBe('xp bliss v1');
+      expect(readFileSync(join(homeWallpapers, 'macos-light.svg'), 'utf8')).toBe('macos light v1');
+      expect(readFileSync(join(homeWallpapers, 'moraine-lake.jpg'), 'utf8')).toBe('moraine v2');
+      expect(readFileSync(join(homeWallpapers, 'win11-bloom.jpg'), 'utf8')).toBe('win11 bloom v2');
+      // User wallpapers are untouched — including one colliding with a
+      // template manifest entry, proving the override is name-exact.
+      expect(readFileSync(join(homeWallpapers, 'user-upload.jpg'), 'utf8')).toBe('my own photo');
+      expect(readFileSync(join(homeWallpapers, 'custom.jpg'), 'utf8')).toBe('user customized');
+      // Leftovers from the superseded .svg generation are user data now.
+      expect(readFileSync(join(homeWallpapers, 'xp-bliss.svg'), 'utf8')).toBe('old svg from previous sync');
+      expect(readFileSync(join(homeWallpapers, 'win11-bloom.svg'), 'utf8')).toBe('old bloom svg from previous sync');
+      const log = readFileSync(join(homeDir, 'system', 'logs', 'template-sync.log'), 'utf8');
+      expect(log).toContain('Added: system/wallpapers/xp-bliss.jpg');
+      expect(log).toContain('Updated: system/wallpapers/win11-bloom.jpg');
+      expect(log).toContain('Skipped: system/wallpapers/custom.jpg (protected user data)');
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -610,9 +692,14 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
     expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL}/vps/preview/provision"');
-    expect(workflow).toContain('{clerkUserId: $owner, handle: $handle, runtimeSlot: $handle}');
+    expect(workflow).toContain('{clerkUserId: $owner, handle: $handle, runtimeSlot: $handle, accessClerkUserIds: $access}');
     expect(workflow).not.toContain('-X POST "${PLATFORM_PUBLIC_URL}/vps/provision"');
     expect(workflow).not.toContain('"runtimeSlot":"preview"');
+    expect(workflow).toContain('PREVIEW_CLERK_ACCESS_USER_IDS');
+    expect(workflow).toContain('accessClerkUserIds: $access');
+    expect(workflow.match(/type == "array" and length <= 8/g)).toHaveLength(2);
+    expect(workflow.match(/index\(\$owner\) == null/g)).toHaveLength(2);
+    expect(workflow).toContain("type == \"array\" and length <= 8");
   });
 
   it('preview VPS workflow accepts only a valid 202 provision response', () => {
@@ -642,9 +729,10 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
 
     expect(workflow).toContain('provisioning|running)');
     expect(workflow).toContain('if [ "$runtime_slot" = "$HANDLE" ]; then');
-    expect(workflow).toContain('Reusing existing ${HANDLE} machine ${accepted_machine_id} (${status})');
+    expect(workflow).toContain('Reusing existing ${HANDLE} preview (${status})');
+    expect(workflow).not.toContain('Fleet returned an active preview without a machine ID.');
     expect(workflow).toContain('requires exact-slot adoption from ${runtime_slot:-unset}');
-    expect(workflow).toContain('needs_provision=true');
+    expect(workflow).toContain('also reconciles the complete access');
     expect(workflow).toContain('absent|failed)');
     expect(workflow.match(/\/vps\/preview\/provision/g)).toHaveLength(1);
   });
@@ -680,14 +768,15 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
 
     expect(workflow).toContain('verify_inventory:');
     expect(workflow).toContain('action="verify"');
-    expect(workflow).toContain('https://api.clerk.com/v1/users/${PREVIEW_CLERK_USER_ID}');
+    expect(workflow).toContain('https://api.clerk.com/v1/users/${preview_user_id}');
     expect(workflow).toContain('Configured preview verification user is unavailable (HTTP ${user_code}).');
-    expect(workflow).toContain('https://api.clerk.com/v1/sessions?user_id=${PREVIEW_CLERK_USER_ID}&status=active&limit=10');
+    expect(workflow).toContain('https://api.clerk.com/v1/sessions?user_id=${preview_user_id}&status=active&limit=10');
     expect(workflow).toContain('https://api.clerk.com/v1/sessions/${session_id}/tokens');
     expect(workflow).toContain("--data-binary '{\"expires_in_seconds\":60}'");
     expect(workflow.match(/Clerk-API-Version: 2025-11-10/g)).toHaveLength(3);
     expect(workflow).toContain('"${PLATFORM_PUBLIC_URL}/api/auth/computers"');
     expect(workflow).toContain('select(.handle == $h and .runtimeSlot == $h and .kind == "preview")');
+    expect(workflow).toContain('for preview_user_id in "${preview_user_ids[@]}"');
     expect(workflow).not.toContain('echo "$session_token"');
     expect(workflow).not.toContain('/sessions/${session_id}/revoke');
   });
@@ -822,7 +911,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       GITHUB_REF_TYPE: 'branch',
       HEAD_COMMIT_MESSAGE: 'docs: update landing page',
       SKIP_DEV_BUNDLE_INPUT: 'false',
-      CHANGED_FILES: ['www/content/docs/index.mdx', 'docs/dev/releases.md', 'README.md', 'AGENTS.md'].join('\n'),
+      CHANGED_FILES: ['docs/dev/onboarding.md', 'docs/dev/releases.md', 'README.md', 'AGENTS.md'].join('\n'),
     });
 
     expect(result.output).toContain('should_build=true');

@@ -8,7 +8,7 @@ This document is the root map for contributors. Package-specific architecture no
 
 ```text
 matrix-os.com / app.matrix-os.com
-  |-- www/                 public docs, marketing, signup entry points
+  |-- matrix-os-site       public docs, marketing, signup entry points (separate repository)
   |-- shell/               web shell renderer for owner runtime
   |-- desktop/             desktop shell packaging/runtime
   |-- apps/                companion app surfaces, including mobile and menu bar
@@ -43,7 +43,6 @@ Production customer runtime is VPS-native. Do not model new user-facing runtime 
 | `shell/` | Browser shell renderer, Canvas/Desktop windows, frontend stores | Canonical backend source of truth |
 | `desktop/` | Desktop package/runtime integration | Web-only shell product logic |
 | `apps/` | Companion shell surfaces such as mobile and menu bar apps | Canonical backend source of truth or platform control-plane ownership |
-| `www/` | Public website and docs | Runtime-only shell behavior |
 | `home/` | Owner-visible OS files, default apps, icons, templates | Hidden platform state |
 | `specs/` | Product/architecture specs and quality gates | Implementation-only scratch plans |
 | `tests/` | Cross-package Vitest suites | Runtime code |
@@ -74,7 +73,7 @@ Rules:
 
 - A domain package may expose pure types, validators, repository/service interfaces, and route registration helpers.
 - Gateway/platform packages may adapt HTTP/auth/runtime dependencies into domain APIs.
-- Domain packages must not import renderer components from `shell/` or `www/`.
+- Domain packages must not import renderer components from `shell/`.
 - Domain packages must not bypass owner data rules with a new database or ORM.
 - Cross-domain calls should go through explicit service interfaces or stable public functions, not deep imports from another domain's internals.
 - If `packages/domains/*` is introduced, update `pnpm-workspace.yaml` before adding packages there.

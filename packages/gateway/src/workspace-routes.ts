@@ -538,7 +538,7 @@ export function createWorkspaceRoutes(options: {
     return c.json({ session: result.session });
   });
 
-  app.get("/api/agents", async (c) => c.json(await agentLauncher.detectAgents()));
+  app.get("/api/agents", async (c) => c.json(await agentLauncher.detectAgentInstallations()));
 
   app.get("/api/agents/sandbox-status", async (c) => c.json(await agentSandbox.status()));
 

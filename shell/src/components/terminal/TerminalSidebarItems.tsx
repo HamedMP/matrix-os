@@ -16,12 +16,136 @@ import {
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { sessionAccent } from "./terminal-session-names";
 import { NewSessionMenu } from "./NewSessionMenu";
-import type { TerminalAgentId, TerminalAgentOption } from "./terminal-agent-options";
-import type { ShellSessionSummary } from "./terminal-session-state";
+import { TerminalAgentLogo } from "./TerminalAgentLogo";
+import type {
+  TerminalAgentId,
+  TerminalAgentInstallState,
+  TerminalAgentMenuAction,
+  TerminalAgentOption,
+} from "./terminal-agent-options";
+import { getShellVisualStatus, type ShellSessionSummary } from "./terminal-session-state";
+import { formatAgentStrength, formatTerminalAgentName, TerminalSessionHoverCard } from "./TerminalSessionHoverCard";
+import { TERMINAL_MONO_FONT_FAMILY, TERMINAL_UI_FONT_FAMILY } from "./terminal-typography";
 
 export const DEFAULT_SHELL_SESSION_NAME = "main";
 
 const COLLAPSED_RAIL_ITEM_SIZE = 40;
+const COMPACT_GIT_CONTEXT_GAP = 8;
+
+export function doesCompactGitContextFit(input: {
+  availableWidth: number;
+  primaryWidth: number;
+  contextWidth: number;
+}): boolean {
+  return input.availableWidth > 0 && input.contextWidth > 0 &&
+    input.primaryWidth + COMPACT_GIT_CONTEXT_GAP + input.contextWidth <= input.availableWidth;
+}
+
+function compactGitContextLabel(shell: ShellSessionSummary): string | null {
+  const parts = [
+    shell.repository,
+    shell.pullRequest ? `PR #${shell.pullRequest.number}` : undefined,
+  ].filter((value): value is string => Boolean(value));
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+function TerminalAgentMetadataLine({
+  shell,
+  agentName,
+  liveState,
+}: {
+  shell: ShellSessionSummary;
+  agentName: string;
+  liveState: string;
+}) {
+  const rowRef = useRef<HTMLSpanElement>(null);
+  const primaryRef = useRef<HTMLSpanElement>(null);
+  const contextRef = useRef<HTMLSpanElement>(null);
+  const [showContext, setShowContext] = useState(false);
+  const contextLabel = compactGitContextLabel(shell);
+
+  useEffect(() => {
+    const row = rowRef.current;
+    const primary = primaryRef.current;
+    const context = contextRef.current;
+    if (!row || !primary || !context || !contextLabel) {
+      setShowContext(false);
+      return;
+    }
+    const measure = () => setShowContext(doesCompactGitContextFit({
+      availableWidth: row.clientWidth,
+      primaryWidth: primary.scrollWidth + 21,
+      contextWidth: context.scrollWidth + 9,
+    }));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [contextLabel, shell.model, shell.strength, liveState]);
+
+  return (
+    <span
+      ref={rowRef}
+      data-testid={`terminal-session-agent-state-${shell.name}`}
+      style={{
+        alignItems: "center",
+        color: "var(--terminal-drawer-subtle)",
+        display: "flex",
+        fontFamily: TERMINAL_UI_FONT_FAMILY,
+        fontSize: 10,
+        fontWeight: 600,
+        gap: 5,
+        lineHeight: "16px",
+        minWidth: 0,
+        overflow: "hidden",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <TerminalAgentLogo agent={shell.agent!} compact testIdPrefix="terminal-session-agent-logo" />
+      <span
+        ref={primaryRef}
+        style={{
+          flexShrink: showContext ? 0 : 1,
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          textTransform: "capitalize",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {agentName}
+        {shell.model ? <> <span aria-hidden="true">·</span> {shell.model}</> : null}
+        {shell.strength ? <> <span aria-hidden="true">·</span> {formatAgentStrength(shell.strength)}</> : null}
+        {" "}<span aria-hidden="true">·</span> {liveState}
+      </span>
+      {contextLabel ? (
+        <span
+          ref={contextRef}
+          data-testid={`terminal-session-compact-git-${shell.name}`}
+          aria-hidden={showContext ? undefined : "true"}
+          style={showContext ? {
+            borderLeft: "1px solid var(--terminal-drawer-card-border)",
+            flexShrink: 0,
+            marginLeft: COMPACT_GIT_CONTEXT_GAP - 5,
+            paddingLeft: COMPACT_GIT_CONTEXT_GAP,
+            textTransform: "none",
+            whiteSpace: "nowrap",
+          } : {
+            borderLeft: "1px solid var(--terminal-drawer-card-border)",
+            paddingLeft: COMPACT_GIT_CONTEXT_GAP,
+            pointerEvents: "none",
+            position: "absolute",
+            textTransform: "none",
+            visibility: "hidden",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {contextLabel}
+        </span>
+      ) : null}
+    </span>
+  );
+}
 
 const SHELL_ROW_BUTTON_STYLE: CSSProperties = {
   background: "transparent",
@@ -47,9 +171,10 @@ const SHELL_ROW_DRAG_HANDLE_STYLE: CSSProperties = {
 };
 
 const SESSION_ACTIONS_STYLE: CSSProperties = {
+  flexDirection: "row-reverse",
   gap: 6,
   position: "absolute",
-  right: -8,
+  right: 8,
   top: "50%",
   transform: "translateY(-50%)",
   transition: "opacity 120ms ease",
@@ -106,9 +231,9 @@ const SESSION_CONTEXT_MENU_ITEM_STYLE: CSSProperties = {
   color: "var(--terminal-drawer-fg)",
   cursor: "pointer",
   display: "flex",
-  fontFamily: "Inter, system-ui, sans-serif",
+  fontFamily: TERMINAL_UI_FONT_FAMILY,
   fontSize: 12,
-  fontWeight: 650,
+  fontWeight: 600,
   gap: 7,
   height: 28,
   padding: "0 8px",
@@ -125,9 +250,9 @@ const SESSION_COPY_FEEDBACK_STYLE: CSSProperties = {
   color: "var(--terminal-drawer-action-fg)",
   display: "inline-flex",
   flexShrink: 0,
-  fontFamily: "Inter, system-ui, sans-serif",
+  fontFamily: TERMINAL_UI_FONT_FAMILY,
   fontSize: 12,
-  fontWeight: 750,
+  fontWeight: 650,
   gap: 5,
   height: 24,
   lineHeight: "14px",
@@ -140,7 +265,7 @@ const SESSION_NAME_BUTTON_BASE_STYLE: CSSProperties = {
   background: "transparent",
   border: 0,
   cursor: "pointer",
-  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+  fontFamily: TERMINAL_MONO_FONT_FAMILY,
   fontSize: 14,
   fontWeight: 700,
   lineHeight: "18px",
@@ -156,7 +281,7 @@ const SESSION_RENAME_INPUT_STYLE: CSSProperties = {
   borderRadius: 6,
   color: "var(--terminal-drawer-fg)",
   flex: "1 1 auto",
-  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+  fontFamily: TERMINAL_MONO_FONT_FAMILY,
   fontSize: 14,
   fontWeight: 700,
   height: 24,
@@ -293,13 +418,6 @@ async function copyTextToClipboard(text: string): Promise<void> {
   throw new Error(legacyCopyError instanceof Error ? legacyCopyError.message : "Clipboard copy unavailable");
 }
 
-function getShellVisualStatus(shell: ShellSessionSummary): NonNullable<ShellSessionSummary["visualStatus"]> {
-  if (shell.visualStatus) return shell.visualStatus;
-  if (shell.status === "degraded") return "waiting";
-  if (shell.status === "exited") return shell.unread ? "finished" : "idle";
-  return shell.unread ? "finished" : "idle";
-}
-
 export function getShellStatusDotStyle(shell: ShellSessionSummary): CSSProperties {
   const status = getShellVisualStatus(shell);
   if (status === "running") {
@@ -332,6 +450,8 @@ export function CollapsedSessionsRail({
   onCreateShell,
   onCreateAgent,
   agentStatuses,
+  agentStatusesChecking,
+  agentStatusesUnavailable,
   onOpen,
 }: {
   shells: ShellSessionSummary[];
@@ -343,8 +463,10 @@ export function CollapsedSessionsRail({
   onNew: () => void;
   onNewMenuClose: () => void;
   onCreateShell: () => void;
-  onCreateAgent: (option: TerminalAgentOption, installed: boolean) => void;
-  agentStatuses: Record<TerminalAgentId, boolean> | null;
+  onCreateAgent: (option: TerminalAgentOption, action: TerminalAgentMenuAction) => void;
+  agentStatuses: Record<TerminalAgentId, TerminalAgentInstallState>;
+  agentStatusesChecking: boolean;
+  agentStatusesUnavailable: boolean;
   onOpen: (shell: ShellSessionSummary) => void;
 }) {
   const activeShells = shells.filter((shell) => shell.placement !== "background");
@@ -410,6 +532,8 @@ export function CollapsedSessionsRail({
             onCreateShell={onCreateShell}
             onCreateAgent={onCreateAgent}
             agentStatuses={agentStatuses}
+            agentStatusesChecking={agentStatusesChecking}
+            agentStatusesUnavailable={agentStatusesUnavailable}
           />
         ) : null}
       </div>
@@ -462,14 +586,14 @@ function CollapsedRailGroup({
             onClick={() => onOpen(shell)}
             className="relative flex items-center justify-center"
             style={{
-              background: accent.bg,
-              border: `1px solid ${selected ? "var(--terminal-drawer-selected-border)" : accent.border}`,
+              background: selected ? "var(--terminal-drawer-card-selected-bg)" : accent.bg,
+              border: `1px solid ${selected ? "var(--terminal-drawer-card-border)" : accent.border}`,
               borderRadius: 11,
-              boxShadow: selected ? "0 0 0 5px var(--terminal-drawer-selected-ring), 0 8px 18px var(--terminal-drawer-card-shadow)" : "none",
+              boxShadow: selected ? "0 8px 18px var(--terminal-drawer-card-shadow)" : "none",
               color: accent.fg,
               cursor: "pointer",
               flexShrink: 0,
-              fontFamily: "var(--font-mono, ui-monospace, monospace)",
+              fontFamily: TERMINAL_MONO_FONT_FAMILY,
               fontSize: 12,
               fontWeight: 700,
               height: COLLAPSED_RAIL_ITEM_SIZE,
@@ -678,7 +802,7 @@ function ShellPendingCard() {
         alignItems: "center",
         background: "var(--terminal-drawer-card-bg)",
         border: "1px solid var(--terminal-drawer-card-border)",
-        borderRadius: 10,
+        borderRadius: 8,
         boxShadow: "0 9px 22px var(--terminal-drawer-card-shadow)",
         color: "var(--terminal-drawer-muted)",
         display: "grid",
@@ -703,7 +827,7 @@ function ShellPendingCard() {
       />
       <span
         style={{
-          fontFamily: "var(--font-mono, ui-monospace, monospace)",
+          fontFamily: TERMINAL_MONO_FONT_FAMILY,
           fontSize: 14,
           fontWeight: 700,
           lineHeight: "18px",
@@ -767,6 +891,7 @@ function ShellCard({
   const displayName = formatShellDisplayName(shell.name);
   const [actionsVisible, setActionsVisible] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const [hoverCardOpen, setHoverCardOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState(shell.name);
   const [renameSaving, setRenameSaving] = useState(false);
@@ -776,12 +901,31 @@ function ShellCard({
   const renameInputRef = useRef<HTMLInputElement>(null);
   const renameCommittingRef = useRef(false);
   const copiedTimerRef = useRef<number | null>(null);
+  const mouseHoverTimerRef = useRef<number | null>(null);
+  const lastTouchAtRef = useRef(0);
   const restoreFocusAfterMenuCloseRef = useRef(false);
   const showActions = actionsVisible || copyFeedback !== null || contextMenuOpen;
   const showRenameControl = actionsVisible && !renaming;
   const showDragHandle = (actionsVisible || dragging) && !renaming && !deleting;
   const renameControlLabel = `Rename ${displayName}`;
   const toggleMenuLabel = foreground ? "Move to Background" : "Make Active";
+  const agentName = shell.agent ? formatTerminalAgentName(shell.agent) : null;
+  const liveState = getShellVisualStatus(shell);
+  const hoverSuppressed = contextMenuOpen || renaming || dragging || Boolean(deleting);
+  const scheduleHoverCardOpen = () => {
+    if (hoverCardOpen || mouseHoverTimerRef.current !== null) return;
+    mouseHoverTimerRef.current = window.setTimeout(() => {
+      mouseHoverTimerRef.current = null;
+      setHoverCardOpen(true);
+    }, 300);
+  };
+  const cancelHoverCardOpen = () => {
+    if (mouseHoverTimerRef.current !== null) {
+      window.clearTimeout(mouseHoverTimerRef.current);
+      mouseHoverTimerRef.current = null;
+    }
+    setHoverCardOpen(false);
+  };
   const getContextMenuItems = () => Array.from(
     contextMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [],
   );
@@ -819,6 +963,9 @@ function ShellCard({
   useEffect(() => () => {
     if (copiedTimerRef.current !== null) {
       window.clearTimeout(copiedTimerRef.current);
+    }
+    if (mouseHoverTimerRef.current !== null) {
+      window.clearTimeout(mouseHoverTimerRef.current);
     }
   }, []);
 
@@ -937,7 +1084,7 @@ function ShellCard({
     onOpen();
   };
 
-  return (
+  const card = (
     <div
       ref={cardRef}
       className="group terminal-session-card"
@@ -953,14 +1100,34 @@ function ShellCard({
         event.preventDefault();
         onDrop();
       }}
-      onMouseEnter={() => setActionsVisible(true)}
+      onMouseEnter={() => {
+        setActionsVisible(true);
+        if (Date.now() - lastTouchAtRef.current < 1_000) return;
+        scheduleHoverCardOpen();
+      }}
       onMouseMove={() => setActionsVisible(true)}
       onMouseOver={() => setActionsVisible(true)}
-      onMouseLeave={() => setActionsVisible(false)}
-      onPointerEnter={() => setActionsVisible(true)}
-      onPointerMove={() => setActionsVisible(true)}
+      onMouseLeave={() => {
+        setActionsVisible(false);
+        cancelHoverCardOpen();
+      }}
+      onTouchStart={() => {
+        lastTouchAtRef.current = Date.now();
+        setHoverCardOpen(false);
+      }}
+      onPointerEnter={(event) => {
+        setActionsVisible(true);
+        if (event.pointerType !== "touch") scheduleHoverCardOpen();
+      }}
+      onPointerMove={(event) => {
+        setActionsVisible(true);
+        if (event.pointerType !== "touch") scheduleHoverCardOpen();
+      }}
       onPointerOver={() => setActionsVisible(true)}
-      onPointerLeave={() => setActionsVisible(false)}
+      onPointerLeave={() => {
+        setActionsVisible(false);
+        cancelHoverCardOpen();
+      }}
       onFocus={() => setActionsVisible(true)}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
@@ -968,25 +1135,23 @@ function ShellCard({
         }
       }}
       style={{
-        background: selected ? "var(--terminal-drawer-card-bg)" : foreground ? "var(--terminal-drawer-card-bg)" : "var(--terminal-drawer-card-muted-bg)",
-        border: `1px solid ${selected ? "var(--terminal-drawer-selected-border)" : foreground ? "var(--terminal-drawer-card-border)" : "var(--terminal-drawer-card-muted-border)"}`,
+        background: selected ? "var(--terminal-drawer-card-selected-bg)" : foreground ? "var(--terminal-drawer-card-bg)" : "var(--terminal-drawer-card-muted-bg)",
+        border: `1px solid ${foreground ? "var(--terminal-drawer-card-border)" : "var(--terminal-drawer-card-muted-border)"}`,
         borderRadius: 10,
         boxShadow: dragging
           ? "0 18px 34px var(--terminal-drawer-card-shadow)"
-          : selected
-            ? "0 0 0 5px var(--terminal-drawer-selected-ring), 0 14px 30px var(--terminal-drawer-card-shadow)"
-            : foreground ? "0 9px 22px var(--terminal-drawer-card-shadow)" : "none",
+          : foreground ? "0 9px 22px var(--terminal-drawer-card-shadow)" : "none",
         cursor: renaming || deleting ? "default" : "pointer",
         alignItems: "center",
         display: "grid",
         gap: 10,
         gridTemplateColumns: "minmax(0, 1fr)",
-        height: 52,
+        height: shell.agent ? 78 : 52,
         opacity: dragging ? 0.94 : foreground ? 1 : 0.86,
         padding: "0 12px",
         position: "relative",
         transform: dragging ? "translateY(-2px)" : undefined,
-        transition: "border-color 150ms ease, box-shadow 150ms ease, opacity 120ms ease, transform 150ms ease",
+        transition: "background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, opacity 120ms ease, transform 150ms ease",
         zIndex: contextMenuOpen ? SHELL_Z_INDEX.terminalSessionMenuCard : dragging ? 1 : undefined,
       }}
     >
@@ -1003,21 +1168,6 @@ function ShellCard({
             right: 12,
             top: -7,
             zIndex: 3,
-          }}
-        />
-      )}
-      {selected && (
-        <span
-          aria-hidden="true"
-          style={{
-            background: "var(--terminal-drawer-selected-stripe)",
-            borderRadius: 999,
-            bottom: 12,
-            left: -1,
-            position: "absolute",
-            top: 12,
-            width: 3,
-            zIndex: 2,
           }}
         />
       )}
@@ -1084,55 +1234,109 @@ function ShellCard({
         <div
           className="min-w-0"
           style={{
-            alignItems: "center",
+            alignContent: "center",
             display: "grid",
-            gap: 6,
+            gap: shell.agent ? 2 : 0,
             gridTemplateColumns: "minmax(0, 1fr)",
-            paddingRight: renaming ? 0 : 58,
+            gridTemplateRows: shell.agent ? "18px 16px 16px" : "24px",
+            paddingRight: 34,
           }}
         >
-          {renaming ? (
-            <input
-              ref={renameInputRef}
-              aria-label={`Session name for ${displayName}`}
-              value={renameDraft}
-              disabled={renameSaving}
-              onChange={(event) => setRenameDraft(event.target.value)}
-              onClick={(event) => event.stopPropagation()}
-              onPointerDown={(event) => event.stopPropagation()}
-              onMouseDown={(event) => event.stopPropagation()}
-              onBlur={finishRename}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  void commitRename();
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  cancelRename();
-                }
-              }}
-              style={SESSION_RENAME_INPUT_STYLE}
-            />
-          ) : (
-            <button
-              type="button"
-              data-session-name={shell.name}
-              data-testid={`terminal-session-name-${shell.name}`}
-              aria-label={`Open ${displayName}`}
-              className="min-w-0 truncate"
-              onClick={(event) => {
-                event.stopPropagation();
-                onOpen();
-              }}
+          <div
+            data-testid={`terminal-session-name-row-${shell.name}`}
+            style={{ alignItems: "center", display: "flex", gap: 5, minWidth: 0 }}
+          >
+            {renaming ? (
+              <input
+                ref={renameInputRef}
+                aria-label={`Session name for ${displayName}`}
+                value={renameDraft}
+                disabled={renameSaving}
+                onChange={(event) => setRenameDraft(event.target.value)}
+                onClick={(event) => event.stopPropagation()}
+                onPointerDown={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+                onBlur={finishRename}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void commitRename();
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    cancelRename();
+                  }
+                }}
+                style={SESSION_RENAME_INPUT_STYLE}
+              />
+            ) : (
+              <>
+                <button
+                  type="button"
+                  data-session-name={shell.name}
+                  data-testid={`terminal-session-name-${shell.name}`}
+                  aria-label={`Open ${displayName}`}
+                  className="min-w-0 truncate"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onOpen();
+                  }}
+                  style={{
+                    ...SESSION_NAME_BUTTON_BASE_STYLE,
+                    color: selected ? "var(--terminal-drawer-fg)" : "var(--terminal-drawer-muted)",
+                    flex: "0 1 auto",
+                    maxWidth: "calc(100% - 27px)",
+                  }}
+                >
+                  {displayName}
+                </button>
+                <button
+                  type="button"
+                  aria-label={renameControlLabel}
+                  title={renameControlLabel}
+                  disabled={renameSaving}
+                  tabIndex={showActions ? 0 : -1}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setHoverCardOpen(false);
+                    setRenameDraft(shell.name);
+                    setRenaming(true);
+                  }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  className="flex items-center justify-center"
+                  style={{
+                    ...SESSION_RENAME_BUTTON_STYLE,
+                    cursor: renameSaving ? "not-allowed" : "pointer",
+                    opacity: showRenameControl ? 1 : 0,
+                  }}
+                >
+                  <PencilIcon size={12} strokeWidth={2} />
+                </button>
+              </>
+            )}
+          </div>
+          {shell.agent ? (
+            <span
+              data-testid={`terminal-session-subtitle-${shell.name}`}
               style={{
-                ...SESSION_NAME_BUTTON_BASE_STYLE,
-                color: foreground ? "var(--terminal-drawer-fg)" : "var(--terminal-drawer-muted)",
+                color: "var(--terminal-drawer-muted)",
+                fontFamily: TERMINAL_UI_FONT_FAMILY,
+                fontSize: 11,
+                fontWeight: 500,
+                lineHeight: "16px",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
               }}
+              title={shell.subtitle}
             >
-              {displayName}
-            </button>
-          )}
+              {shell.subtitle ?? ""}
+            </span>
+          ) : null}
+          {shell.agent && agentName ? (
+            <TerminalAgentMetadataLine shell={shell} agentName={agentName} liveState={liveState} />
+          ) : null}
           {!renaming && (
             <div
               data-testid={`terminal-session-actions-${shell.name}`}
@@ -1144,28 +1348,6 @@ function ShellCard({
                 pointerEvents: showActions ? "auto" : "none",
               }}
             >
-              <button
-                type="button"
-                aria-label={renameControlLabel}
-                title={renameControlLabel}
-                disabled={renameSaving}
-                tabIndex={showActions ? 0 : -1}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setRenameDraft(shell.name);
-                  setRenaming(true);
-                }}
-                onPointerDown={(event) => event.stopPropagation()}
-                onMouseDown={(event) => event.stopPropagation()}
-                className="flex items-center justify-center"
-                style={{
-                  ...SESSION_RENAME_BUTTON_STYLE,
-                  cursor: renameSaving ? "not-allowed" : "pointer",
-                  opacity: showRenameControl ? 1 : 0,
-                }}
-              >
-                <PencilIcon size={12} strokeWidth={2} />
-              </button>
               <div style={{ position: "relative" }}>
                 <button
                   ref={moreButtonRef}
@@ -1176,9 +1358,12 @@ function ShellCard({
                   tabIndex={showActions ? 0 : -1}
                   onClick={(event) => {
                     event.stopPropagation();
+                    setHoverCardOpen(false);
                     restoreFocusAfterMenuCloseRef.current = true;
                     setContextMenuOpen((open) => !open);
                   }}
+                  onFocus={() => setHoverCardOpen(false)}
+                  onPointerEnter={() => setHoverCardOpen(false)}
                   onPointerDown={(event) => event.stopPropagation()}
                   onMouseDown={(event) => event.stopPropagation()}
                   className="flex items-center justify-center"
@@ -1210,7 +1395,7 @@ function ShellCard({
                       <Rows2Icon size={13} strokeWidth={2} />
                     </SessionContextMenuItem>
                     <SessionContextMenuItem
-                      label="Copy Command"
+                      label="Copy Connect Command"
                       onClick={() => {
                         void copyAttachCommand();
                         closeContextMenuWithFocusReturn();
@@ -1260,6 +1445,19 @@ function ShellCard({
         </div>
       </div>
     </div>
+  );
+
+  return (
+    <TerminalSessionHoverCard
+      shell={shell}
+      displayName={displayName}
+      cardRef={cardRef}
+      open={hoverCardOpen}
+      suppressed={hoverSuppressed}
+      onOpenChange={setHoverCardOpen}
+    >
+      {card}
+    </TerminalSessionHoverCard>
   );
 }
 

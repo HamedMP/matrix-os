@@ -15,23 +15,15 @@ import { ChatApp } from "../ChatApp";
 import { ActivityMonitorApp } from "../system-activity/ActivityMonitorApp";
 import { useChatContext } from "@/stores/chat-context";
 import { TrafficLights } from "../window/TrafficLights";
-import { Minus, Maximize2 } from "lucide-react";
-
-function useThemeStyle() {
-  const [style, setStyle] = useState<string>("flat");
-  useEffect(() => {
-    const root = document.documentElement;
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-initialize-state -- syncs from an external DOM source: the `data-theme-style` attribute is mutated outside React (by the theme system) and is not derivable in render; the mount read + MutationObserver mirror is the canonical external-store subscription
-    setStyle(root.getAttribute("data-theme-style") ?? "flat");
-    const observer = new MutationObserver(() => {
-      setStyle(root.getAttribute("data-theme-style") ?? "flat");
-    });
-    // react-doctor-disable-next-line react-doctor/no-initialize-state -- observer subscription that keeps `style` mirrored to the external DOM attribute; the value originates outside React, not from a render-time initializer
-    observer.observe(root, { attributes: true, attributeFilter: ["data-theme-style"] });
-    return () => observer.disconnect();
-  }, []);
-  return style;
-}
+import { useThemeStyle } from "../window/useThemeStyle";
+import { resolveTitleBarVariant } from "../window/title-bar-variant";
+import {
+  MacGlassTitleBarChrome,
+  MacTitleBarChrome,
+  Win11TitleBarChrome,
+  Win98TitleBarChrome,
+  WinXpTitleBarChrome,
+} from "../window/DesignTitleBarChrome";
 
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
@@ -62,13 +54,6 @@ function ensureCanvasWindowMotionStyles() {
   document.head.appendChild(style);
 }
 
-const win98Bevel = {
-  borderTop: "1.5px solid var(--neu-shadow-light)",
-  borderLeft: "1.5px solid var(--neu-shadow-light)",
-  borderBottom: "1.5px solid var(--neu-shadow-dark)",
-  borderRight: "1.5px solid var(--neu-shadow-dark)",
-};
-
 interface CanvasWindowProps {
   win: AppWindow;
   /** When true, the window stays mounted but is visually hidden so iframe
@@ -78,7 +63,7 @@ interface CanvasWindowProps {
   deferAppContent?: boolean;
 }
 
-// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- cohesive single-window renderer: the bulk is two theme-specific title-bar JSX trees (mac vs win98) plus drag/resize/fullscreen pointer handlers that all share the same window state and refs. Splitting would require threading every handler and ref through props with no readability or reuse gain.
+// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- cohesive single-window renderer: the bulk is theme-specific title-bar selection plus drag/resize/fullscreen pointer handlers that all share the same window state and refs. Splitting would require threading every handler and ref through props with no readability or reuse gain.
 export function CanvasWindow({ win, hidden = false, deferAppContent = false }: CanvasWindowProps) {
   const chatState = useChatContext();
   const zoom = useCanvasTransform((s) => s.zoom);
@@ -99,7 +84,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
   const wrapperRef = useRef<HTMLDivElement>(null);
   const isMobile = useMobileViewport();
   const themeStyle = useThemeStyle();
-  const isNeumorphic = themeStyle === "neumorphic";
+  const titleBarVariant = resolveTitleBarVariant(themeStyle);
 
   const [interacting, setInteracting] = useState(false);
   const [minimizePhase, setMinimizePhase] = useState<"idle" | "minimizing">("idle");
@@ -357,9 +342,37 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
   const titleBarHeight = 36;
   const titleBarGap = 8;
 
-  const macTitleBar = (
+  // All five title-bar variants share the same handlers; only the visual bar
+  // differs. Chrome components live in window/DesignTitleBarChrome.tsx.
+  const designChromeProps = {
+    title: win.title,
+    iconUrl,
+    isFocused,
+    onClose: () => closeWindow(win.id),
+    onMinimize: animateMinimize,
+    onMaximize: () => useWindowManager.getState().toggleFullscreen(win.id),
+  };
+
+  const titleBarChrome = (() => {
+    switch (titleBarVariant) {
+      case "win98":
+        return <Win98TitleBarChrome {...designChromeProps} />;
+      case "macos-glass":
+        return <MacGlassTitleBarChrome {...designChromeProps} />;
+      case "winxp":
+        return <WinXpTitleBarChrome {...designChromeProps} />;
+      case "win11":
+        return <Win11TitleBarChrome {...designChromeProps} />;
+      default:
+        return <MacTitleBarChrome {...designChromeProps} />;
+    }
+  })();
+
+  const titleBarInner = (
     <div
-      className="absolute cursor-grab active:cursor-grabbing select-none group/titlebar transition-all duration-200"
+      className={titleBarVariant === "mac" || titleBarVariant === "macos-glass"
+        ? "absolute cursor-grab active:cursor-grabbing select-none group/titlebar transition-all duration-200"
+        : "absolute cursor-grab active:cursor-grabbing select-none"}
       style={{
         width: win.width,
         height: titleBarHeight,
@@ -372,132 +385,9 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
       onPointerCancel={onDragEnd}
       onDoubleClick={onTitleDoubleClick}
     >
-      {/* Glass pill container */}
-      <div
-        className={`relative w-full h-full rounded-2xl flex items-center gap-2 px-3 overflow-hidden transition-all duration-200 backdrop-blur-xl backdrop-saturate-150 ${
-          isFocused
-            ? "bg-muted/80 border border-border/50 shadow-sm"
-            : "bg-muted/40 border border-border/20 opacity-80"
-        }`}
-      >
-        <TrafficLights
-          className="mr-2 shrink-0 relative z-10"
-          onClose={() => closeWindow(win.id)}
-          onMinimize={animateMinimize}
-          onFullscreen={() => useWindowManager.getState().toggleFullscreen(win.id)}
-        />
-        {/* Centered title with icon */}
-        <div className="flex-1 flex items-center justify-center gap-1.5 min-w-0 relative z-10">
-          {iconUrl ? (
-            // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png with ?v=etag) that cannot be statically configured for next/image
-            <img src={iconUrl} alt="" className="size-4 rounded-md object-cover shrink-0" draggable={false} />
-          ) : (
-            <span className="size-4 rounded-md bg-muted flex items-center justify-center text-[9px] font-semibold text-muted-foreground shrink-0">
-              {win.title.charAt(0).toUpperCase()}
-            </span>
-          )}
-          <span className="text-xs font-medium text-foreground/70 truncate">
-            {win.title}
-          </span>
-        </div>
-        <div className="w-[42px] shrink-0" />
-      </div>
+      {titleBarChrome}
     </div>
   );
-
-  const win98TitleBar = (
-    <div
-      className="absolute cursor-grab active:cursor-grabbing select-none"
-      style={{
-        width: win.width,
-        height: titleBarHeight,
-        bottom: `calc(100% + ${titleBarGap}px)`,
-        left: 0,
-      }}
-      onPointerDown={onDragStart}
-      onPointerMove={onDragMove}
-      onPointerUp={onDragEnd}
-      onPointerCancel={onDragEnd}
-      onDoubleClick={onTitleDoubleClick}
-    >
-      {/* Win98 raised title bar */}
-      <div
-        className={`relative w-full h-full flex items-center px-2 gap-2 ${
-          isFocused
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted text-muted-foreground"
-        }`}
-        style={{
-          ...win98Bevel,
-          borderTopWidth: "2px",
-          borderLeftWidth: "2px",
-          borderBottomWidth: "2px",
-          borderRightWidth: "2px",
-          borderRadius: "2px",
-        }}
-      >
-        {/* Left: icon + title */}
-        <div className="flex items-center gap-1.5 min-w-0 flex-1">
-          {iconUrl ? (
-            // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png with ?v=etag) that cannot be statically configured for next/image
-            <img src={iconUrl} alt="" className="size-4 object-cover shrink-0" style={{ imageRendering: "auto" }} draggable={false} />
-          ) : (
-            <span className="size-4 flex items-center justify-center text-[10px] font-bold shrink-0">
-              {win.title.charAt(0).toUpperCase()}
-            </span>
-          )}
-          <span className="text-xs font-bold truncate">
-            {win.title}
-          </span>
-        </div>
-        {/* Right: Win98 window buttons */}
-        <div className="flex items-center gap-0.5 shrink-0" onDoubleClick={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
-            style={{
-              ...win98Bevel,
-              fontSize: "12px",
-              lineHeight: 1,
-            }}
-            onClick={(e) => { e.stopPropagation(); animateMinimize(); }}
-            aria-label="Minimize"
-          >
-            <Minus className="size-2.5" />
-          </button>
-          <button
-            type="button"
-            className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
-            style={{
-              ...win98Bevel,
-              fontSize: "12px",
-              lineHeight: 1,
-            }}
-            onClick={(e) => { e.stopPropagation(); useWindowManager.getState().toggleFullscreen(win.id); }}
-            aria-label="Fullscreen"
-          >
-            <Maximize2 className="size-2.5" />
-          </button>
-          <button
-            type="button"
-            className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
-            style={{
-              ...win98Bevel,
-              fontSize: "12px",
-              fontWeight: 700,
-              lineHeight: 1,
-            }}
-            onClick={(e) => { e.stopPropagation(); closeWindow(win.id); }}
-            aria-label="Close"
-          >
-            ×
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-
-  const titleBarInner = isNeumorphic ? win98TitleBar : macTitleBar;
   const titleBar = (
     <div
       style={{

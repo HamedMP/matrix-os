@@ -47,9 +47,9 @@ describe("DockEditor", () => {
 });
 
 describe("AppearanceSection", () => {
-  it("keeps only background and dock settings", () => {
-    const sections = ["Background", "Dock"];
-    expect(sections).toHaveLength(2);
+  it("keeps design, background, and dock settings", () => {
+    const sections = ["Design", "Background", "Dock"];
+    expect(sections).toHaveLength(3);
     expect(sections).not.toContain("Theme");
   });
 });

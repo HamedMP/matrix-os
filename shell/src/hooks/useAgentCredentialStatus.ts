@@ -6,7 +6,7 @@ export type AgentId = "claude" | "codex" | "hermes";
 
 export interface AgentCredentialSummary {
   agent: AgentId;
-  status: "available" | "missing" | "expired" | "revoked" | "failed" | "not_applicable";
+  status: "available" | "missing" | "auth_required" | "check_failed" | "version_unsupported" | "expired" | "revoked" | "failed" | "not_applicable";
   coordinationRole: "system_agent" | "core_agent" | "coding_specialist" | "assistant_specialist";
   workflows: string[];
   degradedWorkflows: string[];
