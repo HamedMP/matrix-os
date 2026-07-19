@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Keyb
 import { ChevronsLeftIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 
 import { getGatewayUrl } from "@/lib/gateway";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { NewSessionMenu } from "./NewSessionMenu";
 import { NewSessionSplitButton } from "./NewSessionSplitButton";
 import { ShellCloseConfirmation } from "./ShellCloseConfirmation";
@@ -63,7 +64,6 @@ export const DEFAULT_TERMINAL_SIDEBAR_WIDTH = 392;
 const MIN_TERMINAL_SIDEBAR_WIDTH = 280;
 const MAX_TERMINAL_SIDEBAR_WIDTH = 560;
 const TERMINAL_SIDEBAR_TRANSITION = "opacity 140ms ease, transform 180ms ease";
-const TERMINAL_SIDEBAR_MENU_Z_INDEX = 3;
 const SHELL_STATUS_DOT_CSS = `
 @keyframes terminal-session-status-pulse {
   0%, 100% { box-shadow: 0 0 0 4px rgba(95, 184, 95, 0.24); }
@@ -978,7 +978,7 @@ export function LocalTerminalSidebar() {
             transform: "translateX(0)",
             transition: TERMINAL_SIDEBAR_TRANSITION,
             width: 76,
-            zIndex: railMenuOpen ? TERMINAL_SIDEBAR_MENU_Z_INDEX : undefined,
+            zIndex: railMenuOpen ? SHELL_Z_INDEX.terminalCollapsedRailMenu : undefined,
           }}
         >
           <CollapsedSessionsRail

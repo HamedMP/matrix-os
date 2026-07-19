@@ -2594,6 +2594,7 @@ describe("TerminalApp", () => {
     sidebarShell = screen.getByTestId("terminal-sidebar-shell");
     expect(screen.queryByRole("menu", { name: "New session menu" })).toBeNull();
     expect(sidebarShell.style.overflow).toBe("hidden");
+    expect(sidebarShell.style.position).toBe("");
     expect(sidebarShell.style.zIndex).toBe("");
   });
 
