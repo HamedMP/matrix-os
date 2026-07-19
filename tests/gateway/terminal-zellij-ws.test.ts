@@ -180,13 +180,12 @@ describe("zellij terminal WebSocket", () => {
     const rawLivePrompt = "\x1b[7mlive prompt\x1b[27m";
     const readableReplayPrompt = "\x1b[38;2;214;216;221;48;2;48;54;61mold prompt\x1b[39;49m";
     const readableLivePrompt = "\x1b[38;2;214;216;221;48;2;48;54;61mlive prompt\x1b[39;49m";
+    const attachSession = vi.fn(() => pty);
     const handler = createShellWsHandler({
       registry: {
         list: vi.fn(async () => [{ name: "main", status: "active" }]),
       },
-      adapter: {
-        attachSession: vi.fn(() => pty),
-      },
+      adapter: { attachSession },
       scrollbackStore: {
         latestSeq: vi.fn(async () => 41),
         readSince: vi.fn(async () => [
@@ -210,6 +209,7 @@ describe("zellij terminal WebSocket", () => {
     expect(ws.sent).not.toContainEqual({ type: "output", seq: 41, data: rawReplayPrompt });
     expect(ws.sent).toContainEqual({ type: "output", seq: 42, data: readableLivePrompt });
     expect(append).toHaveBeenCalledWith("main", [{ type: "output", seq: 42, data: readableLivePrompt }]);
+    expect(attachSession).toHaveBeenCalledTimes(1);
   });
 
   it("keeps non-Codex reverse-video output unchanged", async () => {
