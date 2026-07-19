@@ -6,6 +6,7 @@ import {
   normalizeAgentBridgeEvents,
   registerAgentBridges,
   resolveAgentBridgeCommand,
+  tryRegisterAgentBridges,
 } from "../../packages/gateway/src/shell/agent-session-bridges.js";
 import {
   ingestAgentBridgePayload,
@@ -155,6 +156,26 @@ describe("agent session bridge adapters", () => {
 });
 
 describe("agent session bridge registration", () => {
+  it("keeps gateway startup alive when bridge command resolution throws synchronously", async () => {
+    const register = vi.fn();
+    const warn = vi.fn();
+
+    await expect(tryRegisterAgentBridges({
+      homePath: "/owner/home",
+      resolveCommand: () => {
+        throw new Error("tsx is unavailable");
+      },
+      register,
+      warn,
+    })).resolves.toBeNull();
+
+    expect(register).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      "[gateway] Agent session bridge registration skipped:",
+      "Error",
+    );
+  });
+
   it("uses the source bridge CLI during local development", () => {
     expect(resolveAgentBridgeCommand({
       environment: { NODE_ENV: "development" },

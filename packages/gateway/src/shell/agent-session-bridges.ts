@@ -168,6 +168,13 @@ export interface AgentBridgeRegistrationReport {
   failed: AgentKind[];
 }
 
+export interface TryRegisterAgentBridgesOptions {
+  homePath: string;
+  resolveCommand?: () => string;
+  register?: (options: RegisterAgentBridgesOptions) => Promise<AgentBridgeRegistrationReport>;
+  warn?: (message: string, errorName: string) => void;
+}
+
 export interface ResolveAgentBridgeCommandOptions {
   environment?: NodeJS.ProcessEnv;
   execPath?: string;
@@ -188,6 +195,24 @@ export function resolveAgentBridgeCommand(
   const tsxLoaderPath = options.tsxLoaderPath
     ?? fileURLToPath(import.meta.resolve("tsx"));
   return `${shellQuote(execPath)} --import=${shellQuote(tsxLoaderPath)} ${shellQuote(sourceCliPath)}`;
+}
+
+export async function tryRegisterAgentBridges(
+  options: TryRegisterAgentBridgesOptions,
+): Promise<AgentBridgeRegistrationReport | null> {
+  try {
+    const command = (options.resolveCommand ?? resolveAgentBridgeCommand)();
+    return await (options.register ?? registerAgentBridges)({
+      homePath: options.homePath,
+      command,
+    });
+  } catch (err: unknown) {
+    (options.warn ?? console.warn)(
+      "[gateway] Agent session bridge registration skipped:",
+      err instanceof Error ? err.name : "UnknownError",
+    );
+    return null;
+  }
 }
 
 function shellQuote(value: string): string {
