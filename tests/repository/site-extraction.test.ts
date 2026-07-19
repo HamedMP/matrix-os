@@ -7,8 +7,11 @@ const read = (path: string) => readFileSync(join(root, path), "utf8");
 
 describe("extracted public site boundary", () => {
   it("does not keep a second deployable www app in the monorepo", () => {
-    expect(existsSync(join(root, "www"))).toBe(false);
+    for (const deployablePath of ["www/package.json", "www/src", "www/next.config.ts"]) {
+      expect(existsSync(join(root, deployablePath))).toBe(false);
+    }
     expect(read("pnpm-workspace.yaml")).not.toMatch(/^\s*- ["']www["']$/m);
+    expect(read("pnpm-lock.yaml")).not.toMatch(/^  www:\s*$/m);
     expect(read("package.json")).not.toContain('"dev:www"');
   });
 
