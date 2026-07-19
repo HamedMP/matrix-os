@@ -104,7 +104,7 @@ import { createCodingAgentRoutes } from "./coding-agents/routes.js";
 import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type CodingAgentProviderAdapter, type CodingAgentThreadStore, type CodingAgentTurnStore } from "./coding-agents/thread-store.js";
 import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./coding-agents/thread-stream.js";
 import { createWorkspaceCodingAgentProviderSet } from "./coding-agents/workspace-provider.js";
-import { configuredWorkspaceProviderAgents } from "./coding-agents/workspace-provider-config.js";
+import { resolveWorkspaceProviderRuntime } from "./coding-agents/workspace-provider-config.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
 import { createCodingAgentTurnLifecycle } from "./coding-agents/turn-lifecycle.js";
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
@@ -118,6 +118,8 @@ import { createCodingAgentSourceControlStore } from "./coding-agents/source-cont
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
 import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
 import { createCodingAgentProjectMutationService } from "./coding-agents/project-mutations.js";
+import { createCodexEventBridge, type CodexEventBridge } from "./coding-agents/codex-event-bridge.js";
+import { createCodexControlClient } from "./coding-agents/codex-control-client.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -224,6 +226,7 @@ import {
 } from "./server/symphony-origin.js";
 import { registerAppRuntimeRoutes } from "./server/app-runtime-routes.js";
 import { registerFileRoutes } from "./server/file-routes.js";
+import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import {
   metricsRegistry,
   httpRequestsTotal,
@@ -368,6 +371,11 @@ export async function createGateway(config: GatewayConfig) {
     registry: zellijShellRegistry,
     adapter: zellijAdapter,
     scrollbackStore: shellScrollbackStore,
+    persistCanonicalSize: (name, size) => {
+      void zellijShellRegistry.updateCanonicalSize(name, size).catch((err: unknown) => {
+        console.warn("[shell] canonical size persist failed:", err instanceof Error ? err.message : String(err));
+      });
+    },
   });
   const shellSessionReaper = createShellSessionReaper({ registry: zellijShellRegistry });
   shellSessionReaper.start();
@@ -427,8 +435,14 @@ export async function createGateway(config: GatewayConfig) {
   const internalPlatformToken = process.env.UPGRADE_TOKEN;
   const internalHandle = process.env.MATRIX_HANDLE;
   let platformDb: PlatformDb | null = null;
-  const agentCredentialLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
-  let agentDetectionInFlight: Promise<Awaited<ReturnType<typeof agentCredentialLauncher.detectAgents>>> | null = null;
+  const workspaceProviderRuntime = resolveWorkspaceProviderRuntime(process.env);
+  const codingAgentWorkspaceAgents = workspaceProviderRuntime.agents;
+  const codexExecutable = workspaceProviderRuntime.codexExecutable;
+  const agentCredentialLauncher = createAgentLauncher({
+    cwd: homePath,
+    runtimeHome: homePath,
+    codexExecutable,
+  });
   let internalIntegrationBaseUrl: string | null = null;
   const PLATFORM_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const CAPABILITY_LOOKUP_TIMEOUT_MS = 10_000;
@@ -490,18 +504,27 @@ export async function createGateway(config: GatewayConfig) {
   const agentCredentialService = createAgentCredentialStatusService({
     onChange: (ownerId) => readinessCache.delete(ownerId),
     probeAgent: async (_ownerId, agent) => {
-      agentDetectionInFlight ??= agentCredentialLauncher.detectAgents().finally(() => {
-        agentDetectionInFlight = null;
-      });
-      const detected = await agentDetectionInFlight;
+      const detected = await agentCredentialLauncher.detectAgentCredentials();
       const status = detected.agents.find((candidate) => candidate.id === agent);
       return {
         available: Boolean(status?.installed && status.authState === "ok"),
-        missing: status?.installed === false,
+        condition: status?.errorCode === "agent_missing"
+          ? "missing"
+          : status?.errorCode === "agent_auth_required"
+            ? "auth_required"
+            : status?.errorCode === "agent_version_unsupported"
+              ? "version_unsupported"
+              : status?.errorCode === "agent_check_failed"
+                ? "check_failed"
+                : status?.authState === "ok"
+                  ? "available"
+                  : "check_failed",
       };
     },
   });
   let codingAgentThreadStore: (CodingAgentThreadStore & CodingAgentTurnStore) | undefined;
+  let codexEventBridge: CodexEventBridge | undefined;
+  let codingAgentApprovalsEnabled = false;
   const codingAgentSessionStopReconciler = createCodingAgentSessionStopReconciler();
   const workspaceEventStore = createWorkspaceEventStore({ homePath });
   const reviewStore = createReviewStore({ homePath });
@@ -536,15 +559,16 @@ export async function createGateway(config: GatewayConfig) {
   });
   const codingAgentProviders: CodingAgentProviderAdapter[] = [];
   const codingAgentRegistryProviders: CodingAgentProviderAdapter[] = [];
-  const codingAgentWorkspaceAgents = configuredWorkspaceProviderAgents(process.env);
   if (codingAgentWorkspaceAgents.length > 0) {
     const codingAgentProjectManager = createProjectManager({ homePath });
+    codexEventBridge = codexExecutable
+      ? createCodexEventBridge({ homePath, codexExecutable })
+      : undefined;
     const codingAgentWorktreeManager = createWorktreeManager({ homePath });
-    const codingAgentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
     const codingAgentSessionManager = createAgentSessionManager({
       homePath,
       worktreeManager: codingAgentWorktreeManager,
-      agentLauncher: codingAgentLauncher,
+      agentLauncher: agentCredentialLauncher,
       zellijRuntime: workspaceZellijRuntime,
       inputWriter: (sessionId, input, signal) =>
         workspaceZellijRuntime.sendInput(sessionId, input, signal),
@@ -560,7 +584,10 @@ export async function createGateway(config: GatewayConfig) {
     const providerSet = createWorkspaceCodingAgentProviderSet({
       agents: codingAgentWorkspaceAgents,
       runtime: codingAgentWorkspaceRuntime,
+      codexEvents: codexEventBridge,
+      codexControl: codexExecutable ? createCodexControlClient({ homePath }) : undefined,
     });
+    codingAgentApprovalsEnabled = providerSet.approvalsEnabled;
     codingAgentProviders.push(...providerSet.executionProviders);
     codingAgentRegistryProviders.push(...providerSet.registryProviders);
   } else if (process.env.MATRIX_CODING_AGENTS_FAKE_PROVIDER === "1") {
@@ -581,6 +608,7 @@ export async function createGateway(config: GatewayConfig) {
         workspaceEventPublisher.publishCodingAgentThreadProjection(change),
     })
     : undefined;
+  if (codingAgentThreadStore) codexEventBridge?.attachThreadStore(codingAgentThreadStore);
   const codingAgentProviderRegistry = createCodingAgentProviderRegistry({
     providers: codingAgentRegistryProviders,
     agentCredentials: agentCredentialService,
@@ -629,7 +657,7 @@ export async function createGateway(config: GatewayConfig) {
       kanbanView: true,
       workspace: codingAgentWorkspaceEnabled,
       sameThreadTurns: codingAgentTurnsEnabled,
-      approvals: false,
+      approvals: codingAgentApprovalsEnabled,
       review: true,
       preview: true,
       files: true,
@@ -2167,11 +2195,29 @@ export async function createGateway(config: GatewayConfig) {
     upgradeWebSocket(() => forwardTunnelHub.createHandler()),
   );
 
+  const parseTerminalSizingParams = (
+    query: (name: string) => string | undefined,
+  ): { clientClass?: "hard" | "soft"; declaredSize?: { cols: number; rows: number } } => {
+    const clientParam = query("client");
+    const clientClass = clientParam === "hard" || clientParam === "soft" ? clientParam : undefined;
+    const colsParam = query("cols");
+    const rowsParam = query("rows");
+    const cols = colsParam && /^\d{1,3}$/.test(colsParam) ? Number(colsParam) : null;
+    const rows = rowsParam && /^\d{1,3}$/.test(rowsParam) ? Number(rowsParam) : null;
+    const declaredSize =
+      cols && rows && cols >= 1 && cols <= 500 && rows >= 1 && rows <= 200
+        ? { cols, rows }
+        : undefined;
+    return { clientClass, declaredSize };
+  };
+
+
   app.get(
     "/ws/terminal/session",
     upgradeWebSocket((c) => {
       const namedSession = c.req.query("session");
       const fromSeqParam = c.req.query("fromSeq");
+      const sizingParams = parseTerminalSizingParams((name) => c.req.query(name));
       let namedHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
       let namedSocketClosed = false;
       const pendingInput = createPendingTerminalInputQueue();
@@ -2195,6 +2241,8 @@ export async function createGateway(config: GatewayConfig) {
             ws,
             session: namedSession,
             fromSeq,
+            clientClass: sizingParams.clientClass,
+            declaredSize: sizingParams.declaredSize,
           }).then((session) => {
             if (namedSocketClosed) {
               session.onClose();
@@ -2366,6 +2414,7 @@ export async function createGateway(config: GatewayConfig) {
       const cwdParam = c.req.query("cwd");
       const namedSession = c.req.query("session");
       const fromSeqParam = c.req.query("fromSeq");
+      const sizingParams = parseTerminalSizingParams((name) => c.req.query(name));
       let handle: SessionHandle | null = null;
       let namedHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
       let namedSocketClosed = false;
@@ -2418,6 +2467,8 @@ export async function createGateway(config: GatewayConfig) {
               ws,
               session: namedSession,
               fromSeq,
+              clientClass: sizingParams.clientClass,
+              declaredSize: sizingParams.declaredSize,
             }).then((session) => {
               if (namedSocketClosed) {
                 session.onClose();
@@ -2803,6 +2854,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/", createWorkspaceRoutes({
     homePath,
     zellijRuntime: workspaceZellijRuntime,
+    agentLauncher: agentCredentialLauncher,
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
     eventStore: workspaceEventStore,
     eventPublisher: workspaceEventPublisher,
@@ -3336,6 +3388,8 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Integration call failed" }, 502);
     }
   });
+
+  registerConversationHistoryRoutes(app, { conversations });
 
   app.get("/api/conversations", (c) => {
     return c.json(conversations.list());
@@ -4226,6 +4280,7 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       await codingAgentTurnLifecycle.shutdown();
+      await codexEventBridge?.shutdown();
       codingAgentThreadStream?.shutdown();
       codingAgentAttentionNotifications?.dispose();
       codingAgentSessionStopReconciler.dispose();

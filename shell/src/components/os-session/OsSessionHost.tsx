@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useOsSessionStore } from "./os-session-store";
-import { BOOT_BEAT_MS, isBootDesign } from "./os-session-utils";
+import { BOOT_BEAT_MS } from "./os-session-utils";
 import { OsBootScreen } from "./OsBootScreen";
 import {
   XpLogoffDialog,
@@ -16,31 +16,15 @@ import "./os-session.css";
 
 /**
  * Hosts the OS session overlays (Feature: lock / user-switch / log-off
- * simulation) and the design-switch boot beat. Rendered once by Desktop.
- *
- * The boot beat watches `data-theme-style` mutations (e.g. the DesignPicker
- * applying a saved theme) rather than React state: the baseline is captured
- * when the host mounts, so the initial theme apply is never mistaken for a
- * design switch, and only genuine changes to another OS design replay the
- * boot screen for ~1.5s.
+ * simulation) and explicit design-switch boot beats. Rendered once by Desktop.
+ * Theme hydration can run whenever Settings mounts, so attribute mutations are
+ * deliberately not interpreted as boots; DesignPicker starts the beat only for
+ * a user-initiated OS switch.
  */
 export function OsSessionHost() {
   const view = useOsSessionStore((s) => s.view);
   const bootDesign = useOsSessionStore((s) => s.bootDesign);
   const bootId = useOsSessionStore((s) => s.bootId);
-
-  useEffect(() => {
-    const root = document.documentElement;
-    let current = root.getAttribute("data-theme-style") ?? "flat";
-    const observer = new MutationObserver(() => {
-      const next = root.getAttribute("data-theme-style") ?? "flat";
-      if (next === current) return;
-      current = next;
-      if (isBootDesign(next)) useOsSessionStore.getState().beginBoot(next);
-    });
-    observer.observe(root, { attributes: true, attributeFilter: ["data-theme-style"] });
-    return () => observer.disconnect();
-  }, []);
 
   // Auto-dismiss the boot beat. `bootId` retriggers the window when beats
   // happen back to back.

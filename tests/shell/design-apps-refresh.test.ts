@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { reconcileDesignApps } from "../../shell/src/lib/design-apps-refresh";
 
@@ -5,6 +6,17 @@ const normalize = (path: string) => path.replace(/^\/files\//, "");
 const iconUrlFor = (app: { slug?: string; icon?: string }) => `/icons/${app.icon ?? app.slug}.png`;
 
 describe("reconcileDesignApps", () => {
+  it("rechecks cancellation after parsing before applying refreshed apps", async () => {
+    const source = await readFile("shell/src/components/Desktop.tsx", "utf8");
+    const effectStart = source.indexOf("// The gateway re-filters design-scoped apps");
+    const effectEnd = source.indexOf("const visibleWindowCount", effectStart);
+    const effectSource = source.slice(effectStart, effectEnd);
+
+    expect(effectSource).toMatch(
+      /const apiApps = \(await res\.json\(\)\) as ApiAppEntry\[\];\s+if \(cancelled\) return;\s+const \{ next, apiPaths \}/,
+    );
+  });
+
   it("adds newly matching design-scoped apps with resolved icons", () => {
     const { next, apiPaths } = reconcileDesignApps({
       current: [{ name: "Terminal", path: "__terminal__", iconUrl: "/icons/terminal.png" }],

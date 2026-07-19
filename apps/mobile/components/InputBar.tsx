@@ -6,7 +6,7 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import Animated, { useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
+import Animated, { type SharedValue, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
 import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
@@ -15,6 +15,11 @@ interface InputBarProps {
   onSend: (text: string) => void;
   busy: boolean;
   connected: boolean;
+}
+
+function animateSend(scale: SharedValue<number>): void {
+  scale.value = 0.7;
+  scale.value = withSpring(1, { damping: 12, stiffness: 320 });
 }
 
 export function InputBar({ onSend, busy, connected }: InputBarProps) {
@@ -29,8 +34,7 @@ export function InputBar({ onSend, busy, connected }: InputBarProps) {
     if (process.env.EXPO_OS === "ios") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
-    sendScale.value = 0.7;
-    sendScale.value = withSpring(1, { damping: 12, stiffness: 320 });
+    animateSend(sendScale);
     onSend(trimmed);
     setText("");
   }, [text, connected, onSend, sendScale]);

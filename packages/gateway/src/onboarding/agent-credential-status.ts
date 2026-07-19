@@ -15,6 +15,8 @@ export interface AgentCredentialStatusService {
 
 export interface AgentCredentialProbeResult {
   available: boolean;
+  condition?: "available" | "missing" | "auth_required" | "check_failed" | "version_unsupported";
+  /** @deprecated Use condition: "missing". */
   missing?: boolean;
 }
 
@@ -35,27 +37,53 @@ function hermesSummary(): AgentCredentialSummary {
   };
 }
 
-function claudeSummary(verifiedAt: string | undefined): AgentCredentialSummary {
+function probeCondition(result: AgentCredentialProbeResult): NonNullable<AgentCredentialProbeResult["condition"]> {
+  if (result.condition) return result.condition;
+  if (result.available) return "available";
+  return result.missing ? "missing" : "auth_required";
+}
+
+function claudeSummary(
+  condition: NonNullable<AgentCredentialProbeResult["condition"]>,
+  verifiedAt: string | undefined,
+): AgentCredentialSummary {
   return {
     agent: "claude",
-    status: verifiedAt ? "available" : "missing",
+    status: condition,
     coordinationRole: "core_agent",
     workflows: ["core_agent"],
-    degradedWorkflows: verifiedAt ? [] : ["core_agent"],
+    degradedWorkflows: condition === "available" ? [] : ["core_agent"],
     verifiedAt: verifiedAt ?? null,
-    nextAction: verifiedAt ? null : "Connect Claude to enable the core agent path",
+    nextAction: condition === "available"
+      ? null
+      : condition === "missing"
+        ? "Install the agent to enable the core agent path"
+        : condition === "auth_required"
+          ? "Log in to the agent to enable the core agent path"
+          : "Agent setup status could not be verified",
   };
 }
 
-function codexSummary(verifiedAt: string | undefined): AgentCredentialSummary {
+function codexSummary(
+  condition: NonNullable<AgentCredentialProbeResult["condition"]>,
+  verifiedAt: string | undefined,
+): AgentCredentialSummary {
   return {
     agent: "codex",
-    status: verifiedAt ? "available" : "missing",
+    status: condition,
     coordinationRole: "coding_specialist",
     workflows: ["coding"],
-    degradedWorkflows: verifiedAt ? [] : ["coding"],
+    degradedWorkflows: condition === "available" ? [] : ["coding"],
     verifiedAt: verifiedAt ?? null,
-    nextAction: verifiedAt ? null : "Connect Codex for optional coding support",
+    nextAction: condition === "available"
+      ? null
+      : condition === "missing"
+        ? "Install the agent for optional coding support"
+        : condition === "auth_required"
+          ? "Log in to the agent for optional coding support"
+          : condition === "version_unsupported"
+            ? "Install the verified agent version for structured coding sessions"
+            : "Agent setup status could not be verified",
   };
 }
 
@@ -110,7 +138,7 @@ export function createAgentCredentialStatusService(options: {
       return await options.probeAgent!(ownerId, agent);
     } catch (err: unknown) {
       console.warn("[onboarding] agent availability probe failed:", err instanceof Error ? err.message : String(err));
-      return { available: false };
+      return { available: false, condition: "check_failed" };
     }
   }
 
@@ -121,13 +149,15 @@ export function createAgentCredentialStatusService(options: {
         probeAvailability(ownerId, "codex"),
       ]);
       const verifiedAt = now().toISOString();
+      const claudeCondition = probeCondition(claude);
+      const codexCondition = probeCondition(codex);
       return {
         systemAgent: "hermes",
-        activeAgents: activeAgentsFromAvailability(claude.available, codex.available),
+        activeAgents: activeAgentsFromAvailability(claudeCondition === "available", codexCondition === "available"),
         routingExplanation: "Hermes remains the Matrix system agent while Claude and Codex add optional specialist paths when connected.",
         agents: [
-          claudeSummary(claude.available ? verifiedAt : undefined),
-          codexSummary(codex.available ? verifiedAt : undefined),
+          claudeSummary(claudeCondition, claudeCondition === "available" ? verifiedAt : undefined),
+          codexSummary(codexCondition, codexCondition === "available" ? verifiedAt : undefined),
           hermesSummary(),
         ],
       };
@@ -138,8 +168,8 @@ export function createAgentCredentialStatusService(options: {
       activeAgents: activeAgents(state),
       routingExplanation: "Hermes remains the Matrix system agent while Claude and Codex add optional specialist paths when connected.",
       agents: [
-        claudeSummary(state.claudeVerifiedAt),
-        codexSummary(state.codexVerifiedAt),
+        claudeSummary(state.claudeVerifiedAt ? "available" : "missing", state.claudeVerifiedAt),
+        codexSummary(state.codexVerifiedAt ? "available" : "missing", state.codexVerifiedAt),
         hermesSummary(),
       ],
     };
@@ -151,12 +181,18 @@ export function createAgentCredentialStatusService(options: {
     }
     if (options.probeAgent) {
       const probe = await options.probeAgent(ownerId, agent);
-      if (!probe.available) {
-        throw new ActivationRouteError(
-          probe.missing ? "agent_not_installed" : "agent_auth_required",
-          probe.missing ? "Install the agent before verifying credentials" : "Log in to the agent before verifying credentials",
-          { status: 409, retryable: true },
-        );
+      const condition = probeCondition(probe);
+      if (condition !== "available") {
+        if (condition === "missing") {
+          throw new ActivationRouteError("agent_not_installed", "Install the agent before verifying credentials", { status: 409, retryable: true });
+        }
+        if (condition === "auth_required") {
+          throw new ActivationRouteError("agent_auth_required", "Log in to the agent before verifying credentials", { status: 409, retryable: true });
+        }
+        if (condition === "version_unsupported") {
+          throw new ActivationRouteError("agent_version_unsupported", "Install the verified agent version before using structured sessions", { status: 409, retryable: true });
+        }
+        throw new ActivationRouteError("agent_check_failed", "Agent setup status could not be verified", { status: 503, retryable: true });
       }
       const verifiedAt = now().toISOString();
       options.onChange?.(ownerId);

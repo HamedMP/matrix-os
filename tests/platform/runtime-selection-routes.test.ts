@@ -26,6 +26,8 @@ async function insertMachine(
     handle: string;
     runtimeSlot: string;
     status?: string;
+    provisioningClass?: "customer" | "preview";
+    accessClerkUserIds?: string[];
   },
 ): Promise<void> {
   await insertUserMachine(db, {
@@ -34,6 +36,8 @@ async function insertMachine(
     handle: input.handle,
     runtimeSlot: input.runtimeSlot,
     status: input.status ?? "running",
+    provisioningClass: input.provisioningClass,
+    accessClerkUserIds: input.accessClerkUserIds,
     hetznerServerId: 100,
     publicIPv4: "203.0.113.10",
     imageVersion: "stable",
@@ -116,6 +120,34 @@ describe("trusted runtime selection route", () => {
 
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+  });
+
+  it("issues a runtime token for an explicitly shared preview", async () => {
+    const sourceToken = await issueSourceToken(db);
+    await insertMachine(db, {
+      clerkUserId: "user_bob",
+      handle: "pr-1037",
+      runtimeSlot: "pr-1037",
+      provisioningClass: "preview",
+      accessClerkUserIds: ["user_alice"],
+    });
+
+    const response = await createTestApp(db).request("/api/auth/runtime-selection", {
+      method: "POST",
+      headers: {
+        host: "api.matrix-os.com",
+        authorization: `Bearer ${sourceToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ slot: "pr-1037" }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = RuntimeSelectionResponseSchema.parse(await response.json());
+    expect(body.handle).toBe("pr-1037");
+    const claims = await verifySyncJwt(body.accessToken, { secret: JWT_SECRET });
+    expect(claims.sub).toBe("user_alice");
+    expect(claims.runtime_slot).toBe("pr-1037");
   });
 
   it("rejects Clerk bearer and cookie-carried sync credentials", async () => {

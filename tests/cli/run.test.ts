@@ -8,6 +8,7 @@ import { WebSocketServer } from "ws";
 import {
   createOrAttachRunSession,
   exitCodeFromRunResult,
+  inferRunAgent,
   parseRunCommand,
   quoteCommandArg,
   runCommand,
@@ -149,6 +150,12 @@ describe("run CLI command", () => {
     expect(parseRunCommand(["-it", "--session=setup", "claude"])).toEqual(["claude"]);
   });
 
+  it("infers agents behind env and inline environment assignments", () => {
+    expect(inferRunAgent(["env", "FOO=bar", "claude"])).toBe("claude");
+    expect(inferRunAgent(["DEBUG=1", "/opt/matrix/runtime/node/bin/codex"])).toBe("codex");
+    expect(inferRunAgent(["env", "FOO=bar", "bash"])).toBeUndefined();
+  });
+
   it("attaches existing named sessions instead of failing create-or-attach", async () => {
     const client = {
       createSession: vi.fn(async () => {
@@ -188,6 +195,7 @@ describe("run CLI command", () => {
       }),
     ).resolves.toEqual({ detached: true });
     expect(client.attachSession).toHaveBeenCalledWith("setup", { mouse: false });
+    expect(client.createSession).toHaveBeenCalledWith(expect.objectContaining({ agent: "claude" }));
   });
 
   it("passes no-rich-paste mode through interactive run attach", async () => {
@@ -206,6 +214,7 @@ describe("run CLI command", () => {
       }),
     ).resolves.toEqual({ detached: true });
     expect(client.attachSession).toHaveBeenCalledWith("setup", { cwd: "projects/app", noRichPaste: true });
+    expect(client.createSession).toHaveBeenCalledWith(expect.objectContaining({ agent: "codex" }));
   });
 
   it("keeps stdout JSON-only for run -it --json", async () => {

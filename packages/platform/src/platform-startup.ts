@@ -16,6 +16,7 @@ import {
   updateContainerStatus,
   type PlatformDB,
 } from './db.js';
+import { createAtsDb, resolveAtsDatabaseUrl, type AtsDB } from './ats-db.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { ClerkAuth } from './clerk-auth.js';
 import { createClerkAuth, createClerkSessionRevoker } from './clerk-auth.js';
@@ -125,6 +126,7 @@ interface GatewayR2ClientModule {
 
 type CreatePlatformApp = (deps: {
   db: PlatformDB;
+  atsDb?: AtsDB;
   docker?: Dockerode;
   orchestrator: Orchestrator;
   clerkAuth?: ClerkAuth;
@@ -205,8 +207,11 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
     process.exit(1);
   }
 
+  const atsDatabaseUrl = resolveAtsDatabaseUrl(process.env);
   const db = createPlatformDb(runtimeConfig.platformDatabaseUrl);
   await db.ready;
+  const atsDb = atsDatabaseUrl ? createAtsDb(atsDatabaseUrl) : undefined;
+  await atsDb?.ready;
 
   let docker: Dockerode | undefined;
   let orchestrator: Orchestrator;
@@ -509,6 +514,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !customerVpsService;
   const app = createPlatformApp({
     db,
+    atsDb,
     docker,
     orchestrator,
     clerkAuth,
@@ -564,7 +570,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
         posthogProcessErrors.dispose();
         await app.shutdownPostHog();
         await processPosthogErrorTracker.shutdown();
-        await db.destroy();
+        await Promise.all([db.destroy(), atsDb?.destroy()]);
       })()
         .catch((destroyErr: unknown) => {
           exitCode = 1;

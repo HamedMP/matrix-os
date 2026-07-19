@@ -51,6 +51,8 @@ const restorePlan = vi.hoisted(() => ({
         cols: number;
         rows: number;
         focus: ReturnType<typeof vi.fn>;
+        loadAddon: ReturnType<typeof vi.fn>;
+        refresh: ReturnType<typeof vi.fn>;
         write: ReturnType<typeof vi.fn>;
         dispose: ReturnType<typeof vi.fn>;
         onData: ReturnType<typeof vi.fn>;
@@ -92,6 +94,7 @@ vi.mock("@xterm/xterm", () => ({
 
     loadAddon = vi.fn();
     focus = vi.fn();
+    refresh = vi.fn();
     write = vi.fn();
     dispose = vi.fn();
     onData = vi.fn(() => ({ dispose: vi.fn() }));
@@ -150,7 +153,7 @@ vi.mock("@xterm/addon-image", () => ({
 
 vi.mock("../../shell/src/components/terminal/terminal-cache.js", () => ({
   cacheTerminal: vi.fn(),
-  getCached: vi.fn(() => null),
+  takeCached: vi.fn(() => null),
   removeCached: vi.fn(),
   hasCached: vi.fn(() => false),
 }));
@@ -199,6 +202,11 @@ vi.mock("@/stores/terminal-settings", () => {
 });
 
 import { TerminalPane } from "../../shell/src/components/terminal/TerminalPane.js";
+import { cacheTerminal } from "../../shell/src/components/terminal/terminal-cache.js";
+import { capturePostHogEvent } from "../../shell/src/lib/posthog-client.js";
+
+const mockedCacheTerminal = vi.mocked(cacheTerminal);
+const mockedCapturePostHogEvent = vi.mocked(capturePostHogEvent);
 
 const theme = {
   mode: "dark",
@@ -273,6 +281,8 @@ function createCachedTerminal() {
       cols: 80,
       rows: 24,
       focus: vi.fn(),
+      loadAddon: vi.fn(),
+      refresh: vi.fn(),
       write: vi.fn(),
       dispose: vi.fn(),
       onData: vi.fn(() => ({ dispose: vi.fn() })),
@@ -305,6 +315,9 @@ describe("TerminalPane scrolling", () => {
       setTimeout(() => cb(0), 0)) as typeof requestAnimationFrame;
     stubWs.send.mockReset();
     stubWs.close.mockReset();
+    stubWs.readyState = WebSocketMock.OPEN;
+    mockedCacheTerminal.mockClear();
+    mockedCapturePostHogEvent.mockClear();
     WebSocketMock.instances.length = 0;
     buildAuthenticatedWebSocketUrl.mockClear();
     Reflect.deleteProperty(window, "visualViewport");
@@ -398,6 +411,92 @@ describe("TerminalPane scrolling", () => {
     expect(cached.viewport.style.getPropertyValue("scrollbar-gutter")).toBe("stable");
     expect(cached.viewport.style.overscrollBehavior).toBe("contain");
     expect(cached.viewport.style.touchAction).toBe("pan-y");
+  });
+
+  it("disposes WebGL before caching an unmounted desktop pane", async () => {
+    const { unmount } = render(
+      <TerminalPane
+        paneId="pane-cache-webgl-dispose-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        shouldCacheOnUnmount={() => true}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(createdWebglAddons).toHaveLength(1));
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+
+    await act(async () => {
+      unmount();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(mockedCacheTerminal).toHaveBeenCalledOnce());
+
+    const webglAddon = createdWebglAddons[0];
+    expect(webglAddon.dispose).toHaveBeenCalledOnce();
+    expect(webglAddon.dispose.mock.invocationCallOrder[0]).toBeLessThan(
+      mockedCacheTerminal.mock.invocationCallOrder[0],
+    );
+    expect(mockedCacheTerminal.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+      terminal: createdTerminals[0],
+      fitAddon: createdFitAddons[0],
+      webglAddon: null,
+      ws: WebSocketMock.instances[0],
+    }));
+  });
+
+  it("reattaches and refreshes a DOM cached terminal before re-enabling WebGL", async () => {
+    const cached = createCachedTerminal();
+    const fitAddon = { fit: vi.fn() };
+    restorePlan.current = {
+      cached: {
+        terminal: cached.terminal,
+        fitAddon,
+        webglAddon: null,
+        searchAddon: null,
+        ws: stubWs,
+        lastSeq: 14,
+        hasReplayCursor: true,
+        sessionId: "cached-terminal-with-dom-renderer",
+      },
+      reuseTerminal: true,
+      reuseSocket: true,
+      sessionId: "cached-terminal-with-dom-renderer",
+      lastSeq: 14,
+      hasReplayCursor: true,
+    };
+
+    const { container } = render(
+      <TerminalPane
+        paneId="pane-cached-webgl-restore-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(container.querySelector(".xterm")).toBe(cached.terminal.element));
+    await waitFor(() => expect(cached.terminal.refresh).toHaveBeenCalledWith(0, 23));
+    await waitFor(() => expect(createdWebglAddons).toHaveLength(1));
+
+    expect(createdTerminals).toHaveLength(0);
+    expect(fitAddon.fit).toHaveBeenCalled();
+    expect(cached.terminal.loadAddon).toHaveBeenCalledWith(createdWebglAddons[0]);
+    expect(fitAddon.fit.mock.invocationCallOrder[0]).toBeLessThan(
+      cached.terminal.loadAddon.mock.invocationCallOrder[0],
+    );
+    expect(cached.terminal.refresh.mock.invocationCallOrder[0]).toBeLessThan(
+      cached.terminal.loadAddon.mock.invocationCallOrder[0],
+    );
   });
 
   it("does not refocus xterm on mobile visual viewport resize when native keyboard is suppressed", async () => {
@@ -509,7 +608,7 @@ describe("TerminalPane scrolling", () => {
     }));
   });
 
-  it("keeps attempting WebGL on desktop panes", async () => {
+  it("loads WebGL on fresh desktop panes", async () => {
     render(
       <TerminalPane
         paneId="pane-desktop-webgl-test"
@@ -525,6 +624,273 @@ describe("TerminalPane scrolling", () => {
 
     await waitFor(() => expect(createdWebglAddons).toHaveLength(1));
     expect(createdTerminals[0].loadAddon).toHaveBeenCalledWith(createdWebglAddons[0]);
+  });
+
+  it("requests retained scrollback from zero for a fresh canonical browser session", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-cold-replay-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        sessionId="main"
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const url = new URL(WebSocketMock.instances[0]!.url);
+
+    expect(url.pathname).toBe("/ws/terminal/session");
+    expect(url.searchParams.get("session")).toBe("main");
+    expect(url.searchParams.get("fromSeq")).toBe("0");
+    expect(url.searchParams.get("fromSeq")).not.toBe(String(Number.MAX_SAFE_INTEGER));
+  });
+
+  it("renders retained output into a new xterm after a full canonical-session remount", async () => {
+    const props = {
+      paneId: "pane-full-remount-test",
+      cwd: "",
+      theme,
+      isFocused: false,
+      isClosing: false,
+      sessionId: "main",
+      shouldCacheOnUnmount: () => false,
+      shouldDestroyOnUnmount: () => false,
+      onFocus: () => {},
+    } satisfies Parameters<typeof TerminalPane>[0];
+    const firstMount = render(<TerminalPane {...props} />);
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    firstMount.unmount();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    render(<TerminalPane {...props} />);
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+    expect(createdTerminals).toHaveLength(2);
+    const restoredSocket = WebSocketMock.instances[1]!;
+    const restoredTerminal = createdTerminals[1]!;
+    expect(new URL(restoredSocket.url).searchParams.get("fromSeq")).toBe("0");
+
+    await act(async () => {
+      restoredSocket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+      });
+      restoredSocket.onmessage?.({ data: JSON.stringify({ type: "replay-start", fromSeq: 0 }) });
+      restoredSocket.onmessage?.({
+        data: JSON.stringify({ type: "output", seq: 0, data: "retained-before-refresh\r\n" }),
+      });
+      restoredSocket.onmessage?.({ data: JSON.stringify({ type: "replay-end" }) });
+    });
+
+    expect(restoredTerminal.write).toHaveBeenCalledWith("retained-before-refresh\r\n");
+  });
+
+  it("records cold replay and cursor resume request/accept metadata without terminal content", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-replay-telemetry-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        sessionId="main"
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const firstSocket = WebSocketMock.instances[0]!;
+    await act(async () => {
+      firstSocket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 12 }),
+      });
+    });
+    expect(mockedCapturePostHogEvent).toHaveBeenCalledWith("shell_terminal_ws", expect.objectContaining({
+      event: "attached",
+      replayMode: "cold-replay",
+      requestedSeq: 0,
+      acceptedSeq: 12,
+    }));
+
+    await act(async () => {
+      firstSocket.onclose?.();
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+    const reconnectSocket = WebSocketMock.instances[1]!;
+    await act(async () => {
+      reconnectSocket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 12 }),
+      });
+    });
+    expect(mockedCapturePostHogEvent).toHaveBeenCalledWith("shell_terminal_ws", expect.objectContaining({
+      event: "attached",
+      replayMode: "cursor-resume",
+      requestedSeq: 12,
+      acceptedSeq: 12,
+    }));
+
+    const telemetryPayloads = mockedCapturePostHogEvent.mock.calls.map(([, payload]) => payload);
+    expect(telemetryPayloads).not.toContainEqual(expect.objectContaining({ data: expect.anything() }));
+  });
+
+  it("records cursor-resume metadata when a cached canonical socket finishes connecting", async () => {
+    const cached = createCachedTerminal();
+    stubWs.readyState = WebSocketMock.CONNECTING;
+    restorePlan.current = {
+      cached: {
+        terminal: cached.terminal,
+        fitAddon: { fit: vi.fn() },
+        webglAddon: null,
+        searchAddon: null,
+        ws: stubWs,
+        lastSeq: 23,
+        hasReplayCursor: true,
+        sessionId: "main",
+      },
+      reuseTerminal: true,
+      reuseSocket: true,
+      sessionId: "main",
+      lastSeq: 23,
+      hasReplayCursor: true,
+    };
+
+    render(
+      <TerminalPane
+        paneId="pane-cached-connecting-telemetry-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(stubWs.onmessage).not.toBeNull());
+    await act(async () => {
+      stubWs.readyState = WebSocketMock.OPEN;
+      stubWs.onopen?.();
+      stubWs.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 23 }),
+      });
+    });
+
+    expect(mockedCapturePostHogEvent).toHaveBeenCalledWith("shell_terminal_ws", expect.objectContaining({
+      event: "attached",
+      replayMode: "cursor-resume",
+      requestedSeq: 23,
+      acceptedSeq: 23,
+    }));
+  });
+
+  it("resumes from the next accepted sequence and renders missed output once", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-missed-output-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        sessionId="main"
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const firstSocket = WebSocketMock.instances[0]!;
+    const terminal = createdTerminals[0]!;
+    await act(async () => {
+      firstSocket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 40 }),
+      });
+      firstSocket.onmessage?.({ data: JSON.stringify({ type: "output", seq: 40, data: "before-drop\r\n" }) });
+      firstSocket.onclose?.();
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+    const reconnectSocket = WebSocketMock.instances[1]!;
+    expect(new URL(reconnectSocket.url).searchParams.get("fromSeq")).toBe("41");
+    await act(async () => {
+      reconnectSocket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 41 }),
+      });
+      reconnectSocket.onmessage?.({ data: JSON.stringify({ type: "output", seq: 41, data: "missed-once\r\n" }) });
+    });
+
+    expect(terminal.write.mock.calls.filter(([data]) => data === "before-drop\r\n")).toHaveLength(1);
+    expect(terminal.write.mock.calls.filter(([data]) => data === "missed-once\r\n")).toHaveLength(1);
+  });
+
+  it("preserves the xterm buffer and replay cursor across cached tab switching", async () => {
+    const props = {
+      paneId: "pane-cached-replay-test",
+      cwd: "",
+      theme,
+      isFocused: false,
+      isClosing: false,
+      sessionId: "main",
+      shouldCacheOnUnmount: () => true,
+      shouldDestroyOnUnmount: () => false,
+      onFocus: () => {},
+    } satisfies Parameters<typeof TerminalPane>[0];
+    const firstMount = render(<TerminalPane {...props} />);
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const firstSocket = WebSocketMock.instances[0]!;
+    const terminal = createdTerminals[0]!;
+    await act(async () => {
+      firstSocket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 7 }),
+      });
+      firstSocket.onmessage?.({ data: JSON.stringify({ type: "output", seq: 7, data: "cached-output\r\n" }) });
+      firstMount.unmount();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(mockedCacheTerminal).toHaveBeenCalled());
+    const cachedEntry = mockedCacheTerminal.mock.calls.at(-1)![1];
+    expect(cachedEntry.terminal).toBe(terminal);
+    expect(cachedEntry.lastSeq).toBe(8);
+    expect(cachedEntry.hasReplayCursor).toBe(true);
+    expect(mockedCacheTerminal.mock.calls.at(-1)![2]).toEqual({ retainSocket: false });
+
+    restorePlan.current = {
+      cached: {
+        terminal: cachedEntry.terminal,
+        fitAddon: cachedEntry.fitAddon,
+        webglAddon: null,
+        searchAddon: cachedEntry.searchAddon,
+        ws: stubWs,
+        lastSeq: cachedEntry.lastSeq,
+        hasReplayCursor: cachedEntry.hasReplayCursor,
+        sessionId: cachedEntry.sessionId,
+      },
+      reuseTerminal: true,
+      reuseSocket: false,
+      sessionId: "main",
+      lastSeq: 8,
+      hasReplayCursor: true,
+    };
+
+    render(<TerminalPane {...props} />);
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+
+    expect(createdTerminals).toHaveLength(1);
+    expect(terminal.write.mock.calls.filter(([data]) => data === "cached-output\r\n")).toHaveLength(1);
+    expect(new URL(WebSocketMock.instances[1]!.url).searchParams.get("fromSeq")).toBe("8");
   });
 
   it.each([0, 60])("uses attached fromSeq %i as the reconnect cursor before output arrives", async (fromSeq) => {

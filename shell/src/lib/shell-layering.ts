@@ -3,6 +3,9 @@ export const SHELL_Z_INDEX = {
   // below every app window — window z-order starts at
   // SHELL_WINDOW_Z_INDEX_START = 1.
   desktopIcons: 0,
+  // Collapsed Terminal rail elevation while its session menu is open. This must
+  // outrank xterm's link canvas (z-index 2) without escaping the app surface.
+  terminalCollapsedRailMenu: 3,
   // Panel-local card elevation. This stays below app windows and only orders
   // sibling rows inside a shell surface.
   terminalSessionMenuCard: 30,

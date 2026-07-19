@@ -1,6 +1,8 @@
 export * from "./names.js";
 export * from "./osc133.js";
 export * from "./atomic-write.js";
+export * from "./agent-session-state.js";
+export * from "./agent-session-bridges.js";
 export * from "./command-runner.js";
 export * from "./errors.js";
 export * from "./layouts.js";
@@ -11,6 +13,7 @@ export * from "./registry.js";
 export * from "./replay-buffer.js";
 export * from "./routes.js";
 export * from "./scrollback-store.js";
+export * from "./terminal-git-context.js";
 export * from "./ws.js";
 export * from "./reaper.js";
 export * from "./output-pipeline.js";

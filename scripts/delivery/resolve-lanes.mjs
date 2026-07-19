@@ -2,7 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-export const LANES = Object.freeze(["platform", "shell", "edge", "runtime", "www", "cli", "ops"]);
+export const LANES = Object.freeze(["platform", "shell", "edge", "runtime", "cli", "ops"]);
 export const GIT_DIFF_TIMEOUT_MS = 30_000;
 
 const LANE_ORDER = new Map(LANES.map((lane, index) => [lane, index]));
@@ -12,7 +12,6 @@ const DISPATCH_SELECTORS = Object.freeze({
   "deploy/shell": "shell",
   "deploy/edge": "edge",
   "deploy/runtime": "runtime",
-  "deploy/www": "www",
   "deploy/cli": "cli",
   "deploy/ops": "ops",
 });
@@ -29,7 +28,6 @@ const REQUIRED_CHECKS_BY_LANE = Object.freeze({
   shell: ["react-doctor", "shell-smoke"],
   edge: ["edge-smoke"],
   runtime: ["host-bundle-smoke"],
-  www: ["www-smoke"],
   cli: ["cli-smoke"],
   ops: ["ops-smoke"],
 });
@@ -97,13 +95,8 @@ const PATH_RULES = Object.freeze([
   },
   {
     test: (path) => path.startsWith("packages/observability/"),
-    lanes: ["ops", "platform", "shell", "www"],
+    lanes: ["ops", "platform", "shell"],
     reason: "observability package changed",
-  },
-  {
-    test: (path) => path.startsWith("www/"),
-    lanes: ["www"],
-    reason: "website/docs changed",
   },
   {
     test: (path) =>
@@ -247,7 +240,6 @@ function laneForTag(tag) {
   if (/^platform\/v\d{4}\.\d{2}\.\d{2}\.\d+$/.test(tag)) return "platform";
   if (/^shell\/v\d{4}\.\d{2}\.\d{2}\.\d+$/.test(tag)) return "shell";
   if (/^edge\/v\d{4}\.\d{2}\.\d{2}\.\d+$/.test(tag)) return "edge";
-  if (/^www\/v\d{4}\.\d{2}\.\d{2}\.\d+$/.test(tag)) return "www";
   if (/^cli-v\d+\.\d+\.\d+$/.test(tag)) return "cli";
   if (/^v[\w.-]+$/.test(tag)) return "runtime";
   throw new Error(`Unknown deploy tag: ${tag}`);
