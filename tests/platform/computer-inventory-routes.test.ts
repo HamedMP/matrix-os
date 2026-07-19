@@ -200,7 +200,7 @@ describe("canonical computer inventory route", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("routes a slot-qualified computer path to the matching shared-handle runtime", async () => {
+  it("routes a slot-qualified computer path without moving another tab's bare API calls", async () => {
     await insertMachine(db, {
       machineId: "machine-shared-primary",
       handle: "alice-shared",
@@ -250,7 +250,46 @@ describe("canonical computer inventory route", () => {
     });
 
     expect(followUp.status).toBe(200);
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.21:443/api/projects");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.20:443/api/projects");
+  });
+
+  it("routes tab-scoped slot-qualified API paths without shared cookies", async () => {
+    await insertMachine(db, {
+      machineId: "machine-tab-primary",
+      handle: "alice-tabbed",
+      runtimeSlot: "primary",
+      publicIPv4: "203.0.113.30",
+    });
+    await insertMachine(db, {
+      machineId: "machine-tab-review",
+      handle: "alice-tabbed",
+      runtimeSlot: "review",
+      publicIPv4: "203.0.113.31",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("review", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const response = await app.request(
+      "/vm/alice-tabbed/~runtime/review/api/projects",
+      {
+        headers: {
+          host: "app.matrix-os.com",
+          authorization: "Bearer clerk-session",
+        },
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.31:443/api/projects");
   });
 
   it("routes an existing long platform-provisioned computer handle", async () => {

@@ -379,9 +379,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const cookieRuntimeSlot = isAppDomain
       ? readShellRuntimeSlotCookie(path, cookieHeader)
       : null;
-    const requestRuntimeSlot = runtimeSelection.source === 'query'
-      ? runtimeSelection.slot
-      : cookieRuntimeSlot ?? runtimeSelection.slot;
+    const requestRuntimeSlot = explicitVmRoute?.runtimeSlot ?? (
+      runtimeSelection.source === 'query'
+        ? runtimeSelection.slot
+        : cookieRuntimeSlot ?? runtimeSelection.slot
+    );
     let singleMachineRuntimeSlot: string | null = null;
 
     const isGatewayPath = isAppDomain && isAppDomainGatewayPath(path);
@@ -505,7 +507,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       const machine = await getActiveUserMachineByHandle(
         db,
         explicitVmRoute.handle,
-        runtimeSelection.source === 'query' ? requestRuntimeSlot : undefined,
+        explicitVmRoute.runtimeSlot ?? (
+          runtimeSelection.source === 'query' ? requestRuntimeSlot : undefined
+        ),
       );
       if (!machine || (identity.userId && machine.clerkUserId !== identity.userId)) {
         applyNoStoreHeaders(c);
