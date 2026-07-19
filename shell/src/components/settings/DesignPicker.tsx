@@ -5,7 +5,6 @@ import { CheckIcon } from "lucide-react";
 import { DEFAULT_THEME, saveTheme, useTheme, type Theme } from "@/hooks/useTheme";
 import {
   saveDesktopConfigPatch,
-  useDesktopConfig,
   type DesktopConfig,
   type DesktopConfigPatch,
 } from "@/hooks/useDesktopConfig";
@@ -206,8 +205,6 @@ const PREVIEWS: Record<DesignStyle, () => React.ReactElement> = {
 export function DesignPicker() {
   const theme = useTheme();
   const activeId: DesignStyle = theme?.style ?? "flat";
-  useDesktopConfig();
-
   const [pendingId, setPendingId] = useState<DesignStyle | null>(null);
   const [error, setError] = useState<string | null>(null);
 
