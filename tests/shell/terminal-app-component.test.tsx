@@ -80,7 +80,7 @@ class ResizeObserverMock {
 }
 
 async function openNewSessionMenu() {
-  fireEvent.click(screen.getByRole("button", { name: "New session" }));
+  fireEvent.click(screen.getByRole("button", { name: "Choose session type" }));
   await Promise.resolve();
 }
 
@@ -1949,7 +1949,32 @@ describe("TerminalApp", () => {
     expect(screen.getByPlaceholderText("Find a session...")).toBeTruthy();
   });
 
-  it("opens the Paper new-session menu before creating a new session", async () => {
+  it("creates a shell from the primary new-session button without opening the menu", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockClear();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "New shell session" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByRole("menu", { name: "New session menu" })).toBeNull();
+    expect(fetchMock.mock.calls.some(([input, init]) => (
+      String(input).endsWith("/api/terminal/sessions") &&
+      init?.method === "POST"
+    ))).toBe(true);
+  });
+
+  it("opens the new-session menu from a grouped split-button dropdown trigger", async () => {
     render(<TerminalApp />);
 
     await act(async () => {
@@ -1975,6 +2000,52 @@ describe("TerminalApp", () => {
       String(input).endsWith("/api/terminal/sessions") &&
       init?.method === "POST"
     ))).toBe(false);
+
+    const splitButton = screen.getByTestId("terminal-new-session-split-button");
+    const primaryAction = screen.getByRole("button", { name: "New shell session" });
+    const dropdownTrigger = screen.getByRole("button", { name: "Choose session type" });
+    const dropdownChevron = screen.getByTestId("terminal-new-session-dropdown-chevron");
+
+    expect(splitButton.classList.contains("terminal-new-session-split-button")).toBe(true);
+    expect(splitButton.getAttribute("data-slot")).toBe("button-group");
+    expect(splitButton.getAttribute("role")).toBe("group");
+    expect(splitButton.getAttribute("aria-label")).toBe("New session actions");
+    expect(primaryAction.classList.contains("terminal-new-session-primary-action")).toBe(true);
+    expect(dropdownTrigger.classList.contains("terminal-new-session-dropdown-trigger")).toBe(true);
+    expect(primaryAction.nextElementSibling).toBe(dropdownTrigger);
+    expect(dropdownTrigger.style.position).toBe("");
+    expect(dropdownTrigger.getAttribute("data-state")).toBe("open");
+    expect(dropdownChevron.classList.contains("terminal-new-session-dropdown-chevron")).toBe(true);
+    expect(menu.classList.contains("terminal-new-session-menu")).toBe(true);
+
+    await act(async () => {
+      fireEvent.click(dropdownTrigger);
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByRole("menu", { name: "New session menu" })).toBeNull();
+    expect(dropdownTrigger.getAttribute("data-state")).toBe("closed");
+  });
+
+  it("opens split-button session choices with ArrowDown from the primary action", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const primaryAction = screen.getByRole("button", { name: "New shell session" });
+    const dropdownTrigger = screen.getByRole("button", { name: "Choose session type" });
+
+    await act(async () => {
+      fireEvent.keyDown(primaryAction, { key: "ArrowDown" });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("menu", { name: "New session menu" })).toBeTruthy();
+    expect(dropdownTrigger.getAttribute("data-state")).toBe("open");
   });
 
   it("keeps the new-session menu visible outside a resized drawer", async () => {
@@ -2168,7 +2239,8 @@ describe("TerminalApp", () => {
     });
 
     await openNewSessionMenu();
-    const newSessionButton = screen.getByRole("button", { name: "New session" });
+    const newSessionButton = screen.getByRole("button", { name: "New shell session" });
+    const sessionTypeButton = screen.getByRole("button", { name: "Choose session type" });
     const menu = screen.getByRole("menu", { name: "New session menu" });
 
     await act(async () => {
@@ -2177,6 +2249,7 @@ describe("TerminalApp", () => {
     });
 
     expect(newSessionButton).toHaveProperty("disabled", true);
+    expect(sessionTypeButton).toHaveProperty("disabled", true);
     expect(screen.getByTestId("terminal-session-pending-row").textContent).toContain("Creating session");
 
     await act(async () => {
@@ -2447,6 +2520,7 @@ describe("TerminalApp", () => {
     const sidebarShell = screen.getByTestId("terminal-sidebar-shell");
     expect(sidebarShell.style.transition).toContain("transform");
     expect(sidebarShell.style.opacity).toBe("1");
+    expect(sidebarShell.style.overflow).toBe("hidden");
     const rail = screen.getByTestId("terminal-collapsed-rail");
     expect(rail.style.width).toBe("76px");
     expect(rail.className).not.toContain("absolute");
@@ -3557,6 +3631,10 @@ describe("TerminalApp", () => {
     const installPill = within(menu).getAllByTestId("terminal-agent-install-pill")[0];
     expect(installPill.style.background).toBe("var(--terminal-drawer-action-bg)");
     expect(installPill.style.color).toBe("var(--terminal-drawer-action-fg)");
+    const openCodeItem = within(menu).getByRole("menuitem", { name: /OpenCode.*Install/ });
+    expect(openCodeItem.style.background).toBe("transparent");
+    expect(within(openCodeItem).getByText("OpenCode").style.color).toBe("var(--terminal-drawer-fg)");
+    expect(within(menu).getByTestId("terminal-agent-logo-opencode").style.opacity).toBe("1");
     expect(within(menu).getByTestId("terminal-agent-logo-claude")).toBeTruthy();
     expect(within(menu).getByTestId("terminal-agent-logo-codex")).toBeTruthy();
     expect(within(menu).getByTestId("terminal-agent-logo-opencode")).toBeTruthy();
