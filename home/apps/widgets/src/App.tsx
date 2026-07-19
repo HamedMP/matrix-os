@@ -103,6 +103,7 @@ function NotesWidget() {
   const [saveState, setSaveState] = useState<SaveState>("loading");
   const loaded = useRef(false);
   const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingText = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,7 +128,18 @@ function NotesWidget() {
   }, []);
 
   useEffect(() => () => {
+    const value = pendingText.current;
     if (pending.current) clearTimeout(pending.current);
+    pending.current = null;
+    pendingText.current = null;
+    if (value === null) return;
+    void (async () => {
+      try {
+        await window.MatrixOS?.writeData?.(NOTES_KEY, value);
+      } catch (err: unknown) {
+        console.warn("[widgets] notes save-on-close failed:", errMsg(err));
+      }
+    })();
   }, []);
 
   const handleChange = (value: string) => {
@@ -135,10 +147,15 @@ function NotesWidget() {
     if (!loaded.current) return;
     setSaveState("saving");
     if (pending.current) clearTimeout(pending.current);
+    pendingText.current = value;
     pending.current = setTimeout(() => {
+      const valueToSave = pendingText.current;
+      pending.current = null;
+      pendingText.current = null;
+      if (valueToSave === null) return;
       void (async () => {
         try {
-          await window.MatrixOS?.writeData?.(NOTES_KEY, value);
+          await window.MatrixOS?.writeData?.(NOTES_KEY, valueToSave);
           setSaveState("saved");
         } catch (err: unknown) {
           console.warn("[widgets] notes save failed:", errMsg(err));
