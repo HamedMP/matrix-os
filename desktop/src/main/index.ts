@@ -5,6 +5,7 @@ import { createCredentialStore } from "./auth/credential-store";
 import { installGatewayCors, installHeaderInjection } from "./auth/header-injection";
 import { EmbedService } from "./embeds/embed-service";
 import {
+  abortCodingAgentThread,
   createCodingAgentSourcePullRequest,
   createCodingAgentThread,
   createCodingAgentTurn,
@@ -285,6 +286,7 @@ if (!gotLock) {
           }),
         createAgentThread: (request) => createCodingAgentThread(auth, request),
         createAgentTurn: (request) => createCodingAgentTurn(auth, request),
+        abortAgentThread: (request) => abortCodingAgentThread(auth, request),
       });
 
       let boundsSaveTimer: ReturnType<typeof setTimeout> | null = null;

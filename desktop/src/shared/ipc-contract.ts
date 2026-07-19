@@ -86,6 +86,7 @@ const STATE_KEYS = [
   "appearance",
   "recents",
   "projectViews",
+  "providerPreferences",
 ] as const;
 
 const MAX_STATE_VALUE_BYTES = 64 * 1024;
@@ -229,6 +230,10 @@ export const INVOKE_CHANNELS = {
   "runtime:create-turn": {
     request: CodingAgentCreateTurnRequestSchema,
     response: CodingAgentCreateTurnResultSchema,
+  },
+  "runtime:abort-thread": {
+    request: z.object({ threadId: ThreadIdSchema }).strict(),
+    response: AgentThreadSnapshotSchema,
   },
   "state:get": {
     request: z.object({ key: z.enum(STATE_KEYS) }).strict(),

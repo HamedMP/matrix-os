@@ -530,8 +530,8 @@ function ConversationComposer({
   const removeQueued = useCodingAgentMessageQueue((state) => state.removeQueued);
   const submitting = turnStatus === "submitting" && turnThreadId === threadId;
   const blocked = waitingForAction || submitting || threadBusy;
-  // The preload has no abort channel yet; the Stop button stays hidden until
-  // window.matrix.abortThread exists (see abort-thread.ts).
+  // Stop renders while the thread is busy and the preload bridge carries the
+  // "runtime:abort-thread" channel (see abort-thread.ts).
   const abortSupported = agentThreadAbortSupported();
   const drainingRef = useRef(false);
   const pausedUntilBusyRef = useRef(false);
