@@ -19,14 +19,10 @@ import {
   clearMatrixAppSession,
   clerkSignOutWithTimeout,
   getSignInRedirectUrl,
-  isSignOutTimeoutError,
+  isTimeoutError,
 } from "@/lib/sign-out";
 
 type UserButtonVariant = "dock" | "menubar" | "settings";
-
-function isTimeoutError(error: unknown): boolean {
-  return isSignOutTimeoutError(error);
-}
 
 function Placeholder({ variant = "dock" }: { variant?: UserButtonVariant }) {
   const isSettings = variant === "settings";

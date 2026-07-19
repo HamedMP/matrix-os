@@ -24,7 +24,7 @@ export async function clearMatrixAppSession(): Promise<void> {
   }
 }
 
-function isTimeoutError(error: unknown): boolean {
+export function isTimeoutError(error: unknown): boolean {
   return error instanceof Error && error.name === "TimeoutError";
 }
 
@@ -49,8 +49,4 @@ export async function clerkSignOutWithTimeout(
       window.clearTimeout(timeoutId);
     }
   }
-}
-
-export function isSignOutTimeoutError(error: unknown): boolean {
-  return isTimeoutError(error);
 }
