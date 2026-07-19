@@ -79,6 +79,14 @@ describe("TerminalApp mobile actions", () => {
       if (url.endsWith("/api/terminal/layout") && init?.method !== "PUT") {
         return Promise.resolve({ ok: true, json: async () => ({ tabs: [] }) });
       }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [{ name: "main", status: "active" }],
+          }),
+        });
+      }
       if (url.endsWith("/api/terminal/sessions")) {
         return Promise.resolve({ ok: true, status: 201, json: async () => ({}) });
       }
@@ -191,6 +199,12 @@ describe("TerminalApp mobile actions", () => {
       if (url.endsWith("/api/terminal/layout") && init?.method !== "PUT") {
         return Promise.resolve({ ok: true, json: async () => ({ tabs: [] }) });
       }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ sessions: [{ name: "main", status: "active" }] }),
+        });
+      }
       if (url.endsWith("/api/terminal/sessions")) {
         const body = typeof init?.body === "string" ? JSON.parse(init.body) as { name?: string } : {};
         return Promise.resolve({ ok: true, status: 201, json: async () => ({ name: body.name }) });
@@ -234,6 +248,12 @@ describe("TerminalApp mobile actions", () => {
       }
       if (url.endsWith("/api/terminal/layout") && init?.method !== "PUT") {
         return Promise.resolve({ ok: true, json: async () => ({ tabs: [] }) });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ sessions: [{ name: "main", status: "active" }] }),
+        });
       }
       return Promise.resolve({ ok: true, status: 201, json: async () => ({}) });
     }));
