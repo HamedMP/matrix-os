@@ -52,6 +52,9 @@ export type AgentId = z.infer<typeof AgentIdSchema>;
 export const AgentCredentialStatusSchema = z.enum([
   "available",
   "missing",
+  "auth_required",
+  "check_failed",
+  "version_unsupported",
   "expired",
   "revoked",
   "failed",

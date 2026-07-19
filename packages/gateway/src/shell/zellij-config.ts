@@ -1,4 +1,4 @@
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 export const MATRIX_ZELLIJ_LAYOUT_NAME = "matrix";
 export type MatrixZellijShellThemeId = "dark" | "light" | "matrix";
@@ -7,6 +7,8 @@ export type MatrixZellijConfigPaths = {
   dir: string;
   file: string;
   shellFile: string;
+  zshenvFile: string;
+  zshrcFile: string;
   bashrcFile: string;
   promptLabelFile: string;
   layoutDir: string;
@@ -38,7 +40,45 @@ if [ -n "\${MATRIX_HOME:-}" ]; then
 fi
 `;
 
-export const MATRIX_TERMINAL_BASHRC = `# Matrix OS generated terminal rcfile.
+export const MATRIX_TERMINAL_ZSHENV = `# Matrix OS generated terminal environment forwarder.
+matrix_terminal_generated_zdotdir="$ZDOTDIR"
+matrix_terminal_owner_zdotdir="$HOME"
+if [ -r "$HOME/.zshenv" ]; then
+  ZDOTDIR="$HOME"
+  . "$HOME/.zshenv"
+  matrix_terminal_owner_zdotdir="\${ZDOTDIR:-$HOME}"
+fi
+ZDOTDIR="$matrix_terminal_generated_zdotdir"
+unset matrix_terminal_generated_zdotdir
+`;
+
+export const MATRIX_TERMINAL_ZSHRC = `# Matrix OS generated terminal rcfile.
+matrix_terminal_generated_zdotdir="$ZDOTDIR"
+matrix_terminal_owner_zdotdir="\${matrix_terminal_owner_zdotdir:-$HOME}"
+
+if [ "$matrix_terminal_owner_zdotdir" != "$matrix_terminal_generated_zdotdir" ] &&
+   [ -r "$matrix_terminal_owner_zdotdir/.zshrc" ]; then
+  ZDOTDIR="$matrix_terminal_owner_zdotdir"
+  . "$matrix_terminal_owner_zdotdir/.zshrc"
+  ZDOTDIR="$matrix_terminal_generated_zdotdir"
+fi
+unset matrix_terminal_owner_zdotdir matrix_terminal_generated_zdotdir
+
+${MATRIX_TERMINAL_PATH_BOOTSTRAP}
+
+autoload -Uz add-zsh-hook
+matrix_terminal_apply_prompt() {
+  if [ -n "\${MATRIX_TERMINAL_PROMPT:-}" ]; then
+    PROMPT="\${MATRIX_TERMINAL_PROMPT}"
+  else
+    PROMPT="%n:%~%# "
+  fi
+}
+add-zsh-hook precmd matrix_terminal_apply_prompt
+matrix_terminal_apply_prompt
+`;
+
+export const MATRIX_TERMINAL_BASHRC = `# Matrix OS generated fallback terminal rcfile.
 if [ -r "$HOME/.bashrc" ]; then
   . "$HOME/.bashrc"
 fi
@@ -86,6 +126,8 @@ export function matrixZellijConfigPaths(homePath: string): MatrixZellijConfigPat
     dir: zellijDir,
     file: join(zellijDir, "config.kdl"),
     shellFile: join(zellijDir, "matrix-terminal-shell"),
+    zshenvFile: join(zellijDir, ".zshenv"),
+    zshrcFile: join(zellijDir, ".zshrc"),
     bashrcFile: join(zellijDir, "bashrc"),
     promptLabelFile: join(zellijDir, "prompt-label.mjs"),
     layoutDir: join(zellijDir, "layouts"),
@@ -135,7 +177,12 @@ themes {
 `;
 }
 
-export function matrixTerminalShellScript(bashrcPath: string, promptLabelPath: string): string {
+export function matrixTerminalShellScript(
+  zshrcPath: string,
+  bashrcPath: string,
+  promptLabelPath: string,
+): string {
+  const zshConfigDir = dirname(resolve(zshrcPath));
   return `#!/usr/bin/env bash
 set -euo pipefail
 
@@ -143,16 +190,19 @@ export MATRIX_HOME="\${MATRIX_HOME:-\${HOME:-/home/matrix/home}}"
 export HOME="\${HOME:-$MATRIX_HOME}"
 ${MATRIX_TERMINAL_PATH_BOOTSTRAP}
 
-if [ -z "\${MATRIX_TERMINAL_PROMPT:-}" ]; then
-  matrix_prompt_label=""
-  if command -v node >/dev/null 2>&1; then
-    matrix_prompt_label="$(node ${shellSingleQuote(promptLabelPath)} 2>/dev/null || true)"
-  fi
+matrix_prompt_label=""
+if [ -z "\${MATRIX_TERMINAL_PROMPT:-}" ] && command -v node >/dev/null 2>&1; then
+  matrix_prompt_label="$(node ${shellSingleQuote(promptLabelPath)} 2>/dev/null || true)"
+fi
 
-  if [ -n "$matrix_prompt_label" ]; then
-    export MATRIX_TERMINAL_PROMPT="\\\\[\\\\e[0;1;36m\\\\]$matrix_prompt_label\\\\[\\\\e[0m\\\\]:\\\\[\\\\e[0;1;34m\\\\]\\\\w\\\\[\\\\e[0m\\\\]\\\\$ "
-  else
-    export MATRIX_TERMINAL_PROMPT="\\\\[\\\\e[0;1;36m\\\\]\\\\u\\\\[\\\\e[0m\\\\]:\\\\[\\\\e[0;1;34m\\\\]\\\\w\\\\[\\\\e[0m\\\\]\\\\$ "
+matrix_zsh="$(command -v zsh 2>/dev/null || true)"
+matrix_bash=""
+if [ -n "$matrix_zsh" ]; then
+  export SHELL="$matrix_zsh"
+else
+  matrix_bash="$(command -v bash 2>/dev/null || true)"
+  if [ -n "$matrix_bash" ]; then
+    export SHELL="$matrix_bash"
   fi
 fi
 
@@ -160,6 +210,26 @@ if [ "$#" -gt 0 ]; then
   set +e
   ( "$@" )
   set -e
+fi
+
+if [ -n "$matrix_zsh" ]; then
+  if [ -z "\${MATRIX_TERMINAL_PROMPT:-}" ]; then
+    if [ -n "$matrix_prompt_label" ]; then
+      export MATRIX_TERMINAL_PROMPT="%B%F{cyan}$matrix_prompt_label%f%b:%B%F{blue}%~%f%b%# "
+    else
+      export MATRIX_TERMINAL_PROMPT="%B%F{cyan}%n%f%b:%B%F{blue}%~%f%b%# "
+    fi
+  fi
+  export ZDOTDIR=${shellSingleQuote(zshConfigDir)}
+  exec "$matrix_zsh" -d -i
+fi
+
+if [ -z "\${MATRIX_TERMINAL_PROMPT:-}" ]; then
+  if [ -n "$matrix_prompt_label" ]; then
+    export MATRIX_TERMINAL_PROMPT="\\\\[\\\\e[0;1;36m\\\\]$matrix_prompt_label\\\\[\\\\e[0m\\\\]:\\\\[\\\\e[0;1;34m\\\\]\\\\w\\\\[\\\\e[0m\\\\]\\\\$ "
+  else
+    export MATRIX_TERMINAL_PROMPT="\\\\[\\\\e[0;1;36m\\\\]\\\\u\\\\[\\\\e[0m\\\\]:\\\\[\\\\e[0;1;34m\\\\]\\\\w\\\\[\\\\e[0m\\\\]\\\\$ "
+  fi
 fi
 
 exec bash --noprofile --rcfile ${shellSingleQuote(bashrcPath)} -i

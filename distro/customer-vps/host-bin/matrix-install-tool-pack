@@ -78,6 +78,18 @@ run_as_matrix() {
       "$@"
     return
   fi
+  # setpriv avoids PAM account checks: sudo fails outright when the invoking
+  # or target account has an expired password (Hetzner expires root's).
+  if [ "$(id -u)" = "0" ] && command -v setpriv >/dev/null 2>&1; then
+    setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_USER" --init-groups env \
+      HOME="$MATRIX_RUNTIME_HOME" \
+      XDG_CONFIG_HOME="$MATRIX_RUNTIME_HOME/.config" \
+      XDG_DATA_HOME="$MATRIX_RUNTIME_HOME/.local/share" \
+      XDG_CACHE_HOME="$MATRIX_RUNTIME_HOME/.cache" \
+      PATH="$MATRIX_RUNTIME_HOME/.local/bin:$NODE_PREFIX/bin:/usr/local/bin:/usr/bin:/bin" \
+      "$@"
+    return
+  fi
   sudo -H -u "$MATRIX_RUNTIME_USER" env \
     HOME="$MATRIX_RUNTIME_HOME" \
     XDG_CONFIG_HOME="$MATRIX_RUNTIME_HOME/.config" \
@@ -265,7 +277,12 @@ install_linux_tools() {
     return
   fi
   if [ "$(id -u)" = "0" ]; then
-    sudo -H -u "$MATRIX_RUNTIME_USER" /opt/matrix/bin/matrix-install-linux-tools
+    if command -v setpriv >/dev/null 2>&1; then
+      setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_USER" --init-groups \
+        env HOME="$MATRIX_RUNTIME_HOME" /opt/matrix/bin/matrix-install-linux-tools
+    else
+      sudo -H -u "$MATRIX_RUNTIME_USER" /opt/matrix/bin/matrix-install-linux-tools
+    fi
   else
     /opt/matrix/bin/matrix-install-linux-tools
   fi

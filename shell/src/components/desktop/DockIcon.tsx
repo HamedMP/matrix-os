@@ -1,4 +1,7 @@
+import { useRef } from "react";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
+import { useThemeStyle } from "../window/useThemeStyle";
+import { useDockMagnification } from "./useDockMagnification";
 import {
   Tooltip,
   TooltipContent,
@@ -40,9 +43,15 @@ export function DockIcon({
 }) {
   const initial = name.charAt(0).toUpperCase();
   const { showImage, onError: onImgError } = useIconWithFallback(iconUrl);
+  // macOS Dock magnification — active only under the macos-glass design;
+  // every other design gets zero listeners and zero style writes.
+  const themeStyle = useThemeStyle();
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  useDockMagnification(buttonRef, themeStyle === "macos-glass");
 
   const btn = (
     <button
+      ref={buttonRef}
       type="button"
       onClick={onClick}
       className="relative flex items-center justify-center rounded-xl shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all bg-card border border-border/60 overflow-hidden"

@@ -5,7 +5,7 @@
 The platform service (`packages/platform/`) is the Matrix OS control plane. It handles Clerk authentication, customer VPS provisioning, Cloudflare routing, R2 host-bundle publication, upgrade orchestration, and platform-owned integrations. Production user runtime is VPS-native: one customer VPS per active user.
 
 ```
-Vercel (www/)
+Vercel (private FinnaAI/matrix-os-site repository)
   |-- matrix-os.com (landing, signup/login, dashboard, admin)
   |-- Clerk auth + Inngest provisioning
   |

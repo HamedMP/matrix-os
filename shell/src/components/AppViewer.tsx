@@ -45,6 +45,11 @@ function readCurrentTheme(): ThemeVars {
   return getThemeVariables(style);
 }
 
+function readCurrentDesign(): string {
+  if (typeof document === "undefined") return "flat";
+  return document.documentElement.dataset.themeStyle ?? "flat";
+}
+
 async function handleBridgeFetch(appName: string, payload: unknown, port: MessagePort): Promise<void> {
   try {
     if (!payload || typeof payload !== "object") {
@@ -98,7 +103,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     const onLoad = () => {
       try {
         const themeVars = readCurrentTheme();
-        const script = buildBridgeScript(appName, themeVars);
+        const script = buildBridgeScript(appName, themeVars, readCurrentDesign());
         // Inject bridge directly into iframe DOM, then trigger reload.
         const doc = iframe.contentDocument;
         if (doc) {
@@ -133,7 +138,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       try {
         const themeVars = readCurrentTheme();
         iframe.contentWindow?.postMessage(
-          { type: "os:theme-update", payload: themeVars },
+          { type: "os:theme-update", payload: themeVars, design: readCurrentDesign() },
           "*",
         );
       } catch (err) {
@@ -146,7 +151,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
 
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["style", "class"],
+      attributeFilter: ["style", "class", "data-theme-style"],
     });
 
     return () => observer.disconnect();
@@ -272,7 +277,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       })
       .then((html) => {
         if (!cancelled) {
-          setIframeHtml(injectBridgeIntoAppHtml(html, appName, readCurrentTheme(), baseHref));
+          setIframeHtml(injectBridgeIntoAppHtml(html, appName, readCurrentTheme(), baseHref, readCurrentDesign()));
         }
       })
       .catch((err: unknown) => {

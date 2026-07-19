@@ -8,6 +8,7 @@ import { issueSyncJwt } from '../../packages/platform/src/sync-jwt.js';
 import {
   getOnboardingFirstRun,
   insertUserMachine,
+  upsertBillingOverride,
   type PlatformDB,
 } from '../../packages/platform/src/db.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
@@ -52,6 +53,32 @@ describe('platform/journey-routes', () => {
       const body = await res.json();
       expect(body.phase).toBe('plan_required');
       expect(body.nextAction.kind).toBe('open_plans');
+    });
+
+    it('validates runtimeSlot and derives progress for that slot', async () => {
+      await upsertBillingOverride(db, {
+        id: 'override-active', clerkUserId: 'user_123', planSlug: 'internal', status: 'active',
+        maxRuntimeSlots: 2, includedRuntimeSlots: 2, addonRuntimeSlots: 0,
+        defaultServerType: 'cpx32', allowedServerTypes: ['cpx32'], reason: 'test', createdBy: 'test',
+        expiresAt: null, revokedAt: null, createdAt: '2026-06-11T00:00:00.000Z',
+      });
+      await insertUserMachine(db, {
+        machineId: 'm-secondary', clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'studio',
+        status: 'provisioning', provisionedAt: '2026-06-11T11:59:00.000Z',
+      });
+      const app = routes();
+
+      const response = await app.request('/api/journey?runtimeSlot=studio');
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        phase: 'provisioning',
+        progress: { stage: 'creating_server' },
+      });
+
+      const invalid = await app.request('/api/journey?runtimeSlot=Bad%20Slot!');
+      expect(invalid.status).toBe(400);
+      await expect(invalid.json()).resolves.toEqual({ error: 'Invalid request' });
+      expect((await app.request('/api/journey?runtimeSlot=studio-')).status).toBe(400);
     });
 
     it('503 when a journey dependency fails (no phase guessing)', async () => {

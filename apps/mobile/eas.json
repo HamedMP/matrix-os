@@ -1,12 +1,12 @@
 {
   "cli": {
-    "version": ">= 13.0.0",
+    "version": ">= 20.1.0",
     "appVersionSource": "remote"
   },
   "build": {
     "base": {
-      "node": "20.19.4",
-      "pnpm": "10.6.2"
+      "node": "24.14.0",
+      "pnpm": "10.33.4"
     },
     "development": {
       "extends": "base",
@@ -34,6 +34,9 @@
     "production": {
       "extends": "base",
       "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      },
       // EXPO_PUBLIC_POSTHOG_API_KEY is intentionally NOT set here — provide it as
       // an EAS secret/env var so the key is never committed. When it is absent the
       // app runs analytics-free (see apps/mobile/lib/analytics.ts).
@@ -45,6 +48,9 @@
   },
   "submit": {
     "production": {
+      "android": {
+        "track": "internal"
+      },
       "ios": {
         // Apple ID auth. ascAppId + appleTeamId are intentionally omitted so EAS
         // auto-resolves them (finds/creates the ASC app by bundleIdentifier and

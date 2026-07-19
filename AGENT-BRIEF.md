@@ -35,7 +35,6 @@ packages/kernel/     # AI kernel (Agent SDK, agents, IPC tools, hooks, SOUL, ski
 packages/gateway/    # Hono HTTP/WebSocket gateway + channels + cron + heartbeat
 packages/platform/   # Multi-tenant platform service (Clerk, orchestrator)
 shell/               # Next.js 16 desktop shell (React 19)
-www/                 # Landing page + dashboard + auth (Next.js, Clerk)
 home/                # File system template (copied to ~/matrixos/ on first boot)
 tests/               # Vitest test suites (mirrors packages/ structure)
 specs/               # Architecture specs (one folder per phase)
@@ -77,10 +76,9 @@ bin/                 # CLI entry points
 - `hooks/useSocket.ts` -- WebSocket connection.
 - `components/ui-blocks/` -- Rich content rendering (cards, options, status).
 
-### www (www/src/app/)
-- `page.tsx` -- Landing page (hero, features, Web4, CTA).
-- `signup/` -- Clerk signup (currently centered, being redesigned).
-- `login/` -- Clerk login.
+### Public website
+The landing page, public docs, signup, and login live in the private
+`FinnaAI/matrix-os-site` repository and deploy independently through Vercel.
 - `dashboard/` -- User dashboard (instance status, provision).
 - `admin/` -- Admin panel.
 
@@ -149,9 +147,9 @@ Each spec lives in `specs/{number}-{name}/tasks.md`. Read your assigned spec's t
 ```
 GROUP 1 (no deps, start immediately):
   014 Skills Library      T600-T614   home/agents/skills/ only
-  020 Signup Redesign     T700-T709   www/ only
-  022 Whitepaper          T730-T739   www/ only (content)
-  023 Landing Page        T740-T752   www/ only
+  020 Signup Redesign     T700-T709   historical; moved to matrix-os-site
+  022 Whitepaper          T730-T739   historical; moved to matrix-os-site
+  023 Landing Page        T740-T752   historical; moved to matrix-os-site
   018 CLI                 T680-T689   new bin/ + package
 
 GROUP 2 (no deps between them, start with Group 1):

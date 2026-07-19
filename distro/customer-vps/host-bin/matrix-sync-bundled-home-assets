@@ -61,6 +61,21 @@ const userOwnedPrefixes = [
   "system/wallpapers/",
 ];
 
+// OS-bundled wallpapers are template-managed even though system/wallpapers/
+// is a user-owned prefix: the OS design presets (Windows XP, Windows 11,
+// macOS) and the default background must reach existing VPS homes, not only
+// fresh first-boot homes. This set must list exact file paths only — every
+// other file under system/wallpapers/ stays user-owned and is never touched.
+// (The sync loop below only adds/updates files listed in the template
+// manifest and never deletes anything, so user-uploaded wallpapers are safe
+// either way.)
+const systemOwnedWallpapers = new Set([
+  "system/wallpapers/macos-light.svg",
+  "system/wallpapers/moraine-lake.jpg",
+  "system/wallpapers/win11-bloom.jpg",
+  "system/wallpapers/xp-bliss.jpg",
+]);
+
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -100,6 +115,7 @@ function safeRelPath(relPath) {
 }
 
 function isProtectedUserPath(relPath) {
+  if (systemOwnedWallpapers.has(relPath)) return false;
   return userOwnedFiles.has(relPath) || userOwnedPrefixes.some((prefix) => relPath.startsWith(prefix));
 }
 

@@ -1,0 +1,518 @@
+/* ═══════════════════════════════════════════════════════════════
+   OS session surfaces: per-design boot screens and the lock /
+   user-switch / log-off simulation overlays. All styling for the
+   components under components/os-session/ lives here so no other
+   stylesheet needs to change. Every overlay is position:fixed, so
+   the desktop beneath never shifts (UX rule: no layout shift).
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Shared ──────────────────────────────────────────────────── */
+
+.os-boot-screen {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 48px;
+  background: #000000;
+  user-select: none;
+}
+
+/* ── macOS boot: centered white logo, thin gray filling bar ──── */
+
+.os-boot-macos-bar {
+  width: 220px;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.25);
+  overflow: hidden;
+}
+
+.os-boot-macos-fill {
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: #d2d2d7;
+  animation: os-boot-macos-fill 2.4s ease-out forwards;
+}
+
+@keyframes os-boot-macos-fill {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+/* ── Windows XP boot: flag + wordmark, three sliding blocks ──── */
+
+.os-boot-xp-logo {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.os-boot-xp-wordmark {
+  display: flex;
+  flex-direction: column;
+  line-height: 1;
+  color: #ffffff;
+  font-family: "Franklin Gothic Medium", "Segoe UI", Tahoma, sans-serif;
+}
+
+.os-boot-xp-microsoft {
+  font-size: 15px;
+  letter-spacing: 0.5px;
+  color: #d7d7d7;
+}
+
+.os-boot-xp-windows {
+  font-size: 44px;
+  font-weight: 700;
+}
+
+.os-boot-xp-edition {
+  margin-left: 10px;
+  color: #ff6a2a;
+  font-style: italic;
+}
+
+.os-boot-xp-track {
+  position: relative;
+  width: 158px;
+  height: 16px;
+  border: 1px solid #8a8a8a;
+  border-radius: 3px;
+  overflow: hidden;
+  background: #111111;
+}
+
+.os-boot-xp-blocks {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  display: flex;
+  gap: 4px;
+  animation: os-boot-xp-slide 1.6s linear infinite;
+}
+
+.os-boot-xp-blocks span {
+  width: 10px;
+  height: 10px;
+  border-radius: 1px;
+  background: linear-gradient(to bottom, #4aa3ff 0%, #0f63c9 100%);
+}
+
+@keyframes os-boot-xp-slide {
+  from { transform: translateX(-42px); }
+  to { transform: translateX(158px); }
+}
+
+/* ── Windows 11 boot: blue logo, spinning-dots ring ──────────── */
+
+.os-boot-win11-spinner {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  animation: os-boot-win11-spin 1.8s linear infinite;
+}
+
+.os-boot-win11-spinner span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin: -2.5px;
+  border-radius: 50%;
+  background: #ffffff;
+}
+
+/* Five dots arranged on a ring, like the Win11 boot spinner. */
+.os-boot-win11-spinner span:nth-child(1) { transform: rotate(0deg) translateY(-19px); opacity: 1; }
+.os-boot-win11-spinner span:nth-child(2) { transform: rotate(72deg) translateY(-19px); opacity: 0.85; }
+.os-boot-win11-spinner span:nth-child(3) { transform: rotate(144deg) translateY(-19px); opacity: 0.7; }
+.os-boot-win11-spinner span:nth-child(4) { transform: rotate(216deg) translateY(-19px); opacity: 0.55; }
+.os-boot-win11-spinner span:nth-child(5) { transform: rotate(288deg) translateY(-19px); opacity: 0.4; }
+
+@keyframes os-boot-win11-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ── XP dialogs (Log Off Windows / Turn off computer) ────────── */
+
+.os-xp-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.os-xp-dialog-scrim {
+  position: absolute;
+  inset: 0;
+  border: none;
+  padding: 0;
+  background: rgba(0, 24, 72, 0.45);
+  cursor: default;
+}
+
+.os-xp-dialog {
+  position: relative;
+  width: 340px;
+  border-radius: 8px 8px 4px 4px;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  font-family: Tahoma, "Segoe UI", sans-serif;
+}
+
+.os-xp-dialog-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+  background: linear-gradient(to bottom, #0058e6 0%, #3a93ff 50%, #0058e6 100%);
+}
+
+.os-xp-dialog-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 3px;
+  background: linear-gradient(to bottom, #f39c8a 0%, #d94f30 100%);
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.os-xp-dialog-close svg {
+  width: 12px;
+  height: 12px;
+}
+
+.os-xp-dialog-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-evenly;
+  gap: 8px;
+  padding: 22px 14px;
+  background: linear-gradient(to bottom, #3d6fd8 0%, #2b57ad 100%);
+}
+
+.os-xp-dialog-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 88px;
+  padding: 8px 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #ffffff;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.os-xp-dialog-action:hover,
+.os-xp-dialog-action:focus-visible {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.os-xp-dialog-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.os-xp-dialog-chip svg {
+  width: 20px;
+  height: 20px;
+  color: #ffffff;
+}
+
+.os-xp-chip-switch { background: linear-gradient(to bottom, #7ec56b 0%, #3d9e3d 100%); }
+.os-xp-chip-logoff { background: linear-gradient(to bottom, #f7b733 0%, #e08a00 100%); }
+.os-xp-chip-cancel { background: linear-gradient(to bottom, #b9b9b9 0%, #7a7a7a 100%); }
+.os-xp-chip-standby { background: linear-gradient(to bottom, #b9b9b9 0%, #7a7a7a 100%); }
+.os-xp-chip-power { background: linear-gradient(to bottom, #f39c8a 0%, #d94f30 100%); }
+.os-xp-chip-restart { background: linear-gradient(to bottom, #7ec56b 0%, #3d9e3d 100%); }
+
+/* ── XP Welcome screen ───────────────────────────────────────── */
+
+.os-xp-welcome {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 48px 0;
+  background: radial-gradient(ellipse at 50% 35%, #6d8fd3 0%, #3b5cb7 45%, #1e3a8a 100%);
+  font-family: "Franklin Gothic Medium", "Segoe UI", Tahoma, sans-serif;
+  user-select: none;
+}
+
+.os-xp-welcome-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.os-xp-welcome-wordmark {
+  display: flex;
+  flex-direction: column;
+  line-height: 1;
+  color: #ffffff;
+}
+
+.os-xp-welcome-microsoft {
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.os-xp-welcome-windows {
+  font-size: 36px;
+  font-weight: 700;
+}
+
+.os-xp-welcome-edition {
+  margin-left: 8px;
+  color: #ff6a2a;
+  font-style: italic;
+}
+
+.os-xp-welcome-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.os-xp-welcome-tile {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 22px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.os-xp-welcome-tile:hover,
+.os-xp-welcome-tile:focus-visible {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.7);
+}
+
+.os-xp-welcome-user {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 20px;
+  color: #ffffff;
+}
+
+.os-xp-welcome-user .taskbar-avatar,
+.os-xp-welcome-user .taskbar-avatar-fallback {
+  border-radius: 6px;
+}
+
+.os-xp-welcome-caption {
+  margin: 0;
+  font-size: 15px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* ── XP safe-to-turn-off screen ──────────────────────────────── */
+
+.os-xp-safeoff {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  border: none;
+  background: #000000;
+  cursor: pointer;
+}
+
+.os-xp-safeoff span:first-child {
+  color: #f0a13a;
+  font-size: 22px;
+  font-weight: 700;
+  font-family: Tahoma, "Segoe UI", sans-serif;
+}
+
+.os-xp-safeoff-hint {
+  color: #666666;
+  font-size: 12px;
+  font-family: Tahoma, "Segoe UI", sans-serif;
+}
+
+/* ── Windows 11 lock screen ──────────────────────────────────── */
+
+.os-win11-lock {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  background: rgba(12, 20, 38, 0.35);
+  backdrop-filter: blur(60px) saturate(140%);
+  -webkit-backdrop-filter: blur(60px) saturate(140%);
+  color: #ffffff;
+  user-select: none;
+}
+
+.os-win11-lock-clock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-shadow: 0 2px 16px rgba(0, 0, 0, 0.4);
+}
+
+.os-win11-lock-time {
+  font-size: 96px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -1px;
+}
+
+.os-win11-lock-date {
+  font-size: 22px;
+  font-weight: 500;
+}
+
+.os-win11-lock-hint {
+  margin: 0;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.os-win11-lock-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 36px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.os-win11-lock-tile:hover,
+.os-win11-lock-tile:focus-visible {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.os-win11-lock-user {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  font-size: 22px;
+  color: #ffffff;
+}
+
+/* ── macOS lock screen ───────────────────────────────────────── */
+
+.os-mac-lock {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: rgba(30, 30, 46, 0.3);
+  backdrop-filter: blur(48px) saturate(160%);
+  -webkit-backdrop-filter: blur(48px) saturate(160%);
+  color: #ffffff;
+  user-select: none;
+}
+
+.os-mac-lock-user {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  font-size: 24px;
+  font-weight: 600;
+  color: #ffffff;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+}
+
+.os-mac-lock-form {
+  display: flex;
+  justify-content: center;
+}
+
+.os-mac-lock-input {
+  width: 200px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+  color: #ffffff;
+  font-size: 14px;
+  text-align: center;
+  outline: none;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.os-mac-lock-input::placeholder {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.os-mac-lock-input:focus-visible {
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.45);
+}
+
+.os-mac-lock-hint {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* ── Reduced motion: static flash, no animated progress ──────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .os-boot-macos-fill {
+    animation: none;
+    width: 45%;
+  }
+
+  .os-boot-xp-blocks {
+    animation: none;
+    transform: translateX(58px);
+  }
+
+  .os-boot-win11-spinner {
+    animation: none;
+  }
+}

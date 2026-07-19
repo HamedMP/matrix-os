@@ -470,7 +470,7 @@ exit 99
     expect(cloudInit).toContain('ln -sfn /home/matrix/home /home/matrixos/home');
     expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common');
     expect(cloudInit).toContain('add-apt-repository -y universe');
-    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip');
+    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip zsh');
     expect(cloudInit).toContain("cat >/etc/apparmor.d/bwrap <<'EOF'");
     expect(cloudInit).toContain('profile bwrap /usr/bin/bwrap flags=(unconfined) {');
     expect(cloudInit).toContain('      userns,');
@@ -511,9 +511,11 @@ exit 99
     expect(cloudInit).toContain('sudo');
     expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common');
     expect(cloudInit).toContain('add-apt-repository -y universe');
-    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip');
+    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip zsh');
     expect(cloudInit).toContain('install -d -o root -g root -m 0750 /etc/sudoers.d');
     expect(cloudInit).toContain("printf 'matrix ALL=(ALL) NOPASSWD:ALL\\n' >/etc/sudoers.d/matrix");
+    expect(cloudInit).toContain('chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 root');
+    expect(cloudInit).toContain('chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 matrix');
     expect(cloudInit).toContain('chmod 0440 /etc/sudoers.d/matrix');
     expect(cloudInit).toContain('visudo -cf /etc/sudoers.d/matrix');
     expect(cloudInit).toContain('loginctl enable-linger matrix');
@@ -698,7 +700,7 @@ exit 99
     }
     expect(cloudInit).toMatch(/for required_bin in matrixctl matrix-db-backup\.sh matrix-restore\.sh /);
     expect(cloudInit).toContain('path: /etc/systemd/system/matrix-db-backup.timer');
-    expect(cloudInit).toContain('docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip');
+    expect(cloudInit).toContain('docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip zsh');
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');

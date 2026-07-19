@@ -194,14 +194,10 @@ git show v0.1.0
 git log $(git describe --tags --abbrev=0)..HEAD --oneline
 ```
 
-## www (Vercel)
+## Public site (Vercel)
 
-Vercel deploys from `main` automatically. To deploy a specific tag:
-```bash
-git checkout v0.X.0
-cd www
-vercel --prod
-```
+The public site deploys independently from the private `FinnaAI/matrix-os-site`
+repository. Site releases and rollbacks must be performed from that repository.
 
 Or configure Vercel to deploy on tag push via GitHub webhook.
 
