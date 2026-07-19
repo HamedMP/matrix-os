@@ -1609,6 +1609,32 @@ describe("platform proxy routing", () => {
     );
   });
 
+  it("keeps runtime provisioning server-authenticated for signed-out requests", async () => {
+    const customerVpsService = {
+      provision: vi.fn(),
+    };
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({ verifyToken: vi.fn().mockResolvedValue(null) }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: customerVpsService as unknown as CustomerVpsService,
+    });
+
+    const res = await app.request("/api/auth/provision-runtime", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ runtime: "studio" }),
+    });
+
+    expect(res.status).toBe(401);
+    await expect(res.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(customerVpsService.provision).not.toHaveBeenCalled();
+  });
+
   it("lets a signed-in checkout return start hosted runtime provisioning without admin credentials", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     await deleteContainer(db, "alice");
@@ -3013,6 +3039,40 @@ describe("platform proxy routing", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:3200/runtime");
     expect(await res.text()).toBe("react-runtime-manager");
+  });
+
+  it("returns a bounded no-store 503 when the runtime auth shell is unavailable", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    const timeout = new Error("The operation was aborted due to timeout");
+    timeout.name = "TimeoutError";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(timeout);
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/runtime", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(503);
+    expect(res.headers.get("cache-control")).toBe("no-store, private");
+    expect(res.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("retry-after")).toBe("5");
+    const html = await res.text();
+    expect(html.length).toBeLessThan(4_096);
+    expect(html).toContain("Matrix OS shell unavailable");
+    expect(html).not.toContain("Loading your Matrix computer");
+    expect(html).not.toContain('data-matrix-platform-fallback-auth="true"');
   });
 
   it("routes explicit VM URLs to the named computer and keeps API calls on that computer", async () => {
