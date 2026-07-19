@@ -15,13 +15,13 @@ import {
   MIN_INSPECTOR_WIDTH_PCT,
   useInspectorLayout,
 } from "../panels/inspector-layout-store";
-import { AgentPreviewList } from "../coding-agents/AgentWorkspaceContext";
 import { AgentConversationView } from "../coding-agents/AgentConversationView";
 import {
   AgentConversationInspector,
   type AgentConversationInspectorTab,
 } from "../coding-agents/AgentConversationInspector";
 import { InspectorFilesPanel } from "../panels/InspectorFilesPanel";
+import { InspectorPreviewPanel } from "../panels/InspectorPreviewPanel";
 import { InspectorTerminalPanel } from "../panels/InspectorTerminalPanel";
 import { toast } from "sonner";
 import { AgentComposer, type ComposerSeed } from "../coding-agents/AgentComposer";
@@ -353,7 +353,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
           />
         )}
         preview={previewEnabled ? (
-          <AgentPreviewList summary={summary} />
+          <InspectorPreviewPanel summary={summary} />
         ) : (
           <InspectorEmptyState message="No preview capability is available for this project." />
         )}
