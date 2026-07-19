@@ -1,12 +1,11 @@
 import { MessageSquare, Server } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { defaultAgentThreadComposerDraft } from "@matrix-os/contracts";
+import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import { Button, EmptyState } from "../../design/primitives";
 import { useProjectChatLauncher } from "../../lib/project-chat";
-import {
-  clearCodingAgentThreadSelection,
-  useCodingAgentWorkspace,
-} from "../../stores/coding-agent-workspace";
+import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { useConnection } from "../../stores/connection";
 import { useProjectView } from "../../stores/project-view";
 import { useProjectWorkspaces } from "../../stores/project-workspaces";
 import { AgentPreviewList, AgentTerminalList } from "../coding-agents/AgentWorkspaceContext";
@@ -60,22 +59,26 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const selectedThreadId = useProjectView((s) => s.entries[projectId]?.selectedThreadId ?? null);
   const setSelectedThread = useProjectView((s) => s.setSelectedThread);
   const composerRequest = useProjectChatLauncher((s) => s.composerRequest);
+  const runtimeScope = useConnection(codingAgentRuntimeScope);
   const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
 
-  // Self-sufficiency bootstrap (tests, future embeds): when no shell bootstrap
-  // has loaded the runtime summary yet, the view loads it itself. ProjectTab
-  // and MissionControl run the same guarded check, so only one refresh fires.
+  // Runtime-scope reconciliation + self-sufficiency bootstrap: the first
+  // mounted view claims the scope (clearing the previous account's data),
+  // then loads the summary when nothing has. ProjectTab and MissionControl
+  // run the same guarded check, so only one refresh fires per scope.
   useEffect(() => {
     const workspace = useCodingAgentWorkspace.getState();
-    if (workspace.status !== "idle" || workspace.summary) return;
-    void workspace.refresh().then(() => {
-      const current = useCodingAgentWorkspace.getState();
-      if (current.notificationPreferencesStatus === "idle") {
-        void current.loadNotificationPreferences();
+    workspace.ensureRuntimeScope(runtimeScope);
+    const current = useCodingAgentWorkspace.getState();
+    if (current.status !== "idle" || current.summary) return;
+    void current.refresh().then(() => {
+      const after = useCodingAgentWorkspace.getState();
+      if (after.notificationPreferencesStatus === "idle") {
+        void after.loadNotificationPreferences();
       }
     });
-  }, []);
+  }, [runtimeScope]);
 
   const projectWorkspaceEnabled = summary
     ? capabilityEnabled(summary, "codingAgentsProjectWorkspace")
@@ -86,19 +89,39 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     void ensureWorkspace(projectId);
   }, [ensureWorkspace, projectId, projectWorkspaceEnabled]);
 
+  // The shared snapshot store follows the ACTIVE project tab's selection.
+  // Background tabs keep their per-project selection in the view store but
+  // never bind the snapshot, so two open project chats cannot fight over it.
+  // When the runtime evicts a previously bound conversation (a refresh says
+  // the thread is gone) and the project workspace doesn't list it either, the
+  // selection is dropped instead of resurrecting a vanished conversation.
+  const boundThreadRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!active) return;
+    if (!active || !selectedThreadId) return;
     const workspace = useCodingAgentWorkspace.getState();
-    if (!selectedThreadId) {
-      // No chat selected here: the shared snapshot must not keep another
-      // project's conversation warm while this tab is visible.
-      if (workspace.activeThreadId) clearCodingAgentThreadSelection();
+    if (workspace.activeThreadId === selectedThreadId) {
+      if (workspace.threadSnapshot?.thread.id === selectedThreadId) {
+        boundThreadRef.current = selectedThreadId;
+      }
       return;
     }
-    if (workspace.activeThreadId !== selectedThreadId) {
-      void workspace.loadThreadSnapshot(selectedThreadId);
+    const listedInWorkspace = (() => {
+      const entry = useProjectWorkspaces.getState().entries[projectId]?.workspace;
+      if (!entry) return false;
+      return [...entry.projectThreads.items, ...entry.taskThreads.items]
+        .some((thread) => thread.id === selectedThreadId);
+    })();
+    if (
+      boundThreadRef.current === selectedThreadId
+      && workspace.activeThreadId === null
+      && !listedInWorkspace
+    ) {
+      boundThreadRef.current = null;
+      setSelectedThread(projectId, null);
+      return;
     }
-  }, [active, selectedThreadId]);
+    void workspace.loadThreadSnapshot(selectedThreadId);
+  }, [active, selectedThreadId, activeThreadId, threadSnapshot?.thread.id, projectId, setSelectedThread]);
 
   async function openNewChat(taskId?: string) {
     if (!summary) return;
@@ -267,12 +290,14 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
                 seed={composerSeed}
                 focusRequestId={composerFocusRequestId}
                 onCreated={() => {
+                  // Surface the new chat in the list and select it, whatever
+                  // the capability shape — a created conversation must never
+                  // land on the empty state.
+                  const createdId = useCodingAgentWorkspace.getState().activeThreadId;
+                  if (createdId) setSelectedThread(projectId, createdId);
                   if (!projectWorkspaceEnabled) return;
                   setComposerOpen(false);
                   setComposerSeed(null);
-                  // Surface the new chat in the list and select it.
-                  const createdId = useCodingAgentWorkspace.getState().activeThreadId;
-                  if (createdId) setSelectedThread(projectId, createdId);
                   void refreshWorkspace(projectId);
                 }}
               />

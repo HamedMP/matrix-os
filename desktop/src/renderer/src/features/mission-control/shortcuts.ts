@@ -138,8 +138,11 @@ export function handleNewAgentRunShortcut(
     ui.setComposerOpen(true);
     return;
   }
-  if (canRequestAgentComposerFocus(workspace.summary)) workspace.requestComposerFocus();
-  openProjectChat(projectId, { compose: true });
+  // Opening the composer itself is gated on thread creation support; the
+  // project's Chats view still opens either way.
+  const canCompose = canRequestAgentComposerFocus(workspace.summary);
+  if (canCompose) workspace.requestComposerFocus();
+  openProjectChat(projectId, { compose: canCompose });
 }
 
 export function useGlobalShortcuts(): void {
