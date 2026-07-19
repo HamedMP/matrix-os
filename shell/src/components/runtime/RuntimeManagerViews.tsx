@@ -1,13 +1,12 @@
 "use client";
 
-import { BrandCard, Eyebrow, palette as brand, StatusPill } from "@matrix-os/brand";
+import { BrandCard, Eyebrow } from "@matrix-os/brand";
 import type { MatrixComputer } from "@matrix-os/contracts";
 import {
   ArrowLeftIcon,
   CheckCircle2Icon,
   ChevronRightIcon,
   CircleAlertIcon,
-  CloudIcon,
   ExternalLinkIcon,
   Loader2Icon,
   PlusIcon,
@@ -48,76 +47,28 @@ export function ComputerInventory({
   onRetry: () => void;
   onAdd: () => void;
 }) {
-  const customerCount = overview.status === "ready"
-    ? overview.inventory.items.filter((computer) => computer.kind === "customer").length
-    : 0;
-  const readyCount = overview.status === "ready"
-    ? overview.inventory.items.filter((computer) => computer.availability === "available").length
-    : 0;
-
   return (
-    <div>
-      <section className="relative overflow-hidden rounded-[28px] border border-white/70 bg-white/55 px-5 py-7 shadow-[0_32px_100px_rgba(50,53,46,0.12)] backdrop-blur-xl sm:px-9 sm:py-10 lg:px-12 lg:py-12">
-        <div className="absolute -right-24 -top-32 size-80 rounded-full bg-ember/10 blur-3xl sm:-right-10 sm:size-[28rem]" aria-hidden="true" />
-        <div className="absolute -bottom-40 -left-24 size-80 rounded-full bg-cream/80 blur-3xl" aria-hidden="true" />
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute -bottom-28 right-4 hidden h-[25rem] w-[19rem] bg-forest/[0.045] lg:block"
-          style={{
-            WebkitMask: "url('/matrix-logo.svg') no-repeat center / contain",
-            mask: "url('/matrix-logo.svg') no-repeat center / contain",
-          }}
-        />
-
-        <div className="relative max-w-4xl">
-          <div className="flex items-center gap-3">
-            <span className="grid size-10 place-items-center rounded-2xl border border-forest/10 bg-white/75 shadow-[0_12px_32px_rgba(50,53,46,0.08)]">
-              <span
-                aria-hidden="true"
-                className="h-5 w-4 bg-ember"
-                style={{
-                  WebkitMask: "url('/matrix-logo.svg') no-repeat center / contain",
-                  mask: "url('/matrix-logo.svg') no-repeat center / contain",
-                }}
-              />
-            </span>
-            <Eyebrow>Switch computer</Eyebrow>
-          </div>
-          <h1 className="mt-5 max-w-4xl bg-[linear-gradient(92deg,#32352E_0%,#434E3F_35%,#D06F25_52%,#434E3F_72%,#32352E_100%)] bg-[length:220%_100%] bg-clip-text text-[clamp(2.7rem,7.5vw,5.6rem)] font-medium uppercase leading-[0.91] tracking-[-0.055em] text-transparent">
-            Choose your Matrix OS computer
-          </h1>
-          <p className="mt-5 max-w-2xl text-sm leading-6 text-forest/65 sm:text-base sm:leading-7">
-            Every computer is its own private workspace. Open the one you need, check a build, or create another with independent files and data.
-          </p>
-          <div className="mt-7 flex flex-col gap-4 sm:flex-row sm:items-center">
-            <button type="button" onClick={onAdd} className="primary-action w-full sm:w-auto">
-              <PlusIcon className="size-4" aria-hidden="true" /> Get another computer
-            </button>
-            {overview.status === "ready" ? (
-              <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-forest/55" aria-label="Computer summary">
-                <span className="rounded-full border border-forest/10 bg-white/65 px-3 py-2">{customerCount} {customerCount === 1 ? "computer" : "computers"}</span>
-                <span className="rounded-full border border-forest/10 bg-white/65 px-3 py-2">{readyCount} ready</span>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </section>
-
-      <div className="mt-10 flex items-end justify-between gap-4">
-        <div>
-          <Eyebrow>Available workspaces</Eyebrow>
-          <h2 className="mt-2 text-2xl font-semibold tracking-[-0.025em] text-deep sm:text-3xl">Your computers</h2>
-        </div>
-        <span className="hidden text-xs font-medium text-forest/45 sm:block">Select a computer to continue</span>
-      </div>
+    <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center py-7 sm:py-12">
+      <header className="text-center">
+        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-forest/45">Where do you want to work?</p>
+        <h1 className="mt-3 text-[clamp(2.15rem,6vw,3.5rem)] font-medium tracking-[-0.055em] text-deep">Choose a computer</h1>
+        <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-forest/55">
+          Each one is a private Matrix OS workspace with its own files and data.
+        </p>
+      </header>
 
       {overview.status === "loading" ? (
-        <div className="mt-5 grid gap-4 md:grid-cols-2" aria-label="Loading computers" aria-busy="true">
-          {[0, 1].map((item) => <div key={item} className="h-64 animate-pulse rounded-[22px] border border-white/70 bg-white/55" />)}
+        <div className="mt-10 grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-2 lg:grid-cols-4" aria-label="Loading computers" aria-busy="true">
+          {[0, 1, 2, 3].map((item) => (
+            <div key={item} className="flex animate-pulse flex-col items-center">
+              <span className="size-24 rounded-full bg-forest/[0.07]" />
+              <span className="mt-4 h-4 w-24 rounded bg-forest/[0.07]" />
+            </div>
+          ))}
         </div>
       ) : null}
       {overview.status === "error" ? (
-        <BrandCard className="mt-5 p-6">
+        <BrandCard className="mx-auto mt-10 max-w-md p-6 text-center">
           <CircleAlertIcon className="size-7 text-ember" aria-hidden="true" />
           <h2 className="mt-4 text-xl font-semibold">Computers are temporarily unavailable</h2>
           <p className="mt-2 text-sm text-forest/65">Nothing was changed. Try loading your computer list again.</p>
@@ -128,13 +79,25 @@ export function ComputerInventory({
       ) : null}
       {overview.status === "ready" ? (
         overview.inventory.items.length > 0 ? (
-          <div className="mt-5 grid gap-4 md:grid-cols-2" aria-label="Matrix OS computers">
+          <div className="mt-10 grid grid-cols-2 gap-x-4 gap-y-9 sm:grid-cols-2 lg:grid-cols-4" aria-label="Matrix OS computers">
             {overview.inventory.items.map((computer) => (
-              <ComputerCard key={computer.runtimeSlot} computer={computer} current={computer.runtimeSlot === overview.inventory.selectedSlot} />
+              <ComputerProfile key={computer.runtimeSlot} computer={computer} current={computer.runtimeSlot === overview.inventory.selectedSlot} />
             ))}
+            <button
+              type="button"
+              onClick={onAdd}
+              aria-label="Get another computer"
+              className="group flex min-w-0 flex-col items-center rounded-3xl px-2 py-2 text-center outline-none transition focus-visible:ring-2 focus-visible:ring-ember focus-visible:ring-offset-4"
+            >
+              <span className="grid size-24 place-items-center rounded-full border border-dashed border-forest/20 bg-white/35 text-forest/45 transition duration-200 group-hover:scale-[1.03] group-hover:border-ember/40 group-hover:bg-white/70 group-hover:text-ember group-focus-visible:scale-[1.03]">
+                <PlusIcon className="size-7" aria-hidden="true" />
+              </span>
+              <strong className="mt-4 block truncate text-sm font-semibold text-deep">New computer</strong>
+              <span className="mt-1 text-xs text-forest/45">Buy another</span>
+            </button>
           </div>
         ) : (
-          <BrandCard className="mt-5 flex flex-col items-center p-8 text-center">
+          <BrandCard className="mx-auto mt-10 flex max-w-md flex-col items-center p-8 text-center">
             <ServerIcon className="size-9 text-forest/55" aria-hidden="true" />
             <h2 className="mt-4 text-xl font-semibold">Build your first computer</h2>
             <p className="mt-2 max-w-md text-sm text-forest/65">Choose a name and default installs to begin.</p>
@@ -146,62 +109,51 @@ export function ComputerInventory({
   );
 }
 
-function ComputerCard({ computer, current }: { computer: MatrixComputer; current: boolean }) {
+const COMPUTER_EMOJIS = ["🦊", "🐼", "🐯", "🐸", "🐙", "🦉", "🐳"] as const;
+const COMPUTER_TONES = [
+  "bg-[#F3E5D1]",
+  "bg-[#E7E9DD]",
+  "bg-[#E9E2D6]",
+  "bg-[#DDE9DF]",
+  "bg-[#E8E0E9]",
+  "bg-[#E2E6EA]",
+  "bg-[#E2E8E5]",
+] as const;
+
+function computerIdentity(computer: MatrixComputer): { emoji: string; tone: string } {
+  if (computer.kind === "preview") return { emoji: "🧪", tone: "bg-[#E8E8E1]" };
+  if (computer.runtimeSlot === "primary") return { emoji: "🐇", tone: "bg-[#F4E4CF]" };
+  const index = [...computer.runtimeSlot].reduce((total, character) => total + character.codePointAt(0)!, 0) % COMPUTER_EMOJIS.length;
+  return { emoji: COMPUTER_EMOJIS[index]!, tone: COMPUTER_TONES[index]! };
+}
+
+function ComputerProfile({ computer, current }: { computer: MatrixComputer; current: boolean }) {
   const title = computer.runtimeSlot === "primary" ? "Main Computer" : runtimeSlotTitle(computer.runtimeSlot);
   const available = computer.availability === "available";
-  const tone = available ? "ready" : "pending";
+  const status = available ? "Ready" : computer.availability === "starting" ? "Building" : "Unavailable";
+  const identity = computerIdentity(computer);
+
   return (
-    <BrandCard
-      className="group relative flex min-h-64 flex-col overflow-hidden p-5 transition duration-300 hover:-translate-y-1 sm:p-6"
-      style={{
-        borderRadius: 22,
-        background: current
-          ? "linear-gradient(145deg, rgba(255,255,255,0.96), rgba(250,246,235,0.94))"
-          : "rgba(252,252,248,0.82)",
-        ...(current
-          ? { borderColor: brand.ember, boxShadow: "0 28px 80px rgba(50,53,46,0.14)" }
-          : { boxShadow: "0 18px 55px rgba(50,53,46,0.08)" }),
-      }}
+    <a
+      href={available ? computer.gatewayPath : undefined}
+      aria-label={available ? `Switch to ${title}` : `${title} is ${status.toLowerCase()}`}
+      aria-disabled={!available || undefined}
+      className={`group flex min-w-0 flex-col items-center rounded-3xl px-2 py-2 text-center no-underline outline-none transition focus-visible:ring-2 focus-visible:ring-ember focus-visible:ring-offset-4 ${available ? "cursor-pointer" : "cursor-default"}`}
     >
-      <span className={`absolute inset-x-0 top-0 h-1 ${current ? "bg-ember" : "bg-forest/10"}`} aria-hidden="true" />
-      <div className="flex items-start justify-between gap-4">
-        <span className={`grid size-12 place-items-center rounded-2xl border ${current ? "border-ember/20 bg-ember/10 text-ember" : "border-forest/10 bg-forest/[0.06] text-forest"}`}>
-          {computer.kind === "preview" ? (
-            <CloudIcon className="size-5" aria-hidden="true" />
-          ) : (
-            <span
-              aria-hidden="true"
-              className="h-6 w-[19px] bg-current"
-              style={{
-                WebkitMask: "url('/matrix-logo.svg') no-repeat center / contain",
-                mask: "url('/matrix-logo.svg') no-repeat center / contain",
-              }}
-            />
-          )}
+      <span className="relative">
+        <span className={`grid size-24 place-items-center rounded-full border text-[2.7rem] shadow-[0_16px_40px_rgba(50,53,46,0.09)] transition duration-200 ${identity.tone} ${current ? "border-ember ring-4 ring-ember/10" : "border-white/65 group-hover:scale-[1.03] group-hover:border-white"}`}>
+          <span aria-hidden="true">{identity.emoji}</span>
         </span>
-        <StatusPill tone={tone}>{computer.availability === "available" ? "Ready" : computer.availability === "starting" ? "Building" : "Unavailable"}</StatusPill>
-      </div>
-      <div className="mt-5">
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className="text-xl font-semibold tracking-tight">{title}</h3>
-          {current ? <span className="rounded-full bg-ember/10 px-2 py-1 text-[11px] font-semibold text-ember">Current computer</span> : null}
-        </div>
-        <p className="mt-1 text-sm text-forest/55">{computer.label} · {computer.runtimeSlot}</p>
-        <code className="mt-3 block truncate rounded-lg bg-forest/[0.045] px-2.5 py-2 text-[11px] text-forest/50" title={computer.gatewayPath}>
-          {computer.gatewayPath}
-        </code>
-      </div>
-      <div className="mt-auto flex items-center justify-between gap-3 pt-6">
-        <span className="text-xs font-medium text-forest/50"><span className="text-forest/35">Version</span> · {computer.versionLabel ?? "Pending"}</span>
-        {available ? (
-          <a className={current ? "primary-action" : "secondary-action"} href={computer.gatewayPath} aria-label={`Open ${title}`}>
-            Open computer <ChevronRightIcon className="size-4" aria-hidden="true" />
-          </a>
-        ) : (
-          <span className="text-xs font-semibold text-forest/45">Check again soon</span>
-        )}
-      </div>
-    </BrandCard>
+        <span className={`absolute bottom-1 right-1 size-4 rounded-full border-[3px] border-[#F2F1E8] ${available ? "bg-[#6F8E58]" : computer.availability === "starting" ? "bg-ember" : "bg-forest/25"}`} aria-label={status} />
+      </span>
+      <span className="mt-4 block max-w-full">
+        <strong className="block text-sm font-semibold leading-5 text-deep">{title}</strong>
+        {current ? <span className="mt-1 inline-flex rounded-full bg-ember/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-ember">Current</span> : null}
+      </span>
+      <span className="mt-1 truncate text-xs text-forest/50">{computer.label} · {status}</span>
+      <span className="mt-1 truncate text-[11px] text-forest/40">{computer.versionLabel ?? "Version pending"}</span>
+      <code className="mt-2 block max-w-full truncate rounded-full bg-white/35 px-2 py-1 text-[9px] text-forest/35" title={computer.gatewayPath}>{computer.gatewayPath}</code>
+    </a>
   );
 }
 

@@ -184,19 +184,23 @@ describe("RuntimeManager", () => {
     installFetchRouter();
     await renderManager();
 
-    expect(await screen.findByRole("heading", { name: "Choose your Matrix OS computer", level: 1 })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Choose a computer", level: 1 })).toBeTruthy();
     expect(screen.getByRole("img", { name: "Matrix OS logo" })).toBeTruthy();
-    expect(await screen.findByRole("heading", { name: "Your computers" })).toBeTruthy();
+    expect(await screen.findByText("Where do you want to work?")).toBeTruthy();
     expect(screen.getByText("Matrix OS member")).toBeTruthy();
     expect(screen.getByText("neo@example.com")).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Open Studio/i }).getAttribute("href")).toBe(
+    expect(screen.getByRole("link", { name: /Switch to Studio/i }).getAttribute("href")).toBe(
       "/vm/neo-studio?runtime=studio",
     );
-    expect(screen.getByText("Current computer")).toBeTruthy();
+    expect(screen.getByText("Current")).toBeTruthy();
+    expect(screen.getByText("🐇")).toBeTruthy();
+    expect(screen.getByText("🧪")).toBeTruthy();
     expect(screen.getByText(/Preview Computer/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Get another computer" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Manage account" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
-    expect(screen.getByLabelText("Matrix OS computers").className).toMatch(/md:grid-cols-2/);
+    expect(screen.getByLabelText("Matrix OS computers").className).toMatch(/sm:grid-cols-2/);
+    expect(screen.getByLabelText("Account").className).toMatch(/md:fixed/);
     expect(screen.getByRole("main").className).toMatch(/overflow-y-auto/);
   });
 
