@@ -1,9 +1,10 @@
 import { useEffect } from "react";
 import { onEvent } from "../../lib/operator";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
+import { defaultProjectId, openProjectChat } from "../../lib/project-chat";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
-import { AGENTS_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
+import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 
 interface CloseTabShortcutState {
@@ -29,14 +30,6 @@ interface NewAgentRunShortcutUiState {
   setComposerOpen(open: boolean): void;
 }
 
-interface NewAgentRunShortcutTabsState {
-  openTab(spec: typeof AGENTS_WORKSPACE_TAB_SPEC): void;
-}
-
-interface AgentWorkspaceShortcutTabsState {
-  openTab(spec: typeof AGENTS_WORKSPACE_TAB_SPEC): void;
-}
-
 interface NewAgentRunShortcutWorkspaceState {
   summary: { capabilities: Array<{ id: string; enabled: boolean }> } | null;
   requestComposerFocus(): void;
@@ -55,32 +48,21 @@ export function isTerminalFocusShortcut(
   return meta && event.altKey && !event.shiftKey && event.key.toLowerCase() === "t";
 }
 
-export function isAgentWorkspaceShortcut(
-  event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
-): boolean {
-  const meta = event.metaKey || event.ctrlKey;
-  return meta && event.altKey && !event.shiftKey && event.key.toLowerCase() === "a";
-}
-
 export function handleMenuNavigate(kind: string): void {
   if (kind === "settings") {
     useTabs.getState().openTab({ kind: "settings", title: "Settings" });
-    return;
-  }
-  if (kind === "agents") {
-    useTabs.getState().openTab(AGENTS_WORKSPACE_TAB_SPEC);
     return;
   }
   if (kind === "terminals") {
     handleTerminalFocusShortcut({ preventDefault: () => undefined }, useTabs.getState());
     return;
   }
-  if (kind === "board") {
+  if (kind === "board" || kind === "project") {
     const { activeProjectSlug, projects } = useBoard.getState();
     const project = projects.find((candidate) => candidate.slug === activeProjectSlug) ?? projects[0];
     if (project) {
       useTabs.getState().openTab({
-        kind: "board",
+        kind: "project",
         projectSlug: project.slug,
         title: project.name || project.slug,
       });
@@ -135,14 +117,6 @@ export function handleTerminalFocusShortcut(
   tabs.openTab({ kind: "terminals", title: "Terminal" });
 }
 
-export function handleAgentWorkspaceShortcut(
-  event: Pick<KeyboardEvent, "preventDefault">,
-  tabs: AgentWorkspaceShortcutTabsState,
-): void {
-  event.preventDefault();
-  tabs.openTab(AGENTS_WORKSPACE_TAB_SPEC);
-}
-
 function canRequestAgentComposerFocus(summary: NewAgentRunShortcutWorkspaceState["summary"]): boolean {
   if (!summary) return true;
   return summary.capabilities.some((capability) => capability.id === "codingAgentsThreadCreate" && capability.enabled);
@@ -151,18 +125,21 @@ function canRequestAgentComposerFocus(summary: NewAgentRunShortcutWorkspaceState
 export function handleNewAgentRunShortcut(
   event: Pick<KeyboardEvent, "preventDefault">,
   ui: NewAgentRunShortcutUiState,
-  tabs: NewAgentRunShortcutTabsState,
   workspace: NewAgentRunShortcutWorkspaceState,
   options: { desktopWorkspaceEnabled?: boolean } = {},
 ): void {
   event.preventDefault();
   const desktopWorkspaceEnabled = options.desktopWorkspaceEnabled ?? CODING_AGENTS_DESKTOP_WORKSPACE;
-  if (desktopWorkspaceEnabled) {
-    if (canRequestAgentComposerFocus(workspace.summary)) workspace.requestComposerFocus();
-    tabs.openTab(AGENTS_WORKSPACE_TAB_SPEC);
+  // A global "new chat" lands in the current project (open project tab first,
+  // then the board's active project); without any project the legacy kernel
+  // composer modal is the only place a run can go.
+  const projectId = desktopWorkspaceEnabled ? defaultProjectId() : null;
+  if (!projectId) {
+    ui.setComposerOpen(true);
     return;
   }
-  ui.setComposerOpen(true);
+  if (canRequestAgentComposerFocus(workspace.summary)) workspace.requestComposerFocus();
+  openProjectChat(projectId, { compose: true });
 }
 
 export function useGlobalShortcuts(): void {
@@ -179,7 +156,7 @@ export function useGlobalShortcuts(): void {
         return;
       }
       if (meta && key === "j") {
-        handleNewAgentRunShortcut(e, ui, tabs, useCodingAgentWorkspace.getState());
+        handleNewAgentRunShortcut(e, ui, useCodingAgentWorkspace.getState());
         return;
       }
       if (meta && key === "p") {
@@ -189,10 +166,6 @@ export function useGlobalShortcuts(): void {
       }
       if (isTerminalFocusShortcut(e)) {
         handleTerminalFocusShortcut(e, tabs);
-        return;
-      }
-      if (CODING_AGENTS_DESKTOP_WORKSPACE && isAgentWorkspaceShortcut(e)) {
-        handleAgentWorkspaceShortcut(e, tabs);
         return;
       }
       // New chat with the OS agent.
@@ -234,7 +207,7 @@ export function useGlobalShortcuts(): void {
       const ui = useUi.getState();
       if (action === "new-task") ui.setCreateTaskOpen(true);
       if (action === "new-thread") {
-        handleNewAgentRunShortcut({ preventDefault: () => undefined }, ui, useTabs.getState(), useCodingAgentWorkspace.getState());
+        handleNewAgentRunShortcut({ preventDefault: () => undefined }, ui, useCodingAgentWorkspace.getState());
       }
       if (action === "palette") ui.setPaletteOpen(!ui.paletteOpen);
       if (action === "quick-open") ui.setQuickOpenOpen(!ui.quickOpenOpen);

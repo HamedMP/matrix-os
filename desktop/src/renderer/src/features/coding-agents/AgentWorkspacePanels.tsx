@@ -152,9 +152,16 @@ function threadAttentionLabel(attention: RuntimeAttentionThread["attention"]): s
   }
 }
 
-export function AttentionThreadList({ summary }: { summary: RuntimeSummary }) {
+export function AttentionThreadList({
+  summary,
+  onOpenThread,
+}: {
+  summary: RuntimeSummary;
+  onOpenThread?: (thread: RuntimeAttentionThread) => void;
+}) {
   const activeThreadId = useCodingAgentWorkspace((s) => s.activeThreadId);
   const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
+  const openThread = onOpenThread ?? ((thread: RuntimeAttentionThread) => void loadThreadSnapshot(thread.id));
 
   return (
     <Section title="Needs Attention" count={summary.attentionThreads.items.length}>
@@ -174,7 +181,7 @@ export function AttentionThreadList({ summary }: { summary: RuntimeSummary }) {
                 borderColor: active ? "var(--accent)" : "var(--border-subtle)",
                 background: active ? "var(--accent-muted)" : "var(--bg-surface)",
               }}
-              onClick={() => void loadThreadSnapshot(thread.id)}
+              onClick={() => openThread(thread)}
             >
               <div className="flex min-w-0 items-center gap-2">
                 <GitBranch size={15} style={{ color: "var(--text-tertiary)" }} />

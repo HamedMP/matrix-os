@@ -1,16 +1,19 @@
+// @vitest-environment jsdom
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   handleCycleTabShortcut,
   handleCloseTabShortcut,
-  handleAgentWorkspaceShortcut,
   handleMenuNavigate,
   handleNewAgentRunShortcut,
   handleTerminalFocusShortcut,
-  isAgentWorkspaceShortcut,
   isTerminalFocusShortcut,
 } from "@desktop/renderer/src/features/mission-control/shortcuts";
+import { useProjectChatLauncher } from "@desktop/renderer/src/lib/project-chat";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
+import { useProjectView } from "@desktop/renderer/src/stores/project-view";
+import { useProjectWorkspaces } from "@desktop/renderer/src/stores/project-workspaces";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 
@@ -155,52 +158,72 @@ describe("handleNewAgentRunShortcut", () => {
       composerFocusRequestId: 0,
     });
     useTabs.setState({ tabs: [], activeTabId: null });
+    useBoard.setState({ projects: [], activeProjectSlug: null });
+    useProjectView.setState({ entries: {}, runtimeScope: null });
+    useProjectWorkspaces.setState({ entries: {} });
+    useProjectChatLauncher.setState({ composerRequest: null });
     useUi.setState({
       composerOpen: false,
       paletteOpen: false,
     });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: {
+        invoke: vi.fn(async (channel: string) => {
+          if (channel === "state:set") return { ok: true };
+          throw new Error(`unexpected channel ${channel}`);
+        }),
+        on: vi.fn(() => () => undefined),
+      },
+    });
   });
 
-  it("routes desktop new-run shortcuts to the coding-agent workspace composer", () => {
+  it("routes new-run shortcuts to the active board project's chats view", () => {
+    useBoard.setState({
+      projects: [{ slug: "matrix-os", name: "Matrix OS" }],
+      activeProjectSlug: "matrix-os",
+    });
     const preventDefault = vi.fn();
     const focusRequestId = useCodingAgentWorkspace.getState().composerFocusRequestId;
 
     handleNewAgentRunShortcut(
       { preventDefault },
       useUi.getState(),
-      useTabs.getState(),
       useCodingAgentWorkspace.getState(),
     );
 
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(useTabs.getState().tabs[0]).toMatchObject({
-      kind: "agents",
-      slug: "agents",
-      title: "Agents",
+      kind: "project",
+      projectSlug: "matrix-os",
+      title: "Matrix OS",
     });
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
+    expect(useProjectChatLauncher.getState().composerRequest).toMatchObject({ projectId: "matrix-os" });
     expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequestId + 1);
     expect(useUi.getState().composerOpen).toBe(false);
   });
 
-  it("focuses the existing Agents workspace tab on repeated new-run shortcuts", () => {
-    const preventDefault = vi.fn();
+  it("targets the open project tab over the board's active project", () => {
+    useBoard.setState({
+      projects: [
+        { slug: "matrix-os", name: "Matrix OS" },
+        { slug: "website", name: "Website" },
+      ],
+      activeProjectSlug: "website",
+    });
+    useTabs.getState().openTab({ kind: "project", projectSlug: "matrix-os", title: "Matrix OS" });
 
     handleNewAgentRunShortcut(
-      { preventDefault },
+      { preventDefault: vi.fn() },
       useUi.getState(),
-      useTabs.getState(),
-      useCodingAgentWorkspace.getState(),
-    );
-    const firstTabId = useTabs.getState().activeTabId;
-    handleNewAgentRunShortcut(
-      { preventDefault },
-      useUi.getState(),
-      useTabs.getState(),
       useCodingAgentWorkspace.getState(),
     );
 
-    expect(useTabs.getState().tabs).toHaveLength(1);
-    expect(useTabs.getState().activeTabId).toBe(firstTabId);
+    expect(useTabs.getState().tabs.filter((tab) => tab.kind === "project")).toHaveLength(1);
+    expect(useProjectChatLauncher.getState().composerRequest).toMatchObject({ projectId: "matrix-os" });
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
+    expect(useProjectView.getState().viewFor("website")).toBe("board");
   });
 
   it("keeps the legacy composer open when desktop workspace routing is disabled", () => {
@@ -210,7 +233,6 @@ describe("handleNewAgentRunShortcut", () => {
     handleNewAgentRunShortcut(
       { preventDefault },
       useUi.getState(),
-      useTabs.getState(),
       useCodingAgentWorkspace.getState(),
       { desktopWorkspaceEnabled: false },
     );
@@ -219,47 +241,19 @@ describe("handleNewAgentRunShortcut", () => {
     expect(useUi.getState().composerOpen).toBe(true);
     expect(useTabs.getState().tabs).toEqual([]);
   });
-});
 
-describe("handleAgentWorkspaceShortcut", () => {
-  beforeEach(() => {
-    useCodingAgentWorkspace.setState({
-      summary: null,
-      composerFocusRequestId: 0,
-    });
-    useTabs.setState({ tabs: [], activeTabId: null });
-  });
-
-  it("matches only the exact Agents workspace modifier chord", () => {
-    expect(isAgentWorkspaceShortcut({
-      altKey: true,
-      ctrlKey: false,
-      key: "a",
-      metaKey: true,
-      shiftKey: false,
-    })).toBe(true);
-    expect(isAgentWorkspaceShortcut({
-      altKey: true,
-      ctrlKey: false,
-      key: "a",
-      metaKey: true,
-      shiftKey: true,
-    })).toBe(false);
-  });
-
-  it("opens the Agents workspace without requesting composer focus", () => {
+  it("opens the legacy composer when the runtime has no projects", () => {
     const preventDefault = vi.fn();
-    const focusRequestId = useCodingAgentWorkspace.getState().composerFocusRequestId;
 
-    handleAgentWorkspaceShortcut({ preventDefault }, useTabs.getState());
+    handleNewAgentRunShortcut(
+      { preventDefault },
+      useUi.getState(),
+      useCodingAgentWorkspace.getState(),
+    );
 
     expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(useTabs.getState().tabs[0]).toMatchObject({
-      kind: "agents",
-      slug: "agents",
-      title: "Agents",
-    });
-    expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequestId);
+    expect(useUi.getState().composerOpen).toBe(true);
+    expect(useTabs.getState().tabs).toEqual([]);
   });
 });
 
@@ -274,7 +268,7 @@ describe("handleMenuNavigate", () => {
     vi.restoreAllMocks();
   });
 
-  it("opens board tabs for active projects", () => {
+  it("opens project tabs for active projects", () => {
     useBoard.setState({
       projects: [{ slug: "matrix", name: "Matrix OS" }],
       activeProjectSlug: "matrix",
@@ -283,20 +277,23 @@ describe("handleMenuNavigate", () => {
     handleMenuNavigate("board");
 
     expect(useTabs.getState().tabs[0]).toMatchObject({
-      kind: "board",
+      kind: "project",
       projectSlug: "matrix",
       title: "Matrix OS",
     });
   });
 
-  it("opens the coding-agent workspace from menu navigation", () => {
+  it("treats the retired agents kind as unsupported and falls back home", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
     handleMenuNavigate("agents");
 
     expect(useTabs.getState().tabs[0]).toMatchObject({
-      kind: "agents",
-      slug: "agents",
-      title: "Agents",
+      kind: "home",
+      title: "Home",
+      closable: false,
     });
+    expect(warn).toHaveBeenCalledWith("[shortcuts] unsupported menu:navigate kind: agents");
   });
 
   it("focuses an existing terminal tab from menu navigation", () => {

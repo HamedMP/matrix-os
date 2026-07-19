@@ -7,13 +7,11 @@ import { create } from "zustand";
 export type TabKind =
   | "home"
   | "chat"
-  | "board"
+  | "project"
   | "task"
   | "terminal"
   | "terminals"
-  | "agents"
   | "files"
-  | "thread"
   | "apps"
   | "app"
   | "settings";
@@ -27,16 +25,9 @@ export interface Tab {
   projectSlug?: string;
   taskId?: string;
   sessionName?: string;
-  threadId?: string;
   slug?: string;
   closable: boolean;
 }
-
-export const AGENTS_WORKSPACE_TAB_SPEC = {
-  kind: "agents" as const,
-  title: "Agents",
-  slug: "agents",
-};
 
 export const FILES_WORKSPACE_TAB_SPEC = {
   kind: "files" as const,
@@ -48,14 +39,13 @@ export const FILES_WORKSPACE_TAB_SPEC = {
 const MAX_TABS = 24;
 
 function identityKey(
-  spec: Pick<Tab, "kind" | "projectSlug" | "taskId" | "sessionName" | "threadId" | "slug">,
+  spec: Pick<Tab, "kind" | "projectSlug" | "taskId" | "sessionName" | "slug">,
 ): string {
   return [
     spec.kind,
     spec.projectSlug ?? "",
     spec.taskId ?? "",
     spec.sessionName ?? "",
-    spec.threadId ?? "",
     spec.slug ?? "",
   ].join("|");
 }

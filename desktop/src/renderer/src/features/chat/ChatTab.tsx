@@ -3,10 +3,10 @@ import { useMemo, useState } from "react";
 import { StatusDot } from "../../design/primitives";
 import { groupMessages } from "../../lib/chat";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
+import { openCodingAgentThread } from "../../lib/project-chat";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
-import { AGENTS_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import {
   listUnifiedThreads,
@@ -140,7 +140,7 @@ function HermesPane() {
 
 // Unified chat: a Codex-style rail listing Hermes + every agent thread on the
 // left, the selected conversation on the right. Kernel runs open in-pane;
-// coding-agent threads route to their canonical Agents workspace surface.
+// coding-agent threads route into their project tab's Chats view.
 export default function ChatTab() {
   const threads = useThreads((s) => s.threads);
   const activeThreadId = useThreads((s) => s.activeThreadId);
@@ -148,8 +148,6 @@ export default function ChatTab() {
   // Short-circuit inside the selector so a disabled workspace never re-renders
   // the rail on coding-agent store updates.
   const summary = useCodingAgentWorkspace((s) => (CODING_AGENTS_DESKTOP_WORKSPACE ? s.summary : null));
-  const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
-  const openTab = useTabs((s) => s.openTab);
 
   const railThreads = useMemo(
     () => listUnifiedThreads(threads, summary),
@@ -161,13 +159,7 @@ export default function ChatTab() {
       setActiveThread(item.id);
       return;
     }
-    loadThreadSnapshot(item.id).catch((err: unknown) => {
-      console.warn(
-        "[chat] coding-agent thread open failed:",
-        err instanceof Error ? err.message : String(err),
-      );
-    });
-    openTab(AGENTS_WORKSPACE_TAB_SPEC);
+    openCodingAgentThread(item.id);
   };
 
   // activeThreadId is the single source of truth: null → Hermes, otherwise the

@@ -3,7 +3,8 @@ import { useEditorTabs } from "../features/editor/editor-tabs-store";
 import { resetKernel } from "../lib/kernel-wiring";
 import { useBoard } from "./board";
 import { useHermesChat } from "./hermes-chat";
-import { clearCodingAgentProjectRuntime } from "./coding-agent-project-workspace";
+import { clearProjectViewRuntime } from "./project-view";
+import { clearProjectWorkspaces } from "./project-workspaces";
 import { clearCodingAgentRuntimeSelection } from "./coding-agent-workspace";
 import { useFileTree } from "./file-tree";
 import { useGit } from "./git";
@@ -79,7 +80,8 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
   });
   useThreads.setState({ threads: [], activeThreadId: null });
   clearCodingAgentRuntimeSelection();
-  clearCodingAgentProjectRuntime();
+  clearProjectWorkspaces();
+  clearProjectViewRuntime();
   useUi.setState({
     createProjectOpen: false,
     createTaskOpen: false,

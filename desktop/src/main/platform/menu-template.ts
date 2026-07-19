@@ -4,7 +4,6 @@ type MenuEventSender = (channel: string, payload: unknown) => void;
 
 interface AppMenuTemplateOptions {
   appName: string;
-  codingAgentsWorkspace: boolean;
   isPackaged: boolean;
   openExternal(url: string): void;
   send: MenuEventSender;
@@ -12,7 +11,6 @@ interface AppMenuTemplateOptions {
 
 export function createAppMenuTemplate({
   appName,
-  codingAgentsWorkspace,
   isPackaged,
   openExternal,
   send,
@@ -34,14 +32,6 @@ export function createAppMenuTemplate({
       click: () => send("menu:navigate", { kind: "terminals" }),
     },
   ];
-
-  if (codingAgentsWorkspace) {
-    viewSubmenu.push({
-      label: "Agents",
-      accelerator: "Cmd+Alt+A",
-      click: () => send("menu:navigate", { kind: "agents" }),
-    });
-  }
 
   viewSubmenu.push(
     { type: "separator" },
