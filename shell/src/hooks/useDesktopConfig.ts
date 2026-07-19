@@ -274,7 +274,6 @@ export async function saveDesktopConfigPatch(
     dock: {
       ...DEFAULT_DESKTOP_CONFIG.dock,
       ...(typeof dockValue === "object" && dockValue !== null && !Array.isArray(dockValue) ? dockValue : {}),
-      autoHide: false,
     },
     pinnedApps: Array.isArray(nextConfig.pinnedApps)
       ? nextConfig.pinnedApps.filter((value): value is string => typeof value === "string")
