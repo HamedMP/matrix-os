@@ -174,14 +174,14 @@ describe("DesignPicker", () => {
     });
   });
 
-  it("applies the macOS wallpaper and moves the dock to the bottom when macOS 27 is selected", async () => {
+  it("applies the first bundled wallpaper and moves the dock to the bottom when macOS 27 is selected", async () => {
     const { getByRole } = render(<DesignPicker />);
 
     fireEvent.click(getByRole("button", { name: /macOS 27/ }));
 
     await waitFor(() => expect(shared.saveDesktopConfigPatchMock).toHaveBeenCalledTimes(1));
     expect(shared.saveDesktopConfigPatchMock).toHaveBeenCalledWith({
-      background: { type: "wallpaper", name: "macos-light.svg" },
+      background: { type: "wallpaper", name: "moraine-lake.jpg" },
       dock: { ...shared.desktopConfig.dock, position: "bottom" },
     });
   });
