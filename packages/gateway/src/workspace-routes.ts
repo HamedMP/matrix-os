@@ -4,6 +4,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { randomUUID } from "node:crypto";
 import { z } from "zod/v4";
 import { createProjectManager, PROJECT_SLUG_REGEX } from "./project-manager.js";
+import { createGitLog, COMMIT_SHA_REGEX } from "./git-log.js";
 import { createWorktreeManager } from "./worktree-manager.js";
 import { createStateOps, type OwnerScope } from "./state-ops.js";
 import { createAgentLauncher } from "./agent-launcher.js";
@@ -24,6 +25,7 @@ import { createWorkspaceSessionOrchestrator, type WorkspaceSessionOrchestrator }
 import { requestHasBody } from "./http-body.js";
 
 type ProjectManager = ReturnType<typeof createProjectManager>;
+type GitLog = ReturnType<typeof createGitLog>;
 type WorktreeManager = ReturnType<typeof createWorktreeManager>;
 type AgentLauncher = ReturnType<typeof createAgentLauncher>;
 type AgentSessionManager = ReturnType<typeof createAgentSessionManager>;
@@ -192,6 +194,7 @@ async function parseJson<T>(c: Context, schema: z.ZodType<T>): Promise<
 export function createWorkspaceRoutes(options: {
   homePath: string;
   projectManager?: ProjectManager;
+  gitLog?: GitLog;
   worktreeManager?: WorktreeManager;
   agentLauncher?: AgentLauncher;
   agentSessionManager?: AgentSessionManager;
@@ -208,6 +211,7 @@ export function createWorkspaceRoutes(options: {
 }) {
   const app = new Hono();
   const projectManager = options.projectManager ?? createProjectManager({ homePath: options.homePath });
+  const gitLog = options.gitLog ?? createGitLog({ homePath: options.homePath });
   const worktreeManager = options.worktreeManager ?? createWorktreeManager({ homePath: options.homePath });
   const agentLauncher = options.agentLauncher ?? createAgentLauncher({ cwd: options.homePath, runtimeHome: options.homePath });
   const zellijRuntime = options.zellijRuntime ?? createZellijRuntime({ homePath: options.homePath });
@@ -342,6 +346,41 @@ export function createWorkspaceRoutes(options: {
     const result = await projectManager.listBranches(c.req.param("slug"));
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ branches: result.branches, refreshedAt: result.refreshedAt });
+  });
+
+  const ListCommitsQuerySchema = z.object({
+    limit: z.coerce.number().int().min(1).max(500).default(200),
+    cursor: z.string().regex(/^\d{1,7}$/).optional(),
+  });
+
+  app.get("/api/projects/:slug/commits", async (c) => {
+    const query = ListCommitsQuerySchema.safeParse(c.req.query());
+    if (!query.success) return c.json(errorBody("invalid_request", "Query parameters are invalid"), 400);
+    const result = await gitLog.listCommits(c.req.param("slug"), {
+      limit: query.data.limit,
+      offset: query.data.cursor ? Number(query.data.cursor) : 0,
+    });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ commits: result.commits, nextCursor: result.nextCursor, refreshedAt: result.refreshedAt });
+  });
+
+  const CommitDiffQuerySchema = z.object({
+    maxFiles: z.coerce.number().int().min(1).max(500).default(200),
+    maxLines: z.coerce.number().int().min(50).max(2000).default(400),
+  });
+
+  app.get("/api/projects/:slug/commits/:sha/diff", async (c) => {
+    const sha = z.string().regex(COMMIT_SHA_REGEX).safeParse(c.req.param("sha"));
+    const query = CommitDiffQuerySchema.safeParse(c.req.query());
+    if (!sha.success || !query.success) {
+      return c.json(errorBody("invalid_request", "Request parameters are invalid"), 400);
+    }
+    const result = await gitLog.getCommitDiff(c.req.param("slug"), sha.data, {
+      maxFiles: query.data.maxFiles,
+      maxLines: query.data.maxLines,
+    });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ files: result.files, truncated: result.truncated, refreshedAt: result.refreshedAt });
   });
 
   app.post("/api/projects/:slug/worktrees", limited, async (c) => {
