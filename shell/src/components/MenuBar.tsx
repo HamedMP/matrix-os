@@ -11,6 +11,7 @@ import { UserButton } from "./UserButton";
 import { ModeSwitcherBar } from "./ModeSwitcherBar";
 import { isSelfHostedDocument } from "@/lib/self-host-mode";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { useOsSessionStore } from "./os-session/os-session-store";
 import { useThemeStyle } from "./window/useThemeStyle";
 
 const FALLBACK_APP_ICON = "/icon-192.png";
@@ -319,14 +320,21 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, o
 
   /* macOS-glass only: Apple menu (system-level affordances), Window menu
      (window management), Help menu (discoverability). Every item is wired to
-     an existing working handler — no decorative menus. */
-  const appleItems: MenuEntry[] = onOpenSettings
-    ? [
-        { label: "System Settings…", action: onOpenSettings },
-        { separator: true },
-        { label: "Command Palette", shortcut: "⌘K", action: onOpenCommandPalette },
-      ]
-    : [{ label: "Command Palette", shortcut: "⌘K", action: onOpenCommandPalette }];
+     an existing working handler — no decorative menus. Lock Screen / Log Out…
+     sit at the bottom like the real macOS Apple menu and open the simulated
+     lock screen via the os-session store (never a real Clerk sign-out). */
+  const appleItems: MenuEntry[] = [
+    ...(onOpenSettings
+      ? [
+          { label: "System Settings…", action: onOpenSettings },
+          { separator: true } as MenuEntry,
+        ]
+      : []),
+    { label: "Command Palette", shortcut: "⌘K", action: onOpenCommandPalette },
+    { separator: true },
+    { label: "Lock Screen", action: () => useOsSessionStore.getState().openMacosLock() },
+    { label: "Log Out…", action: () => useOsSessionStore.getState().openMacosLock() },
+  ];
 
   const windowItems: MenuEntry[] = [
     { label: "Minimize", shortcut: "⌘M", action: () => { if (focusedWindow) minimizeWindow(focusedWindow.id); } },

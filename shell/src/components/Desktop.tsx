@@ -33,6 +33,10 @@ import { AmbientClock } from "./AmbientClock";
 import { MenuBar } from "./MenuBar";
 import { WindowsTaskbar } from "./taskbar/WindowsTaskbar";
 import { useThemeStyle } from "./window/useThemeStyle";
+import { useIsClient } from "@/hooks/useIsClient";
+import { OsBootScreen } from "./os-session/OsBootScreen";
+import { OsSessionHost } from "./os-session/OsSessionHost";
+import { isBootDesign, readPersistedThemeStyle } from "./os-session/os-session-utils";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -189,6 +193,12 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
   const [firstRunStatus, setFirstRunStatus] = useState<DesktopFirstRunStatus>("checking");
   const firstRunStatusRef = useRef<DesktopFirstRunStatus>("checking");
+  // Pre-paint design from the shell snapshot cache: decides whether the
+  // initial loading surface is the OS-authentic boot screen (macos-glass /
+  // winxp / win11) or the existing Matrix loading screen (flat/neumorphic and
+  // unknown/first-run). Client-gated below to stay hydration-safe.
+  const isClient = useIsClient();
+  const [initialThemeStyle] = useState(() => readPersistedThemeStyle(cacheScope));
   const launchPathConsumedRef = useRef<string | null>(null);
   const [manualSetupVisible, setManualSetupVisible] = useState(false);
 
@@ -1082,7 +1092,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         <ShellNotificationStack>
           <RuntimeIdentityBanner />
         </ShellNotificationStack>
-        <MatrixFirstRunLoading />
+        {isClient && isBootDesign(initialThemeStyle) ? (
+          <OsBootScreen design={initialThemeStyle} />
+        ) : (
+          <MatrixFirstRunLoading />
+        )}
       </TooltipProvider>
     );
   }
@@ -1111,6 +1125,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           {canvasToolbarChild}
         </MenuBar>
       )}
+      <OsSessionHost />
       <div className={isWindowsDesign ? "relative flex-1 flex flex-col md:flex-row" : "relative flex-1 flex flex-col md:flex-row md:pt-8"}>
         {/* Desktop dock -- hidden in ambient/conversational modes. */}
         {modeConfig.showDock && !isWindowsDesign && <div

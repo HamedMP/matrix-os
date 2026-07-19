@@ -10,6 +10,7 @@ import {
   saveDesktopConfig,
   saveDesktopConfigPatch,
   useDesktopConfig,
+  wallpaperUrl,
   type DesktopConfig,
 } from "../../shell/src/hooks/useDesktopConfig";
 import { createShellSnapshotScope, loadShellSnapshot, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache";
@@ -88,6 +89,23 @@ describe("Desktop config", () => {
     const gradient = buildMeshGradient();
     expect(gradient).toMatch(/radial-gradient/);
     expect(gradient).toMatch(/var\(--gradient-/);
+  });
+
+  it("wallpaperUrl routes bundled OS wallpapers through the gateway files route", () => {
+    // The shell-public /wallpapers path is unreliable through the platform
+    // session-routing proxy, so bundled names must not be special-cased.
+    const gatewayUrl = "https://gateway.example.com";
+    for (const name of ["moraine-lake.jpg", "xp-bliss.svg", "win11-bloom.svg", "macos-light.svg"]) {
+      expect(wallpaperUrl(name, gatewayUrl)).toBe(
+        `${gatewayUrl}/files/system/wallpapers/${name}`,
+      );
+    }
+  });
+
+  it("wallpaperUrl routes user-uploaded wallpapers through the gateway files route", () => {
+    expect(wallpaperUrl("custom-upload.png", "https://gateway.example.com")).toBe(
+      "https://gateway.example.com/files/system/wallpapers/custom-upload.png",
+    );
   });
 
   it("saveDesktopConfig calls fetch with PUT method", async () => {

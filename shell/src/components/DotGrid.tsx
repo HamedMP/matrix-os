@@ -3,6 +3,7 @@
 import { useEffect, useEffectEvent, useRef, useCallback } from "react";
 import { create } from "zustand";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
+import { useThemeStyle } from "./window/useThemeStyle";
 
 interface DotGridStore {
   enabled: boolean;
@@ -22,9 +23,17 @@ const GLOW_RADIUS = 120;
 const IDLE_FADE_MS = 2000;
 const MIN_SCREEN_SPACING = 14;
 
+// OS designs paint their own wallpaper chrome; a dot grid over it breaks the
+// illusion, so the grid is only ever shown in the flat/neumorphic designs.
+const OS_DESIGN_STYLES = new Set(["macos-glass", "winxp", "win11"]);
+
 export function DotGrid() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const enabled = useDotGrid((s) => s.enabled);
+  const gridEnabled = useDotGrid((s) => s.enabled);
+  const themeStyle = useThemeStyle();
+  // The store toggle is untouched — CanvasToolbar keeps working and the grid
+  // returns when the design switches back to flat/neumorphic.
+  const enabled = gridEnabled && !OS_DESIGN_STYLES.has(themeStyle);
   const mouseRef = useRef({ x: -1000, y: -1000, active: false });
   const idleTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const rafRef = useRef(0);

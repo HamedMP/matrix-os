@@ -7,6 +7,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 const shared = vi.hoisted(() => ({
   saveThemeMock: vi.fn(),
   saveDesktopConfigPatchMock: vi.fn(),
+  beginBootMock: vi.fn(),
   theme: {
     name: "default",
     style: "flat",
@@ -36,15 +37,20 @@ vi.mock("@/hooks/useDesktopConfig", () => ({
   saveDesktopConfigPatch: shared.saveDesktopConfigPatchMock,
 }));
 
+vi.mock("@/components/os-session/os-session-store", () => ({
+  useOsSessionStore: {
+    getState: () => ({ beginBoot: shared.beginBootMock }),
+  },
+}));
+
 import { DesignPicker } from "../../shell/src/components/settings/DesignPicker.js";
 import {
   MACOS_GLASS_THEME,
-  RETRO_THEME,
   WIN11_THEME,
   WINXP_THEME,
 } from "../../shell/src/lib/theme-presets.js";
 
-const DESIGN_LABELS = ["Default", "Retro", "macOS 27", "Windows XP", "Windows 11"] as const;
+const DESIGN_LABELS = ["Default", "macOS 27", "Windows XP", "Windows 11"] as const;
 
 function resetTheme(style?: string) {
   shared.theme = { name: "default", colors: {}, fonts: {}, radius: "0.75rem" };
@@ -57,6 +63,7 @@ describe("DesignPicker", () => {
     shared.saveThemeMock.mockResolvedValue(undefined);
     shared.saveDesktopConfigPatchMock.mockReset();
     shared.saveDesktopConfigPatchMock.mockResolvedValue(undefined);
+    shared.beginBootMock.mockReset();
     resetTheme("flat");
   });
 
@@ -64,13 +71,30 @@ describe("DesignPicker", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders all five design options", () => {
-    const { getByRole, getAllByRole } = render(<DesignPicker />);
+  it("renders all four design options", () => {
+    const { getByRole, getAllByRole, queryByRole } = render(<DesignPicker />);
 
     expect(getByRole("heading", { name: "Design" })).toBeTruthy();
-    expect(getAllByRole("button")).toHaveLength(5);
+    expect(getAllByRole("button")).toHaveLength(4);
     for (const label of DESIGN_LABELS) {
       expect(getByRole("button", { name: new RegExp(label) })).toBeTruthy();
+    }
+  });
+
+  it("does not offer the retired Retro (neumorphic) design", () => {
+    const { queryByRole } = render(<DesignPicker />);
+
+    expect(queryByRole("button", { name: /Retro/ })).toBeNull();
+  });
+
+  it("keeps rendering for an existing neumorphic theme with no option selected", () => {
+    resetTheme("neumorphic");
+    const { getAllByRole } = render(<DesignPicker />);
+
+    const buttons = getAllByRole("button");
+    expect(buttons).toHaveLength(4);
+    for (const button of buttons) {
+      expect(button.getAttribute("aria-pressed")).toBe("false");
     }
   });
 
@@ -79,7 +103,7 @@ describe("DesignPicker", () => {
     const { getByRole } = render(<DesignPicker />);
 
     expect(getByRole("button", { name: /Windows XP/ }).getAttribute("aria-pressed")).toBe("true");
-    for (const label of ["Default", "Retro", "macOS 27", "Windows 11"]) {
+    for (const label of ["Default", "macOS 27", "Windows 11"]) {
       expect(getByRole("button", { name: new RegExp(label) }).getAttribute("aria-pressed")).toBe("false");
     }
   });
@@ -98,17 +122,22 @@ describe("DesignPicker", () => {
     await waitFor(() => expect(shared.saveThemeMock).toHaveBeenCalledTimes(1));
     expect(shared.saveThemeMock).toHaveBeenCalledWith({ ...WINXP_THEME });
 
-    fireEvent.click(getByRole("button", { name: /Retro/ }));
-    await waitFor(() => expect(shared.saveThemeMock).toHaveBeenCalledTimes(2));
-    expect(shared.saveThemeMock).toHaveBeenLastCalledWith({ ...RETRO_THEME });
-
     fireEvent.click(getByRole("button", { name: /macOS 27/ }));
-    await waitFor(() => expect(shared.saveThemeMock).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(shared.saveThemeMock).toHaveBeenCalledTimes(2));
     expect(shared.saveThemeMock).toHaveBeenLastCalledWith({ ...MACOS_GLASS_THEME });
 
     fireEvent.click(getByRole("button", { name: /Windows 11/ }));
-    await waitFor(() => expect(shared.saveThemeMock).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(shared.saveThemeMock).toHaveBeenCalledTimes(3));
     expect(shared.saveThemeMock).toHaveBeenLastCalledWith({ ...WIN11_THEME });
+  });
+
+  it("starts an OS boot beat only after an explicit design selection", async () => {
+    const { getByRole } = render(<DesignPicker />);
+    expect(shared.beginBootMock).not.toHaveBeenCalled();
+
+    fireEvent.click(getByRole("button", { name: /Windows XP/ }));
+    await waitFor(() => expect(shared.saveThemeMock).toHaveBeenCalledTimes(1));
+    expect(shared.beginBootMock).toHaveBeenCalledWith("winxp");
   });
 
   it("saves the flat default preset when Default is selected", async () => {
@@ -127,7 +156,7 @@ describe("DesignPicker", () => {
     shared.saveThemeMock.mockRejectedValueOnce(new Error("Failed to save theme"));
     const { getByRole } = render(<DesignPicker />);
 
-    fireEvent.click(getByRole("button", { name: /Retro/ }));
+    fireEvent.click(getByRole("button", { name: /Default/ }));
 
     await waitFor(() => {
       const alert = getByRole("alert");
@@ -174,14 +203,11 @@ describe("DesignPicker", () => {
     });
   });
 
-  it("does not touch background or dock when Default or Retro is selected", async () => {
+  it("does not touch background or dock when Default is selected", async () => {
     const { getByRole } = render(<DesignPicker />);
 
     fireEvent.click(getByRole("button", { name: /Default/ }));
     await waitFor(() => expect(shared.saveThemeMock).toHaveBeenCalledTimes(1));
-
-    fireEvent.click(getByRole("button", { name: /Retro/ }));
-    await waitFor(() => expect(shared.saveThemeMock).toHaveBeenCalledTimes(2));
 
     expect(shared.saveDesktopConfigPatchMock).not.toHaveBeenCalled();
   });

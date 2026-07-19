@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppEntry, AppWindow } from "../../shell/src/hooks/useWindowManager.js";
 import { WindowsTaskbar } from "../../shell/src/components/taskbar/WindowsTaskbar.js";
+import { resetOsSession } from "../../shell/src/components/os-session/os-session-store.js";
 
 vi.mock("@clerk/nextjs", () => ({
   useUser: () => ({ user: { fullName: "Test User", imageUrl: undefined } }),
@@ -63,6 +64,7 @@ describe("WindowsTaskbar", () => {
   // outside act(). RTL's cleanup unmounts before the next beforeEach runs.
   beforeEach(() => {
     document.documentElement.removeAttribute("data-theme-style");
+    resetOsSession();
   });
 
   it("renders nothing for non-Windows designs", async () => {
@@ -278,16 +280,54 @@ describe("WindowsTaskbar", () => {
     expect(handlers.onFocusWindow).toHaveBeenCalledWith("w-chess");
   });
 
-  it("closes the Win11 start menu via the decorative power button", async () => {
+  it("opens the Win11 power flyout with Lock and Sign out options", async () => {
     setDesign("win11");
     const { container, handlers } = await renderTaskbar();
 
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
     const menu = container.querySelector("[data-win11-start-menu]") as HTMLElement;
     fireEvent.click(within(menu).getByRole("button", { name: "Power" }));
-    expect(container.querySelector("[data-win11-start-menu]")).toBeNull();
+
+    // The flyout opens over the footer; the start menu stays open behind it.
+    expect(container.querySelector("[data-win11-start-menu]")).toBeTruthy();
+    const flyout = within(menu).getByRole("menu", { name: "Power options" });
+    expect(within(flyout).getByRole("menuitem", { name: "Lock" })).toBeTruthy();
+    expect(within(flyout).getByRole("menuitem", { name: "Sign out" })).toBeTruthy();
     expect(handlers.onOpenApp).not.toHaveBeenCalled();
     expect(handlers.onOpenSettings).not.toHaveBeenCalled();
+
+    // Picking an option closes the start menu.
+    fireEvent.click(within(flyout).getByRole("menuitem", { name: "Lock" }));
+    expect(container.querySelector("[data-win11-start-menu]")).toBeNull();
+  });
+
+  it("supports arrow-key navigation and Escape in the Win11 power flyout", async () => {
+    setDesign("win11");
+    const { container } = await renderTaskbar();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    const menu = container.querySelector("[data-win11-start-menu]") as HTMLElement;
+    fireEvent.click(within(menu).getByRole("button", { name: "Power" }));
+
+    // Opening the flyout focuses the first menu item.
+    const flyout = within(menu).getByRole("menu", { name: "Power options" });
+    const lockItem = within(flyout).getByRole("menuitem", { name: "Lock" });
+    const signOutItem = within(flyout).getByRole("menuitem", { name: "Sign out" });
+    expect(document.activeElement).toBe(lockItem);
+
+    // Arrow keys cycle focus between the two items.
+    fireEvent.keyDown(flyout, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(signOutItem);
+    fireEvent.keyDown(flyout, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(lockItem);
+    fireEvent.keyDown(flyout, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(signOutItem);
+
+    // Escape closes only the flyout and returns focus to the Power button.
+    fireEvent.keyDown(flyout, { key: "Escape" });
+    expect(within(menu).queryByRole("menu", { name: "Power options" })).toBeNull();
+    expect(container.querySelector("[data-win11-start-menu]")).toBeTruthy();
+    expect(document.activeElement).toBe(within(menu).getByRole("button", { name: "Power" }));
   });
 
   it("opens Settings from the Win11 start menu user footer, like XP's Control Panel", async () => {

@@ -11,10 +11,11 @@ import {
 import {
   getPreset,
   MACOS_GLASS_THEME,
-  RETRO_THEME,
   WIN11_THEME,
   WINXP_THEME,
 } from "@/lib/theme-presets";
+import { useOsSessionStore } from "@/components/os-session/os-session-store";
+import { isBootDesign } from "@/components/os-session/os-session-utils";
 
 /* ── Design options ────────────────────────────── */
 
@@ -33,7 +34,6 @@ interface DesignOption {
 
 const DESIGN_OPTIONS: DesignOption[] = [
   { id: "flat", label: "Default", theme: DEFAULT_FLAT_THEME },
-  { id: "neumorphic", label: "Retro", theme: RETRO_THEME },
   { id: "macos-glass", label: "macOS 27", theme: MACOS_GLASS_THEME },
   { id: "winxp", label: "Windows XP", theme: WINXP_THEME },
   { id: "win11", label: "Windows 11", theme: WIN11_THEME },
@@ -242,6 +242,9 @@ export function DesignPicker() {
             : "Design applied, but its wallpaper couldn't be updated. Try choosing it again below.",
         );
       }
+    }
+    if (option.id !== activeId && isBootDesign(option.id)) {
+      useOsSessionStore.getState().beginBoot(option.id);
     }
     // No `finally` — React Compiler cannot lower TryStatement with a finalizer.
     setPendingId(null);

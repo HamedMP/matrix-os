@@ -43,13 +43,12 @@ export const BUNDLED_WALLPAPERS = new Set([
 ]);
 const SETTINGS_FETCH_TIMEOUT_MS = 10_000;
 
-// Bundled defaults live in shell/public/wallpapers and work even when the
-// gateway is unreachable. User-uploaded wallpapers are served by the gateway
-// under /files/system/wallpapers.
+// All wallpapers — bundled OS defaults and user uploads alike — are served by
+// the gateway from the owner's home dir under /files/system/wallpapers. The
+// shell-public /wallpapers path is unreliable through the platform
+// session-routing proxy, so bundled names must not be special-cased to it.
 export function wallpaperUrl(name: string, gatewayUrl: string): string {
-  return BUNDLED_WALLPAPERS.has(name)
-    ? `/wallpapers/${name}`
-    : `${gatewayUrl}/files/system/wallpapers/${name}`;
+  return `${gatewayUrl}/files/system/wallpapers/${name}`;
 }
 
 const DEFAULT_DESKTOP_CONFIG: DesktopConfig = {

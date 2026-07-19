@@ -13,6 +13,7 @@ import {
 import type { AppEntry } from "@/hooks/useWindowManager";
 import { isBuiltInAppPath } from "@/lib/builtin-apps";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { useOsSessionStore } from "../os-session/os-session-store";
 import { StartMenuUser, TaskbarAppIcon } from "./taskbar-shared";
 import { resolveBuiltInStartApps } from "./taskbar-utils";
 
@@ -29,8 +30,8 @@ export interface XpStartMenuProps {
  * Authentic Windows XP (Luna) start menu: blue header band with the user
  * identity, a white left column of programs, a light-blue right column of
  * system places, and a footer band with Log Off / Turn Off Computer. The
- * footer actions are decorative — they only close the menu (no sign-out or
- * destructive wiring).
+ * footer actions close the menu and open the XP session overlays (log-off /
+ * shutdown simulation) via the os-session store.
  */
 export function XpStartMenu({
   ref,
@@ -150,7 +151,15 @@ export function XpStartMenu({
         </div>
       </div>
       <div className="xp-start-footer">
-        <button type="button" className="xp-footer-button" aria-label="Log Off" onClick={onClose}>
+        <button
+          type="button"
+          className="xp-footer-button"
+          aria-label="Log Off"
+          onClick={() => {
+            onClose();
+            useOsSessionStore.getState().openXpLogoff();
+          }}
+        >
           <span className="xp-footer-chip xp-footer-chip-logoff" aria-hidden="true">
             <KeyRoundIcon />
           </span>
@@ -160,7 +169,10 @@ export function XpStartMenu({
           type="button"
           className="xp-footer-button"
           aria-label="Turn Off Computer"
-          onClick={onClose}
+          onClick={() => {
+            onClose();
+            useOsSessionStore.getState().openXpShutdown();
+          }}
         >
           <span className="xp-footer-chip xp-footer-chip-power" aria-hidden="true">
             <PowerIcon />
