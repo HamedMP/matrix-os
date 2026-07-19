@@ -1066,7 +1066,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
   if (firstRunStatus === "checking") {
     return (
-      <TooltipProvider delayDuration={300}>
+      <TooltipProvider delay={300}>
         <ShellNotificationStack>
           <RuntimeIdentityBanner />
         </ShellNotificationStack>
@@ -1076,7 +1076,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   }
 
   return (
-    <TooltipProvider delayDuration={300}>
+    <TooltipProvider delay={300}>
       <ShellNotificationStack>
         <RuntimeIdentityBanner />
         <ConnectionIndicator />
@@ -1299,20 +1299,22 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                 </div>
                 {modeConfig.showLauncher && (
                   <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        data-testid="dock-tasks"
-                        onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
-                        className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
-                          taskBoardOpen
-                            ? "bg-primary text-primary-foreground border-primary"
-                            : "bg-card border-border/60"
-                        }`}
-                        style={{ width: dock.iconSize, height: dock.iconSize }}
-                      >
-                        <LayoutGridIcon className="size-4" />
-                      </button>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          data-testid="dock-tasks"
+                          onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
+                          className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+                            taskBoardOpen
+                              ? "bg-primary text-primary-foreground border-primary"
+                              : "bg-card border-border/60"
+                          }`}
+                          style={{ width: dock.iconSize, height: dock.iconSize }}
+                        />
+                      }
+                    >
+                      <LayoutGridIcon className="size-4" />
                     </TooltipTrigger>
                     <TooltipContent side={tooltipSide} sideOffset={8}>
                       Launcher
@@ -1339,61 +1341,67 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                 })()}
                 {!HERMES_CHAT_HIDDEN && (
                 <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      data-testid="dock-chat"
-                      onClick={() => { setChatOpen((v) => !v); setTaskBoardOpen(false); setSettingsOpen(false); }}
-                      className={`relative flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
-                        chatOpen
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "bg-card border-border/60"
-                      }`}
-                      style={{ width: dock.iconSize, height: dock.iconSize }}
-                      aria-label={chatOpen ? "Close Hermes" : "Open Hermes"}
-                    >
-                      <MessageSquareIcon className="size-4" />
-                      {chat?.busy && (
-                        <span
-                          className="absolute right-1 top-1 size-1.5 animate-pulse rounded-full bg-primary"
-                          aria-hidden
-                        />
-                      )}
-                    </button>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        data-testid="dock-chat"
+                        onClick={() => { setChatOpen((v) => !v); setTaskBoardOpen(false); setSettingsOpen(false); }}
+                        className={`relative flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+                          chatOpen
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-card border-border/60"
+                        }`}
+                        style={{ width: dock.iconSize, height: dock.iconSize }}
+                        aria-label={chatOpen ? "Close Hermes" : "Open Hermes"}
+                      />
+                    }
+                  >
+                    <MessageSquareIcon className="size-4" />
+                    {chat?.busy && (
+                      <span
+                        className="absolute right-1 top-1 size-1.5 animate-pulse rounded-full bg-primary"
+                        aria-hidden
+                      />
+                    )}
                   </TooltipTrigger>
                   <TooltipContent side={tooltipSide} sideOffset={8}>Hermes</TooltipContent>
                 </Tooltip>
                 )}
                 <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      data-testid="dock-vscode"
-                      onClick={() => window.open(getCodeEditorUrl(), "_blank", "noopener,noreferrer")}
-                      className="flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all bg-card border-border/60"
-                      style={{ width: dock.iconSize, height: dock.iconSize }}
-                    >
-                      {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- small static dock icon from /public; next/image is overkill for a 20px square */}
-                      <img src="/vscode.png" alt="VS Code" className="size-5 rounded-[5px]" />
-                    </button>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        data-testid="dock-vscode"
+                        onClick={() => window.open(getCodeEditorUrl(), "_blank", "noopener,noreferrer")}
+                        className="flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all bg-card border-border/60"
+                        style={{ width: dock.iconSize, height: dock.iconSize }}
+                      />
+                    }
+                  >
+                    {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- small static dock icon from /public; next/image is overkill for a 20px square */}
+                    <img src="/vscode.png" alt="VS Code" className="size-5 rounded-[5px]" />
                   </TooltipTrigger>
                   <TooltipContent side={tooltipSide} sideOffset={8}>Code editor</TooltipContent>
                 </Tooltip>
                 <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      data-testid="dock-settings"
-                      onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); setChatOpen(false); }}
-                      className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
-                        settingsOpen
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "bg-card border-border/60"
-                      }`}
-                      style={{ width: dock.iconSize, height: dock.iconSize }}
-                    >
-                      <SettingsIcon className="size-4" />
-                    </button>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        data-testid="dock-settings"
+                        onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); setChatOpen(false); }}
+                        className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+                          settingsOpen
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-card border-border/60"
+                        }`}
+                        style={{ width: dock.iconSize, height: dock.iconSize }}
+                      />
+                    }
+                  >
+                    <SettingsIcon className="size-4" />
                   </TooltipTrigger>
                   <TooltipContent side={tooltipSide} sideOffset={8}>
                     Settings

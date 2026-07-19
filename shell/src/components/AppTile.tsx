@@ -91,18 +91,16 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild>
-        {tile}
-      </ContextMenuTrigger>
+      <ContextMenuTrigger render={tile} />
       <ContextMenuContent>
         {onTogglePin && (
-          <ContextMenuItem onSelect={onTogglePin}>
+          <ContextMenuItem onClick={onTogglePin}>
             <PinIcon className="size-3.5 mr-2" />
             {pinned ? "Unpin from Dock" : "Pin to Dock"}
           </ContextMenuItem>
         )}
         {onRegenerateIcon && (
-          <ContextMenuItem onSelect={onRegenerateIcon}>
+          <ContextMenuItem onClick={onRegenerateIcon}>
             <RefreshCwIcon className="size-3.5 mr-2" />
             Regenerate Icon
           </ContextMenuItem>
@@ -112,7 +110,7 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
         )}
         {onRename && (
           <ContextMenuItem
-            onSelect={() => {
+            onClick={() => {
               const newName = window.prompt("Rename app:", name);
               if (newName && newName.trim() && newName.trim() !== name) {
                 onRename(newName.trim());
@@ -124,7 +122,7 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
           </ContextMenuItem>
         )}
         {onRemoveFromCanvas && (
-          <ContextMenuItem onSelect={onRemoveFromCanvas}>
+          <ContextMenuItem onClick={onRemoveFromCanvas}>
             <EyeOffIcon className="size-3.5 mr-2" />
             Remove from canvas
           </ContextMenuItem>

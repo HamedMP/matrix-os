@@ -13,7 +13,7 @@ import {
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 
 interface FileContextMenuProps {
-  children: React.ReactNode;
+  children: React.ReactElement;
   targetName?: string;
   targetType?: "file" | "directory";
   onOpenFile?: (path: string) => void;
@@ -49,7 +49,7 @@ export function FileContextMenu({
   if (isMulti) {
     return (
       <ContextMenu>
-        <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+        <ContextMenuTrigger render={children} />
         <ContextMenuContent>
           <ContextMenuItem onClick={() => copy(fullPaths)}>Copy</ContextMenuItem>
           <ContextMenuItem onClick={() => cut(fullPaths)}>Cut</ContextMenuItem>
@@ -72,7 +72,7 @@ export function FileContextMenu({
 
     return (
       <ContextMenu>
-        <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+        <ContextMenuTrigger render={children} />
         <ContextMenuContent>
           {targetType === "directory" ? (
             <ContextMenuItem
@@ -117,7 +117,7 @@ export function FileContextMenu({
   // Empty space context menu
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuTrigger render={children} />
       <ContextMenuContent>
         <ContextMenuSub>
           <ContextMenuSubTrigger>New File</ContextMenuSubTrigger>

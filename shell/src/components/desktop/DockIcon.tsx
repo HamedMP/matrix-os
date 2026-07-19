@@ -66,7 +66,7 @@ export function DockIcon({
   if (!hasContextMenu) {
     return (
       <Tooltip>
-        <TooltipTrigger asChild>{btn}</TooltipTrigger>
+        <TooltipTrigger render={btn} />
         <TooltipContent side={tooltipSide} sideOffset={8}>{name}</TooltipContent>
       </Tooltip>
     );
@@ -74,23 +74,21 @@ export function DockIcon({
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div>
-          <Tooltip>
-            <TooltipTrigger asChild>{btn}</TooltipTrigger>
-            <TooltipContent side={tooltipSide} sideOffset={8}>{name}</TooltipContent>
-          </Tooltip>
-        </div>
+      <ContextMenuTrigger render={<div />}>
+        <Tooltip>
+          <TooltipTrigger render={btn} />
+          <TooltipContent side={tooltipSide} sideOffset={8}>{name}</TooltipContent>
+        </Tooltip>
       </ContextMenuTrigger>
       <ContextMenuContent className="z-[60]">
         {onUnpin && (
-          <ContextMenuItem onSelect={onUnpin}>
+          <ContextMenuItem onClick={onUnpin}>
             <PinOffIcon className="size-3.5 mr-2" />
             Unpin from Dock
           </ContextMenuItem>
         )}
         {onRegenerateIcon && (
-          <ContextMenuItem onSelect={onRegenerateIcon}>
+          <ContextMenuItem onClick={onRegenerateIcon}>
             <RefreshCwIcon className="size-3.5 mr-2" />
             Regenerate Icon
           </ContextMenuItem>
@@ -100,7 +98,7 @@ export function DockIcon({
         )}
         {onRename && (
           <ContextMenuItem
-            onSelect={() => {
+            onClick={() => {
               const newName = window.prompt("Rename app:", name);
               if (newName && newName.trim() && newName.trim() !== name) {
                 onRename(newName.trim());
@@ -116,7 +114,7 @@ export function DockIcon({
             {(onUnpin || onRegenerateIcon || onRename) && <ContextMenuSeparator />}
             <ContextMenuItem
               disabled={!canQuit}
-              onSelect={() => {
+              onClick={() => {
                 if (canQuit) onQuit();
               }}
             >

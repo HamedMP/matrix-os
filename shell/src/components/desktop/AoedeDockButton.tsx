@@ -41,7 +41,7 @@ export function AoedeDockButton({
 
   return (
     <Tooltip>
-      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipTrigger render={button} />
       <TooltipContent side={tooltipSide} sideOffset={8}>
         {active ? "Aoede (on)" : "Aoede"}
       </TooltipContent>

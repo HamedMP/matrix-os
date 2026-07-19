@@ -20,7 +20,7 @@ interface MobileQuickActionsProps {
 }
 
 /**
- * Launcher quick-actions menu rendered as a brand-themed vaul bottom-sheet
+ * Launcher quick-actions menu rendered as a brand-themed Base UI bottom-sheet
  * (drag handle, snap-to-dismiss). Establishes the mobile bottom-sheet pattern
  * for the shell. Each action closes the sheet before invoking its handler.
  */
@@ -40,14 +40,16 @@ export function MobileQuickActions({
 
   return (
     <Drawer open={open} onOpenChange={setOpen}>
-      <DrawerTrigger asChild>
-        <button
-          type="button"
-          aria-label="Quick actions"
-          className="inline-flex size-9 items-center justify-center rounded-full border border-[var(--surface-glass-border)] bg-[color-mix(in_srgb,var(--foreground)_6%,transparent)] text-foreground transition-transform duration-150 ease-[var(--ease-emphasized)] active:scale-90"
-        >
-          <SettingsIcon className="size-4" />
-        </button>
+      <DrawerTrigger
+        render={
+          <button
+            type="button"
+            aria-label="Quick actions"
+            className="inline-flex size-9 items-center justify-center rounded-full border border-[var(--surface-glass-border)] bg-[color-mix(in_srgb,var(--foreground)_6%,transparent)] text-foreground transition-transform duration-150 ease-[var(--ease-emphasized)] active:scale-90"
+          />
+        }
+      >
+        <SettingsIcon className="size-4" />
       </DrawerTrigger>
       <DrawerContent>
         <DrawerHeader>
@@ -77,13 +79,15 @@ export function MobileQuickActions({
           )}
         </div>
         <div className="px-4 pb-4 pt-1">
-          <DrawerClose asChild>
-            <button
-              type="button"
-              className="w-full rounded-xl border border-[var(--surface-glass-border)] bg-[color-mix(in_srgb,var(--foreground)_6%,transparent)] py-3 text-sm font-medium text-foreground transition-transform duration-150 ease-[var(--ease-emphasized)] active:scale-[0.98]"
-            >
-              Cancel
-            </button>
+          <DrawerClose
+            render={
+              <button
+                type="button"
+                className="w-full rounded-xl border border-[var(--surface-glass-border)] bg-[color-mix(in_srgb,var(--foreground)_6%,transparent)] py-3 text-sm font-medium text-foreground transition-transform duration-150 ease-[var(--ease-emphasized)] active:scale-[0.98]"
+              />
+            }
+          >
+            Cancel
           </DrawerClose>
         </div>
       </DrawerContent>

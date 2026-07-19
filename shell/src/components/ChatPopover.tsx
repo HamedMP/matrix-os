@@ -7,7 +7,7 @@ import {
   useLayoutEffect,
   memo,
 } from "react";
-import { Dialog as DialogPrimitive } from "radix-ui";
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import {
   LoaderCircleIcon,
   WrenchIcon,
@@ -145,10 +145,22 @@ export function ChatPopover({
 
   // Wrap setOpen so every close path latches userClosedDuringBusyRef
   // when the user dismisses while the agent is still busy. Used by both
-  // the Radix Dialog (Esc, click outside) and the header X button.
+  // the Base UI Dialog (Esc, click outside) and the header X button.
   const handleOpenChange = (next: boolean) => {
     if (!next && busy) userClosedDuringBusyRef.current = true;
     setOpen(next);
+  };
+
+  const handleDialogOpenChange = (
+    next: boolean,
+    eventDetails: DialogPrimitive.Root.ChangeEventDetails,
+  ) => {
+    if (!next && eventDetails.reason === "escape-key" && chat?.busy) {
+      eventDetails.cancel();
+      chat.abortCurrent();
+      return;
+    }
+    handleOpenChange(next);
   };
 
   // Clamp an offset against the live popup size + viewport so the surface can
@@ -245,30 +257,14 @@ export function ChatPopover({
     : `min(${CHAT_WIDTH}px, calc(100vw - 32px))`;
 
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={handleOpenChange} modal={false}>
+    <DialogPrimitive.Root
+      open={open}
+      onOpenChange={handleDialogOpenChange}
+      modal={false}
+      disablePointerDismissal
+    >
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Content
-          // Don't auto-close from "click outside" -- the dock-chat button
-          // (the toggle source) is outside Content, so any click on it
-          // would otherwise dismiss-then-toggle. Toggle is now driven
-          // entirely by the parent via the `open` prop.
-          onInteractOutside={(e) => e.preventDefault()}
-          // Never auto-close from focus changes. When the user submits, the
-          // input flips to disabled, browser strips focus, focus lands on
-          // <body>, and Radix would interpret that as "interacted outside"
-          // and close us. The rising-edge auto-open would then reopen,
-          // producing a visible close->open flash on every message.
-          onFocusOutside={(e) => e.preventDefault()}
-          // Esc-while-busy stops the agent (popup stays open). Esc-while-
-          // idle falls through to Radix's default close. This matches the
-          // terminal convention "Ctrl+C to interrupt" with a more
-          // discoverable key on a UI surface.
-          onEscapeKeyDown={(e) => {
-            if (chat.busy) {
-              e.preventDefault();
-              chat.abortCurrent();
-            }
-          }}
+        <DialogPrimitive.Popup
           className={cn(
             // Bottom-centered. left-1/2 + the keyframe-baked translateX(-50%)
             // keep horizontal centering coherent with the open/close
@@ -284,8 +280,8 @@ export function ChatPopover({
             // Subtle layered shadow: short contact + soft ambient + a
             // hairline of accent bloom. Restrained on purpose.
             "shadow-[0_2px_8px_-2px_rgba(0,0,0,0.08),0_20px_40px_-12px_rgba(0,0,0,0.18),0_0_60px_-30px_var(--primary)]",
-            "data-[state=open]:animate-[chat-popup-in_360ms_cubic-bezier(0.22,1,0.36,1)_both]",
-            "data-[state=closed]:animate-[chat-popup-out_180ms_ease-in_both]",
+            "data-open:animate-[chat-popup-in_360ms_cubic-bezier(0.22,1,0.36,1)_both]",
+            "data-closed:animate-[chat-popup-out_180ms_ease-in_both]",
             "transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
             // transform-gpu promotes the popup to its own compositor layer
             // so streaming text below doesn't repaint the whole surface.
@@ -341,7 +337,7 @@ export function ChatPopover({
               busy={chat.busy}
             />
           </div>
-        </DialogPrimitive.Content>
+        </DialogPrimitive.Popup>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
   );
