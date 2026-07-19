@@ -103,13 +103,26 @@ export function openProjectChat(projectId: string, options: OpenProjectChatOptio
 export function openCodingAgentThread(threadId: string): void {
   const workspace = useCodingAgentWorkspace.getState();
   const listed = [
-    ...(workspace.summary?.activeThreads.items ?? []),
+    // Attention entries win the dedupe: they carry the actionable state.
     ...(workspace.summary?.attentionThreads.items ?? []),
+    ...(workspace.summary?.activeThreads.items ?? []),
   ].find((thread) => thread.id === threadId);
   const snapshotProjectId = workspace.threadSnapshot?.thread.id === threadId
     ? workspace.threadSnapshot.thread.projectId
     : undefined;
-  const projectId = listed?.projectId ?? snapshotProjectId ?? defaultProjectId();
+  // Threads may live outside the bounded summary windows; any loaded project
+  // workspace that lists the thread identifies its project just as well.
+  const workspaceProjectId = (() => {
+    for (const entry of Object.values(useProjectWorkspaces.getState().entries)) {
+      const projectWorkspace = entry.workspace;
+      if (!projectWorkspace) continue;
+      const carries = [...projectWorkspace.projectThreads.items, ...projectWorkspace.taskThreads.items]
+        .some((thread) => thread.id === threadId);
+      if (carries) return projectWorkspace.project.id;
+    }
+    return undefined;
+  })();
+  const projectId = listed?.projectId ?? snapshotProjectId ?? workspaceProjectId ?? defaultProjectId();
   if (!projectId) {
     console.warn("[project-chat] cannot open a thread before any project exists");
     return;
