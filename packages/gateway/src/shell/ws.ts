@@ -360,21 +360,40 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     let attachPromise!: Promise<boolean>;
     attachPromise = (async () => {
       const abortController = new AbortController();
-      let child: ShellAttachProcess;
+      let child: ShellAttachProcess | null = null;
       const outputCompat = await createSeededOutputCompat(safeName, replayBuffer);
       if (!canUseAttachPromise(runtime, attachPromise)) {
         return false;
       }
       runtime.outputCompat = outputCompat;
-      try {
-        child = options.adapter.attachSession(safeName, {
-          signal: abortController.signal,
-        });
-      } catch (err: unknown) {
-        if (canUseAttachPromise(runtime, attachPromise)) {
-          runtime.outputCompat = null;
+      // zellij attach can lose the race against the session's own creation
+      // (POST /api/terminal/sessions followed immediately by the ws attach, or
+      // a cold zellij daemon). Retry briefly before declaring attach_failed so
+      // transient startup races do not surface as user-visible errors.
+      const maxAttachAttempts = 3;
+      for (let attempt = 1; attempt <= maxAttachAttempts; attempt += 1) {
+        try {
+          child = options.adapter.attachSession(safeName, {
+            signal: abortController.signal,
+          });
+          break;
+        } catch (err: unknown) {
+          child = null;
+          if (attempt >= maxAttachAttempts || !canUseAttachPromise(runtime, attachPromise)) {
+            if (canUseAttachPromise(runtime, attachPromise)) {
+              runtime.outputCompat = null;
+            }
+            console.warn("[shell] zellij attach process failed:", err instanceof Error ? err.message : String(err));
+            return false;
+          }
+          console.warn(
+            `[shell] zellij attach attempt ${attempt} failed, retrying:`,
+            err instanceof Error ? err.message : String(err),
+          );
+          await new Promise((resolve) => setTimeout(resolve, 400));
         }
-        console.warn("[shell] zellij attach process failed:", err instanceof Error ? err.message : String(err));
+      }
+      if (!child) {
         return false;
       }
 
