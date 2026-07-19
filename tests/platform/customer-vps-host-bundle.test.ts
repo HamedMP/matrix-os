@@ -649,7 +649,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
 
     expect(workflow).toContain('provisioning|running)');
     expect(workflow).toContain('if [ "$runtime_slot" = "$HANDLE" ]; then');
-    expect(workflow).toContain('Reusing existing ${HANDLE} machine ${accepted_machine_id} (${status})');
+    expect(workflow).toContain('Reusing existing ${HANDLE} preview (${status})');
+    expect(workflow).not.toContain('Fleet returned an active preview without a machine ID.');
     expect(workflow).toContain('requires exact-slot adoption from ${runtime_slot:-unset}');
     expect(workflow).toContain('also reconciles the complete access');
     expect(workflow).toContain('absent|failed)');

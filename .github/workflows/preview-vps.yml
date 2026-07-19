@@ -289,12 +289,8 @@ jobs:
 
           case "$status" in
             provisioning|running)
-              if [ -z "$accepted_machine_id" ]; then
-                echo "Fleet returned an active preview without a machine ID." >&2
-                exit 1
-              fi
               if [ "$runtime_slot" = "$HANDLE" ]; then
-                echo "Reusing existing ${HANDLE} machine ${accepted_machine_id} (${status})"
+                echo "Reusing existing ${HANDLE} preview (${status})"
               else
                 echo "Active ${HANDLE} requires exact-slot adoption from ${runtime_slot:-unset}"
               fi
