@@ -127,10 +127,12 @@ describe("zellij-runtime", () => {
     const configDir = join(homePath, "system", "zellij");
     const configPath = join(configDir, "config.kdl");
     const shellPath = join(configDir, "matrix-terminal-shell");
+    const zshenvPath = join(configDir, ".zshenv");
     const zshrcPath = join(configDir, ".zshrc");
     const promptLabelPath = join(configDir, "prompt-label.mjs");
     const config = await readFile(configPath, "utf-8");
     const shell = await readFile(shellPath, "utf-8");
+    const zshenv = await readFile(zshenvPath, "utf-8");
     const zshrc = await readFile(zshrcPath, "utf-8");
     const promptLabel = await readFile(promptLabelPath, "utf-8");
     const defaultLayout = await readFile(join(configDir, "layouts", "matrix.kdl"), "utf-8");
@@ -148,7 +150,8 @@ describe("zellij-runtime", () => {
     expect(shell).toContain(`node '${promptLabelPath}'`);
     expect(shell).toContain('if [ -z "${MATRIX_TERMINAL_PROMPT:-}" ] && command -v node >/dev/null 2>&1; then');
     expect(zshrc).toContain('PROMPT="${MATRIX_TERMINAL_PROMPT}"');
-    expect(zshrc).toContain('$HOME/.zshenv');
+    expect(zshenv).toContain('. "$HOME/.zshenv"');
+    expect(zshrc).not.toContain('$HOME/.zshenv');
     expect(promptLabel).toContain("handle.json");
     expect(config).toContain('theme "default"');
     expect(config).not.toContain("matrix-dark {");

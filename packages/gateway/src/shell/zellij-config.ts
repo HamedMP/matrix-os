@@ -7,6 +7,7 @@ export type MatrixZellijConfigPaths = {
   dir: string;
   file: string;
   shellFile: string;
+  zshenvFile: string;
   zshrcFile: string;
   bashrcFile: string;
   promptLabelFile: string;
@@ -39,7 +40,7 @@ if [ -n "\${MATRIX_HOME:-}" ]; then
 fi
 `;
 
-export const MATRIX_TERMINAL_ZSHRC = `# Matrix OS generated terminal rcfile.
+export const MATRIX_TERMINAL_ZSHENV = `# Matrix OS generated terminal environment forwarder.
 matrix_terminal_generated_zdotdir="$ZDOTDIR"
 matrix_terminal_owner_zdotdir="$HOME"
 if [ -r "$HOME/.zshenv" ]; then
@@ -48,6 +49,12 @@ if [ -r "$HOME/.zshenv" ]; then
   matrix_terminal_owner_zdotdir="\${ZDOTDIR:-$HOME}"
 fi
 ZDOTDIR="$matrix_terminal_generated_zdotdir"
+unset matrix_terminal_generated_zdotdir
+`;
+
+export const MATRIX_TERMINAL_ZSHRC = `# Matrix OS generated terminal rcfile.
+matrix_terminal_generated_zdotdir="$ZDOTDIR"
+matrix_terminal_owner_zdotdir="\${matrix_terminal_owner_zdotdir:-$HOME}"
 
 if [ "$matrix_terminal_owner_zdotdir" != "$matrix_terminal_generated_zdotdir" ] &&
    [ -r "$matrix_terminal_owner_zdotdir/.zshrc" ]; then
@@ -119,6 +126,7 @@ export function matrixZellijConfigPaths(homePath: string): MatrixZellijConfigPat
     dir: zellijDir,
     file: join(zellijDir, "config.kdl"),
     shellFile: join(zellijDir, "matrix-terminal-shell"),
+    zshenvFile: join(zellijDir, ".zshenv"),
     zshrcFile: join(zellijDir, ".zshrc"),
     bashrcFile: join(zellijDir, "bashrc"),
     promptLabelFile: join(zellijDir, "prompt-label.mjs"),

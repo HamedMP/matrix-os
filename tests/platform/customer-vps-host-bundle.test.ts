@@ -187,12 +187,13 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('ensure_agent_sandbox_runtime()');
     expect(installer).toContain('apt-get install -y software-properties-common');
     expect(installer).toContain('add-apt-repository -y universe');
-    expect(installer).toContain('apt-get install -y bubblewrap socat');
+    expect(installer).toContain('! command -v zsh >/dev/null 2>&1');
+    expect(installer).toContain('apt-get install -y bubblewrap socat zsh');
     expect(installer).toContain("cat >/etc/apparmor.d/bwrap <<'EOF'");
     expect(installer).toContain('systemctl reload apparmor');
     expect(installer).toContain('ensure_agent_sandbox_runtime');
     expect(installer.match(/\|\| return 1/g)?.length).toBeGreaterThanOrEqual(7);
-    expect(installer).toContain('command -v bwrap >/dev/null 2>&1 && command -v socat >/dev/null 2>&1');
+    expect(installer).toContain('command -v bwrap >/dev/null 2>&1 && command -v socat >/dev/null 2>&1 && command -v zsh >/dev/null 2>&1');
     expect(installer).toContain('if ! ensure_agent_sandbox_runtime; then');
     expect(installer).toContain('coding-agent sandbox provisioning failed');
     expect(installer).toContain('MODE="${1:-}"');
