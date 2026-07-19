@@ -40,6 +40,32 @@ const DEFAULT_DESKTOP_CONFIG: DesktopConfig = {
   pinnedApps: [...DEFAULT_PINNED_APPS],
 };
 
+interface DesktopConfigRuntimeCache {
+  gatewayUrl: string;
+  config: DesktopConfig;
+}
+
+let desktopConfigRuntimeCache: DesktopConfigRuntimeCache | null = null;
+
+function rememberDesktopConfig(gatewayUrl: string, config: DesktopConfig): void {
+  desktopConfigRuntimeCache = { gatewayUrl, config };
+}
+
+function initialDesktopConfig(
+  cacheScope: ShellSnapshotScope | null,
+  gatewayUrl: string,
+): DesktopConfig {
+  // A scoped shell root starts from its own user/runtime snapshot. Nested
+  // consumers may reuse only the current gateway's applied config so opening
+  // Settings cannot repaint another computer's/default wallpaper.
+  if (cacheScope) {
+    return loadShellSnapshot(cacheScope)?.desktopConfig ?? DEFAULT_DESKTOP_CONFIG;
+  }
+  return desktopConfigRuntimeCache?.gatewayUrl === gatewayUrl
+    ? desktopConfigRuntimeCache.config
+    : DEFAULT_DESKTOP_CONFIG;
+}
+
 // Page background mesh gradient — uses --gradient-* tokens from :root.
 // These are separate from --background (which controls app window tint).
 // Change the gradient by editing the --gradient-* vars in globals.css.
@@ -110,6 +136,7 @@ function applyDesktopConfigSnapshot(
     setDockOrder: (order: DesktopConfig["dockOrder"]) => void;
   },
 ) {
+  rememberDesktopConfig(gatewayUrl, cfg);
   setters.setDock(cfg.dock);
   setters.setPinnedApps(cfg.pinnedApps);
   setters.setDockOrder(cfg.dockOrder);
@@ -119,13 +146,11 @@ function applyDesktopConfigSnapshot(
 export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
   const cacheScope = options.cacheScope ?? null;
   const cacheKey = cacheScope?.storageKey;
-  const [config, setConfig] = useState<DesktopConfig>(() => (
-    loadShellSnapshot(cacheScope)?.desktopConfig ?? DEFAULT_DESKTOP_CONFIG
-  ));
+  const gatewayUrl = getGatewayUrl();
+  const [config, setConfig] = useState<DesktopConfig>(() => initialDesktopConfig(cacheScope, gatewayUrl));
   const setDock = useDesktopConfigStore((s) => s.setDock);
   const setPinnedApps = useDesktopConfigStore((s) => s.setPinnedApps);
   const setDockOrder = useDesktopConfigStore((s) => s.setDockOrder);
-  const gatewayUrl = getGatewayUrl();
 
   useLayoutEffect(() => {
     const cachedConfig = loadShellSnapshot(cacheScope)?.desktopConfig;
@@ -147,6 +172,7 @@ export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
   }, [cacheKey, cacheScope, gatewayUrl, setDock, setPinnedApps, setDockOrder]);
 
   useEffect(() => {
+    rememberDesktopConfig(gatewayUrl, config);
     applyBackground(config.background, gatewayUrl);
   }, [config.background, gatewayUrl]);
 
@@ -201,7 +227,11 @@ export async function saveDesktopConfig(
     signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
     body: JSON.stringify(config),
   });
-  if (res.ok) saveShellSnapshot(options.cacheScope, { desktopConfig: config });
+  if (res.ok) {
+    saveShellSnapshot(options.cacheScope, { desktopConfig: config });
+    const store = useDesktopConfigStore.getState();
+    applyDesktopConfigSnapshot(config, gatewayUrl, store);
+  }
 }
 
 export async function saveDesktopConfigPatch(
@@ -229,5 +259,25 @@ export async function saveDesktopConfigPatch(
   if (!putRes.ok) {
     throw new Error(`PUT /api/settings/desktop ${putRes.status}`);
   }
-  saveShellSnapshot(options.cacheScope, { desktopConfig: nextConfig as unknown as DesktopConfig });
+  const dockValue = nextConfig.dock;
+  const normalizedConfig = {
+    ...DEFAULT_DESKTOP_CONFIG,
+    ...nextConfig,
+    dock: {
+      ...DEFAULT_DESKTOP_CONFIG.dock,
+      ...(typeof dockValue === "object" && dockValue !== null && !Array.isArray(dockValue) ? dockValue : {}),
+      autoHide: false,
+    },
+    pinnedApps: Array.isArray(nextConfig.pinnedApps)
+      ? nextConfig.pinnedApps.filter((value): value is string => typeof value === "string")
+      : DEFAULT_DESKTOP_CONFIG.pinnedApps,
+  } as DesktopConfig;
+  saveShellSnapshot(options.cacheScope, { desktopConfig: normalizedConfig });
+  const store = useDesktopConfigStore.getState();
+  applyDesktopConfigSnapshot(normalizedConfig, gatewayUrl, store);
+}
+
+/** Test hook: clear the module-local current-runtime desktop snapshot. */
+export function resetDesktopConfigRuntimeCacheForTests(): void {
+  desktopConfigRuntimeCache = null;
 }
