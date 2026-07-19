@@ -1078,6 +1078,15 @@ pre {
   box-shadow: var(--glass-specular), var(--glass-shadow);
 }
 
+[data-theme-style="macos-glass"] [data-slot="tooltip-content"] {
+  color: var(--foreground);
+}
+
+[data-theme-style="macos-glass"] [data-slot="tooltip-content"] > svg {
+  background: var(--glass-surface-strong);
+  fill: var(--glass-surface-strong);
+}
+
 /* Menus and dropdowns keep the tight 12px macOS menu radius; dialogs get the
    larger 14px window radius. */
 [data-theme-style="macos-glass"] [data-slot="select-content"],
