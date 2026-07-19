@@ -973,7 +973,7 @@ export function LocalTerminalSidebar() {
             <div className="min-w-0">
               <div
                 data-testid="terminal-expanded-wordmark"
-                style={{ color: "#32352E", fontFamily: "var(--font-orbitron), Orbitron, sans-serif", fontSize: 20, fontWeight: 600, letterSpacing: 0, lineHeight: "24px" }}
+                style={{ color: "#FFFFFF", fontFamily: "var(--font-orbitron), Orbitron, sans-serif", fontSize: 20, fontWeight: 600, letterSpacing: 0, lineHeight: "24px" }}
               >
                 Matrix OS
               </div>

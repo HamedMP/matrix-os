@@ -677,7 +677,7 @@ describe("TerminalApp", () => {
     );
     const wordmark = screen.getByTestId("terminal-expanded-wordmark");
     expect(wordmark.textContent).toBe("Matrix OS");
-    expect(wordmark.style.color).toBe("rgb(50, 53, 46)");
+    expect(wordmark.style.color).toBe("rgb(255, 255, 255)");
     expect(wordmark.style.fontFamily).toBe("var(--font-orbitron), Orbitron, sans-serif");
     expect(screen.getByPlaceholderText("Find a session...")).toBeTruthy();
     expect(screen.getByText("Active")).toBeTruthy();
@@ -904,7 +904,7 @@ describe("TerminalApp", () => {
     expect(contentSurface.style.background).toBe(expectedDarkTerminalBackground);
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("#15180F");
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-bg")).toBe("#20241C");
-    expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-selected-bg")).toBe("#2A3026");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-selected-bg")).toBe("#30372B");
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Theme" }));
@@ -939,7 +939,7 @@ describe("TerminalApp", () => {
     expect(terminalSettingsState.appThemeId).toBe("matrix");
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("#08110B");
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-bg")).toBe("#0F1A12");
-    expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-selected-bg")).toBe("#17271B");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-selected-bg")).toBe("#1C3021");
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-fg")).toBe("#9BFFB5");
     expect(screen.getByTestId("terminal-session-name-main").style.color).toBe("var(--terminal-drawer-fg)");
     expect(screen.getByTestId("terminal-content-surface").style.background).toBe(expectedDarkTerminalBackground);
