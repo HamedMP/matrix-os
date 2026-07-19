@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { ChevronsLeftIcon, PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronsLeftIcon, PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 
 import { getGatewayUrl } from "@/lib/gateway";
 import { NewSessionMenu } from "./NewSessionMenu";
@@ -161,6 +161,7 @@ export function LocalTerminalSidebar() {
   const [closeConfirmationRequest, setCloseConfirmationRequest] = useState<CloseConfirmationRequest | null>(null);
   const pendingDeleteFocusRef = useRef<{ deletedName: string; targetName: string | null } | null>(null);
   const refreshSessionsButtonRef = useRef<HTMLButtonElement>(null);
+  const newSessionDisclosureRef = useRef<HTMLDivElement>(null);
   const sessionsScrollRef = useRef<HTMLDivElement>(null);
   const [newSessionMenuAnchor, setNewSessionMenuAnchor] = useState<NewSessionMenuAnchor | null>(null);
   const [backgroundSessionsExpanded, setBackgroundSessionsExpanded] = useState(true);
@@ -886,7 +887,7 @@ export function LocalTerminalSidebar() {
             display: "flex",
             minHeight: 0,
             opacity: 1,
-            overflow: "visible",
+            overflow: newSessionMenuAnchor === "rail" ? "visible" : "hidden",
             transform: "translateX(0)",
             transition: TERMINAL_SIDEBAR_TRANSITION,
             width: 76,
@@ -1000,13 +1001,11 @@ export function LocalTerminalSidebar() {
           </div>
           <div className="flex shrink-0 items-center" style={{ gap: 10 }}>
             {!ctx.mobile ? (
-              <div style={{ position: "relative" }}>
+              <div ref={newSessionDisclosureRef} style={{ height: 40, position: "relative", width: 40 }}>
                 <button
                   type="button"
-                  aria-label="New session"
-                  aria-haspopup="menu"
-                  aria-expanded={newSessionMenuAnchor === "drawer"}
-                  onClick={() => openNewSessionMenu("drawer")}
+                  aria-label="New shell session"
+                  onClick={() => void createManagedShell()}
                   disabled={creatingShell}
                   className="flex items-center justify-center"
                   style={{
@@ -1024,6 +1023,32 @@ export function LocalTerminalSidebar() {
                 >
                   <PlusIcon aria-hidden="true" size={18} strokeWidth={2.5} />
                 </button>
+                <button
+                  type="button"
+                  aria-label="Choose session type"
+                  aria-haspopup="menu"
+                  aria-expanded={newSessionMenuAnchor === "drawer"}
+                  onClick={() => openNewSessionMenu("drawer")}
+                  disabled={creatingShell}
+                  className="flex items-center justify-center"
+                  style={{
+                    background: "var(--terminal-drawer-button-bg)",
+                    border: "1px solid var(--terminal-drawer-button-border)",
+                    borderRadius: 999,
+                    color: "var(--terminal-drawer-button-fg)",
+                    cursor: creatingShell ? "not-allowed" : "pointer",
+                    height: 18,
+                    opacity: creatingShell ? 0.72 : 1,
+                    padding: 0,
+                    position: "absolute",
+                    right: -4,
+                    top: -4,
+                    width: 18,
+                    zIndex: 1,
+                  }}
+                >
+                  <ChevronDownIcon aria-hidden="true" size={11} strokeWidth={2.4} />
+                </button>
                 {newSessionMenuAnchor === "drawer" ? (
                   <NewSessionMenu
                     align="right"
@@ -1031,6 +1056,7 @@ export function LocalTerminalSidebar() {
                     onCreateShell={() => void createManagedShell()}
                     onCreateAgent={createAgentSession}
                     agentStatuses={agentStatuses}
+                    ignoreLightDismissRef={newSessionDisclosureRef}
                   />
                 ) : null}
               </div>

@@ -134,7 +134,7 @@ export function NewSessionMenu({
             key={option.id}
             label={option.label}
             install={!installed}
-            icon={<TerminalAgentLogo muted={!installed} option={option} />}
+            icon={<TerminalAgentLogo option={option} />}
             onClick={() => onCreateAgent(option, installed)}
           />
         );
@@ -143,7 +143,7 @@ export function NewSessionMenu({
   );
 }
 
-function TerminalAgentLogo({ option, muted }: { option: TerminalAgentOption; muted: boolean }) {
+function TerminalAgentLogo({ option }: { option: TerminalAgentOption }) {
   return (
     <span
       aria-hidden="true"
@@ -151,7 +151,7 @@ function TerminalAgentLogo({ option, muted }: { option: TerminalAgentOption; mut
       style={{
         ...TERMINAL_AGENT_LOGO_STYLE,
         background: option.color,
-        opacity: muted ? 0.86 : 1,
+        opacity: 1,
       }}
     >
       <Image
@@ -187,7 +187,7 @@ function NewSessionMenuItem({
       onClick={onClick}
       style={{
         alignItems: "center",
-        background: active ? "var(--terminal-drawer-action-bg)" : install ? "var(--terminal-drawer-card-muted-bg)" : "transparent",
+        background: active ? "var(--terminal-drawer-action-bg)" : "transparent",
         border: 0,
         borderRadius: 7,
         boxSizing: "border-box",
@@ -204,7 +204,7 @@ function NewSessionMenuItem({
         event.currentTarget.style.background = "var(--terminal-drawer-action-bg)";
       }}
       onMouseLeave={(event) => {
-        event.currentTarget.style.background = active ? "var(--terminal-drawer-action-bg)" : install ? "var(--terminal-drawer-card-muted-bg)" : "transparent";
+        event.currentTarget.style.background = active ? "var(--terminal-drawer-action-bg)" : "transparent";
       }}
     >
       {icon}
@@ -216,7 +216,7 @@ function NewSessionMenuItem({
           fontWeight: active ? 700 : 600,
           lineHeight: "17px",
           minWidth: 0,
-          color: install ? "var(--terminal-drawer-muted)" : "var(--terminal-drawer-fg)",
+          color: "var(--terminal-drawer-fg)",
         }}
       >
         {label}
