@@ -1,11 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { getGatewayUrl } from "@/lib/gateway";
+import { fileBlobUrl } from "@/lib/file-blob";
 import { Button } from "@/components/ui/button";
 import { MinusIcon, PlusIcon, MaximizeIcon } from "lucide-react";
-
-const GATEWAY_URL = getGatewayUrl();
 
 interface ImageViewerProps {
   path: string;
@@ -55,7 +53,7 @@ export function ImageViewer({ path }: ImageViewerProps) {
       >
         {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- arbitrary user file served from gateway; next/image cannot optimize dynamic gateway URLs */}
         <img
-          src={`${GATEWAY_URL}/files/${path}`}
+          src={fileBlobUrl(path)}
           alt={path.split("/").pop()}
           style={{
             width: `${zoom}%`,
