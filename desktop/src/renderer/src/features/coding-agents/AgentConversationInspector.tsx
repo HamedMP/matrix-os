@@ -140,6 +140,9 @@ export function AgentConversationInspector({
         {tabs.map((tabId, index) => {
           const selected = tabId === selectedTab;
           const label = TAB_LABELS[tabId];
+          // Surfaces without a meaningful count (the file browser) render no
+          // badge rather than a permanent zero.
+          const count = counts[tabId];
           return (
             <button
               key={tabId}
@@ -147,7 +150,7 @@ export function AgentConversationInspector({
               id={`${instanceId}-${tabId}-tab`}
               type="button"
               role="tab"
-              aria-label={`${label} ${counts[tabId] ?? 0}`}
+              aria-label={count === undefined ? label : `${label} ${count}`}
               aria-selected={selected}
               aria-controls={`${instanceId}-${tabId}-panel`}
               tabIndex={selected ? 0 : -1}
@@ -161,15 +164,17 @@ export function AgentConversationInspector({
               onKeyDown={(event) => handleTabKeyDown(event, index)}
             >
               <span className="truncate">{label}</span>
-              <span
-                className="min-w-3.5 shrink-0 rounded-full px-0.5 text-center text-[9px] tabular-nums"
-                style={{
-                  background: selected ? "var(--accent-muted)" : "var(--bg-surface)",
-                  color: selected ? "var(--accent)" : "var(--text-tertiary)",
-                }}
-              >
-                {counts[tabId] ?? 0}
-              </span>
+              {count === undefined ? null : (
+                <span
+                  className="min-w-3.5 shrink-0 rounded-full px-0.5 text-center text-[9px] tabular-nums"
+                  style={{
+                    background: selected ? "var(--accent-muted)" : "var(--bg-surface)",
+                    color: selected ? "var(--accent)" : "var(--text-tertiary)",
+                  }}
+                >
+                  {count}
+                </span>
+              )}
             </button>
           );
         })}
