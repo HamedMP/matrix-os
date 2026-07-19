@@ -1,11 +1,22 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
-export type AgentConversationInspectorTab = "changes" | "terminal" | "preview" | "activity";
+export type AgentConversationInspectorTab = "changes" | "files" | "terminal" | "preview" | "activity";
 
-type InspectorCounts = Record<AgentConversationInspectorTab, number>;
+interface InspectorCounts {
+  changes: number;
+  terminal: number;
+  preview: number;
+  activity: number;
+  files?: number;
+}
 
 interface AgentConversationInspectorProps {
   defaultTab: AgentConversationInspectorTab;
+  // Optional controlled selection. When both are provided the parent owns the
+  // active tab (e.g. to gate live resources like an embedded terminal socket
+  // on the Terminal surface being visible).
+  selectedTab?: AgentConversationInspectorTab;
+  onTabChange?: (tab: AgentConversationInspectorTab) => void;
   changesFocusRequestId?: number;
   changesFocusConsumedId?: number;
   onChangesFocusConsumed?: (requestId: number) => void;
@@ -13,23 +24,27 @@ interface AgentConversationInspectorProps {
   toolbar: ReactNode;
   composer?: ReactNode;
   changes: ReactNode;
+  // Optional surface rendered as a tab between Changes and Terminal when
+  // provided; omitted entirely otherwise so existing four-tab layouts keep
+  // their tab order and keyboard navigation.
+  files?: ReactNode;
   terminal: ReactNode;
   preview: ReactNode;
   activity: ReactNode;
 }
 
-const TABS: Array<{
-  id: AgentConversationInspectorTab;
-  label: string;
-}> = [
-  { id: "changes", label: "Changes" },
-  { id: "terminal", label: "Terminal" },
-  { id: "preview", label: "Preview" },
-  { id: "activity", label: "Activity" },
-];
+const TAB_LABELS: Record<AgentConversationInspectorTab, string> = {
+  changes: "Changes",
+  files: "Files",
+  terminal: "Terminal",
+  preview: "Preview",
+  activity: "Activity",
+};
 
 export function AgentConversationInspector({
   defaultTab,
+  selectedTab: controlledTab,
+  onTabChange,
   changesFocusRequestId = 0,
   changesFocusConsumedId = 0,
   onChangesFocusConsumed,
@@ -37,19 +52,40 @@ export function AgentConversationInspector({
   toolbar,
   composer,
   changes,
+  files,
   terminal,
   preview,
   activity,
 }: AgentConversationInspectorProps) {
-  const [selectedTab, setSelectedTab] = useState<AgentConversationInspectorTab>(defaultTab);
+  const [internalTab, setInternalTab] = useState<AgentConversationInspectorTab>(defaultTab);
+  const selectedTab = controlledTab ?? internalTab;
   const instanceId = useId();
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const tabs: AgentConversationInspectorTab[] = files === undefined
+    ? ["changes", "terminal", "preview", "activity"]
+    : ["changes", "files", "terminal", "preview", "activity"];
   const content: Record<AgentConversationInspectorTab, ReactNode> = {
     changes,
+    files,
     terminal,
     preview,
     activity,
   };
+
+  // Lazy-mount surfaces on first visit so a never-opened tab (file listings,
+  // live previews) costs nothing; once visited a surface stays mounted across
+  // switches so local state (drafts, scrollback, selection) survives.
+  const [visitedTabs, setVisitedTabs] = useState<AgentConversationInspectorTab[]>([defaultTab]);
+  if (!visitedTabs.includes(selectedTab)) {
+    setVisitedTabs([...visitedTabs, selectedTab]);
+  }
+
+  function selectTab(tab: AgentConversationInspectorTab, focusIndex?: number) {
+    if (controlledTab === undefined) setInternalTab(tab);
+    onTabChange?.(tab);
+    if (focusIndex !== undefined) tabRefs.current[focusIndex]?.focus();
+  }
 
   // A focus request is a one-shot signal consumed exactly once, tracked by the
   // owner via the consumed marker. That honors a request raised before this
@@ -59,29 +95,26 @@ export function AgentConversationInspector({
   useEffect(() => {
     if (changesFocusRequestId <= changesFocusConsumedId) return;
     onChangesFocusConsumed?.(changesFocusRequestId);
-    setSelectedTab("changes");
+    selectTab("changes");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [changesFocusConsumedId, changesFocusRequestId, onChangesFocusConsumed]);
-
-  function selectTab(index: number) {
-    const tab = TABS[index];
-    if (!tab) return;
-    setSelectedTab(tab.id);
-    tabRefs.current[index]?.focus();
-  }
 
   function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     if (event.key === "ArrowRight") {
       event.preventDefault();
-      selectTab((index + 1) % TABS.length);
+      const next = (index + 1) % tabs.length;
+      selectTab(tabs[next]!, next);
     } else if (event.key === "ArrowLeft") {
       event.preventDefault();
-      selectTab((index - 1 + TABS.length) % TABS.length);
+      const next = (index - 1 + tabs.length) % tabs.length;
+      selectTab(tabs[next]!, next);
     } else if (event.key === "Home") {
       event.preventDefault();
-      selectTab(0);
+      selectTab(tabs[0]!, 0);
     } else if (event.key === "End") {
       event.preventDefault();
-      selectTab(TABS.length - 1);
+      const last = tabs.length - 1;
+      selectTab(tabs[last]!, last);
     }
   }
 
@@ -97,21 +130,26 @@ export function AgentConversationInspector({
       <div
         role="tablist"
         aria-label="Conversation tools"
-        className="grid shrink-0 grid-cols-4 gap-1 border-b p-1.5"
-        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-secondary)" }}
+        className="grid shrink-0 gap-1 border-b p-1.5"
+        style={{
+          gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))`,
+          borderColor: "var(--border-subtle)",
+          background: "var(--bg-secondary)",
+        }}
       >
-        {TABS.map((tab, index) => {
-          const selected = tab.id === selectedTab;
+        {tabs.map((tabId, index) => {
+          const selected = tabId === selectedTab;
+          const label = TAB_LABELS[tabId];
           return (
             <button
-              key={tab.id}
+              key={tabId}
               ref={(node) => { tabRefs.current[index] = node; }}
-              id={`${instanceId}-${tab.id}-tab`}
+              id={`${instanceId}-${tabId}-tab`}
               type="button"
               role="tab"
-              aria-label={`${tab.label} ${counts[tab.id]}`}
+              aria-label={`${label} ${counts[tabId] ?? 0}`}
               aria-selected={selected}
-              aria-controls={`${instanceId}-${tab.id}-panel`}
+              aria-controls={`${instanceId}-${tabId}-panel`}
               tabIndex={selected ? 0 : -1}
               className="no-drag flex min-w-0 items-center justify-center gap-1 rounded-md border px-1 py-2 text-[11px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               style={{
@@ -119,10 +157,10 @@ export function AgentConversationInspector({
                 background: selected ? "var(--bg-elevated)" : "transparent",
                 color: selected ? "var(--text-primary)" : "var(--text-tertiary)",
               }}
-              onClick={() => setSelectedTab(tab.id)}
+              onClick={() => selectTab(tabId)}
               onKeyDown={(event) => handleTabKeyDown(event, index)}
             >
-              <span className="truncate">{tab.label}</span>
+              <span className="truncate">{label}</span>
               <span
                 className="min-w-3.5 shrink-0 rounded-full px-0.5 text-center text-[9px] tabular-nums"
                 style={{
@@ -130,25 +168,27 @@ export function AgentConversationInspector({
                   color: selected ? "var(--accent)" : "var(--text-tertiary)",
                 }}
               >
-                {counts[tab.id]}
+                {counts[tabId] ?? 0}
               </span>
             </button>
           );
         })}
       </div>
-      {TABS.map((tab) => {
-        const selected = tab.id === selectedTab;
+      {tabs.map((tabId) => {
+        const selected = tabId === selectedTab;
         return (
           <div
-            key={tab.id}
-            id={`${instanceId}-${tab.id}-panel`}
+            key={tabId}
+            id={`${instanceId}-${tabId}-panel`}
             role="tabpanel"
-            aria-labelledby={`${instanceId}-${tab.id}-tab`}
+            aria-labelledby={`${instanceId}-${tabId}-tab`}
             tabIndex={selected ? 0 : -1}
             hidden={!selected}
-            className="min-h-0 flex-1 overflow-y-auto p-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+            className="flex min-h-0 flex-1 flex-col overflow-y-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
           >
-            {content[tab.id]}
+            {visitedTabs.includes(tabId) ? (
+              <div className="flex min-h-0 flex-1 flex-col p-4">{content[tabId]}</div>
+            ) : null}
           </div>
         );
       })}
