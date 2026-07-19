@@ -17,21 +17,11 @@ export interface ShellSessionSummary {
   lastSeenSeq?: number | null;
   unread?: boolean;
   visualStatus?: ShellVisualStatus;
-  agent?: "claude" | "codex" | "opencode" | "pi";
-  subtitle?: string;
-  lastAction?: string;
-  agentUpdatedAt?: string;
-  model?: string;
-  strength?: string;
-  project?: string;
-  repository?: string;
-  branch?: string;
-  pullRequest?: { number: number; url?: string };
   attachCommand?: string;
   tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
 }
 
-export type ShellUiStatePatch = Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq">>;
+export type ShellUiStatePatch = Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq" | "visualStatus">>;
 
 interface ShellSessionsState {
   sessions: ShellSessionSummary[];
@@ -97,26 +87,6 @@ function asShellSession(value: unknown): ShellSessionSummary | null {
     shell.visualStatus = record.visualStatus;
   }
   if (typeof record.attachCommand === "string") shell.attachCommand = record.attachCommand;
-  if (record.agent === "claude" || record.agent === "codex" || record.agent === "opencode" || record.agent === "pi") {
-    shell.agent = record.agent;
-  }
-  if (typeof record.subtitle === "string") shell.subtitle = record.subtitle;
-  if (typeof record.lastAction === "string") shell.lastAction = record.lastAction;
-  if (typeof record.agentUpdatedAt === "string") shell.agentUpdatedAt = record.agentUpdatedAt;
-  if (typeof record.model === "string") shell.model = record.model;
-  if (typeof record.strength === "string") shell.strength = record.strength;
-  if (typeof record.project === "string") shell.project = record.project;
-  if (typeof record.repository === "string") shell.repository = record.repository;
-  if (typeof record.branch === "string") shell.branch = record.branch;
-  if (record.pullRequest && typeof record.pullRequest === "object") {
-    const pullRequest = record.pullRequest as Record<string, unknown>;
-    if (Number.isSafeInteger(pullRequest.number) && (pullRequest.number as number) > 0) {
-      shell.pullRequest = {
-        number: pullRequest.number as number,
-        ...(typeof pullRequest.url === "string" ? { url: pullRequest.url } : {}),
-      };
-    }
-  }
   if (Array.isArray(record.tabs)) {
     const tabs: NonNullable<ShellSessionSummary["tabs"]> = [];
     for (const tab of record.tabs) {

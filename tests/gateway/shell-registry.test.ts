@@ -1,9 +1,8 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ShellRegistry } from "../../packages/gateway/src/shell/registry.js";
-import { AgentSessionStateStore } from "../../packages/gateway/src/shell/agent-session-state.js";
 
 const roots: string[] = [];
 
@@ -19,257 +18,6 @@ afterEach(async () => {
 });
 
 describe("shell registry", () => {
-  it("decorates listed sessions concurrently", async () => {
-    const root = await tempRoot();
-    const live = new Set<string>();
-    const adapter = {
-      listSessions: vi.fn(async () => Array.from(live)),
-      createSession: vi.fn(async ({ name }: { name: string }) => { live.add(name); }),
-      deleteSession: vi.fn(async () => undefined),
-    };
-    const gitContextResolver = {
-      resolve: vi.fn(async () => null),
-    };
-    const registry = new ShellRegistry({ homePath: root, adapter, gitContextResolver });
-    await registry.create({ name: "calm-otter" });
-    await registry.create({ name: "brisk-falcon" });
-
-    let releaseDecorations = () => {};
-    const decorationGate = new Promise<void>((resolve) => {
-      releaseDecorations = resolve;
-    });
-    gitContextResolver.resolve.mockClear();
-    gitContextResolver.resolve.mockImplementation(async () => {
-      await decorationGate;
-      return null;
-    });
-
-    const listPromise = registry.list();
-    let startedConcurrently = false;
-    try {
-      await vi.waitFor(() => expect(gitContextResolver.resolve).toHaveBeenCalledTimes(2), { timeout: 1_000 });
-      startedConcurrently = true;
-    } catch {
-      // Release the shared gate so a sequential implementation can settle before the assertion.
-    } finally {
-      releaseDecorations();
-    }
-    await listPromise;
-
-    expect(startedConcurrently).toBe(true);
-  });
-
-  it("adds gateway-owned project and Git context while preserving the session cwd", async () => {
-    const root = await tempRoot();
-    const cwd = join(root, "projects", "matrix-os");
-    await mkdir(cwd, { recursive: true });
-    const live = new Set<string>();
-    const adapter = {
-      listSessions: vi.fn(async () => Array.from(live)),
-      createSession: vi.fn(async ({ name }: { name: string }) => { live.add(name); }),
-      deleteSession: vi.fn(async () => undefined),
-      focusedPaneCwd: vi.fn(async () => cwd),
-    };
-    const gitContextResolver = {
-      resolve: vi.fn(async () => ({
-        project: "Matrix OS",
-        repository: "HamedMP/matrix-os",
-        branch: "codex/session-context",
-        pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
-      })),
-    };
-    const registry = new ShellRegistry({ homePath: root, adapter, gitContextResolver });
-
-    await registry.create({ name: "calm-otter", cwd });
-    const resolvedCwd = await realpath(cwd);
-    const listed = await registry.list();
-    expect(listed).toMatchObject([{
-      name: "calm-otter",
-      project: "Matrix OS",
-      repository: "HamedMP/matrix-os",
-      branch: "codex/session-context",
-      pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
-    }]);
-    expect(listed[0]).not.toHaveProperty("cwd");
-    const persisted = JSON.parse(await readFile(join(root, "system", "shell-sessions.json"), "utf8"));
-    expect(persisted.sessions["calm-otter"].cwd).toBe(resolvedCwd);
-    expect(gitContextResolver.resolve).toHaveBeenCalledWith({ sessionName: "calm-otter", cwd: resolvedCwd });
-  });
-
-  it("persists an explicitly launched agent and omits agent metadata from plain terminals", async () => {
-    const root = await tempRoot();
-    const live = new Set<string>();
-    const adapter = {
-      listSessions: vi.fn(async () => Array.from(live)),
-      createSession: vi.fn(async ({ name }: { name: string }) => { live.add(name); }),
-      deleteSession: vi.fn(async () => undefined),
-    };
-    const registry = new ShellRegistry({ homePath: root, adapter });
-
-    await registry.create({ name: "calm-otter", cmd: "codex", agent: "codex" });
-    await registry.create({ name: "plain-shell" });
-
-    const sessions = await registry.list();
-    expect(sessions.find((session) => session.name === "calm-otter")).toMatchObject({
-      agent: "codex",
-    });
-    expect(sessions.find((session) => session.name === "plain-shell")).not.toHaveProperty("agent");
-    expect(sessions.find((session) => session.name === "plain-shell")).not.toHaveProperty("subtitle");
-    expect(sessions.find((session) => session.name === "plain-shell")).not.toHaveProperty("lastAction");
-    expect(sessions.find((session) => session.name === "plain-shell")).not.toHaveProperty("agentUpdatedAt");
-    expect(sessions.find((session) => session.name === "plain-shell")).not.toHaveProperty("model");
-    expect(sessions.find((session) => session.name === "plain-shell")).not.toHaveProperty("strength");
-  });
-
-  it.each([
-    ["claude --resume", "claude"],
-    ["env FOO=bar codex --full-auto", "codex"],
-    ["opencode .", "opencode"],
-    ["pi", "pi"],
-  ] as const)("infers %s as a recognized agent launch", async (cmd, expectedAgent) => {
-    const root = await tempRoot();
-    const live = new Set<string>();
-    const adapter = {
-      listSessions: vi.fn(async () => Array.from(live)),
-      createSession: vi.fn(async ({ name }: { name: string }) => { live.add(name); }),
-      deleteSession: vi.fn(async () => undefined),
-    };
-    const registry = new ShellRegistry({ homePath: root, adapter });
-
-    await expect(registry.create({ name: "calm-otter", cmd })).resolves.toMatchObject({
-      agent: expectedAgent,
-    });
-  });
-
-  it("uses agent lifecycle evidence before a long-running outer CLI process", async () => {
-    const root = await tempRoot();
-    const agentStateStore = new AgentSessionStateStore({ homePath: root });
-    await agentStateStore.apply({
-      sessionName: "calm-otter",
-      agent: "codex",
-      type: "turn-completed",
-      occurredAt: "2026-07-18T10:00:02.000Z",
-      subtitle: "Implemented agent-aware terminal sessions.",
-      action: "Edited registry.ts",
-      model: "gpt-5.4",
-      strength: "high",
-    });
-    const adapter = {
-      listSessions: vi.fn(async () => ["calm-otter"]),
-      createSession: vi.fn(async () => undefined),
-      deleteSession: vi.fn(async () => undefined),
-    };
-    const scrollbackStore = {
-      latestSeq: vi.fn(async () => 9),
-      latestActivity: vi.fn(async () => ({
-        latestSeq: 9,
-        latestOutputAt: "2026-07-18T10:00:03.000Z",
-        commandRunning: true,
-        latestCommandMark: { code: "B", kind: "command-start" },
-      })),
-      cleanup: vi.fn(async () => undefined),
-    };
-    const registry = new ShellRegistry({
-      homePath: root,
-      adapter,
-      agentStateStore,
-      scrollbackStore: scrollbackStore as never,
-    });
-
-    await expect(registry.list()).resolves.toMatchObject([{
-      name: "calm-otter",
-      agent: "codex",
-      subtitle: "Implemented agent-aware terminal sessions.",
-      lastAction: "Edited registry.ts",
-      agentUpdatedAt: "2026-07-18T10:00:02.000Z",
-      model: "gpt-5.4",
-      strength: "high",
-      visualStatus: "idle",
-    }]);
-  });
-
-  it("falls back to shell activity when the agent bridge store is unavailable", async () => {
-    const root = await tempRoot();
-    const adapter = {
-      listSessions: vi.fn(async () => ["calm-otter"]),
-      createSession: vi.fn(async () => undefined),
-      deleteSession: vi.fn(async () => undefined),
-    };
-    const scrollbackStore = {
-      latestSeq: vi.fn(async () => 2),
-      latestActivity: vi.fn(async () => ({
-        latestSeq: 2,
-        latestOutputAt: new Date().toISOString(),
-        commandRunning: true,
-        latestCommandMark: { code: "B", kind: "command-start" },
-      })),
-      cleanup: vi.fn(async () => undefined),
-    };
-    const agentStateStore = {
-      get: vi.fn(async () => { throw new Error("bridge snapshot unavailable"); }),
-      rename: vi.fn(async () => undefined),
-      delete: vi.fn(async () => undefined),
-    };
-    const registry = new ShellRegistry({
-      homePath: root,
-      adapter,
-      scrollbackStore: scrollbackStore as never,
-      agentStateStore,
-    });
-
-    await expect(registry.list()).resolves.toMatchObject([{
-      name: "calm-otter",
-      visualStatus: "running",
-    }]);
-  });
-
-  it("keeps session rename available when agent metadata rename fails", async () => {
-    const root = await tempRoot();
-    const live = new Set(["calm-otter"]);
-    const adapter = {
-      listSessions: vi.fn(async () => Array.from(live)),
-      createSession: vi.fn(async () => undefined),
-      deleteSession: vi.fn(async () => undefined),
-      renameSession: vi.fn(async (name: string, nextName: string) => {
-        live.delete(name);
-        live.add(nextName);
-      }),
-    };
-    const agentStateStore = {
-      get: vi.fn(async () => null),
-      rename: vi.fn(async () => { throw new Error("metadata unavailable"); }),
-      delete: vi.fn(async () => undefined),
-    };
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const registry = new ShellRegistry({ homePath: root, adapter, agentStateStore });
-    await registry.list();
-
-    await expect(registry.rename("calm-otter", "swift-falcon")).resolves.toMatchObject({
-      name: "swift-falcon",
-    });
-    expect(Array.from(live)).toEqual(["swift-falcon"]);
-    expect(warn).toHaveBeenCalledWith(
-      "[shell] failed to rename agent session state:",
-      "metadata unavailable",
-    );
-  });
-
-  it("ignores legacy browser visualStatus writes", async () => {
-    const root = await tempRoot();
-    const adapter = {
-      listSessions: vi.fn(async () => ["calm-otter"]),
-      createSession: vi.fn(async () => undefined),
-      deleteSession: vi.fn(async () => undefined),
-    };
-    const registry = new ShellRegistry({ homePath: root, adapter });
-    await registry.list();
-
-    await registry.updateUiState("calm-otter", { visualStatus: "waiting" });
-
-    const raw = JSON.parse(await readFile(join(root, "system", "shell-sessions.json"), "utf8"));
-    expect(raw.sessions["calm-otter"]).not.toHaveProperty("visualStatus");
-    await expect(registry.get("calm-otter")).resolves.toMatchObject({ visualStatus: "idle" });
-  });
   it("lists main first, then active sessions by creation time when no custom order exists", async () => {
     const root = await tempRoot();
     const persistPath = join(root, "system", "shell-sessions.json");
@@ -510,7 +258,7 @@ describe("shell registry", () => {
     expect(JSON.parse(raw).sessions.main.placement).toBe("background");
   });
 
-  it("derives status dots from OSC marks and unread output while ignoring legacy client state", async () => {
+  it("derives Paper status dots from OSC marks, unread output, and waiting metadata", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-15T12:00:00.000Z"));
     const root = await tempRoot();
@@ -579,7 +327,7 @@ describe("shell registry", () => {
       { name: "osc-running", unread: false, visualStatus: "running" },
       { name: "quiet", unread: false, visualStatus: "idle" },
       { name: "unread-done", latestSeq: 8, lastSeenSeq: 2, unread: true, visualStatus: "finished" },
-      { name: "waiting", visualStatus: "idle" },
+      { name: "waiting", visualStatus: "waiting" },
     ]);
   });
 
@@ -685,7 +433,7 @@ describe("shell registry", () => {
     expect(JSON.parse(raw).sessions.main.visualStatus).toBe("waiting");
   });
 
-  it("strips legacy waiting metadata when unrelated UI state is written", async () => {
+  it("does not extend waiting metadata when unrelated UI state is written", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-25T12:00:00.000Z"));
     const root = await tempRoot();
@@ -721,14 +469,13 @@ describe("shell registry", () => {
 
     const raw = await readFile(join(root, "system", "shell-sessions.json"), "utf-8");
     expect(JSON.parse(raw).sessions.main).toMatchObject({
-      lastSeenSeq: 1,
+      visualStatus: "waiting",
+      visualStatusUpdatedAt: "2026-06-25T12:00:00.000Z",
       updatedAt: "2026-06-25T12:00:11.900Z",
     });
-    expect(JSON.parse(raw).sessions.main).not.toHaveProperty("visualStatus");
-    expect(JSON.parse(raw).sessions.main).not.toHaveProperty("visualStatusUpdatedAt");
   });
 
-  it("does not let repeated legacy writes create waiting intent", async () => {
+  it("refreshes waiting intent when the same explicit waiting status starts again", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-25T12:00:00.000Z"));
     const root = await tempRoot();
@@ -759,12 +506,15 @@ describe("shell registry", () => {
     vi.setSystemTime(new Date("2026-06-25T12:00:12.100Z"));
 
     await expect(registry.list()).resolves.toMatchObject([
-      { name: "main", latestSeq: 1, lastSeenSeq: 1, unread: false, visualStatus: "idle" },
+      { name: "main", latestSeq: 1, lastSeenSeq: 1, unread: false, visualStatus: "waiting" },
     ]);
 
     const raw = await readFile(join(root, "system", "shell-sessions.json"), "utf-8");
-    expect(JSON.parse(raw).sessions.main).not.toHaveProperty("visualStatus");
-    expect(JSON.parse(raw).sessions.main).not.toHaveProperty("visualStatusUpdatedAt");
+    expect(JSON.parse(raw).sessions.main).toMatchObject({
+      visualStatus: "waiting",
+      visualStatusUpdatedAt: "2026-06-25T12:00:11.900Z",
+      updatedAt: "2026-06-25T12:00:11.900Z",
+    });
   });
 
   it("rejects UI state updates for sessions absent from metadata and live sessions", async () => {
@@ -787,25 +537,20 @@ describe("shell registry", () => {
     expect(adapter.listSessions).toHaveBeenCalled();
   });
 
-  it("uses agent lifecycle snapshots for waiting and shell fallback for idle", async () => {
+  it("uses waiting and idle status dots from durable metadata", async () => {
     const root = await tempRoot();
-    const agentStateStore = new AgentSessionStateStore({ homePath: root });
-    await agentStateStore.apply({
-      sessionName: "codex-backend",
-      agent: "codex",
-      type: "attention-requested",
-      occurredAt: "2026-07-18T10:00:01.000Z",
-      action: "Requested approval",
-    });
     const adapter = {
       listSessions: vi.fn(async () => ["codex-backend", "shell-main"]),
       createSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
     };
-    const registry = new ShellRegistry({ homePath: root, adapter, agentStateStore });
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    await registry.updateUiState("codex-backend", { visualStatus: "waiting" });
+    await registry.updateUiState("shell-main", { visualStatus: "idle" });
 
     await expect(registry.list()).resolves.toMatchObject([
-      { name: "codex-backend", agent: "codex", visualStatus: "waiting", unread: false },
+      { name: "codex-backend", visualStatus: "waiting", unread: false },
       { name: "shell-main", visualStatus: "idle", unread: false },
     ]);
   });

@@ -1,8 +1,8 @@
 "use client";
 
+import Image from "next/image";
 import { TerminalIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useRef, type ReactNode, type RefObject } from "react";
-import { TerminalAgentLogo } from "./TerminalAgentLogo";
+import { useEffect, useEffectEvent, useRef, type CSSProperties, type ReactNode, type RefObject } from "react";
 import {
   TERMINAL_AGENT_OPTIONS,
   resolveTerminalAgentMenuState,
@@ -11,6 +11,33 @@ import {
   type TerminalAgentMenuAction,
   type TerminalAgentOption,
 } from "./terminal-agent-options";
+
+const TERMINAL_AGENT_LOGO_STYLE: CSSProperties = {
+  alignItems: "center",
+  border: "1px solid rgba(255, 255, 255, 0.56)",
+  borderRadius: 7,
+  boxShadow: "0 1px 0 rgba(255, 255, 255, 0.36) inset, 0 4px 9px rgba(49, 54, 45, 0.14)",
+  boxSizing: "border-box",
+  color: "#FFFDF7",
+  display: "flex",
+  flex: "0 0 22px",
+  fontFamily: "Inter, system-ui, sans-serif",
+  fontSize: 11,
+  fontWeight: 900,
+  height: 22,
+  justifyContent: "center",
+  letterSpacing: 0,
+  lineHeight: "22px",
+  overflow: "hidden",
+  width: 22,
+};
+
+const TERMINAL_AGENT_LOGO_IMAGE_STYLE: CSSProperties = {
+  display: "block",
+  height: 15,
+  objectFit: "contain",
+  width: 15,
+};
 
 export function NewSessionMenu({
   align,
@@ -122,12 +149,36 @@ export function NewSessionMenu({
             key={option.id}
             label={option.label}
             statusLabel={menuState.statusLabel}
-            icon={<TerminalAgentLogo agent={option.id} />}
+            icon={<TerminalAgentLogo option={option} />}
             onClick={() => onCreateAgent(option, menuState.action)}
           />
         );
       })}
     </div>
+  );
+}
+
+function TerminalAgentLogo({ option }: { option: TerminalAgentOption }) {
+  return (
+    <span
+      aria-hidden="true"
+      data-testid={`terminal-agent-logo-${option.id}`}
+      style={{
+        ...TERMINAL_AGENT_LOGO_STYLE,
+        background: option.color,
+        opacity: 1,
+      }}
+    >
+      <Image
+        alt=""
+        data-testid={`terminal-agent-logo-image-${option.id}`}
+        draggable={false}
+        height={17}
+        src={option.logoSrc}
+        style={TERMINAL_AGENT_LOGO_IMAGE_STYLE}
+        width={17}
+      />
+    </span>
   );
 }
 
