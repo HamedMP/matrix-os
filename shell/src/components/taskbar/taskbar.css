@@ -673,6 +673,10 @@
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   gap: 2px;
+  max-height: min(336px, 45vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .win11-start-tile {

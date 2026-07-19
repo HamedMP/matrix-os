@@ -15,6 +15,7 @@ TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"
 STATE_DIR="${MATRIX_DEVELOPER_TOOLS_STATE_DIR:-/var/lib/matrix-developer-tools}"
 FAILED_FILE="$STATE_DIR/failed-tools"
 INSTALLED_FILE="$STATE_DIR/installed-tools"
+CODEX_VERSION="0.144.6"
 
 log() {
   printf 'matrix-install-developer-tools: %s\n' "$*"
@@ -49,6 +50,20 @@ EOF
   if systemctl is-active --quiet apparmor; then
     systemctl reload apparmor || return 1
   fi
+}
+
+ensure_terminal_runtime() {
+  command -v zsh >/dev/null 2>&1 && return 0
+  command -v apt-get >/dev/null 2>&1 || {
+    log "zsh package is unavailable"
+    return 1
+  }
+  timeout 120 apt-get update \
+    -o Acquire::Retries=3 \
+    -o Acquire::http::Timeout=20 \
+    -o Acquire::https::Timeout=20 || return 1
+  timeout 180 env DEBIAN_FRONTEND=noninteractive apt-get install -y zsh || return 1
+  command -v zsh >/dev/null 2>&1
 }
 
 ensure_agent_sandbox_runtime() {
@@ -90,13 +105,28 @@ tool_bin_name() {
   printf '%s\n' "$tool"
 }
 
+codex_version_is_current() {
+  local output escaped_version
+  output="$(/opt/matrix/runtime/node/bin/codex --version 2>/dev/null)" || return 1
+  escaped_version="${CODEX_VERSION//./\\.}"
+  printf '%s\n' "$output" | grep -Eq "(^|[[:space:]])${escaped_version}([[:space:]]|$)"
+}
+
 is_tool_installed() {
   local tool="$1"
   local bin_name
   bin_name="$(tool_bin_name "$tool")"
-  grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]
+  grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ] || return 1
+  if [ "$tool" = "codex" ]; then
+    codex_version_is_current
+  fi
 }
 
+if [ "$MODE" != "--sandbox-only" ]; then
+  if ! ensure_terminal_runtime; then
+    log "WARN: zsh provisioning failed; terminal will use the Bash fallback"
+  fi
+fi
 if [ "$MODE" != "--tools-only" ]; then
   if ! ensure_agent_sandbox_runtime; then
     log "coding-agent sandbox provisioning failed"

@@ -145,6 +145,55 @@ describe("Settings: desktop + theme + wallpapers", () => {
     });
   });
 
+  describe("PATCH /desktop", () => {
+    it("atomically preserves overlapping appearance patches", async () => {
+      writeFileSync(join(homePath, "system/desktop.json"), JSON.stringify({
+        background: { type: "wallpaper", name: "family.jpg" },
+        dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
+        pinnedApps: ["apps/notes/index.html"],
+      }));
+
+      const [backgroundResponse, dockResponse] = await Promise.all([
+        app.request("/api/settings/desktop", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ background: { type: "wallpaper", name: "moraine-lake.jpg" } }),
+        }),
+        app.request("/api/settings/desktop", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dock: { position: "bottom" } }),
+        }),
+      ]);
+
+      expect(backgroundResponse.status).toBe(200);
+      expect(dockResponse.status).toBe(200);
+      const saved = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
+      expect(saved).toEqual({
+        background: { type: "wallpaper", name: "moraine-lake.jpg" },
+        dock: { position: "bottom", size: 56, iconSize: 40, autoHide: false },
+        pinnedApps: ["apps/notes/index.html"],
+      });
+    });
+
+    it("rejects invalid and oversized patch bodies", async () => {
+      const invalid = await app.request("/api/settings/desktop", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dock: { position: "ceiling" } }),
+      });
+      expect(invalid.status).toBe(400);
+
+      const oversized = await app.request("/api/settings/desktop", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ future: "x".repeat(300_000) }),
+      });
+      expect(oversized.status).toBeGreaterThanOrEqual(400);
+      expect(oversized.status).not.toBe(200);
+    });
+  });
+
   // --- GET /api/settings/theme ---
 
   describe("GET /theme", () => {

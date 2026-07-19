@@ -12,6 +12,8 @@ describe('CI workflows', () => {
     ['STRIPE_PRICE_MATRIX_MAX_ANNUAL', 'stripe-price-matrix-max-annual'],
     ['STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY', 'stripe-price-extra-runtime-monthly'],
     ['STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL', 'stripe-price-extra-runtime-annual'],
+    ['STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_MONTHLY', 'stripe-portal-configuration-extra-runtime-monthly'],
+    ['STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_ANNUAL', 'stripe-portal-configuration-extra-runtime-annual'],
   ] as const;
 
   it('exposes a stable aggregate CI result job for branch protection', () => {
@@ -44,7 +46,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('name: Docs Contract Tests');
     expect(workflow).toContain('docs_contract_tests: ${{ steps.changed.outputs.docs_contract_tests }}');
     expect(workflow).toContain("if: needs.changes.outputs.docs_contract_tests == 'true'");
-    expect(workflow).toContain('pnpm exec vitest run tests/www/self-host-docs.test.ts');
+    expect(workflow).toContain('pnpm exec vitest run tests/repository/site-extraction.test.ts');
     expect(workflow).toContain('| Docs Contract Tests | $DOCS_CONTRACT_RESULT |');
     expect(readme).toContain('- `Docs Contract Tests`');
     expect(readme).toContain('Docs-only changes still run targeted docs contract tests');

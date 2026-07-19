@@ -1,40 +1,16 @@
 "use client";
 
-import Image from "next/image";
 import { TerminalIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useRef, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { useEffect, useEffectEvent, useRef, type ReactNode, type RefObject } from "react";
+import { TerminalAgentLogo } from "./TerminalAgentLogo";
 import {
   TERMINAL_AGENT_OPTIONS,
+  resolveTerminalAgentMenuState,
   type TerminalAgentId,
+  type TerminalAgentInstallState,
+  type TerminalAgentMenuAction,
   type TerminalAgentOption,
 } from "./terminal-agent-options";
-
-const TERMINAL_AGENT_LOGO_STYLE: CSSProperties = {
-  alignItems: "center",
-  border: "1px solid rgba(255, 255, 255, 0.56)",
-  borderRadius: 7,
-  boxShadow: "0 1px 0 rgba(255, 255, 255, 0.36) inset, 0 4px 9px rgba(49, 54, 45, 0.14)",
-  boxSizing: "border-box",
-  color: "#FFFDF7",
-  display: "flex",
-  flex: "0 0 22px",
-  fontFamily: "Inter, system-ui, sans-serif",
-  fontSize: 11,
-  fontWeight: 900,
-  height: 22,
-  justifyContent: "center",
-  letterSpacing: 0,
-  lineHeight: "22px",
-  overflow: "hidden",
-  width: 22,
-};
-
-const TERMINAL_AGENT_LOGO_IMAGE_STYLE: CSSProperties = {
-  display: "block",
-  height: 15,
-  objectFit: "contain",
-  width: 15,
-};
 
 export function NewSessionMenu({
   align,
@@ -42,13 +18,17 @@ export function NewSessionMenu({
   onCreateShell,
   onCreateAgent,
   agentStatuses,
+  agentStatusesChecking,
+  agentStatusesUnavailable,
   ignoreLightDismissRef,
 }: {
   align: "left" | "right" | "mobile";
   onClose: () => void;
   onCreateShell: () => void;
-  onCreateAgent: (option: TerminalAgentOption, installed: boolean) => void;
-  agentStatuses: Record<TerminalAgentId, boolean> | null;
+  onCreateAgent: (option: TerminalAgentOption, action: TerminalAgentMenuAction) => void;
+  agentStatuses: Record<TerminalAgentId, TerminalAgentInstallState>;
+  agentStatusesChecking: boolean;
+  agentStatusesUnavailable: boolean;
   ignoreLightDismissRef?: RefObject<HTMLElement | null>;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -77,6 +57,8 @@ export function NewSessionMenu({
       ref={menuRef}
       role="menu"
       aria-label="New session menu"
+      className="terminal-new-session-menu"
+      data-align={align}
       onPointerDown={(event) => event.stopPropagation()}
       onMouseDown={(event) => event.stopPropagation()}
       style={{
@@ -90,6 +72,7 @@ export function NewSessionMenu({
         gap: 4,
         padding: 8,
         position: "absolute",
+        transformOrigin: align === "mobile" ? "bottom left" : align === "right" ? "top right" : "top left",
         ...(align === "mobile"
           ? { bottom: "calc(100% + 8px)", left: 0 }
           : align === "right"
@@ -128,14 +111,19 @@ export function NewSessionMenu({
         onClick={onCreateShell}
       />
       {TERMINAL_AGENT_OPTIONS.map((option) => {
-        const installed = agentStatuses?.[option.id] === true;
+        const installState = agentStatuses[option.id];
+        const menuState = resolveTerminalAgentMenuState(
+          installState,
+          agentStatusesChecking,
+          agentStatusesUnavailable,
+        );
         return (
           <NewSessionMenuItem
             key={option.id}
             label={option.label}
-            install={!installed}
-            icon={<TerminalAgentLogo muted={!installed} option={option} />}
-            onClick={() => onCreateAgent(option, installed)}
+            statusLabel={menuState.statusLabel}
+            icon={<TerminalAgentLogo agent={option.id} />}
+            onClick={() => onCreateAgent(option, menuState.action)}
           />
         );
       })}
@@ -143,41 +131,17 @@ export function NewSessionMenu({
   );
 }
 
-function TerminalAgentLogo({ option, muted }: { option: TerminalAgentOption; muted: boolean }) {
-  return (
-    <span
-      aria-hidden="true"
-      data-testid={`terminal-agent-logo-${option.id}`}
-      style={{
-        ...TERMINAL_AGENT_LOGO_STYLE,
-        background: option.color,
-        opacity: muted ? 0.86 : 1,
-      }}
-    >
-      <Image
-        alt=""
-        data-testid={`terminal-agent-logo-image-${option.id}`}
-        draggable={false}
-        height={17}
-        src={option.logoSrc}
-        style={TERMINAL_AGENT_LOGO_IMAGE_STYLE}
-        width={17}
-      />
-    </span>
-  );
-}
-
 function NewSessionMenuItem({
   label,
   icon,
   active = false,
-  install = false,
+  statusLabel = null,
   onClick,
 }: {
   label: string;
   icon: ReactNode;
   active?: boolean;
-  install?: boolean;
+  statusLabel?: "Install" | "Checking…" | "Status unavailable" | null;
   onClick: () => void;
 }) {
   return (
@@ -187,7 +151,7 @@ function NewSessionMenuItem({
       onClick={onClick}
       style={{
         alignItems: "center",
-        background: active ? "var(--terminal-drawer-action-bg)" : install ? "var(--terminal-drawer-card-muted-bg)" : "transparent",
+        background: active ? "var(--terminal-drawer-action-bg)" : "transparent",
         border: 0,
         borderRadius: 7,
         boxSizing: "border-box",
@@ -204,7 +168,7 @@ function NewSessionMenuItem({
         event.currentTarget.style.background = "var(--terminal-drawer-action-bg)";
       }}
       onMouseLeave={(event) => {
-        event.currentTarget.style.background = active ? "var(--terminal-drawer-action-bg)" : install ? "var(--terminal-drawer-card-muted-bg)" : "transparent";
+        event.currentTarget.style.background = active ? "var(--terminal-drawer-action-bg)" : "transparent";
       }}
     >
       {icon}
@@ -216,12 +180,12 @@ function NewSessionMenuItem({
           fontWeight: active ? 700 : 600,
           lineHeight: "17px",
           minWidth: 0,
-          color: install ? "var(--terminal-drawer-muted)" : "var(--terminal-drawer-fg)",
+          color: "var(--terminal-drawer-fg)",
         }}
       >
         {label}
       </span>
-      {install ? (
+      {statusLabel ? (
         <span
           style={{
             alignItems: "center",
@@ -231,7 +195,7 @@ function NewSessionMenuItem({
           }}
         >
           <span
-            data-testid="terminal-agent-install-pill"
+            data-testid={statusLabel === "Install" ? "terminal-agent-install-pill" : "terminal-agent-status-pill"}
             style={{
               alignItems: "center",
               background: "var(--terminal-drawer-action-bg)",
@@ -241,14 +205,14 @@ function NewSessionMenuItem({
               color: "var(--terminal-drawer-action-fg)",
               display: "flex",
               fontFamily: "Inter, system-ui, sans-serif",
-              fontSize: 12,
+              fontSize: statusLabel === "Status unavailable" ? 10 : 12,
               fontWeight: 700,
               height: 18,
               lineHeight: "14px",
               padding: "0 6px",
             }}
           >
-            Install
+            {statusLabel}
           </span>
         </span>
       ) : null}

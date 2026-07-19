@@ -87,17 +87,16 @@ export function cacheTerminal(paneId: string, entry: CachedTerminal, options: Ca
   cache.set(paneId, entry);
 }
 
-export function getCached(paneId: string): CachedTerminal | null {
+/** Transfers ownership of a cached terminal to the caller. */
+export function takeCached(paneId: string): CachedTerminal | null {
   const entry = cache.get(paneId);
-  terminalCacheDebug("cache-get", {
+  cache.delete(paneId);
+  terminalCacheDebug("cache-take", {
     paneId,
     hit: !!entry,
     sessionId: entry?.sessionId ?? null,
+    cacheSizeAfter: cache.size,
   });
-  if (entry) {
-    cache.delete(paneId);
-    cache.set(paneId, entry);
-  }
   return entry ?? null;
 }
 

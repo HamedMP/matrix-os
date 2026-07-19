@@ -1,6 +1,6 @@
 ---
 name: launch-app
-description: Launch Matrix OS runtime surfaces for validation. Use when Symphony agents need runtime checks for shell, gateway, platform, website, or bundled app changes in this repo.
+description: Launch Matrix OS runtime surfaces for validation. Use when Symphony agents need runtime checks for shell, gateway, platform, or bundled app changes in this repo.
 ---
 
 # Launch App
@@ -20,7 +20,6 @@ This starts gateway, proxy, and shell together. For narrower checks:
 bun run dev:gateway
 bun run dev:shell
 bun run dev:platform
-bun run dev:www
 ```
 
 ## Bundled Default Apps
@@ -43,6 +42,7 @@ pnpm --dir home/apps/symphony build
 - Canvas is the primary shell surface; verify user-visible shell changes there first.
 - Built-in app paths must work in Canvas and Desktop.
 - For bundled apps, verify `dist/index.html` exists before handoff.
+- Public website changes are validated in the private `FinnaAI/matrix-os-site` repository.
 - Run the relevant targeted tests, then the repo gates when scope warrants:
   ```bash
   bun run typecheck

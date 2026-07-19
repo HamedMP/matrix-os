@@ -24,10 +24,11 @@ brings their own secrets. The OSS boundary and the secrets boundary are the same
 Everything here is safe and *good* to have open. More eyes on the security controls
 is a feature, not a risk.
 
-- **All application source** — `packages/kernel`, `packages/gateway`,
-  `packages/platform`, `shell/`, `packages/sync-client`, `www/`. Including the
+- **All runtime application source** — `packages/kernel`, `packages/gateway`,
+  `packages/platform`, `shell/`, `packages/sync-client`. Including the
   provisioning logic, the auth middleware, `path-security.ts`, the SSRF allowlist,
-  the bridge relay. These being readable is how bugs get found.
+  the bridge relay. These being readable is how bugs get found. The marketing
+  and public-docs source deploys from the separate private `FinnaAI/matrix-os-site` repository.
 - **cloud-init and deployment templates** — `distro/customer-vps/cloud-init.yaml`,
   host-bin scripts, Dockerfiles. They contain `{{placeholders}}`, not values; secrets
   are injected at render time. The template structure is not sensitive.

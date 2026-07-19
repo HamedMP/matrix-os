@@ -110,8 +110,8 @@ final human review.
    - If any React `.tsx` or `.jsx` file changed, run this gate before staging or
      committing:
      `npx react-doctor@latest <project-dir>` for each affected React project
-     directory that has a `package.json` (for example, `shell`, `packages/ui`,
-     or `www`). Do not pass individual files to react-doctor. For default apps
+     directory that has a `package.json` (for example, `shell` or `packages/ui`).
+     Do not pass individual files to react-doctor. For default apps
      under `home/apps/**`, create a temporary React project outside the repo with
      `mktemp -d` (for example under `/tmp`), copy the affected app `src/` files
      plus a minimal React `package.json`, run react-doctor against that temporary

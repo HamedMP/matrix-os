@@ -390,6 +390,14 @@ Guidance:
   provider identity or capabilities.
 - `setupActions` should contain safe action IDs and labels, not raw arbitrary commands unless explicitly marked as foreground terminal actions.
 - Health checks must be timeout-bound.
+- Provider protocol support is version-gated independently from executable
+  discovery. For Codex, Matrix pins both the exec JSONL schema and the
+  experimental app-server schema to the same set of exact verified package
+  versions, checks the latest published package daily, and fails closed for an
+  unverified installed version or whenever either schema digest or required
+  event/method surface changes. Discovery, health checks, and provider spawn
+  use one validated absolute executable path, with an immediate version recheck
+  before the child process starts.
 
 ### Thread Create
 
@@ -414,6 +422,9 @@ Rules:
 - `clientRequestId` makes create idempotent.
 - Prompt and attachments are bounded.
 - Provider/mode/sandbox/approval combinations are validated server-side.
+- Approval and structured-input capabilities stay disabled until the installed
+  provider's interactive protocol contract is verified; exec JSONL support by
+  itself is not evidence that interactive decisions are supported.
 - Create should return accepted thread snapshot quickly; streaming happens separately.
 - New shell requests require `projectId`; compatibility parsing may accept legacy unassigned records on reads only.
 - If `taskId` is present, the gateway resolves the task and enforces project ownership/match before inserting the thread and first event.
@@ -503,6 +514,17 @@ Rules:
 - `preview` is bounded and redacted.
 - Decision endpoint must be idempotent by `approvalId` and `correlationId`.
 - If two clients decide concurrently, one wins and all clients receive resolved event.
+
+### Structured User Input
+
+Provider input requests may include up to eight uniquely identified questions.
+Each question has bounded safe display text, optional bounded choices, an
+explicit free-form flag, and an explicit secret-entry flag. Answers may include
+a bounded question-id map in addition to the legacy single text answer so older
+shells remain wire-compatible while newer shells preserve provider question
+identity. The gateway must validate that submitted question ids belong to the
+pending request before forwarding a response, must never persist answer text in
+thread events, and must prefer structured answers whenever they are present.
 
 ### Terminal Frame
 

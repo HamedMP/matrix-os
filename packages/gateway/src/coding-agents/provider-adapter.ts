@@ -16,6 +16,24 @@ const MAX_PROVIDER_EVENTS = 500;
 
 export const CodingAgentProviderResumeStateSchema = z.object({
   conversationId: z.string().trim().min(1).max(512),
+  providerThreadId: z.string().trim().min(1).max(512)
+    .regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/)
+    .optional(),
+}).strict();
+
+export const CodingAgentProviderEventBatchSchema = z.object({
+  events: z.array(AgentThreadEventSchema).max(100)
+    .superRefine((events, context) => {
+      const ids = new Set<string>();
+      for (const event of events) {
+        if (ids.has(event.eventId)) {
+          context.addIssue({ code: "custom", message: "Duplicate provider event id" });
+          return;
+        }
+        ids.add(event.eventId);
+      }
+    }),
+  providerThreadId: CodingAgentProviderResumeStateSchema.shape.providerThreadId,
 }).strict();
 
 const CodingAgentProviderRunResultSchema = z.object({
@@ -26,6 +44,7 @@ const CodingAgentProviderRunResultSchema = z.object({
 
 export type CodingAgentProviderResumeState = z.infer<typeof CodingAgentProviderResumeStateSchema>;
 export type CodingAgentProviderRunResult = z.infer<typeof CodingAgentProviderRunResultSchema>;
+export type CodingAgentProviderEventBatch = z.infer<typeof CodingAgentProviderEventBatchSchema>;
 
 export interface CodingAgentProviderAdapter {
   providerId: string;
@@ -101,6 +120,38 @@ export function parseCodingAgentProviderEvents(
     throw new Error("Provider cannot emit user messages");
   }
   return parsed;
+}
+
+function providerMayEmit(event: AgentThreadEvent): boolean {
+  switch (event.type) {
+    case "thread.status":
+    case "assistant.text.delta":
+    case "assistant.text.completed":
+    case "tool.started":
+    case "tool.output":
+    case "tool.completed":
+    case "approval.requested":
+    case "user_input.requested":
+    case "file.changed":
+    case "review.ready":
+    case "thread.error":
+    case "thread.completed":
+      return true;
+    default:
+      return false;
+  }
+}
+
+export function parseCodingAgentProviderEventBatch(
+  batch: CodingAgentProviderEventBatch,
+  threadId: string,
+): CodingAgentProviderEventBatch {
+  const parsed = CodingAgentProviderEventBatchSchema.parse(batch);
+  const events = parseCodingAgentProviderEvents(parsed.events, threadId);
+  if (events.some((event) => !providerMayEmit(event))) {
+    throw new Error("Provider emitted reserved lifecycle event");
+  }
+  return { ...parsed, events };
 }
 
 export function parseCodingAgentProviderRunResult(

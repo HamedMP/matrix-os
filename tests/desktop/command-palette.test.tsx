@@ -473,7 +473,7 @@ describe("CommandPalette", () => {
                 id: "codex",
                 kind: "foreground_terminal",
                 label: "Install Codex",
-                command: "npm install -g --prefix \"$MATRIX_NODE_PREFIX\" @openai/codex@latest",
+                command: "npm install -g --prefix \"$MATRIX_NODE_PREFIX\" @openai/codex@0.144.6",
               },
             ],
           },
@@ -493,7 +493,7 @@ describe("CommandPalette", () => {
       expect(post).toHaveBeenCalledWith("/api/terminal/sessions", {
         name: expect.stringMatching(/^matrix-setup-codex-[a-z0-9]{6}$/),
         cwd: "projects",
-        cmd: "npm install -g --prefix \"$MATRIX_NODE_PREFIX\" @openai/codex@latest",
+        cmd: "npm install -g --prefix \"$MATRIX_NODE_PREFIX\" @openai/codex@0.144.6",
       });
     });
     expect(openTab).toHaveBeenCalledWith({

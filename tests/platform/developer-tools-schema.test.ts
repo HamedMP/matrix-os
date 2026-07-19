@@ -1,4 +1,7 @@
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import codexContract from '../../packages/gateway/src/coding-agents/codex-exec-contract.json' with { type: 'json' };
 import {
   DEFAULT_DEVELOPER_TOOLS,
   DeveloperToolsSchema,
@@ -27,5 +30,21 @@ describe('developer tool selection schema', () => {
 
   it('deduplicates and serializes selected tools in canonical order', () => {
     expect(serializeDeveloperTools(['pi', 'codex', 'pi'])).toBe('["codex","pi"]');
+  });
+
+  it('pins automated Codex installs and installed-state checks to the verified version', async () => {
+    const toolPack = await readFile(fileURLToPath(new URL(
+      '../../distro/customer-vps/host-bin/matrix-install-tool-pack',
+      import.meta.url,
+    )), 'utf8');
+    const developerTools = await readFile(fileURLToPath(new URL(
+      '../../distro/customer-vps/host-bin/matrix-install-developer-tools',
+      import.meta.url,
+    )), 'utf8');
+
+    expect(toolPack).toContain(`CODEX_VERSION="${codexContract.latestVerifiedVersion}"`);
+    expect(toolPack).toContain('"@openai/codex@${CODEX_VERSION}"');
+    expect(developerTools).toContain(`CODEX_VERSION="${codexContract.latestVerifiedVersion}"`);
+    expect(developerTools).toContain('codex_version_is_current');
   });
 });

@@ -5,6 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ReviewIdSchema, SafeAssistantPreviewSourceTextSchema, SafeAssistantPreviewTextSchema, type AgentThreadEvent, type AgentThreadSnapshot, type AgentThreadSummary, type ApprovalDecisionRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
+import { AgentThreadTurnComposer } from "@/components/agents/agent-thread-turn-composer";
 import { useAgentThreadActions, type AgentThreadRouteState, type ThreadActionError } from "@/lib/agent-thread-actions";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
 import { isSafeShellSessionName } from "@/lib/terminal-state";
@@ -24,8 +25,9 @@ export default function AgentThreadRoute() {
   const params = useLocalSearchParams<{ threadId?: string }>();
   const router = useRouter();
   const threadId = typeof params.threadId === "string" ? params.threadId : "thread";
-  const { client } = useGateway();
+  const { client, connectionState } = useGateway();
   const requestGeneration = useRef(0);
+  const previousConnectionStateRef = useRef(connectionState);
   const scrollViewRef = useRef<ScrollView | null>(null);
   const [state, setState] = useState<AgentThreadRouteState>({
     status: "loading",
@@ -142,6 +144,22 @@ export default function AgentThreadRoute() {
     };
   }, [client, loadSnapshot]);
 
+  useEffect(() => {
+    const previous = previousConnectionStateRef.current;
+    previousConnectionStateRef.current = connectionState;
+    if (previous !== "connected" && connectionState === "connected") {
+      let cancelled = false;
+      const timer = setTimeout(() => {
+        void loadSnapshot(() => cancelled);
+      }, 0);
+      return () => {
+        cancelled = true;
+        clearTimeout(timer);
+      };
+    }
+    return undefined;
+  }, [connectionState, loadSnapshot]);
+
   useEffect(() => () => {
     streamGenerationRef.current += 1;
     streamSubscriptionRef.current?.detach();
@@ -196,6 +214,10 @@ export default function AgentThreadRoute() {
     });
   }, [router]);
 
+  const openWorkspaceTools = useCallback(() => {
+    router.push("/agents");
+  }, [router]);
+
   const jumpToLatestActivity = useCallback(() => {
     scrollViewRef.current?.scrollToEnd({ animated: true });
   }, []);
@@ -235,8 +257,11 @@ export default function AgentThreadRoute() {
     <ScrollView
       ref={scrollViewRef}
       style={styles.container}
+      automaticallyAdjustKeyboardInsets
       contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={styles.content}
+      keyboardDismissMode="interactive"
+      keyboardShouldPersistTaps="handled"
       accessibilityLabel="Refresh thread details"
       refreshControl={<RefreshControl refreshing={state.refreshing} onRefresh={() => void loadSnapshot()} tintColor={theme.colors.forest} />}
     >
@@ -296,6 +321,15 @@ export default function AgentThreadRoute() {
             <Ionicons name="chatbubble-ellipses-outline" size={16} color={theme.colors.forest} />
             <Text style={styles.secondaryText}>Follow up</Text>
           </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open files reviews diffs and previews"
+            onPress={openWorkspaceTools}
+            style={styles.secondaryButton}
+          >
+            <Ionicons name="folder-open-outline" size={16} color={theme.colors.forest} />
+            <Text style={styles.secondaryText}>Workspace tools</Text>
+          </Pressable>
           {thread.terminalSessionId ? (
             <Pressable
               accessibilityRole="button"
@@ -318,6 +352,15 @@ export default function AgentThreadRoute() {
           </Pressable>
         </View>
       </View>
+      {client && thread.projectId && canAcceptSameThreadTurn(thread.status) ? (
+        <AgentThreadTurnComposer
+          client={client}
+          connectionState={connectionState}
+          key={thread.id}
+          onAccepted={loadSnapshot}
+          threadId={thread.id}
+        />
+      ) : null}
       {events.items.length > 0 ? (
         <View style={styles.timeline}>
           <View style={styles.timelineHeader}>
@@ -355,6 +398,10 @@ export default function AgentThreadRoute() {
       ) : null}
     </ScrollView>
   );
+}
+
+function canAcceptSameThreadTurn(status: AgentThreadSummary["status"]): boolean {
+  return status === "running" || status === "completed" || status === "failed" || status === "aborted";
 }
 
 function CurrentActionPanel({
@@ -917,6 +964,8 @@ function describeThreadEvent(event: AgentThreadEvent): { icon: keyof typeof Ioni
       return { icon: "sparkles-outline", title: "Thread created", detail: event.thread.title };
     case "thread.status":
       return { icon: "pulse-outline", title: "Status changed", detail: event.status.replace(/_/g, " ") };
+    case "user.message":
+      return { icon: "chatbubble-outline", title: "User message", detail: "Message sent" };
     case "assistant.text.delta":
       return { icon: "chatbubble-ellipses-outline", title: "Assistant update", detail: "Text update received" };
     case "assistant.text.completed":

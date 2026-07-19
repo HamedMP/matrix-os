@@ -22,6 +22,12 @@ describe("Matrix telemetry events", () => {
       VPS_REGISTERED: "matrix_vps_registered",
       VPS_REGISTRATION_FAILED: "matrix_vps_registration_failed",
       RUNTIME_ACTIVATED: "matrix_runtime_activated",
+      RUNTIME_MANAGER_VIEWED: "matrix_runtime_manager_viewed",
+      ADD_COMPUTER_INTENT: "matrix_add_computer_intent",
+      ADD_COMPUTER_BILLING_HANDOFF: "matrix_add_computer_billing_handoff",
+      ADD_COMPUTER_PROVISIONING_STARTED: "matrix_add_computer_provisioning_started",
+      ADD_COMPUTER_COMPLETED: "matrix_add_computer_completed",
+      ADD_COMPUTER_FAILED: "matrix_add_computer_failed",
       BILLING_WEBHOOK_FAILED: "matrix_billing_webhook_failed",
       ONBOARDING_FAILED: "matrix_onboarding_failed",
       RUNTIME_UPGRADE_REQUESTED: "matrix_runtime_upgrade_requested",
@@ -54,6 +60,7 @@ describe("Matrix telemetry events", () => {
       "shell/src/components/ShellHome.tsx",
       "shell/src/components/AppViewer.tsx",
       "shell/src/hooks/useSocket.ts",
+      "shell/src/components/runtime/RuntimeManager.tsx",
     ];
 
     for (const file of browserFiles) {

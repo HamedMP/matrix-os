@@ -8,6 +8,7 @@ import {
 } from './db.js';
 import { loadJourney, type JourneyReadinessAnnotation } from './journey.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
+import { RuntimeSlotSchema } from './customer-vps-schema.js';
 import { verifySyncJwt } from './sync-jwt.js';
 
 export interface JourneyClerkAuth {
@@ -64,8 +65,12 @@ const INTERNAL_BODY_LIMIT = 16 * 1024;
 const RETRY_BODY_LIMIT = 1024;
 
 const RetryBodySchema = z.object({
-  runtimeSlot: z.string().regex(SAFE_SLUG).optional(),
+  runtimeSlot: RuntimeSlotSchema.optional(),
 });
+
+const JourneyQuerySchema = z.object({
+  runtimeSlot: RuntimeSlotSchema.optional(),
+}).strict();
 
 const FirstRunBodySchema = z.object({
   clerkUserId: z.string().min(1).max(256),
@@ -134,8 +139,10 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
     applyNoStore(c);
     const clerkUserId = await options.resolveUserId(c);
     if (!clerkUserId) return c.json({ error: 'Unauthorized' }, 401);
+    const parsedQuery = JourneyQuerySchema.safeParse(c.req.query());
+    if (!parsedQuery.success) return c.json({ error: 'Invalid request' }, 400);
     try {
-      return c.json(await buildJourney(clerkUserId), 200);
+      return c.json(await buildJourney(clerkUserId, parsedQuery.data.runtimeSlot), 200);
     } catch (err: unknown) {
       console.error('[journey] state derivation failed:', err instanceof Error ? err.message : String(err));
       return c.json({ error: 'journey_unavailable' }, 503);
