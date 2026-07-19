@@ -138,7 +138,13 @@ function normalizeThemeSnapshot(value: unknown): Theme | undefined {
   return {
     name: safeString(value.name, 80) ?? "cached",
     ...(value.mode === "light" || value.mode === "dark" ? { mode: value.mode } : {}),
-    ...(value.style === "flat" || value.style === "neumorphic" ? { style: value.style } : {}),
+    ...(value.style === "flat" ||
+      value.style === "neumorphic" ||
+      value.style === "macos-glass" ||
+      value.style === "winxp" ||
+      value.style === "win11"
+      ? { style: value.style }
+      : {}),
     colors,
     fonts,
     radius: safeString(value.radius, 32) ?? "0.75rem",

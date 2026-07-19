@@ -85,6 +85,31 @@ describe("zellij adapter", () => {
     );
   });
 
+  it("reads the focused terminal pane cwd from bounded structured zellij queries", async () => {
+    const execFile = vi.fn((_file, args: string[], _opts, cb) => {
+      const stdout = args.includes("current-tab-info")
+        ? JSON.stringify({ tab_id: 4, active: true })
+        : JSON.stringify([
+          { id: 1, is_plugin: false, is_focused: true, tab_id: 2, pane_cwd: "/home/alice/other" },
+          { id: 2, is_plugin: false, is_focused: true, tab_id: 4, pane_cwd: "/home/alice/project" },
+          { id: 3, is_plugin: true, is_focused: false, tab_id: 4, pane_cwd: null },
+        ]);
+      cb(null, stdout, "");
+      return childProcess();
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.focusedPaneCwd("main")).resolves.toBe("/home/alice/project");
+    await expect(adapter.focusedPaneCwd("main")).resolves.toBe("/home/alice/project");
+    expect(execFile).toHaveBeenCalledTimes(2);
+    expect(execFile).toHaveBeenCalledWith(
+      "zellij",
+      ["--session", "main", "action", "list-panes", "--all", "--json"],
+      expect.objectContaining({ timeout: 25, signal: expect.any(AbortSignal) }),
+      expect.any(Function),
+    );
+  });
+
   it("treats zellij's no-active-sessions response as an empty session list", async () => {
     const execFile = vi.fn((_file, _args, _opts, cb) => {
       cb(Object.assign(new Error("zellij exited"), { code: 1 }), "", "NO ACTIVE ZELLIJ SESSIONS FOUND\n");
@@ -221,6 +246,33 @@ describe("zellij adapter", () => {
     expect(env).not.toHaveProperty("SECRET_TOKEN");
   });
 
+  it("uses the Matrix owner home for shells when a home path is configured", () => {
+    const pty = ptyProcess();
+    const spawnPty = vi.fn(() => pty);
+    const adapter = createZellijAdapter({
+      execFile: vi.fn(),
+      spawnPty,
+      homePath: "/srv/matrix/home",
+      env: {
+        HOME: "/Users/developer",
+        PATH: "/opt/matrix/bin",
+      },
+    });
+
+    adapter.attachSession("main");
+
+    expect(spawnPty).toHaveBeenCalledWith(
+      "zellij",
+      ["attach", "main"],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          HOME: "/srv/matrix/home",
+          MATRIX_HOME: "/srv/matrix/home",
+        }),
+      }),
+    );
+  });
+
   it("kills attach PTYs when the caller aborts", () => {
     const pty = ptyProcess();
     const spawnPty = vi.fn(() => pty);
@@ -339,11 +391,15 @@ describe("zellij adapter", () => {
       const configPath = join(configDir, "config.kdl");
       const layoutPath = join(configDir, "layouts", "matrix.kdl");
       const shellPath = join(configDir, "matrix-terminal-shell");
+      const zshenvPath = join(configDir, ".zshenv");
+      const zshrcPath = join(configDir, ".zshrc");
       const bashrcPath = join(configDir, "bashrc");
       const promptLabelPath = join(configDir, "prompt-label.mjs");
       const config = await readFile(configPath, "utf8");
       const layout = await readFile(layoutPath, "utf8");
       const shell = await readFile(shellPath, "utf8");
+      const zshenv = await readFile(zshenvPath, "utf8");
+      const zshrc = await readFile(zshrcPath, "utf8");
       const bashrc = await readFile(bashrcPath, "utf8");
       const promptLabel = await readFile(promptLabelPath, "utf8");
       const shellMode = (await stat(shellPath)).mode;
@@ -353,19 +409,38 @@ describe("zellij adapter", () => {
       expect(config).toContain("hide_session_name true");
       expect(config).toContain('default_layout "matrix"');
       expect(config).toContain(`default_shell ${JSON.stringify(shellPath)}`);
-      expect(shell).toContain(`exec bash --noprofile --rcfile '${bashrcPath}' -i`);
+      expect(shell).toContain(`export ZDOTDIR='${configDir}'`);
+      expect(shell).toContain('matrix_zsh="$(command -v zsh 2>/dev/null || true)"');
+      expect(shell).toContain('export SHELL="$matrix_zsh"');
+      expect(shell).toContain('exec "$matrix_zsh" -d -i');
+      expect(shell).toContain("exec bash --noprofile --rcfile");
       expect(shell).toContain('matrix_prepend_terminal_path "$MATRIX_HOME/.local/bin"');
       expect(shell).toContain('matrix_prepend_terminal_path "${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}/bin"');
       expect(shell).toContain('if [ "$#" -gt 0 ]; then');
       expect(shell).toContain('  set +e\n  ( "$@" )\n  set -e');
+      expect(shell.indexOf('matrix_zsh="$(command -v zsh')).toBeLessThan(shell.indexOf('if [ "$#" -gt 0 ]; then'));
+      expect(shell.indexOf('export SHELL="$matrix_zsh"')).toBeLessThan(shell.indexOf('if [ "$#" -gt 0 ]; then'));
+      expect(shell.indexOf('matrix_bash="$(command -v bash')).toBeLessThan(shell.indexOf('if [ "$#" -gt 0 ]; then'));
+      expect(shell.indexOf('export SHELL="$matrix_bash"')).toBeLessThan(shell.indexOf('if [ "$#" -gt 0 ]; then'));
       expect(shell).toContain(`node '${promptLabelPath}'`);
-      expect(shell).not.toContain("/bin/bash");
+      expect(shell).toContain('if [ -z "${MATRIX_TERMINAL_PROMPT:-}" ] && command -v node >/dev/null 2>&1; then');
+      expect(shell).not.toContain("/bin/zsh");
       expect(shellMode & 0o700).toBe(0o700);
-      expect(bashrc).toContain('matrix_prepend_terminal_path "${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}/bin"');
-      expect(bashrc).toContain('if [ -n "${MATRIX_HOME:-}" ]; then');
-      expect(bashrc).toContain('matrix_prepend_terminal_path "$MATRIX_HOME/.local/bin"');
+      expect(zshenv).toContain('if [ -r "$HOME/.zshenv" ]; then');
+      expect(zshenv).toContain('. "$HOME/.zshenv"');
+      expect(zshenv).toContain('matrix_terminal_owner_zdotdir="${ZDOTDIR:-$HOME}"');
+      expect(zshrc).not.toContain('$HOME/.zshenv');
+      expect(zshrc).toContain('matrix_terminal_owner_zdotdir="${matrix_terminal_owner_zdotdir:-$HOME}"');
+      expect(zshrc).toContain('[ -r "$matrix_terminal_owner_zdotdir/.zshrc" ]; then');
+      expect(zshrc).toContain('. "$matrix_terminal_owner_zdotdir/.zshrc"');
+      expect(zshrc).not.toContain('if [ -r "$HOME/.zshrc" ]; then');
+      expect(zshrc).toContain('matrix_prepend_terminal_path "${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}/bin"');
+      expect(zshrc).toContain('if [ -n "${MATRIX_HOME:-}" ]; then');
+      expect(zshrc).toContain('matrix_prepend_terminal_path "$MATRIX_HOME/.local/bin"');
+      expect(zshrc).toContain('PROMPT="${MATRIX_TERMINAL_PROMPT}"');
+      expect(zshrc).toContain("%n:%~%# ");
+      expect(zshrc).toContain("add-zsh-hook precmd matrix_terminal_apply_prompt");
       expect(bashrc).toContain('PS1="${MATRIX_TERMINAL_PROMPT}"');
-      expect(bashrc).toContain("\\u:\\w\\$ ");
       expect(promptLabel).toContain("JSON.parse");
       expect(config).toContain('theme "default"');
       expect(config).not.toContain("matrix-dark {");
@@ -646,14 +721,17 @@ describe("zellij adapter", () => {
     );
   });
 
-  it("shell-quotes generated bash rcfile paths", () => {
-    const path = `/tmp/matrix "owner"/it'works/bashrc`;
+  it("shell-quotes generated shell config paths", () => {
+    const zshrcPath = `/tmp/matrix "owner"/it'works/.zshrc`;
+    const bashrcPath = `/tmp/matrix "owner"/it'works/bashrc`;
     const promptLabelPath = `/tmp/matrix "owner"/it'works/prompt-label.mjs`;
-    const script = matrixTerminalShellScript(path, promptLabelPath);
+    const script = matrixTerminalShellScript(zshrcPath, bashrcPath, promptLabelPath);
 
     expect(script).toContain(`exec bash --noprofile --rcfile '/tmp/matrix "owner"/it'\\''works/bashrc' -i`);
+    expect(script).toContain(`export ZDOTDIR='/tmp/matrix "owner"/it'\\''works'`);
     expect(script).toContain('  ( "$@" )');
     expect(script).toContain(`node '/tmp/matrix "owner"/it'\\''works/prompt-label.mjs'`);
     expect(script).not.toContain("/bin/bash");
+    expect(script.indexOf('  ( "$@" )')).toBeLessThan(script.indexOf('exec "$matrix_zsh" -d -i'));
   });
 });

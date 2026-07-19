@@ -31,14 +31,57 @@ export interface DesktopConfig {
   };
 }
 
-const BUNDLED_WALLPAPERS = new Set(["moraine-lake.jpg"]);
+export type DesktopConfigPatch = Omit<Partial<DesktopConfig>, "dock"> & {
+  dock?: Partial<DockConfig>;
+};
+
+export const BUNDLED_WALLPAPERS = new Set([
+  "moraine-lake.jpg",
+  "xp-bliss.jpg",
+  "win11-bloom.jpg",
+  "macos-light.svg",
+]);
 const SETTINGS_FETCH_TIMEOUT_MS = 10_000;
+
+// All wallpapers — bundled OS defaults and user uploads alike — are served by
+// the gateway from the owner's home dir under /files/system/wallpapers. The
+// shell-public /wallpapers path is unreliable through the platform
+// session-routing proxy, so bundled names must not be special-cased to it.
+export function wallpaperUrl(name: string, gatewayUrl: string): string {
+  return `${gatewayUrl}/files/system/wallpapers/${name}`;
+}
 
 const DEFAULT_DESKTOP_CONFIG: DesktopConfig = {
   background: { type: "wallpaper", name: "moraine-lake.jpg" },
   dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
   pinnedApps: [...DEFAULT_PINNED_APPS],
 };
+
+interface DesktopConfigRuntimeCache {
+  gatewayUrl: string;
+  config: DesktopConfig;
+}
+
+let desktopConfigRuntimeCache: DesktopConfigRuntimeCache | null = null;
+
+function rememberDesktopConfig(gatewayUrl: string, config: DesktopConfig): void {
+  desktopConfigRuntimeCache = { gatewayUrl, config };
+}
+
+function initialDesktopConfig(
+  cacheScope: ShellSnapshotScope | null,
+  gatewayUrl: string,
+): DesktopConfig {
+  // A scoped shell root starts from its own user/runtime snapshot. Nested
+  // consumers may reuse only the current gateway's applied config so opening
+  // Settings cannot repaint another computer's/default wallpaper.
+  if (cacheScope) {
+    return loadShellSnapshot(cacheScope)?.desktopConfig ?? DEFAULT_DESKTOP_CONFIG;
+  }
+  return desktopConfigRuntimeCache?.gatewayUrl === gatewayUrl
+    ? desktopConfigRuntimeCache.config
+    : DEFAULT_DESKTOP_CONFIG;
+}
 
 // Page background mesh gradient — uses --gradient-* tokens from :root.
 // These are separate from --background (which controls app window tint).
@@ -76,12 +119,7 @@ function applyBackground(config: DesktopConfig["background"], gatewayUrl: string
       body.style.background = `linear-gradient(${config.angle ?? 135}deg, ${config.from}, ${config.to})`;
       break;
     case "wallpaper": {
-      // Bundled defaults live in shell/public/wallpapers and work even when
-      // the gateway is unreachable. User-uploaded wallpapers are served by
-      // the gateway under /files/system/wallpapers.
-      const url = BUNDLED_WALLPAPERS.has(config.name)
-        ? `/wallpapers/${config.name}`
-        : `${gatewayUrl}/files/system/wallpapers/${config.name}`;
+      const url = wallpaperUrl(config.name, gatewayUrl);
       body.style.backgroundImage = `url(${url})`;
       body.style.backgroundSize = "cover";
       body.style.backgroundPosition = "center";
@@ -110,6 +148,7 @@ function applyDesktopConfigSnapshot(
     setDockOrder: (order: DesktopConfig["dockOrder"]) => void;
   },
 ) {
+  rememberDesktopConfig(gatewayUrl, cfg);
   setters.setDock(cfg.dock);
   setters.setPinnedApps(cfg.pinnedApps);
   setters.setDockOrder(cfg.dockOrder);
@@ -119,13 +158,11 @@ function applyDesktopConfigSnapshot(
 export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
   const cacheScope = options.cacheScope ?? null;
   const cacheKey = cacheScope?.storageKey;
-  const [config, setConfig] = useState<DesktopConfig>(() => (
-    loadShellSnapshot(cacheScope)?.desktopConfig ?? DEFAULT_DESKTOP_CONFIG
-  ));
+  const gatewayUrl = getGatewayUrl();
+  const [config, setConfig] = useState<DesktopConfig>(() => initialDesktopConfig(cacheScope, gatewayUrl));
   const setDock = useDesktopConfigStore((s) => s.setDock);
   const setPinnedApps = useDesktopConfigStore((s) => s.setPinnedApps);
   const setDockOrder = useDesktopConfigStore((s) => s.setDockOrder);
-  const gatewayUrl = getGatewayUrl();
 
   useLayoutEffect(() => {
     const cachedConfig = loadShellSnapshot(cacheScope)?.desktopConfig;
@@ -133,7 +170,7 @@ export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
     applyDesktopConfigSnapshot(cachedConfig, gatewayUrl, { setDock, setPinnedApps, setDockOrder });
   }, [cacheKey, cacheScope, gatewayUrl, setDock, setPinnedApps, setDockOrder]);
 
-  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the setConfig/setDock/setPinnedApps/setDockOrder calls all populate distinct stores from a single fetched desktop-config payload inside one async .then callback; they run together once the load resolves, not as a synchronous render-time cascade, and target separate Zustand slices that cannot be collapsed
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state, react-doctor/no-fetch-in-effect -- the setConfig/setDock/setPinnedApps/setDockOrder calls all populate distinct stores from a single fetched desktop-config payload inside one async .then callback; they run together once the mount-only gateway load resolves (guarded by AbortController), not as a synchronous render-time cascade, and target separate Zustand slices that cannot be collapsed
   useEffect(() => {
     const controller = new AbortController();
     fetchDesktopConfig(gatewayUrl, controller.signal).then((cfg) => {
@@ -147,6 +184,7 @@ export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
   }, [cacheKey, cacheScope, gatewayUrl, setDock, setPinnedApps, setDockOrder]);
 
   useEffect(() => {
+    rememberDesktopConfig(gatewayUrl, config);
     applyBackground(config.background, gatewayUrl);
   }, [config.background, gatewayUrl]);
 
@@ -201,33 +239,51 @@ export async function saveDesktopConfig(
     signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
     body: JSON.stringify(config),
   });
-  if (res.ok) saveShellSnapshot(options.cacheScope, { desktopConfig: config });
+  if (res.ok) {
+    saveShellSnapshot(options.cacheScope, { desktopConfig: config });
+    const store = useDesktopConfigStore.getState();
+    applyDesktopConfigSnapshot(config, gatewayUrl, store);
+  }
 }
 
 export async function saveDesktopConfigPatch(
-  patch: Partial<DesktopConfig>,
+  patch: DesktopConfigPatch,
   options: DesktopConfigHookOptions = {},
 ): Promise<void> {
   const gatewayUrl = getGatewayUrl();
   const url = `${gatewayUrl}/api/settings/desktop`;
-  const getRes = await fetch(url, {
-    signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
-  });
-  const config = getRes.ok
-    ? (await getRes.json()) as Record<string, unknown>
-    : {};
-  const definedPatch = Object.fromEntries(
-    Object.entries(patch).filter(([, value]) => value !== undefined),
-  );
-  const nextConfig = { ...config, ...definedPatch };
-  const putRes = await fetch(url, {
-    method: "PUT",
+  const patchRes = await fetch(url, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
-    body: JSON.stringify(nextConfig),
+    body: JSON.stringify(patch),
   });
-  if (!putRes.ok) {
-    throw new Error(`PUT /api/settings/desktop ${putRes.status}`);
+  if (!patchRes.ok) {
+    throw new Error(`PATCH /api/settings/desktop ${patchRes.status}`);
   }
-  saveShellSnapshot(options.cacheScope, { desktopConfig: nextConfig as unknown as DesktopConfig });
+  const payload = await patchRes.json() as { config?: unknown };
+  if (!payload.config || typeof payload.config !== "object" || Array.isArray(payload.config)) {
+    throw new Error("PATCH /api/settings/desktop returned an invalid config");
+  }
+  const nextConfig = payload.config as Record<string, unknown>;
+  const dockValue = nextConfig.dock;
+  const normalizedConfig = {
+    ...DEFAULT_DESKTOP_CONFIG,
+    ...nextConfig,
+    dock: {
+      ...DEFAULT_DESKTOP_CONFIG.dock,
+      ...(typeof dockValue === "object" && dockValue !== null && !Array.isArray(dockValue) ? dockValue : {}),
+    },
+    pinnedApps: Array.isArray(nextConfig.pinnedApps)
+      ? nextConfig.pinnedApps.filter((value): value is string => typeof value === "string")
+      : DEFAULT_DESKTOP_CONFIG.pinnedApps,
+  } as DesktopConfig;
+  saveShellSnapshot(options.cacheScope, { desktopConfig: normalizedConfig });
+  const store = useDesktopConfigStore.getState();
+  applyDesktopConfigSnapshot(normalizedConfig, gatewayUrl, store);
+}
+
+/** Test hook: clear the module-local current-runtime desktop snapshot. */
+export function resetDesktopConfigRuntimeCacheForTests(): void {
+  desktopConfigRuntimeCache = null;
 }

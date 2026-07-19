@@ -1,0 +1,480 @@
+/* ═══════════════════════════════════════════════════════════════
+   Windows XP Explorer chrome for the Files app (winxp design
+   style only — XpExplorer.tsx renders solely when
+   data-theme-style="winxp" is active). All styling for the XP
+   explorer lives here so no other stylesheet needs to change.
+   The --xp-* tokens are defined in globals.css and resolve only
+   while the winxp design is active; fallbacks keep the layout
+   readable if the sheet is ever loaded outside the winxp theme.
+   Typography: Tahoma 11px, as in Luna.
+   ═══════════════════════════════════════════════════════════════ */
+
+.xp-explorer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  font-family: Tahoma, "Segoe UI", sans-serif;
+  font-size: 11px;
+  color: #1f1f1f;
+  background: #ffffff;
+}
+
+/* ── Toolbar ─────────────────────────────────────────────────── */
+
+.xp-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 6px;
+  background: var(--xp-chrome, #ece9d8);
+  border-bottom: 1px solid var(--xp-bevel-dark, #716f64);
+  box-shadow: inset 0 1px 0 var(--xp-bevel-light, #ffffff);
+}
+
+.xp-tool-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.xp-tool-separator {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 4px;
+  background: var(--xp-bevel-dark, #716f64);
+  box-shadow: 1px 0 0 var(--xp-bevel-light, #ffffff);
+}
+
+.xp-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  font: inherit;
+  color: #1f1f1f;
+  background: var(--xp-chrome, #ece9d8);
+  border: 1px solid var(--xp-bevel-dark, #716f64);
+  border-radius: 3px;
+  box-shadow:
+    inset 1px 1px 0 var(--xp-bevel-light, #ffffff),
+    inset -1px -1px 0 #b5b2a1;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.xp-tool-btn:hover:not(:disabled) {
+  background: #f7f5ea;
+}
+
+.xp-tool-btn:active:not(:disabled),
+.xp-tool-btn[aria-expanded="true"],
+.xp-tool-btn[aria-pressed="true"] {
+  box-shadow:
+    inset 1px 1px 0 var(--xp-bevel-dark, #716f64),
+    inset -1px -1px 0 var(--xp-bevel-light, #ffffff);
+  background: #e4e1cf;
+}
+
+.xp-tool-btn:disabled {
+  color: #9c9a8c;
+}
+
+.xp-tool-btn:disabled svg {
+  filter: grayscale(1);
+  opacity: 0.5;
+}
+
+.xp-tool-btn:focus-visible {
+  outline: 1px dotted #1f1f1f;
+  outline-offset: -4px;
+}
+
+.xp-tool-btn .xp-chevron {
+  margin-left: 2px;
+  color: #1f1f1f;
+}
+
+.xp-tool-btn:disabled .xp-chevron {
+  color: #9c9a8c;
+}
+
+/* split button: main action + dropdown chevron share one bevel */
+.xp-tool-split {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.xp-tool-split .xp-tool-btn {
+  border-radius: 3px 0 0 3px;
+  border-right-width: 0;
+}
+
+.xp-tool-split .xp-tool-chevron-btn {
+  border-radius: 0 3px 3px 0;
+  padding: 2px 3px;
+}
+
+/* dropdown menus opened from the toolbar / address bar */
+.xp-menu-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.xp-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 40;
+  min-width: 170px;
+  padding: 2px;
+  background: var(--xp-chrome, #ece9d8);
+  border: 1px solid var(--xp-bevel-dark, #716f64);
+  border-radius: 2px;
+  box-shadow:
+    inset 1px 1px 0 var(--xp-bevel-light, #ffffff),
+    2px 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.xp-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 8px;
+  font: inherit;
+  color: #1f1f1f;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.xp-menu-item:hover:not(:disabled),
+.xp-menu-item[data-checked="true"] {
+  background: var(--xp-blue-dark, #0058e6);
+  color: #ffffff;
+}
+
+.xp-menu-item:disabled {
+  color: #9c9a8c;
+}
+
+/* search field toggled by the Search toolbar button */
+.xp-tool-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.xp-tool-search input {
+  width: 170px;
+  padding: 2px 4px;
+  font: inherit;
+  background: #ffffff;
+  border: 1px solid var(--xp-field-line, #7f9db9);
+  border-radius: 0;
+  box-shadow: inset 1px 1px 2px rgba(0, 0, 0, 0.08);
+  outline: none;
+}
+
+.xp-tool-search input:focus-visible {
+  border-color: var(--xp-blue-dark, #0058e6);
+}
+
+/* ── Address bar ─────────────────────────────────────────────── */
+
+.xp-address-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  background: var(--xp-chrome, #ece9d8);
+  border-bottom: 1px solid var(--xp-bevel-dark, #716f64);
+}
+
+.xp-address-label {
+  color: #5a5848;
+  white-space: nowrap;
+}
+
+.xp-address-combo {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 2px 1px 4px;
+  background: #ffffff;
+  border: 1px solid var(--xp-field-line, #7f9db9);
+  box-shadow: inset 1px 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.xp-address-combo:focus-within {
+  border-color: var(--xp-blue-dark, #0058e6);
+}
+
+.xp-address-input {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 2px;
+  font: inherit;
+  color: #1f1f1f;
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+.xp-address-chevron {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 4px;
+  font: inherit;
+  color: #1f1f1f;
+  background: var(--xp-chrome, #ece9d8);
+  border: 1px solid var(--xp-bevel-dark, #716f64);
+  border-radius: 2px;
+  cursor: default;
+}
+
+.xp-address-chevron:hover {
+  background: #f7f5ea;
+}
+
+.xp-go-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font: inherit;
+  color: #1f1f1f;
+  background: var(--xp-chrome, #ece9d8);
+  border: 1px solid var(--xp-bevel-dark, #716f64);
+  border-radius: 3px;
+  box-shadow:
+    inset 1px 1px 0 var(--xp-bevel-light, #ffffff),
+    inset -1px -1px 0 #b5b2a1;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.xp-go-btn:hover {
+  background: #f7f5ea;
+}
+
+.xp-go-btn:active {
+  box-shadow:
+    inset 1px 1px 0 var(--xp-bevel-dark, #716f64),
+    inset -1px -1px 0 var(--xp-bevel-light, #ffffff);
+}
+
+/* ── Body: common-tasks pane + main listing ──────────────────── */
+
+.xp-explorer-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.xp-explorer-main {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  background: #ffffff;
+}
+
+/* left common-tasks pane */
+.xp-task-pane {
+  width: 190px;
+  flex: none;
+  overflow-y: auto;
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: linear-gradient(to bottom, #7aa5e4 0%, #4f76d3 100%);
+  border-right: 1px solid var(--xp-bevel-dark, #716f64);
+}
+
+.xp-pane {
+  background: #ffffff;
+  border: 1px solid #3c5fae;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.xp-pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 3px 8px;
+  font: inherit;
+  font-weight: bold;
+  color: #ffffff;
+  text-shadow: 0 1px 1px rgba(0, 0, 60, 0.45);
+  background: linear-gradient(to bottom, #94b0ec 0%, #6d8fe0 50%, #5478d8 100%);
+  border: none;
+  cursor: default;
+  text-align: left;
+}
+
+.xp-pane-header .xp-chevron {
+  color: #ffffff;
+}
+
+.xp-pane-body {
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.xp-task-link {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 1px 2px;
+  font: inherit;
+  color: #215dc6;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: default;
+}
+
+.xp-task-link:hover {
+  color: #1a49a0;
+  text-decoration: underline;
+}
+
+.xp-task-link:focus-visible {
+  outline: 1px dotted #215dc6;
+  outline-offset: 1px;
+}
+
+.xp-details {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.xp-details-text {
+  min-width: 0;
+  line-height: 1.5;
+}
+
+.xp-details-name {
+  font-weight: bold;
+  color: #1f1f1f;
+  overflow-wrap: anywhere;
+}
+
+.xp-details-meta {
+  color: #5a5a5a;
+}
+
+/* ── Tiles view ──────────────────────────────────────────────── */
+
+.xp-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 2px;
+  padding: 8px;
+  align-content: start;
+}
+
+.xp-tile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: default;
+  user-select: none;
+  min-width: 0;
+}
+
+.xp-tile:hover {
+  border-color: #9ec3ec;
+  background: #eaf3fe;
+}
+
+.xp-tile-selected,
+.xp-tile-selected:hover {
+  background: rgba(49, 106, 197, 0.28);
+  border-color: #316ac5;
+}
+
+.xp-tile:focus-visible {
+  outline: 1px dotted #1f1f1f;
+  outline-offset: -2px;
+}
+
+.xp-tile-glyph {
+  flex: none;
+}
+
+.xp-tile-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  line-height: 1.35;
+}
+
+.xp-tile-name {
+  display: block;
+  color: #000000;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xp-tile-detail {
+  display: block;
+  color: #6d6d6d;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* loading / empty states inside the main area */
+.xp-main-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 100%;
+  color: #5a5a5a;
+}
+
+/* ── Status bar ──────────────────────────────────────────────── */
+
+.xp-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px;
+  background: var(--xp-chrome, #ece9d8);
+  border-top: 1px solid var(--xp-bevel-dark, #716f64);
+}
+
+.xp-status-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  color: #1f1f1f;
+  border: 1px solid;
+  border-color: var(--xp-bevel-dark, #716f64) var(--xp-bevel-light, #ffffff)
+    var(--xp-bevel-light, #ffffff) var(--xp-bevel-dark, #716f64);
+}
+
+.xp-status-right {
+  margin-left: auto;
+}

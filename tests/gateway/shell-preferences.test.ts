@@ -227,7 +227,6 @@ describe("shell preferences", () => {
     });
     expect(updateUiState).toHaveBeenCalledWith("main", {
       placement: "background",
-      visualStatus: "waiting",
       lastSeenSeq: 12,
     });
 

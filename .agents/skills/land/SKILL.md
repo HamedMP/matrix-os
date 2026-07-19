@@ -18,6 +18,14 @@ description:
 - No need to delete remote branches after merge; the repo auto-deletes head
   branches.
 
+## Non-negotiable squash-merge subject
+
+- Never pass `--subject` or `-s` to `gh pr merge`; always let GitHub generate
+  the repository-default squash-merge subject.
+- Custom `--body` and `--body-file` values are allowed.
+- Treat an exact PR title requirement as applying only to the PR title; never
+  use it to override the squash-merge subject.
+
 ## Preconditions
 
 - `gh` CLI is authenticated.

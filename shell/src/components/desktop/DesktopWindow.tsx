@@ -18,6 +18,9 @@ import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
 import { WorkspaceApp } from "@/components/workspace/WorkspaceApp";
 import { TrafficLights } from "./DesktopDockControls";
+import { useThemeStyle } from "../window/useThemeStyle";
+import { resolveTitleBarVariant, usesCaptionButtons, designTitleBarContainerStyle } from "../window/title-bar-variant";
+import { DesignCaptionButtons } from "../window/DesignCaptionButtons";
 
 interface DesktopWindowProps {
   win: AppWindow;
@@ -62,6 +65,8 @@ export function DesktopWindow({
   const isMinimizing = minimizingIds.has(win.id);
   const isHidden = win.minimized && !isMinimizing && !isFullscreen;
   const terminalOwnsChrome = win.path.startsWith("__terminal__");
+  const titleBarVariant = resolveTitleBarVariant(useThemeStyle());
+  const captionButtons = usesCaptionButtons(titleBarVariant);
 
   let dockTargetX = 0;
   let dockTargetY = 0;
@@ -124,7 +129,9 @@ export function DesktopWindow({
           "flex flex-row items-center gap-0 px-3 py-2 md:cursor-grab md:active:cursor-grabbing select-none space-y-0",
           terminalOwnsChrome ? "border-b-0" : "border-b border-border",
         )}
-        style={terminalOwnsChrome ? { background: "var(--terminal-drawer-bg)", color: "var(--terminal-drawer-fg)" } : undefined}
+        style={terminalOwnsChrome && !captionButtons
+          ? { background: "var(--terminal-drawer-bg)", color: "var(--terminal-drawer-fg)" }
+          : designTitleBarContainerStyle(titleBarVariant)}
         onPointerDown={(e) => onDragStart(win.id, e)}
         onPointerMove={onDragMove}
         onPointerUp={onDragEnd}
@@ -133,15 +140,39 @@ export function DesktopWindow({
           onToggleFullscreen(win.id);
         }}
       >
-        <TrafficLights
-          onClose={() => onCloseWindow(win.id)}
-          onMinimize={() => onAnimateMinimize(win.id)}
-          onFullscreen={() => onToggleFullscreen(win.id)}
-        />
-        <CardTitle className="text-xs font-medium truncate flex-1 text-center">
-          {win.title}
-        </CardTitle>
-        <div className="w-[78px]" aria-hidden />
+        {captionButtons ? (
+          <>
+            <CardTitle
+              className={cn(
+                "text-xs truncate flex-1",
+                titleBarVariant === "winxp" ? "font-bold text-white" : "font-medium text-foreground/70",
+              )}
+              style={titleBarVariant === "winxp"
+                ? { fontFamily: 'Tahoma, "Segoe UI", sans-serif', textShadow: "0 1px 2px rgba(0, 0, 0, 0.5)" }
+                : undefined}
+            >
+              {win.title}
+            </CardTitle>
+            <DesignCaptionButtons
+              variant={titleBarVariant}
+              onClose={() => onCloseWindow(win.id)}
+              onMinimize={() => onAnimateMinimize(win.id)}
+              onMaximize={() => onToggleFullscreen(win.id)}
+            />
+          </>
+        ) : (
+          <>
+            <TrafficLights
+              onClose={() => onCloseWindow(win.id)}
+              onMinimize={() => onAnimateMinimize(win.id)}
+              onFullscreen={() => onToggleFullscreen(win.id)}
+            />
+            <CardTitle className="text-xs font-medium truncate flex-1 text-center">
+              {win.title}
+            </CardTitle>
+            <div className="w-[78px]" aria-hidden />
+          </>
+        )}
       </CardHeader>
 
       <CardContent className="relative flex-1 p-0 min-h-0">
