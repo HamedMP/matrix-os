@@ -48,8 +48,8 @@ describe("AgentSection", () => {
       api: api as never,
     });
     useTabs.setState({
-      activeTabId: "agents",
-      tabs: [{ id: "agents", kind: "agents", title: "Agents" }],
+      activeTabId: "home",
+      tabs: [{ id: "home", kind: "home", title: "Home", closable: false }],
     });
     window.operator = {
       invoke: vi.fn((channel: string) => {

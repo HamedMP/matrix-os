@@ -6,11 +6,10 @@ beforeEach(() => {
 });
 
 describe("ui store create task dialog state", () => {
-  it("records whether project creation should return to Agents", () => {
-    useUi.getState().openCreateProject("agents");
+  it("opens the create-project dialog", () => {
+    useUi.getState().openCreateProject();
 
     expect(useUi.getState().createProjectOpen).toBe(true);
-    expect(useUi.getState().createProjectDestination).toBe("agents");
   });
 
   it("keeps explicit column preselection only for openCreateTask", () => {

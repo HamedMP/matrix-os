@@ -2,8 +2,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { wireKernel } from "../../desktop/src/renderer/src/lib/kernel-wiring";
+import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
+import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useThreads } from "../../desktop/src/renderer/src/stores/threads";
 
@@ -90,6 +93,9 @@ describe("kernel wiring", () => {
       api: null,
     });
     useTabs.setState({ tabs: [], activeTabId: null });
+    useBoard.setState({ projects: [], activeProjectSlug: null });
+    useProjectView.setState({ entries: {}, runtimeScope: null });
+    useProjectWorkspaces.setState({ entries: {} });
     useThreads.setState({ threads: [], activeThreadId: null });
     useCodingAgentWorkspace.setState({
       status: "idle",
@@ -121,9 +127,10 @@ describe("kernel wiring", () => {
     vi.restoreAllMocks();
   });
 
-  it("focuses the coding-agent workspace thread when a native notification is clicked", () => {
+  it("opens the notified coding-agent thread inside its project tab", () => {
     const loadThreadSnapshot = vi.fn().mockResolvedValue(undefined);
     useCodingAgentWorkspace.setState({ loadThreadSnapshot });
+    useBoard.setState({ projects: [{ slug: "matrix-os", name: "Matrix OS" }] });
     const cleanup = wireKernel();
 
     expect(notificationClick).not.toBeNull();
@@ -131,7 +138,10 @@ describe("kernel wiring", () => {
 
     expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_alpha");
     const tabs = useTabs.getState();
-    expect(tabs.tabs.find((tab) => tab.id === tabs.activeTabId)?.kind).toBe("agents");
+    const active = tabs.tabs.find((tab) => tab.id === tabs.activeTabId);
+    expect(active).toMatchObject({ kind: "project", projectSlug: "matrix-os" });
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
+    expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_alpha");
 
     cleanup();
   });
