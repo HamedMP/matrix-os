@@ -98,13 +98,14 @@ describe("terminal agent options", () => {
     const testDir = await mkdtemp(join(tmpdir(), "matrix-agent-install-shell-"));
     const runtimeBin = join(testDir, "runtime", "bin");
     const wrapperPath = join(testDir, "matrix-terminal-shell");
+    const zshrcPath = join(testDir, ".zshrc");
     const bashrcPath = join(testDir, "bashrc");
     const promptLabelPath = join(testDir, "prompt-label.mjs");
     const tracePath = join(testDir, "shell-trace.txt");
     try {
       await writeFile(bashrcPath, "# generated test bashrc\n");
       await writeFile(promptLabelPath, "");
-      await writeFile(wrapperPath, matrixTerminalShellScript(bashrcPath, promptLabelPath));
+      await writeFile(wrapperPath, matrixTerminalShellScript(zshrcPath, bashrcPath, promptLabelPath));
       await mkdir(runtimeBin, { recursive: true });
       await writeFile(join(runtimeBin, "npm"), `#!/bin/sh
 printf 'installer-output:%s\\n' "$*"
