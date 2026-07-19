@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { parseConfigFileTextToJson } from "typescript";
 
 type MobileAppConfig = {
   expo?: {
@@ -45,12 +46,17 @@ type MobileEasConfig = {
 
 const appConfig = require("../app.json") as MobileAppConfig;
 const packageConfig = require("../package.json") as MobilePackageConfig;
-const easConfig = JSON.parse(
-  readFileSync(join(__dirname, "../eas.json"), "utf8")
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("//"))
-    .join("\n"),
-) as MobileEasConfig;
+const easConfigPath = join(__dirname, "../eas.json");
+const parsedEasConfig = parseConfigFileTextToJson(
+  easConfigPath,
+  readFileSync(easConfigPath, "utf8"),
+);
+
+if (parsedEasConfig.error) {
+  throw parsedEasConfig.error;
+}
+
+const easConfig = parsedEasConfig.config as MobileEasConfig;
 
 describe("mobile native orientation configuration", () => {
   it("allows portrait and landscape on phones and tablets", () => {
@@ -61,6 +67,8 @@ describe("mobile native orientation configuration", () => {
 
 describe("mobile Android release configuration", () => {
   it("declares the Expo config plugin dependency used by native plugins", () => {
+    // Expo config plugins must stay aligned with SDK 57; upgrades should update
+    // this pin deliberately instead of accepting an arbitrary transitive version.
     expect(packageConfig.devDependencies?.["@expo/config-plugins"]).toBe("57.0.2");
   });
 
