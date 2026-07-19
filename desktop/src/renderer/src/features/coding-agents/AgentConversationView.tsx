@@ -497,7 +497,12 @@ function ConversationComposer({
       if (source !== "keyboard") {
         if (submitting) return;
         const sent = await send({ threadId, message });
-        if (sent) setMessage("");
+        if (sent) {
+          setMessage("");
+          // A manual send that reached the agent proves the drain can retry
+          // on the next busy→idle cycle even after a paused rejection.
+          pausedUntilBusyRef.current = false;
+        }
         return;
       }
       const queued = enqueue(threadId, message);
