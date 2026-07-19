@@ -71,8 +71,10 @@ Required repo secrets (beyond the existing release secrets):
 `PREVIEW_CLERK_ACCESS_USER_IDS` — optional JSON array of up to eight additional
 Clerk user IDs allowed to open the same preview VPSes. The owner must not be
 repeated in this list. Re-running the workflow replaces the preview allowlist
-with the configured value, so removing a collaborator takes effect on the next
-deploy without recreating the VPS.
+with the configured value without recreating the VPS. Removing a collaborator
+blocks subsequent HTTP requests and new WebSocket handshakes after that deploy.
+An already-established WebSocket remains connected until it disconnects or is
+closed; active connection draining is intentionally deferred.
 
 Preview provisioning uses the operator-only `/vps/preview/provision` route with the
 same `pr-<N>` value for the handle and runtime slot. A `202` is valid only when its
