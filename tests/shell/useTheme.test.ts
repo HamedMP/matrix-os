@@ -2,7 +2,7 @@
 
 import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, it, expect, vi } from "vitest";
-import { DEFAULT_THEME, getThemeFallback, normalizeTheme, saveTheme, useTheme, type Theme } from "../../shell/src/hooks/useTheme";
+import { DEFAULT_THEME, getThemeFallback, normalizeTheme, resetThemeRuntimeCacheForTests, saveTheme, useTheme, type Theme } from "../../shell/src/hooks/useTheme";
 import { createShellSnapshotScope, loadShellSnapshot, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache";
 
 vi.mock("../../shell/src/hooks/useFileWatcher", () => ({
@@ -43,6 +43,9 @@ describe("theme system", () => {
       configurable: true,
     });
     vi.restoreAllMocks();
+    resetThemeRuntimeCacheForTests();
+    window.history.replaceState({}, "", "/");
+    document.documentElement.removeAttribute("data-theme-style");
   });
 
   const REQUIRED_COLOR_KEYS = [
@@ -243,6 +246,30 @@ describe("theme system", () => {
     expect(result.current.colors.background).toBe("#101010");
     await waitFor(() => expect(result.current.name).toBe("fresh-light"));
     expect(loadShellSnapshot(scope)?.theme?.name).toBe("fresh-light");
+  });
+
+  it("keeps the active OS design when a second theme consumer mounts", async () => {
+    let keepSecondFetchPending: ((value: never) => void) | undefined;
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ...DEFAULT_THEME, name: "xp", style: "winxp" }),
+      })
+      .mockReturnValueOnce(new Promise((resolve) => {
+        keepSecondFetchPending = resolve;
+      })));
+
+    const root = renderHook(() => useTheme());
+    await waitFor(() => expect(root.result.current.style).toBe("winxp"));
+    expect(document.documentElement.getAttribute("data-theme-style")).toBe("winxp");
+
+    const settings = renderHook(() => useTheme());
+
+    expect(settings.result.current.style).toBe("winxp");
+    expect(document.documentElement.getAttribute("data-theme-style")).toBe("winxp");
+    settings.unmount();
+    root.unmount();
+    expect(keepSecondFetchPending).toBeTypeOf("function");
   });
 
   it("updates the scoped shell snapshot only after theme saves succeed", async () => {

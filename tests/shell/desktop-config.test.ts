@@ -6,6 +6,7 @@ import { useDesktopConfigStore, type DockConfig } from "../../shell/src/stores/d
 import { DEFAULT_PINNED_APPS } from "../../shell/src/lib/builtin-apps";
 import {
   buildMeshGradient,
+  resetDesktopConfigRuntimeCacheForTests,
   saveDesktopConfig,
   saveDesktopConfigPatch,
   useDesktopConfig,
@@ -40,6 +41,9 @@ describe("Desktop config", () => {
       pinnedApps: [...DEFAULT_PINNED_APPS],
     });
     vi.restoreAllMocks();
+    resetDesktopConfigRuntimeCacheForTests();
+    window.history.replaceState({}, "", "/");
+    document.body.removeAttribute("style");
   });
 
   it("default dock config has position left, size 56", () => {
@@ -153,6 +157,25 @@ describe("Desktop config", () => {
     });
   });
 
+  it("applies a saved OS wallpaper immediately without waiting for the file watcher", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          background: { type: "wallpaper", name: "moraine-lake.jpg" },
+          dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
+          pinnedApps: [],
+        }),
+      })
+      .mockResolvedValueOnce({ ok: true }));
+
+    await saveDesktopConfigPatch({
+      background: { type: "wallpaper", name: "xp-bliss.jpg" },
+    });
+
+    expect(document.body.style.backgroundImage).toContain("xp-bliss.jpg");
+  });
+
   it("saveDesktopConfigPatch still writes when the current config cannot be loaded", async () => {
     const mockFetch = vi
       .fn()
@@ -244,6 +267,37 @@ describe("Desktop config", () => {
     expect(useDesktopConfigStore.getState().dock.position).toBe("bottom");
     await waitFor(() => expect(result.current.background).toEqual({ type: "wallpaper", name: "fresh-wallpaper.jpg" }));
     expect(loadShellSnapshot(scope)?.desktopConfig?.pinnedApps).toEqual(["apps/fresh/index.html"]);
+  });
+
+  it("keeps the active OS wallpaper when a second desktop-config consumer mounts", async () => {
+    let keepSecondFetchPending: ((value: never) => void) | undefined;
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          background: { type: "wallpaper", name: "xp-bliss.jpg" },
+          dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
+          pinnedApps: [],
+        }),
+      })
+      .mockReturnValueOnce(new Promise((resolve) => {
+        keepSecondFetchPending = resolve;
+      })));
+
+    const root = renderHook(() => useDesktopConfig());
+    await waitFor(() => expect(root.result.current.background).toEqual({
+      type: "wallpaper",
+      name: "xp-bliss.jpg",
+    }));
+    expect(document.body.style.backgroundImage).toContain("xp-bliss.jpg");
+
+    const settings = renderHook(() => useDesktopConfig());
+
+    expect(settings.result.current.background).toEqual({ type: "wallpaper", name: "xp-bliss.jpg" });
+    expect(document.body.style.backgroundImage).toContain("xp-bliss.jpg");
+    settings.unmount();
+    root.unmount();
+    expect(keepSecondFetchPending).toBeTypeOf("function");
   });
 
   it("updates the scoped shell snapshot only after desktop config saves succeed", async () => {
