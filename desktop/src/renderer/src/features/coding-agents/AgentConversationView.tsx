@@ -26,6 +26,7 @@ import { Conversation, ConversationContent } from "../chat/elements/conversation
 import { PromptInput, type PromptSubmitSource } from "../chat/elements/prompt-input";
 import { abortAgentThread, agentThreadAbortSupported } from "./abort-thread";
 import { EMPTY_QUEUED_MESSAGES, useCodingAgentMessageQueue } from "./message-queue-store";
+import { ToolCallDetailMeta } from "./tool-call-detail";
 
 type ConversationStatus = "idle" | "loading" | "ready" | "error";
 type AssistantEvent = Extract<AgentThreadEvent, { type: "assistant.text.delta" | "assistant.text.completed" }>;
@@ -281,6 +282,7 @@ function ToolChip({ events }: { events: ToolEvent[] }) {
       </button>
       {open ? (
         <div className="mt-1 ml-7 border-l pl-3" style={{ borderColor: "var(--border-subtle)" }}>
+          <ToolCallDetailMeta events={events} />
           <pre className="max-h-64 overflow-auto font-mono text-[11px] leading-relaxed whitespace-pre-wrap" style={{ color: "var(--text-secondary)" }} data-selectable>
             {detail}
             {outputs.some((event) => event.truncated) ? "\nOutput was truncated for display." : ""}
