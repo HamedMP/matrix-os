@@ -904,6 +904,7 @@ describe("TerminalApp", () => {
     expect(contentSurface.style.background).toBe(expectedDarkTerminalBackground);
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("#15180F");
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-bg")).toBe("#20241C");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-selected-bg")).toBe("#2A3026");
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Theme" }));
@@ -919,8 +920,9 @@ describe("TerminalApp", () => {
     expect(terminalSettingsState.appThemeId).toBe("light");
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("#E9E9D8");
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-bg")).toBe("#FFFDF7");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-selected-bg")).toBe("#FFFFFF");
     expect(screen.getByTestId("terminal-sidebar-shell").style.background).toBe("var(--terminal-drawer-bg)");
-    expect(screen.getByTestId("terminal-session-card-main").style.background).toBe("var(--terminal-drawer-card-bg)");
+    expect(screen.getByTestId("terminal-session-card-main").style.background).toBe("var(--terminal-drawer-card-selected-bg)");
     expect(screen.getByTestId("terminal-content-surface").style.background).toBe(expectedDarkTerminalBackground);
 
     await act(async () => {
@@ -937,6 +939,7 @@ describe("TerminalApp", () => {
     expect(terminalSettingsState.appThemeId).toBe("matrix");
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("#08110B");
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-bg")).toBe("#0F1A12");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-selected-bg")).toBe("#17271B");
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-fg")).toBe("#9BFFB5");
     expect(screen.getByTestId("terminal-session-name-main").style.color).toBe("var(--terminal-drawer-fg)");
     expect(screen.getByTestId("terminal-content-surface").style.background).toBe(expectedDarkTerminalBackground);
@@ -1858,6 +1861,11 @@ describe("TerminalApp", () => {
     expect(screen.getByTestId("terminal-session-row-docs").getAttribute("aria-current")).toBeNull();
     expect(screen.getByTestId("terminal-session-row-main").getAttribute("data-selected")).toBe("true");
     expect(screen.getByTestId("terminal-session-row-docs").getAttribute("data-selected")).toBe("false");
+    expect(screen.getByTestId("terminal-session-card-main").style.background).toBe("var(--terminal-drawer-card-selected-bg)");
+    expect(screen.getByTestId("terminal-session-card-main").style.border).toBe("1px solid var(--terminal-drawer-card-border)");
+    expect(screen.getByTestId("terminal-session-card-main").style.boxShadow).not.toContain("selected-ring");
+    expect(screen.getByTestId("terminal-session-name-main").style.color).toBe("var(--terminal-drawer-fg)");
+    expect(screen.getByTestId("terminal-session-name-docs").style.color).toBe("var(--terminal-drawer-muted)");
 
     await act(async () => {
       fireEvent.click(screen.getByTestId("terminal-session-row-docs"));
@@ -1868,6 +1876,10 @@ describe("TerminalApp", () => {
     expect(screen.getByTestId("terminal-session-row-docs").getAttribute("aria-current")).toBe("true");
     expect(screen.getByTestId("terminal-session-row-main").getAttribute("data-selected")).toBe("false");
     expect(screen.getByTestId("terminal-session-row-docs").getAttribute("data-selected")).toBe("true");
+    expect(screen.getByTestId("terminal-session-card-main").style.background).toBe("var(--terminal-drawer-card-bg)");
+    expect(screen.getByTestId("terminal-session-card-docs").style.background).toBe("var(--terminal-drawer-card-selected-bg)");
+    expect(screen.getByTestId("terminal-session-name-main").style.color).toBe("var(--terminal-drawer-muted)");
+    expect(screen.getByTestId("terminal-session-name-docs").style.color).toBe("var(--terminal-drawer-fg)");
 
     expect(calls).toEqual(expect.arrayContaining([
       expect.objectContaining({

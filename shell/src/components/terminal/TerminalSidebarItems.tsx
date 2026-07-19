@@ -586,10 +586,10 @@ function CollapsedRailGroup({
             onClick={() => onOpen(shell)}
             className="relative flex items-center justify-center"
             style={{
-              background: accent.bg,
-              border: `1px solid ${selected ? "var(--terminal-drawer-selected-border)" : accent.border}`,
+              background: selected ? "var(--terminal-drawer-card-selected-bg)" : accent.bg,
+              border: `1px solid ${selected ? "var(--terminal-drawer-card-border)" : accent.border}`,
               borderRadius: 11,
-              boxShadow: selected ? "0 0 0 5px var(--terminal-drawer-selected-ring), 0 8px 18px var(--terminal-drawer-card-shadow)" : "none",
+              boxShadow: selected ? "0 8px 18px var(--terminal-drawer-card-shadow)" : "none",
               color: accent.fg,
               cursor: "pointer",
               flexShrink: 0,
@@ -1135,14 +1135,12 @@ function ShellCard({
         }
       }}
       style={{
-        background: selected ? "var(--terminal-drawer-card-bg)" : foreground ? "var(--terminal-drawer-card-bg)" : "var(--terminal-drawer-card-muted-bg)",
-        border: `1px solid ${selected ? "var(--terminal-drawer-selected-border)" : foreground ? "var(--terminal-drawer-card-border)" : "var(--terminal-drawer-card-muted-border)"}`,
+        background: selected ? "var(--terminal-drawer-card-selected-bg)" : foreground ? "var(--terminal-drawer-card-bg)" : "var(--terminal-drawer-card-muted-bg)",
+        border: `1px solid ${foreground ? "var(--terminal-drawer-card-border)" : "var(--terminal-drawer-card-muted-border)"}`,
         borderRadius: 10,
         boxShadow: dragging
           ? "0 18px 34px var(--terminal-drawer-card-shadow)"
-          : selected
-            ? "0 0 0 5px var(--terminal-drawer-selected-ring), 0 14px 30px var(--terminal-drawer-card-shadow)"
-            : foreground ? "0 9px 22px var(--terminal-drawer-card-shadow)" : "none",
+          : foreground ? "0 9px 22px var(--terminal-drawer-card-shadow)" : "none",
         cursor: renaming || deleting ? "default" : "pointer",
         alignItems: "center",
         display: "grid",
@@ -1153,7 +1151,7 @@ function ShellCard({
         padding: "0 12px",
         position: "relative",
         transform: dragging ? "translateY(-2px)" : undefined,
-        transition: "border-color 150ms ease, box-shadow 150ms ease, opacity 120ms ease, transform 150ms ease",
+        transition: "background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, opacity 120ms ease, transform 150ms ease",
         zIndex: contextMenuOpen ? SHELL_Z_INDEX.terminalSessionMenuCard : dragging ? 1 : undefined,
       }}
     >
@@ -1170,21 +1168,6 @@ function ShellCard({
             right: 12,
             top: -7,
             zIndex: 3,
-          }}
-        />
-      )}
-      {selected && (
-        <span
-          aria-hidden="true"
-          style={{
-            background: "var(--terminal-drawer-selected-stripe)",
-            borderRadius: 999,
-            bottom: 12,
-            left: -1,
-            position: "absolute",
-            top: 12,
-            width: 3,
-            zIndex: 2,
           }}
         />
       )}
@@ -1300,7 +1283,7 @@ function ShellCard({
                   }}
                   style={{
                     ...SESSION_NAME_BUTTON_BASE_STYLE,
-                    color: foreground ? "var(--terminal-drawer-fg)" : "var(--terminal-drawer-muted)",
+                    color: selected ? "var(--terminal-drawer-fg)" : "var(--terminal-drawer-muted)",
                     flex: "0 1 auto",
                     maxWidth: "calc(100% - 27px)",
                   }}

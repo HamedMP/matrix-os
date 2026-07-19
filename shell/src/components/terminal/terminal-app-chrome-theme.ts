@@ -46,6 +46,7 @@ export interface TerminalAppChromeTheme {
   drawerSearchBorder: string;
   drawerSearchIcon: string;
   drawerCardBackground: string;
+  drawerCardSelectedBackground: string;
   drawerCardMutedBackground: string;
   drawerCardBorder: string;
   drawerCardMutedBorder: string;
@@ -105,6 +106,7 @@ const TERMINAL_APP_CHROME_THEMES: Record<TerminalAppThemeId, TerminalAppChromeTh
     drawerSearchBorder: "#D6D5C4",
     drawerSearchIcon: "#A09F92",
     drawerCardBackground: "#FFFDF7",
+    drawerCardSelectedBackground: "#FFFFFF",
     drawerCardMutedBackground: "#E2E2D0",
     drawerCardBorder: "#D6D5C4",
     drawerCardMutedBorder: "#D4D2C1",
@@ -160,6 +162,7 @@ const TERMINAL_APP_CHROME_THEMES: Record<TerminalAppThemeId, TerminalAppChromeTh
     drawerSearchBorder: "#2D3127",
     drawerSearchIcon: "#6F7167",
     drawerCardBackground: "#20241C",
+    drawerCardSelectedBackground: "#2A3026",
     drawerCardMutedBackground: "#171A13",
     drawerCardBorder: "#2D3127",
     drawerCardMutedBorder: "#24271F",
@@ -215,6 +218,7 @@ const TERMINAL_APP_CHROME_THEMES: Record<TerminalAppThemeId, TerminalAppChromeTh
     drawerSearchBorder: "#1C3324",
     drawerSearchIcon: "#2F7A44",
     drawerCardBackground: "#0F1A12",
+    drawerCardSelectedBackground: "#17271B",
     drawerCardMutedBackground: "#0B130D",
     drawerCardBorder: "#1C3324",
     drawerCardMutedBorder: "#16271B",
@@ -277,6 +281,7 @@ export function getTerminalAppChromeCssVars(theme: TerminalAppChromeTheme): Term
     "--terminal-drawer-search-border": theme.drawerSearchBorder,
     "--terminal-drawer-search-icon": theme.drawerSearchIcon,
     "--terminal-drawer-card-bg": theme.drawerCardBackground,
+    "--terminal-drawer-card-selected-bg": theme.drawerCardSelectedBackground,
     "--terminal-drawer-card-muted-bg": theme.drawerCardMutedBackground,
     "--terminal-drawer-card-border": theme.drawerCardBorder,
     "--terminal-drawer-card-muted-border": theme.drawerCardMutedBorder,
