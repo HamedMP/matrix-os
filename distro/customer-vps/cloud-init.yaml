@@ -441,8 +441,8 @@ runcmd:
     # SSH keys; expired accounts fail sudo/PAM account checks, which breaks
     # every sudo-based installer (Hermes, tool pack). Clear expiry for the
     # system accounts we transition between.
-    chage -d now -M -1 -E -1 root || true
-    chage -d now -M -1 -E -1 matrix || true
+    chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 root || true
+    chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 matrix || true
   - |
     set -eu
     # Swap first so nothing later in provisioning (or after) can OOM the box.

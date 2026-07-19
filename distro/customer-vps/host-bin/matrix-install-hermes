@@ -75,7 +75,7 @@ done
 
 if [ -x "$MATRIX_RUNTIME_HOME/.local/bin/hermes" ] && [ -x "$MATRIX_APP_DIR/scripts/install-hermes-matrix-skills.sh" ]; then
   log "installing bundled Matrix Hermes skills"
-  sudo -H -u "$MATRIX_RUNTIME_USER" env \
+  run_installer_as_runtime_user env \
     HOME="$MATRIX_RUNTIME_HOME" \
     HERMES_HOME="$HERMES_HOME" \
     HERMES_BIN="$MATRIX_RUNTIME_HOME/.local/bin/hermes" \
@@ -85,7 +85,7 @@ if [ -x "$MATRIX_RUNTIME_HOME/.local/bin/hermes" ] && [ -x "$MATRIX_APP_DIR/scri
     PATH="$MATRIX_RUNTIME_HOME/.local/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
     bash -lc "cd '$MATRIX_APP_DIR' && ./scripts/install-hermes-matrix-skills.sh '$MATRIX_APP_DIR'"
 
-  sudo -H -u "$MATRIX_RUNTIME_USER" env \
+  run_installer_as_runtime_user env \
     HOME="$MATRIX_RUNTIME_HOME" \
     HERMES_HOME="$HERMES_HOME" \
     XDG_CONFIG_HOME="$MATRIX_RUNTIME_HOME/.config" \
