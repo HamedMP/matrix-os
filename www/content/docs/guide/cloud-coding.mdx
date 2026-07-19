@@ -87,7 +87,7 @@ Dirty worktrees require explicit cleanup. Matrix OS tracks leases so two writers
 
 Coding sessions are durable workspace objects. You can attach as the active operator, observe without taking control, take over when needed, duplicate panes, or hand a session to a local terminal.
 
-Session transcripts are retained with bounded replay caps, so reconnecting from web, desktop, CLI, or TUI can show recent output without keeping unbounded process output in memory. Reopening a terminal or refreshing the browser restores the output still available within that bounded replay limit, but stages that replay before revealing the current viewport so old full-screen frames do not flash during attachment. Output older than the retained limit is not restored. Shell `clear` and Ctrl+L clear the display without erasing retained transcript data.
+Session transcripts are retained with bounded replay caps, so reconnecting from web, desktop, CLI, or TUI can show recent output without keeping unbounded process output in memory. Reopening a terminal or refreshing the browser restores the output still available within that bounded replay limit, but stages that replay before revealing the current viewport so old full-screen frames do not flash during attachment. If synchronization stalls, Matrix discards the incomplete browser rendering and reconnects instead of revealing it. Output older than the retained limit is not restored. Shell `clear` and Ctrl+L clear the display without erasing retained transcript data.
 
 ## Review loops
 

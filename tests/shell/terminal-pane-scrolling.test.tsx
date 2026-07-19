@@ -9,6 +9,7 @@ const createdTerminals = vi.hoisted(() => [] as Array<{
   viewport: HTMLElement | null;
   focus: ReturnType<typeof vi.fn>;
   flushWrites: () => void;
+  reset: ReturnType<typeof vi.fn>;
 }>);
 
 const createdFitAddons = vi.hoisted(() => [] as Array<{
@@ -107,6 +108,7 @@ vi.mock("@xterm/xterm", () => ({
         callback();
       }
     };
+    reset = vi.fn();
     dispose = vi.fn();
     onData = vi.fn(() => ({ dispose: vi.fn() }));
     onResize = vi.fn(() => ({ dispose: vi.fn() }));
@@ -213,6 +215,7 @@ vi.mock("@/stores/terminal-settings", () => {
 });
 
 import { TerminalPane } from "../../shell/src/components/terminal/TerminalPane.js";
+import { COLD_REPLAY_TIMEOUT_MS } from "../../shell/src/components/terminal/cold-replay-visibility.js";
 import { cacheTerminal } from "../../shell/src/components/terminal/terminal-cache.js";
 import { capturePostHogEvent } from "../../shell/src/lib/posthog-client.js";
 
@@ -753,6 +756,56 @@ describe("TerminalPane scrolling", () => {
     });
 
     expect(terminal.element?.style.visibility).toBe("visible");
+  });
+
+  it("abandons a stalled cold replay without revealing historical output", async () => {
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    let stalledReplayTimeout: (() => void) | null = null;
+    const setTimeoutSpy = vi.spyOn(window, "setTimeout").mockImplementation((handler, timeout, ...args) => {
+      if (timeout === COLD_REPLAY_TIMEOUT_MS && typeof handler === "function") {
+        stalledReplayTimeout = () => handler(...args);
+        return COLD_REPLAY_TIMEOUT_MS as unknown as ReturnType<typeof window.setTimeout>;
+      }
+      return nativeSetTimeout(handler, timeout, ...args);
+    });
+    try {
+      const view = render(
+        <TerminalPane
+          paneId="pane-stalled-cold-replay-test"
+          cwd=""
+          theme={theme}
+          isFocused={false}
+          isClosing={false}
+          sessionId="main"
+          shouldCacheOnUnmount={() => false}
+          shouldDestroyOnUnmount={() => false}
+          onFocus={() => {}}
+        />,
+      );
+
+      await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+      const socket = WebSocketMock.instances[0]!;
+      const terminal = createdTerminals[0]!;
+
+      await act(async () => {
+        socket.onmessage?.({
+          data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+        });
+        socket.onmessage?.({ data: JSON.stringify({ type: "replay-start", fromSeq: 0 }) });
+        socket.onmessage?.({
+          data: JSON.stringify({ type: "output", seq: 0, data: "OLD_PRIVATE_FRAME\r\n" }),
+        });
+      });
+      expect(stalledReplayTimeout).not.toBeNull();
+      await act(async () => stalledReplayTimeout?.());
+
+      expect(socket.close).toHaveBeenCalledTimes(1);
+      expect(terminal.reset).toHaveBeenCalledTimes(1);
+      expect(terminal.element?.style.visibility).toBe("hidden");
+      expect(view.getByText("Reconnecting terminal...")).toBeTruthy();
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
   });
 
   it("records cold replay and cursor resume request/accept metadata without terminal content", async () => {
