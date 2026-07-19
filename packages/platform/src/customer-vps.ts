@@ -843,13 +843,26 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
   }
 
   async function provision(
-    input: ProvisionRequest,
+    input: ProvisionRequest | PreviewProvisionRequest,
     provisioningClass: UserMachineProvisioningClass,
   ): Promise<ProvisionResponse> {
     const request = {
       ...input,
       runtimeSlot: input.runtimeSlot ?? 'primary',
       developerTools: canonicalizeDeveloperTools(input.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
+      accessClerkUserIds: provisioningClass === 'preview'
+        ? (input as PreviewProvisionRequest).accessClerkUserIds ?? []
+        : [],
+    };
+    const reconcilePreviewAccess = async (
+      db: PlatformDB,
+      machine: UserMachineRecord,
+    ): Promise<UserMachineRecord> => {
+      if (provisioningClass !== 'preview') return machine;
+      await updateUserMachine(db, machine.machineId, {
+        accessClerkUserIds: request.accessClerkUserIds,
+      });
+      return { ...machine, accessClerkUserIds: request.accessClerkUserIds };
     };
     const currentTime = now();
     const machineId = machineIdFactory();
@@ -878,11 +891,12 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       && !(provisioningClass === 'preview' && existingBeforeBundleResolve.runtimeSlot !== request.runtimeSlot)
       && (provisioningClass === 'customer' || existingBeforeBundleResolve.provisioningClass === 'preview')
     ) {
+      const reconciled = await reconcilePreviewAccess(deps.db, existingBeforeBundleResolve);
       const existingJob = await getProvisioningJobByMachineId(deps.db, existingBeforeBundleResolve.machineId);
       if (existingJob && (existingJob.status === 'queued' || existingJob.status === 'running')) {
         await dispatchProvisioningJobBestEffort(existingJob.jobId);
       }
-      return activeProvisionResponse(existingBeforeBundleResolve, deps.config.provisionEtaSeconds);
+      return activeProvisionResponse(reconciled, deps.config.provisionEtaSeconds);
     }
 
     const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
@@ -925,9 +939,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             const retainedMachines = await listNonDeletedUserMachinesByClerkId(trx, request.clerkUserId);
             assertPreviewProvisioningCapacity(retainedMachines, deps.config.previewProvisioningLimit);
             await updateUserMachine(trx, existing.machineId, { provisioningClass: 'preview' });
-            return { existing: { ...existing, provisioningClass: 'preview' as const } };
+            return { existing: await reconcilePreviewAccess(trx, { ...existing, provisioningClass: 'preview' as const }) };
           }
-          return { existing };
+          return { existing: await reconcilePreviewAccess(trx, existing) };
         }
         // The active slot is held by a failed attempt. Retire it, enqueue its
         // server for reaping, and provision a fresh one — all in one
@@ -970,6 +984,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         handle: request.handle,
         runtimeSlot: request.runtimeSlot,
         provisioningClass,
+        accessClerkUserIds: request.accessClerkUserIds,
         status: 'provisioning',
         imageVersion: bundleRef.imageVersion,
         serverType: billingContext?.serverType ?? deps.config.serverType,
@@ -1017,11 +1032,12 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         && !(provisioningClass === 'preview' && concurrent.runtimeSlot !== request.runtimeSlot)
         && (provisioningClass === 'customer' || concurrent.provisioningClass === 'preview')
       ) {
+        const reconciled = await reconcilePreviewAccess(deps.db, concurrent);
         const concurrentJob = await getProvisioningJobByMachineId(deps.db, concurrent.machineId);
         if (concurrentJob && (concurrentJob.status === 'queued' || concurrentJob.status === 'running')) {
           await dispatchProvisioningJobBestEffort(concurrentJob.jobId);
         }
-        return activeProvisionResponse(concurrent, deps.config.provisionEtaSeconds);
+        return activeProvisionResponse(reconciled, deps.config.provisionEtaSeconds);
       }
       throw err;
     }

@@ -53,9 +53,12 @@ Add the **`preview-vps`** label to a same-repo PR. The `Preview VPS` workflow:
 2. Publishes it **register-only** (`publish-release.sh --channel none`): the
    release exists in R2 + platform DB but no channel pointer can ever select
    it, so it cannot reach real users.
-3. Provisions VPS `pr-<N>` (runtime slot `preview`, bound to the
-   `PREVIEW_CLERK_USER_ID` Clerk user) if absent, then deploys exactly that
-   version to exactly that handle.
+3. Provisions VPS `pr-<N>` (runtime slot `pr-<N>`, owned by the
+   `PREVIEW_CLERK_USER_ID` Clerk user and shared only with the bounded
+   `PREVIEW_CLERK_ACCESS_USER_IDS` allowlist) if absent, then deploys exactly
+   that version to exactly that handle. Shared access applies only to
+   server-classified preview machines; customer and primary runtimes remain
+   owner-only.
 4. Comments the URL on the PR: `https://app.matrix-os.com/vm/pr-<N>`.
 
 Teardown is automatic on PR close. A daily reaper deletes any `pr-*` VPS whose
@@ -65,6 +68,11 @@ is skipped, and the job fails so the skip is visible. Manual deploy: `gh workflo
 
 Required repo secrets (beyond the existing release secrets):
 `PREVIEW_CLERK_USER_ID` — the Clerk user that owns preview VPSes.
+`PREVIEW_CLERK_ACCESS_USER_IDS` — optional JSON array of up to eight additional
+Clerk user IDs allowed to open the same preview VPSes. The owner must not be
+repeated in this list. Re-running the workflow replaces the preview allowlist
+with the configured value, so removing a collaborator takes effect on the next
+deploy without recreating the VPS.
 
 Preview provisioning uses the operator-only `/vps/preview/provision` route with the
 same `pr-<N>` value for the handle and runtime slot. A `202` is valid only when its

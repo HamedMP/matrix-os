@@ -228,6 +228,7 @@ jobs:
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
       PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
+      PREVIEW_CLERK_ACCESS_USER_IDS: ${{ secrets.PREVIEW_CLERK_ACCESS_USER_IDS }}
       HANDLE: ${{ needs.gate.outputs.handle }}
       VERSION: ${{ needs.gate.outputs.action == 'deploy_existing' && needs.gate.outputs.requested_version || needs.build.outputs.version }}
     steps:
@@ -257,6 +258,16 @@ jobs:
             echo "PREVIEW_CLERK_USER_ID secret is not configured." >&2
             exit 1
           fi
+          access_user_ids="${PREVIEW_CLERK_ACCESS_USER_IDS:-[]}"
+          if ! jq -e --arg owner "$PREVIEW_CLERK_USER_ID" '
+            type == "array" and length <= 8
+            and all(.[]; type == "string" and test("^user_[A-Za-z0-9]+$"))
+            and (unique | length) == length
+            and (index($owner) == null)
+          ' <<< "$access_user_ids" > /dev/null; then
+            echo "PREVIEW_CLERK_ACCESS_USER_IDS must be a JSON array of up to eight unique non-owner Clerk user IDs." >&2
+            exit 1
+          fi
 
           fleet_machine="$(curl -fsS --max-time 30 \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
@@ -275,7 +286,6 @@ jobs:
           status="$(jq -r '.status' <<< "$fleet_machine")"
           accepted_machine_id="$(jq -r '.machineId // ""' <<< "$fleet_machine")"
           runtime_slot="$(jq -r '.runtimeSlot // ""' <<< "$fleet_machine")"
-          needs_provision=false
           echo "Fleet status for ${HANDLE}: ${status}"
 
           case "$status" in
@@ -288,11 +298,10 @@ jobs:
                 echo "Reusing existing ${HANDLE} machine ${accepted_machine_id} (${status})"
               else
                 echo "Active ${HANDLE} requires exact-slot adoption from ${runtime_slot:-unset}"
-                needs_provision=true
               fi
               ;;
             absent|failed)
-              needs_provision=true
+              echo "Preview ${HANDLE} requires provisioning or retry"
               ;;
             *)
               echo "Preview ${HANDLE} is in an unsupported state (${status})." >&2
@@ -300,31 +309,32 @@ jobs:
               ;;
           esac
 
-          if [ "$needs_provision" = true ]; then
-              provision_body="$(jq -cn \
-                --arg owner "$PREVIEW_CLERK_USER_ID" \
-                --arg handle "$HANDLE" \
-                '{clerkUserId: $owner, handle: $handle, runtimeSlot: $handle}')"
-              code="$(curl -sS --max-time 60 -o /tmp/provision.json -w '%{http_code}' \
-                -X POST "${PLATFORM_PUBLIC_URL}/vps/preview/provision" \
-                -H "authorization: Bearer ${PLATFORM_SECRET}" \
-                -H "content-type: application/json" \
-                --data-binary "$provision_body")"
-              if [ "$code" != "202" ]; then
-                echo "Preview provision failed with HTTP ${code}." >&2
-                exit 1
-              fi
-              if ! accepted_machine_id="$(jq -er '
-                if (
-                  type == "object"
-                  and (.machineId | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))
-                  and (.status == "provisioning" or .status == "running")
-                  and (.etaSeconds | type == "number" and . >= 0)
-                ) then .machineId else error("invalid response") end
-              ' /tmp/provision.json)"; then
-                echo "Preview provision returned an invalid response." >&2
-                exit 1
-              fi
+          # The idempotent provision call also reconciles the complete access
+          # allowlist on already-running previews.
+          provision_body="$(jq -cn \
+            --arg owner "$PREVIEW_CLERK_USER_ID" \
+            --arg handle "$HANDLE" \
+            --argjson access "$access_user_ids" \
+            '{clerkUserId: $owner, handle: $handle, runtimeSlot: $handle, accessClerkUserIds: $access}')"
+          code="$(curl -sS --max-time 60 -o /tmp/provision.json -w '%{http_code}' \
+            -X POST "${PLATFORM_PUBLIC_URL}/vps/preview/provision" \
+            -H "authorization: Bearer ${PLATFORM_SECRET}" \
+            -H "content-type: application/json" \
+            --data-binary "$provision_body")"
+          if [ "$code" != "202" ]; then
+            echo "Preview provision failed with HTTP ${code}." >&2
+            exit 1
+          fi
+          if ! accepted_machine_id="$(jq -er '
+            if (
+              type == "object"
+              and (.machineId | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))
+              and (.status == "provisioning" or .status == "running")
+              and (.etaSeconds | type == "number" and . >= 0)
+            ) then .machineId else error("invalid response") end
+          ' /tmp/provision.json)"; then
+            echo "Preview provision returned an invalid response." >&2
+            exit 1
           fi
 
           status="$(curl -fsS --max-time 30 \
@@ -415,6 +425,7 @@ jobs:
     env:
       CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
+      PREVIEW_CLERK_ACCESS_USER_IDS: ${{ secrets.PREVIEW_CLERK_ACCESS_USER_IDS }}
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://api.matrix-os.com' }}
       HANDLE: ${{ needs.gate.outputs.handle }}
     steps:
@@ -425,54 +436,69 @@ jobs:
             echo "Preview inventory verification is not configured." >&2
             exit 1
           fi
-          if ! printf '%s' "$PREVIEW_CLERK_USER_ID" | grep -Eq '^user_[A-Za-z0-9]+$'; then
-            echo "Preview inventory verification user is invalid." >&2
+          access_user_ids="${PREVIEW_CLERK_ACCESS_USER_IDS:-[]}"
+          if ! preview_user_ids_json="$(jq -ce --arg owner "$PREVIEW_CLERK_USER_ID" '
+            if (
+              type == "array" and length <= 8
+              and all(.[]; type == "string" and test("^user_[A-Za-z0-9]+$"))
+              and (unique | length) == length
+              and (index($owner) == null)
+            ) then [$owner] + . else error("invalid access list") end
+          ' <<< "$access_user_ids")"; then
+            echo "PREVIEW_CLERK_ACCESS_USER_IDS must be a JSON array of up to eight unique non-owner Clerk user IDs." >&2
             exit 1
           fi
-          user_code="$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' \
-            "https://api.clerk.com/v1/users/${PREVIEW_CLERK_USER_ID}" \
-            -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
-            -H "Clerk-API-Version: 2025-11-10")"
-          if [ "$user_code" != "200" ]; then
-            echo "Configured preview verification user is unavailable (HTTP ${user_code})." >&2
-            exit 1
-          fi
+          mapfile -t preview_user_ids < <(jq -r '.[]' <<< "$preview_user_ids_json")
+          for preview_user_id in "${preview_user_ids[@]}"; do
+            if ! printf '%s' "$preview_user_id" | grep -Eq '^user_[A-Za-z0-9]+$'; then
+              echo "Preview inventory verification user is invalid." >&2
+              exit 1
+            fi
+            user_code="$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' \
+              "https://api.clerk.com/v1/users/${preview_user_id}" \
+              -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
+              -H "Clerk-API-Version: 2025-11-10")"
+            if [ "$user_code" != "200" ]; then
+              echo "Configured preview verification user is unavailable (HTTP ${user_code})." >&2
+              exit 1
+            fi
 
-          sessions_code="$(curl -sS --max-time 30 -o /tmp/clerk-sessions.json -w '%{http_code}' \
-            "https://api.clerk.com/v1/sessions?user_id=${PREVIEW_CLERK_USER_ID}&status=active&limit=10" \
-            -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
-            -H "Clerk-API-Version: 2025-11-10")"
-          if [ "$sessions_code" != "200" ]; then
-            echo "Active preview verification sessions are unavailable (HTTP ${sessions_code})." >&2
-            exit 1
-          fi
-          session_id="$(jq -er 'sort_by(.last_active_at // 0) | reverse | .[0].id | select(type == "string" and test("^sess_[A-Za-z0-9]+$"))' /tmp/clerk-sessions.json)"
-          token_code="$(curl -sS --max-time 30 -o /tmp/clerk-token.json -w '%{http_code}' \
-            -X POST "https://api.clerk.com/v1/sessions/${session_id}/tokens" \
-            -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
-            -H "Clerk-API-Version: 2025-11-10" \
-            -H "content-type: application/json" \
-            --data-binary '{"expires_in_seconds":60}')"
-          if [ "$token_code" != "200" ]; then
-            echo "Preview verification token is unavailable (HTTP ${token_code})." >&2
-            exit 1
-          fi
-          session_token="$(jq -er '.jwt | select(type == "string" and length <= 8192)' /tmp/clerk-token.json)"
+            sessions_code="$(curl -sS --max-time 30 -o /tmp/clerk-sessions.json -w '%{http_code}' \
+              "https://api.clerk.com/v1/sessions?user_id=${preview_user_id}&status=active&limit=10" \
+              -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
+              -H "Clerk-API-Version: 2025-11-10")"
+            if [ "$sessions_code" != "200" ]; then
+              echo "Active preview verification sessions are unavailable (HTTP ${sessions_code})." >&2
+              exit 1
+            fi
+            session_id="$(jq -er 'sort_by(.last_active_at // 0) | reverse | .[0].id | select(type == "string" and test("^sess_[A-Za-z0-9]+$"))' /tmp/clerk-sessions.json)"
+            token_code="$(curl -sS --max-time 30 -o /tmp/clerk-token.json -w '%{http_code}' \
+              -X POST "https://api.clerk.com/v1/sessions/${session_id}/tokens" \
+              -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
+              -H "Clerk-API-Version: 2025-11-10" \
+              -H "content-type: application/json" \
+              --data-binary '{"expires_in_seconds":60}')"
+            if [ "$token_code" != "200" ]; then
+              echo "Preview verification token is unavailable (HTTP ${token_code})." >&2
+              exit 1
+            fi
+            session_token="$(jq -er '.jwt | select(type == "string" and length <= 8192)' /tmp/clerk-token.json)"
 
-          inventory_code="$(curl -sS --max-time 30 -o /tmp/computers.json -w '%{http_code}' \
-            "${PLATFORM_PUBLIC_URL}/api/auth/computers" \
-            -H "authorization: Bearer ${session_token}")"
-          if [ "$inventory_code" != "200" ]; then
-            echo "Authenticated computer inventory is unavailable." >&2
-            exit 1
-          fi
-          if ! jq -e --arg h "$HANDLE" \
-            '[.items[] | select(.handle == $h and .runtimeSlot == $h and .kind == "preview")] | length == 1' \
-            /tmp/computers.json > /dev/null; then
-            echo "Preview computer is not selectable in the authenticated inventory." >&2
-            exit 1
-          fi
-          echo "Verified ${HANDLE} in the authenticated computer inventory."
+            inventory_code="$(curl -sS --max-time 30 -o /tmp/computers.json -w '%{http_code}' \
+              "${PLATFORM_PUBLIC_URL}/api/auth/computers" \
+              -H "authorization: Bearer ${session_token}")"
+            if [ "$inventory_code" != "200" ]; then
+              echo "Authenticated computer inventory is unavailable." >&2
+              exit 1
+            fi
+            if ! jq -e --arg h "$HANDLE" \
+              '[.items[] | select(.handle == $h and .runtimeSlot == $h and .kind == "preview")] | length == 1' \
+              /tmp/computers.json > /dev/null; then
+              echo "Preview computer is not selectable in the authenticated inventory." >&2
+              exit 1
+            fi
+            echo "Verified ${HANDLE} in the authenticated computer inventory for ${preview_user_id}."
+          done
 
   teardown:
     name: Teardown preview VPS

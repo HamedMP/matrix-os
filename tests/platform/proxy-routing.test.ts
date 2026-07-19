@@ -3520,6 +3520,81 @@ describe("platform proxy routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("routes an explicitly shared preview to a collaborator but never shares customer machines", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff137",
+      clerkUserId: "user_bob",
+      handle: "pr-1037",
+      runtimeSlot: "pr-1037",
+      provisioningClass: "preview",
+      accessClerkUserIds: ["user_alice"],
+      status: "running",
+      hetznerServerId: 123481,
+      publicIPv4: "203.0.113.37",
+      imageVersion: "v2026.07.19-pr1037",
+      provisionedAt: "2026-07-19T12:00:00.000Z",
+    });
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff138",
+      clerkUserId: "user_bob",
+      handle: "bob-private",
+      runtimeSlot: "primary",
+      accessClerkUserIds: ["user_alice"],
+      status: "running",
+      hetznerServerId: 123482,
+      publicIPv4: "203.0.113.38",
+      imageVersion: "v2026.07.19",
+      provisionedAt: "2026-07-19T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("shared preview", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const shared = await app.request("/vm/pr-1037", {
+      headers: { host: "app.matrix-os.com", authorization: "Bearer clerk-session" },
+    });
+    expect(shared.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.37:443/");
+
+    const routeCookies = shared.headers.get("set-cookie") ?? "";
+    fetchMock.mockClear();
+    const followUp = await app.request("/api/projects", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        cookie: routeCookies,
+      },
+    });
+    expect(followUp.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.37:443/api/projects");
+
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValueOnce(Response.json({ release: { version: "v2026.07.19-pr1037" } }));
+    const picker = await app.request("/runtime", {
+      headers: { host: "app.matrix-os.com", authorization: "Bearer clerk-session" },
+    });
+    expect(picker.status).toBe(200);
+    const pickerHtml = await picker.text();
+    expect(pickerHtml).toContain('href="/vm/pr-1037"');
+    expect(pickerHtml).not.toContain("bob-private");
+
+    fetchMock.mockClear();
+    const privateMachine = await app.request("/vm/bob-private", {
+      headers: { host: "app.matrix-os.com", authorization: "Bearer clerk-session" },
+    });
+    expect(privateMachine.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("shows unknown CPU and RAM for legacy machines without stored server type", async () => {
     process.env.HETZNER_SERVER_TYPE = "cpx22";
     await deleteContainer(db, "alice");

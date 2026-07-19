@@ -42,10 +42,20 @@ export const PreviewProvisionRequestSchema = z.object({
   clerkUserId: ClerkUserIdSchema,
   handle: PreviewRuntimeSlotSchema,
   runtimeSlot: PreviewRuntimeSlotSchema,
+  accessClerkUserIds: z.array(ClerkUserIdSchema).max(8).default([]),
   developerTools: DeveloperToolsSchema.optional(),
-}).strict().refine((request) => request.handle === request.runtimeSlot, {
-  message: 'Preview handle and runtime slot must match',
-});
+}).strict()
+  .refine((request) => request.handle === request.runtimeSlot, {
+    message: 'Preview handle and runtime slot must match',
+  })
+  .refine((request) => !request.accessClerkUserIds.includes(request.clerkUserId), {
+    message: 'Preview owner must not be duplicated as a collaborator',
+  })
+  .refine((request) => request.accessClerkUserIds.every(
+    (value, index, values) => values.indexOf(value) === index,
+  ), {
+    message: 'Preview collaborators must be unique',
+  });
 
 export const RegisterRequestSchema = z.object({
   machineId: z.uuid(),
@@ -78,7 +88,10 @@ export const DeployRequestSchema = z.object({
 });
 
 export type ProvisionRequest = z.infer<typeof ProvisionRequestSchema>;
-export type PreviewProvisionRequest = z.infer<typeof PreviewProvisionRequestSchema>;
+type ParsedPreviewProvisionRequest = z.infer<typeof PreviewProvisionRequestSchema>;
+export type PreviewProvisionRequest = Omit<ParsedPreviewProvisionRequest, 'accessClerkUserIds'> & {
+  accessClerkUserIds?: string[];
+};
 export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;
 export type RecoverRequest = z.infer<typeof RecoverRequestSchema>;
 export type ResizeMachineRequest = z.infer<typeof ResizeMachineRequestSchema>;
