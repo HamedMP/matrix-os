@@ -12,7 +12,6 @@ import {
   resolveOwnerTelemetryDistinctId,
 } from "@matrix-os/observability";
 import { createGateway } from "./server.js";
-import { tryRegisterAgentBridges } from "./shell/agent-session-bridges.js";
 
 try {
   process.loadEnvFile(resolve(dirname(fileURLToPath(import.meta.url)), "../../../.env"));
@@ -50,8 +49,6 @@ const syncReport: SyncReport = {
   skipped: syncResult.skipped,
 };
 const port = Number(process.env.PORT ?? 4000);
-
-await tryRegisterAgentBridges({ homePath });
 
 // T2093: Store sync report for WebSocket notification
 const hasChanges = syncReport.added.length > 0 || syncReport.updated.length > 0;

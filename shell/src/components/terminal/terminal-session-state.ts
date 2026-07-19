@@ -8,29 +8,11 @@ export interface ShellSessionSummary {
   lastSeenSeq?: number | null;
   unread?: boolean;
   visualStatus?: "running" | "waiting" | "finished" | "idle";
-  agent?: "claude" | "codex" | "opencode" | "pi";
-  subtitle?: string;
-  lastAction?: string;
-  agentUpdatedAt?: string;
-  model?: string;
-  strength?: string;
-  project?: string;
-  repository?: string;
-  branch?: string;
-  pullRequest?: { number: number; url?: string };
   attachCommand?: string;
   tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
 }
 
-export function getShellVisualStatus(
-  shell: ShellSessionSummary,
-): NonNullable<ShellSessionSummary["visualStatus"]> {
-  if (shell.visualStatus) return shell.visualStatus;
-  if (shell.status === "degraded") return "waiting";
-  return shell.unread ? "finished" : "idle";
-}
-
-export type ShellUiStatePatch = Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq">>;
+export type ShellUiStatePatch = Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq" | "visualStatus">>;
 type ShellUiStatePatchKey = keyof ShellUiStatePatch;
 
 export interface ShellRefreshState {
@@ -40,7 +22,7 @@ export interface ShellRefreshState {
   error: string | null;
 }
 
-const SHELL_UI_STATE_PATCH_KEYS: ShellUiStatePatchKey[] = ["placement", "lastSeenSeq"];
+const SHELL_UI_STATE_PATCH_KEYS: ShellUiStatePatchKey[] = ["placement", "lastSeenSeq", "visualStatus"];
 
 export function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSessionSummary[]): boolean {
   return left.length === right.length && left.every((session, index) => {
@@ -56,17 +38,6 @@ export function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSess
       session.lastSeenSeq !== next.lastSeenSeq ||
       session.unread !== next.unread ||
       session.visualStatus !== next.visualStatus ||
-      session.agent !== next.agent ||
-      session.subtitle !== next.subtitle ||
-      session.lastAction !== next.lastAction ||
-      session.agentUpdatedAt !== next.agentUpdatedAt ||
-      session.model !== next.model ||
-      session.strength !== next.strength ||
-      session.project !== next.project ||
-      session.repository !== next.repository ||
-      session.branch !== next.branch ||
-      session.pullRequest?.number !== next.pullRequest?.number ||
-      session.pullRequest?.url !== next.pullRequest?.url ||
       session.attachCommand !== next.attachCommand
     ) {
       return false;
@@ -113,6 +84,9 @@ function snapshotShellUiStatePatchValue(
     case "lastSeenSeq":
       previousValues.lastSeenSeq = shell.lastSeenSeq;
       return;
+    case "visualStatus":
+      previousValues.visualStatus = shell.visualStatus;
+      return;
     default: {
       const unhandledKey: never = key;
       throw new Error(`Unhandled shell UI state patch key: ${String(unhandledKey)}`);
@@ -142,6 +116,10 @@ function rollbackShellUiStatePatchValue(
     case "lastSeenSeq":
       return Object.is(shell.lastSeenSeq, patch.lastSeenSeq)
         ? { ...shell, lastSeenSeq: previousValues.lastSeenSeq }
+        : shell;
+    case "visualStatus":
+      return Object.is(shell.visualStatus, patch.visualStatus)
+        ? { ...shell, visualStatus: previousValues.visualStatus }
         : shell;
     default: {
       const unhandledKey: never = key;
