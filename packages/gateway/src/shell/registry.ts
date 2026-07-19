@@ -91,6 +91,8 @@ export interface ShellSession extends PersistedShellSession {
   subtitle?: string;
   lastAction?: string;
   agentUpdatedAt?: string;
+  model?: string;
+  strength?: string;
 }
 
 export interface ShellSessionUiStatePatch {
@@ -514,6 +516,8 @@ export class ShellRegistry {
       ...(agentSnapshot?.subtitle ? { subtitle: agentSnapshot.subtitle } : {}),
       ...(agentSnapshot?.lastAction ? { lastAction: agentSnapshot.lastAction } : {}),
       ...(agentSnapshot?.agentUpdatedAt ? { agentUpdatedAt: agentSnapshot.agentUpdatedAt } : {}),
+      ...(agentSnapshot?.model ? { model: agentSnapshot.model } : {}),
+      ...(agentSnapshot?.strength ? { strength: agentSnapshot.strength } : {}),
       placement: session.placement ?? "active",
       lastSeenSeq: lastSeenSeq ?? null,
       latestSeq,

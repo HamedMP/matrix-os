@@ -6,6 +6,8 @@ import {
   AgentSessionStateStore,
   deriveAgentVisualStatus,
   sanitizeAgentAction,
+  sanitizeAgentModel,
+  sanitizeAgentStrength,
   sanitizeAgentSubtitle,
   type NormalizedAgentEvent,
 } from "../../packages/gateway/src/shell/agent-session-state.js";
@@ -45,6 +47,19 @@ describe("agent session state", () => {
 
     expect(snapshot.phase).toBe("started");
     expect(deriveAgentVisualStatus(snapshot, true)).toBe("idle");
+  });
+
+  it("records model metadata before the first prompt without marking the agent as running", async () => {
+    const root = await tempRoot();
+    const store = new AgentSessionStateStore({ homePath: root });
+
+    const snapshot = await store.apply(event("metadata-updated", "2026-07-18T10:00:00.000Z", {
+      model: "gpt-5.4",
+      strength: "ultra",
+    }));
+
+    expect(snapshot).toMatchObject({ phase: "started", model: "gpt-5.4", strength: "ultra" });
+    expect(deriveAgentVisualStatus(snapshot, false)).toBe("idle");
   });
 
   it("applies lifecycle precedence without exposing semantic tool states", async () => {
@@ -99,6 +114,11 @@ describe("agent session state", () => {
       "Edited TerminalSidebarItems.tsx",
     );
     expect(sanitizeAgentAction("x".repeat(200))).toHaveLength(160);
+    expect(sanitizeAgentModel("  openai/\u001b[31mgpt-5.4  ")).toBe("openai/gpt-5.4");
+    expect(sanitizeAgentModel("x".repeat(120))).toHaveLength(80);
+    expect(sanitizeAgentStrength("  HIGH\n ")).toBe("high");
+    expect(sanitizeAgentStrength("ultra")).toBe("ultra");
+    expect(sanitizeAgentStrength("not-a-strength")).toBeUndefined();
   });
 
   it("persists private atomic snapshots across store restarts", async () => {
@@ -107,6 +127,8 @@ describe("agent session state", () => {
     await store.apply(event("turn-completed", "2026-07-18T10:00:02.000Z", {
       subtitle: "A durable summary",
       action: "Edited registry.ts",
+      model: "gpt-5.4",
+      strength: "high",
     }));
 
     const snapshotPath = join(root, "system", "agent-sessions", "calm-otter.json");
@@ -118,6 +140,8 @@ describe("agent session state", () => {
       agent: "codex",
       subtitle: "A durable summary",
       lastAction: "Edited registry.ts",
+      model: "gpt-5.4",
+      strength: "high",
     });
   });
 

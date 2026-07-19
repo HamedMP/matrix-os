@@ -12,6 +12,8 @@ export interface ShellSessionSummary {
   subtitle?: string;
   lastAction?: string;
   agentUpdatedAt?: string;
+  model?: string;
+  strength?: string;
   attachCommand?: string;
   tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
 }
@@ -54,6 +56,8 @@ export function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSess
       session.subtitle !== next.subtitle ||
       session.lastAction !== next.lastAction ||
       session.agentUpdatedAt !== next.agentUpdatedAt ||
+      session.model !== next.model ||
+      session.strength !== next.strength ||
       session.attachCommand !== next.attachCommand
     ) {
       return false;

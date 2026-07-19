@@ -60,6 +60,11 @@ export function formatTerminalAgentName(agent: NonNullable<ShellSessionSummary["
   return "Pi";
 }
 
+export function formatAgentStrength(strength: string): string {
+  if (strength.toLowerCase() === "xhigh") return "XHigh";
+  return `${strength.charAt(0).toUpperCase()}${strength.slice(1).toLowerCase()}`;
+}
+
 function formatAgentUpdatedAt(value: string | undefined): string {
   if (!value) return "Updated recently";
   const timestamp = Date.parse(value);
@@ -147,6 +152,26 @@ export function TerminalSessionHoverCard({
               {liveState}
             </span>
           </div>
+          {shell.model || shell.strength ? (
+            <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+              {shell.model ? (
+                <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+                  <span style={{ color: theme.subtle, fontSize: 10, fontWeight: 750 }}>Model</span>
+                  <span style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, overflowWrap: "anywhere" }}>
+                    {shell.model}
+                  </span>
+                </div>
+              ) : null}
+              {shell.strength ? (
+                <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+                  <span style={{ color: theme.subtle, fontSize: 10, fontWeight: 750 }}>Strength</span>
+                  <span style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12 }}>
+                    {formatAgentStrength(shell.strength)}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {shell.subtitle ? (
             <p style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, lineHeight: "18px", margin: 0, overflowWrap: "anywhere" }}>
               {shell.subtitle}

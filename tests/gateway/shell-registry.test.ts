@@ -40,6 +40,8 @@ describe("shell registry", () => {
     expect(sessions.find((session) => session.name === "plain-shell")).not.toHaveProperty("subtitle");
     expect(sessions.find((session) => session.name === "plain-shell")).not.toHaveProperty("lastAction");
     expect(sessions.find((session) => session.name === "plain-shell")).not.toHaveProperty("agentUpdatedAt");
+    expect(sessions.find((session) => session.name === "plain-shell")).not.toHaveProperty("model");
+    expect(sessions.find((session) => session.name === "plain-shell")).not.toHaveProperty("strength");
   });
 
   it.each([
@@ -72,6 +74,8 @@ describe("shell registry", () => {
       occurredAt: "2026-07-18T10:00:02.000Z",
       subtitle: "Implemented agent-aware terminal sessions.",
       action: "Edited registry.ts",
+      model: "gpt-5.4",
+      strength: "high",
     });
     const adapter = {
       listSessions: vi.fn(async () => ["calm-otter"]),
@@ -101,6 +105,8 @@ describe("shell registry", () => {
       subtitle: "Implemented agent-aware terminal sessions.",
       lastAction: "Edited registry.ts",
       agentUpdatedAt: "2026-07-18T10:00:02.000Z",
+      model: "gpt-5.4",
+      strength: "high",
       visualStatus: "idle",
     }]);
   });

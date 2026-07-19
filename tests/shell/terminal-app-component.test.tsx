@@ -295,6 +295,8 @@ describe("TerminalApp", () => {
               subtitle: "Implement agent-aware terminal sessions",
               lastAction: "Requested approval",
               agentUpdatedAt: "2026-07-18T10:00:00.000Z",
+              model: "gpt-5.4",
+              strength: "high",
               tabs: [],
             },
             { name: "main", status: "active", placement: "active", tabs: [] },
@@ -323,6 +325,8 @@ describe("TerminalApp", () => {
     const agentState = screen.getByTestId("terminal-session-agent-state-calm-otter");
     expect(agentState.textContent).toContain("Codex");
     expect(agentState.textContent).toContain("waiting");
+    expect(agentState.textContent).toContain("gpt-5.4");
+    expect(agentState.textContent).toContain("High");
     expectOptimizedImageSrc(
       within(agentState).getByTestId("terminal-session-agent-logo-image-codex"),
       "/agent-logos/codex.png",
@@ -347,10 +351,17 @@ describe("TerminalApp", () => {
     expect(hoverCard.style.color).not.toContain("var(");
     expect(hoverCard.textContent).toContain("waiting");
     expect(hoverCard.textContent).toContain("Requested approval");
+    expect(hoverCard.textContent).toContain("Model");
+    expect(hoverCard.textContent).toContain("gpt-5.4");
+    expect(hoverCard.textContent).toContain("Strength");
+    expect(hoverCard.textContent).toContain("High");
     expectOptimizedImageSrc(
       within(hoverCard).getByTestId("terminal-session-hover-agent-logo-image-codex"),
       "/agent-logos/codex.png",
     );
+    expect(
+      within(hoverCard).getByTestId("terminal-session-hover-agent-logo-image-codex").getAttribute("loading"),
+    ).toBe("eager");
 
     const moreButton = screen.getByRole("button", { name: "More actions for calm-otter" });
     fireEvent.pointerEnter(moreButton, { pointerType: "mouse" });

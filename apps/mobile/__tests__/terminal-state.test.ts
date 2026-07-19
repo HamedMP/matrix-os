@@ -137,6 +137,8 @@ describe("mobile terminal state", () => {
         subtitle: "Refactor the terminal sidebar",
         lastAction: "Requested approval",
         agentUpdatedAt: "2026-07-18T10:00:00.000Z",
+        model: "claude-sonnet-4-6",
+        strength: "high",
         attachedClients: 2,
         updatedAt: "2026-06-24T10:00:00Z",
         tabs: [{ idx: 0, name: "claude", focused: true }, { idx: 1 }],
@@ -154,6 +156,8 @@ describe("mobile terminal state", () => {
       subtitle: "Refactor the terminal sidebar",
       lastAction: "Requested approval",
       agentUpdatedAt: "2026-07-18T10:00:00.000Z",
+      model: "claude-sonnet-4-6",
+      strength: "high",
     });
     expect(sessions[0]?.tabs).toEqual([{ idx: 0, name: "claude", focused: true }, { idx: 1 }]);
     expect(sessions[1]?.sessionId).toBe("main");

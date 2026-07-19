@@ -7,6 +7,8 @@ import {
   AgentKindSchema,
   NormalizedAgentEventSchema,
   sanitizeAgentAction,
+  sanitizeAgentModel,
+  sanitizeAgentStrength,
   sanitizeAgentSubtitle,
   type AgentKind,
   type NormalizedAgentEvent,
@@ -36,6 +38,7 @@ export function normalizeAgentBridgeEvents(rawInput: AgentBridgeInput): Normaliz
     ? extractSubtitle(payload)
     : undefined;
   const action = actionForEvent(input.eventName, payload, type);
+  const { model, strength } = extractAgentMetadata(payload);
   return [NormalizedAgentEventSchema.parse({
     sessionName: input.sessionName,
     agent: input.agent,
@@ -43,6 +46,8 @@ export function normalizeAgentBridgeEvents(rawInput: AgentBridgeInput): Normaliz
     occurredAt: input.occurredAt,
     ...(subtitle ? { subtitle } : {}),
     ...(action ? { action } : {}),
+    ...(model ? { model } : {}),
+    ...(strength ? { strength } : {}),
   })];
 }
 
@@ -67,6 +72,7 @@ function normalizedType(
     if (eventName === "session.deleted") return "session-ended";
     if (eventName === "session.idle") return "turn-completed";
     if (eventName === "tool.execute.after") return "action-updated";
+    if (eventName === "message.updated") return "metadata-updated";
     if (eventName === "session.status") {
       const status = objectValue(payload.status);
       const value = stringValue(status?.type) ?? stringValue(payload.status);
@@ -79,7 +85,50 @@ function normalizedType(
   if (eventName === "agent_end") return "turn-completed";
   if (eventName === "tool_execution_end") return "action-updated";
   if (eventName === "session_shutdown") return "session-ended";
+  if (eventName === "model_select" || eventName === "thinking_level_select") return "metadata-updated";
   return null;
+}
+
+function extractAgentMetadata(payload: JsonObject): { model?: string; strength?: string } {
+  const candidates = [
+    payload,
+    objectValue(payload.info),
+    objectValue(payload.message),
+    objectValue(payload.model),
+  ].filter((candidate): candidate is JsonObject => candidate !== undefined);
+  let model: string | undefined;
+  let strength: string | undefined;
+  for (const candidate of candidates) {
+    if (!model) {
+      const modelObject = objectValue(candidate.model);
+      const modelId = stringValue(candidate.modelID)
+        ?? stringValue(candidate.model_id)
+        ?? stringValue(candidate.model)
+        ?? stringValue(modelObject?.id)
+        ?? stringValue(modelObject?.modelID);
+      const provider = stringValue(candidate.providerID)
+        ?? stringValue(candidate.provider_id)
+        ?? stringValue(modelObject?.provider);
+      model = sanitizeAgentModel(provider && modelId && !modelId.includes("/")
+        ? `${provider}/${modelId}`
+        : modelId ?? "");
+    }
+    if (!strength) {
+      strength = sanitizeAgentStrength(
+        stringValue(candidate.reasoning_effort)
+        ?? stringValue(candidate.reasoningEffort)
+        ?? stringValue(candidate.thinking_level)
+        ?? stringValue(candidate.thinkingLevel)
+        ?? stringValue(candidate.strength)
+        ?? stringValue(candidate.variant)
+        ?? "",
+      );
+    }
+  }
+  return {
+    ...(model ? { model } : {}),
+    ...(strength ? { strength } : {}),
+  };
 }
 
 function supportsSubtitle(type: NormalizedAgentEvent["type"]): boolean {
@@ -335,5 +384,5 @@ function openCodePluginSource(command: string): string {
 }
 
 function piExtensionSource(command: string): string {
-  return `${bridgeEmitterSource("pi", command)}\nexport default function matrixSessionMetadata(pi) {\n  for (const eventName of ["before_agent_start", "agent_end", "tool_execution_end", "session_shutdown"]) {\n    pi.on(eventName, (event) => emit(eventName, event));\n  }\n}\n`;
+  return `${bridgeEmitterSource("pi", command)}\nexport default function matrixSessionMetadata(pi) {\n  function withMetadata(event, ctx) {\n    const model = ctx.model;\n    return {\n      ...event,\n      ...(model?.id ? { model: { provider: model.provider, id: model.id } } : {}),\n      strength: pi.getThinkingLevel(),\n    };\n  }\n  for (const eventName of ["before_agent_start", "agent_end", "tool_execution_end", "session_shutdown", "model_select", "thinking_level_select"]) {\n    pi.on(eventName, (event, ctx) => emit(eventName, withMetadata(event, ctx)));\n  }\n}\n`;
 }

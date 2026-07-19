@@ -29,6 +29,8 @@ describe("terminal session state helpers", () => {
       subtitle: "Implement agent-aware sessions",
       lastAction: "Edited TerminalSidebarItems.tsx",
       agentUpdatedAt: "2026-07-18T10:00:00.000Z",
+      model: "gpt-5.4",
+      strength: "high",
     };
     expect(shellSessionsEqual([mainShell], [agentShell])).toBe(false);
     expect(shellSessionsEqual([agentShell], [{ ...agentShell }])).toBe(true);

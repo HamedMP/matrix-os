@@ -70,6 +70,8 @@ describe("useShellSessions", () => {
               subtitle: "Implement agent-aware terminal sessions",
               lastAction: "Edited registry.ts",
               agentUpdatedAt: "2026-07-18T10:00:00.000Z",
+              model: "gpt-5.4",
+              strength: "high",
               attachCommand: "matrix shell connect matrix-main",
               tabs: [{ idx: 0, name: "main", focused: true }],
             },
@@ -93,6 +95,8 @@ describe("useShellSessions", () => {
       subtitle: "Implement agent-aware terminal sessions",
       lastAction: "Edited registry.ts",
       agentUpdatedAt: "2026-07-18T10:00:00.000Z",
+      model: "gpt-5.4",
+      strength: "high",
     });
   });
 

@@ -51,9 +51,11 @@ export function TerminalAgentLogo({
         data-testid={`${testIdPrefix}-image-${option.id}`}
         draggable={false}
         height={imageSize}
+        loading="eager"
         src={option.logoSrc}
         style={{ display: "block", height: imageSize, objectFit: "contain", width: imageSize }}
         width={imageSize}
+        unoptimized
       />
     </span>
   );

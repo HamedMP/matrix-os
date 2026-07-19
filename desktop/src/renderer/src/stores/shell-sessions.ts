@@ -21,6 +21,8 @@ export interface ShellSessionSummary {
   subtitle?: string;
   lastAction?: string;
   agentUpdatedAt?: string;
+  model?: string;
+  strength?: string;
   attachCommand?: string;
   tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
 }
@@ -97,6 +99,8 @@ function asShellSession(value: unknown): ShellSessionSummary | null {
   if (typeof record.subtitle === "string") shell.subtitle = record.subtitle;
   if (typeof record.lastAction === "string") shell.lastAction = record.lastAction;
   if (typeof record.agentUpdatedAt === "string") shell.agentUpdatedAt = record.agentUpdatedAt;
+  if (typeof record.model === "string") shell.model = record.model;
+  if (typeof record.strength === "string") shell.strength = record.strength;
   if (Array.isArray(record.tabs)) {
     const tabs: NonNullable<ShellSessionSummary["tabs"]> = [];
     for (const tab of record.tabs) {

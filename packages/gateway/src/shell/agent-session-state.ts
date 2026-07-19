@@ -15,6 +15,7 @@ export const AgentEventTypeSchema = z.enum([
   "session-ended",
   "subtitle-updated",
   "action-updated",
+  "metadata-updated",
 ]);
 export type AgentEventType = z.infer<typeof AgentEventTypeSchema>;
 
@@ -28,6 +29,8 @@ export const NormalizedAgentEventSchema = z.object({
   occurredAt: z.iso.datetime({ offset: true }),
   subtitle: z.string().max(4_096).optional(),
   action: z.string().max(4_096).optional(),
+  model: z.string().max(4_096).optional(),
+  strength: z.string().max(128).optional(),
 }).strict();
 export type NormalizedAgentEvent = z.infer<typeof NormalizedAgentEventSchema>;
 
@@ -38,6 +41,8 @@ const AgentSessionSnapshotSchema = z.object({
   phase: AgentSessionPhaseSchema,
   subtitle: z.string().max(120).optional(),
   lastAction: z.string().max(160).optional(),
+  model: z.string().max(80).optional(),
+  strength: z.enum(["off", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]).optional(),
   agentUpdatedAt: z.iso.datetime({ offset: true }),
 }).strict();
 export type AgentSessionSnapshot = z.infer<typeof AgentSessionSnapshotSchema>;
@@ -60,6 +65,28 @@ export function sanitizeAgentSubtitle(value: string): string | undefined {
 
 export function sanitizeAgentAction(value: string): string | undefined {
   return sanitizeAgentText(value, 160);
+}
+
+export function sanitizeAgentModel(value: string): string | undefined {
+  return sanitizeAgentText(value, 80);
+}
+
+export function sanitizeAgentStrength(value: string): AgentSessionSnapshot["strength"] {
+  const normalized = sanitizeAgentText(value, 32)?.toLowerCase();
+  if (
+    normalized === "off"
+    || normalized === "none"
+    || normalized === "minimal"
+    || normalized === "low"
+    || normalized === "medium"
+    || normalized === "high"
+    || normalized === "xhigh"
+    || normalized === "max"
+    || normalized === "ultra"
+  ) {
+    return normalized;
+  }
+  return undefined;
 }
 
 function sanitizeAgentText(value: string, maxLength: number): string | undefined {
@@ -129,11 +156,19 @@ export class AgentSessionStateStore {
         phase: phaseForEvent(event.type, current?.phase),
         ...(current?.subtitle ? { subtitle: current.subtitle } : {}),
         ...(current?.lastAction ? { lastAction: current.lastAction } : {}),
+        ...(current?.model ? { model: current.model } : {}),
+        ...(current?.strength ? { strength: current.strength } : {}),
         ...(event.subtitle !== undefined
           ? optionalProperty("subtitle", sanitizeAgentSubtitle(event.subtitle))
           : {}),
         ...(event.action !== undefined
           ? optionalProperty("lastAction", sanitizeAgentAction(event.action))
+          : {}),
+        ...(event.model !== undefined
+          ? optionalProperty("model", sanitizeAgentModel(event.model))
+          : {}),
+        ...(event.strength !== undefined
+          ? optionalProperty("strength", sanitizeAgentStrength(event.strength))
           : {}),
         agentUpdatedAt: event.occurredAt,
       });
@@ -302,6 +337,7 @@ function phaseForEvent(type: AgentEventType, current?: AgentSessionPhase): Agent
   if (type === "attention-requested") return "waiting";
   if (type === "turn-completed") return "completed";
   if (type === "session-ended") return "ended";
+  if (type === "metadata-updated") return current ?? "started";
   if (type === "action-updated" && current === "waiting") return "running";
   return current ?? "running";
 }

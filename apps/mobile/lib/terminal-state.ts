@@ -24,6 +24,8 @@ export interface MobileTerminalSession {
   subtitle?: string;
   lastAction?: string;
   agentUpdatedAt?: string;
+  model?: string;
+  strength?: string;
   updatedAt?: string;
   unread?: boolean;
   tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
@@ -232,6 +234,8 @@ export function parseShellSessions(value: unknown): MobileTerminalSession[] {
     if (typeof c.subtitle === "string") session.subtitle = c.subtitle;
     if (typeof c.lastAction === "string") session.lastAction = c.lastAction;
     if (typeof c.agentUpdatedAt === "string") session.agentUpdatedAt = c.agentUpdatedAt;
+    if (typeof c.model === "string") session.model = c.model;
+    if (typeof c.strength === "string") session.strength = c.strength;
     if (Array.isArray(c.tabs)) {
       const tabs: NonNullable<MobileTerminalSession["tabs"]> = [];
       for (const tab of c.tabs) {

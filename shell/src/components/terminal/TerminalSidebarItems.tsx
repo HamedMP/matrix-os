@@ -24,7 +24,7 @@ import type {
   TerminalAgentOption,
 } from "./terminal-agent-options";
 import { getShellVisualStatus, type ShellSessionSummary } from "./terminal-session-state";
-import { formatTerminalAgentName, TerminalSessionHoverCard } from "./TerminalSessionHoverCard";
+import { formatAgentStrength, formatTerminalAgentName, TerminalSessionHoverCard } from "./TerminalSessionHoverCard";
 
 export const DEFAULT_SHELL_SESSION_NAME = "main";
 
@@ -1257,7 +1257,10 @@ function ShellCard({
                 testIdPrefix="terminal-session-agent-logo"
               />
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {agentName} <span aria-hidden="true">·</span> {liveState}
+                {agentName}
+                {shell.model ? <> <span aria-hidden="true">·</span> {shell.model}</> : null}
+                {shell.strength ? <> <span aria-hidden="true">·</span> {formatAgentStrength(shell.strength)}</> : null}
+                {" "}<span aria-hidden="true">·</span> {liveState}
               </span>
             </span>
           ) : null}

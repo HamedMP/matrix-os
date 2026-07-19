@@ -34,15 +34,27 @@ describe("agent session bridge adapters", () => {
       eventName: "SessionStart",
       sessionName: "calm-otter",
       occurredAt: "2026-07-18T10:00:00.000Z",
-      payload: { source: "startup" },
+      payload: { source: "startup", model: "gpt-5.4", reasoning_effort: "high" },
     })).toEqual([expect.objectContaining({
       type: "session-started",
       agent: "codex",
       sessionName: "calm-otter",
+      model: "gpt-5.4",
+      strength: "high",
     })]);
   });
 
   it("normalizes Claude lifecycle, permission, subtitle, and tool events", () => {
+    expect(normalizeAgentBridgeEvents({
+      agent: "claude",
+      eventName: "SessionStart",
+      sessionName: "calm-otter",
+      occurredAt: "2026-07-18T09:59:59.000Z",
+      payload: { model: "claude-sonnet-4-6" },
+    })).toEqual([expect.objectContaining({
+      model: "claude-sonnet-4-6",
+    })]);
+
     expect(normalizeAgentBridgeEvents({
       agent: "claude",
       eventName: "UserPromptSubmit",
@@ -101,6 +113,18 @@ describe("agent session bridge adapters", () => {
   it("normalizes OpenCode plugin events", () => {
     expect(normalizeAgentBridgeEvents({
       agent: "opencode",
+      eventName: "message.updated",
+      sessionName: "calm-otter",
+      occurredAt: "2026-07-18T09:59:59.000Z",
+      payload: { properties: { info: { providerID: "openai", modelID: "gpt-5.4", variant: "high" } } },
+    })).toEqual([expect.objectContaining({
+      type: "metadata-updated",
+      model: "openai/gpt-5.4",
+      strength: "high",
+    })]);
+
+    expect(normalizeAgentBridgeEvents({
+      agent: "opencode",
       eventName: "session.status",
       sessionName: "calm-otter",
       occurredAt: "2026-07-18T10:00:00.000Z",
@@ -138,11 +162,17 @@ describe("agent session bridge adapters", () => {
       eventName: "before_agent_start",
       sessionName: "calm-otter",
       occurredAt: "2026-07-18T10:00:00.000Z",
-      payload: { prompt: "Improve the terminal session cards." },
+      payload: {
+        prompt: "Improve the terminal session cards.",
+        model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+        strength: "xhigh",
+      },
     })).toEqual([expect.objectContaining({
       type: "turn-started",
       agent: "pi",
       subtitle: "Improve the terminal session cards.",
+      model: "anthropic/claude-sonnet-4-6",
+      strength: "xhigh",
     })]);
 
     expect(normalizeAgentBridgeEvents({
@@ -252,6 +282,10 @@ describe("agent session bridge registration", () => {
     expect(piSource).toContain('spawn("/bin/sh", [');
     expect(piSource).not.toContain("spawn(command,");
     expect(piSource).not.toContain('"agent_start",');
+    expect(piSource).toContain("ctx.model");
+    expect(piSource).toContain("pi.getThinkingLevel()");
+    expect(piSource).toContain('"model_select"');
+    expect(piSource).toContain('"thinking_level_select"');
     await expect(readFile(opencodeBridge, "utf8")).resolves.toContain(
       'Buffer.byteLength(encoded, "utf8") <= 65536',
     );
