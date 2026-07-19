@@ -253,36 +253,20 @@ export async function saveDesktopConfigPatch(
 ): Promise<void> {
   const gatewayUrl = getGatewayUrl();
   const url = `${gatewayUrl}/api/settings/desktop`;
-  const getRes = await fetch(url, {
-    signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
-  });
-  if (!getRes.ok) {
-    throw new Error(`GET /api/settings/desktop ${getRes.status}`);
-  }
-  const config = (await getRes.json()) as Record<string, unknown>;
-  const { dock: dockPatch, ...topLevelPatch } = patch;
-  const definedPatch = Object.fromEntries(
-    Object.entries(topLevelPatch).filter(([, value]) => value !== undefined),
-  );
-  const existingDock = config.dock !== null
-    && typeof config.dock === "object"
-    && !Array.isArray(config.dock)
-    ? config.dock as Record<string, unknown>
-    : {};
-  const nextConfig: Record<string, unknown> = {
-    ...config,
-    ...definedPatch,
-    ...(dockPatch ? { dock: { ...existingDock, ...dockPatch } } : {}),
-  };
-  const putRes = await fetch(url, {
-    method: "PUT",
+  const patchRes = await fetch(url, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
-    body: JSON.stringify(nextConfig),
+    body: JSON.stringify(patch),
   });
-  if (!putRes.ok) {
-    throw new Error(`PUT /api/settings/desktop ${putRes.status}`);
+  if (!patchRes.ok) {
+    throw new Error(`PATCH /api/settings/desktop ${patchRes.status}`);
   }
+  const payload = await patchRes.json() as { config?: unknown };
+  if (!payload.config || typeof payload.config !== "object" || Array.isArray(payload.config)) {
+    throw new Error("PATCH /api/settings/desktop returned an invalid config");
+  }
+  const nextConfig = payload.config as Record<string, unknown>;
   const dockValue = nextConfig.dock;
   const normalizedConfig = {
     ...DEFAULT_DESKTOP_CONFIG,
