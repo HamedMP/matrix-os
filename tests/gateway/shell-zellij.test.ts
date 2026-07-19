@@ -368,9 +368,12 @@ describe("zellij adapter", () => {
       expect(shell).toContain('if [ -z "${MATRIX_TERMINAL_PROMPT:-}" ] && command -v node >/dev/null 2>&1; then');
       expect(shell).not.toContain("/bin/zsh");
       expect(shellMode & 0o700).toBe(0o700);
-      expect(zshrc).toContain('if [ -r "$HOME/.zshrc" ]; then');
       expect(zshrc).toContain('if [ -r "$HOME/.zshenv" ]; then');
-      expect(zshrc.indexOf('$HOME/.zshenv')).toBeLessThan(zshrc.indexOf('$HOME/.zshrc'));
+      expect(zshrc).toContain('matrix_terminal_owner_zdotdir="${ZDOTDIR:-$HOME}"');
+      expect(zshrc).toContain('[ -r "$matrix_terminal_owner_zdotdir/.zshrc" ]; then');
+      expect(zshrc).toContain('. "$matrix_terminal_owner_zdotdir/.zshrc"');
+      expect(zshrc).not.toContain('if [ -r "$HOME/.zshrc" ]; then');
+      expect(zshrc.indexOf('$HOME/.zshenv')).toBeLessThan(zshrc.indexOf('$matrix_terminal_owner_zdotdir/.zshrc'));
       expect(zshrc).toContain('matrix_prepend_terminal_path "${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}/bin"');
       expect(zshrc).toContain('if [ -n "${MATRIX_HOME:-}" ]; then');
       expect(zshrc).toContain('matrix_prepend_terminal_path "$MATRIX_HOME/.local/bin"');

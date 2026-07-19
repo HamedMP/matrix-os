@@ -40,21 +40,22 @@ fi
 `;
 
 export const MATRIX_TERMINAL_ZSHRC = `# Matrix OS generated terminal rcfile.
+matrix_terminal_generated_zdotdir="$ZDOTDIR"
+matrix_terminal_owner_zdotdir="$HOME"
 if [ -r "$HOME/.zshenv" ]; then
-  matrix_terminal_zdotdir="$ZDOTDIR"
   ZDOTDIR="$HOME"
   . "$HOME/.zshenv"
-  ZDOTDIR="$matrix_terminal_zdotdir"
-  unset matrix_terminal_zdotdir
+  matrix_terminal_owner_zdotdir="\${ZDOTDIR:-$HOME}"
 fi
+ZDOTDIR="$matrix_terminal_generated_zdotdir"
 
-if [ -r "$HOME/.zshrc" ]; then
-  matrix_terminal_zdotdir="$ZDOTDIR"
-  ZDOTDIR="$HOME"
-  . "$HOME/.zshrc"
-  ZDOTDIR="$matrix_terminal_zdotdir"
-  unset matrix_terminal_zdotdir
+if [ "$matrix_terminal_owner_zdotdir" != "$matrix_terminal_generated_zdotdir" ] &&
+   [ -r "$matrix_terminal_owner_zdotdir/.zshrc" ]; then
+  ZDOTDIR="$matrix_terminal_owner_zdotdir"
+  . "$matrix_terminal_owner_zdotdir/.zshrc"
+  ZDOTDIR="$matrix_terminal_generated_zdotdir"
 fi
+unset matrix_terminal_owner_zdotdir matrix_terminal_generated_zdotdir
 
 ${MATRIX_TERMINAL_PATH_BOOTSTRAP}
 
