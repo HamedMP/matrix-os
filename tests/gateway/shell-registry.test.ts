@@ -19,6 +19,46 @@ afterEach(async () => {
 });
 
 describe("shell registry", () => {
+  it("decorates listed sessions concurrently", async () => {
+    const root = await tempRoot();
+    const live = new Set<string>();
+    const adapter = {
+      listSessions: vi.fn(async () => Array.from(live)),
+      createSession: vi.fn(async ({ name }: { name: string }) => { live.add(name); }),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const gitContextResolver = {
+      resolve: vi.fn(async () => null),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, gitContextResolver });
+    await registry.create({ name: "calm-otter" });
+    await registry.create({ name: "brisk-falcon" });
+
+    let releaseDecorations = () => {};
+    const decorationGate = new Promise<void>((resolve) => {
+      releaseDecorations = resolve;
+    });
+    gitContextResolver.resolve.mockClear();
+    gitContextResolver.resolve.mockImplementation(async () => {
+      await decorationGate;
+      return null;
+    });
+
+    const listPromise = registry.list();
+    let startedConcurrently = false;
+    try {
+      await vi.waitFor(() => expect(gitContextResolver.resolve).toHaveBeenCalledTimes(2), { timeout: 1_000 });
+      startedConcurrently = true;
+    } catch {
+      // Release the shared gate so a sequential implementation can settle before the assertion.
+    } finally {
+      releaseDecorations();
+    }
+    await listPromise;
+
+    expect(startedConcurrently).toBe(true);
+  });
+
   it("adds gateway-owned project and Git context while preserving the session cwd", async () => {
     const root = await tempRoot();
     const cwd = join(root, "projects", "matrix-os");

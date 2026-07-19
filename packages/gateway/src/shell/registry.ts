@@ -517,14 +517,16 @@ export class ShellRegistry {
   }
 
   private async decorateSession(session: PersistedShellSession, file?: RegistryFile): Promise<ShellSession> {
-    const activity = await this.options.scrollbackStore?.latestActivity?.(session.name);
+    const [activity, agentSnapshot, focusedPaneCwd] = await Promise.all([
+      this.options.scrollbackStore?.latestActivity?.(session.name),
+      this.readAgentSnapshot(session.name),
+      this.readFocusedPaneCwd(session.name),
+    ]);
     const latestSeq = activity?.latestSeq ?? await this.options.scrollbackStore?.latestSeq(session.name) ?? null;
     const lastSeenSeq = session.lastSeenSeq ?? session.lastSeq ?? latestSeq;
     const unread = latestSeq !== null && lastSeenSeq !== null && latestSeq > lastSeenSeq;
     const references = file ? this.referencesForTarget(file, session.name) : [];
     const recoverable = session.status === "exited" && references.length > 0;
-    const agentSnapshot = await this.readAgentSnapshot(session.name);
-    const focusedPaneCwd = await this.readFocusedPaneCwd(session.name);
     const gitContext = await this.readGitContext({ sessionName: session.name, cwd: focusedPaneCwd ?? session.cwd });
     const visualStatus = deriveAgentVisualStatus(agentSnapshot, unread)
       ?? this.deriveVisualStatus(session, unread, activity);
@@ -638,11 +640,7 @@ export class ShellRegistry {
   }
 
   private async decorateSessions(sessions: PersistedShellSession[], file?: RegistryFile): Promise<ShellSession[]> {
-    const decorated: ShellSession[] = [];
-    for (const session of sessions) {
-      decorated.push(await this.decorateSession(session, file));
-    }
-    return decorated;
+    return Promise.all(sessions.map((session) => this.decorateSession(session, file)));
   }
 
   private withRecoverableReferences(
