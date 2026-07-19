@@ -515,11 +515,13 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
             }
 
             const sessionName = await getFirstOrderedShellSessionName();
-            if (!cancelled && sessionName) {
-              addSessionTab(formatShellDisplayName(sessionName), sessionName);
+            if (!cancelled) {
+              if (sessionName) {
+                addSessionTab(formatShellDisplayName(sessionName), sessionName);
+              }
               setInitialized(true);
-              return;
             }
+            return;
           }
         }
       } catch (err: unknown) {

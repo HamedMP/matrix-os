@@ -2751,6 +2751,9 @@ describe("TerminalApp", () => {
     expect(screen.getByText("No terminal tabs open")).toBeTruthy();
     expect(screen.queryByTestId("terminal-pane-grid")).toBeNull();
     expect(terminalSessionPostBodies()).toHaveLength(0);
+    expect(vi.mocked(fetch).mock.calls.filter(([input, init]) => (
+      String(input).endsWith("/api/terminal/sessions") && init?.method !== "POST"
+    ))).toHaveLength(2);
   });
 
   it("replaces mixed canonical and legacy pty layouts with the canonical main shell session", async () => {
