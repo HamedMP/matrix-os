@@ -9,9 +9,6 @@ import type { Project } from "../../desktop/src/renderer/src/stores/board";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
-import { useUi } from "../../desktop/src/renderer/src/stores/ui";
-import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
-import { useCodingAgentProjectWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-project-workspace";
 
 describe("CreateProjectDialog", () => {
   beforeEach(() => {
@@ -31,8 +28,6 @@ describe("CreateProjectDialog", () => {
       error: null,
     });
     useTabs.setState({ tabs: [], activeTabId: null });
-    useUi.setState({ createProjectDestination: "board" });
-    useCodingAgentWorkspace.setState({ summary: null, status: "idle" });
   });
 
   afterEach(() => {
@@ -116,24 +111,26 @@ describe("CreateProjectDialog", () => {
     }));
   });
 
-  it("returns an Agents-created project to chats without opening a board tab", async () => {
+  it("opens the created project in a project tab", async () => {
     const project = { slug: "desktop", name: "Desktop" };
     const createProject = vi.fn(async () => project);
     const selectProject = vi.fn(async () => undefined);
-    const refresh = vi.fn(async () => undefined);
     const openTab = vi.fn();
-    useUi.setState({ createProjectDestination: "agents" });
+    const onClose = vi.fn();
     useBoard.setState({ createProject, selectProject });
-    useCodingAgentWorkspace.setState({ refresh });
     useTabs.setState({ openTab });
 
-    render(<CreateProjectDialog open onClose={vi.fn()} />);
+    render(<CreateProjectDialog open onClose={onClose} />);
     fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Desktop" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
-    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
-    expect(selectProject).not.toHaveBeenCalled();
-    expect(openTab).not.toHaveBeenCalled();
+    await waitFor(() => expect(selectProject).toHaveBeenCalledWith(expect.anything(), "desktop"));
+    await waitFor(() => expect(openTab).toHaveBeenCalledWith({
+      kind: "project",
+      projectSlug: "desktop",
+      title: "Desktop",
+    }));
+    expect(onClose).toHaveBeenCalled();
   });
 
   it("clears the chosen folder when the signed-in session is replaced", async () => {
@@ -176,84 +173,22 @@ describe("CreateProjectDialog", () => {
     expect(createProject).not.toHaveBeenCalled();
   });
 
-  it("keeps the dialog open with an error when the Agents workspace refresh fails after create", async () => {
-    const project = { slug: "desktop", name: "Desktop" };
-    const createProject = vi.fn(async () => project);
-    // The workspace store catches refresh failures internally and clears the
-    // summary, so the dialog observes a resolved refresh with a null summary.
-    const refresh = vi.fn(async () => {
-      useCodingAgentWorkspace.setState({ summary: null });
-    });
-    const openCreatedProject = vi.fn(async () => undefined);
+  it("keeps the dialog open with an error when project creation fails", async () => {
+    const createProject = vi.fn(async () => null);
+    const selectProject = vi.fn(async () => undefined);
     const openTab = vi.fn();
     const onClose = vi.fn();
-    useUi.setState({ createProjectDestination: "agents" });
-    useBoard.setState({ createProject, selectProject: vi.fn(async () => undefined) });
-    useCodingAgentWorkspace.setState({ refresh });
-    useCodingAgentProjectWorkspace.setState({ openCreatedProject });
+    useBoard.setState({ createProject, selectProject });
     useTabs.setState({ openTab });
 
     render(<CreateProjectDialog open onClose={onClose} />);
     fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Desktop" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
-    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
-    await waitFor(() => expect(screen.getByText(/project was created/i)).toBeTruthy());
-    expect(openCreatedProject).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByText(/Couldn't create the project/)).toBeTruthy());
+    expect(selectProject).not.toHaveBeenCalled();
     expect(openTab).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog")).toBeTruthy();
-  });
-
-  it("treats a failed refresh with a stale summary like a missing one", async () => {
-    const project = { slug: "desktop", name: "Desktop" };
-    const staleSummary = { runtime: { id: "rt_primary" } } as never;
-    const createProject = vi.fn(async () => project);
-    // A failed refresh records status "error" but keeps the previous summary;
-    // the dialog must not treat that as success and select against stale data.
-    const refresh = vi.fn(async () => {
-      useCodingAgentWorkspace.setState({ status: "error", summary: staleSummary });
-    });
-    const openCreatedProject = vi.fn(async () => undefined);
-    const onClose = vi.fn();
-    useUi.setState({ createProjectDestination: "agents" });
-    useBoard.setState({ createProject, selectProject: vi.fn(async () => undefined) });
-    useCodingAgentWorkspace.setState({ refresh, summary: staleSummary, status: "ready" });
-    useCodingAgentProjectWorkspace.setState({ openCreatedProject });
-
-    render(<CreateProjectDialog open onClose={onClose} />);
-    fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Desktop" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create" }));
-
-    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
-    await waitFor(() => expect(screen.getByText(/project was created/i)).toBeTruthy());
-    expect(openCreatedProject).not.toHaveBeenCalled();
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
-  it("lands the coding-agent navigator on the project created from the Agents empty state", async () => {
-    const project = { slug: "desktop", name: "Desktop" };
-    const summary = { runtime: { id: "rt_primary" } } as never;
-    const createProject = vi.fn(async () => project);
-    const refresh = vi.fn(async () => undefined);
-    const openCreatedProject = vi.fn(async () => undefined);
-    const openTab = vi.fn();
-    useUi.setState({ createProjectDestination: "agents" });
-    useBoard.setState({ createProject, selectProject: vi.fn(async () => undefined) });
-    useCodingAgentWorkspace.setState({ refresh, summary });
-    useCodingAgentProjectWorkspace.setState({ openCreatedProject });
-    useTabs.setState({ openTab });
-
-    render(<CreateProjectDialog open onClose={vi.fn()} />);
-    fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Desktop" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create" }));
-
-    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
-    await waitFor(() => expect(openCreatedProject).toHaveBeenCalledWith(
-      summary,
-      "desktop",
-      "operator|https://platform.test|primary",
-    ));
-    expect(openTab).not.toHaveBeenCalled();
   });
 });

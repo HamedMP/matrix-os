@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
+import type { ProjectAgentWorkspace } from "@matrix-os/contracts";
 import {
   resolveNewChatRelation,
   groupProjectWorkspaceThreads,
-  reconcileProjectWorkspaceSelection,
-  resolveSelectedProjectId,
+  reconcileProjectChatSelection,
 } from "../../desktop/src/renderer/src/features/coding-agents/project-workspace-model";
 
 const NOW = "2026-07-10T12:00:00.000Z";
@@ -20,38 +19,6 @@ function thread(id: string, title: string, taskId?: string) {
     ...(taskId ? { taskId } : {}),
     createdAt: NOW,
     updatedAt: NOW,
-  };
-}
-
-function summary(): RuntimeSummary {
-  return {
-    runtime: { id: "rt_primary", label: "Primary", status: "available" },
-    capabilities: [
-      { id: "codingAgentsRuntimeSummary", enabled: true },
-      { id: "codingAgentsProjectWorkspace", enabled: true },
-      { id: "codingAgentsConversationView", enabled: true },
-    ],
-    providers: [],
-    projects: {
-      items: [
-        { id: "matrix-os", label: "Matrix OS", status: "available", taskCount: 1, threadCount: 3, attentionCount: 0 },
-        { id: "website", label: "Website", status: "available", taskCount: 0, threadCount: 0, attentionCount: 0 },
-      ],
-      hasMore: false,
-      limit: 20,
-    },
-    activeThreads: { items: [], hasMore: false, limit: 20 },
-    attentionThreads: { items: [], hasMore: false, limit: 20 },
-    terminalSessions: { items: [], hasMore: false, limit: 20 },
-    previewSessions: { items: [], hasMore: false, limit: 50 },
-    recentActivity: { items: [], hasMore: false, limit: 20 },
-    limits: {
-      maxPromptBytes: 16_384,
-      maxAttachmentCount: 8,
-      maxTerminalInputBytes: 8_192,
-      maxListItems: 20,
-    },
-    serverTime: NOW,
   };
 }
 
@@ -98,22 +65,24 @@ function workspace(): ProjectAgentWorkspace {
 }
 
 describe("coding-agent project workspace model", () => {
-  it("DT-004 falls back from a stale persisted project to the first live project", () => {
-    expect(resolveSelectedProjectId(summary(), "deleted-project")).toBe("matrix-os");
+  it("keeps a persisted chat selection the fresh workspace still lists", () => {
+    expect(reconcileProjectChatSelection(workspace(), "thread_fix", new Set())).toBe("thread_fix");
   });
 
-  it("DT-004 reconciles a stale task chat to an independently selectable live chat", () => {
-    expect(reconcileProjectWorkspaceSelection(workspace(), {
-      selectedProjectId: "matrix-os",
-      selectedTaskId: "task_auth",
-      selectedThreadId: "thread_deleted",
-      viewMode: "conversation",
-    })).toEqual({
-      selectedProjectId: "matrix-os",
-      selectedTaskId: "task_auth",
-      selectedThreadId: "thread_plan",
-      viewMode: "conversation",
-    });
+  it("falls back from a stale persisted chat to the first listed chat", () => {
+    expect(reconcileProjectChatSelection(workspace(), "thread_deleted", new Set())).toBe("thread_audit");
+    expect(reconcileProjectChatSelection(workspace(), null, new Set())).toBe("thread_audit");
+  });
+
+  it("keeps a selection the summary still carries outside the workspace page", () => {
+    expect(reconcileProjectChatSelection(workspace(), "thread_attention", new Set(["thread_attention"]))).toBe("thread_attention");
+  });
+
+  it("returns null when the project has no chats at all", () => {
+    const empty = workspace();
+    empty.projectThreads = { ...empty.projectThreads, items: [] };
+    empty.taskThreads = { ...empty.taskThreads, items: [] };
+    expect(reconcileProjectChatSelection(empty, "thread_deleted", new Set())).toBeNull();
   });
 
   it("DT-002 and DT-003 group every task chat separately from project chats", () => {

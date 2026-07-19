@@ -3,7 +3,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultAgentThreadComposerDraft, type AgentThreadSnapshot, type RuntimeSummary } from "@matrix-os/contracts";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
-import { useCodingAgentProjectWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-project-workspace";
+import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
+import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 
 const NOW = "2026-07-12T12:00:00.000Z";
@@ -54,7 +55,8 @@ function snapshot(id: string, prompt: string): AgentThreadSnapshot {
 describe("project to task to chat flow", () => {
   beforeEach(() => {
     useBoard.setState(useBoard.getInitialState(), true);
-    useCodingAgentProjectWorkspace.setState(useCodingAgentProjectWorkspace.getInitialState(), true);
+    useProjectWorkspaces.setState({ entries: {} });
+    useProjectView.setState({ entries: {}, runtimeScope: null });
     useCodingAgentWorkspace.setState(useCodingAgentWorkspace.getInitialState(), true);
   });
 
@@ -75,17 +77,20 @@ describe("project to task to chat flow", () => {
 
     const runtimeSummary = summary();
     useCodingAgentWorkspace.setState({ summary: runtimeSummary, status: "ready" });
-    useCodingAgentProjectWorkspace.setState({
-      status: "ready",
-      summary: runtimeSummary,
-      selectedProjectId: "desktop",
-      selectedTaskId: task!.id,
-      workspace: {
-        project: runtimeSummary.projects.items[0]!,
-        tasks: { items: [{ id: task!.id, projectId: "desktop", title: task!.title, status: "todo", priority: "normal", order: 0, threadCount: 0, activeThreadCount: 0, attentionCount: 0 }], hasMore: false, limit: 100 },
-        projectThreads: { items: [], hasMore: false, limit: 100 },
-        taskThreads: { items: [], hasMore: false, limit: 100 },
-        updatedAt: NOW,
+    useProjectWorkspaces.setState({
+      entries: {
+        desktop: {
+          status: "ready",
+          error: null,
+          fetchedAt: 1,
+          workspace: {
+            project: runtimeSummary.projects.items[0]!,
+            tasks: { items: [{ id: task!.id, projectId: "desktop", title: task!.title, status: "todo", priority: "normal", order: 0, threadCount: 0, activeThreadCount: 0, attentionCount: 0 }], hasMore: false, limit: 100 },
+            projectThreads: { items: [], hasMore: false, limit: 100 },
+            taskThreads: { items: [], hasMore: false, limit: 100 },
+            updatedAt: NOW,
+          },
+        },
       },
     });
 
