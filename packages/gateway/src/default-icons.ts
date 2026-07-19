@@ -2,7 +2,38 @@ import { lstat, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const SAFE_ICON_FILE = /^([a-zA-Z0-9_-]+)\.(png|svg)$/;
+const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]+$/;
 const SKIP_APP_DIRS = new Set(["node_modules"]);
+
+export async function resolveExactSystemIconUrl(homePath: string, requestedIcon: string): Promise<string | null> {
+  let stem: string;
+  let requestedExt: string | undefined;
+  const fileMatch = requestedIcon.match(SAFE_ICON_FILE);
+  if (fileMatch) {
+    [, stem, requestedExt] = fileMatch;
+  } else if (SAFE_ICON_STEM.test(requestedIcon)) {
+    stem = requestedIcon;
+  } else {
+    return null;
+  }
+
+  const candidates = requestedExt
+    ? [`${stem}.${requestedExt}`]
+    : [`${stem}.png`, `${stem}.svg`];
+
+  for (const candidate of candidates) {
+    try {
+      const iconStat = await lstat(join(homePath, "system/icons", candidate));
+      if (iconStat.isFile()) return `/files/system/icons/${candidate}`;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        console.warn("[icons] failed to stat exact system icon:", err instanceof Error ? err.message : String(err));
+      }
+    }
+  }
+
+  return null;
+}
 
 export async function resolveSystemIconUrl(homePath: string, requestedFile: string): Promise<string | null> {
   const match = requestedFile.match(SAFE_ICON_FILE);

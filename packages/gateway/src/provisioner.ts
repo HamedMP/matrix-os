@@ -13,6 +13,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Dispatcher, BatchEntry, BatchResult } from "./dispatcher.js";
 import type { ServerMessage } from "./server.js";
+import { resolveExactSystemIconUrl } from "./default-icons.js";
 
 export interface ProvisionerConfig {
   homePath: string;
@@ -103,14 +104,14 @@ export function createProvisioner(config: ProvisionerConfig) {
   return { onSetupPlanChange };
 }
 
-async function generateIconsForApps(homePath: string, apiKey: string, appNames: string[]) {
+export async function generateIconsForApps(homePath: string, apiKey: string, appNames: string[]) {
   const iconStyle = loadIconStyle(homePath);
   const client = createImageClient(apiKey);
   const iconsDir = join(homePath, "system/icons");
 
   for (const appName of appNames) {
     const slug = appName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-    if (existsSync(join(iconsDir, `${slug}.png`))) continue;
+    if (existsSync(join(iconsDir, `${slug}.png`)) || await resolveExactSystemIconUrl(homePath, slug)) continue;
     try {
       await client.generateImage(buildIconPrompt(slug, iconStyle), {
         aspectRatio: "1:1",

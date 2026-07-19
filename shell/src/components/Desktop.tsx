@@ -596,6 +596,8 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     generatingRef.current.add(slug);
     fetch(`${GATEWAY_URL}/api/apps/${slug}/icon`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ regenerate: true }),
       signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
     })
       .then((r) => {

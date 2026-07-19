@@ -113,6 +113,7 @@ import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
 import { createQueryEngine, type FilterValue, type QueryEngine } from "./app-db-query.js";
 import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
+import { isExplicitIconRegeneration } from "./icon-request.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
 import { createPipedreamClient, type PipedreamConnectClient } from "./integrations/pipedream.js";
 import {
@@ -3230,7 +3231,19 @@ export async function createGateway(config: GatewayConfig) {
     if (!/^[a-zA-Z0-9_-]+$/.test(slug)) {
       return c.json({ error: "Invalid slug" }, 400);
     }
-    const shippedDefaultIcon = await resolveDefaultAppIconUrl(homePath, slug);
+
+    let body: { style?: string; regenerate?: boolean } = {};
+    try {
+      body = await c.req.json();
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) {
+        console.error("[gateway] Failed to parse icon generation body:", err);
+        return c.json({ error: "Failed to read request body" }, 500);
+      }
+    }
+
+    const explicitRegeneration = isExplicitIconRegeneration(body);
+    const shippedDefaultIcon = explicitRegeneration ? null : await resolveDefaultAppIconUrl(homePath, slug);
     if (shippedDefaultIcon) {
       return c.json({
         iconUrl: shippedDefaultIcon,
@@ -3246,16 +3259,6 @@ export async function createGateway(config: GatewayConfig) {
       });
     }
     try {
-      let body: { style?: string } = {};
-      try {
-        body = await c.req.json();
-      } catch (err: unknown) {
-        if (!(err instanceof SyntaxError)) {
-          console.error("[gateway] Failed to parse icon generation body:", err);
-          return c.json({ error: "Failed to read request body" }, 500);
-        }
-      }
-
       const iconStyle = body.style || loadIconStyle(homePath);
       const client = createImageClient(geminiKey);
       const prompt = buildIconPrompt(slug, iconStyle);
