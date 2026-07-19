@@ -33,6 +33,7 @@ export default function App() {
   const zCounter = useRef(1);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingNotes = useRef<StickyNote[] | null>(null);
   const dragCleanupRef = useRef<(() => void) | null>(null);
 
   // Remove window-level drag listeners if the app unmounts mid-gesture.
@@ -65,10 +66,15 @@ export default function App() {
   useEffect(() => {
     if (!loaded) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
+    pendingNotes.current = notes;
     saveTimer.current = setTimeout(() => {
+      const value = pendingNotes.current;
+      pendingNotes.current = null;
+      saveTimer.current = null;
+      if (!value) return;
       void (async () => {
         try {
-          await window.MatrixOS?.writeData?.(NOTES_KEY, notes);
+          await window.MatrixOS?.writeData?.(NOTES_KEY, value);
         } catch (err: unknown) {
           console.warn("[stickies] notes save failed:", errMsg(err));
         }
@@ -78,6 +84,23 @@ export default function App() {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, [notes, loaded]);
+
+  // A window can close inside the debounce window. Flush the latest value so
+  // authentic window chrome never turns a quick close into silent data loss.
+  useEffect(() => () => {
+    const value = pendingNotes.current;
+    if (!value) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    pendingNotes.current = null;
+    saveTimer.current = null;
+    void (async () => {
+      try {
+        await window.MatrixOS?.writeData?.(NOTES_KEY, value);
+      } catch (err: unknown) {
+        console.warn("[stickies] notes save-on-close failed:", errMsg(err));
+      }
+    })();
+  }, []);
 
   const addNote = useCallback(() => {
     zCounter.current += 1;
