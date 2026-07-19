@@ -14,6 +14,10 @@ export interface ShellSessionSummary {
   agentUpdatedAt?: string;
   model?: string;
   strength?: string;
+  project?: string;
+  repository?: string;
+  branch?: string;
+  pullRequest?: { number: number; url?: string };
   attachCommand?: string;
   tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
 }
@@ -58,6 +62,11 @@ export function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSess
       session.agentUpdatedAt !== next.agentUpdatedAt ||
       session.model !== next.model ||
       session.strength !== next.strength ||
+      session.project !== next.project ||
+      session.repository !== next.repository ||
+      session.branch !== next.branch ||
+      session.pullRequest?.number !== next.pullRequest?.number ||
+      session.pullRequest?.url !== next.pullRequest?.url ||
       session.attachCommand !== next.attachCommand
     ) {
       return false;

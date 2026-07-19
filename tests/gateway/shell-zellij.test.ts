@@ -85,6 +85,31 @@ describe("zellij adapter", () => {
     );
   });
 
+  it("reads the focused terminal pane cwd from bounded structured zellij queries", async () => {
+    const execFile = vi.fn((_file, args: string[], _opts, cb) => {
+      const stdout = args.includes("current-tab-info")
+        ? JSON.stringify({ tab_id: 4, active: true })
+        : JSON.stringify([
+          { id: 1, is_plugin: false, is_focused: true, tab_id: 2, pane_cwd: "/home/alice/other" },
+          { id: 2, is_plugin: false, is_focused: true, tab_id: 4, pane_cwd: "/home/alice/project" },
+          { id: 3, is_plugin: true, is_focused: false, tab_id: 4, pane_cwd: null },
+        ]);
+      cb(null, stdout, "");
+      return childProcess();
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.focusedPaneCwd("main")).resolves.toBe("/home/alice/project");
+    await expect(adapter.focusedPaneCwd("main")).resolves.toBe("/home/alice/project");
+    expect(execFile).toHaveBeenCalledTimes(2);
+    expect(execFile).toHaveBeenCalledWith(
+      "zellij",
+      ["--session", "main", "action", "list-panes", "--all", "--json"],
+      expect.objectContaining({ timeout: 25, signal: expect.any(AbortSignal) }),
+      expect.any(Function),
+    );
+  });
+
   it("treats zellij's no-active-sessions response as an empty session list", async () => {
     const execFile = vi.fn((_file, _args, _opts, cb) => {
       cb(Object.assign(new Error("zellij exited"), { code: 1 }), "", "NO ACTIVE ZELLIJ SESSIONS FOUND\n");

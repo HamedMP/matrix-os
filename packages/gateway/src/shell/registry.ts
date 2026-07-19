@@ -12,6 +12,11 @@ import {
 import { shellError } from "./errors.js";
 import { resolveShellCwd, SESSION_NAME_PATTERN, validateLayoutName, validateSessionName } from "./names.js";
 import type { ScrollbackActivity, ScrollbackStore } from "./scrollback-store.js";
+import {
+  TerminalGitContextResolver,
+  type TerminalGitContext,
+  type TerminalGitContextInput,
+} from "./terminal-git-context.js";
 
 const ShellPlacementSchema = z.enum(["active", "background"]);
 const ShellVisualStatusSchema = z.enum(["running", "finished", "idle", "waiting"]);
@@ -25,6 +30,7 @@ const SHELL_RUNNING_FALLBACK_WINDOW_MS = 12_000;
 
 export interface ShellRegistryAdapter {
   listSessions(): Promise<string[]>;
+  focusedPaneCwd?(name: string): Promise<string | null>;
   createSession(options: { name: string; cwd?: string; layout?: string; cmd?: string }): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
   renameSession?(name: string, nextName: string): Promise<void>;
@@ -57,6 +63,7 @@ const ShellSessionSchema = z.object({
   visualStatus: ShellVisualStatusSchema.optional(),
   visualStatusUpdatedAt: z.string().optional(),
   agent: AgentKindSchema.optional(),
+  cwd: z.string().max(4096).optional(),
 });
 
 const RegistryFileSchema = z.object({
@@ -77,7 +84,7 @@ export interface ShellSessionAlias {
   target: string;
   source: ShellSessionAliasSource;
 }
-export interface ShellSession extends PersistedShellSession {
+export type ShellSession = Omit<PersistedShellSession, "cwd"> & {
   canonicalName: string;
   latestSeq: number | null;
   unread: boolean;
@@ -93,7 +100,11 @@ export interface ShellSession extends PersistedShellSession {
   agentUpdatedAt?: string;
   model?: string;
   strength?: string;
-}
+  project?: string;
+  repository?: string;
+  branch?: string;
+  pullRequest?: TerminalGitContext["pullRequest"];
+};
 
 export interface ShellSessionUiStatePatch {
   placement?: ShellPlacement;
@@ -118,17 +129,20 @@ export interface ShellRegistryOptions {
   scrollbackStore?: ScrollbackStore;
   preferencesStore?: ShellNameScopedStore;
   agentStateStore?: ShellAgentStateStore;
+  gitContextResolver?: { resolve(input: TerminalGitContextInput): Promise<TerminalGitContext | null> };
 }
 
 export class ShellRegistry {
   private readonly persistPath: string;
   private readonly agentStateStore: ShellAgentStateStore;
+  private readonly gitContextResolver: { resolve(input: TerminalGitContextInput): Promise<TerminalGitContext | null> };
   private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: ShellRegistryOptions) {
     this.persistPath =
       options.persistPath ?? join(options.homePath, "system", "shell-sessions.json");
     this.agentStateStore = options.agentStateStore ?? new AgentSessionStateStore({ homePath: options.homePath });
+    this.gitContextResolver = options.gitContextResolver ?? new TerminalGitContextResolver({ homePath: options.homePath });
   }
 
   async list(): Promise<ShellSession[]> {
@@ -213,6 +227,7 @@ export class ShellRegistry {
           updatedAt: now,
           ...(layoutName ? { layoutName } : {}),
           ...(agent ? { agent } : {}),
+          ...(cwd ? { cwd } : {}),
         };
         file.sessions[name] = session;
         await this.write(file);
@@ -235,6 +250,7 @@ export class ShellRegistry {
         lastSeenSeq: null,
         kind: "session",
         ...(agent ? { agent } : {}),
+        ...(cwd ? { cwd } : {}),
       };
       file.sessions[name] = session;
       if (file.order) {
@@ -508,16 +524,23 @@ export class ShellRegistry {
     const references = file ? this.referencesForTarget(file, session.name) : [];
     const recoverable = session.status === "exited" && references.length > 0;
     const agentSnapshot = await this.readAgentSnapshot(session.name);
+    const focusedPaneCwd = await this.readFocusedPaneCwd(session.name);
+    const gitContext = await this.readGitContext({ sessionName: session.name, cwd: focusedPaneCwd ?? session.cwd });
     const visualStatus = deriveAgentVisualStatus(agentSnapshot, unread)
       ?? this.deriveVisualStatus(session, unread, activity);
+    const { cwd: _internalCwd, ...publicSession } = session;
     return {
-      ...session,
+      ...publicSession,
       ...(agentSnapshot?.agent ? { agent: agentSnapshot.agent } : {}),
       ...(agentSnapshot?.subtitle ? { subtitle: agentSnapshot.subtitle } : {}),
       ...(agentSnapshot?.lastAction ? { lastAction: agentSnapshot.lastAction } : {}),
       ...(agentSnapshot?.agentUpdatedAt ? { agentUpdatedAt: agentSnapshot.agentUpdatedAt } : {}),
       ...(agentSnapshot?.model ? { model: agentSnapshot.model } : {}),
       ...(agentSnapshot?.strength ? { strength: agentSnapshot.strength } : {}),
+      ...(gitContext?.project ? { project: gitContext.project } : {}),
+      ...(gitContext?.repository ? { repository: gitContext.repository } : {}),
+      ...(gitContext?.branch ? { branch: gitContext.branch } : {}),
+      ...(gitContext?.pullRequest ? { pullRequest: gitContext.pullRequest } : {}),
       placement: session.placement ?? "active",
       lastSeenSeq: lastSeenSeq ?? null,
       latestSeq,
@@ -765,6 +788,32 @@ export class ShellRegistry {
     } catch (err: unknown) {
       console.warn(
         "[shell] agent session state unavailable:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return null;
+    }
+  }
+
+  private async readFocusedPaneCwd(name: string): Promise<string | null> {
+    if (!this.options.adapter.focusedPaneCwd) return null;
+    try {
+      const cwd = await this.options.adapter.focusedPaneCwd(name);
+      return cwd ? await resolveShellCwd(cwd, this.options.homePath) : null;
+    } catch (err: unknown) {
+      console.warn(
+        "[shell] focused pane cwd unavailable:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return null;
+    }
+  }
+
+  private async readGitContext(input: TerminalGitContextInput): Promise<TerminalGitContext | null> {
+    try {
+      return await this.gitContextResolver.resolve(input);
+    } catch (err: unknown) {
+      console.warn(
+        "[shell] terminal Git context unavailable:",
         err instanceof Error ? err.message : String(err),
       );
       return null;

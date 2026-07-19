@@ -13,6 +13,7 @@ export * from "./registry.js";
 export * from "./replay-buffer.js";
 export * from "./routes.js";
 export * from "./scrollback-store.js";
+export * from "./terminal-git-context.js";
 export * from "./ws.js";
 export * from "./reaper.js";
 export * from "./output-pipeline.js";

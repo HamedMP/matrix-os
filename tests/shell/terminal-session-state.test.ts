@@ -31,6 +31,10 @@ describe("terminal session state helpers", () => {
       agentUpdatedAt: "2026-07-18T10:00:00.000Z",
       model: "gpt-5.4",
       strength: "high",
+      project: "Matrix OS",
+      repository: "HamedMP/matrix-os",
+      branch: "codex/session-context",
+      pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
     };
     expect(shellSessionsEqual([mainShell], [agentShell])).toBe(false);
     expect(shellSessionsEqual([agentShell], [{ ...agentShell }])).toBe(true);

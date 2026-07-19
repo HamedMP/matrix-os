@@ -29,6 +29,122 @@ import { formatAgentStrength, formatTerminalAgentName, TerminalSessionHoverCard 
 export const DEFAULT_SHELL_SESSION_NAME = "main";
 
 const COLLAPSED_RAIL_ITEM_SIZE = 40;
+const COMPACT_GIT_CONTEXT_GAP = 8;
+
+export function doesCompactGitContextFit(input: {
+  availableWidth: number;
+  primaryWidth: number;
+  contextWidth: number;
+}): boolean {
+  return input.availableWidth > 0 && input.contextWidth > 0 &&
+    input.primaryWidth + COMPACT_GIT_CONTEXT_GAP + input.contextWidth <= input.availableWidth;
+}
+
+function compactGitContextLabel(shell: ShellSessionSummary): string | null {
+  const parts = [
+    shell.repository,
+    shell.pullRequest ? `PR #${shell.pullRequest.number}` : undefined,
+  ].filter((value): value is string => Boolean(value));
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+function TerminalAgentMetadataLine({
+  shell,
+  agentName,
+  liveState,
+}: {
+  shell: ShellSessionSummary;
+  agentName: string;
+  liveState: string;
+}) {
+  const rowRef = useRef<HTMLSpanElement>(null);
+  const primaryRef = useRef<HTMLSpanElement>(null);
+  const contextRef = useRef<HTMLSpanElement>(null);
+  const [showContext, setShowContext] = useState(false);
+  const contextLabel = compactGitContextLabel(shell);
+
+  useEffect(() => {
+    const row = rowRef.current;
+    const primary = primaryRef.current;
+    const context = contextRef.current;
+    if (!row || !primary || !context || !contextLabel) {
+      setShowContext(false);
+      return;
+    }
+    const measure = () => setShowContext(doesCompactGitContextFit({
+      availableWidth: row.clientWidth,
+      primaryWidth: primary.scrollWidth + 21,
+      contextWidth: context.scrollWidth + 9,
+    }));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [contextLabel, shell.model, shell.strength, liveState]);
+
+  return (
+    <span
+      ref={rowRef}
+      data-testid={`terminal-session-agent-state-${shell.name}`}
+      style={{
+        alignItems: "center",
+        color: "var(--terminal-drawer-subtle)",
+        display: "flex",
+        fontFamily: "Inter, system-ui, sans-serif",
+        fontSize: 10,
+        fontWeight: 700,
+        gap: 5,
+        lineHeight: "16px",
+        minWidth: 0,
+        overflow: "hidden",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <TerminalAgentLogo agent={shell.agent!} compact testIdPrefix="terminal-session-agent-logo" />
+      <span
+        ref={primaryRef}
+        style={{
+          flexShrink: showContext ? 0 : 1,
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          textTransform: "capitalize",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {agentName}
+        {shell.model ? <> <span aria-hidden="true">·</span> {shell.model}</> : null}
+        {shell.strength ? <> <span aria-hidden="true">·</span> {formatAgentStrength(shell.strength)}</> : null}
+        {" "}<span aria-hidden="true">·</span> {liveState}
+      </span>
+      {contextLabel ? (
+        <span
+          ref={contextRef}
+          data-testid={`terminal-session-compact-git-${shell.name}`}
+          aria-hidden={showContext ? undefined : "true"}
+          style={showContext ? {
+            borderLeft: "1px solid var(--terminal-drawer-card-border)",
+            flexShrink: 0,
+            marginLeft: COMPACT_GIT_CONTEXT_GAP - 5,
+            paddingLeft: COMPACT_GIT_CONTEXT_GAP,
+            textTransform: "none",
+            whiteSpace: "nowrap",
+          } : {
+            borderLeft: "1px solid var(--terminal-drawer-card-border)",
+            paddingLeft: COMPACT_GIT_CONTEXT_GAP,
+            pointerEvents: "none",
+            position: "absolute",
+            textTransform: "none",
+            visibility: "hidden",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {contextLabel}
+        </span>
+      ) : null}
+    </span>
+  );
+}
 
 const SHELL_ROW_BUTTON_STYLE: CSSProperties = {
   background: "transparent",
@@ -1234,35 +1350,7 @@ function ShellCard({
             </span>
           ) : null}
           {shell.agent && agentName ? (
-            <span
-              data-testid={`terminal-session-agent-state-${shell.name}`}
-              style={{
-                alignItems: "center",
-                color: "var(--terminal-drawer-subtle)",
-                display: "flex",
-                fontFamily: "Inter, system-ui, sans-serif",
-                fontSize: 10,
-                fontWeight: 700,
-                gap: 5,
-                lineHeight: "16px",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                textTransform: "capitalize",
-                whiteSpace: "nowrap",
-              }}
-            >
-              <TerminalAgentLogo
-                agent={shell.agent}
-                compact
-                testIdPrefix="terminal-session-agent-logo"
-              />
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {agentName}
-                {shell.model ? <> <span aria-hidden="true">·</span> {shell.model}</> : null}
-                {shell.strength ? <> <span aria-hidden="true">·</span> {formatAgentStrength(shell.strength)}</> : null}
-                {" "}<span aria-hidden="true">·</span> {liveState}
-              </span>
-            </span>
+            <TerminalAgentMetadataLine shell={shell} agentName={agentName} liveState={liveState} />
           ) : null}
           {!renaming && (
             <div

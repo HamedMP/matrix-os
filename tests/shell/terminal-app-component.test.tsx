@@ -63,6 +63,7 @@ vi.mock("@/stores/terminal-settings", () => {
 });
 
 import { TerminalApp } from "../../shell/src/components/terminal/TerminalApp.js";
+import { doesCompactGitContextFit } from "../../shell/src/components/terminal/TerminalSidebarItems.js";
 import { getTerminalThemePreset } from "../../shell/src/components/terminal/terminal-themes.js";
 
 function normalizeCssColor(color: string) {
@@ -297,6 +298,10 @@ describe("TerminalApp", () => {
               agentUpdatedAt: "2026-07-18T10:00:00.000Z",
               model: "gpt-5.4",
               strength: "high",
+              project: "Matrix OS",
+              repository: "HamedMP/matrix-os",
+              branch: "codex/session-context",
+              pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
               tabs: [],
             },
             { name: "main", status: "active", placement: "active", tabs: [] },
@@ -327,6 +332,9 @@ describe("TerminalApp", () => {
     expect(agentState.textContent).toContain("waiting");
     expect(agentState.textContent).toContain("gpt-5.4");
     expect(agentState.textContent).toContain("High");
+    const compactGitContext = within(agentState).getByTestId("terminal-session-compact-git-calm-otter");
+    expect(compactGitContext.textContent).toBe("HamedMP/matrix-os · PR #1032");
+    expect(compactGitContext.style.position).toBe("absolute");
     expectOptimizedImageSrc(
       within(agentState).getByTestId("terminal-session-agent-logo-image-codex"),
       "/agent-logos/codex.png",
@@ -358,6 +366,16 @@ describe("TerminalApp", () => {
     expect(hoverCard.textContent).toContain("gpt-5.4");
     expect(hoverCard.textContent).toContain("Strength");
     expect(hoverCard.textContent).toContain("High");
+    expect(hoverCard.textContent).toContain("Project");
+    expect(hoverCard.textContent).toContain("Matrix OS");
+    expect(hoverCard.textContent).toContain("Repository");
+    expect(hoverCard.textContent).toContain("HamedMP/matrix-os");
+    expect(hoverCard.textContent).toContain("Branch");
+    expect(hoverCard.textContent).toContain("codex/session-context");
+    expect(hoverCard.textContent).toContain("Pull request");
+    expect(within(hoverCard).getByRole("link", { name: "PR #1032" }).getAttribute("href")).toBe(
+      "https://github.com/HamedMP/matrix-os/pull/1032",
+    );
     expectOptimizedImageSrc(
       within(hoverCard).getByTestId("terminal-session-hover-agent-logo-image-codex"),
       "/agent-logos/codex.png",
@@ -403,6 +421,12 @@ describe("TerminalApp", () => {
     const plainHoverCard = screen.getByTestId("terminal-session-hover-card-main");
     expect(plainHoverCard.textContent).toContain("Terminal");
     expect(plainHoverCard.textContent).toContain("active");
+  });
+
+  it("shows compact Git context only when it fits on the existing metadata line", () => {
+    expect(doesCompactGitContextFit({ availableWidth: 360, primaryWidth: 190, contextWidth: 130 })).toBe(true);
+    expect(doesCompactGitContextFit({ availableWidth: 280, primaryWidth: 190, contextWidth: 130 })).toBe(false);
+    expect(doesCompactGitContextFit({ availableWidth: 0, primaryWidth: 0, contextWidth: 0 })).toBe(false);
   });
 
   it("marks restored codex-* shell sessions for Codex TUI compatibility", async () => {

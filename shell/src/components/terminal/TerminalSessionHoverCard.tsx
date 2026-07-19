@@ -83,6 +83,38 @@ function canOpenToRight(card: HTMLElement | null): boolean {
   return card.getBoundingClientRect().right + HOVER_CARD_GAP + HOVER_CARD_WIDTH <= window.innerWidth - 12;
 }
 
+function safePullRequestUrl(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "github.com" ? url.toString() : null;
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) {
+      console.warn("Failed to validate terminal pull request URL");
+    }
+    return null;
+  }
+}
+
+function ContextField({
+  label,
+  value,
+  theme,
+}: {
+  label: string;
+  value: string;
+  theme: TerminalHoverCardTheme;
+}) {
+  return (
+    <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+      <span style={{ color: theme.subtle, fontSize: 10, fontWeight: 750 }}>{label}</span>
+      <span style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, overflowWrap: "anywhere" }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
 export function TerminalSessionHoverCard({
   shell,
   displayName,
@@ -104,6 +136,8 @@ export function TerminalSessionHoverCard({
   const agentName = shell.agent ? formatTerminalAgentName(shell.agent) : "Terminal";
   const liveState = getShellVisualStatus(shell);
   const updatedAt = shell.agent ? shell.agentUpdatedAt : shell.updatedAt;
+  const pullRequestUrl = safePullRequestUrl(shell.pullRequest?.url);
+  const hasProjectContext = Boolean(shell.project || shell.repository || shell.branch || shell.pullRequest);
   const canDisplay = open && !suppressed && canOpenToRight(cardRef.current);
   useEffect(() => {
     if (canDisplay) setTheme(readHoverCardTheme(cardRef.current));
@@ -176,6 +210,32 @@ export function TerminalSessionHoverCard({
             <p style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, lineHeight: "18px", margin: 0, overflowWrap: "anywhere" }}>
               {shell.subtitle}
             </p>
+          ) : null}
+          {hasProjectContext ? (
+            <div data-testid={`terminal-session-project-context-${shell.name}`} style={{ display: "grid", gap: 9 }}>
+              {shell.project ? <ContextField label="Project" value={shell.project} theme={theme} /> : null}
+              {shell.repository ? <ContextField label="Repository" value={shell.repository} theme={theme} /> : null}
+              {shell.branch ? <ContextField label="Branch" value={shell.branch} theme={theme} /> : null}
+              {shell.pullRequest ? (
+                <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+                  <span style={{ color: theme.subtle, fontSize: 10, fontWeight: 750 }}>Pull request</span>
+                  {pullRequestUrl ? (
+                    <a
+                      href={pullRequestUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ color: theme.foreground, fontFamily: "Inter, system-ui, sans-serif", fontSize: 12 }}
+                    >
+                      PR #{shell.pullRequest.number}
+                    </a>
+                  ) : (
+                    <span style={{ fontFamily: "Inter, system-ui, sans-serif", fontSize: 12 }}>
+                      PR #{shell.pullRequest.number}
+                    </span>
+                  )}
+                </div>
+              ) : null}
+            </div>
           ) : null}
           {!shell.agent ? (
             <div style={{ display: "grid", gap: 3 }}>

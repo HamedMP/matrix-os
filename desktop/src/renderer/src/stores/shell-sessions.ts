@@ -23,6 +23,10 @@ export interface ShellSessionSummary {
   agentUpdatedAt?: string;
   model?: string;
   strength?: string;
+  project?: string;
+  repository?: string;
+  branch?: string;
+  pullRequest?: { number: number; url?: string };
   attachCommand?: string;
   tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
 }
@@ -101,6 +105,18 @@ function asShellSession(value: unknown): ShellSessionSummary | null {
   if (typeof record.agentUpdatedAt === "string") shell.agentUpdatedAt = record.agentUpdatedAt;
   if (typeof record.model === "string") shell.model = record.model;
   if (typeof record.strength === "string") shell.strength = record.strength;
+  if (typeof record.project === "string") shell.project = record.project;
+  if (typeof record.repository === "string") shell.repository = record.repository;
+  if (typeof record.branch === "string") shell.branch = record.branch;
+  if (record.pullRequest && typeof record.pullRequest === "object") {
+    const pullRequest = record.pullRequest as Record<string, unknown>;
+    if (Number.isSafeInteger(pullRequest.number) && (pullRequest.number as number) > 0) {
+      shell.pullRequest = {
+        number: pullRequest.number as number,
+        ...(typeof pullRequest.url === "string" ? { url: pullRequest.url } : {}),
+      };
+    }
+  }
   if (Array.isArray(record.tabs)) {
     const tabs: NonNullable<ShellSessionSummary["tabs"]> = [];
     for (const tab of record.tabs) {

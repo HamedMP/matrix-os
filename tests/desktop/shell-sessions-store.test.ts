@@ -72,6 +72,10 @@ describe("useShellSessions", () => {
               agentUpdatedAt: "2026-07-18T10:00:00.000Z",
               model: "gpt-5.4",
               strength: "high",
+              project: "Matrix OS",
+              repository: "HamedMP/matrix-os",
+              branch: "codex/session-context",
+              pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
               attachCommand: "matrix shell connect matrix-main",
               tabs: [{ idx: 0, name: "main", focused: true }],
             },
@@ -97,6 +101,10 @@ describe("useShellSessions", () => {
       agentUpdatedAt: "2026-07-18T10:00:00.000Z",
       model: "gpt-5.4",
       strength: "high",
+      project: "Matrix OS",
+      repository: "HamedMP/matrix-os",
+      branch: "codex/session-context",
+      pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
     });
   });
 

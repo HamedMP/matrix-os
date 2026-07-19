@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +19,43 @@ afterEach(async () => {
 });
 
 describe("shell registry", () => {
+  it("adds gateway-owned project and Git context while preserving the session cwd", async () => {
+    const root = await tempRoot();
+    const cwd = join(root, "projects", "matrix-os");
+    await mkdir(cwd, { recursive: true });
+    const live = new Set<string>();
+    const adapter = {
+      listSessions: vi.fn(async () => Array.from(live)),
+      createSession: vi.fn(async ({ name }: { name: string }) => { live.add(name); }),
+      deleteSession: vi.fn(async () => undefined),
+      focusedPaneCwd: vi.fn(async () => cwd),
+    };
+    const gitContextResolver = {
+      resolve: vi.fn(async () => ({
+        project: "Matrix OS",
+        repository: "HamedMP/matrix-os",
+        branch: "codex/session-context",
+        pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
+      })),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, gitContextResolver });
+
+    await registry.create({ name: "calm-otter", cwd });
+    const resolvedCwd = await realpath(cwd);
+    const listed = await registry.list();
+    expect(listed).toMatchObject([{
+      name: "calm-otter",
+      project: "Matrix OS",
+      repository: "HamedMP/matrix-os",
+      branch: "codex/session-context",
+      pullRequest: { number: 1032, url: "https://github.com/HamedMP/matrix-os/pull/1032" },
+    }]);
+    expect(listed[0]).not.toHaveProperty("cwd");
+    const persisted = JSON.parse(await readFile(join(root, "system", "shell-sessions.json"), "utf8"));
+    expect(persisted.sessions["calm-otter"].cwd).toBe(resolvedCwd);
+    expect(gitContextResolver.resolve).toHaveBeenCalledWith({ sessionName: "calm-otter", cwd: resolvedCwd });
+  });
+
   it("persists an explicitly launched agent and omits agent metadata from plain terminals", async () => {
     const root = await tempRoot();
     const live = new Set<string>();
