@@ -21,6 +21,7 @@ import {
   clearMatrixAppSession,
   clerkSignOutWithTimeout,
   getSignInRedirectUrl,
+  isTimeoutError,
 } from "@/lib/sign-out";
 import { useOsSessionStore } from "../os-session/os-session-store";
 import { StartMenuUser, TaskbarAppIcon } from "./taskbar-shared";
@@ -116,7 +117,12 @@ export function Win11StartMenu({ ref, apps, onOpenApp, onOpenSettings, onClose }
     try {
       await clerkSignOutWithTimeout(signOut, redirectUrl);
       window.location.replace(redirectUrl);
-    } catch {
+    } catch (error: unknown) {
+      if (isTimeoutError(error)) {
+        console.warn("[auth] Clerk sign-out timed out");
+      } else {
+        console.error("[auth] Clerk sign-out failed", error instanceof Error ? error.name : typeof error);
+      }
       window.location.replace(redirectUrl);
     }
   };
