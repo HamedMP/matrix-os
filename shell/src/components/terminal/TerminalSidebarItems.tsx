@@ -910,6 +910,7 @@ function ShellCard({
   const renameControlLabel = `Rename ${displayName}`;
   const toggleMenuLabel = foreground ? "Move to Background" : "Make Active";
   const agentName = shell.agent ? formatTerminalAgentName(shell.agent) : null;
+  const hasSubtitle = Boolean(shell.subtitle?.trim());
   const liveState = getShellVisualStatus(shell);
   const hoverSuppressed = contextMenuOpen || renaming || dragging || Boolean(deleting);
   const scheduleHoverCardOpen = () => {
@@ -1146,7 +1147,7 @@ function ShellCard({
         display: "grid",
         gap: 10,
         gridTemplateColumns: "minmax(0, 1fr)",
-        height: shell.agent ? 78 : 52,
+        height: shell.agent ? hasSubtitle ? 78 : 60 : 52,
         opacity: dragging ? 0.94 : foreground ? 1 : 0.86,
         padding: "0 12px",
         position: "relative",
@@ -1238,7 +1239,7 @@ function ShellCard({
             display: "grid",
             gap: shell.agent ? 2 : 0,
             gridTemplateColumns: "minmax(0, 1fr)",
-            gridTemplateRows: shell.agent ? "18px 16px 16px" : "24px",
+            gridTemplateRows: shell.agent ? hasSubtitle ? "18px 16px 16px" : "18px 16px" : "24px",
             paddingRight: 34,
           }}
         >
@@ -1316,7 +1317,7 @@ function ShellCard({
               </>
             )}
           </div>
-          {shell.agent ? (
+          {shell.agent && hasSubtitle ? (
             <span
               data-testid={`terminal-session-subtitle-${shell.name}`}
               style={{
@@ -1331,7 +1332,7 @@ function ShellCard({
               }}
               title={shell.subtitle}
             >
-              {shell.subtitle ?? ""}
+              {shell.subtitle}
             </span>
           ) : null}
           {shell.agent && agentName ? (

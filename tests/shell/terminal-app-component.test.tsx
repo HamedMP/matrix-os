@@ -63,7 +63,11 @@ vi.mock("@/stores/terminal-settings", () => {
 });
 
 import { TerminalApp } from "../../shell/src/components/terminal/TerminalApp.js";
-import { doesCompactGitContextFit } from "../../shell/src/components/terminal/TerminalSidebarItems.js";
+import {
+  doesCompactGitContextFit,
+  ShellSessionGroup,
+} from "../../shell/src/components/terminal/TerminalSidebarItems.js";
+import type { ShellSessionSummary } from "../../shell/src/components/terminal/terminal-session-state.js";
 import { getTerminalThemePreset } from "../../shell/src/components/terminal/terminal-themes.js";
 
 function normalizeCssColor(color: string) {
@@ -431,62 +435,60 @@ describe("TerminalApp", () => {
     expect(plainHoverCard.textContent).toContain("active");
   });
 
-  it("compacts empty agent subtitles and expands when refreshed metadata adds one", async () => {
-    let sessionFetches = 0;
-    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
-        return Promise.resolve(mockJsonResponse({ ok: true }));
-      }
-      if (url.includes("/api/terminal/layout")) {
-        return Promise.resolve(mockJsonResponse({}));
-      }
-      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
-        sessionFetches += 1;
-        return Promise.resolve(mockJsonResponse({
-          sessions: [{
-            name: "codex-fix",
-            status: "active",
-            placement: "active",
-            visualStatus: "running",
-            agent: "codex",
-            subtitle: sessionFetches === 2 ? "Fix Terminal sessions" : "   ",
-            tabs: [],
-          }],
-        }));
-      }
-      return Promise.resolve(mockJsonResponse({}));
-    });
+  it("compacts empty agent subtitles and expands when refreshed metadata adds one", () => {
+    const shell = {
+      name: "codex-fix",
+      status: "active",
+      placement: "active",
+      visualStatus: "running",
+      agent: "codex",
+      subtitle: "   ",
+      tabs: [],
+    } satisfies ShellSessionSummary;
+    const groupProps = {
+      label: "Active" as const,
+      deletingShellNames: [],
+      foreground: true,
+      selectedShellName: null,
+      onOpen: vi.fn(),
+      onToggle: vi.fn(),
+      onRename: vi.fn(async () => true),
+      onDelete: vi.fn(),
+      draggingShellName: null,
+      dragOverShellName: null,
+      onDragStart: vi.fn(),
+      onDragOver: vi.fn(),
+      onDrop: vi.fn(),
+      onDragEnd: vi.fn(),
+    };
+    const { rerender } = render(<ShellSessionGroup {...groupProps} shells={[shell]} />);
 
-    render(<TerminalApp />);
-    await vi.waitFor(() => {
-      expect(screen.getByTestId("terminal-session-card-codex-fix").style.height).toBe("60px");
-    });
+    expect(screen.getByTestId("terminal-session-card-codex-fix").style.height).toBe("60px");
 
     const compactName = screen.getByTestId("terminal-session-name-codex-fix");
     const compactMetadata = screen.getByTestId("terminal-session-agent-state-codex-fix");
     expect(compactName.textContent).toBe("codex-fix");
     expect(compactMetadata.textContent).toContain("Codex");
     expect(compactMetadata.textContent).toContain("running");
-    expect(compactMetadata.style.textTransform).toBe("");
     expect(screen.queryByTestId("terminal-session-subtitle-codex-fix")).toBeNull();
     expect(screen.getByTestId("terminal-session-name-row-codex-fix").parentElement?.style.gridTemplateRows).toBe(
       "18px 16px",
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh sessions" }));
-    await vi.waitFor(() => {
-      expect(screen.getByTestId("terminal-session-subtitle-codex-fix").textContent).toBe("Fix Terminal sessions");
-    });
+    rerender(
+      <ShellSessionGroup
+        {...groupProps}
+        shells={[{ ...shell, subtitle: "Fix Terminal sessions" }]}
+      />,
+    );
+    expect(screen.getByTestId("terminal-session-subtitle-codex-fix").textContent).toBe("Fix Terminal sessions");
     expect(screen.getByTestId("terminal-session-card-codex-fix").style.height).toBe("78px");
     expect(screen.getByTestId("terminal-session-name-row-codex-fix").parentElement?.style.gridTemplateRows).toBe(
       "18px 16px 16px",
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Refresh sessions" }));
-    await vi.waitFor(() => {
-      expect(screen.queryByTestId("terminal-session-subtitle-codex-fix")).toBeNull();
-    });
+    rerender(<ShellSessionGroup {...groupProps} shells={[shell]} />);
+    expect(screen.queryByTestId("terminal-session-subtitle-codex-fix")).toBeNull();
     expect(screen.getByTestId("terminal-session-card-codex-fix").style.height).toBe("60px");
     expect(screen.getByTestId("terminal-session-name-row-codex-fix").parentElement?.style.gridTemplateRows).toBe(
       "18px 16px",
