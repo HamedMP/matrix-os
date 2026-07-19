@@ -7,6 +7,13 @@
 
 **Related Architecture Work**: `specs/093-codebase-domain-structure/` defines the domain-structure convention and gateway migration strategy. For this feature, 093 is an enabling cleanup track, not a prerequisite for product work. Land the 093 docs/lint foundation before or alongside 097, but defer high-coupling gateway moves until Developer mode, Workspace removal, Terminal-first setup, SSH credentials, and warm-pool flows settle.
 
+> **Superseded warm-pool decision:** `specs/109-golden-vps-snapshots/spec.md` is the
+> authoritative provisioning-latency design. Its approved V1 decision supersedes this
+> specification's warm-pool User Story 4, FR-022 through FR-026, related authorization,
+> resource-limit, success-criteria, and implementation-plan text. Matrix MUST NOT keep
+> running or powered-off unassigned customer VPSes; it builds sanitized golden snapshots
+> and creates customer or recovery VPSes just in time instead.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Agent-Guided First Coding Session (Priority: P1)
