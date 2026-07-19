@@ -17,7 +17,7 @@ describe("CreateProjectDialog", () => {
       handle: "operator",
       platformHost: "https://platform.test",
       runtimeSlot: "primary",
-      api: { post: vi.fn(), get: vi.fn() } as never,
+      api: { post: vi.fn(), get: vi.fn(), baseUrl: "https://gateway.test" } as never,
     });
     useBoard.setState({
       projects: [],
@@ -54,6 +54,7 @@ describe("CreateProjectDialog", () => {
 
     render(<Harness />);
 
+    fireEvent.click(screen.getByRole("button", { name: /New folder/ }));
     fireEvent.change(screen.getByPlaceholderText("Project name"), {
       target: { value: "Desktop" },
     });
@@ -91,12 +92,12 @@ describe("CreateProjectDialog", () => {
       }
       return { entries: [] };
     });
-    useConnection.setState({ api: { post: vi.fn(), get } as never });
+    useConnection.setState({ api: { post: vi.fn(), get, baseUrl: "https://gateway.test" } as never });
     useBoard.setState({ createProject, selectProject: vi.fn(async () => undefined) });
     render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
 
+    fireEvent.click(screen.getByRole("button", { name: /Existing folder/ }));
     fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Customer app" } });
-    fireEvent.click(screen.getByRole("button", { name: "Use existing folder" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Open workspaces" })).not.toBeNull());
     fireEvent.doubleClick(screen.getByRole("button", { name: "Open workspaces" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Open customer-app" })).not.toBeNull());
@@ -121,6 +122,7 @@ describe("CreateProjectDialog", () => {
     useTabs.setState({ openTab });
 
     render(<CreateProjectDialog open onClose={onClose} />);
+    fireEvent.click(screen.getByRole("button", { name: /New folder/ }));
     fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Desktop" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
@@ -149,12 +151,12 @@ describe("CreateProjectDialog", () => {
       }
       return { entries: [] };
     });
-    useConnection.setState({ api: { post: vi.fn(), get } as never, authGeneration: 1 });
+    useConnection.setState({ api: { post: vi.fn(), get, baseUrl: "https://gateway.test" } as never, authGeneration: 1 });
     useBoard.setState({ createProject, selectProject: vi.fn(async () => undefined) });
     render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
 
+    fireEvent.click(screen.getByRole("button", { name: /Existing folder/ }));
     fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Customer app" } });
-    fireEvent.click(screen.getByRole("button", { name: "Use existing folder" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Open workspaces" })).not.toBeNull());
     fireEvent.doubleClick(screen.getByRole("button", { name: "Open workspaces" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Open customer-app" })).not.toBeNull());
@@ -182,6 +184,7 @@ describe("CreateProjectDialog", () => {
     useTabs.setState({ openTab });
 
     render(<CreateProjectDialog open onClose={onClose} />);
+    fireEvent.click(screen.getByRole("button", { name: /New folder/ }));
     fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Desktop" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
