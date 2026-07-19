@@ -77,6 +77,44 @@ async function isShellSessionExistsResponse(res: Response): Promise<boolean> {
   return res.status === 409 && await readShellErrorCode(res) === "session_exists";
 }
 
+interface ShellSessionSummary {
+  name?: unknown;
+  status?: unknown;
+}
+
+// In-flight dedupe for the sessions list: the mount bootstrap needs the same
+// /api/terminal/sessions payload as the ensure step that follows it, so both
+// join one fetch instead of paying two serial roundtrips. Keyed by gateway
+// URL so navigating between machines (/vm/A -> /vm/B) never joins a fetch
+// started for the previous machine.
+let shellSessionsListInflight: { key: string; promise: Promise<ShellSessionSummary[] | null> } | null = null;
+
+function listShellSessions(): Promise<ShellSessionSummary[] | null> {
+  const key = getGatewayUrl();
+  if (shellSessionsListInflight?.key === key) {
+    return shellSessionsListInflight.promise;
+  }
+  const promise = (async () => {
+    try {
+      const res = await fetch(`${key}/api/terminal/sessions`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) return null;
+      const data = await res.json() as { sessions?: ShellSessionSummary[] };
+      return Array.isArray(data.sessions) ? data.sessions : [];
+    } catch (err: unknown) {
+      console.warn("Failed to list shell sessions:", err instanceof Error ? err.message : String(err));
+      return null;
+    }
+  })();
+  shellSessionsListInflight = { key, promise };
+  return promise.finally(() => {
+    if (shellSessionsListInflight?.promise === promise) {
+      shellSessionsListInflight = null;
+    }
+  });
+}
+
 async function ensureShellSessions(sessionNames: string[]): Promise<boolean> {
   const requestedNames = Array.from(new Set(
     sessionNames.filter((name) => isCanonicalShellSessionId(name)),
@@ -86,17 +124,12 @@ async function ensureShellSessions(sessionNames: string[]): Promise<boolean> {
   }
 
   try {
-    const listRes = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
-      signal: AbortSignal.timeout(10_000),
-    });
+    const sessions = await listShellSessions();
     const existingNames = new Set<string>();
-    if (listRes.ok) {
-      const data = await listRes.json() as { sessions?: Array<{ name?: unknown }> };
-      if (Array.isArray(data.sessions)) {
-        for (const session of data.sessions) {
-          if (typeof session.name === "string") {
-            existingNames.add(session.name);
-          }
+    if (sessions) {
+      for (const session of sessions) {
+        if (typeof session.name === "string") {
+          existingNames.add(session.name);
         }
       }
     }
@@ -129,27 +162,16 @@ async function ensureDefaultShellSession(): Promise<boolean> {
 }
 
 async function getFirstOrderedShellSessionName(): Promise<string | null> {
-  try {
-    const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) {
-      return null;
-    }
-    const data = await res.json() as { sessions?: Array<{ name?: unknown; status?: unknown }> };
-    if (!Array.isArray(data.sessions)) {
-      return null;
-    }
-    for (const session of data.sessions) {
-      if (typeof session.name === "string" && isCanonicalShellSessionId(session.name) && session.status !== "exited") {
-        return session.name;
-      }
-    }
-    return null;
-  } catch (err: unknown) {
-    console.warn("Failed to load ordered shell sessions:", err instanceof Error ? err.message : err);
+  const sessions = await listShellSessions();
+  if (!sessions) {
     return null;
   }
+  for (const session of sessions) {
+    if (typeof session.name === "string" && isCanonicalShellSessionId(session.name) && session.status !== "exited") {
+      return session.name;
+    }
+  }
+  return null;
 }
 
 async function ensureInitialShellSession(): Promise<string | null> {
@@ -528,6 +550,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       }
 
       try {
+        // Warm the sessions list in parallel with the layout fetch — the
+        // ensure step below joins the same in-flight request instead of
+        // paying a second serial roundtrip before the terminal can open.
+        void listShellSessions();
         const res = await fetch(`${getGatewayUrl()}/api/terminal/layout`, {
           signal: AbortSignal.timeout(10_000),
         });

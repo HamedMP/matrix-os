@@ -80,6 +80,8 @@ export interface ShellWsHandlerOptions {
   maxAttachedClients?: number;
   staleAttachTtlMs?: number;
   idleAttachGraceMs?: number;
+  /** Briefly observe a new PTY for asynchronous zellij startup failures. */
+  attachStartupGraceMs?: number;
   flowControl?: ShellWsFlowControlOptions;
   sizingDebounceMs?: number;
   defaultCanonicalSize?: TerminalSize;
@@ -156,6 +158,8 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
   const maxAttachedClients = options.maxAttachedClients ?? 8;
   const staleAttachTtlMs = options.staleAttachTtlMs ?? 60_000;
   const idleAttachGraceMs = options.idleAttachGraceMs ?? 2_000;
+  const attachStartupGraceMs = options.attachStartupGraceMs ?? 75;
+  const earlyAttachOutputLimit = Math.min(options.maxReplayBytes ?? 1024 * 1024, 64 * 1024);
   const highWaterMark = options.flowControl?.highWaterMark ?? 1024 * 1024;
 
   const runtimes = new Map<string, SessionRuntime>();
@@ -376,40 +380,135 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     let attachPromise!: Promise<boolean>;
     attachPromise = (async () => {
       const abortController = new AbortController();
-      let child: ShellAttachProcess;
+      let child: ShellAttachProcess | null = null;
       const outputCompat = await createSeededOutputCompat(safeName, replayBuffer);
       if (!canUseAttachPromise(runtime, attachPromise)) {
         return false;
       }
       runtime.outputCompat = outputCompat;
-      try {
-        child = options.adapter.attachSession(safeName, {
-          signal: abortController.signal,
-          size: runtime.sizing?.spawnSize(),
-        });
-      } catch (err: unknown) {
-        if (canUseAttachPromise(runtime, attachPromise)) {
-          runtime.outputCompat = null;
+      // zellij attach can lose the race against the session's own creation
+      // (POST /api/terminal/sessions followed immediately by the ws attach, or
+      // a cold zellij daemon). Retry briefly before declaring attach_failed so
+      // transient startup races do not surface as user-visible errors.
+      const maxAttachAttempts = 3;
+      for (let attempt = 1; attempt <= maxAttachAttempts; attempt += 1) {
+        try {
+          child = options.adapter.attachSession(safeName, {
+            signal: abortController.signal,
+            size: runtime.sizing?.spawnSize(),
+          });
+        } catch (err: unknown) {
+          child = null;
+          if (attempt >= maxAttachAttempts || !canUseAttachPromise(runtime, attachPromise)) {
+            if (canUseAttachPromise(runtime, attachPromise)) {
+              runtime.outputCompat = null;
+            }
+            console.warn("[shell] zellij attach process failed:", err instanceof Error ? err.message : String(err));
+            return false;
+          }
+          console.warn(
+            `[shell] zellij attach attempt ${attempt} failed, retrying:`,
+            err instanceof Error ? err.message : String(err),
+          );
+          await new Promise((resolve) => setTimeout(resolve, 400));
+          continue;
         }
-        console.warn("[shell] zellij attach process failed:", err instanceof Error ? err.message : String(err));
-        return false;
-      }
 
-      if (!canUseAttachPromise(runtime, attachPromise)) {
-        child.kill();
-        return false;
-      }
+        let committed = false;
+        let earlyOutputLength = 0;
+        const earlyOutput: string[] = [];
+        let earlyOutputPaused = false;
+        let earlyOutputOverflowed = false;
+        let resolveEarlyExit!: (event: { exitCode: number; signal?: number }) => void;
+        const earlyExit = new Promise<{ exitCode: number; signal?: number }>((resolve) => {
+          resolveEarlyExit = resolve;
+        });
+        const dataDisposable = child.onData((data: string) => {
+          if (committed) {
+            const transformed = runtime.outputCompat?.write(data) ?? data;
+            emitOutput(runtime, transformed);
+            return;
+          }
+          if (earlyOutputOverflowed) return;
+          earlyOutput.push(data);
+          earlyOutputLength += data.length;
+          if (earlyOutputLength < earlyAttachOutputLimit || earlyOutputPaused) return;
+          if (child?.pause) {
+            child.pause();
+            earlyOutputPaused = true;
+            return;
+          }
+          // A custom adapter without PTY flow control cannot preserve a
+          // bounded startup buffer. Fail this attach explicitly rather than
+          // acknowledge a connection after silently dropping output.
+          earlyOutputOverflowed = true;
+          child?.kill();
+        });
+        const exitDisposable = child.onExit((event: { exitCode: number; signal?: number }) => {
+          if (committed) {
+            handleSharedExit(runtime, event);
+          } else {
+            resolveEarlyExit(event);
+          }
+        });
+        let startupTimer: ReturnType<typeof setTimeout> | undefined;
+        const startupExit = attachStartupGraceMs <= 0
+          ? null
+          : await Promise.race([
+              earlyExit,
+              new Promise<null>((resolve) => {
+                startupTimer = setTimeout(() => resolve(null), attachStartupGraceMs);
+              }),
+            ]);
+        if (startupTimer !== undefined) clearTimeout(startupTimer);
 
-      runtime.abortController = abortController;
-      runtime.child = child;
-      runtime.dataDisposable = child.onData((data: string) => {
-        const transformed = runtime.outputCompat?.write(data) ?? data;
-        emitOutput(runtime, transformed);
-      });
-      runtime.exitDisposable = child.onExit((event: { exitCode: number; signal?: number }) => {
-        handleSharedExit(runtime, event);
-      });
-      return true;
+        if (startupExit || earlyOutputOverflowed) {
+          dataDisposable.dispose();
+          exitDisposable.dispose();
+          if (!startupExit) child.kill();
+          child = null;
+          if (attempt >= maxAttachAttempts || !canUseAttachPromise(runtime, attachPromise)) {
+            if (canUseAttachPromise(runtime, attachPromise)) runtime.outputCompat = null;
+            console.warn(
+              startupExit
+                ? `[shell] zellij attach exited during startup with code ${startupExit.exitCode}`
+                : "[shell] zellij attach exceeded the bounded startup buffer without flow control",
+            );
+            return false;
+          }
+          console.warn(
+            startupExit
+              ? `[shell] zellij attach attempt ${attempt} exited during startup, retrying: code ${startupExit.exitCode}`
+              : `[shell] zellij attach attempt ${attempt} exceeded the bounded startup buffer, retrying`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 400));
+          continue;
+        }
+
+        if (!canUseAttachPromise(runtime, attachPromise)) {
+          dataDisposable.dispose();
+          exitDisposable.dispose();
+          child.kill();
+          return false;
+        }
+
+        runtime.abortController = abortController;
+        runtime.child = child;
+        const canonicalSize = runtime.sizing?.current();
+        if (canonicalSize) {
+          child.resize(canonicalSize.cols, canonicalSize.rows);
+        }
+        runtime.dataDisposable = dataDisposable;
+        runtime.exitDisposable = exitDisposable;
+        committed = true;
+        for (const data of earlyOutput) {
+          const transformed = runtime.outputCompat?.write(data) ?? data;
+          emitOutput(runtime, transformed);
+        }
+        if (earlyOutputPaused) child.resume?.();
+        return true;
+      }
+      return false;
     })();
 
     runtime.attachPromise = attachPromise;

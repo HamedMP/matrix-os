@@ -93,6 +93,7 @@ import {
 import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
+import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
 
 export function shouldServeRuntimeManager(input: {
   isAppDomain: boolean;
@@ -133,6 +134,40 @@ interface CreateSessionRoutingMiddlewareOpts {
   ) => Promise<EntitlementAccessDecision>;
   getGatewayUrlForHandle: (handle: string) => string;
   logRouteError: (context: string, err: unknown) => void;
+}
+
+/**
+ * Fetch a runtime response with a bounded header wait. Streaming responses can
+ * release that timer once the upstream headers arrive so the signal does not
+ * terminate a healthy, long-lived response body.
+ */
+export async function fetchRuntimeProxy(
+  targetUrl: string,
+  init: RequestInit,
+  timeoutMs: number,
+  releaseTimeoutAfterHeaders: boolean,
+): Promise<Response> {
+  if (!releaseTimeoutAfterHeaders) {
+    return fetch(targetUrl, {
+      ...init,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(targetUrl, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function shouldReleaseRuntimeProxyTimeout(method: string, path: string): boolean {
+  return method === 'GET' && path === '/api/files/media';
 }
 
 function logCodeDomainUpstreamFailure(opts: {
@@ -236,6 +271,28 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         200,
       );
     }
+  }
+
+  async function issueWebSocketTokenResponse(
+    c: Context,
+    target: { clerkUserId: string; handle: string; runtimeSlot?: string },
+  ): Promise<Response> {
+    applyNoStoreHeaders(c);
+    if (!platformJwtSecret) {
+      return c.json({ error: 'WebSocket auth unavailable' }, 503);
+    }
+    const issued = await issueSyncJwt({
+      secret: platformJwtSecret,
+      clerkUserId: target.clerkUserId,
+      handle: target.handle,
+      gatewayUrl: getGatewayUrlForHandle(target.handle),
+      runtimeSlot: target.runtimeSlot,
+      expiresInSec: wsTokenExpiresInSec,
+    });
+    return c.json({
+      token: issued.token,
+      expiresAt: issued.expiresAt,
+    });
   }
 
   return async (c, next) => {
@@ -369,9 +426,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const cookieRuntimeSlot = isAppDomain
       ? readShellRuntimeSlotCookie(path, cookieHeader)
       : null;
-    const requestRuntimeSlot = runtimeSelection.source === 'query'
-      ? runtimeSelection.slot
-      : cookieRuntimeSlot ?? runtimeSelection.slot;
+    const requestRuntimeSlot = explicitVmRoute?.runtimeSlot ?? (
+      runtimeSelection.source === 'query'
+        ? runtimeSelection.slot
+        : cookieRuntimeSlot ?? runtimeSelection.slot
+    );
 
     const isGatewayPath = isAppDomain && isAppDomainGatewayPath(path);
     const allowAuthShellUnroutedIdentity = shouldProxyAuthShellForUnroutedUser({
@@ -494,7 +553,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       const machine = await getActiveUserMachineByHandle(
         db,
         explicitVmRoute.handle,
-        runtimeSelection.source === 'query' ? requestRuntimeSlot : undefined,
+        explicitVmRoute.runtimeSlot ?? (
+          runtimeSelection.source === 'query' ? requestRuntimeSlot : undefined
+        ),
       );
       if (!machine || (identity.userId && !canClerkUserAccessMachine(machine, identity.userId))) {
         applyNoStoreHeaders(c);
@@ -522,6 +583,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         }
         applyNoStoreHeaders(c);
         return c.html(getVpsBootPage({ status: machine.status }), 503);
+      }
+      if (explicitVmRoute.upstreamPath === '/api/auth/ws-token') {
+        return issueWebSocketTokenResponse(c, {
+          clerkUserId: machine.clerkUserId,
+          handle: machine.handle,
+          runtimeSlot: machine.runtimeSlot,
+        });
       }
       const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
       const targetUrl = buildCustomerVpsProxyUrl(machine, explicitVmRoute.upstreamPath, qs);
@@ -563,16 +631,17 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
 
       try {
-        const upstream = await fetch(targetUrl, {
+        const upstream = await fetchRuntimeProxy(targetUrl, {
           method: c.req.method,
           headers,
           redirect: 'manual',
-          signal: AbortSignal.timeout(proxyTimeoutMs),
           body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
           dispatcher: customerVpsProxyDispatcher,
-        } as RequestInit & { dispatcher: Agent });
+        } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
+        shouldReleaseRuntimeProxyTimeout(c.req.method, explicitVmRoute.upstreamPath));
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        scopeExplicitVmAppSessionCookie(responseHeaders, explicitVmRoute);
         applySandboxedAppAssetCorsHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.header('origin'));
         applyAppDomainRuntimeAssetCacheHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.url);
         responseHeaders.append('set-cookie', buildShellRouteCookie(machine.handle));
@@ -599,20 +668,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     }
 
     if (isAppDomain && path === '/api/auth/ws-token') {
-      if (!platformJwtSecret) {
-        return c.json({ error: 'WebSocket auth unavailable' }, 503);
-      }
-      const issued = await issueSyncJwt({
-        secret: platformJwtSecret,
+      return issueWebSocketTokenResponse(c, {
         clerkUserId: identity.userId,
         handle: identity.handle,
-        gatewayUrl: getGatewayUrlForHandle(identity.handle),
         runtimeSlot: identity.runtimeSlot ?? requestRuntimeSlot,
-        expiresInSec: wsTokenExpiresInSec,
-      });
-      return c.json({
-        token: issued.token,
-        expiresAt: issued.expiresAt,
       });
     }
 
@@ -710,14 +769,14 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
 
       try {
-        const upstream = await fetch(targetUrl, {
+        const upstream = await fetchRuntimeProxy(targetUrl, {
           method: c.req.method,
           headers,
           redirect: 'manual',
-          signal: AbortSignal.timeout(proxyTimeoutMs),
           body,
           dispatcher: customerVpsProxyDispatcher,
-        } as RequestInit & { dispatcher: Agent });
+        } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
+        shouldReleaseRuntimeProxyTimeout(c.req.method, path));
         if (isCodeDomain && upstream.status >= 500) {
           logCodeDomainUpstreamFailure({
             handle: runningMachine.handle,
@@ -901,14 +960,14 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
 
       const targetUrl = `http://${endpoint.host}:${targetPort}${path}${qs}`;
       try {
-        const upstream = await fetch(targetUrl, {
+        const upstream = await fetchRuntimeProxy(targetUrl, {
           method: c.req.method,
           headers,
           redirect: 'manual',
-          signal: AbortSignal.timeout(proxyTimeoutMs),
           body,
           dispatcher: containerProxyDispatcher,
-        } as RequestInit & { dispatcher: Agent });
+        } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
+        shouldReleaseRuntimeProxyTimeout(c.req.method, path));
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));
