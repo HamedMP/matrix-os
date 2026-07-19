@@ -16,11 +16,11 @@ import {
   hasPaneId,
 } from "./terminal-layout";
 import {
-  parseTerminalAgentStatuses,
   terminalAgentVisibleInstallCommand,
-  type TerminalAgentId,
+  type TerminalAgentMenuAction,
   type TerminalAgentOption,
 } from "./terminal-agent-options";
+import { useTerminalAgentStatuses } from "./useTerminalAgentStatuses";
 import {
   applyShellRefreshFailure,
   applyShellRefreshSilentFailure,
@@ -170,7 +170,12 @@ export function LocalTerminalSidebar() {
   const [sessions, setSessions] = useState<WorkspaceSessionSummary[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
-  const [agentStatuses, setAgentStatuses] = useState<Record<TerminalAgentId, boolean> | null>(null);
+  const {
+    statuses: agentStatuses,
+    checking: agentStatusesChecking,
+    statusUnavailable: agentStatusesUnavailable,
+    refresh: refreshAgentStatuses,
+  } = useTerminalAgentStatuses();
   const [rootPath, setRootPath] = useState("projects");
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [filter, setFilter] = useState("");
@@ -210,31 +215,6 @@ export function LocalTerminalSidebar() {
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-event-handler -- async network load of the projects list when the Projects tab becomes active; `tab` is live derived state that can change from many sources (restore, programmatic nav, deep link), not a single DOM click handler, so the fetch belongs in the effect and cannot be hoisted to one parent handler
     if (tab === "projects") void fetchProjects();
   }, [tab, fetchProjects]);
-
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for mount-time agent status loading and explicit refresh from the new-session menu lifecycle.
-  const fetchAgentStatuses = useCallback(async () => {
-    try {
-      const res = await fetch(`${getGatewayUrl()}/api/agents`, {
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) {
-        console.warn(`Failed to load terminal agent status: ${res.status}`);
-        return;
-      }
-      const parsed = parseTerminalAgentStatuses(await res.json());
-      if (parsed.length === 0) return;
-      setAgentStatuses(Object.fromEntries(
-        parsed.map((agent) => [agent.id, agent.installed]),
-      ) as Record<TerminalAgentId, boolean>);
-    } catch (err: unknown) {
-      console.warn("Failed to load terminal agent status:", err instanceof Error ? err.message : String(err));
-    }
-  }, []);
-
-  useEffect(() => {
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-fetch-in-effect -- owner-scoped local gateway status probe; it is timeout-guarded and falls back to the Paper default menu state if unavailable.
-    void fetchAgentStatuses();
-  }, [fetchAgentStatuses]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchShells` is in the dependency array of the shells-tab load useEffect below and command handlers.
   const fetchShells = useCallback(async (options: { silent?: boolean; signal?: AbortSignal; preserveOrderDuringReorder?: boolean } = {}) => {
@@ -810,13 +790,12 @@ export function LocalTerminalSidebar() {
   const openNewSessionMenu = (anchor: NewSessionMenuAnchor) => {
     if (creatingShell) return;
     if (newSessionMenuAnchor !== anchor) {
-      setAgentStatuses(null);
-      void fetchAgentStatuses();
+      refreshAgentStatuses();
     }
     setNewSessionMenuAnchor((current) => current === anchor ? null : anchor);
   };
 
-  const createAgentSession = async (option: TerminalAgentOption, installed: boolean) => {
+  const createAgentSession = async (option: TerminalAgentOption, action: TerminalAgentMenuAction) => {
     if (creatingShellRef.current) return;
     setNewSessionMenuAnchor(null);
     creatingShellRef.current = true;
@@ -824,13 +803,13 @@ export function LocalTerminalSidebar() {
     setShellsError(null);
     const cwd = ctx.sidebarSelectedPath ?? DEFAULT_CWD;
     try {
-      const label = installed ? option.label : `Install ${option.label}`;
-      const cmd = installed
+      const label = action === "launch" ? option.label : `Install ${option.label}`;
+      const cmd = action === "launch"
         ? option.launchCommand ?? (option.claudeMode ? "claude" : undefined)
         : terminalAgentVisibleInstallCommand(option);
       const name = await ctx.createShellSessionTab(label, cwd, {
         cmd,
-        ...(installed && option.id === "codex" ? { compatMode: "codex-tui" } : {}),
+        ...(action === "launch" && option.id === "codex" ? { compatMode: "codex-tui" } : {}),
       });
       if (name) {
         await fetchShells({ silent: true });
@@ -904,6 +883,8 @@ export function LocalTerminalSidebar() {
             onCreateShell={() => void createManagedShell()}
             onCreateAgent={createAgentSession}
             agentStatuses={agentStatuses}
+            agentStatusesChecking={agentStatusesChecking}
+            agentStatusesUnavailable={agentStatusesUnavailable}
             onOpen={makeShellActive}
           />
         </div>
@@ -1031,6 +1012,8 @@ export function LocalTerminalSidebar() {
                     onCreateShell={() => void createManagedShell()}
                     onCreateAgent={createAgentSession}
                     agentStatuses={agentStatuses}
+                    agentStatusesChecking={agentStatusesChecking}
+                    agentStatusesUnavailable={agentStatusesUnavailable}
                   />
                 ) : null}
               </div>

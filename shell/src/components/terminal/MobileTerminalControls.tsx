@@ -1,16 +1,15 @@
 import { useRef, useState, type ReactNode } from "react";
 import { ClipboardPasteIcon, PlusIcon, SearchIcon } from "lucide-react";
 
-import { getGatewayUrl } from "@/lib/gateway";
 import { NewSessionMenu } from "./NewSessionMenu";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 import { useTerminalAppContext } from "./TerminalAppContext";
 import {
-  parseTerminalAgentStatuses,
   terminalAgentVisibleInstallCommand,
-  type TerminalAgentId,
+  type TerminalAgentMenuAction,
   type TerminalAgentOption,
 } from "./terminal-agent-options";
+import { useTerminalAgentStatuses } from "./useTerminalAgentStatuses";
 
 function dispatchPaneAction(paneId: string | null, action: NonNullable<TerminalInputEventDetail["action"]>): void {
   if (!paneId) return;
@@ -35,7 +34,12 @@ export function MobileTerminalActions({
 }) {
   const ctx = useTerminalAppContext();
   const [newSessionMenuOpen, setNewSessionMenuOpen] = useState(false);
-  const [agentStatuses, setAgentStatuses] = useState<Record<TerminalAgentId, boolean> | null>(null);
+  const {
+    statuses: agentStatuses,
+    checking: agentStatusesChecking,
+    statusUnavailable: agentStatusesUnavailable,
+    refresh: refreshAgentStatuses,
+  } = useTerminalAgentStatuses();
   const newSessionDisclosureRef = useRef<HTMLDivElement | null>(null);
   const getCwd = () => ctx.sidebarSelectedPath ?? defaultCwd;
   const focusedPaneId = ctx.focusedPaneId;
@@ -43,28 +47,11 @@ export function MobileTerminalActions({
   const actionBorder = `color-mix(in srgb, ${foreground} 18%, transparent)`;
   const primaryForeground = "var(--terminal-mobile-primary-fg)";
 
-  const fetchAgentStatuses = async () => {
-    try {
-      const res = await fetch(`${getGatewayUrl()}/api/agents`, {
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) return;
-      const parsed = parseTerminalAgentStatuses(await res.json());
-      if (parsed.length === 0) return;
-      setAgentStatuses(Object.fromEntries(
-        parsed.map((agent) => [agent.id, agent.installed]),
-      ) as Record<TerminalAgentId, boolean>);
-    } catch (err: unknown) {
-      console.warn("Failed to load terminal agent status:", err instanceof Error ? err.message : String(err));
-    }
-  };
-
   const toggleNewSessionMenu = () => {
     const shouldOpen = !newSessionMenuOpen;
     setNewSessionMenuOpen(shouldOpen);
     if (shouldOpen) {
-      setAgentStatuses(null);
-      void fetchAgentStatuses();
+      refreshAgentStatuses();
     }
   };
 
@@ -77,15 +64,15 @@ export function MobileTerminalActions({
     void ctx.createShellSessionTab("Shell", getCwd());
   };
 
-  const createAgentSession = (option: TerminalAgentOption, installed: boolean) => {
+  const createAgentSession = (option: TerminalAgentOption, action: TerminalAgentMenuAction) => {
     setNewSessionMenuOpen(false);
-    const label = installed ? option.label : `Install ${option.label}`;
-    const cmd = installed
+    const label = action === "launch" ? option.label : `Install ${option.label}`;
+    const cmd = action === "launch"
       ? option.launchCommand ?? (option.claudeMode ? "claude" : undefined)
       : terminalAgentVisibleInstallCommand(option);
     void ctx.createShellSessionTab(label, getCwd(), {
       cmd,
-      ...(installed && option.id === "codex" ? { compatMode: "codex-tui" } : {}),
+      ...(action === "launch" && option.id === "codex" ? { compatMode: "codex-tui" } : {}),
     });
   };
 
@@ -129,6 +116,8 @@ export function MobileTerminalActions({
             onCreateShell={createShellSession}
             onCreateAgent={createAgentSession}
             agentStatuses={agentStatuses}
+            agentStatusesChecking={agentStatusesChecking}
+            agentStatusesUnavailable={agentStatusesUnavailable}
             ignoreLightDismissRef={newSessionDisclosureRef}
           />
         ) : null}
