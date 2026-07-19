@@ -204,8 +204,11 @@ describe('CI workflows', () => {
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 
     expect(workflow).toContain('optional_portal_configuration_secrets=(');
+    expect(workflow).toContain('STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_MONTHLY=stripe-portal-configuration-extra-runtime-monthly');
+    expect(workflow).toContain('STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_ANNUAL=stripe-portal-configuration-extra-runtime-annual');
     expect(workflow).toContain('available_portal_configuration_secrets=0');
-    expect(workflow).toContain('if [ "$available_portal_configuration_secrets" -eq 1 ]; then');
+    expect(workflow).toContain('expected_portal_configuration_secrets="${#optional_portal_configuration_secrets[@]}"');
+    expect(workflow).toContain('[ "$available_portal_configuration_secrets" -lt "$expected_portal_configuration_secrets" ]; then');
     expect(workflow).toContain('Focused Stripe portal configuration secrets are incomplete');
     expect(workflow).toContain('if [ "$available_portal_configuration_secrets" -eq 0 ]; then');
     expect(workflow).toContain('Add-computer billing will remain unavailable');

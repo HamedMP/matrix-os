@@ -181,7 +181,9 @@ jobs:
             rm -f "$describe_error_tmpfile"
           done
 
-          if [ "$available_portal_configuration_secrets" -eq 1 ]; then
+          expected_portal_configuration_secrets="${#optional_portal_configuration_secrets[@]}"
+          if [ "$available_portal_configuration_secrets" -gt 0 ] && \
+            [ "$available_portal_configuration_secrets" -lt "$expected_portal_configuration_secrets" ]; then
             echo "Focused Stripe portal configuration secrets are incomplete; configure both intervals or neither." >&2
             exit 1
           fi
