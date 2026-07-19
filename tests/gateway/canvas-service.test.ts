@@ -131,7 +131,12 @@ describe("CanvasService", () => {
     expect(repo.patchNode).not.toHaveBeenCalled();
   });
 
-  it("marks stale terminal refs recoverable on the main canvas read path", async () => {
+  it("marks stale terminal refs missing without spawning on the main canvas read path", async () => {
+    const terminalRegistry = {
+      create: vi.fn(),
+      getSession: vi.fn().mockReturnValue(null),
+      destroy: vi.fn(),
+    };
     const service = new CanvasService(repository([record({
       nodes: [{
         id: "node_terminal",
@@ -141,19 +146,85 @@ describe("CanvasService", () => {
         metadata: {},
       }],
     })]), {
-      terminalRegistry: {
-        create: vi.fn(),
-        getSession: vi.fn().mockReturnValue(null),
-        destroy: vi.fn(),
-      },
+      terminalRegistry,
     });
 
     const result = await service.getCanvas("user_a", "cnv_0123456789abcdef");
 
     expect(result.document.nodes[0]).toMatchObject({
       displayState: "recoverable",
-      metadata: { recoveryReason: "missing_reference" },
+      metadata: {
+        recoveryReason: "terminal_session_missing",
+        terminalSessionState: "missing",
+        terminalSessionId: "550e8400-e29b-41d4-a716-446655440000",
+      },
     });
+    expect(result.linkedState.terminalSessions).toEqual([]);
+    expect(result.linkedState.missingRefs).toContainEqual({
+      kind: "terminal_session",
+      id: "550e8400-e29b-41d4-a716-446655440000",
+      state: "missing",
+      recoverable: true,
+    });
+    expect(terminalRegistry.getSession).toHaveBeenCalledTimes(1);
+    expect(terminalRegistry.getSession).toHaveBeenCalledWith("550e8400-e29b-41d4-a716-446655440000");
+    expect(terminalRegistry.create).not.toHaveBeenCalled();
+  });
+
+  it("treats prototype-named terminal refs as missing instead of live sessions", async () => {
+    const terminalRegistry = {
+      create: vi.fn(),
+      getSession: vi.fn().mockReturnValue(null),
+      destroy: vi.fn(),
+    };
+    const service = new CanvasService(repository([record({
+      nodes: [{
+        id: "node_terminal",
+        type: "terminal",
+        sourceRef: { kind: "terminal_session", id: "toString" },
+        displayState: "normal",
+        metadata: {},
+      }],
+    })]), {
+      terminalRegistry,
+    });
+
+    const result = await service.getCanvas("user_a", "cnv_0123456789abcdef");
+
+    expect(result.linkedState.terminalSessions).toEqual([]);
+    expect(result.linkedState.missingRefs).toContainEqual({
+      kind: "terminal_session",
+      id: "toString",
+      state: "missing",
+      recoverable: true,
+    });
+    expect(terminalRegistry.getSession).toHaveBeenCalledTimes(1);
+    expect(terminalRegistry.getSession).toHaveBeenCalledWith("toString");
+    expect(terminalRegistry.create).not.toHaveBeenCalled();
+  });
+
+  it("classifies stale terminal refs in canvas summaries without spawning sessions", async () => {
+    const terminalRegistry = {
+      create: vi.fn(),
+      getSession: vi.fn().mockReturnValue(null),
+      destroy: vi.fn(),
+    };
+    const service = new CanvasService(repository([record({
+      nodes: [{
+        id: "node_terminal",
+        type: "terminal",
+        sourceRef: { kind: "terminal_session", id: "550e8400-e29b-41d4-a716-446655440000" },
+        displayState: "normal",
+        metadata: {},
+      }],
+    })]), { terminalRegistry });
+
+    const result = await service.listCanvases("user_a");
+
+    expect(result.canvases[0].nodeCounts).toEqual({ total: 1, stale: 0, live: 0 });
+    expect(terminalRegistry.getSession).toHaveBeenCalledTimes(1);
+    expect(terminalRegistry.getSession).toHaveBeenCalledWith("550e8400-e29b-41d4-a716-446655440000");
+    expect(terminalRegistry.create).not.toHaveBeenCalled();
   });
 
   it("maps canvas configuration failures to service unavailable", () => {
