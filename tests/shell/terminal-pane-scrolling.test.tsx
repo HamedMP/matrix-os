@@ -8,6 +8,8 @@ const createdTerminals = vi.hoisted(() => [] as Array<{
   element: HTMLElement | null;
   viewport: HTMLElement | null;
   focus: ReturnType<typeof vi.fn>;
+  flushWrites: () => void;
+  reset: ReturnType<typeof vi.fn>;
 }>);
 
 const createdFitAddons = vi.hoisted(() => [] as Array<{
@@ -86,6 +88,7 @@ vi.mock("@xterm/xterm", () => ({
     rows = 24;
     options: Record<string, unknown>;
     parser = { registerOscHandler: vi.fn() };
+    private writeCallbacks: Array<() => void> = [];
 
     constructor(options: Record<string, unknown>) {
       this.options = options;
@@ -95,7 +98,17 @@ vi.mock("@xterm/xterm", () => ({
     loadAddon = vi.fn();
     focus = vi.fn();
     refresh = vi.fn();
-    write = vi.fn();
+    write = vi.fn((_data: string, callback?: () => void) => {
+      if (callback) {
+        this.writeCallbacks.push(callback);
+      }
+    });
+    flushWrites = () => {
+      for (const callback of this.writeCallbacks.splice(0)) {
+        callback();
+      }
+    };
+    reset = vi.fn();
     dispose = vi.fn();
     onData = vi.fn(() => ({ dispose: vi.fn() }));
     onResize = vi.fn(() => ({ dispose: vi.fn() }));
@@ -202,6 +215,7 @@ vi.mock("@/stores/terminal-settings", () => {
 });
 
 import { TerminalPane } from "../../shell/src/components/terminal/TerminalPane.js";
+import { COLD_REPLAY_TIMEOUT_MS } from "../../shell/src/components/terminal/cold-replay-visibility.js";
 import { cacheTerminal } from "../../shell/src/components/terminal/terminal-cache.js";
 import { capturePostHogEvent } from "../../shell/src/lib/posthog-client.js";
 
@@ -691,6 +705,109 @@ describe("TerminalPane scrolling", () => {
     expect(restoredTerminal.write).toHaveBeenCalledWith("retained-before-refresh\r\n");
   });
 
+  it("keeps a fresh canonical xterm hidden while old alternate-screen frames rebuild the current viewport", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-private-cold-replay-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        sessionId="main"
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const socket = WebSocketMock.instances[0]!;
+    const terminal = createdTerminals[0]!;
+    await waitFor(() => expect(terminal.element).not.toBeNull());
+
+    expect(terminal.element?.style.visibility).toBe("hidden");
+
+    const replayFrames = [
+      "\x1b[?10",
+      "49h\x1b[32mOLD_CMATRIX_FRAME_A\r\n",
+      "OLD_CMATRIX_FRAME_B\x1b[0m\x1b[?104",
+      "9l\x1b[2J\x1b[H",
+      "CURRENT_ECHO_OUTPUT\r\n",
+    ];
+    await act(async () => {
+      socket.onmessage?.({
+        data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+      });
+      socket.onmessage?.({ data: JSON.stringify({ type: "replay-start", fromSeq: 0 }) });
+      for (const [seq, data] of replayFrames.entries()) {
+        socket.onmessage?.({ data: JSON.stringify({ type: "output", seq, data }) });
+        expect(terminal.element?.style.visibility).toBe("hidden");
+      }
+      socket.onmessage?.({ data: JSON.stringify({ type: "replay-end", toSeq: replayFrames.length - 1 }) });
+    });
+
+    expect(terminal.element?.style.visibility).toBe("hidden");
+    expect(terminal.write).toHaveBeenCalledWith(expect.stringContaining("OLD_CMATRIX_FRAME_A"));
+    expect(terminal.write).toHaveBeenCalledWith("CURRENT_ECHO_OUTPUT\r\n");
+
+    await act(async () => {
+      terminal.flushWrites();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(terminal.element?.style.visibility).toBe("visible");
+  });
+
+  it("abandons a stalled cold replay without revealing historical output", async () => {
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    let stalledReplayTimeout: (() => void) | null = null;
+    const setTimeoutSpy = vi.spyOn(window, "setTimeout").mockImplementation((handler, timeout, ...args) => {
+      if (timeout === COLD_REPLAY_TIMEOUT_MS && typeof handler === "function") {
+        stalledReplayTimeout = () => handler(...args);
+        return COLD_REPLAY_TIMEOUT_MS as unknown as ReturnType<typeof window.setTimeout>;
+      }
+      return nativeSetTimeout(handler, timeout, ...args);
+    });
+    try {
+      const view = render(
+        <TerminalPane
+          paneId="pane-stalled-cold-replay-test"
+          cwd=""
+          theme={theme}
+          isFocused={false}
+          isClosing={false}
+          sessionId="main"
+          shouldCacheOnUnmount={() => false}
+          shouldDestroyOnUnmount={() => false}
+          onFocus={() => {}}
+        />,
+      );
+
+      await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+      const socket = WebSocketMock.instances[0]!;
+      const terminal = createdTerminals[0]!;
+
+      await act(async () => {
+        socket.onmessage?.({
+          data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 0 }),
+        });
+        socket.onmessage?.({ data: JSON.stringify({ type: "replay-start", fromSeq: 0 }) });
+        socket.onmessage?.({
+          data: JSON.stringify({ type: "output", seq: 0, data: "OLD_PRIVATE_FRAME\r\n" }),
+        });
+      });
+      expect(stalledReplayTimeout).not.toBeNull();
+      await act(async () => stalledReplayTimeout?.());
+
+      expect(socket.close).toHaveBeenCalledTimes(1);
+      expect(terminal.reset).toHaveBeenCalledTimes(1);
+      expect(terminal.element?.style.visibility).toBe("hidden");
+      expect(view.getByText("Reconnecting terminal...")).toBeTruthy();
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
   it("records cold replay and cursor resume request/accept metadata without terminal content", async () => {
     render(
       <TerminalPane
@@ -791,6 +908,7 @@ describe("TerminalPane scrolling", () => {
       requestedSeq: 23,
       acceptedSeq: 23,
     }));
+    expect(cached.terminal.element.style.visibility).toBe("visible");
   });
 
   it("resumes from the next accepted sequence and renders missed output once", async () => {
@@ -823,6 +941,7 @@ describe("TerminalPane scrolling", () => {
     await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
     const reconnectSocket = WebSocketMock.instances[1]!;
     expect(new URL(reconnectSocket.url).searchParams.get("fromSeq")).toBe("41");
+    expect(terminal.element?.style.visibility).toBe("visible");
     await act(async () => {
       reconnectSocket.onmessage?.({
         data: JSON.stringify({ type: "attached", session: "main", state: "running", fromSeq: 41 }),
