@@ -35,13 +35,14 @@ jest.mock("@clerk/clerk-expo", () => ({
   }),
 }));
 
+const mockNormalizeGatewayUrl = jest.fn((url: string) => url);
 jest.mock("@/lib/storage", () => ({
   HOSTED_GATEWAY_URL: "https://app.matrix-os.com",
   getSelectedGatewayConnection: jest.fn(() =>
     Promise.resolve({ url: "https://app.matrix-os.com" }),
   ),
   isHostedGatewayUrl: (url: string) => url === "https://app.matrix-os.com",
-  normalizeGatewayUrl: (url: string) => url,
+  normalizeGatewayUrl: (url: string) => mockNormalizeGatewayUrl(url),
   saveSelectedGatewayBasicAuth: jest.fn(),
   saveSelectedGatewayUrl: jest.fn(() => Promise.resolve()),
 }));
@@ -66,6 +67,7 @@ function attemptWithEmailCodeFactor() {
 describe("SignInScreen email code flow", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockNormalizeGatewayUrl.mockImplementation((url: string) => url);
     mockCreate.mockImplementation(() => Promise.resolve(attemptWithEmailCodeFactor()));
   });
 
@@ -133,6 +135,19 @@ describe("SignInScreen email code flow", () => {
 
     expect(await screen.findByText("Couldn't find your account.")).toBeTruthy();
     expect(screen.queryByLabelText("Verification code")).toBeNull();
+  });
+
+  it("reports a bad computer URL as a URL problem, without starting a Clerk attempt", async () => {
+    mockNormalizeGatewayUrl.mockImplementation(() => {
+      throw new Error("Enter a valid Matrix OS URL.");
+    });
+    render(<SignInScreen />);
+
+    fireEvent.changeText(screen.getByLabelText("Email address"), "neo@matrix-os.com");
+    fireEvent.press(screen.getByText("Email me a code"));
+
+    expect(await screen.findByText("Enter a valid Matrix OS URL.")).toBeTruthy();
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 
   it("returns to the email step so a typo can be corrected", async () => {

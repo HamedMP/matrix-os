@@ -10,6 +10,7 @@
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
 const CODE_LENGTH = 6;
+const CODE_PATTERN = new RegExp(`^\\d{${CODE_LENGTH}}$`);
 
 export type FirstFactorLike = {
   strategy: string;
@@ -49,6 +50,16 @@ export class EmailCodeSignInError extends Error {
   }
 }
 
+/**
+ * Resolves any sign-in failure to user-safe copy. Errors raised by this module
+ * already carry such copy; anything else (a Clerk error thrown by `setActive`,
+ * a storage write failure) goes through the Clerk-aware normaliser.
+ */
+export function describeSignInFailure(error: unknown, fallback: string): string {
+  if (error instanceof EmailCodeSignInError) return error.message;
+  return describeClerkError(error, fallback);
+}
+
 export function normalizeSignInIdentifier(raw: string): string {
   const trimmed = raw.trim();
   // Usernames are case sensitive in Clerk; email addresses are not, and iOS
@@ -61,8 +72,11 @@ export function isLikelyEmail(value: string): boolean {
 }
 
 export function isValidVerificationCode(code: string): boolean {
-  return new RegExp(`^\\d{${CODE_LENGTH}}$`).test(stripCodeSpacing(code));
+  return CODE_PATTERN.test(stripCodeSpacing(code));
 }
+
+/** Longest raw input that can still contain a valid code, e.g. "123 456". */
+export const MAX_VERIFICATION_CODE_INPUT_LENGTH = CODE_LENGTH + 1;
 
 export function findEmailCodeFactor(
   factors: FirstFactorLike[] | null | undefined,

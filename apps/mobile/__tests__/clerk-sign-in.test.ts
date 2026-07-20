@@ -1,6 +1,8 @@
 import {
   EmailCodeSignInError,
+  MAX_VERIFICATION_CODE_INPUT_LENGTH,
   describeClerkError,
+  describeSignInFailure,
   findEmailCodeFactor,
   isLikelyEmail,
   isValidVerificationCode,
@@ -106,6 +108,33 @@ describe("describeClerkError", () => {
     expect(describeClerkError(new Error("Network request failed"), "fallback")).toBe("fallback");
     expect(describeClerkError(undefined, "fallback")).toBe("fallback");
     expect(describeClerkError({ errors: [] }, "fallback")).toBe("fallback");
+  });
+});
+
+describe("describeSignInFailure", () => {
+  it("passes through copy this module already made safe", () => {
+    expect(
+      describeSignInFailure(new EmailCodeSignInError("Enter the 6-digit code."), "fallback"),
+    ).toBe("Enter the 6-digit code.");
+  });
+
+  it("normalises a Clerk error thrown outside this module, such as by setActive", () => {
+    expect(
+      describeSignInFailure({ errors: [{ longMessage: "Session is expired." }] }, "fallback"),
+    ).toBe("Session is expired.");
+  });
+
+  it("hides raw internals from any other failure", () => {
+    expect(describeSignInFailure(new Error("ECONNREFUSED 10.0.0.1:443"), "fallback")).toBe(
+      "fallback",
+    );
+  });
+});
+
+describe("MAX_VERIFICATION_CODE_INPUT_LENGTH", () => {
+  it("still admits a code pasted with its separating space", () => {
+    expect("123 456".length).toBe(MAX_VERIFICATION_CODE_INPUT_LENGTH);
+    expect(isValidVerificationCode("123 456")).toBe(true);
   });
 });
 

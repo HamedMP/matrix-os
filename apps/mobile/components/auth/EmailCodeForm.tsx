@@ -1,7 +1,12 @@
 import { View, Text, Pressable, ActivityIndicator, TextInput } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Ionicons } from "@expo/vector-icons";
-import { isLikelyEmail, isValidVerificationCode, normalizeSignInIdentifier } from "@/lib/clerk-sign-in";
+import {
+  MAX_VERIFICATION_CODE_INPUT_LENGTH,
+  isLikelyEmail,
+  isValidVerificationCode,
+  normalizeSignInIdentifier,
+} from "@/lib/clerk-sign-in";
 
 type EmailCodeFormProps = {
   email: string;
@@ -95,7 +100,7 @@ export function EmailCodeForm({
           autoComplete="one-time-code"
           keyboardType="number-pad"
           textContentType="oneTimeCode"
-          maxLength={7}
+          maxLength={MAX_VERIFICATION_CODE_INPUT_LENGTH}
           returnKeyType="go"
           onSubmitEditing={onVerify}
           style={styles.input}

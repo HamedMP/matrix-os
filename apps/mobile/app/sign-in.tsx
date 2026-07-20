@@ -9,7 +9,7 @@ import { useSSO, useAuth, useSignIn } from "@clerk/clerk-expo";
 import * as WebBrowser from "expo-web-browser";
 import { Image } from "expo-image";
 import {
-  EmailCodeSignInError,
+  describeSignInFailure,
   requestEmailCode,
   submitEmailCode,
   type SignInAttemptLike,
@@ -124,26 +124,32 @@ export default function SignInScreen() {
 
   const handleSendEmailCode = useCallback(async () => {
     if (!signInLoaded || !signIn) return;
+
+    // Validate the target computer before starting a Clerk attempt, so a bad URL
+    // reports its own message instead of being normalised as a sign-in failure.
+    let targetGatewayUrl: string;
+    try {
+      targetGatewayUrl = normalizeGatewayUrl(gatewayUrl);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Enter a valid Matrix OS URL.";
+      setGatewayError(message);
+      return;
+    }
+
     setLoadingProvider("email");
     try {
-      const normalizedGatewayUrl = normalizeGatewayUrl(gatewayUrl);
-      await saveSelectedGatewayUrl(normalizedGatewayUrl);
-      setGatewayUrl(normalizedGatewayUrl);
+      await saveSelectedGatewayUrl(targetGatewayUrl);
+      setGatewayUrl(targetGatewayUrl);
       setGatewayError(null);
-      const { attempt, maskedIdentifier } = await requestEmailCode(
-        signIn as never,
-        email,
-      );
+      const { attempt, maskedIdentifier } = await requestEmailCode(signIn, email);
       emailAttemptRef.current = attempt;
       setCodeSentTo(maskedIdentifier);
       setCode("");
     } catch (err: unknown) {
-      const message =
-        err instanceof EmailCodeSignInError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : "We could not send the code. Try again in a moment.";
+      const message = describeSignInFailure(
+        err,
+        "We could not send the code. Try again in a moment.",
+      );
       console.warn("[mobile] email code request failed:", err);
       setGatewayError(message);
       Alert.alert("Sign in failed", message);
@@ -164,12 +170,10 @@ export default function SignInScreen() {
       redirectedRef.current = true;
       router.replace("/(tabs)/apps" as any);
     } catch (err: unknown) {
-      const message =
-        err instanceof EmailCodeSignInError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : "That code did not work. Request a new one and try again.";
+      const message = describeSignInFailure(
+        err,
+        "That code did not work. Request a new one and try again.",
+      );
       console.warn("[mobile] email code verification failed:", err);
       setGatewayError(message);
       Alert.alert("Sign in failed", message);
