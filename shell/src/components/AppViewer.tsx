@@ -96,12 +96,14 @@ const requestBridgeData: BridgeDataRequest = async (action, app, key, value) => 
   }
 };
 
+// App windows can be removed while their final writes are still draining.
+// Keep one process-local queue so a newly opened viewer for the same app/key
+// waits behind those writes instead of racing an independent component queue.
+const bridgeDataHandler = createCoalescedBridgeDataHandler(requestBridgeData);
+
 export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [iframeHtml, setIframeHtml] = useState<string | null>(null);
-  const [bridgeDataHandler] = useState<BridgeDataRequest>(() =>
-    createCoalescedBridgeDataHandler(requestBridgeData),
-  );
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { send, subscribe } = useSocket();
   // react-doctor-disable-next-line react-doctor/no-event-handler -- pure derived value computed from the `path` prop during render, not a DOM event handler or effect-driven side effect.

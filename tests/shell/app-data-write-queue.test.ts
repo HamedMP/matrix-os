@@ -43,6 +43,37 @@ describe("serialized app data writes", () => {
     expect(request).toHaveBeenCalledTimes(2);
   });
 
+  it("settles a superseded pending caller without retaining it until the latest write", async () => {
+    let finishFirst: (() => void) | undefined;
+    let finishLatest: (() => void) | undefined;
+    const request = vi.fn()
+      .mockImplementationOnce(() => new Promise<void>((resolve) => {
+        finishFirst = resolve;
+      }))
+      .mockImplementationOnce(() => new Promise<void>((resolve) => {
+        finishLatest = resolve;
+      }));
+    const handle = createCoalescedBridgeDataHandler(request);
+
+    const first = handle("write", "notes", "draft", "first");
+    const superseded = handle("write", "notes", "draft", "second");
+    let supersededSettled = false;
+    void superseded.then(() => {
+      supersededSettled = true;
+    });
+    const latest = handle("write", "notes", "draft", "third");
+
+    await vi.waitFor(() => expect(supersededSettled).toBe(true));
+    expect(request).toHaveBeenCalledTimes(1);
+
+    finishFirst?.();
+    await first;
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(request.mock.calls[1]).toEqual(["write", "notes", "draft", "third"]);
+    finishLatest?.();
+    await latest;
+  });
+
   it("rejects new active keys after the bounded queue reaches capacity", async () => {
     const request = vi.fn(() => new Promise<void>(() => undefined));
     const handle = createCoalescedBridgeDataHandler(request, 1);
