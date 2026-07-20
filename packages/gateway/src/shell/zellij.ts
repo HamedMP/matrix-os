@@ -113,9 +113,6 @@ export interface ZellijAdapter {
   setShellTheme(themeId: MatrixZellijShellThemeId): Promise<void>;
 }
 
-const ZellijTabInfoSchema = z.object({
-  tab_id: z.number().int().nonnegative(),
-}).passthrough();
 const ZellijPaneListSchema = z.array(z.object({
   is_plugin: z.boolean(),
   is_focused: z.boolean(),
@@ -449,17 +446,13 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       }
       if (cached) focusedPaneRuntimeCache.delete(name);
       try {
-        const [tabJson, panesJson] = await Promise.all([
-          run(["--session", name, "action", "current-tab-info", "--json"]),
-          run(["--session", name, "action", "list-panes", "--all", "--json"]),
-        ]);
-        const tab = ZellijTabInfoSchema.safeParse(JSON.parse(tabJson));
+        const panesJson = await run(["--session", name, "action", "list-panes", "--all", "--json"]);
         const panes = ZellijPaneListSchema.safeParse(JSON.parse(panesJson));
-        if (!tab.success || !panes.success) {
+        if (!panes.success) {
           throw new Error("Invalid focused pane runtime response");
         }
         const focusedPane = panes.data.find((pane) => (
-          !pane.is_plugin && pane.is_focused && pane.tab_id === tab.data.tab_id
+          !pane.is_plugin && pane.is_focused
         ));
         const value: FocusedPaneRuntimeObservation = {
           cwd: focusedPane?.pane_cwd ?? null,
