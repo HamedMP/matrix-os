@@ -146,6 +146,7 @@ jobs:
             -H "authorization: Bearer ${gateway_token}" \
             -H 'content-type: application/json' \
             --data-binary "$run_body")"
+          echo "gateway_http_status=$http_code"
           if [ "$http_code" != 200 ]; then
             echo "Authenticated spike execution failed." >&2
             exit 1
@@ -190,6 +191,7 @@ jobs:
             -H "authorization: Bearer ${gateway_token}" \
             -H 'content-type: application/json' \
             --data-binary "$pack_body")"
+          echo "gateway_http_status=$http_code"
           if [ "$http_code" != 200 ] || ! jq -e '
             type == "object" and .exitCode == 0 and .timedOut == false and
             .truncated == false and .signal == null and

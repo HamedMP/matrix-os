@@ -97,6 +97,7 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain("'https://app.matrix-os.com/api/terminal/run'");
     expect(workflow.match(/--insecure/g)).toHaveLength(2);
     expect(workflow).toContain('PLATFORM_SECRET never leaves the runner');
+    expect(workflow.match(/gateway_http_status=\$http_code/g)).toHaveLength(2);
     expect(workflow).not.toContain('VPS_SSH_KEY');
     expect(workflow).toContain('workflow_dispatch:');
   });
