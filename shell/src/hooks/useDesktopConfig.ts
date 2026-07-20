@@ -44,11 +44,11 @@ export const BUNDLED_WALLPAPERS = new Set([
 const SETTINGS_FETCH_TIMEOUT_MS = 10_000;
 
 // All wallpapers — bundled OS defaults and user uploads alike — are served by
-// the gateway from the owner's home dir under /files/system/wallpapers. The
-// shell-public /wallpapers path is unreliable through the platform
-// session-routing proxy, so bundled names must not be special-cased to it.
+// the gateway from the owner's home dir via /api/files/blob, the same
+// authenticated /api path as the file listing APIs. Raw /files/* URLs can
+// 401/404 for signed-in users behind the platform session router.
 export function wallpaperUrl(name: string, gatewayUrl: string): string {
-  return `${gatewayUrl}/files/system/wallpapers/${name}`;
+  return `${gatewayUrl}/api/files/blob?path=${encodeURIComponent(`system/wallpapers/${name}`)}`;
 }
 
 const DEFAULT_DESKTOP_CONFIG: DesktopConfig = {

@@ -32,6 +32,7 @@ import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
 import { MenuBar } from "./MenuBar";
 import { WindowsTaskbar } from "./taskbar/WindowsTaskbar";
+import { XpDesktopIcons } from "./desktop/XpDesktopIcons";
 import { useThemeStyle } from "./window/useThemeStyle";
 import { useIsClient } from "@/hooks/useIsClient";
 import { OsBootScreen } from "./os-session/OsBootScreen";
@@ -39,7 +40,7 @@ import { OsSessionHost } from "./os-session/OsSessionHost";
 import { isBootDesign, readPersistedThemeStyle } from "./os-session/os-session-utils";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
-import { getGatewayUrl } from "@/lib/gateway";
+import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { ChatPopover } from "./ChatPopover";
 import { SetupChecklist } from "./onboarding/SetupChecklist";
@@ -143,7 +144,7 @@ function MatrixFirstRunLoading() {
 }
 
 async function markOnboardingComplete() {
-  const res = await fetch("/api/settings/onboarding-complete", {
+  const res = await fetch(`${getGatewayUrl()}/api/settings/onboarding-complete`, {
     method: "POST",
     signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
   });
@@ -234,7 +235,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     const controller = new AbortController();
     let cancelled = false;
     const timeout = window.setTimeout(() => controller.abort(), GATEWAY_FETCH_TIMEOUT_MS);
-    void fetch("/api/settings/onboarding-status", {
+    void fetch(`${getGatewayUrl()}/api/settings/onboarding-status`, {
       cache: "no-store",
       signal: controller.signal,
     })
@@ -554,7 +555,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
       const iconForSlug = (slug: string | undefined): string | undefined => {
         if (!slug) return undefined;
-        return bootstrap.icons?.[slug]?.versionedUrl ?? iconUrlForSlug(slug);
+        return gatewayAssetUrl(bootstrap.icons?.[slug]?.versionedUrl) ?? iconUrlForSlug(slug);
       };
 
       const savedLayout: { windows?: LayoutWindow[] } =
@@ -1131,6 +1132,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     />
   ) : null;
 
+  // Shared by the Windows taskbar (start menu, quick launch) and the XP
+  // desktop icons: open the app window or focus the existing one.
+  const openAppOrFocus = (path: string, name?: string) =>
+    focusOrOpen(name ?? apps.find((a) => a.path === path)?.name ?? "App", path);
+
   if (firstRunStatus === "checking") {
     return (
       <TooltipProvider delayDuration={300}>
@@ -1157,7 +1163,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           themeStyle={themeStyle}
           apps={apps}
           windows={windows}
-          onOpenApp={(path, name) => focusOrOpen(name ?? apps.find((a) => a.path === path)?.name ?? "App", path)}
+          onOpenApp={openAppOrFocus}
           onFocusWindow={(id) => { wmRestoreAndFocusWindow(id); focusCanvasWindow(id); }}
           onMinimizeWindow={animateMinimize}
           onOpenSettings={() => { setSettingsOpen(true); setTaskBoardOpen(false); setChatOpen(false); }}
@@ -1415,7 +1421,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                       onClick={() => focusOrOpen("Terminal", "__terminal__")}
                       iconSize={dock.iconSize}
                       tooltipSide={tooltipSide}
-                      iconUrl={terminalApp?.iconUrl ?? "/icons/terminal.png"}
+                      iconUrl={terminalApp?.iconUrl ?? iconUrlForSlug("terminal")}
                     />
                   );
                 })()}
@@ -1585,6 +1591,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
         <div className="relative flex-1 min-h-0 overflow-hidden">
           <DotGrid />
+          {/* XP desktop icons: above the wallpaper, below app windows. The
+              component self-gates to the winxp design and renders null
+              otherwise. */}
+          <XpDesktopIcons onOpenApp={openAppOrFocus} />
           <MissionControl
             open={taskBoardOpen}
             apps={apps}

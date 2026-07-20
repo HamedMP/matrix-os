@@ -2,11 +2,10 @@
 
 import { useState, useEffect, lazy, Suspense } from "react";
 import { usePreviewWindow, type PreviewTab as PreviewTabType } from "@/hooks/usePreviewWindow";
-import { getGatewayUrl } from "@/lib/gateway";
+import { fileBlobUrl, fileMediaUrl } from "@/lib/file-blob";
 import { FileIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-const GATEWAY_URL = getGatewayUrl();
 const FILE_FETCH_TIMEOUT_MS = 10_000;
 
 const CodeEditor = lazy(() =>
@@ -45,7 +44,7 @@ export function PreviewTabContent({ tab }: PreviewTabContentProps) {
 
     // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- raises the loading gate before the awaited fetch for the newly-selected tab; not a render-time derivation because the resolved file body arrives asynchronously below.
     setLoading(true);
-    fetch(`${GATEWAY_URL}/files/${tab.path}`, {
+    fetch(fileBlobUrl(tab.path), {
       signal: AbortSignal.timeout(FILE_FETCH_TIMEOUT_MS),
     })
       .then((r) => (r.ok ? r.text() : ""))
@@ -70,7 +69,7 @@ export function PreviewTabContent({ tab }: PreviewTabContentProps) {
 
   async function handleSave() {
     try {
-      const res = await fetch(`${GATEWAY_URL}/files/${tab.path}`, {
+      const res = await fetch(`${fileBlobUrl(tab.path)}&force=true`, {
         method: "PUT",
         signal: AbortSignal.timeout(FILE_FETCH_TIMEOUT_MS),
         body: content,
@@ -163,7 +162,7 @@ function PdfPlaceholder({ path }: { path: string }) {
         PDF rendering requires pdfjs-dist (planned for v2)
       </div>
       <a
-        href={`${GATEWAY_URL}/files/${path}`}
+        href={fileMediaUrl(path)}
         target="_blank"
         rel="noopener noreferrer"
         className="text-xs text-primary underline"

@@ -6,7 +6,9 @@ const WS_TOKEN_REFRESH_SKEW_MS = 30_000;
 
 let cachedToken: string | null = null;
 let cachedExpiresAt = 0;
+let cachedGatewayUrl: string | null = null;
 let inflightTokenRequest: Promise<string | null> | null = null;
+let inflightGatewayUrl: string | null = null;
 
 interface WsTokenResponse {
   token?: unknown;
@@ -20,20 +22,21 @@ export class WebSocketCredentialUnavailableError extends Error {
   }
 }
 
-function getCachedToken(now = Date.now()): string | null {
-  if (!cachedToken) {
+function getCachedToken(gatewayUrl: string, now = Date.now()): string | null {
+  if (!cachedToken || cachedGatewayUrl !== gatewayUrl) {
     return null;
   }
   if (cachedExpiresAt - WS_TOKEN_REFRESH_SKEW_MS <= now) {
     cachedToken = null;
     cachedExpiresAt = 0;
+    cachedGatewayUrl = null;
     return null;
   }
   return cachedToken;
 }
 
-async function fetchWebSocketToken(): Promise<string | null> {
-  const res = await fetch(`${getGatewayUrl()}${WS_AUTH_PATH}`, {
+async function fetchWebSocketToken(gatewayUrl: string): Promise<string | null> {
+  const res = await fetch(`${gatewayUrl}${WS_AUTH_PATH}`, {
     credentials: "same-origin",
     signal: AbortSignal.timeout(10_000),
   });
@@ -46,18 +49,25 @@ async function fetchWebSocketToken(): Promise<string | null> {
   }
   cachedToken = body.token;
   cachedExpiresAt = body.expiresAt;
+  cachedGatewayUrl = gatewayUrl;
   return body.token;
 }
 
 export async function getWebSocketAuthToken(): Promise<string | null> {
-  const cached = getCachedToken();
+  const gatewayUrl = getGatewayUrl();
+  const cached = getCachedToken(gatewayUrl);
   if (cached) {
     return cached;
   }
-  if (!inflightTokenRequest) {
-    inflightTokenRequest = fetchWebSocketToken().finally(() => {
-      inflightTokenRequest = null;
+  if (!inflightTokenRequest || inflightGatewayUrl !== gatewayUrl) {
+    inflightGatewayUrl = gatewayUrl;
+    const request = fetchWebSocketToken(gatewayUrl).finally(() => {
+      if (inflightTokenRequest === request) {
+        inflightTokenRequest = null;
+        inflightGatewayUrl = null;
+      }
     });
+    inflightTokenRequest = request;
   }
   return inflightTokenRequest;
 }
@@ -68,7 +78,9 @@ export async function buildAuthenticatedWebSocketUrl(
   options?: { requireToken?: boolean },
 ): Promise<string> {
   const gatewayUrl = new URL(getGatewayWs());
-  gatewayUrl.pathname = path;
+  const explicitComputerPrefix = gatewayUrl.pathname.replace(/\/ws\/?$/, "");
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  gatewayUrl.pathname = `${explicitComputerPrefix}${normalizedPath}`;
   gatewayUrl.search = "";
 
   for (const [key, value] of Object.entries(query ?? {})) {
@@ -95,5 +107,7 @@ export async function buildAuthenticatedWebSocketUrl(
 export function resetWebSocketAuthTokenCacheForTests(): void {
   cachedToken = null;
   cachedExpiresAt = 0;
+  cachedGatewayUrl = null;
   inflightTokenRequest = null;
+  inflightGatewayUrl = null;
 }
