@@ -9,6 +9,7 @@ import {
   reportGateChecks,
   validateEvidenceDirectory,
 } from '../../scripts/spikes/terminal-runtime/verify-evidence.mjs';
+import { stripTerminalControls } from '../../scripts/spikes/terminal-runtime/terminal-text.mjs';
 
 const roots: string[] = [];
 
@@ -138,10 +139,10 @@ describe('terminal runtime spike evidence', () => {
   });
 
   it('keeps the fixed notify unit shape and accepts readiness from the keeper helper', async () => {
-    const unit = await readFile(
-      join(process.cwd(), 'scripts/spikes/terminal-runtime/matrix-terminal-spike@.service'),
-      'utf8',
-    );
+    const [unit, keeper] = await Promise.all([
+      readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/matrix-terminal-spike@.service'), 'utf8'),
+      readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/keeper.mjs'), 'utf8'),
+    ]);
 
     expect(unit).toContain('Type=notify\nNotifyAccess=all\n');
     expect(unit).toContain('ExecStart=/opt/matrix/runtime/node/bin/node /opt/matrix/libexec/terminal-runtime-spike/keeper.mjs %i');
@@ -149,6 +150,11 @@ describe('terminal runtime spike evidence', () => {
     expect(unit).toContain('Restart=no');
     expect(unit).not.toContain('EnvironmentFile=');
     expect(unit).not.toContain('[Install]');
+    expect(keeper).toContain("!process.cmdline.includes('list-sessions')");
+  });
+
+  it('normalizes terminal controls before matching the resurrection confirmation', () => {
+    expect(stripTerminalControls('\u001b[2JPress\u001b[1C enter\u001b[0m to run')).toBe('Press enter to run');
   });
 
   it('accepts complete bounded S1 and S2 evidence', async () => {

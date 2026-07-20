@@ -56,7 +56,7 @@ install -d -o matrix -g matrix -m 0700 "/run/user/$(id -u matrix)"
 
 rm -rf -- "$support_root.next"
 install -d -o root -g root -m 0755 "$support_root.next" "$support_root.next/node_modules"
-  for file in keeper.mjs record-outcome.mjs record-runtime-roles.mjs pane-probe.sh memory-hog.mjs layout.kdl; do
+  for file in keeper.mjs record-outcome.mjs record-runtime-roles.mjs terminal-text.mjs pane-probe.sh memory-hog.mjs layout.kdl; do
   install -o root -g root -m 0755 "$source_dir/$file" "$support_root.next/$file"
 done
 cp -aL /opt/matrix/app/node_modules/node-pty "$support_root.next/node_modules/node-pty"

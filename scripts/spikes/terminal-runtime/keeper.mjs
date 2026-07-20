@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
+import { stripTerminalControls } from './terminal-text.mjs';
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -112,7 +113,9 @@ async function cgroupRoles(cgroupPath) {
   const raw = await readFile(`${cgroupPath}/cgroup.procs`, 'utf8');
   const pids = raw.split(/\s+/).filter(Boolean).map((value) => Number.parseInt(value, 10));
   const processes = (await Promise.all(pids.map(processInfo))).filter(Boolean);
-  const zellijPids = processes.filter((process) => process.comm === 'zellij').map((process) => process.pid);
+  const zellijPids = processes
+    .filter((process) => process.comm === 'zellij' && !process.cmdline.includes('list-sessions'))
+    .map((process) => process.pid);
   const shell = processes.find((entry) => entry.comm === 'bash');
   const agent = processes.find((process) => process.cmdline[0] === 'matrix-agent-probe');
   if (zellijPids.length < 2 || !shell || !agent) return null;
@@ -191,7 +194,7 @@ async function main() {
     if (
       descriptor.intent === 'recover' &&
       !confirmationRecorded &&
-      /press\s+enter\s+to\s+run/i.test(confirmationBuffer)
+      /press\s+enter\s+to\s+run/i.test(stripTerminalControls(confirmationBuffer))
     ) {
       confirmationRecorded = true;
       void writeFile(`${runtimeRoot}/confirmations/${runtimeId}.pass`, 'pass\n', {
