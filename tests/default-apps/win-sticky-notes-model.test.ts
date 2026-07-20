@@ -159,4 +159,18 @@ describe("formatNoteTime", () => {
     expect(formatNoteTime(new Date("2026-03-04T09:00:00").getTime(), now)).toBe("Mar 4");
     expect(formatNoteTime(new Date("2025-11-02T09:00:00").getTime(), now)).toBe("Nov 2, 2025");
   });
+
+  it("labels the previous calendar day across a daylight-saving transition", () => {
+    const originalTimeZone = process.env.TZ;
+    process.env.TZ = "America/New_York";
+    try {
+      const afterSpringForward = new Date(2026, 2, 9, 12).getTime();
+      const previousCalendarDay = new Date(2026, 2, 8, 9).getTime();
+
+      expect(formatNoteTime(previousCalendarDay, afterSpringForward)).toBe("Yesterday");
+    } finally {
+      if (originalTimeZone === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTimeZone;
+    }
+  });
 });

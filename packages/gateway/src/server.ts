@@ -157,7 +157,8 @@ import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel"
 import { listApps } from "./apps.js";
 import { createAppDb, type AppDb } from "./app-db.js";
 import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
-import { createQueryEngine, type FilterValue, type QueryEngine } from "./app-db-query.js";
+import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
+import { BridgeQueryBodySchema } from "./app-db-contracts.js";
 import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
@@ -2951,9 +2952,9 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Database not configured (no DATABASE_URL)" }, 503);
     }
 
-    let body: Record<string, unknown>;
+    let rawBody: unknown;
     try {
-      body = await c.req.json();
+      rawBody = await c.req.json();
     } catch (err: unknown) {
       if (err instanceof SyntaxError) {
         return c.json({ error: "Invalid JSON body" }, 400);
@@ -2962,105 +2963,20 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Failed to read request body" }, 500);
     }
 
-    const rawSlug = body.app as string;
-    const action = body.action as string;
-    const appSlug = rawSlug?.replace(/[^a-zA-Z0-9_-]/g, "");
-
-    if (!action) {
-      return c.json({ error: "action is required" }, 400);
+    const parsedBody = BridgeQueryBodySchema.safeParse(rawBody);
+    if (!parsedBody.success) {
+      const exceedsRowLimit = parsedBody.error.issues.some((issue) =>
+        issue.code === "too_big" && (issue.path[0] === "rows" || issue.path[0] === "updates")
+      );
+      return c.json(
+        { error: exceedsRowLimit ? "rows too large (max 200 rows)" : "Invalid query body" },
+        exceedsRowLimit ? 413 : 400,
+      );
     }
-
-    if (action !== "listApps" && !appSlug) {
-      return c.json({ error: "app is required and must contain valid characters" }, 400);
-    }
-
-    // Validate data for insert/update
-    if ((action === "insert" || action === "update") && (body.data == null || typeof body.data !== "object" || Array.isArray(body.data))) {
-      return c.json({ error: "data must be a non-null object" }, 400);
-    }
-    if ((action === "insert" || action === "update") && JSON.stringify(body.data).length > 1_000_000) {
-      return c.json({ error: "data too large (max 1MB)" }, 413);
-    }
-    if (action === "bulkInsert") {
-      if (!Array.isArray(body.rows)) {
-        return c.json({ error: "rows must be an array" }, 400);
-      }
-      if (body.rows.length > 200) {
-        return c.json({ error: "rows too large (max 200 rows)" }, 413);
-      }
-      if (JSON.stringify(body.rows).length > 1_000_000) {
-        return c.json({ error: "rows too large (max 1MB)" }, 413);
-      }
-      for (const row of body.rows) {
-        if (!row || typeof row !== "object" || Array.isArray(row) || Object.keys(row).length === 0) {
-          return c.json({ error: "rows entries must be non-empty objects" }, 400);
-        }
-      }
-    }
-    if (action === "bulkUpdate") {
-      if (!Array.isArray(body.updates)) {
-        return c.json({ error: "updates must be an array" }, 400);
-      }
-      if (body.updates.length > 200) {
-        return c.json({ error: "updates too large (max 200 rows)" }, 413);
-      }
-      if (JSON.stringify(body.updates).length > 1_000_000) {
-        return c.json({ error: "updates too large (max 1MB)" }, 413);
-      }
-      for (const update of body.updates) {
-        if (!update || typeof update !== "object" || Array.isArray(update)) {
-          return c.json({ error: "updates entries must be objects" }, 400);
-        }
-        const candidate = update as Record<string, unknown>;
-        if (typeof candidate.id !== "string" || candidate.id.length === 0) {
-          return c.json({ error: "updates entries require id" }, 400);
-        }
-        if (!candidate.data || typeof candidate.data !== "object" || Array.isArray(candidate.data)) {
-          return c.json({ error: "updates entries require data" }, 400);
-        }
-        if (Object.keys(candidate.data).length === 0) {
-          return c.json({ error: "updates entries require at least one data field" }, 400);
-        }
-      }
-    }
-
-    // Validate table is present for actions that need it
-    const needsTable = ["find", "findOne", "insert", "bulkInsert", "update", "bulkUpdate", "delete", "count"].includes(action);
-    const safeTable = typeof body.table === "string" ? body.table.replace(/[^a-zA-Z0-9_-]/g, "") : "";
-    if (needsTable && !safeTable) {
-      return c.json({ error: "table is required and must contain valid characters" }, 400);
-    }
-
-    // Validate id is present for actions that need it
-    const needsId = ["findOne", "update", "delete"].includes(action);
-    if (needsId && !body.id) {
-      return c.json({ error: "id is required" }, 400);
-    }
-
-    // Validate filter: must be a plain object with string keys (parseSafeName validates in query engine)
-    if (body.filter != null && (typeof body.filter !== "object" || Array.isArray(body.filter))) {
-      return c.json({ error: "filter must be a plain object" }, 400);
-    }
-
-    // Validate orderBy: must be a plain object with only "asc"/"desc" values
-    if (body.orderBy != null) {
-      if (typeof body.orderBy !== "object" || Array.isArray(body.orderBy)) {
-        return c.json({ error: "orderBy must be a plain object" }, 400);
-      }
-      for (const [, dir] of Object.entries(body.orderBy as Record<string, unknown>)) {
-        if (dir !== "asc" && dir !== "desc") {
-          return c.json({ error: "orderBy values must be 'asc' or 'desc'" }, 400);
-        }
-      }
-    }
-
-    // Validate limit/offset are non-negative integers
-    if (body.limit != null && (typeof body.limit !== "number" || !Number.isInteger(body.limit) || body.limit < 0)) {
-      return c.json({ error: "limit must be a non-negative integer" }, 400);
-    }
-    if (body.offset != null && (typeof body.offset !== "number" || !Number.isInteger(body.offset) || body.offset < 0)) {
-      return c.json({ error: "offset must be a non-negative integer" }, 400);
-    }
+    const body = parsedBody.data;
+    const action = body.action;
+    const appSlug = action === "listApps" ? "" : body.app;
+    const safeTable = "table" in body ? body.table : "";
 
     // Ensure the app's Postgres schema exists before querying. Apps built in-OS
     // after gateway startup aren't in the startup registration pass; provision
@@ -3073,15 +2989,15 @@ export async function createGateway(config: GatewayConfig) {
       switch (action) {
         case "find":
           return c.json(await queryEngine.find(appSlug, safeTable, {
-            filter: body.filter as Record<string, FilterValue> | undefined,
-            orderBy: body.orderBy as Record<string, "asc" | "desc"> | undefined,
-            limit: body.limit as number | undefined,
-            offset: body.offset as number | undefined,
+            filter: body.filter,
+            orderBy: body.orderBy,
+            limit: body.limit,
+            offset: body.offset,
           }));
         case "findOne":
-          return c.json(await queryEngine.findOne(appSlug, safeTable, body.id as string));
+          return c.json(await queryEngine.findOne(appSlug, safeTable, body.id));
         case "insert": {
-          const result = await queryEngine.insert(appSlug, safeTable, body.data as Record<string, unknown>);
+          const result = await queryEngine.insert(appSlug, safeTable, body.data);
           broadcast({ type: "data:change", app: appSlug, key: safeTable });
           return c.json(result, 201);
         }
@@ -3089,13 +3005,13 @@ export async function createGateway(config: GatewayConfig) {
           const result = await queryEngine.bulkInsert(
             appSlug,
             safeTable,
-            body.rows as Array<Record<string, unknown>>,
+            body.rows,
           );
           broadcast({ type: "data:change", app: appSlug, key: safeTable });
           return c.json(result, 201);
         }
         case "update": {
-          await queryEngine.update(appSlug, safeTable, body.id as string, body.data as Record<string, unknown>);
+          await queryEngine.update(appSlug, safeTable, body.id, body.data);
           broadcast({ type: "data:change", app: appSlug, key: safeTable });
           return c.json({ ok: true });
         }
@@ -3103,18 +3019,18 @@ export async function createGateway(config: GatewayConfig) {
           await queryEngine.bulkUpdate(
             appSlug,
             safeTable,
-            body.updates as Array<{ id: string; data: Record<string, unknown> }>,
+            body.updates,
           );
           broadcast({ type: "data:change", app: appSlug, key: safeTable });
           return c.json({ ok: true });
         }
         case "delete": {
-          await queryEngine.delete(appSlug, safeTable, body.id as string);
+          await queryEngine.delete(appSlug, safeTable, body.id);
           broadcast({ type: "data:change", app: appSlug, key: safeTable });
           return c.json({ ok: true });
         }
         case "count":
-          return c.json({ count: await queryEngine.count(appSlug, safeTable, body.filter as Record<string, FilterValue> | undefined) });
+          return c.json({ count: await queryEngine.count(appSlug, safeTable, body.filter) });
         case "schema":
           return c.json(await appRegistry.getSchema(appSlug));
         case "appInfo": {

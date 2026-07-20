@@ -121,8 +121,13 @@ export function formatNoteTime(updatedAt: number, now: number): string {
   if (diff < DAY) return `${Math.floor(diff / HOUR)} hr ago`;
   const date = new Date(updatedAt);
   const reference = new Date(now);
-  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  if (startOfDay(reference) - startOfDay(date) === DAY) return "Yesterday";
+  const yesterday = new Date(reference);
+  yesterday.setDate(reference.getDate() - 1);
+  if (
+    date.getFullYear() === yesterday.getFullYear()
+    && date.getMonth() === yesterday.getMonth()
+    && date.getDate() === yesterday.getDate()
+  ) return "Yesterday";
   const sameYear = date.getFullYear() === reference.getFullYear();
   return date.toLocaleDateString("en-US", sameYear
     ? { month: "short", day: "numeric" }
