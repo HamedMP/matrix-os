@@ -3056,11 +3056,12 @@ describe("platform proxy routing", () => {
     const html = await res.text();
     expect(html).toContain('var redirectTarget = "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK";');
     expect(html).toContain('var deviceReturnTarget = "/auth/device?user_code=BCDF-GHJK";');
+    expect(html).toContain("var provisionHandoffTarget = deviceReturnTarget ? redirectTarget : '/';");
     expect(html).toContain("Opening Billing settings");
     expect(html).toContain("var billingSetupTarget = ");
     expect(html).toContain("var url = new URL(billingSetupTarget);");
     expect(html).toContain("window.location.replace(target);");
-    expect(html).toContain("window.location.replace(afterProvision ? (deviceReturnTarget || '/') : (deviceReturnTarget || payload.redirectTo || redirectTarget));");
+    expect(html).toContain("window.location.replace(afterProvision ? provisionHandoffTarget : (deviceReturnTarget || payload.redirectTo || redirectTarget));");
     expect(html).toContain("fetch('/api/auth/provision-runtime'");
     expect(html).not.toContain("Open Billing settings");
     expect(html).not.toBe("auth shell");

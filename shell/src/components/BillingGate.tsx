@@ -15,6 +15,10 @@ import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
 import { Settings } from "./Settings";
 import { navigateForOnboarding } from "@/lib/onboarding-navigation";
 import { isAcceptedProvisionResponse, PROVISIONING_RETRY_ERROR } from "@/lib/provisioning-handoff";
+import {
+  buildDeviceBootHandoffPath,
+  normalizeDeviceReturnPath,
+} from "@/lib/device-onboarding";
 
 const e2eBillingBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 const CHECKOUT_ATTEMPT_STORAGE_KEY = "matrix.billing.checkoutAttemptAt";
@@ -57,21 +61,6 @@ function hasRecentBillingCheckoutAttempt(): boolean {
   } catch (error) {
     logCheckoutStorageError("read", error);
     return false;
-  }
-}
-
-function normalizeDeviceReturnPath(value: string | null): string | null {
-  if (!value || value.length > 2048 || !value.startsWith("/") || value.startsWith("//")) {
-    return null;
-  }
-
-  try {
-    const url = new URL(value, "https://app.matrix-os.com");
-    if (url.pathname !== "/auth/device") return null;
-    return `${url.pathname}${url.search}${url.hash}`;
-  } catch (error) {
-    console.warn("[billing] invalid device return path", error instanceof Error ? error.name : typeof error);
-    return null;
   }
 }
 
@@ -274,6 +263,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
   const searchParams = useSearchParams();
   const checkoutReturnRequested = searchParams.get("checkout") === "success";
   const deviceReturnPath = normalizeDeviceReturnPath(searchParams.get("device_return"));
+  const requestedRuntime = searchParams.get("runtime");
   const billingCheckoutReturnPath = getBillingCheckoutReturnPath(deviceReturnPath);
   const hasBillingAccess = billingActive === true;
   const billingChecking = billingAccessChecking;
@@ -320,6 +310,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
   async function startDeviceRuntimeSetup(developerTools: DeveloperToolId[]): Promise<void> {
     if (!deviceReturnPath || deviceSetupStarted.current) return;
     const activeDeviceReturnPath = deviceReturnPath;
+    const bootHandoffPath = buildDeviceBootHandoffPath(activeDeviceReturnPath, requestedRuntime);
     deviceSetupStarted.current = true;
     setDeviceSetupLoading(true);
     setDeviceSetupError(null);
@@ -343,13 +334,13 @@ function BillingGateInner({ children }: { children: ReactNode }) {
         method: "POST",
         credentials: "include",
         headers: await deviceAuthHeaders(),
-        body: JSON.stringify({ redirectTo: activeDeviceReturnPath }),
+        body: JSON.stringify({ redirectTo: bootHandoffPath }),
       });
       if (!sessionResponse.ok) {
         finishSetup(PROVISIONING_RETRY_ERROR);
         return;
       }
-      navigateForOnboarding(activeDeviceReturnPath);
+      navigateForOnboarding(bootHandoffPath);
       finishSetup();
     } catch (error: unknown) {
       console.warn("[billing] device runtime setup failed", error instanceof Error ? error.name : typeof error);

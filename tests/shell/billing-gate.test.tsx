@@ -504,6 +504,7 @@ describe("BillingGate", () => {
       return new Response("", { status: 503 });
     });
     vi.resetModules();
+    const timeoutSpy = vi.spyOn(window, "setTimeout");
 
     const { BillingGate } = await loadBillingGate();
 
@@ -519,6 +520,7 @@ describe("BillingGate", () => {
     }
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/auth/provision-runtime")).toBe(false);
     fireEvent.click(screen.getByRole("checkbox", { name: "Pi" }));
+    timeoutSpy.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -534,11 +536,16 @@ describe("BillingGate", () => {
         "/api/auth/app-session",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ redirectTo: "/auth/device?user_code=BCDF-GHJK" }),
+          body: JSON.stringify({
+            redirectTo: "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+          }),
         }),
       ),
     );
-    expect(onboardingNavigation.navigate).toHaveBeenCalledWith("/auth/device?user_code=BCDF-GHJK");
+    expect(onboardingNavigation.navigate).toHaveBeenCalledWith(
+      "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    );
+    expect(timeoutSpy.mock.calls.some(([, delay]) => delay === 8_000)).toBe(false);
   });
 
   it("surfaces a retry state when CLI device runtime provisioning fails", async () => {

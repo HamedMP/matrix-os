@@ -573,6 +573,7 @@ export function getAuthPage(
   <script nonce="${scriptNonce}">
     var redirectTarget = ${redirectTargetJson};
     var deviceReturnTarget = ${deviceReturnTargetJson};
+    var provisionHandoffTarget = deviceReturnTarget ? redirectTarget : '/';
     var signOutTarget = ${signOutTargetJson};
     var billingSetupTarget = ${billingSetupTargetJson};
     var SIGN_OUT_TIMEOUT_MS = ${BROWSER_CLERK_SIGN_OUT_TIMEOUT_MS};
@@ -1143,7 +1144,7 @@ export function getAuthPage(
             else showSignedInRecoveryState();
             return null;
           }
-          var sessionRedirectTarget = afterProvision ? (deviceReturnTarget || '/') : redirectTarget;
+          var sessionRedirectTarget = afterProvision ? provisionHandoffTarget : redirectTarget;
           return fetch('/api/auth/app-session', {
             method: 'POST',
             headers: {
@@ -1181,7 +1182,7 @@ export function getAuthPage(
         })
         .then(function(payload) {
           if (!payload) return;
-          window.location.replace(afterProvision ? (deviceReturnTarget || '/') : (deviceReturnTarget || payload.redirectTo || redirectTarget));
+          window.location.replace(afterProvision ? provisionHandoffTarget : (deviceReturnTarget || payload.redirectTo || redirectTarget));
         })
         .catch(function(err) {
           console.error('[matrix] Clerk session exchange failed', err instanceof Error ? err.name : String(typeof err));
