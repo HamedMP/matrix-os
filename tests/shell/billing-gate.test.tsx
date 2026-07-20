@@ -14,6 +14,13 @@ const clerkState = vi.hoisted(() => ({
 const navigationState = vi.hoisted(() => ({
   replace: vi.fn(),
 }));
+const onboardingNavigation = vi.hoisted(() => ({
+  navigate: vi.fn(),
+}));
+
+vi.mock("@/lib/onboarding-navigation", () => ({
+  navigateForOnboarding: onboardingNavigation.navigate,
+}));
 
 function installClerkMock() {
   vi.doMock("@clerk/nextjs", () => ({
@@ -99,6 +106,7 @@ describe("BillingGate", () => {
     window.history.replaceState({}, "", "/");
     window.sessionStorage.clear();
     navigationState.replace.mockReset();
+    onboardingNavigation.navigate.mockReset();
     vi.restoreAllMocks();
   });
 
@@ -488,14 +496,15 @@ describe("BillingGate", () => {
         return new Response("{}", { status: 202, headers: { "content-type": "application/json" } });
       }
       if (input === "/api/auth/app-session") {
-        return new Response(JSON.stringify({ error: "Matrix computer unavailable" }), {
-          status: 404,
+        return new Response(JSON.stringify({ redirectTo: "/auth/device?user_code=BCDF-GHJK" }), {
+          status: 200,
           headers: { "content-type": "application/json" },
         });
       }
       return new Response("", { status: 503 });
     });
     vi.resetModules();
+    const timeoutSpy = vi.spyOn(window, "setTimeout");
 
     const { BillingGate } = await loadBillingGate();
 
@@ -505,13 +514,14 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    expect(await screen.findByText("Preinstall coding agents?")).toBeTruthy();
+    expect((await screen.findByRole("button", { name: "Default installs" })).getAttribute("aria-current")).toBe("page");
     for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
       expect(screen.getByRole("checkbox", { name: label })).toHaveProperty("checked", true);
     }
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/auth/provision-runtime")).toBe(false);
     fireEvent.click(screen.getByRole("checkbox", { name: "Pi" }));
-    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
+    timeoutSpy.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/auth/provision-runtime",
@@ -526,11 +536,16 @@ describe("BillingGate", () => {
         "/api/auth/app-session",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ redirectTo: "/auth/device?user_code=BCDF-GHJK" }),
+          body: JSON.stringify({
+            redirectTo: "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+          }),
         }),
       ),
     );
-    expect(navigationState.replace).not.toHaveBeenCalled();
+    expect(onboardingNavigation.navigate).toHaveBeenCalledWith(
+      "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    );
+    expect(timeoutSpy.mock.calls.some(([, delay]) => delay === 8_000)).toBe(false);
   });
 
   it("surfaces a retry state when CLI device runtime provisioning fails", async () => {
@@ -566,10 +581,10 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    expect(await screen.findByText("Preinstall coding agents?")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
-    expect(await screen.findByText("Matrix setup needs attention")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Default installs" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Matrix could not start building this VPS. Try again.");
+    expect((screen.getByRole("button", { name: "Build VPS" }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByText("Confirming your subscription")).toBeNull();
   });
 
@@ -606,10 +621,10 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    expect(await screen.findByText("Preinstall coding agents?")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
-    expect(await screen.findByText("Matrix setup needs attention")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Default installs" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Matrix could not start building this VPS. Try again.");
+    expect((screen.getByRole("button", { name: "Build VPS" }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByText("Confirming your subscription")).toBeNull();
   });
 
