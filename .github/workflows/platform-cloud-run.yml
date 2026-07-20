@@ -59,7 +59,7 @@ jobs:
       DEPLOY_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Validate deployment configuration
         run: |
