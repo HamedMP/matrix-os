@@ -1,7 +1,8 @@
 import { z } from "zod/v4";
-import { isSafeName } from "./app-db-types.js";
+import { isSafeName, normalizeAppStorageSlug } from "./app-db-types.js";
 
 const SafeNameSchema = z.string().refine(isSafeName, { message: "invalid app database name" });
+const AppIdentitySchema = z.string().min(1).transform(normalizeAppStorageSlug).pipe(SafeNameSchema);
 const IdSchema = z.string().min(1).max(512);
 
 const ComparableSchema = z.union([
@@ -34,7 +35,7 @@ const AppDataRecordSchema = z.record(SafeNameSchema, z.json()).refine(
 );
 
 const AppTableSchema = {
-  app: SafeNameSchema,
+  app: AppIdentitySchema,
   table: SafeNameSchema,
 };
 
@@ -75,8 +76,8 @@ export const BridgeQueryBodySchema = z.discriminatedUnion("action", [
     action: z.literal("count"),
     filter: FilterSchema.optional(),
   }).strict(),
-  z.object({ app: SafeNameSchema, action: z.literal("schema") }).strict(),
-  z.object({ app: SafeNameSchema, action: z.literal("appInfo") }).strict(),
+  z.object({ app: AppIdentitySchema, action: z.literal("schema") }).strict(),
+  z.object({ app: AppIdentitySchema, action: z.literal("appInfo") }).strict(),
   z.object({ action: z.literal("listApps") }).strict(),
 ]);
 

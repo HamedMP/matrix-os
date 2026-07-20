@@ -34,6 +34,17 @@ describe("BridgeQueryBodySchema", () => {
     }).success).toBe(true);
   });
 
+  it("normalizes nested app identities to their registered storage slug", () => {
+    const result = BridgeQueryBodySchema.safeParse({
+      app: "games/2048",
+      action: "find",
+      table: "scores",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.app).toBe("games2048");
+  });
+
   it("rejects malformed bulk inserts at the route contract", () => {
     const invalidBodies = [
       { app: "clock", action: "bulkInsert", table: "cities" },

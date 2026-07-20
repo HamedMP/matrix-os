@@ -159,6 +159,7 @@ import { createAppDb, type AppDb } from "./app-db.js";
 import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
 import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
 import { BridgeQueryBodySchema } from "./app-db-contracts.js";
+import { isSafeName, normalizeAppStorageSlug } from "./app-db-types.js";
 import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
@@ -732,7 +733,7 @@ export async function createGateway(config: GatewayConfig) {
   async function ensureAppProvisioned(storageSlug: string): Promise<void> {
     const registry = appRegistry;
     if (!registry || !storageSlug || provisionedAppSlugs.has(storageSlug)) return;
-    if (!/^[a-z][a-z0-9_-]{0,62}$/.test(storageSlug)) return;
+    if (!isSafeName(storageSlug)) return;
     try {
       const { loadAppManifest } = await import("./app-manifest.js");
       const apps = await listApps(homePath, { includeInactiveDesigns: true });
@@ -740,7 +741,7 @@ export async function createGateway(config: GatewayConfig) {
       for (const app of apps) {
         if (!app.file.includes("/")) continue;
         const relDir = app.file.replace(/\/index\.html$/, "").replace(/\.html$/, "");
-        if (relDir.replace(/[^a-zA-Z0-9_-]/g, "") !== storageSlug) continue;
+        if (normalizeAppStorageSlug(relDir) !== storageSlug) continue;
         const manifest = loadAppManifest(join(homePath, "apps", relDir));
         if (!manifest) {
           console.warn(`[app-db] Lazy provisioning skipped for ${relDir}: manifest could not be loaded`);
@@ -861,8 +862,8 @@ export async function createGateway(config: GatewayConfig) {
           // games like "games/2048" register under schema "games2048" — the same
           // value the bridge queries. Schema names must start with a letter
           // (SAFE_SLUG), so numeric-only slugs ("2048") are folded into their path.
-          const storageSlug = relDir.replace(/[^a-zA-Z0-9_-]/g, "");
-          if (!/^[a-z][a-z0-9_-]{0,62}$/.test(storageSlug)) {
+          const storageSlug = normalizeAppStorageSlug(relDir);
+          if (!isSafeName(storageSlug)) {
             console.warn(`[app-db] Skipping registration for ${relDir}: unusable storage slug "${storageSlug}"`);
             continue;
           }

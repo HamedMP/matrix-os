@@ -3,6 +3,11 @@ const SAFE_SLUG = /^[a-z][a-z0-9_-]{0,62}$/;
 export type AppSlug = string & { readonly __brand: "AppSlug" };
 export type SafeName = string & { readonly __brand: "SafeName" };
 
+/** Maps nested app paths (for example, games/2048) to their DB schema slug. */
+export function normalizeAppStorageSlug(appIdentity: string): string {
+  return appIdentity.replace(/[^a-zA-Z0-9_-]/g, "");
+}
+
 export function parseAppSlug(s: string): AppSlug {
   if (!SAFE_SLUG.test(s)) throw new Error(`Invalid app slug: ${s}`);
   return s as AppSlug;
