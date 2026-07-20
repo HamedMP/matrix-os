@@ -3,8 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { SearchIcon } from "lucide-react";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
-import { useWindowManager, type AppEntry } from "@/hooks/useWindowManager";
-import { useDesktopConfigStore } from "@/stores/desktop-config";
+import type { AppEntry } from "@/hooks/useWindowManager";
 import { groupLauncherApps } from "@/lib/dock-sections";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
@@ -34,10 +33,8 @@ export function Launchpad({
   onOpenApp: (name: string, path: string) => void;
   onClose: () => void;
 }) {
-  // Same ordering as the dock/classic launcher, flattened into one grid.
-  const dockOrder = useDesktopConfigStore((s) => s.dockOrder);
-  const appLaunchTimes = useWindowManager((s) => s.appLaunchTimes);
-  const groups = groupLauncherApps(apps, dockOrder, appLaunchTimes);
+  // Keep the registry's stable order, flattened from the classic sections.
+  const groups = groupLauncherApps(apps);
   const orderedApps = [...groups.mainApps, ...groups.generatedApps, ...groups.gameApps];
 
   const [query, setQuery] = useState("");

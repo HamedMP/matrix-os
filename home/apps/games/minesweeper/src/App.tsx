@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bomb, Flag, RotateCcw } from "lucide-react";
+import "./styles.css";
 import {
   CELL,
   chord,
@@ -172,7 +173,12 @@ export default function App(): React.ReactElement {
     } else {
       stopTimer();
     }
-    return stopTimer;
+    return () => {
+      if (timerRef.current !== null) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
   }, [board.status, stopTimer]);
 
   // --- Best-time persistence ----------------------------------------------
