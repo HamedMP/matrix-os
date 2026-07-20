@@ -23,7 +23,12 @@ import type {
   TerminalAgentMenuAction,
   TerminalAgentOption,
 } from "./terminal-agent-options";
-import { getShellVisualStatus, type ShellSessionSummary } from "./terminal-session-state";
+import {
+  getShellVisualStatus,
+  SHELL_WAITING_STATUS_DOT_STYLE,
+  shouldShowShellStatusDot,
+  type ShellSessionSummary,
+} from "./terminal-session-state";
 import { formatAgentStrength, formatTerminalAgentName, TerminalSessionHoverCard } from "./TerminalSessionHoverCard";
 import { TERMINAL_MONO_FONT_FAMILY, TERMINAL_UI_FONT_FAMILY } from "./terminal-typography";
 
@@ -31,6 +36,19 @@ export const DEFAULT_SHELL_SESSION_NAME = "main";
 
 const COLLAPSED_RAIL_ITEM_SIZE = 40;
 const COMPACT_GIT_CONTEXT_GAP = 8;
+const COLLAPSED_SESSION_STATUS_DOT_STYLE: CSSProperties = {
+  borderColor: "var(--terminal-drawer-bg)",
+  borderStyle: "solid",
+  borderWidth: 2,
+  borderRadius: 999,
+  boxSizing: "border-box",
+  height: 12,
+  position: "absolute",
+  right: -3,
+  top: -3,
+  width: 12,
+  zIndex: 1,
+};
 
 export function doesCompactGitContextFit(input: {
   availableWidth: number;
@@ -429,26 +447,6 @@ async function copyTextToClipboard(text: string): Promise<void> {
   throw new Error(legacyCopyError instanceof Error ? legacyCopyError.message : "Clipboard copy unavailable");
 }
 
-export function getShellStatusDotStyle(shell: ShellSessionSummary): CSSProperties {
-  const status = getShellVisualStatus(shell);
-  if (status === "running") {
-    return { background: "#5FB85F", boxShadow: "0 0 0 4px rgba(95,184,95,0.24)" };
-  }
-  if (status === "waiting") {
-    return { background: "#E0A12E", boxShadow: "0 0 0 4px rgba(224,161,46,0.25)" };
-  }
-  if (status === "finished") {
-    return { background: "#2E6B3A", boxShadow: "none" };
-  }
-  return { background: "#A9AA9A", boxShadow: "none" };
-}
-
-export function getShellStatusDotClassName(shell: ShellSessionSummary): string {
-  return getShellVisualStatus(shell) === "running"
-    ? "terminal-session-status-dot terminal-session-status-dot--running"
-    : "terminal-session-status-dot";
-}
-
 export function CollapsedSessionsRail({
   shells,
   selectedShellName,
@@ -586,6 +584,7 @@ function CollapsedRailGroup({
         const label = formatCollapsedShellLabel(shell.name);
         const selected = shell.name === selectedShellName;
         const accent = sessionAccent(shell.name);
+        const showStatusDot = shouldShowShellStatusDot(shell);
         return (
           <button
             key={shell.name}
@@ -615,25 +614,16 @@ function CollapsedRailGroup({
             }}
           >
             {label}
-            <span
-              aria-hidden="true"
-              className={getShellStatusDotClassName(shell)}
-              data-testid={`terminal-session-status-${shell.name}`}
-              style={{
-                ...getShellStatusDotStyle(shell),
-                borderColor: "var(--terminal-drawer-bg)",
-                borderStyle: "solid",
-                borderWidth: 2,
-                borderRadius: 999,
-                boxSizing: "border-box",
-                height: 12,
-                position: "absolute",
-                right: -3,
-                top: -3,
-                width: 12,
-                zIndex: 1,
-              }}
-            />
+            {showStatusDot ? (
+              <span
+                aria-hidden="true"
+                data-testid={`terminal-session-status-${shell.name}`}
+                style={{
+                  ...COLLAPSED_SESSION_STATUS_DOT_STYLE,
+                  ...SHELL_WAITING_STATUS_DOT_STYLE,
+                }}
+              />
+            ) : null}
           </button>
         );
       })}
@@ -897,7 +887,7 @@ function ShellCard({
   onDrop: () => void;
   onDragEnd: () => void;
 }) {
-  const statusDotStyle = getShellStatusDotStyle(shell);
+  const showStatusDot = shouldShowShellStatusDot(shell);
   const [copyFeedback, setCopyFeedback] = useState<"copied" | "failed" | null>(null);
   const displayName = formatShellDisplayName(shell.name);
   const [actionsVisible, setActionsVisible] = useState(false);
@@ -1078,6 +1068,12 @@ function ShellCard({
     void commitRename(nextDraft);
   }, [cancelRename, commitRename, renameDraft, shell.name]);
 
+  const beginRename = () => {
+    cancelHoverCardOpen();
+    setRenameDraft(shell.name);
+    setRenaming(true);
+  };
+
   useEffect(() => {
     if (!renaming) return;
     const handlePointerDown = (event: PointerEvent) => {
@@ -1232,23 +1228,25 @@ function ShellCard({
         >
           <GripVerticalIcon size={12} strokeWidth={2.1} />
         </button>
-        <span
-          className={getShellStatusDotClassName(shell)}
-          data-testid={`terminal-session-status-${shell.name}`}
-          style={{
-            width: foreground ? 7 : 8,
-            height: foreground ? 7 : 8,
-            borderRadius: "50%",
-            flexShrink: 0,
-            ...statusDotStyle,
-          }}
-        />
+        {showStatusDot ? (
+          <span
+            data-testid={`terminal-session-status-${shell.name}`}
+            style={{
+              width: foreground ? 7 : 8,
+              height: foreground ? 7 : 8,
+              borderRadius: "50%",
+              flexShrink: 0,
+              ...SHELL_WAITING_STATUS_DOT_STYLE,
+            }}
+          />
+        ) : null}
         <div
           className="min-w-0"
           style={{
             alignContent: "center",
             display: "grid",
             gap: shell.agent ? 2 : 0,
+            gridColumn: 3,
             gridTemplateColumns: "minmax(0, 1fr)",
             gridTemplateRows: shell.agent ? (hasSubtitle ? "18px 16px 16px" : "18px 16px") : "24px",
             paddingRight: 34,
@@ -1291,7 +1289,14 @@ function ShellCard({
                   className="min-w-0 truncate"
                   onClick={(event) => {
                     event.stopPropagation();
-                    onOpen();
+                    if (event.detail <= 1) {
+                      onOpen();
+                    }
+                  }}
+                  onDoubleClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    beginRename();
                   }}
                   style={{
                     ...SESSION_NAME_BUTTON_BASE_STYLE,
@@ -1310,9 +1315,7 @@ function ShellCard({
                   tabIndex={showActions ? 0 : -1}
                   onClick={(event) => {
                     event.stopPropagation();
-                    setHoverCardOpen(false);
-                    setRenameDraft(shell.name);
-                    setRenaming(true);
+                    beginRename();
                   }}
                   onPointerDown={(event) => event.stopPropagation()}
                   onMouseDown={(event) => event.stopPropagation()}
