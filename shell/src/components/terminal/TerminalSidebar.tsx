@@ -64,7 +64,7 @@ const SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
 export const DEFAULT_TERMINAL_SIDEBAR_WIDTH = 392;
 const MIN_TERMINAL_SIDEBAR_WIDTH = 280;
 const MAX_TERMINAL_SIDEBAR_WIDTH = 560;
-const TERMINAL_SIDEBAR_TRANSITION = "opacity 140ms ease, transform 180ms ease";
+const TERMINAL_SIDEBAR_TRANSITION = "width 220ms ease-in-out, opacity 140ms ease, transform 180ms ease";
 const SHELL_STATUS_DOT_CSS = `
 @keyframes terminal-session-status-pulse {
   0%, 100% { box-shadow: 0 0 0 4px rgba(95, 184, 95, 0.24); }
@@ -82,6 +82,35 @@ const SHELL_STATUS_DOT_CSS = `
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+}
+@keyframes terminal-sidebar-expanded-in {
+  from {
+    opacity: 0;
+    transform: translate3d(-8px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+@keyframes terminal-sidebar-collapsed-in {
+  from {
+    opacity: 0;
+    transform: translate3d(8px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+[data-terminal-sidebar-motion="expanded"] {
+  animation: terminal-sidebar-expanded-in 180ms ease-out both;
+}
+[data-terminal-sidebar-motion="collapsed"] {
+  animation: terminal-sidebar-collapsed-in 180ms ease-out both;
+}
+[data-terminal-sidebar-resizing="true"] {
+  transition: none !important;
 }
 .terminal-session-status-dot--running {
   animation: terminal-session-status-pulse 1.35s ease-in-out infinite;
@@ -141,6 +170,16 @@ const SHELL_STATUS_DOT_CSS = `
 .terminal-new-session-dropdown-trigger:disabled {
   cursor: not-allowed;
   opacity: 0.72;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-terminal-sidebar-shell] {
+    transition: none !important;
+  }
+  [data-terminal-sidebar-motion] {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
 }
 .terminal-drawer-primary-icon-button {
   border-radius: 10px;
@@ -760,7 +799,9 @@ export function LocalTerminalSidebar() {
     event.preventDefault();
     event.stopPropagation();
     const resizeHandle = event.currentTarget;
+    const sidebarShell = resizeHandle.closest<HTMLElement>("[data-terminal-sidebar-shell]");
     const pointerId = event.pointerId;
+    sidebarShell?.setAttribute("data-terminal-sidebar-resizing", "true");
     resizeHandle.setPointerCapture?.(pointerId);
     const startX = event.clientX;
     const startWidth = clampTerminalSidebarWidth(ctx.sidebarWidth);
@@ -768,6 +809,7 @@ export function LocalTerminalSidebar() {
       ctx.setSidebarWidth(clampTerminalSidebarWidth(startWidth + moveEvent.clientX - startX));
     };
     const finishResize = () => {
+      sidebarShell?.removeAttribute("data-terminal-sidebar-resizing");
       if (resizeHandle.hasPointerCapture?.(pointerId)) {
         resizeHandle.releasePointerCapture?.(pointerId);
       }
@@ -970,6 +1012,9 @@ export function LocalTerminalSidebar() {
         {statusDotStyles}
         <div
           data-testid="terminal-sidebar-shell"
+          data-terminal-sidebar-shell
+          data-terminal-sidebar-motion="collapsed"
+          data-terminal-sidebar-state="collapsed"
           className="shrink-0"
           style={{
             display: "flex",
@@ -1019,6 +1064,9 @@ export function LocalTerminalSidebar() {
       {statusDotStyles}
       <div
         data-testid="terminal-sidebar-shell"
+        data-terminal-sidebar-shell
+        data-terminal-sidebar-motion={ctx.mobile ? undefined : "expanded"}
+        data-terminal-sidebar-state={ctx.mobile ? "mobile" : "expanded"}
         className="shrink-0 overflow-hidden"
         style={{
           background: "var(--terminal-drawer-bg)",
@@ -1083,7 +1131,7 @@ export function LocalTerminalSidebar() {
             <div className="min-w-0">
               <div
                 data-testid="terminal-expanded-wordmark"
-                style={{ color: "#FFFFFF", fontFamily: "var(--font-orbitron), Orbitron, sans-serif", fontSize: 20, fontWeight: 600, letterSpacing: 0, lineHeight: "24px" }}
+                style={{ color: "var(--terminal-drawer-fg)", fontFamily: "var(--font-orbitron), Orbitron, sans-serif", fontSize: 20, fontWeight: 600, letterSpacing: 0, lineHeight: "24px" }}
               >
                 Matrix OS
               </div>

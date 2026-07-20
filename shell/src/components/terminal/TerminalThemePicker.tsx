@@ -99,8 +99,8 @@ const TERMINAL_THEME_MENU_DISMISS_STYLE: CSSProperties = {
   position: "absolute",
 };
 
-const TERMINAL_SHELL_THEME_MOTION_CSS = `
-@keyframes terminalShellThemePanelIn {
+const TERMINAL_THEME_MOTION_CSS = `
+@keyframes terminalThemePanelOpen {
   0% {
     opacity: 0;
     transform: translate3d(0, -8px, 0) scale(0.975);
@@ -111,10 +111,32 @@ const TERMINAL_SHELL_THEME_MOTION_CSS = `
   }
 }
 
-@keyframes terminalShellThemeMobilePanelIn {
+@keyframes terminalThemeMobilePanelOpen {
   0% {
     opacity: 0;
     transform: translate3d(0, 18px, 0) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes terminalThemePanelForward {
+  0% {
+    opacity: 0;
+    transform: translate3d(12px, 0, 0) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes terminalThemePanelBack {
+  0% {
+    opacity: 0;
+    transform: translate3d(-12px, 0, 0) scale(0.985);
   }
   100% {
     opacity: 1;
@@ -160,6 +182,7 @@ const TERMINAL_SHELL_THEME_MOTION_CSS = `
 }
 
 @media (prefers-reduced-motion: reduce) {
+  [data-terminal-theme-motion],
   [data-terminal-shell-theme-motion] {
     animation: none !important;
     opacity: 1 !important;
@@ -167,6 +190,8 @@ const TERMINAL_SHELL_THEME_MOTION_CSS = `
   }
 }
 `;
+
+type TerminalThemeMotionDirection = "open" | "forward" | "back";
 
 const TERMINAL_SHELL_THEME_DESKTOP_PANEL_STYLE: CSSProperties = {
   ...TERMINAL_THEME_DESKTOP_MENU_STYLE,
@@ -335,10 +360,12 @@ function mapTerminalThemeToShellTheme(themeId: TerminalThemeId | undefined): She
 export function ThemePickerButton({ mobile, menuPlacement = "below-end" }: { mobile: boolean; menuPlacement?: ThemeMenuPlacement }) {
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [themeMenuView, setThemeMenuView] = useState<"app" | "shell">("app");
+  const [themeMenuMotion, setThemeMenuMotion] = useState<TerminalThemeMotionDirection>("open");
   const wrapRef = useRef<HTMLDivElement>(null);
   const closeThemeMenu = () => {
     setThemeMenuOpen(false);
     setThemeMenuView("app");
+    setThemeMenuMotion("open");
   };
   const closeThemeMenuEvent = useEffectEvent(closeThemeMenu);
 
@@ -364,6 +391,7 @@ export function ThemePickerButton({ mobile, menuPlacement = "below-end" }: { mob
       return;
     }
     setThemeMenuView("app");
+    setThemeMenuMotion("open");
     setThemeMenuOpen(true);
   };
 
@@ -374,6 +402,7 @@ export function ThemePickerButton({ mobile, menuPlacement = "below-end" }: { mob
       onPointerDown={(event) => event.stopPropagation()}
       onMouseDown={(event) => event.stopPropagation()}
     >
+      <style>{TERMINAL_THEME_MOTION_CSS}</style>
       <button
         type="button"
         aria-label="Theme"
@@ -388,15 +417,23 @@ export function ThemePickerButton({ mobile, menuPlacement = "below-end" }: { mob
         <TerminalAppThemeMenu
           mobile={mobile}
           placement={menuPlacement}
+          motionDirection={themeMenuMotion}
           onClose={closeThemeMenu}
-          onOpenShellTheme={() => setThemeMenuView("shell")}
+          onOpenShellTheme={() => {
+            setThemeMenuMotion("forward");
+            setThemeMenuView("shell");
+          }}
         />
       ) : null}
       {themeMenuOpen && themeMenuView === "shell" ? (
         <ShellThemeChooser
           mobile={mobile}
           placement={menuPlacement}
-          onBack={() => setThemeMenuView("app")}
+          motionDirection={themeMenuMotion}
+          onBack={() => {
+            setThemeMenuMotion("back");
+            setThemeMenuView("app");
+          }}
           onClose={closeThemeMenu}
         />
       ) : null}
@@ -407,11 +444,13 @@ export function ThemePickerButton({ mobile, menuPlacement = "below-end" }: { mob
 function TerminalAppThemeMenu({
   mobile,
   placement,
+  motionDirection,
   onClose,
   onOpenShellTheme,
 }: {
   mobile: boolean;
   placement: ThemeMenuPlacement;
+  motionDirection: TerminalThemeMotionDirection;
   onClose: () => void;
   onOpenShellTheme: () => void;
 }) {
@@ -445,7 +484,12 @@ function TerminalAppThemeMenu({
         <div
           role="menu"
           aria-label="Theme"
-          style={TERMINAL_THEME_MOBILE_SHEET_STYLE}
+          data-terminal-theme-motion={motionDirection}
+          data-testid="terminal-app-theme-panel"
+          style={{
+            ...TERMINAL_THEME_MOBILE_SHEET_STYLE,
+            ...getTerminalThemePanelMotionStyle(true, motionDirection),
+          }}
         >
           <div style={{ alignItems: "center", display: "flex", justifyContent: "center", paddingBottom: 4 }}>
             <div style={{ background: "#D6D5C4", borderRadius: 999, height: 5, width: 42 }} />
@@ -478,9 +522,12 @@ function TerminalAppThemeMenu({
     <div
       role="menu"
       aria-label="Theme"
+      data-terminal-theme-motion={motionDirection}
+      data-testid="terminal-app-theme-panel"
       style={{
         ...TERMINAL_THEME_DESKTOP_MENU_STYLE,
         ...getTerminalThemeDesktopMenuPositionStyle(placement),
+        ...getTerminalThemePanelMotionStyle(false, motionDirection),
       }}
     >
       <div style={{ padding: "8px 10px 4px" }}>
@@ -594,11 +641,13 @@ function ChangeShellThemeMenuItem({
 function ShellThemeChooser({
   mobile,
   placement,
+  motionDirection,
   onBack,
   onClose,
 }: {
   mobile: boolean;
   placement: ThemeMenuPlacement;
+  motionDirection: TerminalThemeMotionDirection;
   onBack: () => void;
   onClose: () => void;
 }) {
@@ -649,7 +698,6 @@ function ShellThemeChooser({
           onClose();
         }}
       >
-        <style>{TERMINAL_SHELL_THEME_MOTION_CSS}</style>
         <button
           type="button"
           aria-label="Dismiss theme menu"
@@ -659,11 +707,12 @@ function ShellThemeChooser({
         />
         <section
           aria-label="Shell theme"
+          data-terminal-theme-motion={motionDirection}
           data-terminal-shell-theme-motion
           data-testid="terminal-shell-theme-panel"
           style={{
             ...TERMINAL_THEME_MOBILE_SHEET_STYLE,
-            ...getShellThemePanelMotionStyle(true),
+            ...getTerminalThemePanelMotionStyle(true, motionDirection),
           }}
         >
           {content}
@@ -674,15 +723,15 @@ function ShellThemeChooser({
 
   return (
     <>
-      <style>{TERMINAL_SHELL_THEME_MOTION_CSS}</style>
       <section
         aria-label="Shell theme"
+        data-terminal-theme-motion={motionDirection}
         data-terminal-shell-theme-motion
         data-testid="terminal-shell-theme-panel"
         style={{
           ...TERMINAL_SHELL_THEME_DESKTOP_PANEL_STYLE,
           ...getTerminalThemeDesktopMenuPositionStyle(placement),
-          ...getShellThemePanelMotionStyle(false),
+          ...getTerminalThemePanelMotionStyle(false, motionDirection),
         }}
       >
         {content}
@@ -806,9 +855,17 @@ function ShellThemeChooserContent({
   );
 }
 
-function getShellThemePanelMotionStyle(mobile: boolean): CSSProperties {
+function getTerminalThemePanelMotionStyle(
+  mobile: boolean,
+  direction: TerminalThemeMotionDirection,
+): CSSProperties {
+  const animationName = direction === "open"
+    ? (mobile ? "terminalThemeMobilePanelOpen" : "terminalThemePanelOpen")
+    : direction === "forward"
+      ? "terminalThemePanelForward"
+      : "terminalThemePanelBack";
   return {
-    animation: `${mobile ? "terminalShellThemeMobilePanelIn" : "terminalShellThemePanelIn"} 180ms cubic-bezier(0.16, 1, 0.3, 1) both`,
+    animation: `${animationName} 180ms cubic-bezier(0.16, 1, 0.3, 1) both`,
     transformOrigin: mobile ? "bottom center" : "top right",
   };
 }

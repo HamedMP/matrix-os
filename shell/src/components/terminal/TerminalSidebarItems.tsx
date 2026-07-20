@@ -242,6 +242,17 @@ const SESSION_CONTEXT_MENU_ITEM_STYLE: CSSProperties = {
   width: "100%",
 };
 
+const SESSION_CONTEXT_MENU_SEPARATOR_STYLE: CSSProperties = {
+  background: "var(--terminal-drawer-card-border)",
+  border: 0,
+  height: 1,
+  margin: "3px 4px",
+};
+
+const SESSION_DESTRUCTIVE_HOVER_BACKGROUND =
+  "color-mix(in srgb, var(--terminal-drawer-destructive-fg) 12%, transparent)";
+const SESSION_DESTRUCTIVE_HOVER_FALLBACK = "rgba(184, 64, 58, 0.12)";
+
 const SESSION_COPY_FEEDBACK_STYLE: CSSProperties = {
   alignItems: "center",
   background: "var(--terminal-drawer-action-bg)",
@@ -1387,15 +1398,6 @@ function ShellCard({
                     style={SESSION_CONTEXT_MENU_STYLE}
                   >
                     <SessionContextMenuItem
-                      label={toggleMenuLabel}
-                      onClick={() => {
-                        closeContextMenuWithFocusReturn();
-                        onToggle();
-                      }}
-                    >
-                      <Rows2Icon size={13} strokeWidth={2} />
-                    </SessionContextMenuItem>
-                    <SessionContextMenuItem
                       label="Copy Connect Command"
                       onClick={() => {
                         void copyAttachCommand();
@@ -1405,7 +1407,18 @@ function ShellCard({
                       <LinkIcon size={13} strokeWidth={2} />
                     </SessionContextMenuItem>
                     <SessionContextMenuItem
+                      label={toggleMenuLabel}
+                      onClick={() => {
+                        closeContextMenuWithFocusReturn();
+                        onToggle();
+                      }}
+                    >
+                      <Rows2Icon size={13} strokeWidth={2} />
+                    </SessionContextMenuItem>
+                    <hr style={SESSION_CONTEXT_MENU_SEPARATOR_STYLE} />
+                    <SessionContextMenuItem
                       label={deleting ? "Deleting" : "Close"}
+                      tone="destructive"
                       disabled={deleting}
                       onClick={() => {
                         if (deleting) return;
@@ -1466,18 +1479,22 @@ function SessionContextMenuItem({
   label,
   children,
   disabled = false,
+  tone = "default",
   onClick,
 }: {
   label: string;
   children: ReactNode;
   disabled?: boolean;
+  tone?: "default" | "destructive";
   onClick: () => void;
 }) {
+  const destructive = tone === "destructive";
   return (
     <button
       type="button"
       role="menuitem"
       aria-label={label}
+      data-tone={tone}
       disabled={disabled}
       onClick={(event) => {
         event.stopPropagation();
@@ -1485,17 +1502,25 @@ function SessionContextMenuItem({
       }}
       style={{
         ...SESSION_CONTEXT_MENU_ITEM_STYLE,
+        color: destructive ? "var(--terminal-drawer-destructive-fg)" : "var(--terminal-drawer-fg)",
         cursor: disabled ? "not-allowed" : "pointer",
         opacity: disabled ? 0.62 : 1,
       }}
       onMouseEnter={(event) => {
-        if (!disabled) event.currentTarget.style.background = "var(--terminal-drawer-action-bg)";
+        if (!disabled) {
+          event.currentTarget.style.background = destructive
+            ? typeof CSS !== "undefined" && typeof CSS.supports === "function" &&
+                CSS.supports("background", SESSION_DESTRUCTIVE_HOVER_BACKGROUND)
+              ? SESSION_DESTRUCTIVE_HOVER_BACKGROUND
+              : SESSION_DESTRUCTIVE_HOVER_FALLBACK
+            : "var(--terminal-drawer-action-bg)";
+        }
       }}
       onMouseLeave={(event) => {
         event.currentTarget.style.background = "transparent";
       }}
     >
-      <span aria-hidden="true" style={{ color: "var(--terminal-drawer-action-fg)", display: "flex", flexShrink: 0 }}>
+      <span aria-hidden="true" style={{ color: destructive ? "var(--terminal-drawer-destructive-fg)" : "var(--terminal-drawer-action-fg)", display: "flex", flexShrink: 0 }}>
         {children}
       </span>
       <span>{label}</span>

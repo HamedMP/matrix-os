@@ -58,6 +58,7 @@ export interface TerminalAppChromeTheme {
   drawerActionBackground: string;
   drawerActionBorder: string;
   drawerActionForeground: string;
+  drawerDestructiveForeground: string;
   drawerWarningBackground: string;
   drawerWarningForeground: string;
   drawerToggleBackground: string;
@@ -118,6 +119,7 @@ const TERMINAL_APP_CHROME_THEMES: Record<TerminalAppThemeId, TerminalAppChromeTh
     drawerActionBackground: "#F0EFE5",
     drawerActionBorder: "#E4E2D2",
     drawerActionForeground: "#8A8B7C",
+    drawerDestructiveForeground: "#B8403A",
     drawerWarningBackground: "#F6EAC9",
     drawerWarningForeground: "#8F6712",
     drawerToggleBackground: "#DDEDD6",
@@ -174,6 +176,7 @@ const TERMINAL_APP_CHROME_THEMES: Record<TerminalAppThemeId, TerminalAppChromeTh
     drawerActionBackground: "#20241C",
     drawerActionBorder: "#2D3127",
     drawerActionForeground: "#858578",
+    drawerDestructiveForeground: "#E8796B",
     drawerWarningBackground: "#2A2008",
     drawerWarningForeground: "#E0A12E",
     drawerToggleBackground: "#1F3325",
@@ -230,6 +233,7 @@ const TERMINAL_APP_CHROME_THEMES: Record<TerminalAppThemeId, TerminalAppChromeTh
     drawerActionBackground: "#0E1810",
     drawerActionBorder: "#1C3324",
     drawerActionForeground: "#4E8C61",
+    drawerDestructiveForeground: "#FF6B6B",
     drawerWarningBackground: "#2A2008",
     drawerWarningForeground: "#E0A12E",
     drawerToggleBackground: "#0F3A1E",
@@ -293,6 +297,7 @@ export function getTerminalAppChromeCssVars(theme: TerminalAppChromeTheme): Term
     "--terminal-drawer-action-bg": theme.drawerActionBackground,
     "--terminal-drawer-action-border": theme.drawerActionBorder,
     "--terminal-drawer-action-fg": theme.drawerActionForeground,
+    "--terminal-drawer-destructive-fg": theme.drawerDestructiveForeground,
     "--terminal-drawer-warning-bg": theme.drawerWarningBackground,
     "--terminal-drawer-warning-fg": theme.drawerWarningForeground,
     "--terminal-drawer-toggle-bg": theme.drawerToggleBackground,
