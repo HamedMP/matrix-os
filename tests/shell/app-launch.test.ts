@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { canonicalAppLaunchPath, iconUrlForSlug, terminalContextLaunchPath } from "../../shell/src/lib/app-launch.js";
 import { isGameApp } from "../../shell/src/lib/dock-sections.js";
 
 describe("app launch helpers", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("canonicalizes runtime apps to slug routes before iframe rendering", () => {
     expect(canonicalAppLaunchPath({
       slug: "backgammon",
@@ -48,6 +52,20 @@ describe("app launch helpers", () => {
     expect(iconUrlForSlug("tetris")).toBe("/icons/tetris.png");
     expect(iconUrlForSlug("new-generated-app")).toBe("/icons/new-generated-app.png");
     expect(iconUrlForSlug("matrix_os")).toBe("/icons/matrix_os.png");
+  });
+
+  it("scopes icon URLs to the explicit computer and runtime in browser tabs", () => {
+    vi.stubGlobal("window", {
+      location: {
+        origin: "https://app.matrix-os.com",
+        pathname: "/vm/pr-1018/",
+        search: "?runtime=pr-1018",
+      },
+    });
+
+    expect(iconUrlForSlug("notes")).toBe(
+      "https://app.matrix-os.com/vm/pr-1018/~runtime/pr-1018/icons/notes.png",
+    );
   });
 
   it("classifies only the canonical games subtree as game apps", () => {

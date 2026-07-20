@@ -1,0 +1,91 @@
+/* ═══ Windows XP desktop icons ═══ */
+
+.xp-desktop-icons {
+  position: absolute;
+  inset: 0;
+  /* Desktop chrome only (mirrors the XP taskbar's `display: none`): the
+     mobile shell owns small screens. */
+  display: none;
+  /* Empty-desktop clicks must fall through to the wallpaper/canvas below;
+     only the icons themselves are interactive. */
+  pointer-events: none;
+  font-family: Tahoma, "Segoe UI", sans-serif;
+  user-select: none;
+}
+
+@media (min-width: 768px) {
+  .xp-desktop-icons {
+    display: block;
+  }
+}
+
+.xp-desktop-icons-column {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.xp-desktop-icon {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 76px;
+  padding: 2px;
+  background: none;
+  border: none;
+  cursor: default;
+}
+
+.xp-desktop-icon:focus {
+  outline: none;
+}
+
+/* Keyboard focus cue (the plain :focus rule removes the default outline):
+   the classic XP dotted focus rectangle around the icon. */
+.xp-desktop-icon:focus-visible .xp-desktop-icon-glyph {
+  outline: 1px dotted #ffffff;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+}
+
+.xp-desktop-icon--recycle-bin {
+  /* Real XP anchors the Recycle Bin to the bottom-right of the desktop;
+     lifted 30px + margin to clear the always-on-top taskbar. */
+  position: absolute;
+  right: 12px;
+  bottom: 42px;
+}
+
+.xp-desktop-icon-glyph {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px dotted transparent;
+}
+
+.xp-desktop-icon[data-selected] .xp-desktop-icon-glyph {
+  background: rgba(49, 106, 197, 0.45);
+  border-color: rgba(255, 255, 255, 0.8);
+}
+
+.xp-desktop-icon-label {
+  font-size: 11px;
+  line-height: 1.25;
+  color: #ffffff;
+  text-shadow: 1px 1px 1px rgba(0, 0, 0, 0.8);
+  text-align: center;
+  padding: 1px 3px;
+  max-width: 76px;
+  overflow-wrap: break-word;
+}
+
+.xp-desktop-icon[data-selected] .xp-desktop-icon-label {
+  background: #316ac5;
+  text-shadow: none;
+}

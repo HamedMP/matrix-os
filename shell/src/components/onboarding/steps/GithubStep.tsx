@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { palette as c, fonts, radii, statusTones } from "@matrix-os/brand";
 import { StatusPill } from "@matrix-os/brand";
+import { getGatewayUrl } from "@/lib/gateway";
 import { createTerminalLaunchPath } from "@/lib/terminal-launch";
 
 interface GithubStatus {
@@ -34,7 +35,7 @@ export function GithubStep({
   const [githubStatus, setGithubStatus] = useState<GithubStatus | null>(null);
 
   useEffect(() => {
-    void fetch("/api/github/status", { signal: AbortSignal.timeout(10_000) })
+    void fetch(`${getGatewayUrl()}/api/github/status`, { signal: AbortSignal.timeout(10_000) })
       .then((r) => (r.ok ? r.json() : null))
       .then((d: GithubStatus | null) => {
         setGithubStatus(d);

@@ -6,6 +6,7 @@ import {
   getPostHogClientConfig,
   resolvePostHogClientApiHost,
 } from "@matrix-os/observability/client";
+import { getGatewayUrl } from "./gateway";
 
 type ClientProperties = Record<string, string | number | boolean | undefined>;
 type PostHogInitOptions = Parameters<typeof posthog.init>[1];
@@ -63,7 +64,7 @@ export function reportClientError(error: unknown, properties: ClientProperties =
 
     if (!payload.errorId) return;
 
-    void fetch("/api/client-errors", {
+    void fetch(`${getGatewayUrl()}/api/client-errors`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       keepalive: true,

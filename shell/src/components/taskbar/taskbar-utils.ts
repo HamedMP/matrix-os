@@ -1,5 +1,6 @@
 import { useEffect, useEffectEvent, type RefObject } from "react";
 import type { AppEntry } from "@/hooks/useWindowManager";
+import { iconUrlForSlug } from "@/lib/app-launch";
 
 /**
  * Non-component helpers for the Windows-design shell chrome (kept out of the
@@ -13,10 +14,10 @@ export interface TaskbarAppEntry {
 }
 
 /** Built-ins pinned to the Windows start menus / quick-launch by default. */
-export const BUILT_IN_START_APPS: readonly TaskbarAppEntry[] = [
-  { name: "Terminal", path: "__terminal__", iconUrl: "/icons/terminal.png" },
-  { name: "Files", path: "__file-browser__", iconUrl: "/icons/files.png" },
-  { name: "Chat", path: "__chat__", iconUrl: "/icons/chat.png" },
+const BUILT_IN_START_APPS: readonly (Omit<TaskbarAppEntry, "iconUrl"> & { iconSlug: string })[] = [
+  { name: "Terminal", path: "__terminal__", iconSlug: "terminal" },
+  { name: "Files", path: "__file-browser__", iconSlug: "files" },
+  { name: "Chat", path: "__chat__", iconSlug: "chat" },
 ];
 
 /** Window paths may carry an instance suffix (`__terminal__:setup`, app
@@ -28,9 +29,9 @@ export function baseWindowPath(path: string): string {
 /** Built-in shortcuts prefer the (possibly versioned) icon URL the app
     registry resolved, falling back to the shipped `/icons/*.png` assets. */
 export function resolveBuiltInStartApps(apps: AppEntry[]): TaskbarAppEntry[] {
-  return BUILT_IN_START_APPS.map((builtIn) => ({
+  return BUILT_IN_START_APPS.map(({ iconSlug, ...builtIn }) => ({
     ...builtIn,
-    iconUrl: apps.find((a) => a.path === builtIn.path)?.iconUrl ?? builtIn.iconUrl,
+    iconUrl: apps.find((a) => a.path === builtIn.path)?.iconUrl ?? iconUrlForSlug(iconSlug),
   }));
 }
 
