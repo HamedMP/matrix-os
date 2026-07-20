@@ -973,7 +973,11 @@ describe("platform proxy routing", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("platform-runtime-chunk", {
         status: 200,
-        headers: { "content-type": "text/javascript" },
+        headers: {
+          "cache-control": "public, max-age=31536000, immutable",
+          "cdn-cache-control": "public, max-age=31536000, immutable",
+          "content-type": "text/javascript",
+        },
       }),
     );
     const app = createApp({
@@ -1002,6 +1006,10 @@ describe("platform proxy routing", () => {
     expect(forwardedHeaders.get("host")).toBe("127.0.0.1:3200");
     expect(forwardedHeaders.get("x-forwarded-host")).toBe("app.matrix-os.com");
     expect(forwardedHeaders.get("x-forwarded-proto")).toBe("http");
+    expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(res.headers.get("cdn-cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(res.headers.get("cloudflare-cdn-cache-control")).toBeNull();
+    expect(res.headers.get("pragma")).toBeNull();
   });
 
   it("serves namespaced runtime public images from the platform shell", async () => {
@@ -1026,6 +1034,8 @@ describe("platform proxy routing", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       "http://127.0.0.1:3200/runtime-shell-backdrop.webp",
     );
+    expect(res.headers.get("cache-control")).toBe("no-store, private");
+    expect(res.headers.get("cdn-cache-control")).toBe("no-store");
   });
 
   it("returns a bounded no-store 503 when a platform shell asset is unavailable", async () => {

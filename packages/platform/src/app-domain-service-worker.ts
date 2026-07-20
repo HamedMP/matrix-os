@@ -26,7 +26,7 @@ function isBypassed(url) {
     p.startsWith("/_clerk") ||
     p.startsWith("/__clerk") ||
     p.startsWith("/__session") ||
-    p.startsWith("/__platform-shell/") ||
+    p === "/__platform-shell" || p.startsWith("/__platform-shell/") ||
     p.startsWith("/sign-in") ||
     p.startsWith("/sign-up") ||
     p.startsWith("/files/apps/") ||

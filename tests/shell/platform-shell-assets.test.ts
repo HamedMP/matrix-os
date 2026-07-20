@@ -113,6 +113,8 @@ describe("platform-owned shell assets", () => {
       "utf8",
     );
     expect(platformWorker).toContain('const VERSION = "app-v2"');
-    expect(platformWorker).toContain('p.startsWith("/__platform-shell/")');
+    expect(platformWorker).toContain(
+      'p === "/__platform-shell" || p.startsWith("/__platform-shell/")',
+    );
   });
 });

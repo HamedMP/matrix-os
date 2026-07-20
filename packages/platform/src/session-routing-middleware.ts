@@ -263,6 +263,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     host: string,
     proxyOpts: {
       assetRequest?: boolean;
+      preserveUpstreamCacheHeaders?: boolean;
       redirectToBillingOnFailure?: boolean;
       upstreamPath?: string;
     } = {},
@@ -292,7 +293,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         signal: AbortSignal.timeout(authShellProxyTimeoutMs),
       });
       const responseHeaders = sanitizeProxyResponseHeaders(response.headers);
-      applyNoStoreResponseHeaders(responseHeaders);
+      if (!proxyOpts.preserveUpstreamCacheHeaders) {
+        applyNoStoreResponseHeaders(responseHeaders);
+      }
       return new Response(response.body, {
         status: response.status,
         headers: responseHeaders,
@@ -379,6 +382,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
       return proxyAuthShell(c, host, {
         assetRequest: true,
+        preserveUpstreamCacheHeaders: upstreamPath.startsWith('/_next/static/'),
         redirectToBillingOnFailure: false,
         upstreamPath,
       });
