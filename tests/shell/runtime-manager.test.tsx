@@ -81,7 +81,7 @@ function billingStatus(maxRuntimeSlots = 3, source: "stripe" | "override" = "str
       includedRuntimeSlots: maxRuntimeSlots,
       addonRuntimeSlots: 0,
       defaultServerType: "cpx32",
-      allowedServerTypes: ["cpx32"],
+      allowedServerTypes: ["cpx22", "cpx32"],
       stripeSubscriptionId: source === "stripe" ? "sub_123" : null,
       stripePriceId: source === "stripe" ? "price_builder_monthly" : null,
       gracePeriodEndsAt: null,
@@ -142,6 +142,7 @@ async function beginNamedComputer(name: string) {
   const input = screen.getByRole("textbox", { name: "Computer name" });
   fireEvent.change(input, { target: { value: name } });
   fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Continue setup" }));
 }
 
 describe("RuntimeManager", () => {
@@ -268,8 +269,47 @@ describe("RuntimeManager", () => {
     fireEvent.change(input, { target: { value: "New Design Studio" } });
     expect(screen.getByText("new-design-studio")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    expect(screen.getByRole("heading", { name: "Choose default installs" })).toBeTruthy();
-    expect(screen.getByText(/independent files and data/i)).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Configure your next computer" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Change computer" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Change region" })).toBeTruthy();
+  });
+
+  it("reuses onboarding strength, region, and install steps for another computer", async () => {
+    const fetchMock = installFetchRouter({ billing: billingStatus(3) });
+    await renderManager();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Get another computer" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Computer name" }), {
+      target: { value: "Research Lab" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(await screen.findByRole("heading", { name: "Configure your next computer" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
+    expect(screen.queryByRole("button", { name: /Max.*CPX52/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Starter.*CPX22/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Change region" }));
+    fireEvent.click(screen.getByRole("button", { name: /US West.*hil/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue setup" }));
+
+    expect(await screen.findByRole("heading", { name: "Preinstall coding agents?" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/auth/provision-runtime",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            runtime: "research-lab",
+            developerTools: ["codex", "claude-code", "opencode", "pi"],
+            serverType: "cpx22",
+            location: "hil",
+          }),
+        }),
+      );
+    });
+    expect(fetchMock).not.toHaveBeenCalledWith("/billing/checkout", expect.anything());
   });
 
   it("waits for inventory before accepting a name so duplicate validation cannot be bypassed", async () => {
@@ -282,7 +322,7 @@ describe("RuntimeManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     expect(screen.getByRole("alert").textContent).toMatch(/finish loading/i);
-    expect(screen.queryByRole("heading", { name: "Choose default installs" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Configure your next computer" })).toBeNull();
   });
 
   it("skips payment when subscription capacity is available and starts provisioning", async () => {
@@ -290,7 +330,7 @@ describe("RuntimeManager", () => {
     await renderManager();
     await beginNamedComputer("Research Lab");
 
-    fireEvent.click(screen.getByRole("button", { name: "Build computer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -300,6 +340,8 @@ describe("RuntimeManager", () => {
           body: JSON.stringify({
             runtime: "research-lab",
             developerTools: ["codex", "claude-code", "opencode", "pi"],
+            serverType: "cpx32",
+            location: "fsn1",
           }),
         }),
       );
@@ -315,7 +357,7 @@ describe("RuntimeManager", () => {
     await renderManager({ onExternalNavigate: navigate });
     await beginNamedComputer("Research Lab");
 
-    fireEvent.click(screen.getByRole("button", { name: "Build computer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -350,7 +392,7 @@ describe("RuntimeManager", () => {
     await renderManager({ onExternalNavigate: navigate });
     await beginNamedComputer("Research Lab");
 
-    fireEvent.click(screen.getByRole("button", { name: "Build computer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/Billing is unavailable/i);
     now.mockReturnValue(121_001);
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
@@ -368,7 +410,7 @@ describe("RuntimeManager", () => {
     await renderManager();
     await beginNamedComputer("Research Lab");
 
-    fireEvent.click(screen.getByRole("button", { name: "Build computer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
 
     expect((await screen.findByRole("alert")).textContent).toMatch(/managed internally/i);
     expect(fetchMock).not.toHaveBeenCalledWith("/billing/portal", expect.anything());
@@ -381,7 +423,7 @@ describe("RuntimeManager", () => {
     });
     await renderManager();
     await beginNamedComputer("Research Lab");
-    fireEvent.click(screen.getByRole("button", { name: "Build computer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/could not start building/i);
@@ -403,7 +445,7 @@ describe("RuntimeManager", () => {
     });
     await renderManager();
     await beginNamedComputer("Research Lab");
-    fireEvent.click(screen.getByRole("button", { name: "Build computer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
 
     const retryButton = await screen.findByRole("button", { name: "Retry build" });
     expect(document.body.textContent).not.toMatch(/Hetzner|database|\/var\/lib|provider/i);
@@ -430,7 +472,7 @@ describe("RuntimeManager", () => {
     });
     await renderManager();
     await beginNamedComputer("Research Lab");
-    fireEvent.click(screen.getByRole("button", { name: "Build computer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
 
     const backButton = await screen.findByRole("button", { name: "Back to computers" });
     expect(screen.queryByRole("button", { name: "Retry build" })).toBeNull();
@@ -462,7 +504,7 @@ describe("RuntimeManager", () => {
     });
     await renderManager({ journeyPollIntervalMs: 10 });
     await beginNamedComputer("Research Lab");
-    fireEvent.click(screen.getByRole("button", { name: "Build computer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
 
     expect(await screen.findByText(/Booting/i)).toBeTruthy();
     expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/api/journey?runtimeSlot="))).toHaveLength(2);
@@ -496,7 +538,7 @@ describe("RuntimeManager", () => {
     });
     await renderManager({ journeyPollIntervalMs: 10 });
     await beginNamedComputer("Research Lab");
-    fireEvent.click(screen.getByRole("button", { name: "Build computer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
 
     const openLink = await screen.findByRole("link", { name: "Open computer" });
     expect(openLink.getAttribute("href")).toBe("/vm/machine-73fd?runtime=research-lab");
@@ -509,6 +551,8 @@ describe("RuntimeManager", () => {
       name: "Research Lab",
       slot: "research-lab",
       developerTools: ["codex"],
+      serverType: "cpx32",
+      location: "fsn1",
       baselineMaxRuntimeSlots: 2,
       createdAt: 1_000,
     }));
@@ -540,6 +584,8 @@ describe("RuntimeManager", () => {
       name: "Research Lab",
       slot: "research-lab",
       developerTools: ["codex"],
+      serverType: "cpx32",
+      location: "fsn1",
       baselineMaxRuntimeSlots: 2,
     }));
     let billingReads = 0;
@@ -563,7 +609,14 @@ describe("RuntimeManager", () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/auth/provision-runtime",
-        expect.objectContaining({ body: JSON.stringify({ runtime: "research-lab", developerTools: ["codex"] }) }),
+        expect.objectContaining({
+          body: JSON.stringify({
+            runtime: "research-lab",
+            developerTools: ["codex"],
+            serverType: "cpx32",
+            location: "fsn1",
+          }),
+        }),
       );
     });
   });

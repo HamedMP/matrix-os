@@ -43,7 +43,11 @@ function preselectedFeatureSlug(selectedPlan: unknown): string | null {
   );
 }
 
-export type BillingPanelMode = "settings" | "provisioning" | "device-setup";
+export type BillingPanelMode = "settings" | "provisioning" | "device-setup" | "add-computer";
+export type ComputerSetupSelection = {
+  serverType: string;
+  location: string;
+};
 type BillingInterval = "monthly" | "annual";
 
 const profileLabels = ["Starter", "Recommended", "Scale"] as const;
@@ -591,17 +595,21 @@ function getNearestRegionSlug(): string {
 }
 
 function ProfileOptionRows({
+  profiles,
   selectedFeature,
   billingInterval,
+  showPrice,
   onSelect,
 }: {
+  profiles: typeof MATRIX_BILLING_SERVER_PROFILES;
   selectedFeature: string;
   billingInterval: BillingInterval;
+  showPrice: boolean;
   onSelect: (featureSlug: string) => void;
 }) {
   return (
     <div className="flex flex-col gap-1">
-      {MATRIX_BILLING_SERVER_PROFILES.map((profile, index) => {
+      {profiles.map((profile) => {
         const selected = profile.featureSlug === selectedFeature;
         return (
           <button
@@ -628,9 +636,9 @@ function ProfileOptionRows({
               <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="text-sm font-semibold text-deep">{profile.label}</span>
                 <span className="font-mono text-[11px] text-forest/45">{profile.hetznerType}</span>
-                {index === 1 && (
+                {profile.hetznerType.toLowerCase() === "cpx32" && (
                   <span className="rounded-full bg-ember/12 px-1.5 py-0.5 text-[10px] font-semibold text-ember">
-                    {profileLabels[index]}
+                    {profileLabels[1]}
                   </span>
                 )}
               </span>
@@ -645,14 +653,16 @@ function ProfileOptionRows({
                 <span>{profile.diskGb} GB SSD</span>
               </span>
             </span>
-            <span className="shrink-0 text-right">
-              <span className="text-base font-semibold tracking-tight text-deep">
-                ${profilePrice(profile, billingInterval)}
+            {showPrice ? (
+              <span className="shrink-0 text-right">
+                <span className="text-base font-semibold tracking-tight text-deep">
+                  ${profilePrice(profile, billingInterval)}
+                </span>
+                <span className="block text-[10px] text-forest/45">
+                  {billingInterval === "annual" ? "/yr" : "/mo"}
+                </span>
               </span>
-              <span className="block text-[10px] text-forest/45">
-                {billingInterval === "annual" ? "/yr" : "/mo"}
-              </span>
-            </span>
+            ) : null}
           </button>
         );
       })}
@@ -761,18 +771,22 @@ function PickerDropdown({
 }
 
 function SelectionTriggerCards({
+  profiles,
   selectedProfile,
   selectedRegion,
   billingInterval,
+  showPrice = true,
   openPicker,
   onToggle,
   onClose,
   onSelectProfile,
   onSelectRegion,
 }: {
+  profiles: typeof MATRIX_BILLING_SERVER_PROFILES;
   selectedProfile: (typeof MATRIX_BILLING_SERVER_PROFILES)[number];
   selectedRegion: (typeof MATRIX_BILLING_REGIONS)[number];
   billingInterval: BillingInterval;
+  showPrice?: boolean;
   openPicker: PickerKey;
   onToggle: (picker: "computer" | "region") => void;
   onClose: () => void;
@@ -842,14 +856,16 @@ function SelectionTriggerCards({
             </span>
           </span>
           <span className="flex shrink-0 items-center gap-2.5">
-            <span className="text-right">
-              <span className="text-sm font-semibold text-deep">
-                ${profilePrice(selectedProfile, billingInterval)}
+            {showPrice ? (
+              <span className="text-right">
+                <span className="text-sm font-semibold text-deep">
+                  ${profilePrice(selectedProfile, billingInterval)}
+                </span>
+                <span className="block text-[10px] text-forest/45">
+                  {billingInterval === "annual" ? "/yr" : "/mo"}
+                </span>
               </span>
-              <span className="block text-[10px] text-forest/45">
-                {billingInterval === "annual" ? "/yr" : "/mo"}
-              </span>
-            </span>
+            ) : null}
             <ChevronDownIcon
               className={`size-4 text-forest/40 transition-transform ${computerOpen ? "rotate-180" : ""}`}
               aria-hidden="true"
@@ -857,10 +873,15 @@ function SelectionTriggerCards({
           </span>
         </button>
         {computerOpen && (
-          <PickerDropdown title="Choose your computer" hint="CPX22 / CPX32 / CPX52">
+          <PickerDropdown
+            title="Choose your computer"
+            hint={profiles.map((profile) => profile.hetznerType).join(" / ")}
+          >
             <ProfileOptionRows
+              profiles={profiles}
               selectedFeature={selectedProfile.featureSlug}
               billingInterval={billingInterval}
+              showPrice={showPrice}
               onSelect={onSelectProfile}
             />
           </PickerDropdown>
@@ -919,6 +940,7 @@ export function BillingPanel({
   mode = "settings",
   onCheckoutIntent,
   checkoutReturnPath,
+  onComputerSetupContinue,
 }: {
   active: boolean | null;
   entitlement?: BillingEntitlementSummary | null;
@@ -927,6 +949,7 @@ export function BillingPanel({
   mode?: BillingPanelMode;
   onCheckoutIntent?: () => void;
   checkoutReturnPath?: string;
+  onComputerSetupContinue?: (selection: ComputerSetupSelection) => void;
 }) {
   const props = {
     active,
@@ -936,6 +959,7 @@ export function BillingPanel({
     mode,
     onCheckoutIntent,
     checkoutReturnPath,
+    onComputerSetupContinue,
   };
   if (isSelfHostedDocument()) {
     return <BillingPanelInner {...props} selectedPlan={undefined} />;
@@ -951,6 +975,7 @@ function ManagedBillingPanel(props: {
   mode: BillingPanelMode;
   onCheckoutIntent?: () => void;
   checkoutReturnPath?: string;
+  onComputerSetupContinue?: (selection: ComputerSetupSelection) => void;
 }) {
   const { user } = useUser();
   return <BillingPanelInner {...props} selectedPlan={user?.publicMetadata?.selectedPlan} />;
@@ -964,6 +989,7 @@ function BillingPanelInner({
   mode = "settings",
   onCheckoutIntent,
   checkoutReturnPath,
+  onComputerSetupContinue,
   selectedPlan,
 }: {
   active: boolean | null;
@@ -973,10 +999,12 @@ function BillingPanelInner({
   mode?: BillingPanelMode;
   onCheckoutIntent?: () => void;
   checkoutReturnPath?: string;
+  onComputerSetupContinue?: (selection: ComputerSetupSelection) => void;
   selectedPlan?: unknown;
 }) {
   const [selectedProfileSlug, setSelectedProfileSlug] = useState<string>(
     () =>
+      (mode === "add-computer" ? resolveMachineProfile(entitlement?.defaultServerType)?.featureSlug : null) ??
       preselectedFeatureSlug(selectedPlan) ??
       MATRIX_BILLING_SERVER_PROFILES[1]?.featureSlug ??
       MATRIX_BILLING_SERVER_PROFILES[0]?.featureSlug ??
@@ -985,10 +1013,17 @@ function BillingPanelInner({
   const [selectedRegionSlug, setSelectedRegionSlug] = useState(getNearestRegionSlug);
   const [billingInterval, setBillingInterval] = useState<BillingInterval>("monthly");
   const [openPicker, setOpenPicker] = useState<PickerKey>(null);
+  const allowedProfiles = mode === "add-computer"
+    ? MATRIX_BILLING_SERVER_PROFILES.filter((profile) =>
+        entitlement?.allowedServerTypes.some(
+          (serverType) => serverType.toLowerCase() === profile.hetznerType.toLowerCase(),
+        ),
+      )
+    : MATRIX_BILLING_SERVER_PROFILES;
   const selectedProfile =
-    MATRIX_BILLING_SERVER_PROFILES.find(
+    allowedProfiles.find(
       (profile) => profile.featureSlug === selectedProfileSlug,
-    ) ?? MATRIX_BILLING_SERVER_PROFILES[0]!;
+    ) ?? allowedProfiles[0] ?? MATRIX_BILLING_SERVER_PROFILES[0]!;
   const selectedRegion =
     MATRIX_BILLING_REGIONS.find((region) => region.featureSlug === selectedRegionSlug) ??
     MATRIX_BILLING_REGIONS[0]!;
@@ -1027,7 +1062,7 @@ function BillingPanelInner({
 
   const handleProfileSelect = (featureSlug: string) => {
     const nextProfile =
-      MATRIX_BILLING_SERVER_PROFILES.find((profile) => profile.featureSlug === featureSlug) ??
+      allowedProfiles.find((profile) => profile.featureSlug === featureSlug) ??
       selectedProfile;
     setSelectedProfileSlug(featureSlug);
     setOpenPicker(null);
@@ -1064,7 +1099,7 @@ function BillingPanelInner({
     });
   };
 
-  if (active === true) {
+  if (active === true && mode !== "add-computer") {
     return <ActiveBillingPanel entitlement={entitlement ?? null} accessReason={accessReason ?? null} />;
   }
 
@@ -1079,6 +1114,76 @@ function BillingPanelInner({
           <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
           Checking billing status
         </output>
+      </div>
+    );
+  }
+
+  if (mode === "add-computer") {
+    if (active !== true || allowedProfiles.length === 0 || !onComputerSetupContinue) {
+      return (
+        <div className="rounded-xl border border-ember/25 bg-ember/10 p-4 text-sm text-deep" role="alert">
+          Computer configuration is unavailable for this account. Refresh billing and try again.
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-4">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-forest/55">
+            New computer · 2 of 3
+          </p>
+          <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-deep sm:text-3xl">
+            Configure your next computer
+          </h1>
+          <p className="mt-1.5 max-w-xl text-sm leading-6 text-forest/65">
+            Choose from the computer strengths included in your active plan, then place it in the region closest to you.
+          </p>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
+          <div className="rounded-3xl border border-forest/12 bg-white p-4 sm:p-5">
+            <SelectionTriggerCards
+              profiles={allowedProfiles}
+              selectedProfile={selectedProfile}
+              selectedRegion={selectedRegion}
+              billingInterval={billingInterval}
+              showPrice={false}
+              openPicker={openPicker}
+              onToggle={(picker) =>
+                setOpenPicker((current) => (current === picker ? null : picker))
+              }
+              onClose={() => setOpenPicker(null)}
+              onSelectProfile={handleProfileSelect}
+              onSelectRegion={handleRegionSelect}
+            />
+          </div>
+          <aside className="rounded-3xl bg-forest p-5 text-cream/80 lg:sticky lg:top-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cream/45">
+              Computer setup
+            </p>
+            <p className="mt-3 text-xl font-semibold tracking-tight text-[#FAFAF5]">
+              {selectedProfile.label}
+            </p>
+            <p className="mt-1 font-mono text-xs text-cream/55">
+              {selectedProfile.hetznerType} · {profileSpec(selectedProfile)}
+            </p>
+            <p className="mt-4 border-t border-cream/12 pt-4 text-sm text-[#FAFAF5]">
+              <span aria-hidden="true">{selectedRegion.flag}</span> {selectedRegion.label}
+            </p>
+            <p className="mt-2 text-xs leading-5 text-cream/55">
+              Capacity is verified by the server before provisioning. If another slot is needed, billing opens after you finish setup.
+            </p>
+            <button
+              type="button"
+              onClick={() => onComputerSetupContinue({
+                serverType: selectedProfile.hetznerType.toLowerCase(),
+                location: selectedRegion.location,
+              })}
+              className="mt-5 inline-flex h-12 w-full items-center justify-center rounded-xl bg-ember px-4 text-sm font-semibold text-ember-foreground transition-colors hover:bg-ember/90"
+            >
+              Continue setup
+            </button>
+          </aside>
+        </div>
       </div>
     );
   }
@@ -1105,6 +1210,7 @@ function BillingPanelInner({
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
         <div className="rounded-3xl border border-forest/12 bg-white p-4 sm:p-5">
           <SelectionTriggerCards
+            profiles={MATRIX_BILLING_SERVER_PROFILES}
             selectedProfile={selectedProfile}
             selectedRegion={selectedRegion}
             billingInterval={billingInterval}

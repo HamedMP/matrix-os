@@ -62,6 +62,27 @@ describe('platform/customer-vps-hetzner', () => {
     });
   });
 
+  it('uses a validated per-machine location instead of the platform default', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      server: {
+        id: 123456,
+        status: 'initializing',
+        public_net: { ipv4: { ip: '203.0.113.10' } },
+      },
+    }), { status: 201 }));
+    const client = createHetznerClient(config, fetchImpl as unknown as typeof fetch);
+
+    await client.createServer({ ...createInput, location: 'hil' });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://api.hetzner.cloud/v1/servers',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"location":"hil"'),
+      }),
+    );
+  });
+
   it('changes server type without upgrading disk so future downgrades remain possible', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response('{"action":{"id":42}}', { status: 201 }));
     const client = createHetznerClient(config, fetchImpl as unknown as typeof fetch);

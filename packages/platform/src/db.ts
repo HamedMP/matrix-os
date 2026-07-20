@@ -60,6 +60,7 @@ interface UserMachinesTable {
   status: string;
   image_version: string | null;
   server_type: string | null;
+  location: string | null;
   registration_token_hash: string | null;
   registration_token_expires_at: string | null;
   provisioned_at: string;
@@ -405,6 +406,7 @@ export interface UserMachineRecord {
   status: string;
   imageVersion: string | null;
   serverType: string | null;
+  location: string | null;
   registrationTokenHash: string | null;
   registrationTokenExpiresAt: string | null;
   provisionedAt: string;
@@ -599,6 +601,7 @@ export interface NewUserMachine {
   status: string;
   imageVersion?: string | null;
   serverType?: string | null;
+  location?: string | null;
   registrationTokenHash?: string | null;
   registrationTokenExpiresAt?: string | null;
   provisionedAt: string;
@@ -696,6 +699,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       status TEXT NOT NULL DEFAULT 'provisioning',
       image_version TEXT,
       server_type TEXT,
+      location TEXT,
       registration_token_hash TEXT,
       registration_token_expires_at TEXT,
       provisioned_at TEXT NOT NULL,
@@ -713,6 +717,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS access_clerk_user_ids TEXT[] NOT NULL DEFAULT '{}'`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS developer_tools TEXT NOT NULL DEFAULT '["codex","claude-code","opencode","pi"]'`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS server_type TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS location TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS resize_started_at TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS resize_target_server_type TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 1`.execute(db);
@@ -1222,6 +1227,7 @@ function mapUserMachine(row: UserMachinesTable): UserMachineRecord {
     status: row.status,
     imageVersion: row.image_version,
     serverType: row.server_type,
+    location: row.location,
     registrationTokenHash: row.registration_token_hash,
     registrationTokenExpiresAt: row.registration_token_expires_at,
     provisionedAt: row.provisioned_at,
@@ -1250,6 +1256,7 @@ function toUserMachineRow(record: NewUserMachine): UserMachinesTable {
     status: record.status,
     image_version: record.imageVersion ?? null,
     server_type: record.serverType ?? null,
+    location: record.location ?? null,
     registration_token_hash: record.registrationTokenHash ?? null,
     registration_token_expires_at: record.registrationTokenExpiresAt ?? null,
     provisioned_at: record.provisionedAt,
@@ -1278,6 +1285,7 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
   if (values.status !== undefined) update.status = values.status;
   if (values.imageVersion !== undefined) update.image_version = values.imageVersion;
   if (values.serverType !== undefined) update.server_type = values.serverType;
+  if (values.location !== undefined) update.location = values.location;
   if (values.registrationTokenHash !== undefined) update.registration_token_hash = values.registrationTokenHash;
   if (values.registrationTokenExpiresAt !== undefined) update.registration_token_expires_at = values.registrationTokenExpiresAt;
   if (values.provisionedAt !== undefined) update.provisioned_at = values.provisionedAt;

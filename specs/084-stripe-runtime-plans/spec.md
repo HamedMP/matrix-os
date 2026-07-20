@@ -38,7 +38,7 @@ The core invariant is: **billing changes may affect access, provisioning, and ro
 
 - Clerk sessions identify the user in the platform and shell.
 - Runtime routing already supports multiple machines through `user_machines.runtime_slot`.
-- `user_machines` stores the server type currently used for display and fleet visibility.
+- `user_machines` stores the server type and region used for display, fleet visibility, and recovery-safe reprovisioning.
 - Provisioning currently uses the global `HETZNER_SERVER_TYPE` from platform config.
 - Runtime access is currently gated by the env-based `MATRIX_PAID_BETA_ENTITLEMENT_STATUS`, not by Clerk or Stripe.
 - `/runtime` already renders a picker when multiple machines are active.
@@ -176,6 +176,7 @@ A paid plan can include multiple Matrix runtimes, and the user can switch betwee
 8. Given an internal override account is at capacity, then the manager explains that the account is managed and does not expose a Stripe action.
 9. Given a preview machine exists, then it is visible in inventory but does not consume customer entitlement capacity.
 10. Given a second computer becomes ready, then the manager refreshes inventory and opens it only through its returned `gatewayPath`; it never reconstructs a secondary URL.
+11. Given a user starts another computer, then `/runtime` reuses the first-run computer-strength, region, and default-install controls; the selected server type is restricted to the active entitlement, and the selected region is retained for provisioning and recovery.
 
 ## Functional Requirements
 
@@ -209,6 +210,8 @@ A paid plan can include multiple Matrix runtimes, and the user can switch betwee
 - **FR-022**: Matrix MUST support add-on Stripe Prices for extra machines and provider-backed capacity features such as storage or stronger runtime profiles.
 - **FR-023**: Matrix MUST model Hetzner server types through a Matrix runtime catalog so upstream provider changes do not require changing plan slugs or Stripe price IDs.
 - **FR-024**: Matrix MUST preserve runtime routing for paid users through the active billing period and a 3-day grace period after payment failure or subscription end.
+- **FR-025**: Additional-computer setup MUST reuse the canonical onboarding strength, region, and default-install components rather than maintaining a second set of controls.
+- **FR-026**: Matrix MUST validate the selected server type against the effective entitlement, validate the selected region against the platform allowlist, and persist both on the machine record before asynchronous provisioning.
 
 ### Effective Entitlement Precedence
 
@@ -298,7 +301,7 @@ A paid plan can include multiple Matrix runtimes, and the user can switch betwee
 | `POST /billing/portal` | Clerk session | Create Stripe Customer Portal Session |
 | `GET /billing/status` | Clerk session | Return effective entitlement and subscription summary |
 | `GET /api/auth/computers` | Clerk session | Return authoritative customer and preview computer inventory with `gatewayPath` |
-| `POST /api/auth/provision-runtime` | Clerk session | Idempotently start a customer runtime build from `{ runtime, developerTools }` after transactional entitlement enforcement |
+| `POST /api/auth/provision-runtime` | Clerk session | Idempotently start a customer runtime build from `{ runtime, developerTools, serverType?, location? }` after strict request validation and transactional entitlement enforcement |
 | `GET /api/journey?runtimeSlot=...` | Clerk session | Return account or validated slot-specific journey progress |
 | `POST /api/journey/retry-provision` | Clerk session | Retry a failed build for a validated runtime slot |
 | `POST /billing/webhooks/stripe` | Stripe signature | Process Stripe webhook events |
@@ -361,7 +364,7 @@ Processing rules:
 2. The manager reads authoritative inventory and effective entitlement, excluding server-classified previews from the customer count.
 3. If capacity is full for Stripe, the platform creates a focused subscription-update portal session. On return, the manager polls `/billing/status` until the signed webhook projection increases `maxRuntimeSlots`; a redirect never authorizes provisioning.
 4. The platform transaction rechecks effective entitlement and active customer runtime count while creating the slot, so concurrent requests cannot exceed capacity.
-5. Platform provisions through the existing customer VPS path with the plan's default server type and stores the server type on `user_machines`.
+5. Platform provisions through the existing customer VPS path with the selected allowed server type and allowlisted region (or server defaults when omitted), and stores both on `user_machines` before dispatching the asynchronous job.
 6. The manager polls the slot-specific journey, offers the existing retry contract on retryable failure, refreshes inventory when ready, and uses the returned `gatewayPath` to open it.
 
 ### Upgrade Machine

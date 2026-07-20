@@ -1866,15 +1866,22 @@ describe("platform proxy routing", () => {
         authorization: "Bearer clerk-session",
         "content-type": "application/json",
       },
-      body: JSON.stringify({ developerTools: ["opencode", "pi"] }),
+      body: JSON.stringify({
+        runtime: "research-lab",
+        developerTools: ["opencode", "pi"],
+        serverType: "cpx22",
+        location: "hil",
+      }),
     });
 
     expect(provision.status).toBe(202);
     expect(customerVpsService.provision).toHaveBeenCalledWith({
       handle: "newuser",
       clerkUserId: "user_new_tools",
-      runtimeSlot: "primary",
+      runtimeSlot: "research-lab",
       developerTools: ["opencode", "pi"],
+      serverType: "cpx22",
+      location: "hil",
     });
   });
 

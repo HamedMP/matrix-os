@@ -738,6 +738,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const server = existingServer ?? await deps.hetzner.createServer({
           name: buildServerName(row.handle),
           serverType: row.serverType ?? deps.config.serverType,
+          location: row.location ?? deps.config.location,
           userData,
           labels: {
             app: 'matrix-os',
@@ -1000,6 +1001,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         status: 'provisioning',
         imageVersion: bundleRef.imageVersion,
         serverType: billingContext?.serverType ?? deps.config.serverType,
+        location: ('location' in request ? request.location : undefined) ?? deps.config.location,
         developerTools: request.developerTools,
         registrationTokenHash: registration.hash,
         registrationTokenExpiresAt: registration.expiresAt,
@@ -1209,6 +1211,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         const server = await deps.hetzner.createServer({
           name: buildRecoveryServerName(existing.handle, machineId),
           serverType: billingContext?.serverType ?? active.serverType ?? deps.config.serverType,
+          location: active.location ?? deps.config.location,
           userData,
           labels: {
             app: 'matrix-os',
@@ -1226,7 +1229,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             publicIPv4: server.publicIPv4,
             publicIPv6: server.publicIPv6,
             imageVersion: bundleRef.imageVersion,
-            serverType: deps.config.serverType,
+            serverType: billingContext?.serverType ?? active.serverType ?? deps.config.serverType,
+            location: active.location ?? deps.config.location,
             registrationTokenHash: registration.hash,
             registrationTokenExpiresAt: registration.expiresAt,
             provisionedAt: currentTime.toISOString(),

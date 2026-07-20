@@ -3,22 +3,24 @@
 import { RedirectToSignIn, useAuth, useClerk, useUser } from "@clerk/nextjs";
 import { MatrixComputerListSchema, type MatrixComputerList } from "@matrix-os/contracts";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
-import { LogOutIcon, SettingsIcon, UserIcon } from "lucide-react";
+import { ArrowLeftIcon, LogOutIcon, SettingsIcon, UserIcon } from "lucide-react";
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 
+import { DefaultInstallsStep } from "@/components/onboarding/DefaultInstallsStep";
+import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
 import {
-  defaultDeveloperTools,
-  nextDeveloperToolsSelection,
-  type DeveloperToolId,
-} from "@/components/onboarding/developer-tools";
+  BillingPanel,
+  type ComputerSetupSelection,
+} from "@/components/settings/sections/BillingPanel";
+import type { BillingEntitlementSummary } from "@/hooks/useMatrixBillingAccess";
+import { MATRIX_BILLING_REGIONS, MATRIX_BILLING_SERVER_PROFILES } from "@/lib/billing";
 import { platformShellAssetPath } from "@/lib/platform-shell-assets";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import {
   BillingWait,
   ComputerInventory,
   ErrorStep,
-  InstallsStep,
   NameStep,
   ProvisioningStep,
   ReadyStep,
@@ -32,13 +34,7 @@ const DEFAULT_JOURNEY_POLL_INTERVAL_MS = 3_000;
 const BILLING_PROJECTION_WAIT_MS = 2 * 60_000;
 export const ADD_COMPUTER_DRAFT_KEY = "matrix:add-computer-draft:v1";
 
-type BillingEntitlement = {
-  source: "stripe" | "override";
-  planSlug: "matrix_starter" | "matrix_builder" | "matrix_max" | "internal";
-  status: string;
-  maxRuntimeSlots: number;
-  stripeSubscriptionId: string | null;
-};
+type BillingEntitlement = BillingEntitlementSummary;
 
 type BillingStatus = {
   entitlement: BillingEntitlement | null;
@@ -56,6 +52,8 @@ type AddComputerDraft = {
   name: string;
   slot: string;
   developerTools: DeveloperToolId[];
+  serverType: string;
+  location: string;
   baselineMaxRuntimeSlots: number;
   createdAt: number;
 };
@@ -68,6 +66,7 @@ export type OverviewState =
 type FlowStep =
   | "list"
   | "name"
+  | "configuration"
   | "installs"
   | "billing_wait"
   | "provisioning"
@@ -92,6 +91,18 @@ function isDeveloperToolId(value: unknown): value is DeveloperToolId {
   return value === "codex" || value === "claude-code" || value === "opencode" || value === "pi";
 }
 
+function isKnownServerType(value: unknown): value is string {
+  return typeof value === "string" && MATRIX_BILLING_SERVER_PROFILES.some(
+    (profile) => profile.hetznerType.toLowerCase() === value.toLowerCase(),
+  );
+}
+
+function isKnownLocation(value: unknown): value is string {
+  return typeof value === "string" && MATRIX_BILLING_REGIONS.some(
+    (region) => region.location === value,
+  );
+}
+
 function safeReadDraft(): AddComputerDraft | null {
   if (typeof window === "undefined") return null;
   try {
@@ -107,6 +118,8 @@ function safeReadDraft(): AddComputerDraft | null {
       value.slot !== normalizeRuntimeSlotName(value.name) ||
       !Array.isArray(value.developerTools) ||
       !value.developerTools.every(isDeveloperToolId) ||
+      !isKnownServerType(value.serverType) ||
+      !isKnownLocation(value.location) ||
       typeof value.baselineMaxRuntimeSlots !== "number" ||
       !Number.isInteger(value.baselineMaxRuntimeSlots) ||
       value.baselineMaxRuntimeSlots < 0
@@ -121,6 +134,8 @@ function safeReadDraft(): AddComputerDraft | null {
       name: value.name,
       slot: value.slot,
       developerTools: value.developerTools as DeveloperToolId[],
+      serverType: value.serverType.toLowerCase(),
+      location: value.location,
       baselineMaxRuntimeSlots: value.baselineMaxRuntimeSlots,
       createdAt,
     };
@@ -179,13 +194,25 @@ function parseBillingStatus(value: unknown): BillingStatus | null {
   }
   if (typeof candidate.entitlement !== "object") return null;
   const entitlement = candidate.entitlement as Partial<BillingEntitlement>;
+  const stringOrNull = (value: unknown) => value === null || typeof value === "string";
   if (
     (entitlement.source !== "stripe" && entitlement.source !== "override") ||
     !["matrix_starter", "matrix_builder", "matrix_max", "internal"].includes(entitlement.planSlug ?? "") ||
     typeof entitlement.status !== "string" ||
     !Number.isInteger(entitlement.maxRuntimeSlots) ||
     (entitlement.maxRuntimeSlots ?? -1) < 0 ||
-    (entitlement.stripeSubscriptionId !== null && typeof entitlement.stripeSubscriptionId !== "string")
+    !Number.isInteger(entitlement.includedRuntimeSlots) ||
+    !Number.isInteger(entitlement.addonRuntimeSlots) ||
+    typeof entitlement.defaultServerType !== "string" ||
+    !Array.isArray(entitlement.allowedServerTypes) ||
+    entitlement.allowedServerTypes.length > 10 ||
+    !entitlement.allowedServerTypes.every((serverType) => typeof serverType === "string") ||
+    !stringOrNull(entitlement.stripeSubscriptionId) ||
+    !stringOrNull(entitlement.stripePriceId) ||
+    !stringOrNull(entitlement.gracePeriodEndsAt) ||
+    typeof entitlement.effectiveFrom !== "string" ||
+    !stringOrNull(entitlement.effectiveUntil) ||
+    typeof entitlement.updatedAt !== "string"
   ) {
     return null;
   }
@@ -279,7 +306,6 @@ export function RuntimeManager({
   const [overview, setOverview] = useState<OverviewState>({ status: "loading", inventory: null, billing: null });
   const [overviewRefresh, setOverviewRefresh] = useState(0);
   const [computerName, setComputerName] = useState(initialFlow.draft?.name ?? "");
-  const [selectedTools, setSelectedTools] = useState<DeveloperToolId[]>(initialFlow.draft?.developerTools ?? defaultDeveloperTools);
   const [nameError, setNameError] = useState<string | null>(null);
   const [safeError, setSafeError] = useState<string | null>(null);
   const [journey, setJourney] = useState<JourneyState | null>(null);
@@ -416,15 +442,23 @@ export function RuntimeManager({
     setDraft({
       name: computerName.trim(),
       slot: validation.slot,
-      developerTools: selectedTools,
+      developerTools: [],
+      serverType: overview.billing.entitlement?.defaultServerType.toLowerCase() ?? "cpx22",
+      location: MATRIX_BILLING_REGIONS[0]?.location ?? "fsn1",
       baselineMaxRuntimeSlots: overview.billing.entitlement?.maxRuntimeSlots ?? 0,
       createdAt: Date.now(),
     });
-    setStep("installs");
+    setStep("configuration");
   }
 
-  function toggleTool(tool: DeveloperToolId): void {
-    setSelectedTools((current) => nextDeveloperToolsSelection(current, tool));
+  function continueFromConfiguration(selection: ComputerSetupSelection): void {
+    if (!draft || !isKnownServerType(selection.serverType) || !isKnownLocation(selection.location)) return;
+    setDraft({
+      ...draft,
+      serverType: selection.serverType.toLowerCase(),
+      location: selection.location,
+    });
+    setStep("installs");
   }
 
   function setErrorRetryAction(action: ErrorRetryAction): void {
@@ -440,7 +474,7 @@ export function RuntimeManager({
       setStep("error");
       return;
     }
-    const nextDraft = { ...currentDraft, developerTools: selectedTools };
+    const nextDraft = currentDraft;
     setDraft(nextDraft);
     const entitlement = overview.billing.entitlement;
     const capacityAvailable = Boolean(entitlement && activeCustomerCount(overview.inventory) < entitlement.maxRuntimeSlots);
@@ -595,14 +629,42 @@ export function RuntimeManager({
               onContinue={continueFromName}
             />
           ) : null}
+          {step === "configuration" && draft && overview.status === "ready" ? (
+            <div className="mx-auto w-full max-w-4xl">
+              <button
+                type="button"
+                onClick={() => setStep("name")}
+                className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-forest/65 hover:text-forest"
+              >
+                <ArrowLeftIcon className="size-4" aria-hidden="true" /> Back
+              </button>
+              <BillingPanel
+                active={overview.billing.access.runtimeProxyAllowed}
+                entitlement={overview.billing.entitlement}
+                accessReason={overview.billing.access.reason}
+                mode="add-computer"
+                onComputerSetupContinue={continueFromConfiguration}
+              />
+            </div>
+          ) : null}
           {step === "installs" ? (
-            <InstallsStep
-              title={title}
-              selectedTools={selectedTools}
-              onToggle={toggleTool}
-              onBack={() => setStep("name")}
-              onBuild={() => void buildComputer()}
-            />
+            <div className="mx-auto w-full max-w-4xl">
+              <button
+                type="button"
+                onClick={() => setStep("configuration")}
+                className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-forest/65 hover:text-forest"
+              >
+                <ArrowLeftIcon className="size-4" aria-hidden="true" /> Back
+              </button>
+              <DefaultInstallsStep
+                onBuild={(developerTools) => {
+                  if (!draft) return;
+                  const nextDraft = { ...draft, developerTools };
+                  setDraft(nextDraft);
+                  void buildComputer(nextDraft);
+                }}
+              />
+            </div>
           ) : null}
           {step === "billing_wait" ? <BillingWait title={title} /> : null}
           {step === "provisioning" ? (
@@ -708,7 +770,12 @@ async function provisionComputer(
     const { response } = await fetchJson("/api/auth/provision-runtime", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ runtime: draft.slot, developerTools: draft.developerTools }),
+      body: JSON.stringify({
+        runtime: draft.slot,
+        developerTools: draft.developerTools,
+        serverType: draft.serverType,
+        location: draft.location,
+      }),
     });
     if (response.status === 402) {
       setStep("installs");
