@@ -115,7 +115,7 @@ export function terminalAgentInstallCommand(option: TerminalAgentOption): string
 
 export function terminalAgentVisibleInstallCommand(option: TerminalAgentOption): string {
   const command = terminalAgentInstallCommand(option);
-  return `sh -lc ${shellQuote(`printf '%s\\n' ${shellQuote(command)}; ${command}; exec "\${SHELL:-sh}" -l`)}`;
+  return `sh -lc ${shellQuote(`printf '%s\\n' ${shellQuote(command)}; ${command}`)}`;
 }
 
 function shellQuote(value: string): string {

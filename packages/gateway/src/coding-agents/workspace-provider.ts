@@ -79,7 +79,6 @@ function visibleSetupCommand(command: string): string {
     'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"',
     'export PATH="$MATRIX_NODE_PREFIX/bin:$PATH"',
     command,
-    'exec "${SHELL:-sh}" -l',
   ].join("; ");
   return `sh -lc ${shellQuote(foreground)}`;
 }
