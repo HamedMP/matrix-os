@@ -101,6 +101,24 @@ describe("parseStickyNotes", () => {
 
     expect(new TextEncoder().encode(requestBody).byteLength).toBeLessThan(1_000_000);
   });
+
+  it("keeps worst-case control-character expansion below the bridge request limit", () => {
+    const notes = Array.from({ length: MAX_NOTES }, (_, index) => ({
+      id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      text: "\u0000".repeat(MAX_NOTE_TEXT),
+      color: "yellow",
+      createdAt: 8_640_000_000_000_000,
+      updatedAt: 8_640_000_000_000_000,
+    }));
+    const requestBody = JSON.stringify({
+      action: "write",
+      app: "win-sticky-notes",
+      key: NOTES_KEY,
+      value: JSON.stringify(notes),
+    });
+
+    expect(new TextEncoder().encode(requestBody).byteLength).toBeLessThan(1_000_000);
+  });
 });
 
 describe("createNote", () => {

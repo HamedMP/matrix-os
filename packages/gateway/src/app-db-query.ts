@@ -153,6 +153,9 @@ export function createQueryEngine(db: AppDb): QueryEngine {
       const cols = Object.keys(rows[0]);
       for (const col of cols) parseSafeName(col, "column");
       if (cols.length === 0) throw new Error("bulkInsert: data must have at least one column");
+      if (rows.length * cols.length > 65_535) {
+        throw new Error("bulkInsert: too many bind parameters");
+      }
       const columnSignature = [...cols].sort().join("\0");
       const params: unknown[] = [];
       const valueGroups = rows.map((row) => {

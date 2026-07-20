@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createAppDb, type AppDb } from "../../packages/gateway/src/app-db.js";
 import { createAppRegistry } from "../../packages/gateway/src/app-db-registry.js";
 import { createQueryEngine, type QueryEngine } from "../../packages/gateway/src/app-db-query.js";
@@ -53,6 +53,21 @@ describe("QueryEngine", () => {
     expect(result.ids).toHaveLength(2);
     const rows = await engine.find("todo", "tasks", { orderBy: { priority: "asc" } });
     expect(rows.map((row) => row.title)).toEqual(["First", "Second"]);
+  });
+
+  it("rejects a bulk insert above PostgreSQL's bind-parameter limit before SQL", async () => {
+    const raw = vi.fn();
+    const isolatedEngine = createQueryEngine({ raw } as unknown as AppDb);
+    const wideRow = Object.fromEntries(
+      Array.from({ length: 328 }, (_, index) => [`column_${index}`, index]),
+    );
+
+    await expect(isolatedEngine.bulkInsert(
+      "todo",
+      "tasks",
+      Array.from({ length: 200 }, () => wideRow),
+    )).rejects.toThrow("bulkInsert: too many bind parameters");
+    expect(raw).not.toHaveBeenCalled();
   });
 
   it("finds rows with no filter", async () => {
