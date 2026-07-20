@@ -189,16 +189,18 @@ async function readAppData<T>(key: string, fallback: T): Promise<T> {
   return result.ok ? result.value : fallback;
 }
 
-async function writeAppData<T>(key: string, value: T): Promise<void> {
+async function writeAppData<T>(key: string, value: T): Promise<boolean> {
   try {
     if (window.MatrixOS?.writeData) {
       await window.MatrixOS.writeData(key, value);
-      return;
+      return true;
     }
   } catch (err) {
     console.warn("[clock] MatrixOS data write failed:", err instanceof Error ? err.message : String(err));
+    return false;
   }
   fallbackData[key] = value;
+  return true;
 }
 
 // --- shared types --------------------------------------------------------------
@@ -364,7 +366,9 @@ function WorldClock({ now }: { now: Date }) {
       if (stored === null && hasKvBridge()) {
         const seeded = defaultZoneRows();
         setZones(seeded);
-        await writeAppData(ZONES_KEY, seeded);
+        if (!(await writeAppData(ZONES_KEY, seeded))) {
+          setError("Default cities could not be saved.");
+        }
         return;
       }
       setZones(coerceZones(stored ?? []));
@@ -400,6 +404,8 @@ function WorldClock({ now }: { now: Date }) {
             zones = coerceZones(fresh);
           }
           if (hasCustomZone(zones) || hasAllDefaultZones(zones)) {
+            // A failed marker write is contained: the loaded rows stay visible,
+            // and the idempotent seed check retries on the next load.
             await writeAppData(SEED_MARKER_KEY, true);
           }
         }

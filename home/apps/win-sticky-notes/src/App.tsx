@@ -32,6 +32,8 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [persistenceReady, setPersistenceReady] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const notesRef = useRef(notes);
@@ -47,6 +49,8 @@ export default function App() {
         if (!cancelled && read) setPersistenceReady(true);
       } catch (err: unknown) {
         console.warn("[sticky-notes] load failed:", errMsg(err));
+        if (!cancelled) setLoadError("Notes could not be loaded.");
+        return;
       }
       if (cancelled) return;
       const sorted = sortNotesByRecency(stored);
@@ -58,6 +62,13 @@ export default function App() {
     return () => {
       cancelled = true;
     };
+  }, [loadAttempt]);
+
+  const retryLoad = useCallback(() => {
+    setLoaded(false);
+    setPersistenceReady(false);
+    setLoadError(null);
+    setLoadAttempt((attempt) => attempt + 1);
   }, []);
 
   const persistNotes = useCallback((value: StickyNote[]) => {
@@ -147,7 +158,7 @@ export default function App() {
             <span>{loaded ? `${notes.length} ${notes.length === 1 ? "note" : "notes"}` : "Loading…"}</span>
           </div>
         </div>
-        <button className="sn-new" type="button" onClick={addNote} disabled={!loaded}>
+        <button className="sn-new" type="button" onClick={addNote} disabled={!loaded || loadError !== null}>
           <Plus size={16} /> New note
         </button>
       </header>
@@ -188,7 +199,18 @@ export default function App() {
         </aside>
 
         <section className="sn-editor" aria-label="Note editor">
-          {!selected ? (
+          {loadError ? (
+            <div className="sn-empty" role="alert">
+              <span className="sn-empty-mark" aria-hidden="true">
+                <StickyNoteIcon size={30} />
+              </span>
+              <strong>{loadError}</strong>
+              <span>Your saved notes were not changed. Check the connection and try again.</span>
+              <button className="sn-new" type="button" onClick={retryLoad}>
+                Retry
+              </button>
+            </div>
+          ) : !selected ? (
             <div className="sn-empty">
               <span className="sn-empty-mark" aria-hidden="true">
                 <StickyNoteIcon size={30} />

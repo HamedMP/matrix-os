@@ -48,14 +48,28 @@ describe("Sticky Notes (win11) app", () => {
     expect(screen.getByText(/no notes yet/i)).toBeTruthy();
   });
 
-  it("does not autosave an empty list after the initial bridge read fails", async () => {
+  it("keeps editing locked after an initial bridge read failure and supports retry", async () => {
     const bridge = installMatrixDataBridge();
-    bridge.readData.mockRejectedValue(new Error("gateway unavailable"));
+    bridge.readData
+      .mockRejectedValueOnce(new Error("gateway unavailable"))
+      .mockResolvedValueOnce([]);
     render(<App />);
 
-    expect(await screen.findByText(/no note selected/i)).toBeTruthy();
-    await new Promise((resolve) => setTimeout(resolve, 750));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/notes could not be loaded/i);
+    expect(
+      screen.getAllByRole("button", { name: /new note/i })
+        .every((button) => (button as HTMLButtonElement).disabled),
+    ).toBe(true);
     expect(bridge.writeData).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("button", { name: /new note/i })
+          .every((button) => !(button as HTMLButtonElement).disabled),
+      ).toBe(true);
+    });
+    expect(bridge.readData).toHaveBeenCalledTimes(2);
   });
 
   it("keeps note creation disabled until the initial bridge read settles", async () => {

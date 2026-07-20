@@ -370,6 +370,15 @@ describe("Clock app", () => {
     });
   });
 
+  it("contains a failed first-run KV seed write and surfaces feedback", async () => {
+    const bridge = installMatrixDataBridge();
+    bridge.writeData.mockRejectedValueOnce(new Error("gateway unavailable"));
+    render(<App />);
+
+    expect(await screen.findByText("Los Angeles")).toBeTruthy();
+    expect(await screen.findByText("Default cities could not be saved.")).toBeTruthy();
+  });
+
   it("does not re-seed default cities after the user removed them all", async () => {
     const bridge = installMatrixDataBridge(new Map([["clock.zones", []]]));
     render(<App />);
@@ -428,6 +437,21 @@ describe("Clock app", () => {
     await waitFor(() => {
       expect(bridge.writeData).toHaveBeenCalledWith("clock.seeded-v1", true);
     });
+    expect(db.bulkInsert).not.toHaveBeenCalled();
+  });
+
+  it("keeps loaded Postgres cities visible when the seed marker write fails", async () => {
+    const store: FakeStore = {
+      zones: [{ id: "existing", tz: "Europe/Paris", position: 0 }],
+      alarms: [],
+    };
+    const db = installMatrixDb(store);
+    const bridge = installMatrixDataBridge(new Map(), db);
+    bridge.writeData.mockRejectedValueOnce(new Error("gateway unavailable"));
+    render(<App />);
+
+    expect(await screen.findByText("Paris")).toBeTruthy();
+    expect(screen.queryByText("Saved cities could not be loaded.")).toBeNull();
     expect(db.bulkInsert).not.toHaveBeenCalled();
   });
 
