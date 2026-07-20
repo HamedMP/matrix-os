@@ -90,7 +90,7 @@
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.4.1",
-    "@vitest/coverage-v8": "^4.0.18",
+    "@vitest/coverage-v8": "^4.1.10",
     "better-sqlite3": "^12.10.0",
     "drizzle-orm": "^0.45.2",
     "lucide-react": "^0.563.0",
@@ -98,7 +98,7 @@
     "react-dom": "^19.2.6",
     "tsx": "^4.21.0",
     "vite": "^6.3.2",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.10"
   },
   "dependencies": {
     "@types/pg": "^8.18.0",
