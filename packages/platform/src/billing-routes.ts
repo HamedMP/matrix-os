@@ -38,6 +38,7 @@ import { DeveloperToolsWithDefaultSchema } from './developer-tools.js';
 const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
 const MAX_STRIPE_API_TIMEOUT_MS = 10_000;
+const ADD_COMPUTER_RETURN_PATH = '/onboarding/computer';
 const CLERK_USER_ID_PATTERN = /^user_[A-Za-z0-9]{1,128}$/;
 const BILLING_UNAVAILABLE_RESPONSE = {
   error: 'Billing unavailable',
@@ -291,7 +292,7 @@ export function createBillingRoutes(options: {
           ? env.STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL
           : env.STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY;
         if (!priceId) return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
-        const returnUrl = resolveBillingReturnUrl(env, 'portal', parsed.data.returnPath ?? '/runtime?new=1');
+        const returnUrl = resolveBillingReturnUrl(env, 'portal', parsed.data.returnPath ?? ADD_COMPUTER_RETURN_PATH);
         const configurationId = interval === 'annual'
           ? env.STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_ANNUAL
           : env.STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_MONTHLY;

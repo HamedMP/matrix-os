@@ -77,6 +77,7 @@ export function normalizePlatformMetricPath(path: string): string {
   if (path === '/containers') return '/containers';
   if (path === '/vps') return '/vps';
   if (path === '/runtime') return '/runtime';
+  if (path === '/onboarding/computer') return '/onboarding/computer';
   if (path.startsWith('/system-bundles/releases/')) return '/system-bundles/releases/:version';
   if (path.startsWith('/system-bundles/channels/')) return '/system-bundles/channels/:channel';
   if (/^\/system-bundles\/[^/]+\/[^/]+$/.test(path)) {

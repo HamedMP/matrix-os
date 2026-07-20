@@ -18,6 +18,10 @@ import { MATRIX_BILLING_REGIONS, MATRIX_BILLING_SERVER_PROFILES } from "@/lib/bi
 import { platformShellAssetPath } from "@/lib/platform-shell-assets";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import {
+  ADD_COMPUTER_ONBOARDING_PATH,
+  RUNTIME_MANAGER_PATH,
+} from "@/lib/runtime-routes";
+import {
   BillingWait,
   ComputerInventory,
   ErrorStep,
@@ -74,17 +78,23 @@ type FlowStep =
   | "managed"
   | "error";
 
-type ErrorRetryAction = "billing" | "journey" | "provision";
+type ErrorRetryAction = "billing" | "journey" | "overview" | "provision";
 
 type RuntimeManagerProps = {
   onExternalNavigate?: (url: string) => void;
+  onInternalNavigate?: (url: string) => void;
   billingPollIntervalMs?: number;
   journeyPollIntervalMs?: number;
+  surface?: "manager" | "onboarding";
 };
 
 function hasNewComputerIntent(): boolean {
   if (typeof window === "undefined") return false;
   return new URLSearchParams(window.location.search).get("new") === "1";
+}
+
+function navigateWithinApp(target: string): void {
+  window.location.assign(target);
 }
 
 function isDeveloperToolId(value: unknown): value is DeveloperToolId {
@@ -296,18 +306,19 @@ function activeCustomerCount(inventory: MatrixComputerList): number {
 // react-doctor-disable-next-line react-doctor/no-giant-component -- This finite-state orchestration root delegates every screen to focused view components; keeping shared billing and provisioning transitions together avoids duplicated or divergent flow state.
 export function RuntimeManager({
   onExternalNavigate,
+  onInternalNavigate,
   billingPollIntervalMs = DEFAULT_BILLING_POLL_INTERVAL_MS,
   journeyPollIntervalMs = DEFAULT_JOURNEY_POLL_INTERVAL_MS,
+  surface = "manager",
 }: RuntimeManagerProps) {
   const { isLoaded, isSignedIn, signOut } = useAuth();
   const { user } = useUser();
   const clerk = useClerk();
   const [initialFlow] = useState(() => {
     const storedDraft = safeReadDraft();
-    const newComputerIntent = hasNewComputerIntent();
     return {
-      draft: storedDraft,
-      step: storedDraft && newComputerIntent ? "billing_wait" : newComputerIntent ? "name" : "list",
+      draft: surface === "onboarding" ? storedDraft : null,
+      step: surface === "onboarding" ? (storedDraft ? "billing_wait" : "name") : "list",
     } satisfies { draft: AddComputerDraft | null; step: FlowStep };
   });
   const [draft, setDraft] = useState<AddComputerDraft | null>(initialFlow.draft);
@@ -321,6 +332,17 @@ export function RuntimeManager({
   const [journeyRefresh, setJourneyRefresh] = useState(0);
   const errorRetryActionRef = useRef<ErrorRetryAction>("provision");
   const resumeProvisionStartedRef = useRef(false);
+  const stepRef = useRef(step);
+  const navigateInternal = onInternalNavigate ?? navigateWithinApp;
+
+  useEffect(() => {
+    stepRef.current = step;
+  }, [step]);
+
+  useEffect(() => {
+    if (surface !== "manager" || !hasNewComputerIntent()) return;
+    navigateInternal(ADD_COMPUTER_ONBOARDING_PATH);
+  }, [navigateInternal, surface]);
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this authenticated client inventory depends on Clerk state; the disposed guard prevents stale writes after refresh or unmount.
   useEffect(() => {
@@ -335,17 +357,24 @@ export function RuntimeManager({
           surface: "runtime_manager",
           error_kind: error instanceof Error ? error.message : typeof error,
         });
-        if (!disposed) setOverview({ status: "error", inventory: null, billing: null });
+        if (!disposed) {
+          setOverview({ status: "error", inventory: null, billing: null });
+          if (surface === "onboarding" && stepRef.current === "name") {
+            setSafeError("Your computer setup could not be loaded. Try again in a moment.");
+            errorRetryActionRef.current = "overview";
+            setStep("error");
+          }
+        }
       });
     return () => {
       disposed = true;
     };
-  }, [isLoaded, isSignedIn, overviewRefresh]);
+  }, [isLoaded, isSignedIn, overviewRefresh, surface]);
 
   useEffect(() => {
     if (!isLoaded || !isSignedIn) return;
-    capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.RUNTIME_MANAGER_VIEWED, { entry: hasNewComputerIntent() ? "new" : "manager" });
-  }, [isLoaded, isSignedIn]);
+    capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.RUNTIME_MANAGER_VIEWED, { entry: surface === "onboarding" ? "new" : "manager" });
+  }, [isLoaded, isSignedIn, surface]);
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this bounded poll waits for the signed Stripe webhook projection; each iteration owns and clears its timer.
   useEffect(() => {
@@ -423,6 +452,7 @@ export function RuntimeManager({
 
   if (!isLoaded) return <RuntimeLoading />;
   if (!isSignedIn) return <RedirectToSignIn />;
+  if (surface === "onboarding" && overview.status === "loading") return <RuntimeLoading />;
 
   const displayName = user?.fullName ?? user?.username ?? "Matrix OS member";
   const email = user?.primaryEmailAddress?.emailAddress ?? "Email unavailable";
@@ -433,9 +463,12 @@ export function RuntimeManager({
 
   function beginAddComputer(): void {
     capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.ADD_COMPUTER_INTENT, { source: "runtime_manager" });
-    setNameError(null);
-    setSafeError(null);
-    setStep("name");
+    navigateInternal(ADD_COMPUTER_ONBOARDING_PATH);
+  }
+
+  function returnToRuntimeManager(): void {
+    safeClearDraft();
+    navigateInternal(RUNTIME_MANAGER_PATH);
   }
 
   function continueFromName(): void {
@@ -519,7 +552,7 @@ export function RuntimeManager({
       const { response, body } = await fetchJson("/billing/portal", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ intent: "add_computer", returnPath: "/runtime?new=1" }),
+        body: JSON.stringify({ intent: "add_computer", returnPath: ADD_COMPUTER_ONBOARDING_PATH }),
       });
       const url = body && typeof body === "object" && typeof (body as { url?: unknown }).url === "string"
         ? (body as { url: string }).url
@@ -641,7 +674,7 @@ export function RuntimeManager({
               normalizedSlot={validation.slot}
               error={nameError}
               onChange={setComputerName}
-              onBack={() => setStep("list")}
+              onBack={returnToRuntimeManager}
               onContinue={continueFromName}
             />
           ) : null}
@@ -688,20 +721,14 @@ export function RuntimeManager({
               title={title}
               journey={journey}
               onRetry={() => void retryJourney()}
-              onBack={() => {
-                safeClearDraft();
-                setDraft(null);
-                setJourney(null);
-                setStep("list");
-                setOverviewRefresh((value) => value + 1);
-              }}
+              onBack={returnToRuntimeManager}
             />
           ) : null}
           {step === "ready" && draft ? (
             <ReadyStep
               title={title}
               computer={overview.status === "ready" ? overview.inventory.items.find((item) => item.runtimeSlot === draft.slot) : undefined}
-              onReturn={() => setStep("list")}
+              onReturn={returnToRuntimeManager}
             />
           ) : null}
           {step === "managed" || step === "error" ? (
@@ -711,7 +738,11 @@ export function RuntimeManager({
               onRetry={() => {
                 setSafeError(null);
                 if (step === "managed") setStep("installs");
-                else if (!draft) setStep("list");
+                else if (errorRetryActionRef.current === "overview") {
+                  setOverview({ status: "loading", inventory: null, billing: null });
+                  setStep(draft ? "billing_wait" : surface === "onboarding" ? "name" : "list");
+                  setOverviewRefresh((value) => value + 1);
+                } else if (!draft) setStep(surface === "onboarding" ? "name" : "list");
                 else if (errorRetryActionRef.current === "billing") {
                   const refreshedDraft = { ...draft, createdAt: Date.now() };
                   resumeProvisionStartedRef.current = false;
@@ -724,7 +755,7 @@ export function RuntimeManager({
                   void provisionComputer(draft, setStep, setJourney, setSafeError, setJourneyRefresh, setErrorRetryAction);
                 }
               }}
-              onBack={() => setStep("list")}
+              onBack={returnToRuntimeManager}
             />
           ) : null}
         </section>
@@ -770,6 +801,10 @@ export function RuntimeManager({
       </div>
     </main>
   );
+}
+
+export function AddComputerOnboarding(props: Omit<RuntimeManagerProps, "surface"> = {}) {
+  return <RuntimeManager {...props} surface="onboarding" />;
 }
 
 async function provisionComputer(

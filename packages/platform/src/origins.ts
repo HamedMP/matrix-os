@@ -58,6 +58,7 @@ const RETURN_PATH_ALLOWLIST: RegExp[] = [
   /^\/sign-in(?:[/?].*)?$/,
   /^\/sign-up(?:[/?].*)?$/,
   /^\/runtime(?:[/?].*)?$/,
+  /^\/onboarding\/computer(?:\?.*)?$/,
   /^\/vm\/[a-z0-9][a-z0-9-]{0,63}(?:[/?].*)?$/,
   /^\/auth\/device(?:[/?].*)?$/,
 ];

@@ -21,7 +21,7 @@ import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { buildBillingSetupTarget } from "../../packages/platform/src/auth-pages.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import * as syncJwt from "../../packages/platform/src/sync-jwt.js";
-import { shouldServeRuntimeManager } from "../../packages/platform/src/session-routing-middleware.js";
+import { shouldServePlatformRuntimeShell } from "../../packages/platform/src/session-routing-middleware.js";
 import type { CustomerVpsService } from "../../packages/platform/src/customer-vps.js";
 import {
   JWT_SECRET,
@@ -69,23 +69,35 @@ describe("platform proxy routing", () => {
   });
 
   it("serves runtime management only for authenticated browser identities", () => {
-    expect(shouldServeRuntimeManager({
+    expect(shouldServePlatformRuntimeShell({
       isAppDomain: true,
       path: "/runtime",
       userId: "user_alice",
       identitySource: "auth",
     })).toBe(true);
-    expect(shouldServeRuntimeManager({
+    expect(shouldServePlatformRuntimeShell({
       isAppDomain: true,
       path: "/runtime",
       userId: "user_alice",
       identitySource: "mobile-session",
     })).toBe(false);
-    expect(shouldServeRuntimeManager({
+    expect(shouldServePlatformRuntimeShell({
       isAppDomain: true,
       path: "/runtime",
       userId: "user_alice",
       identitySource: "static-route",
+    })).toBe(false);
+    expect(shouldServePlatformRuntimeShell({
+      isAppDomain: true,
+      path: "/onboarding/computer",
+      userId: "user_alice",
+      identitySource: "auth",
+    })).toBe(true);
+    expect(shouldServePlatformRuntimeShell({
+      isAppDomain: true,
+      path: "/onboarding/computer/other",
+      userId: "user_alice",
+      identitySource: "auth",
     })).toBe(false);
   });
 
@@ -968,6 +980,45 @@ describe("platform proxy routing", () => {
     expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it("serves authenticated computer onboarding from the platform app shell", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff127",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123471,
+      publicIPv4: "203.0.113.24",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      serverType: "cpx22",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("computer-onboarding", { status: 200, headers: { "content-type": "text/html" } }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/onboarding/computer", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("computer-onboarding");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:3200/onboarding/computer");
+  });
+
   it("serves namespaced platform shell assets before Clerk or selected-VPS routing", async () => {
     const verifyToken = vi.fn().mockResolvedValue({ sub: "user_alice" });
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -1104,6 +1155,26 @@ describe("platform proxy routing", () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("clerk-runtime-sign-in");
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:3200/runtime?new=1");
+  });
+
+  it("serves signed-out computer onboarding from the app shell for Clerk authentication", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("clerk-computer-onboarding-sign-in", { status: 200, headers: { "content-type": "text/html" } }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({ verifyToken: vi.fn().mockResolvedValue(null) }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const response = await app.request("/onboarding/computer", {
+      headers: { host: "app.matrix-os.com" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("clerk-computer-onboarding-sign-in");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:3200/onboarding/computer");
   });
 
   it("does not show the runtime picker for unauthenticated root visits", async () => {
@@ -3205,6 +3276,38 @@ describe("platform proxy routing", () => {
     expect(html).not.toMatch(/#(?:10120f|f4f1e8|c9c6bc|8d927f|d8b66a)/i);
     expect(html).not.toContain("Loading your Matrix computer");
     expect(html).not.toContain('data-matrix-platform-fallback-auth="true"');
+  });
+
+  it("returns a bounded no-store 503 when the computer onboarding auth shell is unavailable", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    const timeout = new Error("The operation was aborted due to timeout");
+    timeout.name = "TimeoutError";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(timeout);
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/onboarding/computer", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(503);
+    expect(res.headers.get("cache-control")).toBe("no-store, private");
+    expect(res.headers.get("retry-after")).toBe("5");
+    const html = await res.text();
+    expect(html.length).toBeLessThan(4_096);
+    expect(html).toContain("Matrix OS shell unavailable");
+    expect(html).toContain('href="/onboarding/computer"');
+    expect(html).not.toContain("Loading your Matrix computer");
   });
 
   it("keeps another tab's bare API calls on primary after visiting an explicit VM URL", async () => {

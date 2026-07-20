@@ -34,6 +34,7 @@ describe('platform/origins', () => {
       expect(resolveReturnPath('/sign-in')).toBe('/sign-in');
       expect(resolveReturnPath('/sign-up?redirect=1')).toBe('/sign-up?redirect=1');
       expect(resolveReturnPath('/runtime')).toBe('/runtime');
+      expect(resolveReturnPath('/onboarding/computer')).toBe('/onboarding/computer');
       expect(resolveReturnPath('/vm/alice')).toBe('/vm/alice');
       expect(resolveReturnPath('/auth/device?user_code=BCDF-GHJK')).toBe('/auth/device?user_code=BCDF-GHJK');
     });
@@ -42,6 +43,7 @@ describe('platform/origins', () => {
       expect(resolveReturnPath(undefined)).toBe('/');
       expect(resolveReturnPath('')).toBe('/');
       expect(resolveReturnPath('/admin')).toBe('/');          // not on the allowlist
+      expect(resolveReturnPath('/onboarding/computer/other')).toBe('/');
       expect(resolveReturnPath('https://evil.com')).toBe('/'); // absolute URL
       expect(resolveReturnPath('//evil.com')).toBe('/');       // protocol-relative
       expect(resolveReturnPath('/\\evil.com')).toBe('/');      // backslash
