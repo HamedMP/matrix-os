@@ -14,6 +14,20 @@ const zellij = '/opt/matrix/bin/zellij';
 let stopping = false;
 let monitor;
 let pty;
+let startupStage = 'descriptor';
+
+const STARTUP_FAILURE_CODES = new Set([
+  'runtime_id',
+  'descriptor_schema',
+  'descriptor_runtime',
+  'descriptor_cwd',
+  'descriptor_intent',
+  'descriptor_size',
+  'client_exit',
+  'cgroup_unified',
+  'cgroup_unit',
+  'readiness_timeout',
+]);
 
 function exit(code) {
   if (monitor) clearInterval(monitor);
@@ -123,6 +137,27 @@ async function notifyReady() {
   });
 }
 
+async function recordStartupFailure(error) {
+  const code = error instanceof Error && STARTUP_FAILURE_CODES.has(error.message)
+    ? error.message
+    : 'startup_failed';
+  try {
+    await writeFile(`${runtimeRoot}/startup-failures/${runtimeId}.json`, `${JSON.stringify({
+      stage: startupStage,
+      code,
+    })}\n`, {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    });
+  } catch (writeError) {
+    const writeCode = writeError && typeof writeError === 'object' && 'code' in writeError
+      ? writeError.code
+      : '';
+    if (writeCode !== 'EEXIST') process.exitCode = 1;
+  }
+}
+
 async function main() {
   if (!/^[0-9a-f]{32}$/.test(runtimeId)) throw new Error('runtime_id');
   const descriptorPath = `${runtimeRoot}/descriptors/${runtimeId}.json`;
@@ -131,6 +166,7 @@ async function main() {
   const descriptor = parseDescriptor(JSON.parse(descriptorRaw));
   await unlink(descriptorPath);
 
+  startupStage = 'launch';
   const env = zellijEnvironment();
   const sessionName = `matrix-t-${runtimeId}`;
   const args = descriptor.intent === 'recover'
@@ -169,7 +205,9 @@ async function main() {
     if (!stopping) exit(17);
   });
 
+  startupStage = 'cgroup';
   const cgroup = await ownCgroup();
+  startupStage = 'readiness';
   const deadline = Date.now() + 25_000;
   let roles = null;
   while (Date.now() < deadline) {
@@ -186,6 +224,7 @@ async function main() {
   }
   if (!roles) throw new Error('readiness_timeout');
   await writeReadiness({ runtimeId, sessionName, cgroup: cgroup.relative, roles });
+  startupStage = 'notify';
   await notifyReady();
 
   let checking = false;
@@ -212,5 +251,6 @@ process.on('SIGINT', () => {
 try {
   await main();
 } catch (error) {
+  await recordStartupFailure(error);
   exit(16);
 }

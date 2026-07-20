@@ -43,7 +43,7 @@ trap 'status=$?; cleanup; build_summary; exit $status' EXIT
 
 rm -rf -- "$evidence_root" "$runtime_root"
 install -d -o root -g root -m 0700 "$evidence_root" "$evidence_root/s1" "$evidence_root/s1/checks" "$evidence_root/s2" "$evidence_root/s2/checks"
-install -d -o matrix -g matrix -m 0700 "$runtime_root" "$runtime_root/descriptors" "$runtime_root/readiness" "$runtime_root/outcomes" "$runtime_root/confirmations" "$runtime_root/pane-release"
+install -d -o matrix -g matrix -m 0700 "$runtime_root" "$runtime_root/descriptors" "$runtime_root/readiness" "$runtime_root/outcomes" "$runtime_root/startup-failures" "$runtime_root/confirmations" "$runtime_root/pane-release"
 install -d -o matrix -g matrix -m 0700 "$owner_home/system/terminal-runtime-spike" "$cache_root" "$config_root" "$owner_home/system/terminal-runtime-spike/config-home" "$owner_home/system/terminal-runtime-spike/data"
 install -d -o matrix -g matrix -m 0700 "/run/user/$(id -u matrix)"
 
@@ -117,7 +117,7 @@ start_runtime() {
   runtime_id="$1"
   intent="${2:-create}"
   session_name="matrix-t-${runtime_id}"
-  rm -f -- "$runtime_root/readiness/${runtime_id}.json" "$runtime_root/outcomes/${runtime_id}.json" "$runtime_root/confirmations/${runtime_id}.pass" "$runtime_root/pane-release/${session_name}"
+  rm -f -- "$runtime_root/readiness/${runtime_id}.json" "$runtime_root/outcomes/${runtime_id}.json" "$runtime_root/startup-failures/${runtime_id}.json" "$runtime_root/confirmations/${runtime_id}.pass" "$runtime_root/pane-release/${session_name}"
   descriptor "$runtime_id" "$intent"
   systemctl reset-failed "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true
   systemctl start --no-block "${unit_prefix}${runtime_id}.service"
@@ -213,7 +213,14 @@ if [ "$(systemctl is-active "$base_unit" 2>/dev/null || true)" = "activating" ] 
   mark_pass s1 readinessGated
 fi
 release_pane "$base_id"
-if ! wait_state "$base_unit" active; then exit 10; fi
+if ! wait_state "$base_unit" active; then
+  wait_not_active "$base_unit" || true
+  systemctl show "$base_unit" -p ActiveState -p SubState -p Result -p ExecMainCode -p ExecMainStatus >"$evidence_root/s1/base-startup-unit.txt" || true
+  if [ -f "$runtime_root/startup-failures/${base_id}.json" ]; then
+    cp "$runtime_root/startup-failures/${base_id}.json" "$evidence_root/s1/base-startup-failure.json"
+  fi
+  exit 10
+fi
 cp "$runtime_root/readiness/${base_id}.json" "$evidence_root/s1/base-readiness.json"
 systemctl show "$base_unit" -p MainPID -p ControlGroup -p ActiveState -p SubState -p MemoryHigh -p TasksMax >"$evidence_root/s1/base-unit.txt"
 pid_cgroups="$evidence_root/s1/pid-cgroups.tsv"

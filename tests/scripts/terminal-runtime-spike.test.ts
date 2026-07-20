@@ -177,9 +177,15 @@ describe('terminal runtime spike evidence', () => {
         checks: { ...s1Checks, stopEmptiesCgroup: false, injectedSecret: 'do-not-log' },
       },
     });
+    await writeFile(
+      join(root, 's1', 'base-startup-failure.json'),
+      `${JSON.stringify({ stage: 'readiness', code: 'readiness_timeout' })}\n`,
+      'utf8',
+    );
 
     await expect(reportGateChecks(root)).resolves.toEqual([
       's1:stopEmptiesCgroup=fail',
+      's1:startup=readiness/readiness_timeout',
     ]);
   });
 

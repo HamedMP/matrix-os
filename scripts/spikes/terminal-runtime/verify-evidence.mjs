@@ -175,6 +175,34 @@ export async function reportGateChecks(inputRoot) {
       if (checks[check] !== true) failures.push(`${gate}:${check}=fail`);
     }
   }
+  const startupPath = join(root, 's1', 'base-startup-failure.json');
+  try {
+    const startupStat = await lstat(startupPath);
+    if (!startupStat.isFile() || startupStat.isSymbolicLink() || startupStat.nlink !== 1) {
+      fail('evidence_file_type');
+    }
+    const startupResult = await readNoFollow(startupPath, 4096);
+    scanPrivacy(startupResult.body);
+    let startup;
+    try {
+      startup = JSON.parse(startupResult.body.toString('utf8'));
+    } catch (error) {
+      if (error instanceof SyntaxError) fail('evidence_summary_json');
+      throw error;
+    }
+    const stages = new Set(['descriptor', 'launch', 'cgroup', 'readiness', 'notify']);
+    const codes = new Set([
+      'runtime_id', 'descriptor_schema', 'descriptor_runtime', 'descriptor_cwd',
+      'descriptor_intent', 'descriptor_size', 'client_exit', 'cgroup_unified',
+      'cgroup_unit', 'readiness_timeout', 'startup_failed',
+    ]);
+    if (hasExactKeys(startup, ['stage', 'code']) && stages.has(startup.stage) && codes.has(startup.code)) {
+      failures.push(`s1:startup=${startup.stage}/${startup.code}`);
+    }
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
+    if (code !== 'ENOENT') throw error;
+  }
   return failures;
 }
 
