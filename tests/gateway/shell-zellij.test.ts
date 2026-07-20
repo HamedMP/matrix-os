@@ -796,4 +796,22 @@ describe("zellij adapter", () => {
     expect(script).not.toContain("/bin/bash");
     expect(script.indexOf('  ( "$@" )')).toBeLessThan(script.indexOf('exec "$matrix_zsh" -d -i'));
   });
+
+  it("resets inherited terminal rendition before every Matrix prompt color", () => {
+    const script = matrixTerminalShellScript(
+      "/tmp/matrix/.zshrc",
+      "/tmp/matrix/bashrc",
+      "/tmp/matrix/prompt-label.mjs",
+    );
+
+    expect(script).toContain(
+      'export MATRIX_TERMINAL_PROMPT="\\\\[\\\\e[0;1;36m\\\\]$matrix_prompt_label',
+    );
+    expect(script).toContain(
+      ':\\\\[\\\\e[0;1;34m\\\\]\\\\w\\\\[\\\\e[0m\\\\]\\\\$ "',
+    );
+    expect(script).toContain(
+      'export MATRIX_TERMINAL_PROMPT="\\\\[\\\\e[0;1;36m\\\\]\\\\u',
+    );
+  });
 });

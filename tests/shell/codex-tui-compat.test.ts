@@ -7,6 +7,8 @@ import {
 const theme = {
   foreground: "#D6D8DD",
 };
+const MATRIX_PROMPT = "\x1b[0;1;36mpr-1031\x1b[0m:\x1b[0;1;34m~/projects\x1b[0m$ ";
+const NORMALIZED_MATRIX_PROMPT = "\x1b[0m\x1b[1;36mpr-1031\x1b[0m:\x1b[0m\x1b[1;34m~/projects\x1b[0m$ ";
 
 describe("Codex TUI ANSI compatibility transform", () => {
   it("rewrites reverse-video rows to explicit dark xterm colors", () => {
@@ -63,5 +65,14 @@ describe("Codex TUI ANSI compatibility transform", () => {
     const transform = createCodexTuiCompatTransform(theme);
 
     expect(transformTerminalOutputForCompat(output, undefined, transform)).toBe(output);
+  });
+
+  it("preserves a reset-baselined Matrix prompt when its cyan SGR is split", () => {
+    const transform = createCodexTuiCompatTransform(theme);
+
+    expect(transform.write("\x1b[?1049h\x1b[2mCodex\x1b[?1049l\x1b[0;1;")).toBe(
+      "\x1b[?1049h\x1b[2mCodex\x1b[?1049l",
+    );
+    expect(transform.write(MATRIX_PROMPT.slice("\x1b[0;1;".length))).toBe(NORMALIZED_MATRIX_PROMPT);
   });
 });

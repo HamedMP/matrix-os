@@ -148,6 +148,8 @@ describe("zellij-runtime", () => {
     expect(shell).toContain('exec "$matrix_zsh" -d -i');
     expect(shell).toContain("exec bash --noprofile --rcfile");
     expect(shell).toContain(`node '${promptLabelPath}'`);
+    expect(shell).toContain('\\\\[\\\\e[0;1;36m\\\\]$matrix_prompt_label');
+    expect(shell).toContain(':\\\\[\\\\e[0;1;34m\\\\]\\\\w');
     expect(shell).toContain('if [ -z "${MATRIX_TERMINAL_PROMPT:-}" ] && command -v node >/dev/null 2>&1; then');
     expect(zshrc).toContain('PROMPT="${MATRIX_TERMINAL_PROMPT}"');
     expect(zshenv).toContain('. "$HOME/.zshenv"');
