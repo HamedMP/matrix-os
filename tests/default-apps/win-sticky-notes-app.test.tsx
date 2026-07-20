@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../../home/apps/win-sticky-notes/src/App";
@@ -23,6 +23,7 @@ const savedNotes = [
 
 describe("Sticky Notes (win11) app", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     Reflect.deleteProperty(window, "MatrixOS");
   });
@@ -77,7 +78,7 @@ describe("Sticky Notes (win11) app", () => {
     });
   });
 
-  it("creates a note and autosaves it after the debounce", async () => {
+  it("creates a note and persists edits immediately", async () => {
     const bridge = installMatrixDataBridge();
     render(<App />);
 
@@ -91,16 +92,12 @@ describe("Sticky Notes (win11) app", () => {
 
     fireEvent.change(editor, { target: { value: "Ship the win11 build" } });
 
-    expect(bridge.writeData).not.toHaveBeenCalled();
-    await waitFor(
-      () => {
-        expect(bridge.writeData).toHaveBeenCalledWith(
-          NOTES_KEY,
-          expect.arrayContaining([expect.objectContaining({ text: "Ship the win11 build" })]),
-        );
-      },
-      { timeout: 3000 },
-    );
+    await waitFor(() => {
+      expect(bridge.writeData).toHaveBeenCalledWith(
+        NOTES_KEY,
+        expect.arrayContaining([expect.objectContaining({ text: "Ship the win11 build" })]),
+      );
+    });
 
     // The new note shows up in the list with its snippet.
     expect(within(list).getByText("Ship the win11 build")).toBeTruthy();
@@ -126,23 +123,24 @@ describe("Sticky Notes (win11) app", () => {
     expect(bridge.writeData).not.toHaveBeenCalled();
   });
 
-  it("flushes a pending autosave when the app unmounts before the debounce fires", async () => {
+  it("starts the latest save before iframe removal can bypass React cleanup", async () => {
     const bridge = installMatrixDataBridge();
-    const { unmount } = render(<App />);
+    render(<App />);
 
     await screen.findByText(/no note selected/i);
     fireEvent.click(screen.getAllByRole("button", { name: /new note/i })[0]);
     const editor = screen.getByLabelText(/note text/i) as HTMLTextAreaElement;
+    bridge.writeData.mockClear();
+    vi.useFakeTimers();
     fireEvent.change(editor, { target: { value: "last-second edit" } });
-
-    // Unmount within the 600ms debounce window: the pending save must flush.
-    unmount();
-    await waitFor(() => {
-      expect(bridge.writeData).toHaveBeenCalledWith(
-        NOTES_KEY,
-        expect.arrayContaining([expect.objectContaining({ text: "last-second edit" })]),
-      );
+    await act(async () => {
+      await Promise.resolve();
     });
+
+    expect(bridge.writeData).toHaveBeenCalledWith(
+      NOTES_KEY,
+      expect.arrayContaining([expect.objectContaining({ text: "last-second edit" })]),
+    );
   });
 
   it("switches the selected note from the list", async () => {

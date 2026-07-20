@@ -15,7 +15,6 @@ import {
   type StickyNote,
 } from "./sticky-notes-model";
 
-const SAVE_DEBOUNCE_MS = 600;
 const TIME_REFRESH_MS = 60_000;
 
 function errMsg(err: unknown): string {
@@ -34,8 +33,8 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [persistenceReady, setPersistenceReady] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
+  const notesRef = useRef(notes);
 
   // Initial load. With no bridge the app degrades to in-memory notes only.
   useEffect(() => {
@@ -51,6 +50,7 @@ export default function App() {
       }
       if (cancelled) return;
       const sorted = sortNotesByRecency(stored);
+      notesRef.current = stored;
       setNotes(stored);
       setSelectedId(sorted[0]?.id ?? null);
       setLoaded(true);
@@ -60,48 +60,25 @@ export default function App() {
     };
   }, []);
 
-  // Debounced autosave; skips until the initial load settles so an empty
-  // first render can never clobber stored notes.
-  useEffect(() => {
-    if (!loaded || !persistenceReady) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      saveTimer.current = null;
-      void (async () => {
-        try {
-          await window.MatrixOS?.writeData?.(NOTES_KEY, notes);
-        } catch (err: unknown) {
-          console.warn("[sticky-notes] save failed:", errMsg(err));
-        }
-      })();
-    }, SAVE_DEBOUNCE_MS);
-    return () => {
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-    };
-  }, [notes, loaded, persistenceReady]);
+  const persistNotes = useCallback((value: StickyNote[]) => {
+    if (!persistenceReady) return;
+    // Start persistence in the user event. AppViewer owns the ordered request
+    // queue, so the write can finish after closing destroys this iframe.
+    void (async () => {
+      try {
+        await window.MatrixOS?.writeData?.(NOTES_KEY, value);
+      } catch (err: unknown) {
+        console.warn("[sticky-notes] save failed:", errMsg(err));
+      }
+    })();
+  }, [persistenceReady]);
 
-  const notesRef = useRef(notes);
-  useEffect(() => {
-    notesRef.current = notes;
-  }, [notes]);
-
-  // Flush a pending debounced save on unmount so edits typed in the last
-  // debounce window are not silently dropped.
-  useEffect(
-    () => () => {
-      if (!saveTimer.current) return;
-      clearTimeout(saveTimer.current);
-      saveTimer.current = null;
-      void (async () => {
-        try {
-          await window.MatrixOS?.writeData?.(NOTES_KEY, notesRef.current);
-        } catch (err: unknown) {
-          console.warn("[sticky-notes] final save failed:", errMsg(err));
-        }
-      })();
-    },
-    [],
-  );
+  const updateNotes = useCallback((updater: (current: StickyNote[]) => StickyNote[]) => {
+    const next = updater(notesRef.current);
+    notesRef.current = next;
+    setNotes(next);
+    persistNotes(next);
+  }, [persistNotes]);
 
   // Refresh relative timestamps in the list once a minute.
   useEffect(() => {
@@ -118,45 +95,45 @@ export default function App() {
     // drop the oldest notes on the next load.
     if (notesRef.current.length >= MAX_NOTES) return;
     const note = createNote(newId(), Date.now());
-    setNotes((cur) => (cur.length >= MAX_NOTES ? cur : [note, ...cur]));
+    updateNotes((cur) => (cur.length >= MAX_NOTES ? cur : [note, ...cur]));
     setSelectedId(note.id);
     // Focus after the editor re-renders with the new selection. rAF is not
     // available in every host (e.g. jsdom), so guard it.
     if (typeof requestAnimationFrame === "function") {
       requestAnimationFrame(() => editorRef.current?.focus());
     }
-  }, [loaded]);
+  }, [loaded, updateNotes]);
 
   const updateSelectedText = useCallback(
     (text: string) => {
       if (!selectedId) return;
       const now = Date.now();
-      setNotes((cur) =>
+      updateNotes((cur) =>
         cur.map((note) =>
           note.id === selectedId ? { ...note, text: text.slice(0, MAX_NOTE_TEXT), updatedAt: now } : note,
         ),
       );
     },
-    [selectedId],
+    [selectedId, updateNotes],
   );
 
   const setSelectedColor = useCallback(
     (color: NoteColorId) => {
       if (!selectedId) return;
       const now = Date.now();
-      setNotes((cur) =>
+      updateNotes((cur) =>
         cur.map((note) => (note.id === selectedId ? { ...note, color, updatedAt: now } : note)),
       );
     },
-    [selectedId],
+    [selectedId, updateNotes],
   );
 
   const deleteSelected = useCallback(() => {
     if (!selected) return;
     const remaining = sorted.filter((note) => note.id !== selected.id);
-    setNotes(remaining);
+    updateNotes(() => remaining);
     setSelectedId(remaining[0]?.id ?? null);
-  }, [selected, sorted]);
+  }, [selected, sorted, updateNotes]);
 
   return (
     <main className="sn-app">
