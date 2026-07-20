@@ -498,6 +498,81 @@ describe("TerminalApp", () => {
     );
   });
 
+  it("polls through Terminal, Claude, Terminal, Codex, Terminal without stale badges or card layout", async () => {
+    type Phase = "terminal" | "claude" | "codex";
+    let phase: Phase = "terminal";
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve(mockJsonResponse({ ok: true }));
+      }
+      if (url.includes("/api/terminal/layout")) return Promise.resolve(mockJsonResponse({}));
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        const agentFields = phase === "claude"
+          ? {
+              agent: "claude",
+              subtitle: "Claude task",
+              model: "claude-opus-4-6",
+              strength: "high",
+              visualStatus: "running",
+            }
+          : phase === "codex"
+            ? { agent: "codex", visualStatus: "running" }
+            : {};
+        return Promise.resolve(mockJsonResponse({
+          sessions: [{ name: "main", status: "active", placement: "active", tabs: [], ...agentFields }],
+        }));
+      }
+      return Promise.resolve(mockJsonResponse({}));
+    });
+
+    render(<TerminalApp />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const advanceRefresh = async (nextPhase: Phase) => {
+      phase = nextPhase;
+      await act(async () => {
+        vi.advanceTimersByTime(5_000);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    };
+    const card = () => screen.getByTestId("terminal-session-card-main");
+
+    expect(card().style.height).toBe("52px");
+    expect(screen.queryByTestId(/terminal-session-agent-logo-/)).toBeNull();
+
+    await advanceRefresh("claude");
+    expect(card().style.height).toBe("78px");
+    expect(screen.getByTestId("terminal-session-agent-state-main").textContent).toContain("Claude Code");
+    expect(screen.getByTestId("terminal-session-agent-state-main").textContent).toContain("claude-opus-4-6");
+    expectOptimizedImageSrc(screen.getByTestId("terminal-session-agent-logo-image-claude"), "/agent-logos/claude-code.png");
+
+    await advanceRefresh("terminal");
+    expect(card().style.height).toBe("52px");
+    expect(screen.queryByTestId("terminal-session-subtitle-main")).toBeNull();
+    expect(screen.queryByTestId(/terminal-session-agent-logo-/)).toBeNull();
+
+    await advanceRefresh("codex");
+    expect(card().style.height).toBe("60px");
+    const codexState = screen.getByTestId("terminal-session-agent-state-main");
+    expect(codexState.textContent).toContain("Codex");
+    expect(codexState.textContent).not.toContain("Claude");
+    expect(codexState.textContent).not.toContain("claude-opus-4-6");
+    expect(codexState.textContent).not.toContain("High");
+    expect(screen.queryByTestId("terminal-session-subtitle-main")).toBeNull();
+    expectOptimizedImageSrc(screen.getByTestId("terminal-session-agent-logo-image-codex"), "/agent-logos/codex.png");
+
+    await advanceRefresh("terminal");
+    expect(card().style.height).toBe("52px");
+    expect(screen.queryByTestId(/terminal-session-agent-logo-/)).toBeNull();
+  });
+
   it("shows compact Git context only when it fits on the existing metadata line", () => {
     expect(doesCompactGitContextFit({ availableWidth: 360, primaryWidth: 190, contextWidth: 130 })).toBe(true);
     expect(doesCompactGitContextFit({ availableWidth: 280, primaryWidth: 190, contextWidth: 130 })).toBe(false);

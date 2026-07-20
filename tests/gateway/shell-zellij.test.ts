@@ -11,6 +11,7 @@ import {
   createZellijAdapter,
   sanitizeZellijError,
 } from "../../packages/gateway/src/shell/zellij.js";
+import { inferAgentFromCommand } from "../../packages/gateway/src/shell/registry.js";
 import { matrixTerminalShellScript } from "../../packages/gateway/src/shell/zellij-config.js";
 
 const execFileAsync = promisify(nodeExecFile);
@@ -85,13 +86,13 @@ describe("zellij adapter", () => {
     );
   });
 
-  it("reads the focused terminal pane cwd from bounded structured zellij queries", async () => {
+  it("reads the focused terminal pane runtime from bounded structured zellij queries", async () => {
     const execFile = vi.fn((_file, args: string[], _opts, cb) => {
       const stdout = args.includes("current-tab-info")
         ? JSON.stringify({ tab_id: 4, active: true })
         : JSON.stringify([
-          { id: 1, is_plugin: false, is_focused: true, tab_id: 2, pane_cwd: "/home/alice/other" },
-          { id: 2, is_plugin: false, is_focused: true, tab_id: 4, pane_cwd: "/home/alice/project" },
+          { id: 1, is_plugin: false, is_focused: true, tab_id: 2, pane_cwd: "/home/alice/other", pane_command: "zsh" },
+          { id: 2, is_plugin: false, is_focused: true, tab_id: 4, pane_cwd: "/home/alice/project", pane_command: "claude --resume" },
           { id: 3, is_plugin: true, is_focused: false, tab_id: 4, pane_cwd: null },
         ]);
       cb(null, stdout, "");
@@ -99,8 +100,16 @@ describe("zellij adapter", () => {
     });
     const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
 
-    await expect(adapter.focusedPaneCwd("main")).resolves.toBe("/home/alice/project");
-    await expect(adapter.focusedPaneCwd("main")).resolves.toBe("/home/alice/project");
+    await expect(adapter.focusedPaneRuntime("main")).resolves.toEqual({
+      cwd: "/home/alice/project",
+      command: "claude --resume",
+      observed: true,
+    });
+    await expect(adapter.focusedPaneRuntime("main")).resolves.toEqual({
+      cwd: "/home/alice/project",
+      command: "claude --resume",
+      observed: true,
+    });
     expect(execFile).toHaveBeenCalledTimes(2);
     expect(execFile).toHaveBeenCalledWith(
       "zellij",
@@ -108,6 +117,69 @@ describe("zellij adapter", () => {
       expect.objectContaining({ timeout: 25, signal: expect.any(AbortSignal) }),
       expect.any(Function),
     );
+  });
+
+  it.each([
+    ["env FOO=bar codex --full-auto", "codex"],
+    ["/usr/bin/env --ignore-environment claude", "claude"],
+    ["env -u DEBUG opencode .", "opencode"],
+    ["env --unset=DEBUG pi", "pi"],
+  ] as const)("keeps wrapped focused commands available for exact agent classification: %s", async (paneCommand, agent) => {
+    const execFile = vi.fn((_file, args: string[], _opts, cb) => {
+      cb(null, args.includes("current-tab-info")
+        ? JSON.stringify({ tab_id: 1 })
+        : JSON.stringify([{
+          id: 1,
+          is_plugin: false,
+          is_focused: true,
+          tab_id: 1,
+          pane_cwd: "/home/alice/project",
+          pane_command: paneCommand,
+        }]), "");
+      return childProcess();
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+
+    const runtime = await adapter.focusedPaneRuntime("main");
+
+    expect(runtime).toMatchObject({ command: paneCommand, observed: true });
+    expect(inferAgentFromCommand(runtime.command ?? undefined)).toBe(agent);
+  });
+
+  it("reports a successful observation with no command when the focused pane omits pane_command", async () => {
+    const execFile = vi.fn((_file, args: string[], _opts, cb) => {
+      cb(null, args.includes("current-tab-info")
+        ? JSON.stringify({ tab_id: 1 })
+        : JSON.stringify([{
+          id: 1,
+          is_plugin: false,
+          is_focused: true,
+          tab_id: 1,
+          pane_cwd: "/home/alice/project",
+        }]), "");
+      return childProcess();
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.focusedPaneRuntime("main")).resolves.toEqual({
+      cwd: "/home/alice/project",
+      command: null,
+      observed: true,
+    });
+  });
+
+  it("returns an unavailable observation for malformed pane JSON", async () => {
+    const execFile = vi.fn((_file, args: string[], _opts, cb) => {
+      cb(null, args.includes("current-tab-info") ? JSON.stringify({ tab_id: 1 }) : "{not-json", "");
+      return childProcess();
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.focusedPaneRuntime("main")).resolves.toEqual({
+      cwd: null,
+      command: null,
+      observed: false,
+    });
   });
 
   it("treats zellij's no-active-sessions response as an empty session list", async () => {
