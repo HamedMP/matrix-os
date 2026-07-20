@@ -246,6 +246,45 @@ export async function reportGateChecks(inputRoot) {
     const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
     if (code !== 'ENOENT') throw error;
   }
+  const rolesPath = join(root, 's1', 'base-runtime-roles.json');
+  try {
+    const rolesResult = await readNoFollow(rolesPath, 4096);
+    scanPrivacy(rolesResult.body);
+    const roles = JSON.parse(rolesResult.body.toString('utf8'));
+    const checkpoints = new Set(['initial', 'detach', 'gateway-restart', 'gateway-crash', 'shell-restart']);
+    if (
+      hasExactKeys(roles, ['checkpoint', 'keeper', 'zellijAlive', 'zellijExpected', 'shell', 'agent']) &&
+      checkpoints.has(roles.checkpoint) && typeof roles.keeper === 'boolean' &&
+      Number.isInteger(roles.zellijAlive) && Number.isInteger(roles.zellijExpected) &&
+      roles.zellijAlive >= 0 && roles.zellijAlive <= roles.zellijExpected && roles.zellijExpected <= 8 &&
+      typeof roles.shell === 'boolean' && typeof roles.agent === 'boolean'
+    ) {
+      failures.push(
+        `s1:roles=${roles.checkpoint}/keeper:${Number(roles.keeper)}/zellij:${roles.zellijAlive}of${roles.zellijExpected}/shell:${Number(roles.shell)}/agent:${Number(roles.agent)}`,
+      );
+    }
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
+    if (code !== 'ENOENT') throw error;
+  }
+  const recoveryPath = join(root, 's2', 'recovery-startup-failure.json');
+  try {
+    const recoveryResult = await readNoFollow(recoveryPath, 4096);
+    scanPrivacy(recoveryResult.body);
+    const recovery = JSON.parse(recoveryResult.body.toString('utf8'));
+    const stages = new Set(['descriptor', 'launch', 'cgroup', 'readiness', 'notify']);
+    const codes = new Set([
+      'runtime_id', 'descriptor_schema', 'descriptor_runtime', 'descriptor_cwd',
+      'descriptor_intent', 'descriptor_size', 'client_exit', 'cgroup_unified',
+      'cgroup_unit', 'readiness_timeout', 'startup_failed',
+    ]);
+    if (hasExactKeys(recovery, ['stage', 'code']) && stages.has(recovery.stage) && codes.has(recovery.code)) {
+      failures.push(`s2:recovery=${recovery.stage}/${recovery.code}`);
+    }
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
+    if (code !== 'ENOENT') throw error;
+  }
   return failures;
 }
 

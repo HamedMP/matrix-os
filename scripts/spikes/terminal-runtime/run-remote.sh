@@ -56,7 +56,7 @@ install -d -o matrix -g matrix -m 0700 "/run/user/$(id -u matrix)"
 
 rm -rf -- "$support_root.next"
 install -d -o root -g root -m 0755 "$support_root.next" "$support_root.next/node_modules"
-for file in keeper.mjs record-outcome.mjs pane-probe.sh memory-hog.mjs layout.kdl; do
+  for file in keeper.mjs record-outcome.mjs record-runtime-roles.mjs pane-probe.sh memory-hog.mjs layout.kdl; do
   install -o root -g root -m 0755 "$source_dir/$file" "$support_root.next/$file"
 done
 cp -aL /opt/matrix/app/node_modules/node-pty "$support_root.next/node_modules/node-pty"
@@ -254,6 +254,8 @@ if roles_alive "$base_id"; then
     if ! grep -Fqx "0::${base_cgroup}" "/proc/${pid}/cgroup" 2>/dev/null; then all_in_group=false; fi
   done <"/sys/fs/cgroup${base_cgroup}/cgroup.procs"
   if [ "$all_in_group" = true ]; then mark_pass s1 runtimeCgroupMembers; fi
+else
+  /opt/matrix/runtime/node/bin/node "$support_root/record-runtime-roles.mjs" "$base_id" initial || true
 fi
 
 gateway_before_pid="$(systemctl show matrix-gateway.service -p MainPID --value 2>/dev/null || true)"
@@ -288,7 +290,9 @@ fi
 kill "$attach_parent" "$fifo_writer" 2>/dev/null || true
 rm -f -- "$attach_fifo"
 sleep 0.5
-if roles_alive "$base_id"; then mark_pass s1 detachPreservesPids; fi
+if roles_alive "$base_id"; then mark_pass s1 detachPreservesPids; else
+  /opt/matrix/runtime/node/bin/node "$support_root/record-runtime-roles.mjs" "$base_id" detach || true
+fi
 
 if systemctl restart matrix-gateway.service >/dev/null 2>&1; then
   gateway_restart_pid="$(wait_main_pid_changed matrix-gateway.service "$gateway_before_pid" || true)"
@@ -316,6 +320,9 @@ if systemctl restart matrix-shell.service >/dev/null 2>&1; then
   fi
 fi
 record_pid_cgroup runtime-main-after-events "$main_pid" "$pid_cgroups" || true
+if [ -f "$runtime_root/role-diagnostic-${base_id}.json" ]; then
+  cp "$runtime_root/role-diagnostic-${base_id}.json" "$evidence_root/s1/base-runtime-roles.json"
+fi
 
 exec {base_events_fd}<"/sys/fs/cgroup${base_cgroup}/cgroup.events"
 systemctl stop --no-block "$base_unit" >/dev/null 2>&1 || true
@@ -468,6 +475,10 @@ if wait_state "$recovery_unit" active; then
       if [ "$newest_before_disable" = "$newest_after_disable" ]; then mark_pass s2 liveSerializationDisableSafe; fi
     fi
     systemctl stop "$recovery_unit" >/dev/null 2>&1 || true
+  else
+    if [ -f "$runtime_root/startup-failures/${recovery_id}.json" ]; then
+      cp "$runtime_root/startup-failures/${recovery_id}.json" "$evidence_root/s2/recovery-startup-failure.json"
+    fi
   fi
 
   corrupt_target="$(head -1 "/tmp/matrix-terminal-mapped-${short_sha}.txt" 2>/dev/null || true)"

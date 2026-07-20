@@ -190,12 +190,28 @@ describe('terminal runtime spike evidence', () => {
       'ActiveState=failed\nSubState=failed\nResult=timeout\nExecMainCode=1\nExecMainStatus=16\n',
       'utf8',
     );
+    await writeFile(
+      join(root, 's1', 'base-runtime-roles.json'),
+      `${JSON.stringify({
+        checkpoint: 'initial', keeper: true, zellijAlive: 1,
+        zellijExpected: 2, shell: true, agent: false,
+      })}\n`,
+      'utf8',
+    );
+    await mkdir(join(root, 's2'));
+    await writeFile(
+      join(root, 's2', 'recovery-startup-failure.json'),
+      `${JSON.stringify({ stage: 'readiness', code: 'readiness_timeout' })}\n`,
+      'utf8',
+    );
 
     await expect(reportGateChecks(root)).resolves.toEqual([
       's1:stopEmptiesCgroup=fail',
       's1:startup=readiness/client_exit',
       's1:pty-exit=1/0',
       's1:unit=failed/failed/timeout/1/16',
+      's1:roles=initial/keeper:1/zellij:1of2/shell:1/agent:0',
+      's2:recovery=readiness/readiness_timeout',
     ]);
   });
 
