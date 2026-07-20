@@ -71,6 +71,15 @@ describe("SignInScreen email code flow", () => {
     mockCreate.mockImplementation(() => Promise.resolve(attemptWithEmailCodeFactor()));
   });
 
+  it("lets the scroll view lift a focused field above the keyboard", () => {
+    // Without this the centred layout leaves the email and code inputs hidden
+    // behind the iOS keyboard as soon as they are focused.
+    const { UNSAFE_getByType } = render(<SignInScreen />);
+    const { ScrollView } = require("react-native");
+
+    expect(UNSAFE_getByType(ScrollView).props.automaticallyAdjustKeyboardInsets).toBe(true);
+  });
+
   it("offers email sign-in next to the OAuth providers", () => {
     render(<SignInScreen />);
 

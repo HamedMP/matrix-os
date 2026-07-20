@@ -104,7 +104,10 @@ export default function SignInScreen() {
       }
     } catch (err: unknown) {
       console.warn(`[mobile] ${provider} sign-in failed:`, err);
-      const message = err instanceof Error ? err.message : "Check the mobile OAuth redirect URL and try again.";
+      const message = describeSignInFailure(
+        err,
+        "Check the mobile OAuth redirect URL and try again.",
+      );
       setGatewayError(message);
       Alert.alert("Sign in failed", message);
     } finally {
@@ -164,8 +167,10 @@ export default function SignInScreen() {
     setLoadingProvider("code");
     try {
       const createdSessionId = await submitEmailCode(attempt, code);
-      await setActiveSession({ session: createdSessionId });
+      // The attempt is spent once it verifies; drop it before activating so a
+      // failing setActive cannot leave a completed attempt to be retried.
       emailAttemptRef.current = null;
+      await setActiveSession({ session: createdSessionId });
       setGatewayError(null);
       redirectedRef.current = true;
       router.replace("/(tabs)/apps" as any);
@@ -245,12 +250,18 @@ export default function SignInScreen() {
   }
 
   return (
+    // The content is vertically centred, so on iOS a `padding` behavior just
+    // shrinks the viewport around the centred block and leaves a focused field
+    // under the keyboard. `automaticallyAdjustKeyboardInsets` scrolls the focused
+    // field into view instead; Android has no equivalent and keeps `height`.
     <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      behavior={Platform.OS === "ios" ? undefined : "height"}
       keyboardVerticalOffset={0}
       style={styles.container}
     >
       <ScrollView
+        automaticallyAdjustKeyboardInsets
+        keyboardDismissMode="interactive"
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[
