@@ -12,7 +12,7 @@ export interface BridgeHandler {
     app: string,
     key: string,
     value: string | undefined,
-  ) => void;
+  ) => unknown | Promise<unknown>;
   openApp?: (name: string, path: string) => void;
 }
 
@@ -57,6 +57,37 @@ const THEME_VAR_ALIASES: Record<string, string> = {
 
 export type ThemeVars = Record<string, string>;
 
+function replyToDataRequest(event: MessageEvent, request: () => unknown | Promise<unknown>): void {
+  const port = event.ports[0];
+  if (!port) {
+    try {
+      void Promise.resolve(request()).catch((err: unknown) => {
+        console.warn(
+          "[os-bridge] data request failed without a reply port:",
+          err instanceof Error ? err.message : String(err),
+        );
+      });
+    } catch (err: unknown) {
+      console.warn(
+        "[os-bridge] data request failed without a reply port:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+    return;
+  }
+  void Promise.resolve()
+    .then(request)
+    .then((value) => port.postMessage({ ok: true, value }))
+    .catch((err: unknown) => {
+      console.warn(
+        "[os-bridge] data request failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      port.postMessage({ ok: false });
+    })
+    .finally(() => port.close());
+}
+
 export function getThemeVariables(style: CSSStyleDeclaration): ThemeVars {
   const vars: ThemeVars = {};
   for (const [shellVar, matrixVar] of Object.entries(THEME_VAR_MAP)) {
@@ -98,11 +129,15 @@ export function handleBridgeMessage(
     }
 
     case "os:read-data":
-      handler.fetchData("read", msg.app, msg.payload.key, undefined);
+      replyToDataRequest(event, () =>
+        handler.fetchData("read", msg.app, msg.payload.key, undefined),
+      );
       break;
 
     case "os:write-data":
-      handler.fetchData("write", msg.app, msg.payload.key, msg.payload.value);
+      replyToDataRequest(event, () =>
+        handler.fetchData("write", msg.app, msg.payload.key, msg.payload.value),
+      );
       break;
 
     case "os:open-app":
@@ -256,9 +291,13 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
     },
 
     readData: function(key) {
-      return new Promise(function(resolve) {
+      return new Promise(function(resolve, reject) {
         var channel = new MessageChannel();
-        channel.port1.onmessage = function(e) { resolve(e.data); };
+        channel.port1.onmessage = function(e) {
+          channel.port1.close();
+          if (e.data && e.data.ok) resolve(e.data.value);
+          else reject(new Error("MatrixOS bridge data request failed"));
+        };
         window.parent.postMessage(
           { type: "os:read-data", app: app, payload: { key: key } },
           "*",
@@ -268,11 +307,22 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
     },
 
     writeData: function(key, value) {
-      return new Promise(function(resolve) {
+      return new Promise(function(resolve, reject) {
         var channel = new MessageChannel();
-        channel.port1.onmessage = function() { resolve(); };
+        channel.port1.onmessage = function(e) {
+          channel.port1.close();
+          if (e.data && e.data.ok) resolve();
+          else reject(new Error("MatrixOS bridge data request failed"));
+        };
         window.parent.postMessage(
-          { type: "os:write-data", app: app, payload: { key: key, value: value } },
+          {
+            type: "os:write-data",
+            app: app,
+            payload: {
+              key: key,
+              value: typeof value === "string" ? value : JSON.stringify(value)
+            }
+          },
           "*",
           [channel.port2]
         );

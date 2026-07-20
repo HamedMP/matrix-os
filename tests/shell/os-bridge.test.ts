@@ -91,6 +91,30 @@ describe("OS Bridge", () => {
       );
     });
 
+    it("returns bridge data reads through the request message port", async () => {
+      const postMessage = vi.fn();
+      const close = vi.fn();
+      const handler: BridgeHandler = {
+        sendToKernel: vi.fn(),
+        fetchData: vi.fn().mockResolvedValue('{"items":[]}'),
+      };
+      const event = {
+        data: {
+          type: "os:read-data",
+          app: "expense-tracker",
+          payload: { key: "expenses" },
+        },
+        ports: [{ postMessage, close }],
+      } as unknown as MessageEvent;
+
+      handleBridgeMessage(event, handler);
+
+      await vi.waitFor(() => {
+        expect(postMessage).toHaveBeenCalledWith({ ok: true, value: '{"items":[]}' });
+      });
+      expect(close).toHaveBeenCalledTimes(1);
+    });
+
     it("routes os:write-data to fetchData with value", () => {
       const handler: BridgeHandler = {
         sendToKernel: vi.fn(),
@@ -223,6 +247,9 @@ describe("OS Bridge", () => {
       const script = buildBridgeScript("test-app");
       expect(script).toContain("readData");
       expect(script).toContain("writeData");
+      expect(script).toContain("resolve(e.data.value)");
+      expect(script).toContain("reject(new Error(\"MatrixOS bridge data request failed\"))");
+      expect(script).toContain('typeof value === "string" ? value : JSON.stringify(value)');
     });
 
     it("includes app metadata", () => {

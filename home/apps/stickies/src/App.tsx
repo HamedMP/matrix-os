@@ -44,9 +44,9 @@ export default function App() {
     (async () => {
       try {
         const read = window.MatrixOS?.readData;
-        const stored = read ? parseStickyNotes(await read(NOTES_KEY)) : [];
+        const stored = read ? parseStickyNotes(await read(NOTES_KEY)) : null;
         if (cancelled) return;
-        const initial = stored.length > 0 ? stored : [welcomeNote()];
+        const initial = stored ?? [welcomeNote()];
         zCounter.current = initial.reduce((max, n) => Math.max(max, n.z), 1);
         setNotes(initial);
       } catch (err: unknown) {

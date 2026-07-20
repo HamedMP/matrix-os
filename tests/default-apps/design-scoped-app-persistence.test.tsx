@@ -4,6 +4,7 @@ import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import StickiesApp from "../../home/apps/stickies/src/App";
+import { parseBestTimes } from "../../home/apps/winxp-minesweeper/src/minesweeper-model";
 import WidgetsApp from "../../home/apps/widgets/src/App";
 
 const originalMatrixOs = window.MatrixOS;
@@ -22,6 +23,22 @@ describe("design-scoped app persistence", () => {
 
   afterEach(() => {
     window.MatrixOS = originalMatrixOs;
+  });
+
+  it("restores Windows XP Minesweeper best times from string-backed bridge storage", () => {
+    expect(parseBestTimes('{"beginner":42,"intermediate":91}')).toEqual({
+      beginner: 42,
+      intermediate: 91,
+    });
+  });
+
+  it("preserves an intentionally empty macOS Stickies board from bridge storage", async () => {
+    readData.mockResolvedValueOnce("[]");
+
+    render(<StickiesApp />);
+
+    expect(await screen.findByText(/No stickies yet/)).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "Sticky note" })).toBeNull();
   });
 
   it("flushes the latest macOS Sticky edit when the app closes during the debounce", async () => {

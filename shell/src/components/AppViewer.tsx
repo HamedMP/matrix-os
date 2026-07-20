@@ -164,15 +164,21 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       sendToKernel(text) {
         send({ type: "message", text, sessionId });
       },
-      fetchData(action, app, key, value) {
-        fetch(`${GATEWAY_URL}/api/bridge/data`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(BRIDGE_FETCH_TIMEOUT_MS),
-          body: JSON.stringify({ action, app, key, value }),
-        }).catch((err: unknown) => {
+      async fetchData(action, app, key, value) {
+        try {
+          const response = await fetch(`${GATEWAY_URL}/api/bridge/data`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(BRIDGE_FETCH_TIMEOUT_MS),
+            body: JSON.stringify({ action, app, key, value }),
+          });
+          const body = await response.json() as { value?: unknown };
+          if (!response.ok) return Promise.reject(new Error("Bridge data request failed"));
+          return action === "read" ? body.value : undefined;
+        } catch (err: unknown) {
           console.warn("[app-viewer] bridge data fetch failed:", err instanceof Error ? err.message : String(err));
-        });
+          return Promise.reject(new Error("Bridge data request failed"));
+        }
       },
       openApp: onOpenApp,
     };

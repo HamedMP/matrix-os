@@ -42,8 +42,17 @@ function clampNumber(value: unknown, fallback: number, max: number): number {
   return Math.max(0, Math.min(max, n));
 }
 
-export function parseStickyNotes(value: unknown): StickyNote[] {
-  if (!Array.isArray(value)) return [];
+export function parseStickyNotes(value: unknown): StickyNote[] | null {
+  if (typeof value === "string") {
+    if (value.length > 1_000_000) return null;
+    try {
+      return parseStickyNotes(JSON.parse(value));
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) return null;
+      throw err;
+    }
+  }
+  if (!Array.isArray(value)) return null;
   const out: StickyNote[] = [];
   for (const item of value) {
     if (!item || typeof item !== "object") continue;

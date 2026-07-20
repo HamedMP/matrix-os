@@ -232,6 +232,18 @@ describe("T711: GET /api/apps", () => {
       expect(apps.map((app) => app.slug)).toEqual(["plain-app"]);
     });
 
+    it("keeps inactive design-scoped apps available to runtime provisioning", async () => {
+      writeRuntimeApp("xp-app", {
+        designs: ["winxp"],
+        storage: { tables: { scores: { columns: { value: "integer" } } } },
+      });
+      writeTheme("macos-glass");
+
+      const apps = await listApps(homePath, { includeInactiveDesigns: true });
+
+      expect(apps.map((app) => app.slug)).toEqual(["xp-app"]);
+    });
+
     it("defaults to flat when theme.json is missing", async () => {
       writeRuntimeApp("flat-app", { designs: ["flat", "winxp"] });
       writeRuntimeApp("xp-app", { designs: ["winxp"] });

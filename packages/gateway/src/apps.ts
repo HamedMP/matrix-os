@@ -14,14 +14,27 @@ export interface AppEntry extends AppMeta {
   path: string;
 }
 
-export async function listApps(homePath: string): Promise<AppEntry[]> {
+export interface ListAppsOptions {
+  includeInactiveDesigns?: boolean;
+}
+
+export async function listApps(
+  homePath: string,
+  options: ListAppsOptions = {},
+): Promise<AppEntry[]> {
   const appsDir = join(homePath, "apps");
 
   const result: AppEntry[] = [];
   const seen = new Set<string>();
 
   await scanAppsDir(appsDir, "", result, seen);
-  await scanRuntimeApps(appsDir, result, seen, await resolveActiveDesignId(homePath));
+  await scanRuntimeApps(
+    appsDir,
+    result,
+    seen,
+    await resolveActiveDesignId(homePath),
+    options.includeInactiveDesigns ?? false,
+  );
 
   return result.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -112,6 +125,7 @@ async function scanRuntimeApps(
   result: AppEntry[],
   seen: Set<string>,
   activeDesign: DesignId,
+  includeInactiveDesigns: boolean,
 ): Promise<void> {
   try {
     const apps = await listUniqueAppManifests(appsDir);
@@ -123,7 +137,11 @@ async function scanRuntimeApps(
         continue;
       }
       // Design-scoped apps are listed only while the shell's active design matches.
-      if (app.manifest.designs && !app.manifest.designs.includes(activeDesign)) {
+      if (
+        !includeInactiveDesigns
+        && app.manifest.designs
+        && !app.manifest.designs.includes(activeDesign)
+      ) {
         seen.add(app.slug);
         continue;
       }

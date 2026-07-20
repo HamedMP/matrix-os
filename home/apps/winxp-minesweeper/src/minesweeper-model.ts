@@ -192,6 +192,15 @@ export function minesRemaining(game: Game): number {
 export type BestTimes = Partial<Record<DifficultyId, number>>;
 
 export function parseBestTimes(value: unknown): BestTimes {
+  if (typeof value === "string") {
+    if (value.length > 10_000) return {};
+    try {
+      return parseBestTimes(JSON.parse(value));
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) return {};
+      throw err;
+    }
+  }
   if (!value || typeof value !== "object") return {};
   const record = value as Record<string, unknown>;
   const out: BestTimes = {};

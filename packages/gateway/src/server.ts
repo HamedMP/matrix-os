@@ -734,7 +734,7 @@ export async function createGateway(config: GatewayConfig) {
     if (!/^[a-z][a-z0-9_-]{0,62}$/.test(storageSlug)) return;
     try {
       const { loadAppManifest } = await import("./app-manifest.js");
-      const apps = await listApps(homePath);
+      const apps = await listApps(homePath, { includeInactiveDesigns: true });
       let shouldCacheProvisionAttempt = false;
       for (const app of apps) {
         if (!app.file.includes("/")) continue;
@@ -846,7 +846,7 @@ export async function createGateway(config: GatewayConfig) {
       // Register apps with storage declarations
       try {
         const { loadAppManifest } = await import("./app-manifest.js");
-        const apps = await listApps(homePath);
+        const apps = await listApps(homePath, { includeInactiveDesigns: true });
         let registered = 0;
         for (const app of apps) {
           if (!app.file.includes("/")) continue;
