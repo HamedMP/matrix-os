@@ -139,7 +139,7 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).not.toContain('script -qefc');
     expect(runner).toContain('cgroup_removed');
     expect(runner).toContain("grep -Fq '<ENTER> run'");
-    expect(runner).toContain('action send-keys Enter');
+    expect(runner).toContain('action send-keys --pane-id "$pane_id" Enter');
     expect(runner).toContain('wait_file');
   });
 

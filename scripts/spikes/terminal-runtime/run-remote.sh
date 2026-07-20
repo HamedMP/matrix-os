@@ -157,7 +157,7 @@ wait_not_active() {
 }
 
 wait_file() {
-  for _ in $(seq 1 50); do [ -f "$1" ] && return 0; sleep 0.1; done
+  for _ in $(seq 1 300); do [ -f "$1" ] && return 0; sleep 0.1; done
   return 1
 }
 
@@ -393,13 +393,9 @@ if [ "$memory_ready" = true ]; then
       sleep 0.5
     done
     if [ "${unit_after:-0}" -gt "$unit_before" ]; then memory_stage=slice_no_pressure; fi
-    systemctl stop "${unit_prefix}${memory_ids[0]}.service" >/dev/null 2>&1 || true
-    start_runtime "${memory_ids[0]}"
-    release_pane "${memory_ids[0]}"
-    wait_state "${unit_prefix}${memory_ids[0]}.service" active || true
     slice_before="$(awk '$1=="high"{print $2}' "/sys/fs/cgroup${slice_cgroup}/memory.events")"
     aggregate_each=$((slice_high / 3 + 33554432))
-    for runtime_id in "${memory_ids[@]}"; do
+    for runtime_id in "${memory_ids[@]:1}"; do
       zellij_cmd --session "matrix-t-${runtime_id}" action new-pane -- /opt/matrix/runtime/node/bin/node "$support_root/memory-hog.mjs" "$aggregate_each" >/dev/null 2>&1 || true
     done
     for _ in $(seq 1 120); do
@@ -458,7 +454,10 @@ if wait_state "$recovery_unit" active; then
   done
   rm -f -- "$confirmation_dump"
   if ! pgrep -a zellij | grep -F -- '--force-run-commands' >/dev/null 2>&1; then mark_pass s2 forceRunAbsent; fi
-  zellij_cmd --session "$recovery_session" action write 13 >/dev/null 2>&1 || true
+  panes_json="$(zellij_cmd --session "$recovery_session" action list-panes --all --json 2>/dev/null || true)"
+  while read -r pane_id; do
+    zellij_cmd --session "$recovery_session" action send-keys --pane-id "$pane_id" Enter >/dev/null 2>&1 || true
+  done < <(printf '%s' "$panes_json" | /opt/matrix/runtime/node/bin/node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{for(const p of JSON.parse(s))if(!p.is_plugin)console.log(p.pane_id)}catch(error){}})')
   release_pane "$recovery_id"
   if wait_state "$recovery_unit" active 300; then
     panes_json="$(zellij_cmd --session "$recovery_session" action list-panes --all --json 2>/dev/null || true)"
