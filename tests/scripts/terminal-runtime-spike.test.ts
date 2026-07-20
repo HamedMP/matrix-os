@@ -139,10 +139,10 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).not.toContain('script -qefc');
     expect(runner).toContain('cgroup_removed');
     expect(runner).toContain("grep -Fq '<ENTER> run'");
-    expect(runner).toContain('action write --pane-id "$pane_id" 13');
-    expect(runner).toContain('console.log(p.id)');
+    expect(runner).toContain('attach-probe.mjs" "$recovery_id" confirm');
     expect(runner).toContain('pkill -f -x');
     expect(runner).toContain('for runtime_id in "${memory_ids[@]}"; do');
+    expect(runner).toContain('systemctl set-property --runtime');
     expect(runner).toContain('slice_current=');
     expect(runner).toContain('wait_file');
   });

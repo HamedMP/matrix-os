@@ -6,7 +6,9 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { spawn } = require('node-pty');
 const runtimeId = process.argv[2] ?? '';
+const mode = process.argv[3] ?? 'observe';
 if (!/^[0-9a-f]{32}$/.test(runtimeId)) process.exit(2);
+if (mode !== 'observe' && mode !== 'confirm') process.exit(2);
 
 const pty = spawn('/opt/matrix/bin/zellij', ['attach', `matrix-t-${runtimeId}`], {
   name: 'xterm-256color', cols: 120, rows: 40,
@@ -18,6 +20,12 @@ try {
   await handle.sync();
 } finally {
   await handle.close();
+}
+if (mode === 'confirm') {
+  for (const input of ['\r', '\x1bl', '\r', '\x1bh', '\r']) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    pty.write(input);
+  }
 }
 let stopping = false;
 const stop = () => {

@@ -360,7 +360,7 @@ if wait_state "$server_unit" active; then
     if(selected) process.stdout.write(String(selected));
   ' "$runtime_root/readiness/${server_id}.json")"
   if printf '%s' "$server_pid" | grep -Eq '^[1-9][0-9]*$'; then kill -KILL "$server_pid" 2>/dev/null || true; fi
-  if wait_not_active "$server_unit" && [ -f "$runtime_root/outcomes/${server_id}.json" ] && wait_cgroup_empty "$server_events_fd" "/sys/fs/cgroup${server_cgroup}" "$server_unit"; then
+  if wait_not_active "$server_unit" && wait_file "$runtime_root/outcomes/${server_id}.json" && wait_cgroup_empty "$server_events_fd" "/sys/fs/cgroup${server_cgroup}" "$server_unit"; then
     mark_pass s1 serverLossDeterministic
     cp "$runtime_root/outcomes/${server_id}.json" "$evidence_root/s1/server-loss.json"
   fi
@@ -383,6 +383,10 @@ if [ "$memory_ready" = true ]; then
   slice_high="$(cat "/sys/fs/cgroup${slice_cgroup}/memory.high")"
   printf 'unit_memory_high=%s\nslice_memory_high=%s\n' "$unit_high" "$slice_high" >"$evidence_root/s1/memory-limits.txt"
   if printf '%s' "$unit_high" | grep -Eq '^[0-9]+$' && printf '%s' "$slice_high" | grep -Eq '^[0-9]+$' && [ "$slice_high" -gt "$unit_high" ]; then
+    systemctl set-property --runtime matrix-terminal-spike.slice MemoryHigh=256M >/dev/null
+    for runtime_id in "${memory_ids[@]}"; do systemctl set-property --runtime "${unit_prefix}${runtime_id}.service" MemoryHigh=128M >/dev/null; done
+    unit_high="$(cat "/sys/fs/cgroup${first_cgroup}/memory.high")"
+    slice_high="$(cat "/sys/fs/cgroup${slice_cgroup}/memory.high")"
     memory_stage=unit_no_pressure
     unit_before="$(awk '$1=="high"{print $2}' "/sys/fs/cgroup${first_cgroup}/memory.events")"
     unit_target=$((unit_high + 67108864))
@@ -463,10 +467,9 @@ if wait_state "$recovery_unit" active; then
   done
   rm -f -- "$confirmation_dump"
   if ! pgrep -a zellij | grep -F -- '--force-run-commands' >/dev/null 2>&1; then mark_pass s2 forceRunAbsent; fi
-  panes_json="$(zellij_cmd --session "$recovery_session" action list-panes --all --json 2>/dev/null || true)"
-  while read -r pane_id; do
-    zellij_cmd --session "$recovery_session" action write --pane-id "$pane_id" 13 >/dev/null 2>&1 || true
-  done < <(printf '%s' "$panes_json" | /opt/matrix/runtime/node/bin/node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{for(const p of JSON.parse(s))if(!p.is_plugin)console.log(p.id)}catch(error){}})')
+  rm -f -- "$runtime_root/attach-${recovery_id}.json"
+  runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/runtime/node/bin/node "$support_root/attach-probe.mjs" "$recovery_id" confirm &
+  recovery_attach=$!
   release_pane "$recovery_id"
   if wait_state "$recovery_unit" active 300; then
     panes_json="$(zellij_cmd --session "$recovery_session" action list-panes --all --json 2>/dev/null || true)"
@@ -496,6 +499,7 @@ if wait_state "$recovery_unit" active; then
       cp "$runtime_root/startup-failures/${recovery_id}.json" "$evidence_root/s2/recovery-startup-failure.json"
     fi
   fi
+  kill "$recovery_attach" 2>/dev/null || true
 
   corrupt_target="$(head -1 "/tmp/matrix-terminal-mapped-${short_sha}.txt" 2>/dev/null || true)"
   if [ -n "$corrupt_target" ] && [[ "$corrupt_target" == "$cache_root"/* ]]; then
