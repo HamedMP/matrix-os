@@ -341,6 +341,7 @@ export default function App() {
 function WorldClock({ now }: { now: Date }) {
   const [zones, setZones] = useState<ZoneRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [setupReady, setSetupReady] = useState(false);
   const [adding, setAdding] = useState(false);
   const [query, setQuery] = useState("");
   const [dragId, setDragId] = useState<string | null>(null);
@@ -351,6 +352,7 @@ function WorldClock({ now }: { now: Date }) {
 
   const reload = useCallback(async () => {
     setError(null);
+    setSetupReady(false);
     if (!window.MatrixOS?.db) {
       const readResult = await tryReadAppData<ZoneRow[] | null>(ZONES_KEY, null);
       if (!readResult.ok) {
@@ -364,17 +366,22 @@ function WorldClock({ now }: { now: Date }) {
         setZones(seeded);
         if (!(await writeAppData(ZONES_KEY, seeded))) {
           setError("Default cities could not be saved.");
+          return;
         }
+        setSetupReady(true);
         return;
       }
       setZones(coerceZones(stored ?? []));
+      setSetupReady(true);
       return;
     }
     try {
       const rows = await window.MatrixOS.db.find(ZONES_TABLE, { orderBy: { position: "asc" } });
       let zones = coerceZones(rows);
       const hadExistingZones = zones.length > 0;
-      if (hasKvBridge()) {
+      const appInfo = await window.MatrixOS.db.appInfo?.();
+      const isLegacyInstall = !appInfo || appInfo.installedVersion === null;
+      if (hasKvBridge() && !isLegacyInstall) {
         const markerRead = await tryReadAppData<boolean>(SEED_MARKER_KEY, false);
         if (!markerRead.ok) {
           setZones(zones);
@@ -400,13 +407,20 @@ function WorldClock({ now }: { now: Date }) {
             zones = coerceZones(fresh);
           }
           if (hadExistingZones || hasAllDefaultZones(zones)) {
-            // A failed marker write is contained: the loaded rows stay visible,
-            // and the idempotent seed check retries on the next load.
-            await writeAppData(SEED_MARKER_KEY, true);
+            if (!(await writeAppData(SEED_MARKER_KEY, true))) {
+              setZones(zones);
+              setError("Default cities setup could not finish.");
+              return;
+            }
+          } else {
+            setZones(zones);
+            setError("Default cities setup could not finish.");
+            return;
           }
         }
       }
       setZones(zones);
+      setSetupReady(true);
     } catch (err: unknown) {
       console.warn("[clock] zones load failed:", err instanceof Error ? err.message : String(err));
       setError("Saved cities could not be loaded.");
@@ -424,6 +438,7 @@ function WorldClock({ now }: { now: Date }) {
 
   const addZone = useCallback(
     async (tz: string) => {
+      if (!setupReady) return;
       const alreadyVisible = zones.some((z) => z.tz === tz);
       let existingRows: Record<string, unknown>[] = [];
       try {
@@ -466,11 +481,12 @@ function WorldClock({ now }: { now: Date }) {
         void reload().finally(() => setError("City could not be saved."));
       }
     },
-    [persistLocal, reload, zones],
+    [persistLocal, reload, setupReady, zones],
   );
 
   const removeZone = useCallback(
     async (zone: ZoneRow) => {
+      if (!setupReady) return;
       const next = zones.filter((z) => z.id !== zone.id);
       setZones(next);
       if (!window.MatrixOS?.db) {
@@ -484,11 +500,12 @@ function WorldClock({ now }: { now: Date }) {
         void reload().finally(() => setError("City could not be removed."));
       }
     },
-    [persistLocal, reload, zones],
+    [persistLocal, reload, setupReady, zones],
   );
 
   const reorder = useCallback(
     async (fromId: string, toId: string) => {
+      if (!setupReady) return;
       if (fromId === toId) return;
       const fromIdx = zones.findIndex((z) => z.id === fromId);
       const toIdx = zones.findIndex((z) => z.id === toId);
@@ -518,7 +535,7 @@ function WorldClock({ now }: { now: Date }) {
         void reload().finally(() => setError("New order could not be saved."));
       }
     },
-    [persistLocal, reload, zones],
+    [persistLocal, reload, setupReady, zones],
   );
 
   const results = useMemo(() => searchZones(allZones, query, 60), [allZones, query]);
@@ -534,19 +551,33 @@ function WorldClock({ now }: { now: Date }) {
           <p className="eyebrow">{persistenceLabel}</p>
           <h1>World Clock</h1>
         </div>
-        <button className="primary-btn" type="button" onClick={() => setAdding(true)}>
+        <button className="primary-btn" type="button" onClick={() => setAdding(true)} disabled={!setupReady}>
           <Plus size={16} /> Add city
         </button>
       </div>
 
-      {error && <div className="banner banner--error">{error}</div>}
+      {error && (
+        <div className="banner banner--error" role="alert">
+          <span>{error}</span>
+          {!setupReady ? (
+            <button className="ghost-btn" type="button" onClick={() => void reload()}>
+              Retry setup
+            </button>
+          ) : null}
+        </div>
+      )}
 
-      {zones.length === 0 ? (
+      {!setupReady && !error ? (
+        <div className="empty" aria-live="polite">
+          <Globe2 size={28} />
+          <strong>Loading cities…</strong>
+        </div>
+      ) : zones.length === 0 ? (
         <div className="empty">
           <Globe2 size={28} />
           <strong>No cities yet</strong>
           <span>Track the time anywhere. Add your first city to get started.</span>
-          <button className="primary-btn" type="button" onClick={() => setAdding(true)}>
+          <button className="primary-btn" type="button" onClick={() => setAdding(true)} disabled={!setupReady}>
             <Plus size={16} /> Add city
           </button>
         </div>

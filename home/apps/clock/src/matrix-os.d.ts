@@ -1,4 +1,5 @@
 interface MatrixOSDb {
+  appInfo?(): Promise<{ installedVersion: string | null }>;
   find(table: string, opts?: {
     where?: Record<string, unknown>;
     orderBy?: Record<string, "asc" | "desc">;

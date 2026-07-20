@@ -38,7 +38,6 @@ export default function App() {
   const [nowTick, setNowTick] = useState(() => Date.now());
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const notesRef = useRef(notes);
-  const failedSaveRef = useRef<StickyNote[] | null>(null);
   const saveAttemptRef = useRef(0);
 
   // Initial load. With no bridge the app degrades to in-memory notes only.
@@ -84,13 +83,11 @@ export default function App() {
         if (!window.MatrixOS?.writeData) throw new Error("data bridge unavailable");
         await window.MatrixOS.writeData(NOTES_KEY, value);
         if (attempt === saveAttemptRef.current) {
-          failedSaveRef.current = null;
           setSaveError(null);
         }
       } catch (err: unknown) {
         console.warn("[sticky-notes] save failed:", errMsg(err));
         if (attempt === saveAttemptRef.current) {
-          failedSaveRef.current = value;
           setSaveError("Changes could not be saved.");
         }
       }
@@ -98,7 +95,9 @@ export default function App() {
   }, [persistenceReady]);
 
   const retrySave = useCallback(() => {
-    persistNotes(failedSaveRef.current ?? notesRef.current);
+    // Always retry the live snapshot: the user may have continued editing
+    // after the failed attempt while its error banner was still visible.
+    persistNotes(notesRef.current);
   }, [persistNotes]);
 
   const updateNotes = useCallback((updater: (current: StickyNote[]) => StickyNote[]) => {

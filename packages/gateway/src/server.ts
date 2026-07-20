@@ -3117,6 +3117,11 @@ export async function createGateway(config: GatewayConfig) {
           return c.json({ count: await queryEngine.count(appSlug, safeTable, body.filter as Record<string, FilterValue> | undefined) });
         case "schema":
           return c.json(await appRegistry.getSchema(appSlug));
+        case "appInfo": {
+          const record = await appRegistry.get(appSlug);
+          if (!record) return c.json({ error: "App not found" }, 404);
+          return c.json({ installedVersion: record.installed_version });
+        }
         case "listApps":
           return c.json(await appRegistry.listApps());
         default:

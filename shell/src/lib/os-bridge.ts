@@ -466,6 +466,14 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
 	        }, 10000).then(function(r) { return r.json(); });
 	      },
 
+	      appInfo: function() {
+	        return parentFetch("/api/bridge/query", {
+	          method: "POST",
+	          headers: { "Content-Type": "application/json" },
+	          body: JSON.stringify({ app: app, action: "appInfo" })
+	        }, 10000).then(function(r) { return r.json(); });
+	      },
+
 	      update: function(table, id, data) {
 	        return parentFetch("/api/bridge/query", {
 	          method: "POST",

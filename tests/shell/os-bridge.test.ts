@@ -277,6 +277,8 @@ describe("OS Bridge", () => {
 
       expect(script).toContain("bulkInsert: function(table, rows)");
       expect(script).toContain('action: "bulkInsert"');
+      expect(script).toContain("appInfo: function()");
+      expect(script).toContain('action: "appInfo"');
     });
 
     it("includes app metadata", () => {
