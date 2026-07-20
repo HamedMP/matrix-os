@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { RotateCcw, Undo2, Trophy, Sparkles, X } from "lucide-react";
+import "./styles.css";
 import {
   type Board,
   type Direction,
@@ -121,7 +122,10 @@ export default function App() {
   const latestScoreRef = useRef(0);
   const sessionRef = useRef(0);
   const boardRef = useRef<HTMLDivElement | null>(null);
-  latestScoreRef.current = state.score;
+
+  useEffect(() => {
+    latestScoreRef.current = state.score;
+  }, [state.score]);
 
   const ensureScoreRow = useCallback(async (db: MatrixOSDb, scoreHint: number): Promise<string> => {
     if (dbRowId.current) return dbRowId.current;
