@@ -140,6 +140,9 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).toContain('cgroup_removed');
     expect(runner).toContain("grep -Fq '<ENTER> run'");
     expect(runner).toContain('action send-keys --pane-id "$pane_id" Enter');
+    expect(runner).toContain('console.log(p.id)');
+    expect(runner).toContain('pkill -f -x');
+    expect(runner).toContain('for runtime_id in "${memory_ids[@]}"; do');
     expect(runner).toContain('wait_file');
   });
 

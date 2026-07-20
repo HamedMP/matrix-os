@@ -393,9 +393,14 @@ if [ "$memory_ready" = true ]; then
       sleep 0.5
     done
     if [ "${unit_after:-0}" -gt "$unit_before" ]; then memory_stage=slice_no_pressure; fi
+    pkill -f -x "/opt/matrix/runtime/node/bin/node $support_root/memory-hog.mjs $unit_target" >/dev/null 2>&1 || true
+    for _ in $(seq 1 60); do
+      [ "$(cat "/sys/fs/cgroup${first_cgroup}/memory.current")" -lt $((unit_high / 2)) ] && break
+      sleep 0.5
+    done
     slice_before="$(awk '$1=="high"{print $2}' "/sys/fs/cgroup${slice_cgroup}/memory.events")"
     aggregate_each=$((slice_high / 3 + 33554432))
-    for runtime_id in "${memory_ids[@]:1}"; do
+    for runtime_id in "${memory_ids[@]}"; do
       zellij_cmd --session "matrix-t-${runtime_id}" action new-pane -- /opt/matrix/runtime/node/bin/node "$support_root/memory-hog.mjs" "$aggregate_each" >/dev/null 2>&1 || true
     done
     for _ in $(seq 1 120); do
@@ -457,7 +462,7 @@ if wait_state "$recovery_unit" active; then
   panes_json="$(zellij_cmd --session "$recovery_session" action list-panes --all --json 2>/dev/null || true)"
   while read -r pane_id; do
     zellij_cmd --session "$recovery_session" action send-keys --pane-id "$pane_id" Enter >/dev/null 2>&1 || true
-  done < <(printf '%s' "$panes_json" | /opt/matrix/runtime/node/bin/node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{for(const p of JSON.parse(s))if(!p.is_plugin)console.log(p.pane_id)}catch(error){}})')
+  done < <(printf '%s' "$panes_json" | /opt/matrix/runtime/node/bin/node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{for(const p of JSON.parse(s))if(!p.is_plugin)console.log(p.id)}catch(error){}})')
   release_pane "$recovery_id"
   if wait_state "$recovery_unit" active 300; then
     panes_json="$(zellij_cmd --session "$recovery_session" action list-panes --all --json 2>/dev/null || true)"
