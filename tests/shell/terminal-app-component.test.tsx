@@ -2613,6 +2613,10 @@ describe("TerminalApp", () => {
     expect(within(menu).getByRole("separator").nextElementSibling).toBe(closeItem);
     expect(closeItem.dataset.tone).toBe("destructive");
     expect(closeItem.style.color).toBe("var(--terminal-drawer-destructive-fg)");
+    fireEvent.mouseEnter(closeItem);
+    expect(closeItem.style.background).toBe("rgba(184, 64, 58, 0.12)");
+    fireEvent.mouseLeave(closeItem);
+    expect(closeItem.style.background).toBe("transparent");
     expect(moveItem.style.height).toBe("28px");
     expect(document.activeElement).toBe(copyItem);
     fireEvent.keyDown(copyItem, { key: "ArrowDown" });
@@ -2650,12 +2654,14 @@ describe("TerminalApp", () => {
     Object.defineProperty(resizeHandle, "setPointerCapture", { configurable: true, value: setPointerCapture });
     await act(async () => {
       fireEvent.pointerDown(resizeHandle, { clientX: 392, pointerId: 1 });
+      expect(sidebarShell.dataset.terminalSidebarResizing).toBe("true");
       fireEvent.pointerMove(window, { clientX: 456 });
       fireEvent.pointerUp(window);
       await Promise.resolve();
     });
 
     expect(setPointerCapture).toHaveBeenCalledWith(1);
+    expect(sidebarShell.dataset.terminalSidebarResizing).toBeUndefined();
     expect(sidebarShell.style.width).toBe("456px");
 
     await act(async () => {
@@ -2701,6 +2707,8 @@ describe("TerminalApp", () => {
     const sidebarMotionStyles = Array.from(document.querySelectorAll("style"))
       .map((style) => style.textContent ?? "")
       .find((styles) => styles.includes("[data-terminal-sidebar-motion]"));
+    expect(sidebarMotionStyles).toContain('[data-terminal-sidebar-resizing="true"]');
+    expect(sidebarMotionStyles).toContain("transition: none");
     expect(sidebarMotionStyles).toContain("@media (prefers-reduced-motion: reduce)");
   });
 

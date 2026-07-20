@@ -249,6 +249,10 @@ const SESSION_CONTEXT_MENU_SEPARATOR_STYLE: CSSProperties = {
   margin: "3px 4px",
 };
 
+const SESSION_DESTRUCTIVE_HOVER_BACKGROUND =
+  "color-mix(in srgb, var(--terminal-drawer-destructive-fg) 12%, transparent)";
+const SESSION_DESTRUCTIVE_HOVER_FALLBACK = "rgba(184, 64, 58, 0.12)";
+
 const SESSION_COPY_FEEDBACK_STYLE: CSSProperties = {
   alignItems: "center",
   background: "var(--terminal-drawer-action-bg)",
@@ -1505,7 +1509,10 @@ function SessionContextMenuItem({
       onMouseEnter={(event) => {
         if (!disabled) {
           event.currentTarget.style.background = destructive
-            ? "color-mix(in srgb, var(--terminal-drawer-destructive-fg) 12%, transparent)"
+            ? typeof CSS !== "undefined" && typeof CSS.supports === "function" &&
+                CSS.supports("background", SESSION_DESTRUCTIVE_HOVER_BACKGROUND)
+              ? SESSION_DESTRUCTIVE_HOVER_BACKGROUND
+              : SESSION_DESTRUCTIVE_HOVER_FALLBACK
             : "var(--terminal-drawer-action-bg)";
         }
       }}

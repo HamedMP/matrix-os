@@ -109,6 +109,9 @@ const SHELL_STATUS_DOT_CSS = `
 [data-terminal-sidebar-motion="collapsed"] {
   animation: terminal-sidebar-collapsed-in 180ms ease-out both;
 }
+[data-terminal-sidebar-resizing="true"] {
+  transition: none !important;
+}
 .terminal-session-status-dot--running {
   animation: terminal-session-status-pulse 1.35s ease-in-out infinite;
 }
@@ -796,7 +799,9 @@ export function LocalTerminalSidebar() {
     event.preventDefault();
     event.stopPropagation();
     const resizeHandle = event.currentTarget;
+    const sidebarShell = resizeHandle.closest<HTMLElement>("[data-terminal-sidebar-shell]");
     const pointerId = event.pointerId;
+    sidebarShell?.setAttribute("data-terminal-sidebar-resizing", "true");
     resizeHandle.setPointerCapture?.(pointerId);
     const startX = event.clientX;
     const startWidth = clampTerminalSidebarWidth(ctx.sidebarWidth);
@@ -804,6 +809,7 @@ export function LocalTerminalSidebar() {
       ctx.setSidebarWidth(clampTerminalSidebarWidth(startWidth + moveEvent.clientX - startX));
     };
     const finishResize = () => {
+      sidebarShell?.removeAttribute("data-terminal-sidebar-resizing");
       if (resizeHandle.hasPointerCapture?.(pointerId)) {
         resizeHandle.releasePointerCapture?.(pointerId);
       }
