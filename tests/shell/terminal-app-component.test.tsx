@@ -741,7 +741,7 @@ describe("TerminalApp", () => {
     );
     const wordmark = screen.getByTestId("terminal-expanded-wordmark");
     expect(wordmark.textContent).toBe("Matrix OS");
-    expect(wordmark.style.color).toBe("rgb(255, 255, 255)");
+    expect(wordmark.style.color).toBe("var(--terminal-drawer-fg)");
     expect(wordmark.style.fontFamily).toBe("var(--font-orbitron), Orbitron, sans-serif");
     expect(screen.getByPlaceholderText("Find a session...")).toBeTruthy();
     expect(screen.getByText("Active")).toBeTruthy();
@@ -838,6 +838,18 @@ describe("TerminalApp", () => {
     expect(collapsedMask.style.height).toBe("22px");
   });
 
+  it("uses a theme-aware foreground for the Terminal wordmark", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("terminal-expanded-wordmark").style.color).toBe("var(--terminal-drawer-fg)");
+  });
+
   it("opens terminal-only app theme menu without Match system or global Matrix OS theme controls", async () => {
     const fetchMock = vi.mocked(fetch);
     render(<TerminalApp />);
@@ -869,10 +881,13 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByRole("menu", { name: "Theme" })).toBeTruthy();
-    expect(screen.getByRole("menu", { name: "Theme" }).style.bottom).toBe("100%");
-    expect(screen.getByRole("menu", { name: "Theme" }).style.left).toBe("0px");
-    expect(screen.getByRole("menu", { name: "Theme" }).style.top).toBe("auto");
+    const appThemePanel = screen.getByTestId("terminal-app-theme-panel");
+    expect(appThemePanel).toBe(screen.getByRole("menu", { name: "Theme" }));
+    expect(appThemePanel.dataset.terminalThemeMotion).toBe("open");
+    expect(appThemePanel.style.animation).toContain("terminalThemePanelOpen");
+    expect(appThemePanel.style.bottom).toBe("100%");
+    expect(appThemePanel.style.left).toBe("0px");
+    expect(appThemePanel.style.top).toBe("auto");
     expect(screen.getByText("Warm paper")).toBeTruthy();
     expect(screen.getByText("Warm dark")).toBeTruthy();
     expect(screen.getByText("Phosphor green")).toBeTruthy();
@@ -1050,7 +1065,8 @@ describe("TerminalApp", () => {
     expect(screen.getByText("gruvbox-light")).toBeTruthy();
     expect(screen.getByText("custom · green on black")).toBeTruthy();
     expect(screen.getAllByText("NOT FULLY TUNED")).toHaveLength(2);
-    expect(shellThemePanel.style.animation).toContain("terminalShellThemePanelIn");
+    expect(shellThemePanel.dataset.terminalThemeMotion).toBe("forward");
+    expect(shellThemePanel.style.animation).toContain("terminalThemePanelForward");
     expect(screen.getByText("RECOMMENDED").style.fontSize).toBe("8px");
     expect(screen.getByText("RECOMMENDED").style.animation).toContain("terminalShellThemeBadgeIn");
     expect(screen.getByText("RECOMMENDED").parentElement?.style.justifyContent).toBe("flex-end");
@@ -1068,7 +1084,10 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByRole("menu", { name: "Theme" })).toBeTruthy();
+    const returnedAppThemePanel = screen.getByTestId("terminal-app-theme-panel");
+    expect(returnedAppThemePanel).toBe(screen.getByRole("menu", { name: "Theme" }));
+    expect(returnedAppThemePanel.dataset.terminalThemeMotion).toBe("back");
+    expect(returnedAppThemePanel.style.animation).toContain("terminalThemePanelBack");
     expect(screen.queryByRole("region", { name: "Shell theme" })).toBeNull();
 
     await act(async () => {
@@ -1148,11 +1167,12 @@ describe("TerminalApp", () => {
 
     let menu = await openSessionContextMenu("main");
     const moveButton = within(menu).getByRole("menuitem", { name: "Move to Background" });
+    const firstCopyButton = within(menu).getByRole("menuitem", { name: "Copy Connect Command" });
     expect(moveButton).toBeTruthy();
     expect(within(menu).getByRole("menuitem", { name: "Close" })).toBeTruthy();
-    expect(document.activeElement).toBe(moveButton);
+    expect(document.activeElement).toBe(firstCopyButton);
 
-    fireEvent.keyDown(moveButton, { key: "Escape" });
+    fireEvent.keyDown(firstCopyButton, { key: "Escape" });
     expect(screen.queryByRole("menu", { name: "Actions for matrix-main" })).toBeNull();
     expect(document.activeElement).toBe(within(actions).getByRole("button", { name: "More actions for matrix-main" }));
 
@@ -2268,6 +2288,10 @@ describe("TerminalApp", () => {
     expect(splitButton.getAttribute("aria-label")).toBe("New session actions");
     expect(primaryAction.classList.contains("terminal-new-session-primary-action")).toBe(true);
     expect(dropdownTrigger.classList.contains("terminal-new-session-dropdown-trigger")).toBe(true);
+    expect(primaryAction.classList.contains("bg-primary")).toBe(false);
+    expect(dropdownTrigger.classList.contains("bg-primary")).toBe(false);
+    expect(primaryAction.getAttribute("data-variant")).toBeNull();
+    expect(dropdownTrigger.getAttribute("data-variant")).toBeNull();
     expect(primaryAction.nextElementSibling).toBe(dropdownTrigger);
     expect(dropdownTrigger.style.position).toBe("");
     expect(dropdownTrigger.getAttribute("data-state")).toBe("open");
@@ -2582,19 +2606,23 @@ describe("TerminalApp", () => {
     const moveItem = within(menu).getByRole("menuitem", { name: "Move to Background" });
     const copyItem = within(menu).getByRole("menuitem", { name: "Copy Connect Command" });
     const closeItem = within(menu).getByRole("menuitem", { name: "Close" });
+    expect(within(menu).getAllByRole("menuitem")).toEqual([copyItem, moveItem, closeItem]);
+    expect(within(menu).getByRole("separator").nextElementSibling).toBe(closeItem);
+    expect(closeItem.dataset.tone).toBe("destructive");
+    expect(closeItem.style.color).toBe("var(--terminal-drawer-destructive-fg)");
     expect(moveItem.style.height).toBe("28px");
-    expect(document.activeElement).toBe(moveItem);
-    fireEvent.keyDown(moveItem, { key: "ArrowDown" });
     expect(document.activeElement).toBe(copyItem);
-    fireEvent.keyDown(copyItem, { key: "End" });
+    fireEvent.keyDown(copyItem, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(moveItem);
+    fireEvent.keyDown(moveItem, { key: "End" });
     expect(document.activeElement).toBe(closeItem);
     fireEvent.keyDown(closeItem, { key: "ArrowDown" });
-    expect(document.activeElement).toBe(moveItem);
-    fireEvent.keyDown(moveItem, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(copyItem);
+    fireEvent.keyDown(copyItem, { key: "ArrowUp" });
     expect(document.activeElement).toBe(closeItem);
     fireEvent.keyDown(closeItem, { key: "Home" });
-    expect(document.activeElement).toBe(moveItem);
-    fireEvent.keyDown(moveItem, { key: "Tab" });
+    expect(document.activeElement).toBe(copyItem);
+    fireEvent.keyDown(copyItem, { key: "Tab" });
     expect(screen.queryByRole("menu", { name: "Actions for matrix-main" })).toBeNull();
     expect(document.activeElement).toBe(moreButton);
     expect(screen.queryByRole("menuitem", { name: "Move matrix-main to background" })).toBeNull();
@@ -2651,6 +2679,8 @@ describe("TerminalApp", () => {
     const resizeHandle = screen.getByRole("button", { name: "Resize sessions drawer" });
 
     expect(sidebarShell.style.borderRight).toBe("1px solid var(--terminal-drawer-border)");
+    expect(sidebarShell.dataset.terminalSidebarState).toBe("expanded");
+    expect(sidebarShell.style.transition).toContain("width 220ms");
     expect(resizeHandle.style.background).toBe("var(--terminal-drawer-resize-handle-bg)");
     expect(resizeHandle.getAttribute("style")).toContain("--terminal-drawer-resize-handle-bg");
     expect(resizeHandle.getAttribute("style")).not.toContain("--muted-foreground");
@@ -2659,7 +2689,16 @@ describe("TerminalApp", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
 
+    const collapsedSidebarShell = screen.getByTestId("terminal-sidebar-shell");
+    expect(collapsedSidebarShell).toBe(sidebarShell);
+    expect(collapsedSidebarShell.dataset.terminalSidebarState).toBe("collapsed");
+    expect(collapsedSidebarShell.style.width).toBe("76px");
     expect(screen.getByTestId("terminal-collapsed-rail").style.borderRight).toBe("1px solid var(--terminal-drawer-border)");
+
+    const sidebarMotionStyles = Array.from(document.querySelectorAll("style"))
+      .map((style) => style.textContent ?? "")
+      .find((styles) => styles.includes("[data-terminal-sidebar-motion]"));
+    expect(sidebarMotionStyles).toContain("@media (prefers-reduced-motion: reduce)");
   });
 
   it("stops terminal drawer resizing when the drag is canceled", async () => {

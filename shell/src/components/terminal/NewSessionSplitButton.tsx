@@ -45,6 +45,7 @@ export function NewSessionSplitButton({
       >
         <Button
           type="button"
+          variant={null}
           size="icon-lg"
           aria-label="New shell session"
           onClick={onCreateShell}
@@ -56,6 +57,7 @@ export function NewSessionSplitButton({
         </Button>
         <Button
           type="button"
+          variant={null}
           size="icon-lg"
           aria-label="Choose session type"
           aria-haspopup="menu"
