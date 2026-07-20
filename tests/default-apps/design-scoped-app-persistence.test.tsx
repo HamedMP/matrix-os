@@ -106,6 +106,31 @@ describe("design-scoped app persistence", () => {
     expect(writeData).not.toHaveBeenCalled();
   });
 
+  it("keeps the aggregate macOS Stickies text within the bridge payload budget", async () => {
+    readData.mockResolvedValueOnce([
+      ...Array.from({ length: 5 }, (_, index) => ({
+        id: `full-${index}`,
+        x: 24,
+        y: 24,
+        z: index + 1,
+        text: "x".repeat(20_000),
+        color: "yellow",
+      })),
+      { id: "empty", x: 24, y: 24, z: 6, text: "", color: "yellow" },
+    ]);
+
+    render(<StickiesApp />);
+
+    const notes = await screen.findAllByRole("textbox", { name: "Sticky note" });
+    fireEvent.change(notes[5]!, { target: { value: "cannot fit" } });
+
+    expect((notes[5] as HTMLTextAreaElement).value).toBe("");
+    expect(writeData).toHaveBeenLastCalledWith(
+      "macos-stickies/notes",
+      expect.arrayContaining([expect.objectContaining({ id: "empty", text: "" })]),
+    );
+  });
+
   it("persists Windows Widgets edits immediately so iframe removal cannot lose them", async () => {
     render(<WidgetsApp />);
     const note = await screen.findByRole("textbox", { name: "Notes" });
@@ -134,5 +159,19 @@ describe("design-scoped app persistence", () => {
     finishRead?.("Saved before opening");
     await waitFor(() => expect(note.disabled).toBe(false));
     expect(note.value).toBe("Saved before opening");
+  });
+
+  it("clamps Windows Widgets notes to a bridge-persistable size", async () => {
+    render(<WidgetsApp />);
+    const note = await screen.findByRole("textbox", { name: "Notes" }) as HTMLTextAreaElement;
+
+    fireEvent.change(note, { target: { value: "x".repeat(100_005) } });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(note.maxLength).toBe(100_000);
+    expect(note.value).toHaveLength(100_000);
+    expect(writeData).toHaveBeenLastCalledWith("win11-widgets/notes", "x".repeat(100_000));
   });
 });

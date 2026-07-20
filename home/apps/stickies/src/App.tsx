@@ -6,6 +6,7 @@ import {
   STICKY_WIDTH,
   MAX_STICKY_NOTES,
   MAX_STICKY_TEXT,
+  clampStickyText,
   colorFor,
   parseStickyNotes,
   welcomeNote,
@@ -103,7 +104,7 @@ export default function App() {
   }, [updateNotes]);
 
   const editNote = useCallback((id: string, text: string) => {
-    const boundedText = text.slice(0, MAX_STICKY_TEXT);
+    const boundedText = clampStickyText(notesRef.current, id, text);
     updateNotes((current) => current.map((note) => (note.id === id ? { ...note, text: boundedText } : note)));
   }, [updateNotes]);
 

@@ -2,6 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CalendarDays, Clock3, CloudOff, StickyNote } from "lucide-react";
 
 const NOTES_KEY = "win11-widgets/notes";
+// Bridge writes have a 1 MB request cap and string values are JSON encoded
+// twice. This leaves ample headroom for worst-case escaping and request fields.
+const MAX_NOTES_TEXT = 100_000;
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -110,7 +113,7 @@ function NotesWidget() {
         const read = window.MatrixOS?.readData;
         if (!read) return;
         const value = await read(NOTES_KEY);
-        if (!cancelled && typeof value === "string") setText(value);
+        if (!cancelled && typeof value === "string") setText(value.slice(0, MAX_NOTES_TEXT));
       } catch (err: unknown) {
         console.warn("[widgets] notes load failed:", errMsg(err));
       } finally {
@@ -127,7 +130,8 @@ function NotesWidget() {
 
   const handleChange = (value: string) => {
     if (!loaded.current) return;
-    setText(value);
+    const boundedValue = value.slice(0, MAX_NOTES_TEXT);
+    setText(boundedValue);
     setSaveState("saving");
     const generation = ++saveGeneration.current;
     // Call writeData in the input event rather than relying on iframe-unmount
@@ -135,7 +139,7 @@ function NotesWidget() {
     // React runs passive effect cleanup.
     void (async () => {
       try {
-        await window.MatrixOS?.writeData?.(NOTES_KEY, value);
+        await window.MatrixOS?.writeData?.(NOTES_KEY, boundedValue);
         if (saveGeneration.current === generation) setSaveState("saved");
       } catch (err: unknown) {
         console.warn("[widgets] notes save failed:", errMsg(err));
@@ -161,6 +165,7 @@ function NotesWidget() {
         className="notes-input"
         placeholder="Jot something down…"
         value={text}
+        maxLength={MAX_NOTES_TEXT}
         onChange={(e) => handleChange(e.target.value)}
         disabled={saveState === "loading"}
         aria-label="Notes"
