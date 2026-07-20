@@ -106,6 +106,35 @@ describe("mobile Android release configuration", () => {
   });
 });
 
+describe("workspace package extensions", () => {
+  // `eas build` shells out to the expo CLI from the pnpm store, where a package
+  // can only see dependencies it declares. react-native-edge-to-edge's Expo
+  // plugin requires @expo/config-plugins without declaring it, which fails the
+  // build before the project is even uploaded. pnpm only honours these from
+  // package.json here, not from pnpm-workspace.yaml.
+  const rootPackage = require("../../../package.json") as {
+    pnpm?: { packageExtensions?: Record<string, { dependencies?: Record<string, string> }> };
+  };
+  const workspaceConfig = readFileSync(join(__dirname, "../../../pnpm-workspace.yaml"), "utf8");
+
+  it("declares the Expo config-plugins dependency that the plugin loader needs", () => {
+    // Keyed on `@*` on purpose: pinning an exact version means the next
+    // react-native-edge-to-edge upgrade silently stops matching and the EAS
+    // build starts failing again.
+    const extensions = rootPackage.pnpm?.packageExtensions ?? {};
+    const keys = Object.keys(extensions).filter((key) =>
+      key.startsWith("react-native-edge-to-edge@"),
+    );
+
+    expect(keys).toEqual(["react-native-edge-to-edge@*"]);
+    expect(extensions[keys[0]]?.dependencies?.["@expo/config-plugins"]).toBe("57.0.2");
+  });
+
+  it("keeps package extensions out of pnpm-workspace.yaml, where they are ignored", () => {
+    expect(workspaceConfig).not.toMatch(/^packageExtensions:/m);
+  });
+});
+
 describe("mobile over-the-air update configuration", () => {
   it("ships expo-updates so builds can fetch JS updates without a store release", () => {
     expect(packageConfig.dependencies?.["expo-updates"]).toBe("~57.0.8");
