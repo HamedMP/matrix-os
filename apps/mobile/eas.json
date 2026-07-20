@@ -8,10 +8,14 @@
       "node": "24.14.0",
       "pnpm": "10.33.4"
     },
+    // Each profile's `channel` binds its builds to an EAS Update channel, so a
+    // published update only reaches builds from the matching profile. Builds made
+    // before these channels existed cannot receive updates at all.
     "development": {
       "extends": "base",
       "developmentClient": true,
       "distribution": "internal",
+      "channel": "development",
       "ios": {
         "simulator": true
       }
@@ -20,6 +24,7 @@
       "extends": "base",
       "developmentClient": true,
       "distribution": "internal",
+      "channel": "development",
       "ios": {
         "simulator": false
       }
@@ -27,6 +32,7 @@
     "preview": {
       "extends": "base",
       "distribution": "internal",
+      "channel": "preview",
       "ios": {
         "simulator": false
       }
@@ -34,6 +40,7 @@
     "production": {
       "extends": "base",
       "autoIncrement": true,
+      "channel": "production",
       "android": {
         "buildType": "app-bundle"
       },

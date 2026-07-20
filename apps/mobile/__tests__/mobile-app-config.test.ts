@@ -5,16 +5,29 @@ import { parseConfigFileTextToJson } from "typescript";
 type MobileAppConfig = {
   expo?: {
     orientation?: string;
+    updates?: {
+      url?: string;
+      fallbackToCacheTimeout?: number;
+    };
+    runtimeVersion?: {
+      policy?: string;
+    };
     android?: {
       package?: string;
     };
     ios?: {
       supportsTablet?: boolean;
     };
+    extra?: {
+      eas?: {
+        projectId?: string;
+      };
+    };
   };
 };
 
 type MobilePackageConfig = {
+  dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
 };
 
@@ -28,8 +41,12 @@ type MobileEasConfig = {
       node?: string;
       pnpm?: string;
     };
+    development?: { channel?: string };
+    "development-device"?: { channel?: string };
+    preview?: { channel?: string };
     production?: {
       autoIncrement?: boolean;
+      channel?: string;
       android?: {
         buildType?: string;
       };
@@ -86,5 +103,30 @@ describe("mobile Android release configuration", () => {
 
   it("defaults Android submissions to the internal Play track", () => {
     expect(easConfig.submit?.production?.android?.track).toBe("internal");
+  });
+});
+
+describe("mobile over-the-air update configuration", () => {
+  it("ships expo-updates so builds can fetch JS updates without a store release", () => {
+    expect(packageConfig.dependencies?.["expo-updates"]).toBe("~57.0.8");
+  });
+
+  it("points updates at the EAS Update endpoint for this project", () => {
+    const projectId = appConfig.expo?.extra?.eas?.projectId;
+    expect(projectId).toBeTruthy();
+    expect(appConfig.expo?.updates?.url).toBe(`https://u.expo.dev/${projectId}`);
+  });
+
+  it("gates updates on the app version so an update never lands on mismatched native code", () => {
+    expect(appConfig.expo?.runtimeVersion?.policy).toBe("appVersion");
+  });
+
+  it("binds every build profile to its own update channel", () => {
+    // A build with no channel can never receive an update, so each profile must
+    // declare one and production must not share a channel with internal builds.
+    expect(easConfig.build?.development?.channel).toBe("development");
+    expect(easConfig.build?.["development-device"]?.channel).toBe("development");
+    expect(easConfig.build?.preview?.channel).toBe("preview");
+    expect(easConfig.build?.production?.channel).toBe("production");
   });
 });

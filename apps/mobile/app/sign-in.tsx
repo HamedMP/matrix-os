@@ -1,24 +1,18 @@
 import "@/lib/hermes-polyfills";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import {
-  View,
-  Text,
-  Pressable,
-  ActivityIndicator,
-  Alert,
-  TextInput,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-} from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { View, Text, Alert, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { makeRedirectUri } from "expo-auth-session";
 import { useSSO, useAuth } from "@clerk/clerk-expo";
 import * as WebBrowser from "expo-web-browser";
-import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import { describeSignInFailure } from "@/lib/clerk-sign-in";
+import { SignInStepError, useEmailCodeSignIn } from "@/lib/use-email-code-sign-in";
+import { HostedSignInPanel } from "@/components/auth/HostedSignInPanel";
+import { SelfHostedSignInPanel } from "@/components/auth/SelfHostedSignInPanel";
+import { GatewayUrlPanel } from "@/components/auth/GatewayUrlPanel";
 import {
   HOSTED_GATEWAY_URL,
   getSelectedGatewayConnection,
@@ -39,7 +33,6 @@ type OAuthStrategy = "oauth_google" | "oauth_github";
 type AuthProvider = "google" | "github" | "basic";
 
 export default function SignInScreen() {
-  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { isSignedIn } = useAuth();
@@ -100,13 +93,99 @@ export default function SignInScreen() {
       }
     } catch (err: unknown) {
       console.warn(`[mobile] ${provider} sign-in failed:`, err);
-      const message = err instanceof Error ? err.message : "Check the mobile OAuth redirect URL and try again.";
+      const message = describeSignInFailure(
+        err,
+        "Check the mobile OAuth redirect URL and try again.",
+      );
       setGatewayError(message);
       Alert.alert("Sign in failed", message);
     } finally {
       setLoadingProvider(null);
     }
   }, [gatewayUrl, startSSOFlow, router]);
+
+  const handleGoogleSignIn = useCallback(
+    () => handleOAuthSignIn("oauth_google", "google"),
+    [handleOAuthSignIn],
+  );
+
+  const handleGithubSignIn = useCallback(
+    () => handleOAuthSignIn("oauth_github", "github"),
+    [handleOAuthSignIn],
+  );
+
+  const goToApps = useCallback(() => {
+    setGatewayError(null);
+    redirectedRef.current = true;
+    router.replace("/(tabs)/apps" as any);
+  }, [router]);
+
+  // Persist the chosen computer before Clerk is involved, so a bad URL reports
+  // its own message instead of being normalised as a sign-in failure.
+  const prepareGateway = useCallback(async () => {
+    let targetGatewayUrl: string;
+    try {
+      targetGatewayUrl = normalizeGatewayUrl(gatewayUrl);
+    } catch (err: unknown) {
+      throw new SignInStepError(
+        err instanceof Error ? err.message : "Enter a valid Matrix OS URL.",
+      );
+    }
+    await saveSelectedGatewayUrl(targetGatewayUrl);
+    setGatewayUrl(targetGatewayUrl);
+    setGatewayError(null);
+  }, [gatewayUrl]);
+
+  const emailSignIn = useEmailCodeSignIn({
+    prepareGateway,
+    onError: setGatewayError,
+    onSuccess: goToApps,
+  });
+
+  const handleEmailChange = useCallback(
+    (value: string) => {
+      emailSignIn.setEmail(value);
+      setGatewayError(null);
+    },
+    [emailSignIn],
+  );
+
+  const handleCodeChange = useCallback(
+    (value: string) => {
+      emailSignIn.setCode(value);
+      setGatewayError(null);
+    },
+    [emailSignIn],
+  );
+
+  const handleGatewayUrlChange = useCallback((value: string) => {
+    setGatewayUrl(value);
+    setGatewayError(null);
+  }, []);
+
+  const handleGatewayUrlBlur = useCallback(() => {
+    try {
+      setGatewayUrl(normalizeGatewayUrl(gatewayUrl));
+      setGatewayError(null);
+    } catch (err: unknown) {
+      setGatewayError(err instanceof Error ? err.message : "Enter a valid Matrix OS URL.");
+    }
+  }, [gatewayUrl]);
+
+  const handleUseCloud = useCallback(() => {
+    setGatewayUrl(HOSTED_GATEWAY_URL);
+    setGatewayError(null);
+  }, []);
+
+  const handleBasicPasswordChange = useCallback((value: string) => {
+    setBasicPassword(value);
+    setGatewayError(null);
+  }, []);
+
+  const handleUseDifferentEmail = useCallback(() => {
+    emailSignIn.reset();
+    setGatewayError(null);
+  }, [emailSignIn]);
 
   const handleBasicSignIn = useCallback(async () => {
     setLoadingProvider("basic");
@@ -130,12 +209,18 @@ export default function SignInScreen() {
   }
 
   return (
+    // The content is vertically centred, so on iOS a `padding` behavior just
+    // shrinks the viewport around the centred block and leaves a focused field
+    // under the keyboard. `automaticallyAdjustKeyboardInsets` scrolls the focused
+    // field into view instead; Android has no equivalent and keeps `height`.
     <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      behavior={Platform.OS === "ios" ? undefined : "height"}
       keyboardVerticalOffset={0}
       style={styles.container}
     >
       <ScrollView
+        automaticallyAdjustKeyboardInsets
+        keyboardDismissMode="interactive"
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[
@@ -163,156 +248,42 @@ export default function SignInScreen() {
             </Text>
           </View>
 
-          <View style={styles.gatewayPanel}>
-            <Text style={styles.gatewayLabel}>Computer URL</Text>
-            <View style={[styles.gatewayInputRow, gatewayError ? styles.gatewayInputRowError : null]}>
-              <Ionicons name="server-outline" size={17} color={theme.colors.inkMuted} />
-              <TextInput
-                value={gatewayUrl}
-                onChangeText={(value) => {
-                  setGatewayUrl(value);
-                  setGatewayError(null);
-                }}
-                placeholder={HOSTED_GATEWAY_URL}
-                placeholderTextColor={theme.colors.inkDim}
-                autoCapitalize="none"
-                autoCorrect={false}
-                autoComplete="url"
-                blurOnSubmit
-                clearButtonMode="while-editing"
-                keyboardType="url"
-                textContentType="URL"
-                returnKeyType="done"
-                style={styles.gatewayInput}
-                onBlur={() => {
-                  try {
-                    setGatewayUrl(normalizeGatewayUrl(gatewayUrl));
-                    setGatewayError(null);
-                  } catch (err: unknown) {
-                    setGatewayError(err instanceof Error ? err.message : "Enter a valid Matrix OS URL.");
-                  }
-                }}
-              />
-            </View>
-            {gatewayError ? (
-              <Text selectable style={styles.gatewayError}>{gatewayError}</Text>
-            ) : (
-              <Text style={styles.gatewayHint}>
-                {selfHostedSelected
-                  ? "Use the installer credentials shown after setup."
-                  : "Use the cloud URL, https:// domain, or http:// VPS IP."}
-              </Text>
-            )}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Use Matrix OS Cloud"
-              disabled={loadingProvider !== null}
-              onPress={() => {
-                setGatewayUrl(HOSTED_GATEWAY_URL);
-                setGatewayError(null);
-              }}
-              style={({ pressed }) => [styles.cloudLink, pressed && styles.buttonPressed]}
-            >
-              <Text style={styles.cloudLinkText}>Use Matrix OS Cloud</Text>
-            </Pressable>
-          </View>
+          <GatewayUrlPanel
+            url={gatewayUrl}
+            onUrlChange={handleGatewayUrlChange}
+            onUrlBlur={handleGatewayUrlBlur}
+            onUseCloud={handleUseCloud}
+            error={gatewayError}
+            selfHostedSelected={selfHostedSelected}
+            busy={loadingProvider !== null}
+          />
 
           {selfHostedSelected ? (
-            <View style={styles.authPanel}>
-              <Text style={styles.authPanelTitle}>Basic Auth</Text>
-              <View style={styles.basicFields}>
-                <View style={styles.basicInputRow}>
-                  <Ionicons name="person-outline" size={17} color={theme.colors.inkMuted} />
-                  <TextInput
-                    value={basicUsername}
-                    onChangeText={setBasicUsername}
-                    placeholder="matrix"
-                    placeholderTextColor={theme.colors.inkDim}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    returnKeyType="next"
-                    style={styles.gatewayInput}
-                  />
-                </View>
-                <View style={styles.basicInputRow}>
-                  <Ionicons name="key-outline" size={17} color={theme.colors.inkMuted} />
-                  <TextInput
-                    value={basicPassword}
-                    onChangeText={(value) => {
-                      setBasicPassword(value);
-                      setGatewayError(null);
-                    }}
-                    placeholder="Installer password"
-                    placeholderTextColor={theme.colors.inkDim}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    secureTextEntry
-                    textContentType="password"
-                    returnKeyType="go"
-                    onSubmitEditing={handleBasicSignIn}
-                    style={styles.gatewayInput}
-                  />
-                </View>
-              </View>
-              <Pressable
-                onPress={handleBasicSignIn}
-                disabled={loadingProvider !== null}
-                style={({ pressed }) => [
-                  styles.authButtonPrimary,
-                  pressed && styles.buttonPressed,
-                  loadingProvider !== null && styles.authButtonDisabled,
-                ]}
-              >
-                {loadingProvider === "basic" ? (
-                  <ActivityIndicator size="small" color={theme.colors.primaryForeground} />
-                ) : (
-                  <>
-                    <Ionicons name="log-in-outline" size={19} color={theme.colors.primaryForeground} />
-                    <Text style={styles.authButtonPrimaryText}>Connect to self-hosted Matrix</Text>
-                  </>
-                )}
-              </Pressable>
-            </View>
+            <SelfHostedSignInPanel
+              username={basicUsername}
+              onUsernameChange={setBasicUsername}
+              password={basicPassword}
+              onPasswordChange={handleBasicPasswordChange}
+              connecting={loadingProvider === "basic"}
+              busy={loadingProvider !== null}
+              onConnect={handleBasicSignIn}
+            />
           ) : (
-            <View style={styles.authPanel}>
-              <Text style={styles.authPanelTitle}>Sign in to this computer</Text>
-              <Pressable
-                onPress={() => handleOAuthSignIn("oauth_google", "google")}
-                disabled={loadingProvider !== null}
-                style={({ pressed }) => [
-                  styles.authButtonPrimary,
-                  pressed && styles.buttonPressed,
-                  loadingProvider !== null && styles.authButtonDisabled,
-                ]}
-              >
-                {loadingProvider === "google" ? (
-                  <ActivityIndicator size="small" color={theme.colors.primaryForeground} />
-                ) : (
-                  <>
-                    <Ionicons name="logo-google" size={19} color={theme.colors.primaryForeground} />
-                    <Text style={styles.authButtonPrimaryText}>Continue with Google</Text>
-                  </>
-                )}
-              </Pressable>
-              <Pressable
-                onPress={() => handleOAuthSignIn("oauth_github", "github")}
-                disabled={loadingProvider !== null}
-                style={({ pressed }) => [
-                  styles.authButtonSecondary,
-                  pressed && styles.buttonPressed,
-                  loadingProvider !== null && styles.authButtonDisabled,
-                ]}
-              >
-                {loadingProvider === "github" ? (
-                  <ActivityIndicator size="small" color={theme.colors.foreground} />
-                ) : (
-                  <>
-                    <Ionicons name="logo-github" size={20} color={theme.colors.foreground} />
-                    <Text style={styles.authButtonSecondaryText}>Continue with GitHub</Text>
-                  </>
-                )}
-              </Pressable>
-            </View>
+            <HostedSignInPanel
+              loadingProvider={loadingProvider}
+              sendingCode={emailSignIn.sending}
+              verifyingCode={emailSignIn.verifying}
+              onGoogle={handleGoogleSignIn}
+              onGithub={handleGithubSignIn}
+              email={emailSignIn.email}
+              onEmailChange={handleEmailChange}
+              code={emailSignIn.code}
+              onCodeChange={handleCodeChange}
+              codeSentTo={emailSignIn.codeSentTo}
+              onSendCode={emailSignIn.sendCode}
+              onVerify={emailSignIn.verifyCode}
+              onUseDifferentEmail={handleUseDifferentEmail}
+            />
           )}
 
           <Text style={styles.termsText}>
@@ -381,133 +352,6 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: 21,
     textAlign: "center",
     paddingHorizontal: theme.spacing.sm,
-  },
-  authPanel: {
-    marginTop: 16,
-    gap: 10,
-  },
-  authPanelTitle: {
-    fontFamily: theme.fonts.sansSemiBold,
-    fontSize: 13,
-    color: theme.colors.foreground,
-  },
-  authButtonPrimary: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 12,
-    backgroundColor: theme.colors.primary,
-    borderRadius: theme.radius.lg,
-    borderCurve: "continuous" as const,
-    borderWidth: 1,
-    borderColor: theme.colors.primary,
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    boxShadow: "0 10px 22px rgba(194, 112, 58, 0.18)",
-  },
-  authButtonSecondary: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 12,
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.radius.lg,
-    borderCurve: "continuous" as const,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    paddingVertical: 15,
-    paddingHorizontal: 24,
-  },
-  authButtonDisabled: {
-    opacity: 0.72,
-  },
-  authButtonPrimaryText: {
-    fontFamily: theme.fonts.sansSemiBold,
-    fontSize: 16,
-    color: theme.colors.primaryForeground,
-  },
-  authButtonSecondaryText: {
-    fontFamily: theme.fonts.sansSemiBold,
-    fontSize: 16,
-    color: theme.colors.foreground,
-  },
-  basicFields: {
-    gap: 8,
-  },
-  basicInputRow: {
-    minHeight: 50,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 14,
-    borderRadius: theme.radius.lg,
-    borderCurve: "continuous" as const,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.field,
-  },
-  gatewayPanel: {
-    borderRadius: theme.radius.xl,
-    borderCurve: "continuous" as const,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.card,
-    padding: 14,
-    gap: 8,
-  },
-  gatewayLabel: {
-    fontFamily: theme.fonts.sansSemiBold,
-    fontSize: 13,
-    color: theme.colors.foreground,
-  },
-  gatewayInputRow: {
-    minHeight: 50,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 14,
-    borderRadius: theme.radius.lg,
-    borderCurve: "continuous" as const,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.field,
-  },
-  gatewayInputRowError: {
-    borderColor: theme.colors.destructive,
-  },
-  gatewayInput: {
-    flex: 1,
-    minWidth: 0,
-    fontFamily: theme.fonts.sansMedium,
-    fontSize: 14,
-    color: theme.colors.foreground,
-    paddingVertical: 10,
-  },
-  gatewayHint: {
-    fontFamily: theme.fonts.sans,
-    fontSize: 12,
-    lineHeight: 17,
-    color: theme.colors.mutedForeground,
-  },
-  gatewayError: {
-    fontFamily: theme.fonts.sansMedium,
-    fontSize: 12,
-    lineHeight: 17,
-    color: theme.colors.destructive,
-  },
-  cloudLink: {
-    alignSelf: "flex-start",
-    paddingVertical: 5,
-    paddingHorizontal: 2,
-  },
-  cloudLinkText: {
-    fontFamily: theme.fonts.sansSemiBold,
-    fontSize: 12,
-    color: theme.colors.accentInk,
-  },
-  buttonPressed: {
-    opacity: 0.85,
-    transform: [{ scale: 0.98 }],
   },
   termsText: {
     fontFamily: theme.fonts.sans,
