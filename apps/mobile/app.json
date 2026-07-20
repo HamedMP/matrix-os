@@ -7,6 +7,13 @@
     "icon": "./assets/icon.png",
     "scheme": "matrixos",
     "userInterfaceStyle": "automatic",
+    "updates": {
+      "url": "https://u.expo.dev/cdd27a8d-aebc-446a-8e18-d735c78d3b2d",
+      "fallbackToCacheTimeout": 0
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.matrixos.mobile",
