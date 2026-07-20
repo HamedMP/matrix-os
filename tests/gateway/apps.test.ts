@@ -444,6 +444,46 @@ describe("T711: GET /api/apps", () => {
     }
   });
 
+  it("ships the clock and win11 sticky-notes manifests with first-party metadata", () => {
+    const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+    const read = (slug: string) =>
+      JSON.parse(readFileSync(join(repoRoot, "home/apps", slug, "matrix.json"), "utf8")) as Record<string, unknown>;
+    const shippedIcons = new Set(
+      readdirSync(join(repoRoot, "home/system/icons"))
+        .filter((file) => file.endsWith(".png") || file.endsWith(".svg"))
+        .map((file) => file.replace(/\.(?:png|svg)$/, "")),
+    );
+
+    const clock = read("clock");
+    expect(clock).toMatchObject({
+      name: "Clock",
+      slug: "clock",
+      runtime: "vite",
+      icon: "clock",
+      author: "system",
+      listingTrust: "first_party",
+      runtimeVersion: "^1.0.0",
+      build: { output: "dist" },
+    });
+    // Available in every design: no designs scoping.
+    expect(clock.designs).toBeUndefined();
+    expect(shippedIcons.has("clock")).toBe(true);
+
+    const stickyNotes = read("win-sticky-notes");
+    expect(stickyNotes).toMatchObject({
+      name: "Sticky Notes",
+      slug: "win-sticky-notes",
+      runtime: "vite",
+      icon: "sticky-notes",
+      author: "system",
+      listingTrust: "first_party",
+      runtimeVersion: "^1.0.0",
+      designs: ["win11"],
+      build: { output: "dist" },
+    });
+    expect(shippedIcons.has("sticky-notes")).toBe(true);
+  });
+
   it("ships default apps as Vite apps with explicit build output", () => {
     const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
     const appsRoot = join(repoRoot, "home/apps");

@@ -124,12 +124,14 @@ describe("AppRegistry", () => {
   });
 
   it("upserts on re-register", async () => {
-    await registry.register({ slug: "todo", name: "Todo v1", tables: {} });
-    await registry.register({ slug: "todo", name: "Todo v2", tables: {} });
+    await registry.register({ slug: "todo", name: "Todo v1", version: "1.0.0", tables: {} });
+    await registry.register({ slug: "todo", name: "Todo v2", version: "2.0.0", tables: {} });
 
     const apps = await registry.listApps();
     expect(apps).toHaveLength(1);
     expect(apps[0].name).toBe("Todo v2");
+    expect(apps[0].version).toBe("2.0.0");
+    expect(apps[0].installed_version).toBe("1.0.0");
   });
 
   it("returns null for non-existent app", async () => {
