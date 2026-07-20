@@ -142,6 +142,7 @@ export function getSignupBillingHandoffPage(input: {
       document.getElementById('handoff-detail').textContent = 'Matrix could not finish opening billing. Try again after a moment.';
     }
     function scheduleAuthShellRetry() {
+      if (unresolvedTimer !== undefined) window.clearTimeout(unresolvedTimer);
       var retryCount = readRetryCount();
       if (retryCount >= retryDelays.length || !writeRetryCount(retryCount + 1)) {
         showRetryState();
@@ -160,6 +161,13 @@ export function getSignupBillingHandoffPage(input: {
           body: JSON.stringify({ redirectTo: redirectTarget }),
           credentials: 'same-origin',
           signal: controller.signal
+        }).then(function(response) {
+          if (!response.ok) {
+            var exchangeError = new Error('App session request rejected');
+            exchangeError.name = 'AppSessionExchangeError';
+            throw exchangeError;
+          }
+          return response;
         }).finally(function() { window.clearTimeout(timeoutId); });
       });
     }

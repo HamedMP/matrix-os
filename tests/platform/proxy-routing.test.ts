@@ -2994,7 +2994,12 @@ describe("platform proxy routing", () => {
     expect(html).toContain("fetch('/api/auth/app-session'");
     expect(html).toContain("signal: controller.signal");
     expect(html).toContain("10000");
+    expect(html).toContain("if (!response.ok)");
+    expect(html).toContain("exchangeError.name = 'AppSessionExchangeError';");
     expect(html).toContain("var retryDelays = [2000, 3000, 4000];");
+    expect(html).toContain(
+      "function scheduleAuthShellRetry() {\n      if (unresolvedTimer !== undefined) window.clearTimeout(unresolvedTimer);",
+    );
     expect(html).toContain("window.location.reload();");
     expect(html).not.toContain("Welcome back to Matrix");
     expect(html).not.toContain('data-matrix-platform-fallback-auth="true"');
