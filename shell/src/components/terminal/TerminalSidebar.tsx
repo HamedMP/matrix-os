@@ -90,10 +90,10 @@ const SHELL_STATUS_DOT_CSS = `
   animation: terminal-refresh-spin 0.9s linear infinite;
 }
 .terminal-drawer-primary-control {
-  background: var(--terminal-drawer-primary-button-bg);
-  border: 1px solid color-mix(in srgb, var(--terminal-drawer-primary-button-bg) 78%, var(--terminal-drawer-primary-button-fg));
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--terminal-drawer-primary-button-fg) 14%, transparent) inset;
-  color: var(--terminal-drawer-primary-button-fg);
+  background: var(--primary);
+  border: 1px solid color-mix(in srgb, var(--primary) 78%, var(--primary-foreground));
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--primary-foreground) 14%, transparent) inset;
+  color: var(--primary-foreground);
 }
 .terminal-new-session-split-button {
   align-items: stretch;
@@ -106,13 +106,13 @@ const SHELL_STATUS_DOT_CSS = `
 .terminal-new-session-split-button:focus-within {
   box-shadow:
     0 0 0 2px var(--terminal-drawer-bg),
-    0 0 0 4px color-mix(in srgb, var(--terminal-drawer-primary-button-bg) 68%, var(--terminal-drawer-primary-button-fg));
+    0 0 0 4px color-mix(in srgb, var(--primary) 68%, var(--primary-foreground));
 }
 .terminal-new-session-primary-action,
 .terminal-new-session-dropdown-trigger {
-  background: var(--terminal-drawer-primary-button-bg);
+  background: var(--primary);
   border: 0;
-  color: var(--terminal-drawer-primary-button-fg);
+  color: var(--primary-foreground);
   cursor: pointer;
   padding: 0;
   transition: background-color 150ms ease, filter 150ms ease, transform 120ms ease;
@@ -121,7 +121,7 @@ const SHELL_STATUS_DOT_CSS = `
   width: 38px;
 }
 .terminal-new-session-dropdown-trigger {
-  border-left: 1px solid color-mix(in srgb, var(--terminal-drawer-primary-button-fg) 24%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--primary-foreground) 24%, transparent);
   width: 24px;
 }
 .terminal-new-session-primary-action:hover:not(:disabled),
@@ -160,7 +160,7 @@ const SHELL_STATUS_DOT_CSS = `
 .terminal-drawer-primary-icon-button:focus-visible {
   box-shadow:
     0 0 0 2px var(--terminal-drawer-bg),
-    0 0 0 4px color-mix(in srgb, var(--terminal-drawer-primary-button-bg) 68%, var(--terminal-drawer-primary-button-fg));
+    0 0 0 4px color-mix(in srgb, var(--primary) 68%, var(--primary-foreground));
   outline: none;
 }
 .terminal-drawer-primary-icon-button:disabled {

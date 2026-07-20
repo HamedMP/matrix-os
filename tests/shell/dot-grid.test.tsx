@@ -5,6 +5,7 @@ import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DotGrid, useDotGrid } from "../../shell/src/components/DotGrid";
+import { useDesktopMode } from "../../shell/src/stores/desktop-mode";
 
 class ResizeObserverMock {
   observe() {}
@@ -24,6 +25,7 @@ describe("DotGrid OS-design gating", () => {
   beforeEach(() => {
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     useDotGrid.setState({ enabled: true });
+    useDesktopMode.setState({ mode: "canvas", previousMode: null, _hydrated: true });
     // Reset the attribute before each test (not in afterEach) so the still-
     // mounted MutationObserver never fires outside act after a test ends.
     setThemeStyle(null);
@@ -37,6 +39,12 @@ describe("DotGrid OS-design gating", () => {
   it("renders the grid canvas in the default flat design", () => {
     const { container } = render(<DotGrid />);
     expect(container.querySelector("canvas")).not.toBeNull();
+  });
+
+  it("keeps the grid off in Developer mode even when the Canvas preference is enabled", () => {
+    useDesktopMode.setState({ mode: "dev", previousMode: "canvas" });
+    const { container } = render(<DotGrid />);
+    expect(container.querySelector("canvas")).toBeNull();
   });
 
   it("renders the grid canvas in the neumorphic design", () => {
