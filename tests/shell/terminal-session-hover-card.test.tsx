@@ -38,7 +38,7 @@ function renderHoverCard(shell: ShellSessionSummary) {
   );
 
   const hoverCard = screen.getByTestId(`terminal-session-hover-card-${shell.name}`);
-  return within(hoverCard).getByText("Model").parentElement?.parentElement;
+  return within(hoverCard).getByTestId(`terminal-session-agent-metadata-grid-${shell.name}`);
 }
 
 describe("TerminalSessionHoverCard", () => {
@@ -53,7 +53,21 @@ describe("TerminalSessionHoverCard", () => {
       tabs: [],
     });
 
-    expect(metadataGrid?.style.gridTemplateColumns).toBe("minmax(0, 1fr)");
+    expect(metadataGrid.style.gridTemplateColumns).toBe("minmax(0, 1fr)");
+  });
+
+  it("gives strength-only metadata the full available row", () => {
+    const metadataGrid = renderHoverCard({
+      name: "codex-strength-only",
+      status: "active",
+      placement: "active",
+      visualStatus: "waiting",
+      agent: "codex",
+      strength: "high",
+      tabs: [],
+    });
+
+    expect(metadataGrid.style.gridTemplateColumns).toBe("minmax(0, 1fr)");
   });
 
   it("keeps model and strength metadata in two columns", () => {
@@ -68,6 +82,6 @@ describe("TerminalSessionHoverCard", () => {
       tabs: [],
     });
 
-    expect(metadataGrid?.style.gridTemplateColumns).toBe("repeat(2, minmax(0, 1fr))");
+    expect(metadataGrid.style.gridTemplateColumns).toBe("repeat(2, minmax(0, 1fr))");
   });
 });

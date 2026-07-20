@@ -190,6 +190,7 @@ export function TerminalSessionHoverCard({
           </div>
           {shell.model || shell.strength ? (
             <div
+              data-testid={`terminal-session-agent-metadata-grid-${shell.name}`}
               style={{
                 display: "grid",
                 gap: 8,
