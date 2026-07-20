@@ -225,7 +225,14 @@ jobs:
           EVIDENCE: ${{ steps.retrieve.outputs.evidence }}
         run: |
           set -euo pipefail
+          set +e
           result="$(node scripts/spikes/terminal-runtime/verify-evidence.mjs "$EVIDENCE")"
+          validation_status=$?
+          set -e
+          if [ "$validation_status" -ne 0 ]; then
+            node scripts/spikes/terminal-runtime/verify-evidence.mjs "$EVIDENCE" --report-gates || true
+            exit "$validation_status"
+          fi
           digest="$(jq -r '.summarySha256' <<<"$result")"
           if ! printf '%s' "$digest" | grep -Eq '^[0-9a-f]{64}$'; then
             echo "Invalid evidence digest." >&2

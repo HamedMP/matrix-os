@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { rm } from 'node:fs/promises';
 import {
   MAX_EVIDENCE_FILE_BYTES,
+  reportGateChecks,
   validateEvidenceDirectory,
 } from '../../scripts/spikes/terminal-runtime/verify-evidence.mjs';
 
@@ -122,6 +123,7 @@ describe('terminal runtime spike evidence', () => {
 
     expect(workflow).toContain('/opt/matrix/app/scripts/spikes/terminal-runtime/launch-remote.sh');
     expect(workflow).toContain('evidence_deadline=$((SECONDS + 2100))');
+    expect(workflow).toContain('"$EVIDENCE" --report-gates');
     expect(workflow).not.toContain('REMOTE_STATUS:');
     expect(launcher).toContain('systemd-run');
     expect(launcher).toContain('--collect');
@@ -166,6 +168,19 @@ describe('terminal runtime spike evidence', () => {
     });
 
     await expect(validateEvidenceDirectory(root)).rejects.toThrow('evidence_gate_failed');
+  });
+
+  it('reports only allowlisted gate names for rejected evidence', async () => {
+    const root = await evidence({
+      s1: {
+        status: 'fail',
+        checks: { ...s1Checks, stopEmptiesCgroup: false, injectedSecret: 'do-not-log' },
+      },
+    });
+
+    await expect(reportGateChecks(root)).resolves.toEqual([
+      's1:stopEmptiesCgroup=fail',
+    ]);
   });
 
   it('rejects a binary other than the exact bundled Zellij 0.44.1', async () => {

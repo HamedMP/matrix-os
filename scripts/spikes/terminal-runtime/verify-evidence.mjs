@@ -152,6 +152,32 @@ function scanPrivacy(body) {
   if (PRIVACY_PATTERNS.some((pattern) => pattern.test(text))) fail('evidence_privacy');
 }
 
+export async function reportGateChecks(inputRoot) {
+  const root = resolve(inputRoot);
+  const summaryResult = await readNoFollow(join(root, 'summary.json'), MAX_EVIDENCE_FILE_BYTES);
+  scanPrivacy(summaryResult.body);
+  let summary;
+  try {
+    summary = JSON.parse(summaryResult.body.toString('utf8'));
+  } catch (error) {
+    if (error instanceof SyntaxError) fail('evidence_summary_json');
+    throw error;
+  }
+  const failures = [];
+  for (const [gate, requiredChecks] of [
+    ['s1', REQUIRED_S1_CHECKS],
+    ['s2', REQUIRED_S2_CHECKS],
+  ]) {
+    const checks = isRecord(summary?.[gate]) && isRecord(summary[gate].checks)
+      ? summary[gate].checks
+      : {};
+    for (const check of requiredChecks) {
+      if (checks[check] !== true) failures.push(`${gate}:${check}=fail`);
+    }
+  }
+  return failures;
+}
+
 function validateSummary(summary) {
   if (!hasExactKeys(summary, SUMMARY_KEYS) || summary.schemaVersion !== 1) fail('evidence_summary_schema');
   if (typeof summary.prHeadSha !== 'string' || !/^[0-9a-f]{40}$/.test(summary.prHeadSha)) {
@@ -243,8 +269,13 @@ if (import.meta.url === invokedPath) {
     process.exitCode = 2;
   } else {
     try {
-      const result = await validateEvidenceDirectory(root);
-      process.stdout.write(`${JSON.stringify(result)}\n`);
+      if (process.argv[3] === '--report-gates') {
+        const failures = await reportGateChecks(root);
+        process.stdout.write(`${failures.join('\n')}${failures.length > 0 ? '\n' : ''}`);
+      } else {
+        const result = await validateEvidenceDirectory(root);
+        process.stdout.write(`${JSON.stringify(result)}\n`);
+      }
     } catch (error) {
       const code = error instanceof Error ? error.message : 'evidence_validation_failed';
       console.error(code);
