@@ -71,7 +71,7 @@
     "@types/picomatch": "^4.0.0",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.0.18",
-    "typescript": "^5.9.3",
+    "typescript": "^7.0.2",
     "vitest": "^4.0.18"
   }
 }
