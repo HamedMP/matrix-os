@@ -178,6 +178,113 @@ describe("T711: GET /api/apps", () => {
     expect(apps).toEqual([]);
   });
 
+  describe("design-scoped app visibility", () => {
+    const writeRuntimeApp = (slug: string, extra: Record<string, unknown> = {}) => {
+      mkdirSync(join(homePath, `apps/${slug}`), { recursive: true });
+      writeFileSync(join(homePath, `apps/${slug}/index.html`), "<html></html>");
+      writeFileSync(
+        join(homePath, `apps/${slug}/matrix.json`),
+        JSON.stringify({
+          name: slug,
+          slug,
+          version: "1.0.0",
+          runtimeVersion: "^1.0.0",
+          category: "utility",
+          runtime: "static",
+          ...extra,
+        }),
+      );
+    };
+
+    const writeTheme = (style: unknown) => {
+      mkdirSync(join(homePath, "system"), { recursive: true });
+      writeFileSync(
+        join(homePath, "system/theme.json"),
+        JSON.stringify({ name: "Test", mode: "dark", style }),
+      );
+    };
+
+    it("lists apps without designs regardless of the active design", async () => {
+      writeRuntimeApp("plain-app");
+      writeTheme("winxp");
+
+      const apps = await listApps(homePath);
+
+      expect(apps.map((app) => app.slug)).toEqual(["plain-app"]);
+    });
+
+    it("lists a design-scoped app when the active design matches", async () => {
+      writeRuntimeApp("xp-app", { designs: ["winxp"] });
+      writeTheme("winxp");
+
+      const apps = await listApps(homePath);
+
+      expect(apps.map((app) => app.slug)).toEqual(["xp-app"]);
+    });
+
+    it("hides a design-scoped app when the active design does not match", async () => {
+      writeRuntimeApp("xp-app", { designs: ["winxp"] });
+      writeRuntimeApp("plain-app");
+      writeTheme("macos-glass");
+
+      const apps = await listApps(homePath);
+
+      expect(apps.map((app) => app.slug)).toEqual(["plain-app"]);
+    });
+
+    it("keeps inactive design-scoped apps available to runtime provisioning", async () => {
+      writeRuntimeApp("xp-app", {
+        designs: ["winxp"],
+        storage: { tables: { scores: { columns: { value: "integer" } } } },
+      });
+      writeTheme("macos-glass");
+
+      const apps = await listApps(homePath, { includeInactiveDesigns: true });
+
+      expect(apps.map((app) => app.slug)).toEqual(["xp-app"]);
+    });
+
+    it("defaults to flat when theme.json is missing", async () => {
+      writeRuntimeApp("flat-app", { designs: ["flat", "winxp"] });
+      writeRuntimeApp("xp-app", { designs: ["winxp"] });
+
+      const apps = await listApps(homePath);
+
+      expect(apps.map((app) => app.slug)).toEqual(["flat-app"]);
+    });
+
+    it("defaults to flat when theme.json style is not a known design id", async () => {
+      writeRuntimeApp("flat-app", { designs: ["flat"] });
+      writeRuntimeApp("xp-app", { designs: ["winxp"] });
+      writeTheme("beos");
+
+      const apps = await listApps(homePath);
+
+      expect(apps.map((app) => app.slug)).toEqual(["flat-app"]);
+    });
+
+    it("keeps listing apps when theme.json is malformed", async () => {
+      writeRuntimeApp("plain-app");
+      writeRuntimeApp("flat-app", { designs: ["flat"] });
+      writeRuntimeApp("xp-app", { designs: ["winxp"] });
+      mkdirSync(join(homePath, "system"), { recursive: true });
+      writeFileSync(join(homePath, "system/theme.json"), "{ bad json");
+
+      const apps = await listApps(homePath);
+
+      expect(apps.map((app) => app.slug)).toEqual(["flat-app", "plain-app"]);
+    });
+
+    it("rejects manifests with an empty designs array", async () => {
+      writeRuntimeApp("empty-designs", { designs: [] });
+      writeRuntimeApp("plain-app");
+
+      const apps = await listApps(homePath);
+
+      expect(apps.map((app) => app.slug)).toEqual(["plain-app"]);
+    });
+  });
+
   it("discovers apps in nested subdirectories", async () => {
     mkdirSync(join(homePath, "apps/games"), { recursive: true });
     writeFileSync(
@@ -318,6 +425,23 @@ describe("T711: GET /api/apps", () => {
     visit(appsRoot);
 
     expect(missing).toEqual([]);
+  });
+
+  it("ships exactly one visible Minesweeper app for every supported design", () => {
+    const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+    const manifests = [
+      "home/apps/games/minesweeper/matrix.json",
+      "home/apps/winxp-minesweeper/matrix.json",
+    ].map((path) => JSON.parse(readFileSync(join(repoRoot, path), "utf8")) as {
+      name: string;
+      designs?: string[];
+    });
+
+    for (const design of ["flat", "neumorphic", "macos-glass", "winxp", "win11"]) {
+      const visible = manifests.filter((manifest) => !manifest.designs || manifest.designs.includes(design));
+      expect(visible, design).toHaveLength(1);
+      expect(visible[0]?.name).toBe("Minesweeper");
+    }
   });
 
   it("ships default apps as Vite apps with explicit build output", () => {

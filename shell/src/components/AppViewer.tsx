@@ -13,6 +13,7 @@ import {
 import { getGatewayUrl } from "@/lib/gateway";
 import { openAppSession } from "@/lib/app-session";
 import { capturePostHogEvent } from "@/lib/posthog-client";
+import { createCoalescedBridgeDataHandler, type BridgeDataRequest } from "@/lib/app-data-write-queue";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 import {
   APP_IFRAME_SANDBOX,
@@ -77,6 +78,28 @@ async function handleBridgeFetch(appName: string, payload: unknown, port: Messag
     port.close();
   }
 }
+
+const requestBridgeData: BridgeDataRequest = async (action, app, key, value) => {
+  try {
+    const response = await fetch(`${GATEWAY_URL}/api/bridge/data`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(BRIDGE_FETCH_TIMEOUT_MS),
+      body: JSON.stringify({ action, app, key, value }),
+    });
+    const body = await response.json() as { value?: unknown };
+    if (!response.ok) return Promise.reject(new Error("Bridge data request failed"));
+    return action === "read" ? body.value : undefined;
+  } catch (err: unknown) {
+    console.warn("[app-viewer] bridge data fetch failed:", err instanceof Error ? err.message : String(err));
+    return Promise.reject(new Error("Bridge data request failed"));
+  }
+};
+
+// App windows can be removed while their final writes are still draining.
+// Keep one process-local queue so a newly opened viewer for the same app/key
+// waits behind those writes instead of racing an independent component queue.
+const bridgeDataHandler = createCoalescedBridgeDataHandler(requestBridgeData);
 
 export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
@@ -164,16 +187,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       sendToKernel(text) {
         send({ type: "message", text, sessionId });
       },
-      fetchData(action, app, key, value) {
-        fetch(`${GATEWAY_URL}/api/bridge/data`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(BRIDGE_FETCH_TIMEOUT_MS),
-          body: JSON.stringify({ action, app, key, value }),
-        }).catch((err: unknown) => {
-          console.warn("[app-viewer] bridge data fetch failed:", err instanceof Error ? err.message : String(err));
-        });
-      },
+      fetchData: bridgeDataHandler,
       openApp: onOpenApp,
     };
 
@@ -198,7 +212,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [send, sessionId, onOpenApp, appName]);
+  }, [send, sessionId, onOpenApp, appName, bridgeDataHandler]);
 
   // Forward data:change events to iframe for auto-update
   useEffect(() => {

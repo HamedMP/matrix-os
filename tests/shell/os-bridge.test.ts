@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
+  decodeBridgeStoredValue,
+  encodeBridgeStoredValue,
   handleBridgeMessage,
   buildBridgeScript,
   type BridgeMessage,
@@ -11,6 +13,23 @@ function makeMessageEvent(data: BridgeMessage): MessageEvent {
 }
 
 describe("OS Bridge", () => {
+  describe("bridge storage values", () => {
+    it.each([
+      ["ordinary text", "ordinary text"],
+      ["3", "3"],
+      [3, 3],
+      [[{ id: "home" }], [{ id: "home" }]],
+      [{ enabled: true }, { enabled: true }],
+      [null, null],
+    ])("round-trips %j without guessing JSON-looking strings", (value, expected) => {
+      expect(decodeBridgeStoredValue(encodeBridgeStoredValue(value))).toEqual(expected);
+    });
+
+    it("leaves legacy untagged storage untouched", () => {
+      expect(decodeBridgeStoredValue('{"items":[]}')).toBe('{"items":[]}');
+    });
+  });
+
   describe("handleBridgeMessage", () => {
     it("routes os:generate to kernel with app context prefix", () => {
       const handler: BridgeHandler = {
@@ -89,6 +108,30 @@ describe("OS Bridge", () => {
         "expenses",
         undefined,
       );
+    });
+
+    it("returns bridge data reads through the request message port", async () => {
+      const postMessage = vi.fn();
+      const close = vi.fn();
+      const handler: BridgeHandler = {
+        sendToKernel: vi.fn(),
+        fetchData: vi.fn().mockResolvedValue('{"items":[]}'),
+      };
+      const event = {
+        data: {
+          type: "os:read-data",
+          app: "expense-tracker",
+          payload: { key: "expenses" },
+        },
+        ports: [{ postMessage, close }],
+      } as unknown as MessageEvent;
+
+      handleBridgeMessage(event, handler);
+
+      await vi.waitFor(() => {
+        expect(postMessage).toHaveBeenCalledWith({ ok: true, value: '{"items":[]}' });
+      });
+      expect(close).toHaveBeenCalledTimes(1);
     });
 
     it("routes os:write-data to fetchData with value", () => {
@@ -223,6 +266,10 @@ describe("OS Bridge", () => {
       const script = buildBridgeScript("test-app");
       expect(script).toContain("readData");
       expect(script).toContain("writeData");
+      expect(script).toContain("reject(new Error(\"MatrixOS bridge data request failed\"))");
+      expect(script).toContain("decodeStoredValue(e.data.value)");
+      expect(script).toContain("encodeStoredValue(value)");
+      expect(script).toContain("__matrix_os_value_v1__:");
     });
 
     it("includes app metadata", () => {

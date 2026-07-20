@@ -6,6 +6,8 @@ const SEMVER_RANGE = /^[\^~]?\d+\.\d+\.\d+$|^\d+\.\d+\.\d+$/;
 
 const RuntimeEnum = z.enum(["static", "vite", "node"]);
 const DatabaseEnum = z.enum(["postgres"]);
+export const DesignIdEnum = z.enum(["flat", "neumorphic", "macos-glass", "winxp", "win11"]);
+export type DesignId = z.infer<typeof DesignIdEnum>;
 
 const BuildSchema = z.object({
   install: z.string().default("pnpm install --frozen-lockfile"),
@@ -48,6 +50,8 @@ const BaseManifestSchema = z.object({
   listingTrust: z.string().optional(),
   /** When true, the app is not surfaced in the launcher/app list (and not registered). Use to park unfinished apps. */
   hidden: z.boolean().optional(),
+  /** OS design systems this app is scoped to. When set, the app is listed only while the shell's active design matches one of these ids. */
+  designs: z.array(DesignIdEnum).min(1).optional(),
   /** Advisory flag: marks this manifest as a dev-mode project. No enforcement -- tooling may use it to skip caching or enable HMR. */
   dev: z.boolean().optional(),
 });

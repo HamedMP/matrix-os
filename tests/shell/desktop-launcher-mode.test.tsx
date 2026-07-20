@@ -231,6 +231,49 @@ describe("Desktop launcher dock button by mode", () => {
     });
   });
 
+  it("removes cached design apps that are absent from the fresh bootstrap", async () => {
+    const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
+    expect(scope).not.toBeNull();
+    saveShellSnapshot(scope, {
+      bootstrap: {
+        layout: { windows: [] },
+        modules: [],
+        apps: [{
+          name: "Minesweeper",
+          path: "/files/apps/winxp-minesweeper/index.html",
+          icon: "winxp-minesweeper",
+          slug: "winxp-minesweeper",
+        }],
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
+      if (url.includes("/api/shell/bootstrap")) {
+        return jsonResponse({
+          layout: { windows: [] },
+          modules: [],
+          apps: [{
+            name: "Stickies",
+            path: "/files/apps/stickies/dist/index.html",
+            icon: "stickies",
+            slug: "stickies",
+          }],
+        });
+      }
+      return jsonResponse({});
+    }));
+    resetShellMode("dev", true);
+
+    render(<DesktopComponent cacheScope={scope} />);
+
+    await waitFor(() => {
+      const paths = windowManagerStore.getState().apps.map((app) => app.path);
+      expect(paths).toContain("apps/stickies/dist/index.html");
+      expect(paths).not.toContain("apps/winxp-minesweeper/index.html");
+    });
+  });
+
   it("ignores stale bootstrap responses after cache scope changes", async () => {
     const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
     expect(scope).not.toBeNull();
