@@ -540,11 +540,13 @@ export class ShellRegistry {
     const observedAgent = focusedPaneRuntime.observed
       ? inferAgentFromCommand(focusedPaneRuntime.command ?? undefined)
       : undefined;
-    const compatibleSnapshot = agentSnapshot?.phase !== "ended" && (
-      focusedPaneRuntime.observed
-        ? agentSnapshot?.agent === observedAgent
-        : Boolean(agentSnapshot)
-    ) ? agentSnapshot : null;
+    const compatibleSnapshot = agentSnapshot
+      && agentSnapshot.phase !== "ended"
+      && (!focusedPaneRuntime.observed || (
+        observedAgent !== undefined && agentSnapshot.agent === observedAgent
+      ))
+      ? agentSnapshot
+      : null;
     const launchHintAgent = !focusedPaneRuntime.observed
       && !agentSnapshot
       && session.agent

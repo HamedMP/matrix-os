@@ -113,6 +113,9 @@ export interface ZellijAdapter {
   setShellTheme(themeId: MatrixZellijShellThemeId): Promise<void>;
 }
 
+const ZellijTabInfoSchema = z.object({
+  tab_id: z.number().int().nonnegative(),
+}).passthrough();
 const ZellijPaneListSchema = z.array(z.object({
   is_plugin: z.boolean(),
   is_focused: z.boolean(),
@@ -294,6 +297,22 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
   let ensureConfigPromise: Promise<void> | null = null;
   let shellThemeId: MatrixZellijShellThemeId = "dark";
 
+  function cacheFocusedPaneRuntime(
+    name: string,
+    value: FocusedPaneRuntimeObservation,
+  ): FocusedPaneRuntimeObservation {
+    while (focusedPaneRuntimeCache.size >= MAX_FOCUSED_PANE_RUNTIME_CACHE_ENTRIES) {
+      const oldest = focusedPaneRuntimeCache.keys().next().value as string | undefined;
+      if (!oldest) break;
+      focusedPaneRuntimeCache.delete(oldest);
+    }
+    focusedPaneRuntimeCache.set(name, {
+      expiresAt: nowMs() + FOCUSED_PANE_RUNTIME_CACHE_TTL_MS,
+      value,
+    });
+    return value;
+  }
+
   async function ensureMatrixZellijConfig(): Promise<void> {
     if (!zellijConfigPaths) {
       return;
@@ -451,38 +470,31 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         if (!panes.success) {
           throw new Error("Invalid focused pane runtime response");
         }
-        const focusedPane = panes.data.find((pane) => (
-          !pane.is_plugin && pane.is_focused
-        ));
+        const focusedPanes = panes.data.filter((pane) => !pane.is_plugin && pane.is_focused);
+        let focusedPane = focusedPanes.length === 1 ? focusedPanes[0] : undefined;
+        if (focusedPanes.length > 1) {
+          const tabJson = await run(["--session", name, "action", "current-tab-info", "--json"]);
+          const tab = ZellijTabInfoSchema.safeParse(JSON.parse(tabJson));
+          if (!tab.success) {
+            throw new Error("Invalid focused tab runtime response");
+          }
+          focusedPane = focusedPanes.find((pane) => pane.tab_id === tab.data.tab_id);
+        }
+        if (!focusedPane?.pane_command) {
+          console.warn("[shell] focused pane command unavailable");
+          return cacheFocusedPaneRuntime(name, UNAVAILABLE_FOCUSED_PANE_RUNTIME);
+        }
         const value: FocusedPaneRuntimeObservation = {
-          cwd: focusedPane?.pane_cwd ?? null,
-          command: focusedPane?.pane_command ?? null,
+          cwd: focusedPane.pane_cwd ?? null,
+          command: focusedPane.pane_command,
           observed: true,
         };
-        while (focusedPaneRuntimeCache.size >= MAX_FOCUSED_PANE_RUNTIME_CACHE_ENTRIES) {
-          const oldest = focusedPaneRuntimeCache.keys().next().value as string | undefined;
-          if (!oldest) break;
-          focusedPaneRuntimeCache.delete(oldest);
-        }
-        focusedPaneRuntimeCache.set(name, {
-          expiresAt: nowMs() + FOCUSED_PANE_RUNTIME_CACHE_TTL_MS,
-          value,
-        });
-        return value;
+        return cacheFocusedPaneRuntime(name, value);
       } catch (err: unknown) {
         if (!(err instanceof Error && "code" in err && (err as { code?: unknown }).code === "zellij_failed")) {
           console.warn("[shell] focused pane runtime unavailable:", err instanceof Error ? err.message : String(err));
         }
-        while (focusedPaneRuntimeCache.size >= MAX_FOCUSED_PANE_RUNTIME_CACHE_ENTRIES) {
-          const oldest = focusedPaneRuntimeCache.keys().next().value as string | undefined;
-          if (!oldest) break;
-          focusedPaneRuntimeCache.delete(oldest);
-        }
-        focusedPaneRuntimeCache.set(name, {
-          expiresAt: nowMs() + FOCUSED_PANE_RUNTIME_CACHE_TTL_MS,
-          value: UNAVAILABLE_FOCUSED_PANE_RUNTIME,
-        });
-        return UNAVAILABLE_FOCUSED_PANE_RUNTIME;
+        return cacheFocusedPaneRuntime(name, UNAVAILABLE_FOCUSED_PANE_RUNTIME);
       }
     },
     async createSession(options) {
