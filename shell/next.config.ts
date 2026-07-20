@@ -3,8 +3,15 @@ import { resolve } from "node:path";
 import type { NextConfig } from "next";
 
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
+const platformShellAssetPrefix = process.env.MATRIX_PLATFORM_AUTH_SHELL === "1"
+  ? "/__platform-shell"
+  : undefined;
 
 const nextConfig: NextConfig = {
+  assetPrefix: platformShellAssetPrefix,
+  env: {
+    NEXT_PUBLIC_PLATFORM_SHELL_ASSET_PREFIX: platformShellAssetPrefix ?? "",
+  },
   reactCompiler: true,
   transpilePackages: ["@matrix-os/observability"],
   // Allow HMR websockets when the dev shell is reached through a tunnel

@@ -1,5 +1,5 @@
 const APP_DOMAIN_SAFE_SERVICE_WORKER = `
-const VERSION = "app-v1";
+const VERSION = "app-v2";
 const CACHE_STATIC = "matrix-os-static-" + VERSION;
 
 self.addEventListener("install", () => {
@@ -26,6 +26,7 @@ function isBypassed(url) {
     p.startsWith("/_clerk") ||
     p.startsWith("/__clerk") ||
     p.startsWith("/__session") ||
+    p.startsWith("/__platform-shell/") ||
     p.startsWith("/sign-in") ||
     p.startsWith("/sign-up") ||
     p.startsWith("/files/apps/") ||

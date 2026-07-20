@@ -968,6 +968,114 @@ describe("platform proxy routing", () => {
     expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it("serves namespaced platform shell assets before Clerk or selected-VPS routing", async () => {
+    const verifyToken = vi.fn().mockResolvedValue({ sub: "user_alice" });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("platform-runtime-chunk", {
+        status: 200,
+        headers: { "content-type": "text/javascript" },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({ verifyToken }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/__platform-shell/_next/static/chunks/runtime-manager.js", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        cookie: "matrix_shell_route=alice-staging",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("platform-runtime-chunk");
+    expect(verifyToken).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://127.0.0.1:3200/_next/static/chunks/runtime-manager.js",
+    );
+    const forwardedHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(forwardedHeaders.get("host")).toBe("127.0.0.1:3200");
+    expect(forwardedHeaders.get("x-forwarded-host")).toBe("app.matrix-os.com");
+    expect(forwardedHeaders.get("x-forwarded-proto")).toBe("http");
+  });
+
+  it("serves namespaced runtime public images from the platform shell", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("platform-runtime-image", {
+        status: 200,
+        headers: { "content-type": "image/webp" },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/__platform-shell/runtime-shell-backdrop.webp", {
+      headers: { host: "app.matrix-os.com" },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("platform-runtime-image");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://127.0.0.1:3200/runtime-shell-backdrop.webp",
+    );
+  });
+
+  it("returns a bounded no-store 503 when a platform shell asset is unavailable", async () => {
+    const timeout = new Error("The operation was aborted due to timeout");
+    timeout.name = "TimeoutError";
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(timeout);
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/__platform-shell/_next/static/chunks/runtime-manager.js", {
+      headers: { host: "app.matrix-os.com" },
+    });
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get("cache-control")).toBe("no-store, private");
+    expect(res.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("retry-after")).toBe("5");
+    const body = await res.text();
+    expect(body).toBe("Matrix OS shell asset unavailable");
+    expect(body).not.toContain("Loading your Matrix computer");
+    expect(body).not.toContain('data-matrix-platform-fallback-auth="true"');
+  });
+
+  it("does not expose APIs or mutations through the platform shell asset namespace", async () => {
+    const verifyToken = vi.fn().mockResolvedValue({ sub: "user_alice" });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({ verifyToken }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const apiRes = await app.request("/__platform-shell/api/auth/computers", {
+      headers: { host: "app.matrix-os.com" },
+    });
+    const mutationRes = await app.request("/__platform-shell/_next/static/chunks/runtime-manager.js", {
+      method: "POST",
+      headers: { host: "app.matrix-os.com" },
+    });
+
+    expect(apiRes.status).toBe(404);
+    expect(mutationRes.status).toBe(405);
+    expect(verifyToken).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("serves signed-out runtime management from the app shell for Clerk authentication", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("clerk-runtime-sign-in", { status: 200, headers: { "content-type": "text/html" } }),
