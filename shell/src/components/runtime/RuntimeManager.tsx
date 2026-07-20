@@ -334,15 +334,22 @@ export function RuntimeManager({
   const resumeProvisionStartedRef = useRef(false);
   const stepRef = useRef(step);
   const navigateInternal = onInternalNavigate ?? navigateWithinApp;
+  const navigateInternalRef = useRef(navigateInternal);
+  const legacyRedirectedRef = useRef(false);
 
   useEffect(() => {
     stepRef.current = step;
   }, [step]);
 
   useEffect(() => {
-    if (surface !== "manager" || !hasNewComputerIntent()) return;
-    navigateInternal(ADD_COMPUTER_ONBOARDING_PATH);
-  }, [navigateInternal, surface]);
+    navigateInternalRef.current = navigateInternal;
+  }, [navigateInternal]);
+
+  useEffect(() => {
+    if (surface !== "manager" || !hasNewComputerIntent() || legacyRedirectedRef.current) return;
+    legacyRedirectedRef.current = true;
+    navigateInternalRef.current(ADD_COMPUTER_ONBOARDING_PATH);
+  }, [surface]);
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this authenticated client inventory depends on Clerk state; the disposed guard prevents stale writes after refresh or unmount.
   useEffect(() => {
@@ -359,8 +366,11 @@ export function RuntimeManager({
         });
         if (!disposed) {
           setOverview({ status: "error", inventory: null, billing: null });
-          if (surface === "onboarding" && stepRef.current === "name") {
-            setSafeError("Your computer setup could not be loaded. Try again in a moment.");
+          const failedStep = stepRef.current;
+          if (surface === "onboarding" && (failedStep === "name" || failedStep === "billing_wait")) {
+            setSafeError(failedStep === "billing_wait"
+              ? "Your computer capacity could not be refreshed. Try again in a moment."
+              : "Your computer setup could not be loaded. Try again in a moment.");
             errorRetryActionRef.current = "overview";
             setStep("error");
           }

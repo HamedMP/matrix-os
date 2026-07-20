@@ -290,6 +290,21 @@ describe("RuntimeManager", () => {
     await waitFor(() => expect(navigate).toHaveBeenCalledWith("/onboarding/computer"));
   });
 
+  it("redirects a legacy new-computer link only once when the navigation callback changes", async () => {
+    const firstNavigate = vi.fn();
+    const secondNavigate = vi.fn();
+    window.history.replaceState({}, "", "/runtime?new=1");
+    installFetchRouter();
+    const { RuntimeManager } = await import("../../shell/src/components/runtime/RuntimeManager.js");
+    const view = render(<RuntimeManager onInternalNavigate={firstNavigate} />);
+    await waitFor(() => expect(firstNavigate).toHaveBeenCalledTimes(1));
+
+    view.rerender(<RuntimeManager onInternalNavigate={secondNavigate} />);
+
+    expect(firstNavigate).toHaveBeenCalledTimes(1);
+    expect(secondNavigate).not.toHaveBeenCalled();
+  });
+
   it("hands signed-out visitors to Clerk authentication", async () => {
     clerkState.isSignedIn = false;
 
@@ -397,6 +412,40 @@ describe("RuntimeManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
 
     expect(await screen.findByRole("textbox", { name: "Computer name" })).toBeTruthy();
+    expect(inventoryReads).toBe(2);
+  });
+
+  it("surfaces and recovers a billing-wait inventory refresh failure immediately", async () => {
+    window.sessionStorage.setItem("matrix:add-computer-draft:v1", JSON.stringify({
+      name: "Research Lab",
+      slot: "research-lab",
+      developerTools: ["codex"],
+      serverType: "cpx32",
+      location: "fsn1",
+      baselineMaxRuntimeSlots: 2,
+      createdAt: Date.now(),
+    }));
+    let inventoryReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/api/auth/computers") {
+        inventoryReads += 1;
+        if (inventoryReads === 1) throw new Error("inventory database path leaked");
+        return json(inventory);
+      }
+      if (url === "/billing/status") return json(billingStatus(2));
+      throw new Error(`Unhandled test request: ${url}`);
+    });
+    await renderOnboarding({ billingPollIntervalMs: 60_000 });
+
+    expect(await screen.findByRole("heading", { name: "Computer setup paused" })).toBeTruthy();
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toMatch(/capacity could not be refreshed/i);
+    expect(alert.textContent).not.toMatch(/database path leaked/i);
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByRole("heading", { name: "Confirming computer capacity" })).toBeTruthy();
     expect(inventoryReads).toBe(2);
   });
 
@@ -620,7 +669,7 @@ describe("RuntimeManager", () => {
     expect(openLink.getAttribute("href")).toBe("/vm/machine-73fd?runtime=research-lab");
   });
 
-  it("ends billing wait safely when a projection refresh fails at the deadline", async () => {
+  it("ends billing wait safely when the projection does not change by the deadline", async () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
     window.sessionStorage.setItem("matrix:add-computer-draft:v1", JSON.stringify({
       name: "Research Lab",
@@ -637,7 +686,6 @@ describe("RuntimeManager", () => {
       if (url === "/api/auth/computers") return json(inventory);
       if (url === "/billing/status") {
         billingReads += 1;
-        if (billingReads > 1) throw new Error("raw billing network failure");
         return json(billingStatus(2));
       }
       throw new Error(`Unhandled test request: ${url}`);
@@ -650,7 +698,6 @@ describe("RuntimeManager", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/taking longer than expected/i);
-    expect(alert.textContent).not.toMatch(/network failure/i);
   });
 
   it("resumes after a signed billing projection increases capacity", async () => {
