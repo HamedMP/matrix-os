@@ -81,7 +81,7 @@
           "@babel/traverse": "^7.29.0"
         }
       },
-      "react-native-edge-to-edge@1.8.1": {
+      "react-native-edge-to-edge@*": {
         "dependencies": {
           "@expo/config-plugins": "57.0.2"
         }

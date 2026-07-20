@@ -118,11 +118,16 @@ describe("workspace package extensions", () => {
   const workspaceConfig = readFileSync(join(__dirname, "../../../pnpm-workspace.yaml"), "utf8");
 
   it("declares the Expo config-plugins dependency that the plugin loader needs", () => {
-    expect(
-      rootPackage.pnpm?.packageExtensions?.["react-native-edge-to-edge@1.8.1"]?.dependencies?.[
-        "@expo/config-plugins"
-      ],
-    ).toBe("57.0.2");
+    // Keyed on `@*` on purpose: pinning an exact version means the next
+    // react-native-edge-to-edge upgrade silently stops matching and the EAS
+    // build starts failing again.
+    const extensions = rootPackage.pnpm?.packageExtensions ?? {};
+    const keys = Object.keys(extensions).filter((key) =>
+      key.startsWith("react-native-edge-to-edge@"),
+    );
+
+    expect(keys).toEqual(["react-native-edge-to-edge@*"]);
+    expect(extensions[keys[0]]?.dependencies?.["@expo/config-plugins"]).toBe("57.0.2");
   });
 
   it("keeps package extensions out of pnpm-workspace.yaml, where they are ignored", () => {
