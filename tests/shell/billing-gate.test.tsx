@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const clerkState = vi.hoisted(() => ({
@@ -70,6 +70,7 @@ async function loadBillingGate() {
 }
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => window.location.pathname,
   useRouter: () => ({
     replace: navigationState.replace,
   }),
@@ -153,6 +154,56 @@ describe("BillingGate", () => {
         method: "GET",
       }),
     );
+  });
+
+  it("keeps the signup layout visible while billing resolves and offers inline retry after 12 seconds", async () => {
+    vi.useFakeTimers();
+    window.history.replaceState({}, "", "/?billing=setup&handoff=signup");
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.activePlan = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>(() => {}));
+    vi.resetModules();
+
+    const { BillingGate } = await loadBillingGate();
+
+    render(
+      <BillingGate loadingSurface="signup-handoff">
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(screen.getByText("Loading billing status")).toBeTruthy();
+    expect(screen.getByText("A computer in the cloud for your AI agents")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(12_000);
+    });
+
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(screen.getByText("Billing settings are still loading")).toBeTruthy();
+    expect(screen.queryByText("Welcome back to Matrix")).toBeNull();
+  });
+
+  it("opens locked Billing settings directly after the marked handoff resolves inactive", async () => {
+    window.history.replaceState({}, "", "/?billing=setup&handoff=signup");
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.activePlan = null;
+    vi.resetModules();
+
+    const { BillingGate } = await loadBillingGate();
+
+    render(
+      <BillingGate loadingSurface="signup-handoff">
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Billing" })).toBeTruthy();
+    expect(screen.queryByText("Loading billing status")).toBeNull();
+    expect(screen.queryByText("Confirming your subscription")).toBeNull();
   });
 
   it("revalidates app-session billing instead of reusing a signed-out active cache", async () => {
