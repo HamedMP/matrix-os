@@ -14,9 +14,12 @@ import {
 import { useJourney, type JourneyState } from "@/hooks/useJourney";
 import { MatrixBootMark } from "@/components/MatrixBootMark";
 import {
-  DefaultInstallsStep,
-} from "@/components/onboarding/DefaultInstallsStep";
+  PROVISIONING_RETRY_ERROR,
+  isAcceptedProvisionResponse,
+} from "@/lib/provisioning-handoff";
 import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
+import { Settings } from "@/components/Settings";
+import { navigateForOnboarding } from "@/lib/onboarding-navigation";
 
 // Phases where the shell (Desktop) takes over — first-run UI is owned by Desktop,
 // ready is the running shell. BootSequence only renders the billing/build steps.
@@ -146,7 +149,10 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
   async function startProvision(developerTools: DeveloperToolId[]): Promise<void> {
     setWorking(true);
     setInstallError(null);
-    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower this ordered try/catch/finally, but the shape is required: set a safe user error on failed provision starts and always clear the loading state.
+    const finishProvision = (error: string | null = null): void => {
+      setWorking(false);
+      setInstallError(error);
+    };
     try {
       const res = await fetch("/api/auth/provision-runtime", {
         method: "POST",
@@ -155,16 +161,31 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
         body: JSON.stringify({ developerTools }),
         signal: AbortSignal.timeout(10_000),
       });
-      if (!res.ok && res.status !== 409) {
-        setInstallError("Matrix could not start building this VPS. Try again.");
+      if (res.status === 402) {
+        finishProvision();
+        refreshJourney();
         return;
       }
-      refreshJourney();
+      if (!await isAcceptedProvisionResponse(res)) {
+        finishProvision(PROVISIONING_RETRY_ERROR);
+        return;
+      }
+      const sessionResponse = await fetch("/api/auth/app-session", {
+        method: "POST",
+        credentials: "include",
+        headers: await authHeaders(getToken),
+        body: JSON.stringify({ redirectTo: "/" }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!sessionResponse.ok) {
+        finishProvision(PROVISIONING_RETRY_ERROR);
+        return;
+      }
+      navigateForOnboarding("/");
+      finishProvision();
     } catch (err: unknown) {
-      setInstallError("Matrix could not start building this VPS. Try again.");
       console.warn("[boot] provision start failed", err instanceof Error ? err.name : typeof err);
-    } finally {
-      setWorking(false);
+      finishProvision(PROVISIONING_RETRY_ERROR);
     }
   }
 
@@ -272,15 +293,19 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
       );
     case "install_choices_required":
       return (
-        <BootShell activeStep="installs">
-          <DefaultInstallsStep
-            loading={working}
-            error={installError}
-            onBuild={(tools) => {
+        <Settings
+          open
+          onOpenChange={() => {}}
+          closeDisabled
+          billingActiveOverride
+          onboardingDefaultInstalls={{
+            loading: working,
+            error: installError,
+            onBuild: (tools) => {
               void startProvision(tools);
-            }}
-          />
-        </BootShell>
+            },
+          }}
+        />
       );
     case "provisioning":
       return (

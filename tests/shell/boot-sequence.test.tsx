@@ -9,6 +9,9 @@ const clerkState = vi.hoisted(() => ({
   isSignedIn: true,
   getToken: vi.fn(async () => "clerk-token"),
 }));
+const onboardingNavigation = vi.hoisted(() => ({
+  navigate: vi.fn(),
+}));
 
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({
@@ -17,6 +20,14 @@ vi.mock("@clerk/nextjs", () => ({
     getToken: clerkState.getToken,
   }),
   RedirectToSignIn: () => <div data-testid="redirect-to-sign-in">redirecting to sign in</div>,
+}));
+
+vi.mock("@/lib/onboarding-navigation", () => ({
+  navigateForOnboarding: onboardingNavigation.navigate,
+}));
+
+vi.mock("@/components/UserButton", () => ({
+  UserButton: () => <button type="button">Account menu</button>,
 }));
 
 import { BootSequence } from "../../shell/src/components/BootSequence";
@@ -44,6 +55,7 @@ describe("BootSequence", () => {
   beforeEach(() => {
     clerkState.isLoaded = true;
     clerkState.isSignedIn = true;
+    onboardingNavigation.navigate.mockReset();
   });
   afterEach(() => {
     cleanup();
@@ -116,21 +128,37 @@ describe("BootSequence", () => {
     expect(screen.getByText("Booting your computer")).toBeTruthy();
   });
 
-  it("shows default installs after payment and starts provisioning with selected tools", async () => {
-    const fetchMock = mockJourney({
+  it("shows Settings-style default installs and immediately exchanges the app session after a 202", async () => {
+    const journeyState: JourneyState = {
       phase: "install_choices_required",
       detail: "Choose default installs before building your Matrix computer.",
       nextAction: { kind: "choose_default_installs" },
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/journey")) {
+        return new Response(JSON.stringify(journeyState), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url === "/api/auth/provision-runtime") {
+        return new Response("{}", { status: 202, headers: { "content-type": "application/json" } });
+      }
+      if (url === "/api/auth/app-session") {
+        return new Response(JSON.stringify({ redirectTo: "/" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response("{}", { status: 500 });
     });
+    vi.stubGlobal("fetch", fetchMock);
+    const timeoutSpy = vi.spyOn(window, "setTimeout");
 
     render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
 
-    expect(await screen.findByText("Preinstall coding agents?")).toBeTruthy();
+    expect((await screen.findByRole("button", { name: "Default installs" })).getAttribute("aria-current")).toBe("page");
     for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
       expect(screen.getByRole("checkbox", { name: label })).toHaveProperty("checked", true);
     }
     fireEvent.click(screen.getByRole("checkbox", { name: "OpenCode" }));
-    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
+    timeoutSpy.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -141,6 +169,63 @@ describe("BootSequence", () => {
         }),
       ),
     );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/auth/app-session",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ redirectTo: "/" }) }),
+    );
+    expect(onboardingNavigation.navigate).toHaveBeenCalledWith("/");
+    expect(timeoutSpy.mock.calls.some(([, delay]) => delay === 8_000)).toBe(false);
+    expect(screen.queryByText(/Starting|Preparing|Loading your Matrix computer/i)).toBeNull();
+  });
+
+  it("accepts only a recognized provisioning conflict before the immediate session handoff", async () => {
+    const journeyState: JourneyState = {
+      phase: "install_choices_required",
+      detail: "Choose default installs before building your Matrix computer.",
+      nextAction: { kind: "choose_default_installs" },
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/journey")) {
+        return new Response(JSON.stringify(journeyState), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url === "/api/auth/provision-runtime") {
+        return new Response(JSON.stringify({ code: "provisioning_conflict" }), { status: 409, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ redirectTo: "/" }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+    fireEvent.click(await screen.findByRole("button", { name: "Build VPS" }));
+
+    await waitFor(() => expect(onboardingNavigation.navigate).toHaveBeenCalledWith("/"));
+  });
+
+  it("stays on the chooser with the approved retry error when session exchange fails", async () => {
+    const journeyState: JourneyState = {
+      phase: "install_choices_required",
+      detail: "Choose default installs before building your Matrix computer.",
+      nextAction: { kind: "choose_default_installs" },
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/journey")) {
+        return new Response(JSON.stringify(journeyState), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url === "/api/auth/provision-runtime") {
+        return new Response("{}", { status: 202, headers: { "content-type": "application/json" } });
+      }
+      return new Response("upstream provider secret", { status: 503 });
+    }));
+
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+    fireEvent.click(await screen.findByRole("button", { name: "Build VPS" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("Matrix could not start building this VPS. Try again.");
+    expect((screen.getByRole("button", { name: "Build VPS" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText("upstream provider secret")).toBeNull();
+    expect(onboardingNavigation.navigate).not.toHaveBeenCalled();
   });
 
   it("offers retry on a retryable failure and calls retry-provision", async () => {

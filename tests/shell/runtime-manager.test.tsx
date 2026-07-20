@@ -347,8 +347,8 @@ describe("RuntimeManager", () => {
     fireEvent.click(screen.getByRole("button", { name: /US West.*hil/i }));
     fireEvent.click(screen.getByRole("button", { name: "Continue setup" }));
 
-    expect(await screen.findByRole("heading", { name: "Preinstall coding agents?" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
+    expect(await screen.findByRole("heading", { name: "Default installs" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -454,7 +454,7 @@ describe("RuntimeManager", () => {
     await renderOnboarding();
     await beginNamedComputer("Research Lab");
 
-    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -481,7 +481,7 @@ describe("RuntimeManager", () => {
     await renderOnboarding({ onExternalNavigate: navigate });
     await beginNamedComputer("Research Lab");
 
-    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -516,7 +516,7 @@ describe("RuntimeManager", () => {
     await renderOnboarding({ onExternalNavigate: navigate });
     await beginNamedComputer("Research Lab");
 
-    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/Billing is unavailable/i);
     now.mockReturnValue(121_001);
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
@@ -534,7 +534,7 @@ describe("RuntimeManager", () => {
     await renderOnboarding();
     await beginNamedComputer("Research Lab");
 
-    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
 
     expect((await screen.findByRole("alert")).textContent).toMatch(/managed internally/i);
     expect(fetchMock).not.toHaveBeenCalledWith("/billing/portal", expect.anything());
@@ -547,7 +547,7 @@ describe("RuntimeManager", () => {
     });
     await renderOnboarding();
     await beginNamedComputer("Research Lab");
-    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/could not start building/i);
@@ -569,7 +569,7 @@ describe("RuntimeManager", () => {
     });
     await renderOnboarding();
     await beginNamedComputer("Research Lab");
-    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
 
     const retryButton = await screen.findByRole("button", { name: "Retry build" });
     expect(document.body.textContent).not.toMatch(/Hetzner|database|\/var\/lib|provider/i);
@@ -597,7 +597,7 @@ describe("RuntimeManager", () => {
     });
     await renderOnboarding({ onInternalNavigate: navigate });
     await beginNamedComputer("Research Lab");
-    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
 
     const backButton = await screen.findByRole("button", { name: "Back to computers" });
     expect(screen.queryByRole("button", { name: "Retry build" })).toBeNull();
@@ -629,7 +629,7 @@ describe("RuntimeManager", () => {
     });
     await renderOnboarding({ journeyPollIntervalMs: 10 });
     await beginNamedComputer("Research Lab");
-    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
 
     expect(await screen.findByText(/Booting/i)).toBeTruthy();
     expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/api/journey?runtimeSlot="))).toHaveLength(2);
@@ -663,7 +663,7 @@ describe("RuntimeManager", () => {
     });
     await renderOnboarding({ journeyPollIntervalMs: 10 });
     await beginNamedComputer("Research Lab");
-    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
 
     const openLink = await screen.findByRole("link", { name: "Open computer" });
     expect(openLink.getAttribute("href")).toBe("/vm/machine-73fd?runtime=research-lab");

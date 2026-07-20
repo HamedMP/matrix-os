@@ -193,14 +193,28 @@ export function getAuthPage(
       backdrop-filter: blur(14px);
     }
     .auth-card.default-installs-card {
-      max-width: 860px;
+      width: min(1180px, 94vw);
+      max-width: 1180px;
+      height: min(760px, 90vh);
+      min-height: 0;
       align-items: stretch;
+      overflow: hidden;
+      padding: 0;
+    }
+    body.default-installs-active { overflow: hidden; }
+    body.default-installs-active .page { display: block; min-height: 100vh; }
+    body.default-installs-active .story { display: none; }
+    body.default-installs-active .auth-panel {
+      min-height: 100vh;
+      padding: 24px;
+      background: rgba(50,53,46,0.20);
+      backdrop-filter: blur(18px);
     }
     #auth { width: 100%; min-height: 400px; display: flex; align-items: center; justify-content: center; }
     .loading { color: #7A7768; font-size: 14px; }
     .session-state {
       display: grid;
-      gap: 16px;
+      gap: 12px;
       width: 100%;
       color: #32352E;
       text-align: left;
@@ -240,15 +254,15 @@ export function getAuthPage(
       color: #fffdf6;
     }
     .default-installs-state {
-      gap: 16px;
+      display: grid;
+      gap: 12px;
+      width: 100%;
       max-width: 100%;
+      padding: 18px;
+      overflow-y: auto;
     }
     .install-hero {
-      border: 1px solid rgba(67,78,63,0.15);
-      border-radius: 22px;
-      background: #fbf7ed;
-      box-shadow: 0 24px 80px rgba(50,53,46,0.12);
-      padding: 20px 22px;
+      padding: 0;
     }
     .install-kicker {
       margin: 0 0 8px;
@@ -261,7 +275,7 @@ export function getAuthPage(
     .install-title {
       margin: 0;
       color: #32352E;
-      font-size: 30px;
+      font-size: 18px;
       line-height: 1.08;
       font-weight: 750;
       letter-spacing: 0;
@@ -307,7 +321,7 @@ export function getAuthPage(
       gap: 8px;
     }
     .developer-tool-option {
-      min-height: 68px;
+      min-height: 60px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -317,7 +331,7 @@ export function getAuthPage(
       background: #fff;
       color: #32352E;
       cursor: pointer;
-      padding: 10px 12px;
+      padding: 8px 12px;
       transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
     }
     .developer-tool-option.selected {
@@ -357,13 +371,12 @@ export function getAuthPage(
       height: 22px;
     }
     .developer-tool-name {
-      overflow: hidden;
       color: #32352E;
       font-size: 14px;
       font-weight: 650;
       line-height: 1.25;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      overflow-wrap: anywhere;
+      white-space: normal;
     }
     .developer-tool-option input {
       width: 16px;
@@ -407,6 +420,89 @@ export function getAuthPage(
       color: #fffdf6;
       box-shadow: 0 14px 30px rgba(63,74,58,0.18);
     }
+    .default-installs-actions button.primary[data-loading="true"]::before {
+      content: "";
+      width: 15px;
+      height: 15px;
+      display: inline-block;
+      margin-right: 8px;
+      border: 2px solid rgba(255,253,246,0.42);
+      border-top-color: #fffdf6;
+      border-radius: 50%;
+      vertical-align: -2px;
+      animation: button-spin 700ms linear infinite;
+    }
+    .default-installs-error {
+      display: none;
+      border: 1px solid rgba(208,111,37,0.28);
+      border-radius: 12px;
+      background: rgba(208,111,37,0.10);
+      color: #32352E;
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .default-installs-error.visible { display: block; }
+    .settings-window { width: 100%; height: 100%; display: flex; flex-direction: column; }
+    .settings-titlebar {
+      min-height: 42px;
+      display: grid;
+      grid-template-columns: 52px 1fr 52px;
+      align-items: center;
+      border-bottom: 1px solid rgba(67,78,63,0.14);
+      padding: 0 14px;
+      background: rgba(252,252,248,0.94);
+      user-select: none;
+    }
+    .settings-titlebar h2 { margin: 0; text-align: center; color: #32352E; font-size: 12px; font-weight: 650; }
+    .traffic-lights { display: flex; gap: 6px; }
+    .traffic-light { width: 12px; height: 12px; border-radius: 50%; opacity: 0.52; }
+    .traffic-light.close { background: #ff5f57; }
+    .traffic-light.minimize { background: #febc2e; }
+    .traffic-light.maximize { background: #28c840; }
+    .settings-layout { min-height: 0; flex: 1; display: flex; }
+    .settings-sidebar {
+      width: 208px;
+      flex: none;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid rgba(67,78,63,0.14);
+      background: rgba(252,252,248,0.58);
+      padding: 10px 8px;
+    }
+    .settings-nav { display: grid; gap: 3px; }
+    .settings-nav-item {
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: rgba(67,78,63,0.42);
+      padding: 7px 9px;
+      text-align: left;
+      font: inherit;
+      font-size: 13px;
+    }
+    .settings-nav-item.active { background: rgba(208,111,37,0.12); color: #32352E; font-weight: 700; }
+    .settings-nav-status { margin-left: auto; color: rgba(67,78,63,0.52); font-size: 10px; line-height: 1.2; text-align: right; }
+    .settings-nav-item:disabled .settings-nav-status:not(.completed) { display: none; }
+    .settings-account-footer {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin-top: auto;
+      border-top: 1px solid rgba(67,78,63,0.14);
+      padding: 12px 4px 2px;
+    }
+    .settings-account-avatar { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: #434E3F; color: #fffdf6; font-size: 12px; font-weight: 750; }
+    .settings-account-copy { min-width: 0; flex: 1; }
+    .settings-account-name { overflow: hidden; color: #32352E; font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+    .settings-account-detail { overflow: hidden; color: rgba(67,78,63,0.55); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+    .settings-sign-out { border: 0; background: transparent; color: rgba(67,78,63,0.66); cursor: pointer; font: inherit; font-size: 11px; }
+    .settings-content { min-width: 0; flex: 1; overflow: hidden; background: rgba(252,252,248,0.88); }
+    @keyframes button-spin { to { transform: rotate(360deg); } }
     @media (max-width: 860px) {
       .page { grid-template-columns: 1fr; }
       .story { min-height: 42vh; border-right: 0; border-bottom: 1px solid #D6D3C8; padding: 40px 24px; }
@@ -418,12 +514,29 @@ export function getAuthPage(
       .developer-tool-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .default-installs-footer { align-items: stretch; flex-direction: column; }
       .default-installs-actions { justify-content: flex-end; }
+      body.default-installs-active .auth-panel { padding: 16px; }
+      .auth-card.default-installs-card { width: 100%; height: calc(100vh - 32px); max-width: none; }
+      .settings-sidebar { width: 180px; }
     }
     @media (max-width: 520px) {
       .install-title { font-size: 26px; }
       .developer-tool-grid { grid-template-columns: 1fr; }
       .default-installs-actions { flex-direction: column; }
       .default-installs-actions button { width: 100%; }
+      body.default-installs-active .auth-panel { padding: 0; }
+      .auth-card.default-installs-card { height: 100vh; border: 0; border-radius: 0; }
+      .settings-layout { flex-direction: column; }
+      .settings-sidebar { width: 100%; border-right: 0; border-bottom: 1px solid rgba(67,78,63,0.14); }
+      .settings-nav { display: flex; flex-wrap: wrap; overflow-x: visible; }
+      .settings-nav-item { flex: none; }
+      .settings-nav-item.active { order: -1; }
+      .settings-nav-status { display: none; }
+      .settings-account-footer { order: -1; margin: 0 0 8px; border-top: 0; border-bottom: 1px solid rgba(67,78,63,0.14); padding: 2px 4px 10px; }
+      .default-installs-state { gap: 10px; padding: 12px 16px 14px; }
+      .developer-tools-panel { padding: 12px; }
+      .developer-tools-header { margin-bottom: 8px; }
+      .developer-tool-grid { gap: 6px; }
+      .developer-tool-option { min-height: 56px; padding: 6px 10px; }
     }
   </style>
 </head>
@@ -498,10 +611,13 @@ export function getAuthPage(
     var checkoutJustCompleted = checkoutReturnRequested && hasTrustedCheckoutReturn();
     if (checkoutReturnRequested) stripCheckoutReturnParams();
     var provisionStarted = false;
-    var provisioningPolls = 0;
-    var maxProvisioningPolls = 60;
     var billingConfirmationPolls = 0;
     var maxBillingConfirmationPolls = 60;
+    var billingRetryTimeoutId = null;
+    var provisioningRetryError = 'Matrix could not start building this VPS. Try again.';
+    var activeProvisionButton = null;
+    var activeProvisionInputs = [];
+    var activeProvisionError = null;
     var appearance = {
       variables: {
         colorPrimary: '#D06F25',
@@ -578,10 +694,11 @@ export function getAuthPage(
         signOutButton.textContent = 'Signing out...';
         fetch('/api/auth/app-session', {
           method: 'DELETE',
-          credentials: 'same-origin'
+          credentials: 'same-origin',
+          signal: AbortSignal.timeout(10000)
         })
           .catch(function(err) {
-            console.error('[matrix] App session clear failed', err instanceof Error ? err.message : String(err));
+            console.error('[matrix] App session clear failed', err instanceof Error ? err.name : String(typeof err));
           })
           .then(function() {
             return clerkSignOutWithTimeout();
@@ -623,7 +740,122 @@ export function getAuthPage(
       var selectedTools = defaultDeveloperTools.slice();
 
       var state = document.createElement('div');
-      state.className = 'session-state default-installs-state';
+      state.className = 'settings-window';
+
+      var titleBar = document.createElement('header');
+      titleBar.className = 'settings-titlebar';
+      var trafficLights = document.createElement('div');
+      trafficLights.className = 'traffic-lights';
+      ['close', 'minimize', 'maximize'].forEach(function(kind) {
+        var light = document.createElement('span');
+        light.className = 'traffic-light ' + kind;
+        light.setAttribute('aria-hidden', 'true');
+        trafficLights.appendChild(light);
+      });
+      titleBar.appendChild(trafficLights);
+      var title = document.createElement('h2');
+      title.textContent = 'Settings';
+      titleBar.appendChild(title);
+      titleBar.appendChild(document.createElement('span'));
+      state.appendChild(titleBar);
+
+      var layout = document.createElement('div');
+      layout.className = 'settings-layout';
+      var sidebar = document.createElement('aside');
+      sidebar.className = 'settings-sidebar';
+      var nav = document.createElement('nav');
+      nav.className = 'settings-nav';
+      nav.setAttribute('aria-label', 'Settings sections');
+
+      ['Appearance', 'Integrations'].forEach(function(labelText) {
+        var unavailableItem = document.createElement('button');
+        unavailableItem.type = 'button';
+        unavailableItem.className = 'settings-nav-item';
+        unavailableItem.disabled = true;
+        unavailableItem.textContent = labelText;
+        var unavailableStatus = document.createElement('span');
+        unavailableStatus.className = 'settings-nav-status';
+        unavailableStatus.textContent = 'Unavailable until your VPS is ready';
+        unavailableItem.appendChild(unavailableStatus);
+        nav.appendChild(unavailableItem);
+      });
+
+      var billingItem = document.createElement('button');
+      billingItem.type = 'button';
+      billingItem.className = 'settings-nav-item';
+      billingItem.disabled = true;
+      billingItem.textContent = 'Billing';
+      var billingStatus = document.createElement('span');
+      billingStatus.className = 'settings-nav-status completed';
+      billingStatus.textContent = 'Completed';
+      billingItem.appendChild(billingStatus);
+      nav.appendChild(billingItem);
+
+      var activeItem = document.createElement('button');
+      activeItem.type = 'button';
+      activeItem.className = 'settings-nav-item active';
+      activeItem.setAttribute('aria-current', 'page');
+      activeItem.textContent = 'Default installs';
+      nav.appendChild(activeItem);
+
+      ['System'].forEach(function(labelText) {
+        var unavailableItem = document.createElement('button');
+        unavailableItem.type = 'button';
+        unavailableItem.className = 'settings-nav-item';
+        unavailableItem.disabled = true;
+        unavailableItem.textContent = labelText;
+        var unavailableStatus = document.createElement('span');
+        unavailableStatus.className = 'settings-nav-status';
+        unavailableStatus.textContent = 'Unavailable until your VPS is ready';
+        unavailableItem.appendChild(unavailableStatus);
+        nav.appendChild(unavailableItem);
+      });
+      sidebar.appendChild(nav);
+
+      var accountFooter = document.createElement('footer');
+      accountFooter.className = 'settings-account-footer';
+      var accountAvatar = document.createElement('span');
+      accountAvatar.className = 'settings-account-avatar';
+      accountAvatar.textContent = 'M';
+      accountFooter.appendChild(accountAvatar);
+      var accountCopy = document.createElement('div');
+      accountCopy.className = 'settings-account-copy';
+      var accountName = document.createElement('div');
+      accountName.className = 'settings-account-name';
+      accountName.textContent = window.Clerk.user && (window.Clerk.user.fullName || window.Clerk.user.username) || 'Matrix account';
+      accountCopy.appendChild(accountName);
+      var accountDetail = document.createElement('div');
+      accountDetail.className = 'settings-account-detail';
+      accountDetail.textContent = window.Clerk.user && window.Clerk.user.primaryEmailAddress && window.Clerk.user.primaryEmailAddress.emailAddress || 'Signed in';
+      accountCopy.appendChild(accountDetail);
+      accountFooter.appendChild(accountCopy);
+      var signOutButton = document.createElement('button');
+      signOutButton.type = 'button';
+      signOutButton.className = 'settings-sign-out';
+      signOutButton.textContent = 'Sign out';
+      signOutButton.addEventListener('click', function() {
+        signOutButton.disabled = true;
+        signOutButton.textContent = 'Signing out...';
+        fetch('/api/auth/app-session', {
+          method: 'DELETE',
+          credentials: 'same-origin',
+          signal: AbortSignal.timeout(10000)
+        })
+          .catch(function(err) {
+            console.error('[matrix] App session clear failed', err instanceof Error ? err.name : String(typeof err));
+          })
+          .then(function() { return clerkSignOutWithTimeout(); })
+          .then(function() { window.location.replace(signOutTarget); })
+          .catch(redirectAfterSignOutIssue);
+      });
+      accountFooter.appendChild(signOutButton);
+      sidebar.appendChild(accountFooter);
+      layout.appendChild(sidebar);
+
+      var settingsContent = document.createElement('main');
+      settingsContent.className = 'settings-content';
+      var content = document.createElement('div');
+      content.className = 'default-installs-state';
 
       var hero = document.createElement('section');
       hero.className = 'install-hero';
@@ -640,7 +872,7 @@ export function getAuthPage(
       detailText.className = 'install-detail';
       detailText.textContent = 'Choose command-line agents to preinstall on this VPS.';
       hero.appendChild(detailText);
-      state.appendChild(hero);
+      content.appendChild(hero);
 
       var toolsPanel = document.createElement('section');
       toolsPanel.className = 'developer-tools-panel';
@@ -688,7 +920,12 @@ export function getAuthPage(
         toolList.appendChild(label);
       });
       toolsPanel.appendChild(toolList);
-      state.appendChild(toolsPanel);
+      content.appendChild(toolsPanel);
+
+      var inlineError = document.createElement('p');
+      inlineError.className = 'default-installs-error';
+      inlineError.setAttribute('role', 'alert');
+      content.appendChild(inlineError);
 
       var footer = document.createElement('div');
       footer.className = 'default-installs-footer';
@@ -705,32 +942,27 @@ export function getAuthPage(
         startProvisioningFromClerkSession(selectedTools);
       });
       actions.appendChild(buildButton);
-
-      var signOutButton = document.createElement('button');
-      signOutButton.type = 'button';
-      signOutButton.textContent = 'Sign out';
-      signOutButton.addEventListener('click', function() {
-        signOutButton.disabled = true;
-        signOutButton.textContent = 'Signing out...';
-        fetch('/api/auth/app-session', {
-          method: 'DELETE',
-          credentials: 'same-origin'
-        })
-          .catch(function(err) {
-            console.error('[matrix] App session clear failed', err instanceof Error ? err.message : String(err));
-          })
-          .then(function() {
-            return clerkSignOutWithTimeout();
-          })
-          .then(function() {
-            window.location.replace(signOutTarget);
-          })
-          .catch(redirectAfterSignOutIssue);
-      });
-      actions.appendChild(signOutButton);
       footer.appendChild(actions);
-      state.appendChild(footer);
+      content.appendChild(footer);
+      settingsContent.appendChild(content);
+      layout.appendChild(settingsContent);
+      state.appendChild(layout);
       el.appendChild(state);
+      activeProvisionButton = buildButton;
+      activeProvisionInputs = Array.prototype.slice.call(toolList.querySelectorAll('input'));
+      activeProvisionError = inlineError;
+    }
+    function setProvisionControls(loading, errorMessage) {
+      if (activeProvisionButton) {
+        activeProvisionButton.disabled = loading;
+        activeProvisionButton.dataset.loading = loading ? 'true' : 'false';
+        activeProvisionButton.textContent = loading ? 'Building VPS...' : 'Build VPS';
+      }
+      activeProvisionInputs.forEach(function(input) { input.disabled = loading; });
+      if (activeProvisionError) {
+        activeProvisionError.textContent = errorMessage || '';
+        activeProvisionError.classList.toggle('visible', Boolean(errorMessage));
+      }
     }
     function setDefaultInstallsCard(active) {
       var el = document.getElementById('auth');
@@ -738,8 +970,13 @@ export function getAuthPage(
       if (!card) return;
       if (active) {
         card.classList.add('default-installs-card');
+        document.body.classList.add('default-installs-active');
       } else {
         card.classList.remove('default-installs-card');
+        document.body.classList.remove('default-installs-active');
+        activeProvisionButton = null;
+        activeProvisionInputs = [];
+        activeProvisionError = null;
       }
     }
     function showBillingRequiredState() {
@@ -803,16 +1040,10 @@ export function getAuthPage(
       clearBillingSetupRetryCount();
       window.location.replace(target);
     }
-    function pollProvisioningSession() {
-      provisioningPolls += 1;
-      if (provisioningPolls > maxProvisioningPolls) {
-        provisionStarted = false;
-        checkoutJustCompleted = false;
-        billingConfirmationPolls = 0;
-        showSignedInRecoveryState();
-        return;
-      }
-      window.setTimeout(continueWithClerkSession, 8000);
+    function showProvisionRetryError() {
+      provisionStarted = false;
+      checkoutJustCompleted = false;
+      setProvisionControls(false, provisioningRetryError);
     }
     function retryProvisioningAfterBillingDelay(developerTools) {
       billingConfirmationPolls += 1;
@@ -823,28 +1054,31 @@ export function getAuthPage(
         return;
       }
       provisionStarted = false;
-      showLoadingState('Confirming billing...');
-      window.setTimeout(function() { startProvisioningFromClerkSession(developerTools); }, 8000);
+      setProvisionControls(false, null);
+      billingRetryTimeoutId = window.setTimeout(function() {
+        billingRetryTimeoutId = null;
+        startProvisioningFromClerkSession(developerTools);
+      }, 8000);
     }
     function startProvisioningFromClerkSession(selectedDeveloperTools) {
       if (provisionStarted) return;
+      if (billingRetryTimeoutId !== null) {
+        window.clearTimeout(billingRetryTimeoutId);
+        billingRetryTimeoutId = null;
+      }
       var developerTools = Array.isArray(selectedDeveloperTools) ? selectedDeveloperTools : defaultDeveloperTools;
       provisionStarted = true;
-      showLoadingState('Starting your Matrix computer...');
+      setProvisionControls(true, null);
       if (!window.Clerk.session) {
-        provisionStarted = false;
-        showSignedInRecoveryState();
+        showProvisionRetryError();
         return;
       }
       window.Clerk.session.getToken()
         .then(function(token) {
           if (!token) {
-            provisionStarted = false;
-            showSignedInRecoveryState();
+            showProvisionRetryError();
             return null;
           }
-          var controller = new AbortController();
-          var timeoutId = window.setTimeout(function() { controller.abort(); }, 10000);
           return fetch('/api/auth/provision-runtime', {
             method: 'POST',
             headers: {
@@ -856,18 +1090,14 @@ export function getAuthPage(
               runtime: requestedRuntime || undefined
             }),
             credentials: 'same-origin',
-            signal: controller.signal
-          }).finally(function() {
-            window.clearTimeout(timeoutId);
+            signal: AbortSignal.timeout(10000)
           });
         })
         .then(function(res) {
           if (!res) return null;
           if (res.ok) {
             billingConfirmationPolls = 0;
-            provisioningPolls = 0;
-            showLoadingState('Preparing your Matrix computer...');
-            pollProvisioningSession();
+            continueWithClerkSession(true);
             return null;
           }
           if (res.status === 402) {
@@ -881,60 +1111,56 @@ export function getAuthPage(
           }
           if (res.status === 409) {
             return res.json().catch(function(err) {
-              console.warn('[matrix] Unable to parse provisioning conflict response', err instanceof Error ? err.message : String(err));
+              console.warn('[matrix] Unable to parse provisioning conflict response', err instanceof Error ? err.name : String(typeof err));
               return null;
             }).then(function(body) {
               if (body && body.code === 'provisioning_conflict') {
                 billingConfirmationPolls = 0;
-                provisioningPolls = 0;
-                showLoadingState('Preparing your Matrix computer...');
-                pollProvisioningSession();
+                continueWithClerkSession(true);
                 return;
               }
-              checkoutJustCompleted = false;
-              provisionStarted = false;
-              showSignedInRecoveryState();
+              showProvisionRetryError();
             });
           }
-          provisionStarted = false;
-          showSignedInRecoveryState();
+          showProvisionRetryError();
           return null;
         })
         .catch(function(err) {
-          console.error('[matrix] Runtime provisioning failed', err instanceof Error ? err.message : String(err));
-          provisionStarted = false;
-          showSignedInRecoveryState();
+          console.error('[matrix] Runtime provisioning failed', err instanceof Error ? err.name : String(typeof err));
+          showProvisionRetryError();
         });
     }
-    function continueWithClerkSession() {
-      showLoadingState('Loading your Matrix computer...');
+    function continueWithClerkSession(afterProvision) {
       if (!window.Clerk.session) {
-        showSignedInRecoveryState();
+        if (afterProvision) showProvisionRetryError();
+        else showSignedInRecoveryState();
         return;
       }
       window.Clerk.session.getToken()
         .then(function(token) {
           if (!token) {
-            showSignedInRecoveryState();
+            if (afterProvision) showProvisionRetryError();
+            else showSignedInRecoveryState();
             return null;
           }
+          var sessionRedirectTarget = afterProvision ? (deviceReturnTarget || '/') : redirectTarget;
           return fetch('/api/auth/app-session', {
             method: 'POST',
             headers: {
               Authorization: 'Bearer ' + token,
               'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ redirectTo: redirectTarget, runtime: requestedRuntime || undefined }),
-            credentials: 'same-origin'
+            body: JSON.stringify({ redirectTo: sessionRedirectTarget, runtime: requestedRuntime || undefined }),
+            credentials: 'same-origin',
+            signal: AbortSignal.timeout(10000)
           });
         })
         .then(function(res) {
           if (!res) return null;
           if (res.ok) return res.json();
           if (res.status === 404) {
-            if (provisionStarted) {
-              showLoadingState('Preparing your Matrix computer...');
-              pollProvisioningSession();
+            if (afterProvision) {
+              showProvisionRetryError();
               return null;
             }
             if (checkoutJustCompleted) {
@@ -945,19 +1171,22 @@ export function getAuthPage(
             return null;
           }
           if (res.status === 402) {
-            openBillingSettingsFromClerkSession();
+            if (afterProvision) showProvisionRetryError();
+            else openBillingSettingsFromClerkSession();
             return null;
           }
-          showSignedInRecoveryState();
+          if (afterProvision) showProvisionRetryError();
+          else showSignedInRecoveryState();
           return null;
         })
         .then(function(payload) {
           if (!payload) return;
-          window.location.replace(deviceReturnTarget || payload.redirectTo || redirectTarget);
+          window.location.replace(afterProvision ? (deviceReturnTarget || '/') : (deviceReturnTarget || payload.redirectTo || redirectTarget));
         })
         .catch(function(err) {
-          console.error('[matrix] Clerk session exchange failed', err instanceof Error ? err.message : String(err));
-          showSignedInRecoveryState();
+          console.error('[matrix] Clerk session exchange failed', err instanceof Error ? err.name : String(typeof err));
+          if (afterProvision) showProvisionRetryError();
+          else showSignedInRecoveryState();
         });
     }
     function initClerk() {
