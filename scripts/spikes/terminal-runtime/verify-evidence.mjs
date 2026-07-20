@@ -196,8 +196,14 @@ export async function reportGateChecks(inputRoot) {
       'descriptor_intent', 'descriptor_size', 'client_exit', 'cgroup_unified',
       'cgroup_unit', 'readiness_timeout', 'startup_failed',
     ]);
-    if (hasExactKeys(startup, ['stage', 'code']) && stages.has(startup.stage) && codes.has(startup.code)) {
+    const baseShape = hasExactKeys(startup, ['stage', 'code']);
+    const clientExitShape = hasExactKeys(startup, ['stage', 'code', 'exitCode', 'signal']) &&
+      startup.code === 'client_exit' && Number.isInteger(startup.exitCode) &&
+      startup.exitCode >= 0 && startup.exitCode <= 255 && Number.isInteger(startup.signal) &&
+      startup.signal >= 0 && startup.signal <= 255;
+    if ((baseShape || clientExitShape) && stages.has(startup.stage) && codes.has(startup.code)) {
       failures.push(`s1:startup=${startup.stage}/${startup.code}`);
+      if (clientExitShape) failures.push(`s1:pty-exit=${startup.exitCode}/${startup.signal}`);
     }
   } catch (error) {
     const code = error && typeof error === 'object' && 'code' in error ? error.code : '';

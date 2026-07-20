@@ -179,7 +179,7 @@ describe('terminal runtime spike evidence', () => {
     });
     await writeFile(
       join(root, 's1', 'base-startup-failure.json'),
-      `${JSON.stringify({ stage: 'readiness', code: 'readiness_timeout' })}\n`,
+      `${JSON.stringify({ stage: 'readiness', code: 'client_exit', exitCode: 1, signal: 0 })}\n`,
       'utf8',
     );
     await writeFile(
@@ -190,7 +190,8 @@ describe('terminal runtime spike evidence', () => {
 
     await expect(reportGateChecks(root)).resolves.toEqual([
       's1:stopEmptiesCgroup=fail',
-      's1:startup=readiness/readiness_timeout',
+      's1:startup=readiness/client_exit',
+      's1:pty-exit=1/0',
       's1:unit=failed/failed/timeout/1/16',
     ]);
   });

@@ -15,6 +15,9 @@ let stopping = false;
 let monitor;
 let pty;
 let startupStage = 'descriptor';
+let clientExited = false;
+let clientExitEvent = null;
+let ready = false;
 
 const STARTUP_FAILURE_CODES = new Set([
   'runtime_id',
@@ -141,11 +144,13 @@ async function recordStartupFailure(error) {
   const code = error instanceof Error && STARTUP_FAILURE_CODES.has(error.message)
     ? error.message
     : 'startup_failed';
+  const receipt = { stage: startupStage, code };
+  if (code === 'client_exit' && clientExitEvent) {
+    receipt.exitCode = clientExitEvent.exitCode;
+    receipt.signal = clientExitEvent.signal;
+  }
   try {
-    await writeFile(`${runtimeRoot}/startup-failures/${runtimeId}.json`, `${JSON.stringify({
-      stage: startupStage,
-      code,
-    })}\n`, {
+    await writeFile(`${runtimeRoot}/startup-failures/${runtimeId}.json`, `${JSON.stringify(receipt)}\n`, {
       encoding: 'utf8',
       flag: 'wx',
       mode: 0o600,
@@ -179,7 +184,6 @@ async function main() {
     cwd: '/home/matrix/home',
     env,
   });
-  let clientExited = false;
   let confirmationRecorded = false;
   let confirmationBuffer = '';
   pty.onData((data) => {
@@ -200,9 +204,17 @@ async function main() {
       });
     }
   });
-  pty.onExit(() => {
+  pty.onExit((event) => {
     clientExited = true;
-    if (!stopping) exit(17);
+    clientExitEvent = {
+      exitCode: Number.isInteger(event.exitCode) && event.exitCode >= 0 && event.exitCode <= 255
+        ? event.exitCode
+        : 255,
+      signal: Number.isInteger(event.signal) && event.signal >= 0 && event.signal <= 255
+        ? event.signal
+        : 255,
+    };
+    if (!stopping && ready) exit(17);
   });
 
   startupStage = 'cgroup';
@@ -226,6 +238,8 @@ async function main() {
   await writeReadiness({ runtimeId, sessionName, cgroup: cgroup.relative, roles });
   startupStage = 'notify';
   await notifyReady();
+  if (clientExited) throw new Error('client_exit');
+  ready = true;
 
   let checking = false;
   monitor = setInterval(async () => {
