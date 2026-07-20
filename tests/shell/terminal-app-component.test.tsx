@@ -1577,7 +1577,7 @@ describe("TerminalApp", () => {
     expect(getOrder()).toEqual(["docs", "review", "main"]);
   });
 
-  it("renames sessions from the Paper pencil affordance", async () => {
+  it("renames sessions from the Paper pencil affordance or a name double-click", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -1644,7 +1644,18 @@ describe("TerminalApp", () => {
 
     fireEvent.mouseEnter(row!);
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Rename matrix-main" }));
+      fireEvent.doubleClick(screen.getByRole("button", { name: "Open matrix-main" }));
+      await Promise.resolve();
+    });
+    input = screen.getByRole("textbox", { name: "Session name for matrix-main" });
+    expect(document.activeElement).toBe(input);
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe("main".length);
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByRole("textbox", { name: "Session name for matrix-main" })).toBeNull();
+
+    await act(async () => {
+      fireEvent.doubleClick(screen.getByRole("button", { name: "Open matrix-main" }));
       await Promise.resolve();
     });
     input = screen.getByRole("textbox", { name: "Session name for matrix-main" });
@@ -1664,6 +1675,7 @@ describe("TerminalApp", () => {
         }),
       }),
     ]));
+    expect(calls.filter((call) => call.url.endsWith("/api/terminal/sessions/main/rename") && call.init?.method === "PUT")).toHaveLength(1);
   });
 
   it("anchors desktop close confirmation beside the session without dimming the terminal", async () => {
@@ -1688,7 +1700,7 @@ describe("TerminalApp", () => {
                 name: "claude-review",
                 status: "active",
                 placement: "active",
-                visualStatus: "finished",
+                visualStatus: "waiting",
                 latestSeq,
                 lastSeenSeq: 1,
                 unread: true,
@@ -1736,6 +1748,7 @@ describe("TerminalApp", () => {
     });
 
     const dialog = screen.getByRole("dialog", { name: "Close this session?" });
+    expect(within(dialog).getByTestId("terminal-close-session-status-claude-review")).toBeTruthy();
     expect(within(dialog).getByText("Closing ends the session and permanently deletes it and its transcript. You won't be able to reopen or recover it — this can't be undone.")).toBeTruthy();
     expect(within(dialog).getByText("claude-review")).toBeTruthy();
     expect(within(dialog).getByText("active · 1 unread")).toBeTruthy();
@@ -1831,6 +1844,7 @@ describe("TerminalApp", () => {
     });
 
     const dialog = screen.getByRole("dialog", { name: "Close this session?" });
+    expect(within(dialog).queryByTestId("terminal-close-session-status-main")).toBeNull();
     expect(dialog.style.alignItems).toBe("flex-end");
     const sheet = screen.getByTestId("terminal-close-confirmation-sheet");
     expect(sheet.style.borderTopLeftRadius).toBe("26px");
@@ -1983,7 +1997,7 @@ describe("TerminalApp", () => {
     });
   });
 
-  it("renders Paper status dot colors and pulses only for running sessions", async () => {
+  it("renders a status dot only for waiting sessions", async () => {
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
@@ -2016,23 +2030,13 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    const running = screen.getByTestId("terminal-session-status-running");
-    const finished = screen.getByTestId("terminal-session-status-finished");
-    const idle = screen.getByTestId("terminal-session-status-idle");
     const waiting = screen.getByTestId("terminal-session-status-waiting");
 
-    expect(running.style.background).toBe("rgb(95, 184, 95)");
-    expect(running.style.boxShadow).toContain("rgba(95,184,95,0.24)");
-    expect(running.classList.contains("terminal-session-status-dot--running")).toBe(true);
-    expect(finished.style.background).toBe("rgb(46, 107, 58)");
-    expect(finished.style.boxShadow).toBe("none");
-    expect(finished.classList.contains("terminal-session-status-dot--running")).toBe(false);
-    expect(idle.style.background).toBe("rgb(169, 170, 154)");
-    expect(idle.style.boxShadow).toBe("none");
-    expect(idle.classList.contains("terminal-session-status-dot--running")).toBe(false);
+    expect(screen.queryByTestId("terminal-session-status-running")).toBeNull();
+    expect(screen.queryByTestId("terminal-session-status-finished")).toBeNull();
+    expect(screen.queryByTestId("terminal-session-status-idle")).toBeNull();
     expect(waiting.style.background).toBe("rgb(224, 161, 46)");
     expect(waiting.style.boxShadow).toContain("rgba(224,161,46,0.25)");
-    expect(waiting.classList.contains("terminal-session-status-dot--running")).toBe(false);
   });
 
   it("keeps successful session updates when another optimistic UI patch rolls back", async () => {
@@ -2957,13 +2961,17 @@ describe("TerminalApp", () => {
       expect(control.style.flexShrink).toBe("0");
     }
     const matrixRailButton = screen.getByRole("button", { name: "Open matrix-main" });
-    const matrixRailDot = screen.getByTestId("terminal-session-status-main");
+    const waitingRailDot = screen.getByTestId("terminal-session-status-codex-backend");
     expect(matrixRailButton.style.overflow).toBe("visible");
-    expect(matrixRailDot.style.top).toBe("-3px");
-    expect(matrixRailDot.style.right).toBe("-3px");
-    expect(matrixRailDot.style.borderTopWidth).toBe("2px");
-    expect(matrixRailDot.getAttribute("style")).toContain("border-color: var(--terminal-drawer-bg)");
-    expect(matrixRailDot.style.zIndex).toBe("1");
+    expect(screen.queryByTestId("terminal-session-status-main")).toBeNull();
+    expect(screen.queryByTestId("terminal-session-status-claude-review")).toBeNull();
+    expect(screen.queryByTestId("terminal-session-status-deploy-logs")).toBeNull();
+    expect(screen.queryByTestId("terminal-session-status-hotfix-auth")).toBeNull();
+    expect(waitingRailDot.style.top).toBe("-3px");
+    expect(waitingRailDot.style.right).toBe("-3px");
+    expect(waitingRailDot.style.borderTopWidth).toBe("2px");
+    expect(waitingRailDot.getAttribute("style")).toContain("border-color: var(--terminal-drawer-bg)");
+    expect(waitingRailDot.style.zIndex).toBe("1");
     const newSessionIcon = screen.getByTestId("terminal-collapsed-new-session-icon");
     expect(newSessionIcon.getAttribute("width")).toBe("18");
     expect(newSessionIcon.getAttribute("height")).toBe("18");
