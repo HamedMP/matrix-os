@@ -156,6 +156,11 @@ wait_not_active() {
   return 1
 }
 
+wait_file() {
+  for _ in $(seq 1 50); do [ -f "$1" ] && return 0; sleep 0.1; done
+  return 1
+}
+
 roles_alive() {
   readiness_path="$runtime_root/readiness/$1.json"
   /opt/matrix/runtime/node/bin/node -e '
@@ -336,7 +341,7 @@ if wait_state "$keeper_unit" active; then
   keeper_cgroup="$(runtime_cgroup "$keeper_id")"
   exec {keeper_events_fd}<"/sys/fs/cgroup${keeper_cgroup}/cgroup.events"
   kill -KILL "$(systemctl show "$keeper_unit" -p MainPID --value)" 2>/dev/null || true
-  if wait_not_active "$keeper_unit" && [ -f "$runtime_root/outcomes/${keeper_id}.json" ] && wait_cgroup_empty "$keeper_events_fd" "/sys/fs/cgroup${keeper_cgroup}" "$keeper_unit"; then
+  if wait_not_active "$keeper_unit" && wait_file "$runtime_root/outcomes/${keeper_id}.json" && wait_cgroup_empty "$keeper_events_fd" "/sys/fs/cgroup${keeper_cgroup}" "$keeper_unit"; then
     mark_pass s1 keeperLossDeterministic
     cp "$runtime_root/outcomes/${keeper_id}.json" "$evidence_root/s1/keeper-loss.json"
   fi
@@ -364,18 +369,21 @@ fi
 
 # S1: layered percentage controls and pressure events.
 memory_ready=true
+memory_stage=not_ready
 for runtime_id in "${memory_ids[@]}"; do
   start_runtime "$runtime_id"
   release_pane "$runtime_id"
   if ! wait_state "${unit_prefix}${runtime_id}.service" active; then memory_ready=false; fi
 done
 if [ "$memory_ready" = true ]; then
+  memory_stage=limits_invalid
   first_cgroup="$(runtime_cgroup "${memory_ids[0]}")"
   slice_cgroup="${first_cgroup%/*}"
   unit_high="$(cat "/sys/fs/cgroup${first_cgroup}/memory.high")"
   slice_high="$(cat "/sys/fs/cgroup${slice_cgroup}/memory.high")"
   printf 'unit_memory_high=%s\nslice_memory_high=%s\n' "$unit_high" "$slice_high" >"$evidence_root/s1/memory-limits.txt"
   if printf '%s' "$unit_high" | grep -Eq '^[0-9]+$' && printf '%s' "$slice_high" | grep -Eq '^[0-9]+$' && [ "$slice_high" -gt "$unit_high" ]; then
+    memory_stage=unit_no_pressure
     unit_before="$(awk '$1=="high"{print $2}' "/sys/fs/cgroup${first_cgroup}/memory.events")"
     unit_target=$((unit_high + 67108864))
     zellij_cmd --session "matrix-t-${memory_ids[0]}" action new-pane -- /opt/matrix/runtime/node/bin/node "$support_root/memory-hog.mjs" "$unit_target" >/dev/null 2>&1 || true
@@ -384,6 +392,7 @@ if [ "$memory_ready" = true ]; then
       [ "$unit_after" -gt "$unit_before" ] && break
       sleep 0.5
     done
+    if [ "${unit_after:-0}" -gt "$unit_before" ]; then memory_stage=slice_no_pressure; fi
     systemctl stop "${unit_prefix}${memory_ids[0]}.service" >/dev/null 2>&1 || true
     start_runtime "${memory_ids[0]}"
     release_pane "${memory_ids[0]}"
@@ -398,9 +407,10 @@ if [ "$memory_ready" = true ]; then
       [ "$slice_after" -gt "$slice_before" ] && break
       sleep 0.5
     done
-    if [ "${unit_after:-0}" -gt "$unit_before" ] && [ "${slice_after:-0}" -gt "$slice_before" ]; then mark_pass s1 layeredMemoryHigh; fi
+    if [ "${unit_after:-0}" -gt "$unit_before" ] && [ "${slice_after:-0}" -gt "$slice_before" ]; then memory_stage=pass; mark_pass s1 layeredMemoryHigh; fi
   fi
 fi
+printf '%s\n' "$memory_stage" >"$evidence_root/s1/memory-stage.txt"
 for runtime_id in "${memory_ids[@]}"; do systemctl stop "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true; done
 
 # S2: bounded serialized state and explicit resurrection.
@@ -412,7 +422,7 @@ if wait_state "$recovery_unit" active; then
   zellij_cmd --session "$recovery_session" action new-pane --direction right -- "$support_root/pane-probe.sh" >/dev/null 2>&1 || true
   output_command='for i in $(seq 1 10050); do printf "MATRIX_SCROLL_%05d\n" "$i"; done; printf "MATRIX_VIEWPORT_MARKER\n"'
   zellij_cmd --session "$recovery_session" action write-chars -- "$output_command" >/dev/null 2>&1 || true
-  zellij_cmd --session "$recovery_session" action write 13 >/dev/null 2>&1 || true
+  zellij_cmd --session "$recovery_session" action send-keys Enter >/dev/null 2>&1 || true
   sleep 2
   zellij_cmd --session "$recovery_session" action scroll-up >/dev/null 2>&1 || true
   for _ in $(seq 1 20); do zellij_cmd --session "$recovery_session" action scroll-up >/dev/null 2>&1 || true; done

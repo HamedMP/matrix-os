@@ -286,6 +286,14 @@ export async function reportGateChecks(inputRoot) {
   } catch (error) {
     if (!ignorableDiagnosticError(error)) throw error;
   }
+  try {
+    const memory = (await readNoFollow(join(root, 's1', 'memory-stage.txt'), 64)).body.toString('utf8').trim();
+    if (new Set(['not_ready', 'limits_invalid', 'unit_no_pressure', 'slice_no_pressure']).has(memory)) {
+      failures.push(`s1:memory=${memory}`);
+    }
+  } catch (error) {
+    if (!ignorableDiagnosticError(error)) throw error;
+  }
   return failures;
 }
 

@@ -139,6 +139,8 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).not.toContain('script -qefc');
     expect(runner).toContain('cgroup_removed');
     expect(runner).toContain("grep -Fq '<ENTER> run'");
+    expect(runner).toContain('action send-keys Enter');
+    expect(runner).toContain('wait_file');
   });
 
   it('keeps the fixed notify unit shape and accepts readiness from the keeper helper', async () => {
@@ -209,6 +211,7 @@ describe('terminal runtime spike evidence', () => {
       `${JSON.stringify({ stage: 'readiness', code: 'readiness_timeout' })}\n`,
       'utf8',
     );
+    await writeFile(join(root, 's1', 'memory-stage.txt'), 'unit_no_pressure\n', 'utf8');
 
     await expect(reportGateChecks(root)).resolves.toEqual([
       's1:stopEmptiesCgroup=fail',
@@ -217,13 +220,14 @@ describe('terminal runtime spike evidence', () => {
       's1:unit=failed/failed/timeout/1/16',
       's1:roles=initial/keeper:1/zellij:1of2/shell:1/agent:0',
       's2:recovery=readiness/readiness_timeout',
+      's1:memory=unit_no_pressure',
     ]);
     await rm(join(root, 's1', 'base-runtime-roles.json'));
     await symlink('/etc/passwd', join(root, 's1', 'base-runtime-roles.json'));
     await expect(reportGateChecks(root)).resolves.toEqual([
       's1:stopEmptiesCgroup=fail', 's1:startup=readiness/client_exit',
       's1:pty-exit=1/0', 's1:unit=failed/failed/timeout/1/16',
-      's2:recovery=readiness/readiness_timeout',
+      's2:recovery=readiness/readiness_timeout', 's1:memory=unit_no_pressure',
     ]);
   });
 
