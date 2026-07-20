@@ -5,6 +5,7 @@ import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DotGrid, useDotGrid } from "../../shell/src/components/DotGrid";
+import { useDesktopMode } from "../../shell/src/stores/desktop-mode";
 
 class ResizeObserverMock {
   observe() {}
@@ -24,6 +25,7 @@ describe("DotGrid OS-design gating", () => {
   beforeEach(() => {
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     useDotGrid.setState({ enabled: true });
+    useDesktopMode.setState({ mode: "canvas", previousMode: null, _hydrated: true });
     // Reset the attribute before each test (not in afterEach) so the still-
     // mounted MutationObserver never fires outside act after a test ends.
     setThemeStyle(null);
@@ -35,6 +37,30 @@ describe("DotGrid OS-design gating", () => {
   });
 
   it("renders the grid canvas in the default flat design", () => {
+    const { container } = render(<DotGrid />);
+    expect(container.querySelector("canvas")).not.toBeNull();
+  });
+
+  it("preserves the enabled Canvas grid across a Developer mode round trip", async () => {
+    const { container } = render(<DotGrid />);
+
+    expect(container.querySelector("canvas")).not.toBeNull();
+
+    await act(async () => {
+      useDesktopMode.setState({ mode: "dev", previousMode: "canvas" });
+    });
+    expect(container.querySelector("canvas")).toBeNull();
+    expect(useDotGrid.getState().enabled).toBe(true);
+
+    await act(async () => {
+      useDesktopMode.setState({ mode: "canvas", previousMode: "dev" });
+    });
+    expect(container.querySelector("canvas")).not.toBeNull();
+    expect(useDotGrid.getState().enabled).toBe(true);
+  });
+
+  it("does not silently suppress the grid in the hidden legacy Desktop mode", () => {
+    useDesktopMode.setState({ mode: "desktop", previousMode: "canvas" });
     const { container } = render(<DotGrid />);
     expect(container.querySelector("canvas")).not.toBeNull();
   });

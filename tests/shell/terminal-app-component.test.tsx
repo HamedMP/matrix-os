@@ -2286,7 +2286,7 @@ describe("TerminalApp", () => {
     expect(dropdownTrigger.getAttribute("data-state")).toBe("closed");
   });
 
-  it("uses one primary surface for every desktop drawer header control", async () => {
+  it("uses the active OS primary surface for every desktop drawer header control", async () => {
     render(<TerminalApp />);
 
     await act(async () => {
@@ -2309,8 +2309,9 @@ describe("TerminalApp", () => {
     const primaryControlStyles = Array.from(document.querySelectorAll("style"))
       .map((style) => style.textContent ?? "")
       .find((styles) => styles.includes(".terminal-drawer-primary-control"));
-    expect(primaryControlStyles).toContain("background: var(--terminal-drawer-primary-button-bg)");
-    expect(primaryControlStyles).toContain("color: var(--terminal-drawer-primary-button-fg)");
+    expect(primaryControlStyles).toContain("background: var(--primary)");
+    expect(primaryControlStyles).toContain("color: var(--primary-foreground)");
+    expect(primaryControlStyles).toContain(".terminal-new-session-primary-action");
   });
 
   it("opens split-button session choices with ArrowDown from the primary action", async () => {

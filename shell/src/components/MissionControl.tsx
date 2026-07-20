@@ -4,6 +4,7 @@ import { useEffect, useEffectEvent, useState, useRef } from "react";
 import { useTaskBoard } from "@/hooks/useTaskBoard";
 import { nameToSlug } from "@/lib/utils";
 import { groupLauncherApps } from "@/lib/dock-sections";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { AppTile } from "./AppTile";
@@ -100,7 +101,11 @@ export function MissionControl({
   }
 
   return (
-    <div data-mission-control className="fixed inset-0 z-[45]">
+    <div
+      data-mission-control
+      className="fixed inset-0"
+      style={{ zIndex: SHELL_Z_INDEX.launchpad }}
+    >
       {/* react-doctor-disable-next-line react-doctor/click-events-have-key-events, react-doctor/no-static-element-interactions -- light-dismiss backdrop: a pure pointer convenience that closes the launcher only when the empty area itself is clicked. Keyboard dismiss is already provided by the global Escape handler above, and the launcher's real controls are focusable buttons. */}
       <div
         data-mission-backdrop
