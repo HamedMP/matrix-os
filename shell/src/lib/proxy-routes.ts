@@ -5,6 +5,7 @@ export function isPublicShellPath(pathname: string, search = ""): boolean {
     pathname === "/manifest.json" ||
     pathname === "/og.png" ||
     pathname === "/favicon.ico" ||
+    pathname === "/runtime" ||
     (pathname === "/" && searchParams.get("billing") === "setup") ||
     pathname === "/sign-in" ||
     pathname.startsWith("/sign-in/") ||

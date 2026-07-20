@@ -722,6 +722,9 @@ importers:
       '@hono/node-server':
         specifier: ^1.19.9
         version: 1.19.11(hono@4.12.8)
+      '@matrix-os/brand':
+        specifier: workspace:*
+        version: link:../brand
       '@matrix-os/clerk-sync':
         specifier: workspace:*
         version: link:../clerk-sync

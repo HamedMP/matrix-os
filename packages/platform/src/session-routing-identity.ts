@@ -9,7 +9,6 @@ import {
 } from './db.js';
 import { canClerkUserAccessMachine } from './customer-vps-preview.js';
 import { verifySyncJwt } from './sync-jwt.js';
-import { isAppDomainGatewayPath } from './request-routing.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 import {
   APP_ROUTE_COOKIE,
@@ -28,6 +27,7 @@ import {
 
 export interface ExplicitVmRoute {
   handle: string;
+  runtimeSlot?: string;
   upstreamPath: string;
 }
 
@@ -126,7 +126,7 @@ export function buildShellRuntimeSlotCookie(runtimeSlot: string): string {
 }
 
 export function readShellRuntimeSlotCookie(path: string, cookieHeader: string | undefined): string | null {
-  if (!isAppDomainGatewayPath(path) && !isAppDomainStaticAssetPath(path)) {
+  if (!isAppDomainStaticAssetPath(path)) {
     return null;
   }
   const runtimeSlot = readCookie(cookieHeader, SHELL_RUNTIME_SLOT_COOKIE);
@@ -137,9 +137,18 @@ export function readShellRuntimeSlotCookie(path: string, cookieHeader: string | 
 export function readExplicitVmRoute(path: string): ExplicitVmRoute | null {
   const match = path.match(/^\/vm\/([^/]+)(?:\/(.*))?$/);
   if (!match?.[1] || !HANDLE_PATTERN.test(match[1])) return null;
-  const rest = match[2];
+  let rest = match[2];
+  let runtimeSlot: string | undefined;
+  const runtimeMatch = rest?.match(/^~runtime\/([^/]+)(?:\/(.*))?$/);
+  if (runtimeMatch) {
+    const parsedRuntimeSlot = RuntimeSlotSchema.safeParse(runtimeMatch[1]);
+    if (!parsedRuntimeSlot.success) return null;
+    runtimeSlot = parsedRuntimeSlot.data;
+    rest = runtimeMatch[2];
+  }
   return {
     handle: match[1],
+    ...(runtimeSlot ? { runtimeSlot } : {}),
     upstreamPath: rest ? `/${rest}` : '/',
   };
 }
@@ -180,14 +189,11 @@ export function hasExplicitVmNativeAppStreamCapability(
     && NATIVE_APP_STREAM_CAPABILITY_PATH.test(route.upstreamPath);
 }
 
-function readGatewayRouteCookie(path: string, cookieHeader: string | undefined): string | null {
-  if (!isAppDomainGatewayPath(path)) return null;
-  const handle = readCookie(cookieHeader, SHELL_ROUTE_COOKIE);
-  return handle && HANDLE_PATTERN.test(handle) ? handle : null;
-}
-
 export function readAppDomainRouteCookie(path: string, cookieHeader: string | undefined): string | null {
-  return readGatewayRouteCookie(path, cookieHeader) ?? readShellRouteCookie(path, cookieHeader);
+  // Gateway traffic must be selected by a tab-scoped explicit route (or the
+  // signed app session), never by the process-wide browser cookie. Otherwise
+  // opening one computer in another tab silently moves API calls in this tab.
+  return readShellRouteCookie(path, cookieHeader);
 }
 
 function isSyncJwtAuthError(err: unknown): boolean {

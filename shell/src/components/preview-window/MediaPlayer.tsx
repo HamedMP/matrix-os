@@ -1,8 +1,6 @@
 "use client";
 
-import { getGatewayUrl } from "@/lib/gateway";
-
-const GATEWAY_URL = getGatewayUrl();
+import { fileMediaUrl } from "@/lib/file-blob";
 
 interface MediaPlayerProps {
   path: string;
@@ -10,7 +8,7 @@ interface MediaPlayerProps {
 }
 
 export function MediaPlayer({ path, type }: MediaPlayerProps) {
-  const url = `${GATEWAY_URL}/files/${path}`;
+  const url = fileMediaUrl(path);
 
   if (type === "audio") {
     return (

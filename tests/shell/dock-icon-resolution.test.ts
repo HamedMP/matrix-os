@@ -11,6 +11,7 @@ describe("dock icon resolution", () => {
     expect(source).toContain(
       "fetch(`${GATEWAY_URL}/api/apps`, { signal: AbortSignal.timeout(10_000) })",
     );
+    expect(source).toContain("reconcileDesignApps");
     expect(source).not.toContain("/files/system/modules.json");
   });
 
@@ -21,7 +22,7 @@ describe("dock icon resolution", () => {
     expect(source).not.toContain("function iconUrlForSlug");
     expect(source).not.toContain("/icons/${encodeURIComponent(slug)}.png");
     expect(source).not.toContain("const iconPath = `/icons/${slug}.png`");
-    expect(source).toContain("bootstrap.icons?.[slug]?.versionedUrl ?? iconUrlForSlug(slug)");
+    expect(source).toContain("gatewayAssetUrl(bootstrap.icons?.[slug]?.versionedUrl) ?? iconUrlForSlug(slug)");
     expect(source).not.toContain("method: \"HEAD\"");
   });
 

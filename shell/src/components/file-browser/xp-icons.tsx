@@ -205,3 +205,36 @@ export function XpComputerGlyph({ size = 16, className }: GlyphProps) {
     </svg>
   );
 }
+
+/** Recycle Bin: gray mesh bin with crumpled paper (desktop icon). */
+export function XpRecycleBinGlyph({ size = 32, className }: GlyphProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 48 48"
+      className={className}
+      aria-hidden="true"
+      focusable="false"
+    >
+      {/* crumpled paper sticking out of the bin */}
+      <path d="M17 5l7 2-1.5 6-6.5-1.5L17 5z" fill="#ffffff" stroke="#8f8f8f" strokeWidth="1" />
+      <path d="M27 3.5l6 4.5-3 4.5-4.5-3.5L27 3.5z" fill="#f2f2f2" stroke="#8f8f8f" strokeWidth="1" />
+      {/* rim */}
+      <rect x="9" y="11" width="30" height="5" rx="1.6" fill="#ece9e1" stroke="#7a7a7a" strokeWidth="1.4" />
+      {/* bin body */}
+      <path
+        d="M11.5 17h25l-2.3 23.5c-.15 1.5-1.4 2.6-2.9 2.6H16.7c-1.5 0-2.75-1.1-2.9-2.6L11.5 17z"
+        fill="#d4d0c8"
+        stroke="#7a7a7a"
+        strokeWidth="1.4"
+      />
+      {/* mesh ribs */}
+      <path
+        d="M17 20l1.2 18M24 20v18M31 20l-1.2 18M13 24h22M13.6 30h20.8M14.4 36h19.2"
+        stroke="#a39e94"
+        strokeWidth="1.1"
+      />
+    </svg>
+  );
+}

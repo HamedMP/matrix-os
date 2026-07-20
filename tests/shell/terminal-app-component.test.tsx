@@ -63,7 +63,11 @@ vi.mock("@/stores/terminal-settings", () => {
 });
 
 import { TerminalApp } from "../../shell/src/components/terminal/TerminalApp.js";
-import { doesCompactGitContextFit } from "../../shell/src/components/terminal/TerminalSidebarItems.js";
+import {
+  doesCompactGitContextFit,
+  ShellSessionGroup,
+} from "../../shell/src/components/terminal/TerminalSidebarItems.js";
+import type { ShellSessionSummary } from "../../shell/src/components/terminal/terminal-session-state.js";
 import { getTerminalThemePreset } from "../../shell/src/components/terminal/terminal-themes.js";
 
 function normalizeCssColor(color: string) {
@@ -432,6 +436,66 @@ describe("TerminalApp", () => {
     const plainHoverCard = screen.getByTestId("terminal-session-hover-card-main");
     expect(plainHoverCard.textContent).toContain("Terminal");
     expect(plainHoverCard.textContent).toContain("active");
+  });
+
+  it("compacts empty agent subtitles and expands when refreshed metadata adds one", () => {
+    const shell = {
+      name: "codex-fix",
+      status: "active",
+      placement: "active",
+      visualStatus: "running",
+      agent: "codex",
+      subtitle: "   ",
+      tabs: [],
+    } satisfies ShellSessionSummary;
+    const groupProps = {
+      label: "Active" as const,
+      deletingShellNames: [],
+      foreground: true,
+      selectedShellName: null,
+      onOpen: vi.fn(),
+      onToggle: vi.fn(),
+      onRename: vi.fn(async () => true),
+      onDelete: vi.fn(),
+      draggingShellName: null,
+      dragOverShellName: null,
+      onDragStart: vi.fn(),
+      onDragOver: vi.fn(),
+      onDrop: vi.fn(),
+      onDragEnd: vi.fn(),
+    };
+    const { rerender } = render(<ShellSessionGroup {...groupProps} shells={[shell]} />);
+
+    expect(screen.getByTestId("terminal-session-card-codex-fix").style.height).toBe("60px");
+
+    const compactName = screen.getByTestId("terminal-session-name-codex-fix");
+    const compactMetadata = screen.getByTestId("terminal-session-agent-state-codex-fix");
+    expect(compactName.textContent).toBe("codex-fix");
+    expect(compactMetadata.textContent).toContain("Codex");
+    expect(compactMetadata.textContent).toContain("running");
+    expect(screen.queryByTestId("terminal-session-subtitle-codex-fix")).toBeNull();
+    expect(screen.getByTestId("terminal-session-name-row-codex-fix").parentElement?.style.gridTemplateRows).toBe(
+      "18px 16px",
+    );
+
+    rerender(
+      <ShellSessionGroup
+        {...groupProps}
+        shells={[{ ...shell, subtitle: "Fix Terminal sessions" }]}
+      />,
+    );
+    expect(screen.getByTestId("terminal-session-subtitle-codex-fix").textContent).toBe("Fix Terminal sessions");
+    expect(screen.getByTestId("terminal-session-card-codex-fix").style.height).toBe("78px");
+    expect(screen.getByTestId("terminal-session-name-row-codex-fix").parentElement?.style.gridTemplateRows).toBe(
+      "18px 16px 16px",
+    );
+
+    rerender(<ShellSessionGroup {...groupProps} shells={[shell]} />);
+    expect(screen.queryByTestId("terminal-session-subtitle-codex-fix")).toBeNull();
+    expect(screen.getByTestId("terminal-session-card-codex-fix").style.height).toBe("60px");
+    expect(screen.getByTestId("terminal-session-name-row-codex-fix").parentElement?.style.gridTemplateRows).toBe(
+      "18px 16px",
+    );
   });
 
   it("shows compact Git context only when it fits on the existing metadata line", () => {
@@ -4327,9 +4391,7 @@ describe("TerminalApp", () => {
 
     await chooseNewSessionMenuItemAfterStatus(/^Codex$/);
 
-    const codexPayload = expectTerminalCreatePayloadForCommand(
-      'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"; exec "$MATRIX_NODE_PREFIX/bin/codex"',
-    );
+    const codexPayload = expectTerminalCreatePayloadForCommand("codex");
     expect(codexPayload.agent).toBe("codex");
     await vi.waitFor(() => {
       expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({

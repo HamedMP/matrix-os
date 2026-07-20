@@ -52,6 +52,8 @@ vi.mock("@/hooks/useFileBrowser", () => {
     setQuickLookPath: vi.fn(),
     togglePreviewPanel: vi.fn(),
     searchResults: null,
+    pendingView: null as "files" | "trash" | null,
+    consumeViewRequest: vi.fn(),
   };
   return {
     useFileBrowser: (selector: (value: typeof state) => unknown) => selector(state),
@@ -68,6 +70,7 @@ vi.mock("@/hooks/usePreviewWindow", () => {
 vi.mock("@/hooks/useWindowManager", () => {
   const state = {
     windows: [] as unknown[],
+    focusedWindowId: "win-files" as string | null,
     openWindow: vi.fn(),
     focusWindow: vi.fn(),
   };

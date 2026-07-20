@@ -71,6 +71,7 @@ describe("win11 design: opaque Mica content surfaces", () => {
 
   it("marks the FileBrowser root with the data-file-browser styling hook", () => {
     expect(fileBrowserSrc).toContain("data-file-browser");
+    expect(fileBrowserSrc.match(/data-file-browser/g)).toHaveLength(1);
   });
 });
 
