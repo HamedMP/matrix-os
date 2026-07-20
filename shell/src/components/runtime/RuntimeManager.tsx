@@ -97,6 +97,15 @@ function isKnownServerType(value: unknown): value is string {
   );
 }
 
+export function isServerTypeAllowedForEntitlement(
+  serverType: unknown,
+  allowedServerTypes: readonly string[],
+): serverType is string {
+  return isKnownServerType(serverType) && allowedServerTypes.some(
+    (allowedServerType) => allowedServerType.toLowerCase() === serverType.toLowerCase(),
+  );
+}
+
 function isKnownLocation(value: unknown): value is string {
   return typeof value === "string" && MATRIX_BILLING_REGIONS.some(
     (region) => region.location === value,
@@ -452,7 +461,14 @@ export function RuntimeManager({
   }
 
   function continueFromConfiguration(selection: ComputerSetupSelection): void {
-    if (!draft || !isKnownServerType(selection.serverType) || !isKnownLocation(selection.location)) return;
+    const allowedServerTypes = overview.status === "ready"
+      ? overview.billing.entitlement?.allowedServerTypes ?? []
+      : [];
+    if (
+      !draft ||
+      !isServerTypeAllowedForEntitlement(selection.serverType, allowedServerTypes) ||
+      !isKnownLocation(selection.location)
+    ) return;
     setDraft({
       ...draft,
       serverType: selection.serverType.toLowerCase(),

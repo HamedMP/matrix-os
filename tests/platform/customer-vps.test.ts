@@ -186,6 +186,28 @@ describe('platform/customer-vps', () => {
     });
   });
 
+  it('normalizes billing entitlement server types before enforcing explicit selection', async () => {
+    const { service, hetzner } = createService({
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        defaultServerType: 'CPX32',
+        allowedServerTypes: ['CPX22', 'CPX32'],
+      })),
+    });
+
+    await service.provision({
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      serverType: 'cpx22',
+    });
+
+    expect(vi.mocked(hetzner.createServer).mock.calls[0]?.[0]).toMatchObject({
+      serverType: 'cpx22',
+    });
+    await expect(getActiveUserMachineByClerkId(db, 'user_123')).resolves.toMatchObject({
+      serverType: 'cpx22',
+    });
+  });
+
   it('persists a selected region and uses it for provisioning', async () => {
     const { service, hetzner } = createService({
       config: createTestConfig({ location: 'nbg1' }),

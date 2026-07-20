@@ -371,10 +371,21 @@ function billingUpgradeRequired(): CustomerVpsError {
   return new CustomerVpsError(402, 'billing_required', 'Billing upgrade required');
 }
 
+function normalizeServerType(serverType: string): string {
+  return serverType.trim().toLowerCase();
+}
+
+function allowedEntitlementServerTypes(entitlement: BillingEntitlement): string[] {
+  return entitlement.allowedServerTypes
+    .map(normalizeServerType)
+    .filter((serverType) => serverType.length > 0);
+}
+
 function resolveDefaultEntitlementServerType(entitlement: BillingEntitlement): string {
-  const allowedServerTypes = entitlement.allowedServerTypes.filter((serverType) => serverType.length > 0);
-  if (entitlement.defaultServerType && allowedServerTypes.includes(entitlement.defaultServerType)) {
-    return entitlement.defaultServerType;
+  const allowedServerTypes = allowedEntitlementServerTypes(entitlement);
+  const defaultServerType = normalizeServerType(entitlement.defaultServerType);
+  if (defaultServerType && allowedServerTypes.includes(defaultServerType)) {
+    return defaultServerType;
   }
   const fallbackServerType = allowedServerTypes[0];
   if (!fallbackServerType) {
@@ -396,8 +407,10 @@ async function resolveBillingProvisionContext(
   if (!entitlement || !access.runtimeProxyAllowed) {
     throw billingUpgradeRequired();
   }
-  const serverType = input.serverType ?? resolveDefaultEntitlementServerType(entitlement);
-  if (!entitlement.allowedServerTypes.includes(serverType)) {
+  const serverType = input.serverType
+    ? normalizeServerType(input.serverType)
+    : resolveDefaultEntitlementServerType(entitlement);
+  if (!allowedEntitlementServerTypes(entitlement).includes(serverType)) {
     throw billingUpgradeRequired();
   }
   return { entitlement, serverType };
@@ -417,10 +430,12 @@ async function resolveBillingRecoveryContext(
   if (!entitlement || !access.runtimeProxyAllowed) {
     throw billingUpgradeRequired();
   }
-  const serverType = existingServerType && entitlement.allowedServerTypes.includes(existingServerType)
-    ? existingServerType
+  const normalizedExistingServerType = existingServerType ? normalizeServerType(existingServerType) : null;
+  const allowedServerTypes = allowedEntitlementServerTypes(entitlement);
+  const serverType = normalizedExistingServerType && allowedServerTypes.includes(normalizedExistingServerType)
+    ? normalizedExistingServerType
     : resolveDefaultEntitlementServerType(entitlement);
-  if (!entitlement.allowedServerTypes.includes(serverType)) {
+  if (!allowedServerTypes.includes(serverType)) {
     throw billingUpgradeRequired();
   }
   return { serverType };
@@ -437,7 +452,11 @@ async function assertBillingResizeAllowed(
   }
   const entitlement = await deps.resolveBillingEntitlement(clerkUserId);
   const access = getRuntimeAccessDecision(entitlement, now);
-  if (!entitlement || !access.runtimeProxyAllowed || !entitlement.allowedServerTypes.includes(serverType)) {
+  if (
+    !entitlement ||
+    !access.runtimeProxyAllowed ||
+    !allowedEntitlementServerTypes(entitlement).includes(normalizeServerType(serverType))
+  ) {
     throw billingUpgradeRequired();
   }
 }

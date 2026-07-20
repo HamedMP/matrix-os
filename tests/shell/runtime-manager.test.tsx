@@ -181,6 +181,16 @@ describe("RuntimeManager", () => {
     });
   });
 
+  it("checks configured server types against the entitlement allowlist case-insensitively", async () => {
+    const { isServerTypeAllowedForEntitlement } = await import(
+      "../../shell/src/components/runtime/RuntimeManager.js"
+    );
+
+    expect(isServerTypeAllowedForEntitlement("cpx22", ["CPX22", "CPX32"])).toBe(true);
+    expect(isServerTypeAllowedForEntitlement("cpx52", ["CPX22", "CPX32"])).toBe(false);
+    expect(isServerTypeAllowedForEntitlement("untrusted", ["untrusted"])).toBe(false);
+  });
+
   it("shows the Clerk profile fallback and authoritative computer links", async () => {
     installFetchRouter();
     await renderManager();
