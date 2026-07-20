@@ -19,6 +19,7 @@ export interface AppRecord {
   name: string;
   description: string | null;
   version: string;
+  installed_version: string | null;
   author: string | null;
   category: string | null;
   tables: Record<string, TableDef>;
@@ -48,10 +49,12 @@ export function createAppRegistry(db: AppDb, kysely: Kysely<any>): AppRegistry {
 
         // Upsert registry row inside transaction
         await sql`
-          INSERT INTO public._apps (slug, name, description, version, author, category, tables, updated_at)
+          INSERT INTO public._apps (
+            slug, name, description, version, installed_version, author, category, tables, updated_at
+          )
           VALUES (
             ${slug}, ${opts.name}, ${opts.description ?? null},
-            ${opts.version ?? "1.0.0"}, ${opts.author ?? null},
+            ${opts.version ?? "1.0.0"}, ${opts.version ?? "1.0.0"}, ${opts.author ?? null},
             ${opts.category ?? null}, ${JSON.stringify(opts.tables)}::jsonb,
             now()
           )

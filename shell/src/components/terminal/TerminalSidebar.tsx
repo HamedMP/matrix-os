@@ -66,10 +66,6 @@ const MIN_TERMINAL_SIDEBAR_WIDTH = 280;
 const MAX_TERMINAL_SIDEBAR_WIDTH = 560;
 const TERMINAL_SIDEBAR_TRANSITION = "width 220ms ease-in-out, opacity 140ms ease, transform 180ms ease";
 const SHELL_STATUS_DOT_CSS = `
-@keyframes terminal-session-status-pulse {
-  0%, 100% { box-shadow: 0 0 0 4px rgba(95, 184, 95, 0.24); }
-  50% { box-shadow: 0 0 0 6px rgba(95, 184, 95, 0.10); }
-}
 @keyframes terminal-refresh-spin {
   to { transform: rotate(360deg); }
 }
@@ -111,9 +107,6 @@ const SHELL_STATUS_DOT_CSS = `
 }
 [data-terminal-sidebar-resizing="true"] {
   transition: none !important;
-}
-.terminal-session-status-dot--running {
-  animation: terminal-session-status-pulse 1.35s ease-in-out infinite;
 }
 .terminal-refresh-icon--loading {
   animation: terminal-refresh-spin 0.9s linear infinite;
@@ -216,7 +209,6 @@ const SHELL_STATUS_DOT_CSS = `
   animation: terminal-new-session-menu-in 170ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 @media (prefers-reduced-motion: reduce) {
-  .terminal-session-status-dot--running,
   .terminal-refresh-icon--loading,
   .terminal-new-session-menu {
     animation: none;
