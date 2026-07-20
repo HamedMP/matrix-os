@@ -9,7 +9,10 @@ import {
   reportGateChecks,
   validateEvidenceDirectory,
 } from '../../scripts/spikes/terminal-runtime/verify-evidence.mjs';
-import { stripTerminalControls } from '../../scripts/spikes/terminal-runtime/terminal-text.mjs';
+import {
+  hasResurrectionConfirmation,
+  stripTerminalControls,
+} from '../../scripts/spikes/terminal-runtime/terminal-text.mjs';
 
 const roots: string[] = [];
 
@@ -136,6 +139,8 @@ describe('terminal runtime spike evidence', () => {
     expect(packer).toContain('spike_pack_evidence_incomplete');
     expect(runner).toContain('base_id="1${pr_head_sha:0:31}"');
     expect(runner).toContain('zellij delete-session "matrix-t-${runtime_id}" --force');
+    expect(runner).toContain('attach-probe.mjs');
+    expect(runner).not.toContain('script -qefc');
   });
 
   it('keeps the fixed notify unit shape and accepts readiness from the keeper helper', async () => {
@@ -154,7 +159,9 @@ describe('terminal runtime spike evidence', () => {
   });
 
   it('normalizes terminal controls before matching the resurrection confirmation', () => {
-    expect(stripTerminalControls('\u001b[2JPress\u001b[1C enter\u001b[0m to run')).toBe('Press enter to run');
+    const prompt = '\u001b[2J<ENTER>\u001b[1C run, <ESC> drop to shell';
+    expect(stripTerminalControls(prompt)).toBe('<ENTER> run, <ESC> drop to shell');
+    expect(hasResurrectionConfirmation(prompt)).toBe(true);
   });
 
   it('accepts complete bounded S1 and S2 evidence', async () => {

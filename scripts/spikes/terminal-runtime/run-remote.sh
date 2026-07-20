@@ -56,7 +56,7 @@ install -d -o matrix -g matrix -m 0700 "/run/user/$(id -u matrix)"
 
 rm -rf -- "$support_root.next"
 install -d -o root -g root -m 0755 "$support_root.next" "$support_root.next/node_modules"
-  for file in keeper.mjs record-outcome.mjs record-runtime-roles.mjs terminal-text.mjs pane-probe.sh memory-hog.mjs layout.kdl; do
+for file in attach-probe.mjs keeper.mjs record-outcome.mjs record-runtime-roles.mjs terminal-text.mjs pane-probe.sh memory-hog.mjs layout.kdl; do
   install -o root -g root -m 0755 "$source_dir/$file" "$support_root.next/$file"
 done
 cp -aL /opt/matrix/app/node_modules/node-pty "$support_root.next/node_modules/node-pty"
@@ -265,30 +265,22 @@ if [ -n "$gateway_before_cgroup" ] && [ "$gateway_before_cgroup" != "$base_cgrou
   mark_pass s1 gatewayOutsideCgroup
 fi
 
-attach_fifo="/tmp/matrix-terminal-attach-${short_sha}.fifo"
-rm -f -- "$attach_fifo"
-mkfifo -m 0600 "$attach_fifo"
-tail -f /dev/null >"$attach_fifo" &
-fifo_writer=$!
-runuser -u matrix -- "${zellij_env[@]}" script -qefc "/opt/matrix/bin/zellij attach matrix-t-${base_id}" /dev/null <"$attach_fifo" >/dev/null 2>&1 &
+runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/runtime/node/bin/node "$support_root/attach-probe.mjs" "$base_id" &
 attach_parent=$!
-sleep 1
-outside_found=false
-attach_pid=""
-for pid in $(pgrep -x zellij || true); do
-  membership="$(sed -n 's/^0:://p' "/proc/${pid}/cgroup" 2>/dev/null || true)"
-  if [ -n "$membership" ] && [ "$membership" != "$base_cgroup" ] && grep -azF -- "matrix-t-${base_id}" "/proc/${pid}/cmdline" >/dev/null 2>&1; then
-    outside_found=true
-    attach_pid="$pid"
-    break
-  fi
+attach_receipt="$runtime_root/attach-${base_id}.json"
+for _ in $(seq 1 100); do
+  [ -f "$attach_receipt" ] && break
+  sleep 0.1
 done
-if [ "$outside_found" = true ]; then
+attach_pid="$(/opt/matrix/runtime/node/bin/node -e 'const fs=require("fs");process.stdout.write(String(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).client))' "$attach_receipt")"
+attach_helper="$(/opt/matrix/runtime/node/bin/node -e 'const fs=require("fs");process.stdout.write(String(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).helper))' "$attach_receipt")"
+membership="$(sed -n 's/^0:://p' "/proc/${attach_pid}/cgroup" 2>/dev/null || true)"
+if [ -n "$membership" ] && [ "$membership" != "$base_cgroup" ]; then
   record_pid_cgroup attach-client "$attach_pid" "$pid_cgroups" || true
   mark_pass s1 attachOutsideCgroup
 fi
-kill "$attach_parent" "$fifo_writer" 2>/dev/null || true
-rm -f -- "$attach_fifo"
+kill "$attach_helper" 2>/dev/null || true
+wait "$attach_parent" 2>/dev/null || true
 sleep 0.5
 if roles_alive "$base_id"; then mark_pass s1 detachPreservesPids; else
   /opt/matrix/runtime/node/bin/node "$support_root/record-runtime-roles.mjs" "$base_id" detach || true

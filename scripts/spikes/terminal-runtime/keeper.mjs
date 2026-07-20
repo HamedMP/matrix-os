@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
-import { stripTerminalControls } from './terminal-text.mjs';
+import { hasResurrectionConfirmation } from './terminal-text.mjs';
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -194,7 +194,7 @@ async function main() {
     if (
       descriptor.intent === 'recover' &&
       !confirmationRecorded &&
-      /press\s+enter\s+to\s+run/i.test(stripTerminalControls(confirmationBuffer))
+      hasResurrectionConfirmation(confirmationBuffer)
     ) {
       confirmationRecorded = true;
       void writeFile(`${runtimeRoot}/confirmations/${runtimeId}.pass`, 'pass\n', {

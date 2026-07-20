@@ -4,3 +4,7 @@ export function stripTerminalControls(value) {
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '');
 }
+
+export function hasResurrectionConfirmation(value) {
+  return /<enter>\s+run/i.test(stripTerminalControls(value));
+}
