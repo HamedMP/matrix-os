@@ -1,0 +1,20 @@
+[Unit]
+Description=Matrix terminal persistence spike runtime
+After=matrix-terminal-spike.slice
+
+[Service]
+Type=notify
+NotifyAccess=all
+User=matrix
+Group=matrix
+Slice=matrix-terminal-spike.slice
+ExecStart=/opt/matrix/runtime/node/bin/node /opt/matrix/libexec/terminal-runtime-spike/keeper.mjs %i
+ExecStopPost=/opt/matrix/runtime/node/bin/node /opt/matrix/libexec/terminal-runtime-spike/record-outcome.mjs %i
+KillMode=control-group
+TimeoutStartSec=30
+TimeoutStopSec=30
+Restart=no
+MemoryHigh=50%
+TasksMax=512
+StandardOutput=null
+StandardError=null

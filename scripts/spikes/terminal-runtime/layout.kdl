@@ -1,0 +1,5 @@
+layout {
+  tab name="main" {
+    pane command="/opt/matrix/libexec/terminal-runtime-spike/pane-probe.sh"
+  }
+}
