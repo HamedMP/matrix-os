@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
+import { fonts, lightFg, palette, radii } from "@matrix-os/brand/tokens";
 import {
   type PlatformDB,
   deleteContainer,
@@ -3071,6 +3072,12 @@ describe("platform proxy routing", () => {
     const html = await res.text();
     expect(html.length).toBeLessThan(4_096);
     expect(html).toContain("Matrix OS shell unavailable");
+    expect(html).toContain("--font-instrument: 'Instrument Sans';");
+    expect(html).toContain(`font-family: ${fonts.sans};`);
+    expect(html).toContain(`background: ${palette.deep};`);
+    expect(html).toContain(`color: ${lightFg};`);
+    expect(html).toContain(`border-radius: ${radii.pill};`);
+    expect(html).not.toMatch(/#(?:10120f|f4f1e8|c9c6bc|8d927f|d8b66a)/i);
     expect(html).not.toContain("Loading your Matrix computer");
     expect(html).not.toContain('data-matrix-platform-fallback-auth="true"');
   });
