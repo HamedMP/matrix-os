@@ -4,6 +4,7 @@ import {
   STICKY_COLORS,
   STICKY_MIN_HEIGHT,
   STICKY_WIDTH,
+  MAX_STICKY_NOTES,
   MAX_STICKY_TEXT,
   colorFor,
   parseStickyNotes,
@@ -84,7 +85,7 @@ export default function App() {
   }, [persistNotes]);
 
   const addNote = useCallback(() => {
-    if (!loaded) return;
+    if (!loaded || notesRef.current.length >= MAX_STICKY_NOTES) return;
     zCounter.current += 1;
     const z = zCounter.current;
     updateNotes((current) => {
@@ -156,7 +157,7 @@ export default function App() {
           className="stickies-add"
           onClick={addNote}
           aria-label="New note"
-          disabled={!loaded}
+          disabled={!loaded || notes.length >= MAX_STICKY_NOTES}
         >
           <Plus size={16} />
           <span>New note</span>

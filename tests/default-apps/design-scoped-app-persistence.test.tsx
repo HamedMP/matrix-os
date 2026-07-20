@@ -88,6 +88,24 @@ describe("design-scoped app persistence", () => {
     );
   });
 
+  it("does not accept macOS Stickies beyond the persisted restore cap", async () => {
+    readData.mockResolvedValueOnce(Array.from({ length: 100 }, (_, index) => ({
+      id: `note-${index}`,
+      x: 24,
+      y: 24,
+      z: index + 1,
+      text: "",
+      color: "yellow",
+    })));
+
+    render(<StickiesApp />);
+
+    const addButton = await screen.findByRole("button", { name: "New note" }) as HTMLButtonElement;
+    await waitFor(() => expect(addButton.disabled).toBe(true));
+    fireEvent.click(addButton);
+    expect(writeData).not.toHaveBeenCalled();
+  });
+
   it("persists Windows Widgets edits immediately so iframe removal cannot lose them", async () => {
     render(<WidgetsApp />);
     const note = await screen.findByRole("textbox", { name: "Notes" });
