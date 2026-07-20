@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { Inter, Instrument_Sans, JetBrains_Mono, Cormorant_Garamond, Geist, Geist_Mono, Orbitron } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { getPostHogVisitorCountry } from "@matrix-os/observability/client";
+import { platformShellAssetPath } from "@/lib/platform-shell-assets";
 import { buildShellMetadata } from "@/lib/shell-metadata";
 import "@xterm/xterm/css/xterm.css";
 import "@fontsource/jetbrains-mono/400.css";
@@ -62,10 +63,14 @@ export async function generateMetadata(): Promise<Metadata> {
     // expected 180px target).
     icons: {
       icon: [
-        { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
-        { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+        { url: platformShellAssetPath("/icon-192.png"), sizes: "192x192", type: "image/png" },
+        { url: platformShellAssetPath("/icon-512.png"), sizes: "512x512", type: "image/png" },
       ],
-      apple: [{ url: "/icon-192.png", sizes: "192x192", type: "image/png" }],
+      apple: [{
+        url: platformShellAssetPath("/icon-192.png"),
+        sizes: "192x192",
+        type: "image/png",
+      }],
     },
   };
 }

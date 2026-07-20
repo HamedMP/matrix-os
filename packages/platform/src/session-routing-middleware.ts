@@ -33,9 +33,11 @@ import {
   buildBillingSetupPath,
   buildForwardedQueryString,
   buildPostAuthRedirectPath,
+  getPlatformShellAssetUpstreamPath,
   getAuthShellOrigin,
   isAppDomainGatewayPath,
   isBillingSetupPath,
+  isPlatformShellAssetNamespacePath,
   readRuntimeSlotSelection,
   shouldProxyAuthShellForUnroutedUser,
   shouldProxyShellForBillingGate,
@@ -259,10 +261,15 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
   async function proxyAuthShell(
     c: Context,
     host: string,
-    proxyOpts: { redirectToBillingOnFailure?: boolean } = {},
+    proxyOpts: {
+      assetRequest?: boolean;
+      preserveUpstreamCacheHeaders?: boolean;
+      redirectToBillingOnFailure?: boolean;
+      upstreamPath?: string;
+    } = {},
   ): Promise<Response> {
     const upstream = new URL(c.req.url);
-    const targetUrl = `${getAuthShellOrigin(appEnv)}${upstream.pathname}${upstream.search}`;
+    const targetUrl = `${getAuthShellOrigin(appEnv)}${proxyOpts.upstreamPath ?? upstream.pathname}${upstream.search}`;
     const headers = new Headers();
     for (const [key, value] of Object.entries(c.req.header())) {
       const lowerKey = key.toLowerCase();
@@ -286,7 +293,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         signal: AbortSignal.timeout(authShellProxyTimeoutMs),
       });
       const responseHeaders = sanitizeProxyResponseHeaders(response.headers);
-      applyNoStoreResponseHeaders(responseHeaders);
+      if (!proxyOpts.preserveUpstreamCacheHeaders) {
+        applyNoStoreResponseHeaders(responseHeaders);
+      }
       return new Response(response.body, {
         status: response.status,
         headers: responseHeaders,
@@ -295,6 +304,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       logRouteError('app-domain auth-shell proxy', err);
       if (c.req.path === '/runtime') {
         return runtimeShellUnavailableResponse(c, applyNoStoreHeaders);
+      }
+      if (proxyOpts.assetRequest) {
+        applyNoStoreHeaders(c);
+        c.header('Retry-After', '5');
+        return c.text('Matrix OS shell asset unavailable', 503);
       }
       if (proxyOpts.redirectToBillingOnFailure !== false && !isBillingSetupPath(c.req.url)) {
         return c.redirect(buildBillingSetupPath(c.req.url), 302);
@@ -354,6 +368,24 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const reqPath = c.req.path;
     if (isAppDomain && reqPath === '/service-worker.js') {
       return appDomainServiceWorkerResponse();
+    }
+    if (isAppDomain && isPlatformShellAssetNamespacePath(reqPath)) {
+      if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+        applyNoStoreHeaders(c);
+        c.header('Allow', 'GET, HEAD');
+        return c.text('Method Not Allowed', 405);
+      }
+      const upstreamPath = getPlatformShellAssetUpstreamPath(reqPath);
+      if (!upstreamPath) {
+        applyNoStoreHeaders(c);
+        return c.text('Not Found', 404);
+      }
+      return proxyAuthShell(c, host, {
+        assetRequest: true,
+        preserveUpstreamCacheHeaders: upstreamPath.startsWith('/_next/static/'),
+        redirectToBillingOnFailure: false,
+        upstreamPath,
+      });
     }
     if (isAppDomain && isPostHogRelayPath(reqPath)) {
       return proxyPostHogRelay(c, { logRouteError: logRouteError });

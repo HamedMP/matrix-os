@@ -12,6 +12,7 @@ import {
   nextDeveloperToolsSelection,
   type DeveloperToolId,
 } from "@/components/onboarding/developer-tools";
+import { platformShellAssetPath } from "@/lib/platform-shell-assets";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import {
   BillingWait,
@@ -554,10 +555,11 @@ export function RuntimeManager({
     <main className="relative isolate h-dvh overflow-y-auto bg-[#DFE0D8] font-sans text-deep">
       <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden="true">
         <Image
-          src="/runtime-shell-backdrop.webp"
+          src={platformShellAssetPath("/runtime-shell-backdrop.webp")}
           alt=""
           fill
           priority
+          unoptimized
           sizes="100vw"
           data-testid="runtime-shell-backdrop"
           className="scale-[1.08] select-none object-cover blur-[18px] brightness-[0.78] saturate-[0.85]"
@@ -568,11 +570,12 @@ export function RuntimeManager({
         aria-hidden="true"
       />
       <Image
-        src="/logo-rabbit.png"
+        src={platformShellAssetPath("/logo-rabbit.png")}
         alt=""
         width={623}
         height={666}
         priority
+        unoptimized
         aria-hidden="true"
         data-testid="runtime-rabbit-shadow"
         className="pointer-events-none fixed left-1/2 top-1/2 z-[2] w-[min(156vw,68rem)] -translate-x-1/2 -translate-y-1/2 select-none opacity-[0.045] blur-[0.4px]"

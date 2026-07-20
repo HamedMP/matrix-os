@@ -20,6 +20,7 @@ import type { ReactNode } from "react";
 
 import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
 import { DeveloperToolsSelector } from "@/components/onboarding/DefaultInstallsStep";
+import { platformShellAssetPath } from "@/lib/platform-shell-assets";
 import type { JourneyState, OverviewState } from "./RuntimeManager";
 import { runtimeSlotTitle } from "./runtime-name";
 
@@ -60,7 +61,15 @@ export function ComputerInventory({
           aria-label="Matrix OS home"
           className="mx-auto mb-7 inline-flex w-fit flex-row items-center justify-center gap-3.5 text-forest no-underline sm:mb-8"
         >
-          <Image src="/matrix-logo.svg" alt="Matrix OS logo" width={27} height={36} priority className="h-9 w-[27px] shrink-0" />
+          <Image
+            src={platformShellAssetPath("/matrix-logo.svg")}
+            alt="Matrix OS logo"
+            width={27}
+            height={36}
+            priority
+            unoptimized
+            className="h-9 w-[27px] shrink-0"
+          />
           <span
             className="inline-flex h-9 items-center text-[15px] font-semibold leading-none tracking-[0.16em] sm:text-base"
             style={{ color: "#32352E", fontFamily: "var(--font-orbitron), Orbitron, sans-serif" }}

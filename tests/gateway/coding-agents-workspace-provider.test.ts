@@ -1,6 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import {
   AgentThreadEventSchema,
@@ -17,6 +19,9 @@ import {
   createWorkspaceCodingAgentProviderSet,
 } from "../../packages/gateway/src/coding-agents/workspace-provider.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import { matrixTerminalShellScript } from "../../packages/gateway/src/shell/zellij-config.js";
+
+const execFileAsync = promisify(execFile);
 
 const ownerPrincipal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 const baseNow = new Date("2026-07-06T12:00:00.000Z");
@@ -95,8 +100,78 @@ describe("coding agent workspace provider", () => {
         'MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"',
       );
       expect(action.command).toContain('PATH="$MATRIX_NODE_PREFIX/bin:$PATH"');
+      expect(action.command).not.toContain('exec "${SHELL:-sh}" -l');
     }
     expect(JSON.stringify(actions)).not.toMatch(/api[_ -]?key|bearer|token|secret|password/i);
+  });
+
+  it("hands a cancelled Codex connect action back to generated interactive Bash", async () => {
+    const provider = createWorkspaceCodingAgentProvider({
+      providerId: "codex",
+      agent: "codex",
+      runtime: {
+        startSession: vi.fn(),
+        stopSession: vi.fn(),
+      },
+    });
+    const actions = await provider.buildSetupAction?.({
+      principal: ownerPrincipal,
+      now: () => baseNow,
+      signal: AbortSignal.timeout(1_000),
+    });
+    const connectAction = actions?.find((action) => action.id === "codex_connect");
+    expect(connectAction).toBeDefined();
+
+    const testDir = await mkdtemp(join(tmpdir(), "matrix-agent-connect-shell-"));
+    const runtimeBin = join(testDir, "runtime", "bin");
+    const wrapperPath = join(testDir, "matrix-terminal-shell");
+    const zshrcPath = join(testDir, ".zshrc");
+    const bashrcPath = join(testDir, "bashrc");
+    const promptLabelPath = join(testDir, "prompt-label.mjs");
+    const tracePath = join(testDir, "shell-trace.txt");
+    try {
+      await writeFile(bashrcPath, "# generated test bashrc\n");
+      await writeFile(promptLabelPath, "");
+      await writeFile(wrapperPath, matrixTerminalShellScript(zshrcPath, bashrcPath, promptLabelPath));
+      await mkdir(runtimeBin, { recursive: true });
+      await writeFile(join(runtimeBin, "codex"), `#!/bin/sh
+printf 'connect-args=%s\\n' "$*" >> "$MATRIX_TEST_TRACE"
+exit 130
+`);
+      await writeFile(join(runtimeBin, "bash"), `#!/bin/sh
+printf 'bash-args=%s\\n' "$*" >> "$MATRIX_TEST_TRACE"
+printf 'bash-prompt=%s\\n' "\${MATRIX_TERMINAL_PROMPT:-}" >> "$MATRIX_TEST_TRACE"
+exit 0
+`);
+      await Promise.all([
+        chmod(wrapperPath, 0o700),
+        chmod(join(runtimeBin, "codex"), 0o700),
+        chmod(join(runtimeBin, "bash"), 0o700),
+      ]);
+
+      await execFileAsync("/bin/bash", [
+        wrapperPath,
+        "/bin/sh",
+        "-c",
+        connectAction!.command,
+      ], {
+        env: {
+          ...process.env,
+          MATRIX_NODE_PREFIX: join(testDir, "runtime"),
+          MATRIX_TERMINAL_PROMPT: "owner-handle:\\w$ ",
+          MATRIX_TEST_TRACE: tracePath,
+          SHELL: join(runtimeBin, "bash"),
+        },
+      });
+      const trace = await readFile(tracePath, "utf8");
+
+      expect(trace).toContain("connect-args=login");
+      expect(trace).not.toContain("bash-args=-l");
+      expect(trace).toContain(`bash-args=--noprofile --rcfile ${bashrcPath} -i`);
+      expect(trace).toContain("bash-prompt=owner-handle:\\w$ ");
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
   });
 
   it("projects setup actions through the registry for a missing configured provider", async () => {
