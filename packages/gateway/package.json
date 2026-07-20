@@ -15,7 +15,7 @@
     "build": "pnpm --dir ../.. --filter '@matrix-os/observability' build && tsc && cp src/coding-agents/codex-provider-version-check.mjs dist/coding-agents/codex-provider-version-check.mjs && cp src/coding-agents/codex-runner.mjs dist/coding-agents/codex-runner.mjs && cp src/coding-agents/codex-app-server-runner.mjs dist/coding-agents/codex-app-server-runner.mjs"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.4.0",
+    "@electric-sql/pglite": "^0.5.4",
     "@types/node": "^25.2.3",
     "@types/node-telegram-bot-api": "^0.64.13",
     "@types/pg": "^8.18.0",
