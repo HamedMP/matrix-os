@@ -15,10 +15,19 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { makeRedirectUri } from "expo-auth-session";
-import { useSSO, useAuth } from "@clerk/clerk-expo";
+import { useSSO, useAuth, useSignIn } from "@clerk/clerk-expo";
 import * as WebBrowser from "expo-web-browser";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import {
+  EmailCodeSignInError,
+  isLikelyEmail,
+  isValidVerificationCode,
+  normalizeSignInIdentifier,
+  requestEmailCode,
+  submitEmailCode,
+  type SignInAttemptLike,
+} from "@/lib/clerk-sign-in";
 import {
   HOSTED_GATEWAY_URL,
   getSelectedGatewayConnection,
@@ -36,7 +45,7 @@ const clerkOAuthRedirectUrl =
   makeRedirectUri({ scheme: "matrixos", path: "sso-callback" });
 
 type OAuthStrategy = "oauth_google" | "oauth_github";
-type AuthProvider = "google" | "github" | "basic";
+type AuthProvider = "google" | "github" | "basic" | "email" | "code";
 
 export default function SignInScreen() {
   const { theme } = useUnistyles();
@@ -44,6 +53,7 @@ export default function SignInScreen() {
   const router = useRouter();
   const { isSignedIn } = useAuth();
   const { startSSOFlow } = useSSO();
+  const { signIn, setActive: setActiveSession, isLoaded: signInLoaded } = useSignIn();
   const { setGateway } = useGateway();
 
   const [loadingProvider, setLoadingProvider] = useState<AuthProvider | null>(null);
@@ -51,7 +61,13 @@ export default function SignInScreen() {
   const [basicUsername, setBasicUsername] = useState("matrix");
   const [basicPassword, setBasicPassword] = useState("");
   const [gatewayError, setGatewayError] = useState<string | null>(null);
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [codeSentTo, setCodeSentTo] = useState<string | null>(null);
   const redirectedRef = useRef(false);
+  // The pending Clerk attempt is only read inside submit handlers, so a ref keeps
+  // it out of the render path.
+  const emailAttemptRef = useRef<SignInAttemptLike | null>(null);
   const normalizedGatewayUrl = useMemo(() => {
     try {
       return normalizeGatewayUrl(gatewayUrl);
@@ -107,6 +123,69 @@ export default function SignInScreen() {
       setLoadingProvider(null);
     }
   }, [gatewayUrl, startSSOFlow, router]);
+
+  const handleSendEmailCode = useCallback(async () => {
+    if (!signInLoaded || !signIn) return;
+    setLoadingProvider("email");
+    try {
+      const normalizedGatewayUrl = normalizeGatewayUrl(gatewayUrl);
+      await saveSelectedGatewayUrl(normalizedGatewayUrl);
+      setGatewayUrl(normalizedGatewayUrl);
+      setGatewayError(null);
+      const { attempt, maskedIdentifier } = await requestEmailCode(
+        signIn as never,
+        email,
+      );
+      emailAttemptRef.current = attempt;
+      setCodeSentTo(maskedIdentifier);
+      setCode("");
+    } catch (err: unknown) {
+      const message =
+        err instanceof EmailCodeSignInError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "We could not send the code. Try again in a moment.";
+      console.warn("[mobile] email code request failed:", err);
+      setGatewayError(message);
+      Alert.alert("Sign in failed", message);
+    } finally {
+      setLoadingProvider(null);
+    }
+  }, [email, gatewayUrl, signIn, signInLoaded]);
+
+  const handleVerifyEmailCode = useCallback(async () => {
+    const attempt = emailAttemptRef.current;
+    if (!attempt || !setActiveSession) return;
+    setLoadingProvider("code");
+    try {
+      const createdSessionId = await submitEmailCode(attempt, code);
+      await setActiveSession({ session: createdSessionId });
+      emailAttemptRef.current = null;
+      setGatewayError(null);
+      redirectedRef.current = true;
+      router.replace("/(tabs)/apps" as any);
+    } catch (err: unknown) {
+      const message =
+        err instanceof EmailCodeSignInError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "That code did not work. Request a new one and try again.";
+      console.warn("[mobile] email code verification failed:", err);
+      setGatewayError(message);
+      Alert.alert("Sign in failed", message);
+    } finally {
+      setLoadingProvider(null);
+    }
+  }, [code, router, setActiveSession]);
+
+  const handleUseDifferentEmail = useCallback(() => {
+    emailAttemptRef.current = null;
+    setCodeSentTo(null);
+    setCode("");
+    setGatewayError(null);
+  }, []);
 
   const handleBasicSignIn = useCallback(async () => {
     setLoadingProvider("basic");
@@ -312,6 +391,110 @@ export default function SignInScreen() {
                   </>
                 )}
               </Pressable>
+
+              <View style={styles.divider}>
+                <View style={styles.dividerRule} />
+                <Text style={styles.dividerText}>or</Text>
+                <View style={styles.dividerRule} />
+              </View>
+
+              {codeSentTo === null ? (
+                <>
+                  <View style={styles.basicInputRow}>
+                    <Ionicons name="mail-outline" size={17} color={theme.colors.inkMuted} />
+                    <TextInput
+                      value={email}
+                      onChangeText={(value) => {
+                        setEmail(value);
+                        setGatewayError(null);
+                      }}
+                      placeholder="you@example.com"
+                      placeholderTextColor={theme.colors.inkDim}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      autoComplete="email"
+                      keyboardType="email-address"
+                      textContentType="emailAddress"
+                      returnKeyType="go"
+                      onSubmitEditing={handleSendEmailCode}
+                      onBlur={() => setEmail(normalizeSignInIdentifier(email))}
+                      style={styles.gatewayInput}
+                      accessibilityLabel="Email address"
+                    />
+                  </View>
+                  <Pressable
+                    onPress={handleSendEmailCode}
+                    disabled={loadingProvider !== null || !isLikelyEmail(email)}
+                    style={({ pressed }) => [
+                      styles.authButtonSecondary,
+                      pressed && styles.buttonPressed,
+                      (loadingProvider !== null || !isLikelyEmail(email)) &&
+                        styles.authButtonDisabled,
+                    ]}
+                  >
+                    {loadingProvider === "email" ? (
+                      <ActivityIndicator size="small" color={theme.colors.foreground} />
+                    ) : (
+                      <>
+                        <Ionicons name="mail-outline" size={19} color={theme.colors.foreground} />
+                        <Text style={styles.authButtonSecondaryText}>Email me a code</Text>
+                      </>
+                    )}
+                  </Pressable>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.codeHint}>
+                    We sent a 6-digit code to {codeSentTo}.
+                  </Text>
+                  <View style={styles.basicInputRow}>
+                    <Ionicons name="keypad-outline" size={17} color={theme.colors.inkMuted} />
+                    <TextInput
+                      value={code}
+                      onChangeText={(value) => {
+                        setCode(value);
+                        setGatewayError(null);
+                      }}
+                      placeholder="123456"
+                      placeholderTextColor={theme.colors.inkDim}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      autoComplete="one-time-code"
+                      keyboardType="number-pad"
+                      textContentType="oneTimeCode"
+                      maxLength={7}
+                      returnKeyType="go"
+                      onSubmitEditing={handleVerifyEmailCode}
+                      style={styles.gatewayInput}
+                      accessibilityLabel="Verification code"
+                    />
+                  </View>
+                  <Pressable
+                    onPress={handleVerifyEmailCode}
+                    disabled={loadingProvider !== null || !isValidVerificationCode(code)}
+                    style={({ pressed }) => [
+                      styles.authButtonPrimary,
+                      pressed && styles.buttonPressed,
+                      (loadingProvider !== null || !isValidVerificationCode(code)) &&
+                        styles.authButtonDisabled,
+                    ]}
+                  >
+                    {loadingProvider === "code" ? (
+                      <ActivityIndicator size="small" color={theme.colors.primaryForeground} />
+                    ) : (
+                      <Text style={styles.authButtonPrimaryText}>Verify and sign in</Text>
+                    )}
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={handleUseDifferentEmail}
+                    disabled={loadingProvider !== null}
+                    style={({ pressed }) => [styles.cloudLink, pressed && styles.buttonPressed]}
+                  >
+                    <Text style={styles.cloudLinkText}>Use a different email</Text>
+                  </Pressable>
+                </>
+              )}
             </View>
           )}
 
@@ -433,6 +616,28 @@ const styles = StyleSheet.create((theme) => ({
   },
   basicFields: {
     gap: 8,
+  },
+  divider: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginVertical: 2,
+  },
+  dividerRule: {
+    flex: 1,
+    height: 1,
+    backgroundColor: theme.colors.border,
+  },
+  dividerText: {
+    fontFamily: theme.fonts.sansMedium,
+    fontSize: 12,
+    color: theme.colors.mutedForeground,
+  },
+  codeHint: {
+    fontFamily: theme.fonts.sans,
+    fontSize: 13,
+    lineHeight: 18,
+    color: theme.colors.mutedForeground,
   },
   basicInputRow: {
     minHeight: 50,

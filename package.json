@@ -68,6 +68,18 @@
         "dependencies": {
           "node-gyp": "12.3.0"
         }
+      },
+      "@react-native/jest-preset@*": {
+        "dependencies": {
+          "react-native": "0.86.0",
+          "@babel/runtime": "^7.29.0"
+        }
+      },
+      "react-native-worklets@*": {
+        "dependencies": {
+          "@babel/generator": "^7.29.0",
+          "@babel/traverse": "^7.29.0"
+        }
       }
     }
   },
