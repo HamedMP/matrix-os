@@ -222,6 +222,9 @@ describe("TerminalApp", () => {
       if (url.includes("/api/terminal/layout")) {
         return Promise.resolve({ ok: true, json: async () => ({}) });
       }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [{ name: "main", status: "active" }] }) });
+      }
       return Promise.resolve({ ok: true, json: async () => ({}) });
     }));
   });
@@ -3040,7 +3043,74 @@ describe("TerminalApp", () => {
     expect(layoutSave).toBeUndefined();
   });
 
-  it("starts normal terminal tabs on the canonical main shell session", async () => {
+  it("keeps a fresh terminal empty until the user explicitly creates a session", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method !== "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ tabs: [] }) });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [] }) });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { name: string };
+        return Promise.resolve({ ok: true, status: 201, json: async () => ({ name: body.name }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("No terminal tabs open")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "New Terminal" })).toBeTruthy();
+    expect(screen.getByTestId("terminal-session-group-active").textContent).toContain("Active (0)");
+    expect(screen.queryByTestId("terminal-pane-grid")).toBeNull();
+    expect(terminalSessionPostBodies()).toHaveLength(0);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "New Terminal" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const [payload] = terminalSessionPostPayloads();
+    expect(payload).toMatchObject({ cwd: "projects" });
+    expect(payload?.name).toMatch(TWO_WORD_SESSION_NAME_PATTERN);
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { type: "pane"; sessionId?: string };
+    };
+    expect(props.paneTree).toMatchObject({
+      type: "pane",
+      sessionId: payload?.name,
+    });
+  });
+
+  it("opens the first ordered existing shell without creating a replacement", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method !== "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ tabs: [] }) });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "quiet-ember", status: "active" },
+              { name: "bright-river", status: "active" },
+            ],
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
     render(<TerminalApp />);
 
     await act(async () => {
@@ -3052,20 +3122,11 @@ describe("TerminalApp", () => {
     const props = paneGridSpy.mock.lastCall?.[0] as {
       paneTree: { type: "pane"; sessionId?: string };
     };
-    expect(props.paneTree).toMatchObject({
-      type: "pane",
-      sessionId: "main",
-    });
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/api/terminal/sessions"),
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({ name: "main", cwd: "projects" }),
-      }),
-    );
+    expect(props.paneTree.sessionId).toBe("quiet-ember");
+    expect(terminalSessionPostBodies()).toHaveLength(0);
   });
 
-  it("replaces saved legacy pty layouts with the canonical main shell session", async () => {
+  it("discards a saved legacy pty layout without creating any replacement session", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/terminal/layout") && init?.method !== "PUT") {
@@ -3100,10 +3161,12 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    const props = paneGridSpy.mock.lastCall?.[0] as {
-      paneTree: { type: "pane"; sessionId?: string };
-    };
-    expect(props.paneTree.sessionId).toBe("main");
+    expect(screen.getByText("No terminal tabs open")).toBeTruthy();
+    expect(screen.queryByTestId("terminal-pane-grid")).toBeNull();
+    expect(terminalSessionPostBodies()).toHaveLength(0);
+    expect(vi.mocked(fetch).mock.calls.filter(([input, init]) => (
+      String(input).endsWith("/api/terminal/sessions") && init?.method !== "POST"
+    ))).toHaveLength(2);
   });
 
   it("replaces mixed canonical and legacy pty layouts with the canonical main shell session", async () => {
@@ -3254,6 +3317,92 @@ describe("TerminalApp", () => {
     });
 
     expect(paneGridSpy.mock.calls.length).toBe(callsBeforeUnmount);
+  });
+
+  it("does not recreate a deliberately deleted last session on remount", async () => {
+    let deleted = false;
+    let savedLayout: { tabs: unknown[]; activeTabId: string } = { tabs: [], activeTabId: "" };
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        savedLayout = JSON.parse(String(init.body)) as typeof savedLayout;
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => savedLayout });
+      }
+      if (url.includes("/api/terminal/sessions/quiet-ember") && init?.method === "DELETE") {
+        deleted = true;
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: deleted ? [] : [{ name: "quiet-ember", status: "active", placement: "active", tabs: [] }],
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    const firstMount = render(<TerminalApp />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const menu = await openSessionContextMenu("quiet-ember", "quiet-ember");
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Close" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Close this session?" })).getByRole("button", { name: "Delete" }));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      vi.advanceTimersByTime(600);
+      await Promise.resolve();
+    });
+
+    expect(deleted).toBe(true);
+    expect(savedLayout.tabs).toEqual([]);
+    firstMount.unmount();
+    paneGridSpy.mockClear();
+    vi.mocked(global.fetch).mockClear();
+
+    render(<TerminalApp />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("No terminal tabs open")).toBeTruthy();
+    expect(screen.queryByTestId("terminal-pane-grid")).toBeNull();
+    expect(terminalSessionPostBodies()).toHaveLength(0);
+  });
+
+  it("settles into the empty state without creating a session when bootstrap reads fail", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method !== "PUT") {
+        return Promise.reject(new Error("layout unavailable"));
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.reject(new Error("sessions unavailable"));
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("No terminal tabs open")).toBeTruthy();
+    expect(screen.queryByTestId("terminal-pane-grid")).toBeNull();
+    expect(terminalSessionPostBodies()).toHaveLength(0);
   });
 
   it("persists attached session ids in the saved layout", async () => {
