@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "node --import=tsx src/main.ts",
-    "build": "pnpm --dir ../.. --filter '@matrix-os/observability' build && tsc"
+    "build": "pnpm --dir ../.. --filter '@matrix-os/observability' --filter '@matrix-os/brand' build && tsc"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.4.0",
@@ -23,6 +23,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1001.0",
     "@clerk/backend": "2.33.0",
     "@hono/node-server": "^1.19.9",
+    "@matrix-os/brand": "workspace:*",
     "@matrix-os/clerk-sync": "workspace:*",
     "@matrix-os/contracts": "workspace:*",
     "@matrix-os/observability": "workspace:*",

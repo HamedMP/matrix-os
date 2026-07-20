@@ -40,6 +40,7 @@ export default defineConfig({
       "@": path.resolve(__dirname, "shell/src"),
       "@desktop": path.resolve(__dirname, "desktop/src"),
       "@renderer": path.resolve(__dirname, "desktop/src/renderer/src"),
+      "@matrix-os/brand/tokens": path.resolve(__dirname, "packages/brand/src/tokens.ts"),
       "@matrix-os/brand": path.resolve(__dirname, "packages/brand/src/index.ts"),
       "@matrix-os/contracts": path.resolve(__dirname, "packages/contracts/src/index.ts"),
       "@matrix-os/observability/client": path.resolve(

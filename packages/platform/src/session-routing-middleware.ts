@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { Context, MiddlewareHandler } from 'hono';
 import type Dockerode from 'dockerode';
 import type { Agent } from 'undici';
+import { fonts, lightFg, palette, radii } from '@matrix-os/brand/tokens';
 import type { Orchestrator } from './orchestrator.js';
 import type { ClerkAuth } from './clerk-auth.js';
 import {
@@ -195,6 +196,43 @@ function applyAuthPageHeaders(
   );
 }
 
+function runtimeShellUnavailableResponse(
+  c: Context,
+  applyNoStoreHeaders: (c: Context) => void,
+): Response {
+  applyNoStoreHeaders(c);
+  c.header('Retry-After', '5');
+  c.header('X-Frame-Options', 'DENY');
+  c.header(
+    'Content-Security-Policy',
+    "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'",
+  );
+  return c.html(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Matrix OS temporarily unavailable</title>
+  <style>
+    :root { --font-instrument: 'Instrument Sans'; color-scheme: dark; font-family: ${fonts.sans}; }
+    body { display: grid; min-height: 100vh; margin: 0; place-items: center; background: ${palette.deep}; color: ${lightFg}; }
+    main { width: min(32rem, calc(100% - 3rem)); text-align: center; }
+    h1 { margin: 0 0 0.75rem; font-size: clamp(1.5rem, 5vw, 2.25rem); }
+    p { margin: 0 0 1.5rem; color: ${palette.cream}; line-height: 1.6; }
+    a { display: inline-block; border: 1px solid ${palette.subtle}; border-radius: ${radii.pill}; padding: 0.7rem 1.1rem; color: inherit; text-decoration: none; }
+    a:focus-visible { outline: 3px solid ${palette.ember}; outline-offset: 3px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Matrix OS shell unavailable</h1>
+    <p>The computer manager could not be loaded. Please try again in a moment.</p>
+    <a href="/runtime">Try again</a>
+  </main>
+</body>
+</html>`, 503);
+}
+
 export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlewareOpts): MiddlewareHandler {
   const {
     db,
@@ -255,6 +293,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       });
     } catch (err: unknown) {
       logRouteError('app-domain auth-shell proxy', err);
+      if (c.req.path === '/runtime') {
+        return runtimeShellUnavailableResponse(c, applyNoStoreHeaders);
+      }
       if (proxyOpts.redirectToBillingOnFailure !== false && !isBillingSetupPath(c.req.url)) {
         return c.redirect(buildBillingSetupPath(c.req.url), 302);
       }
