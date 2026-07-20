@@ -43,10 +43,7 @@ import {
   type Tab,
   type TerminalLayout,
 } from "./terminal-layout";
-import {
-  DEFAULT_SHELL_SESSION_NAME,
-  formatShellDisplayName,
-} from "./TerminalSidebarItems";
+import { formatShellDisplayName } from "./TerminalSidebarItems";
 import { SHELL_SESSION_CREATE_ATTEMPTS } from "./terminal-session-names";
 import { TERMINAL_UI_FONT_FAMILY } from "./terminal-typography";
 
@@ -157,10 +154,6 @@ async function ensureShellSessions(sessionNames: string[]): Promise<boolean> {
   }
 }
 
-async function ensureDefaultShellSession(): Promise<boolean> {
-  return ensureShellSessions([DEFAULT_SHELL_SESSION_NAME]);
-}
-
 async function getFirstOrderedShellSessionName(): Promise<string | null> {
   const sessions = await listShellSessions();
   if (!sessions) {
@@ -172,15 +165,6 @@ async function getFirstOrderedShellSessionName(): Promise<string | null> {
     }
   }
   return null;
-}
-
-async function ensureInitialShellSession(): Promise<string | null> {
-  const firstOrdered = await getFirstOrderedShellSessionName();
-  if (firstOrdered) {
-    return firstOrdered;
-  }
-  const sessionReady = await ensureDefaultShellSession();
-  return sessionReady ? DEFAULT_SHELL_SESSION_NAME : null;
 }
 
 let globalShellThemePreferenceLoadStarted = false;
@@ -574,12 +558,14 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
               }
             }
 
-            const sessionName = await ensureInitialShellSession();
-            if (!cancelled && sessionName) {
-              addSessionTab(formatShellDisplayName(sessionName), sessionName);
+            const sessionName = await getFirstOrderedShellSessionName();
+            if (!cancelled) {
+              if (sessionName) {
+                addSessionTab(formatShellDisplayName(sessionName), sessionName);
+              }
               setInitialized(true);
-              return;
             }
+            return;
           }
         }
       } catch (err: unknown) {
@@ -587,12 +573,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       }
 
       if (!cancelled) {
-        const sessionName = await ensureInitialShellSession();
+        const sessionName = await getFirstOrderedShellSessionName();
         if (!cancelled) {
           if (sessionName) {
             addSessionTab(formatShellDisplayName(sessionName), sessionName);
-          } else {
-            addTab(DEFAULT_CWD);
           }
           setInitialized(true);
         }

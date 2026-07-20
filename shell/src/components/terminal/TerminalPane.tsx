@@ -32,6 +32,8 @@ import {
   terminalWebSocketPathForSession,
 } from "./terminal-session-id";
 import { createXtermLogger } from "./xterm-logger";
+import { createColdReplayVisibility, type ColdReplayVisibility } from "./cold-replay-visibility";
+import { parseTerminalServerMessage, stripTerminalControls } from "./terminal-server-message";
 import type { TerminalCompatMode } from "@/stores/terminal-store";
 
 const MAX_OSC52_BASE64_LENGTH = 1_000_000;
@@ -163,95 +165,6 @@ const AUTH_BANNER_ACTION_STYLE: CSSProperties = {
   fontSize: 13,
   whiteSpace: "nowrap",
 };
-
-type TerminalServerMessage =
-  | { type: "attached"; sessionId: string; state: "running" | "exited"; exitCode: number | null; fromSeq: number | null }
-  | { type: "output"; data: string; seq: number | null }
-  | { type: "block-mark"; seq: number | null; mark: { code: "A" | "B" | "C" | "D"; exitCode?: number } }
-  | { type: "replay-start" }
-  | { type: "replay-end" }
-  | { type: "exit"; code: number | null }
-  | { type: "error"; message: string };
-
-function toFiniteNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function stripTerminalControls(value: string): string {
-  return value.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
-}
-
-function parseTerminalServerMessage(raw: string): TerminalServerMessage | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (_err: unknown) {
-    return null;
-  }
-
-  if (!parsed || typeof parsed !== "object") {
-    return null;
-  }
-
-  const msg = parsed as Record<string, unknown>;
-  switch (msg.type) {
-    case "attached": {
-      const sessionId = typeof msg.sessionId === "string"
-        ? msg.sessionId
-        : typeof msg.session === "string"
-          ? msg.session
-          : null;
-      if (!sessionId || (msg.state !== "running" && msg.state !== "exited")) {
-        return null;
-      }
-      return {
-        type: "attached",
-        sessionId,
-        state: msg.state,
-        exitCode: toFiniteNumber(msg.exitCode),
-        fromSeq: Number.isInteger(msg.fromSeq) && (msg.fromSeq as number) >= 0 ? (msg.fromSeq as number) : null,
-      };
-    }
-    case "output":
-      if (typeof msg.data !== "string") {
-        return null;
-      }
-      return {
-        type: "output",
-        data: msg.data,
-        seq: Number.isInteger(msg.seq) && (msg.seq as number) >= 0 ? (msg.seq as number) : null,
-      };
-    case "block-mark": {
-      const mark = msg.mark;
-      if (!mark || typeof mark !== "object" || !("code" in mark)) {
-        return null;
-      }
-      const code = (mark as { code?: unknown }).code;
-      if (code !== "A" && code !== "B" && code !== "C" && code !== "D") {
-        return null;
-      }
-      const exitCode = toFiniteNumber((mark as { exitCode?: unknown }).exitCode);
-      return {
-        type: "block-mark",
-        seq: Number.isInteger(msg.seq) && (msg.seq as number) >= 0 ? (msg.seq as number) : null,
-        mark: exitCode === null ? { code } : { code, exitCode },
-      };
-    }
-    case "replay-start":
-      return { type: "replay-start" };
-    case "replay-end":
-      return { type: "replay-end" };
-    case "exit":
-      return { type: "exit", code: toFiniteNumber(msg.code) };
-    case "error":
-      return {
-        type: "error",
-        message: typeof msg.message === "string" ? msg.message : "Unknown error",
-      };
-    default:
-      return null;
-  }
-}
 
 function extractTrustedClaudeAuthUrl(raw: string): string | null {
   const stripped = raw
@@ -881,6 +794,7 @@ export function TerminalPane({
       let fitAddon: FitAddon;
       let searchAddon: unknown = null;
       let webglAddon: unknown = null;
+      let coldReplayVisibility: ColdReplayVisibility | null = null;
       const xtermTheme = buildXtermTheme(theme, terminalThemeId);
       codexCompatTransformRef.current = createCodexTuiCompatTransform(xtermTheme);
 
@@ -1161,12 +1075,32 @@ export function TerminalPane({
         wsGenerationRef.current = generation;
         wsRef.current = ws;
         const alreadyAttached = options.alreadyAttached === true;
+        const isColdReplay = options.replayRequest?.mode === "cold-replay";
         const isCurrentWs = () => (
           wsRef.current === ws
           && wsGenerationRef.current === generation
           && !disposed
           && !isClosingRef.current
         );
+        coldReplayVisibility?.dispose();
+        const replayVisibility = createColdReplayVisibility({
+          terminal: term,
+          coldReplay: isColdReplay,
+          isCurrent: isCurrentWs,
+          onVisible: () => track("cold-replay-visible", {
+            requestedSeq: options.replayRequest?.requestedSeq,
+          }),
+          onTimeout: () => {
+            log("cold-replay-timeout");
+            track("cold-replay-timeout", { requestedSeq: options.replayRequest?.requestedSeq });
+            lastSeqRef.current = 0;
+            hasReplayCursorRef.current = false;
+            term.reset();
+            setConnectionNotice("reconnecting");
+            ws.close();
+          },
+        });
+        coldReplayVisibility = replayVisibility;
         log("bind-ws", {
           attachOnOpen,
           alreadyAttached,
@@ -1258,6 +1192,7 @@ export function TerminalPane({
         };
 
         ws.onclose = () => {
+          replayVisibility.dispose();
           if (!isCurrentWs()) {
             return;
           }
@@ -1412,6 +1347,7 @@ export function TerminalPane({
               outputBufferRef.current = "";
               break;
             case "replay-end":
+              replayVisibility.revealAfterWrites();
               break;
 
             case "exit": {
@@ -1437,6 +1373,7 @@ export function TerminalPane({
               } else {
                 term.write(`\r\n\x1b[31m[Error: ${safeMsg}]\x1b[0m\r\n`);
               }
+              replayVisibility.revealAfterWrites();
               break;
             }
           }
@@ -1664,6 +1601,7 @@ export function TerminalPane({
         clearAuthDetectTimer();
         clearReconnectTimer();
         clearPendingReconnectBanner();
+        coldReplayVisibility?.dispose();
         heartbeatRef.current?.stop();
         // Drop the context-loss subscription on every path. Cache paths dispose
         // the live WebGL renderer before detaching the retained xterm element;
