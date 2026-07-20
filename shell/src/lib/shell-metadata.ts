@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { platformShellAssetPath } from "./platform-shell-assets";
 
 interface ShellIdentity {
   handle?: unknown;
@@ -16,7 +17,7 @@ function metadataFromIdentity(identity: ShellIdentity | null): Metadata {
   return {
     title,
     description,
-    manifest: "/manifest.json",
+    manifest: platformShellAssetPath("/manifest.json"),
     appleWebApp: {
       capable: true,
       statusBarStyle: "black-translucent",
@@ -31,13 +32,18 @@ function metadataFromIdentity(identity: ShellIdentity | null): Metadata {
       description,
       siteName: "Matrix OS",
       type: "website",
-      images: [{ url: "/og.png", width: 1469, height: 1526, alt: "Matrix OS" }],
+      images: [{
+        url: platformShellAssetPath("/og.png"),
+        width: 1469,
+        height: 1526,
+        alt: "Matrix OS",
+      }],
     },
     twitter: {
       card: "summary",
       title,
       description,
-      images: ["/og.png"],
+      images: [platformShellAssetPath("/og.png")],
     },
   };
 }

@@ -1,5 +1,58 @@
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 
+export const PLATFORM_SHELL_ASSET_PREFIX = '/__platform-shell';
+
+const PLATFORM_SHELL_PUBLIC_ASSET_PATHS = [
+  '/icon-192.png',
+  '/icon-512.png',
+  '/icon-maskable-512.png',
+  '/logo-rabbit.png',
+  '/manifest.json',
+  '/matrix-logo.svg',
+  '/og.png',
+  '/runtime-shell-backdrop.webp',
+] as const;
+
+export function isPlatformShellAssetNamespacePath(path: string): boolean {
+  return path === PLATFORM_SHELL_ASSET_PREFIX || path.startsWith(`${PLATFORM_SHELL_ASSET_PREFIX}/`);
+}
+
+export function getPlatformShellAssetUpstreamPath(path: string): string | null {
+  if (!isPlatformShellAssetNamespacePath(path)) return null;
+  const upstreamPath = path.slice(PLATFORM_SHELL_ASSET_PREFIX.length);
+  let decodedPath = upstreamPath;
+  for (let decodePass = 0; decodePass < 4; decodePass += 1) {
+    try {
+      const nextDecodedPath = decodeURIComponent(decodedPath);
+      if (
+        nextDecodedPath.includes('\\') ||
+        nextDecodedPath.includes('\0') ||
+        nextDecodedPath.split('/').some((segment) => segment === '.' || segment === '..')
+      ) {
+        return null;
+      }
+      if (nextDecodedPath === decodedPath) break;
+      if (decodePass === 3) return null;
+      decodedPath = nextDecodedPath;
+    } catch (err: unknown) {
+      if (!(err instanceof URIError)) {
+        console.warn(
+          '[platform] Unexpected platform shell asset path decode failure:',
+          err instanceof Error ? err.name : typeof err,
+        );
+      }
+      return null;
+    }
+  }
+  if (
+    (upstreamPath.startsWith('/_next/static/') && upstreamPath.length > '/_next/static/'.length) ||
+    PLATFORM_SHELL_PUBLIC_ASSET_PATHS.some((assetPath) => assetPath === upstreamPath)
+  ) {
+    return upstreamPath;
+  }
+  return null;
+}
+
 type RuntimeSlotSource = 'query' | 'default';
 
 export interface RuntimeSlotSelection {
