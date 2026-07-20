@@ -549,7 +549,7 @@ describe("TerminalApp", () => {
 
     await advanceRefresh("claude");
     expect(card().style.height).toBe("78px");
-    expect(screen.getByTestId("terminal-session-agent-state-main").textContent).toContain("Claude Code");
+    expect(screen.getByTestId("terminal-session-agent-state-main").textContent).toContain("Claude");
     expect(screen.getByTestId("terminal-session-agent-state-main").textContent).toContain("claude-opus-4-6");
     expectOptimizedImageSrc(screen.getByTestId("terminal-session-agent-logo-image-claude"), "/agent-logos/claude-code.png");
 

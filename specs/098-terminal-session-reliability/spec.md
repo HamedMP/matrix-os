@@ -100,6 +100,25 @@ Engineers can change terminal behavior without editing a giant UI component that
 2. **Given** shell placement changes, **When** the UI updates optimistically and later rolls back, **Then** rollback affects only the fields in the failed mutation.
 3. **Given** session-list state changes, **When** pane layout and workspace-session state are unchanged, **Then** those independent states are not rederived or clobbered by accident.
 
+---
+
+### User Story 6 - Live Focused-Pane Agent Identity (Priority: P1)
+
+A developer can launch and exit different coding agents in the same terminal and the session card follows the focused pane's foreground process within the existing refresh cycle. Provider hooks enrich the card when available but never keep an exited or replaced provider visible.
+
+**Why this priority**: Persisted launch metadata and delayed or missing provider end hooks can leave terminal cards showing the wrong agent, model, or task after the foreground process has changed.
+
+**Independent Test**: Advance one terminal through `Terminal → Claude → Terminal → Codex → Terminal` while polling session summaries every five seconds. Each refresh must show only the currently observed provider and matching enrichment, with plain-terminal layout restored after each agent exits.
+
+**Acceptance Scenarios**:
+
+1. **Given** a plain terminal, **When** Claude is launched manually in its focused pane, **Then** the next refresh identifies Claude even on a first-run or authentication screen with no hook snapshot.
+2. **Given** Claude is observed with matching hook enrichment, **When** Claude exits to the shell, **Then** the next refresh removes the Claude badge, subtitle, action, model, strength, and agent timestamp.
+3. **Given** Claude previously populated enrichment, **When** Codex becomes the focused pane's foreground command, **Then** Codex appears immediately without inheriting any Claude enrichment.
+4. **Given** several panes exist, **When** their foreground commands differ, **Then** only the focused terminal pane determines the session's live agent identity.
+5. **Given** focused-pane inspection is unavailable, **When** a non-ended hook snapshot exists, **Then** Matrix may use that snapshot; otherwise it may use the persisted launch provider for no more than 12 seconds.
+6. **Given** a successful focused-pane observation reports a shell or unrecognized command, **When** stale hook or launch metadata exists, **Then** runtime truth wins and the response omits every agent-specific field.
+
 ### Edge Cases
 
 - A user upgrades with old saved `waiting` or `running` metadata from a previous release.
@@ -117,6 +136,10 @@ Engineers can change terminal behavior without editing a giant UI component that
 - A terminal delete succeeds server-side but the client refresh fails.
 - A terminal delete fails and the optimistic UI has already removed the row.
 - The runtime host is reachable but session-listing is temporarily degraded.
+- A recognized agent is displaying setup, first-run, or authentication UI before hooks start.
+- The focused pane changes while another pane continues running an agent.
+- Zellij returns malformed pane JSON, a missing command, or a command wrapped with `env`.
+- A provider changes without the prior provider emitting a session-end hook.
 
 ## Requirements *(mandatory)*
 
@@ -134,6 +157,7 @@ Engineers can change terminal behavior without editing a giant UI component that
 - **F-010 Insufficient upgrade-state tests**: Current tests cover many fresh-state flows, but not enough upgraded persisted-state cases where old metadata survives into a new bundle.
 - **F-011 Incomplete end-to-end lifecycle proof**: There is no single acceptance test proving a process keeps running across tab switch, backgrounding, refresh, reconnect, and return.
 - **F-012 Operational diagnosis dependency**: Live incident diagnosis can be blocked when the expected smoke SSH key no longer authenticates, so platform-side and product-side evidence paths need to be stronger.
+- **F-013 Persisted agent identity masquerades as live state**: The saved launch provider and non-authoritative hook snapshots can outlive the foreground process, causing stale badges and cross-provider metadata leakage.
 
 ### One-by-One Work Order
 
@@ -143,6 +167,7 @@ Engineers can change terminal behavior without editing a giant UI component that
 4. **Slice 4: Make stale refresh visible and recoverable** - Covers F-004, F-005, and F-008. Deliver stale-state UX and field-scoped optimistic rollback behavior for terminal session list refresh, delete, rename, reorder, placement, and seen-state operations.
 5. **Slice 5: Extract terminal state seams** - Covers F-007. Deliver testable terminal session state helpers or stores that isolate shell/session refresh behavior from unrelated file, project, and agent-menu state.
 6. **Slice 6: Add non-SSH operational diagnostics** - Covers F-012. Deliver a supported status path for customer runtime/session health when direct VPS SSH is unavailable, using coarse metadata only.
+7. **Slice 7: Track focused-pane agent identity** - Covers F-013. Make the focused pane foreground command authoritative, retain hooks as provider-matched enrichment, and prove the complete Terminal/Claude/Terminal/Codex/Terminal lifecycle within five-second polling.
 
 ### Planning Readiness Review
 
@@ -173,6 +198,14 @@ Engineers can change terminal behavior without editing a giant UI component that
 - **FR-016**: Matrix MUST add a lifecycle test that proves a long-running terminal process remains live across tab switching, backgrounding, refresh, reconnect, and return.
 - **FR-017**: Matrix MUST provide an operator-readable status path for terminal/session health that does not depend solely on direct SSH access to the customer VPS.
 - **FR-018**: Matrix MUST avoid exposing provider errors, raw filesystem paths, or raw runtime failures in user-facing terminal recovery messages.
+- **FR-019**: Matrix MUST derive live agent identity from the focused terminal pane's validated foreground command whenever pane inspection succeeds.
+- **FR-020**: Matrix MUST recognize only the exact allowlisted commands `claude`, `codex`, `opencode`, and `pi`, including safely parsed `env` wrappers, and MUST NOT use substring matching.
+- **FR-021**: A successful observation of a shell, missing command, or unrecognized command MUST omit `agent`, `subtitle`, `lastAction`, `agentUpdatedAt`, `model`, and `strength` from the session response.
+- **FR-022**: Hook enrichment MUST be exposed only when its provider matches the observed agent and its phase is not `ended`; an observed recognized agent without compatible enrichment MUST fall back to `running`.
+- **FR-023**: When focused-pane inspection is unavailable, Matrix MAY fall back to a non-ended hook snapshot, then to the persisted launch hint for at most 12 seconds.
+- **FR-024**: Session-start and provider-change events MUST reset subtitle, action, model, and strength before applying new-provider event fields, and ended snapshots MUST NOT derive an active visual status.
+- **FR-025**: `GET /api/terminal/sessions` MUST retain its compatible optional response fields, with `agent` defined as the currently observed or safely degraded active agent rather than the originally launched provider.
+- **FR-026**: Matrix MUST retain the existing five-second session polling contract and MUST NOT require provider session-end hooks for correct exit or provider-switch behavior.
 
 ### Security Architecture
 
@@ -193,6 +226,7 @@ Engineers can change terminal behavior without editing a giant UI component that
 - Recovery paths MUST distinguish invalid input from recoverable legacy identifiers.
 - User-facing terminal errors MUST use coarse, actionable categories such as reconnecting, stale, exited, recoverable, and unavailable.
 - Logs may include enough diagnostic detail for operators, but client responses MUST NOT expose provider errors, filesystem paths, tokens, private host details, or raw runtime command output.
+- Foreground command text is internal classification input only. Session responses MUST expose the allowlisted agent identity, never the raw command or arguments.
 - Health checks and reachability probes MUST return coarse status only.
 
 #### Resource Management
@@ -200,6 +234,7 @@ Engineers can change terminal behavior without editing a giant UI component that
 - Any in-memory session, reconnect, or subscriber registries touched by this work MUST retain explicit caps and stale-entry eviction.
 - Terminal WebSocket subscribers MUST be evicted when sends fail or connections go stale.
 - Polling and retry loops MUST be bounded and cancelable when components unmount or users leave the surface.
+- Focused-pane observation caches MUST be capped and expire before the next five-second refresh can reuse stale foreground-process data.
 - Durable session metadata updates MUST remain atomic and must not corrupt owner files if a write fails.
 - Stale/recoverable session metadata cleanup MUST be safe for owner data and must not delete active runtime sessions.
 
@@ -207,6 +242,7 @@ Engineers can change terminal behavior without editing a giant UI component that
 
 - The shell must receive one coherent session summary from the gateway, including liveness, visual status, stale/recoverable flags, attach target, unread state, and safe user actions.
 - The gateway must reconcile runtime sessions, scrollback/activity evidence, saved shell metadata, and pane/layout references before returning session summaries.
+- The gateway must obtain focused cwd and foreground command from the same bounded Zellij pane inspection and apply runtime-agent precedence before serializing a session summary.
 - Browser terminal views must reattach through the owner-authorized WebSocket/session path after tab switch, refresh, and reconnect.
 - Operator diagnostics must be available through an authenticated platform or gateway path even when direct VPS SSH is unavailable.
 
@@ -218,6 +254,8 @@ Engineers can change terminal behavior without editing a giant UI component that
 - If delete succeeds but post-delete refresh fails, remove the deleted session locally and mark the list stale until refresh succeeds.
 - If delete fails, restore only the deleted row's optimistic state.
 - If saved metadata is corrupt or references impossible sessions, ignore the broken portion, preserve owner data, and surface a recoverable state.
+- If focused-pane inspection fails or returns malformed data, use only the bounded degraded fallback chain; do not reinterpret the failed observation as a successful shell observation.
+- If a provider hook is delayed, missing, mismatched, or never emits session end, the next successful pane observation still determines the visible agent identity.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -225,6 +263,7 @@ Engineers can change terminal behavior without editing a giant UI component that
 - **Session Summary**: The owner-visible row/card describing liveness, visual status, stale state, unread state, attach target, and allowed actions.
 - **Durable UI Metadata**: Owner-controlled saved preferences such as placement, last seen output, order, and display metadata.
 - **Activity Evidence**: Recent terminal output and command boundary marks used to infer running, finished, idle, or waiting state.
+- **Focused-Pane Runtime Observation**: A bounded Zellij inspection result containing the focused pane's validated cwd and foreground command plus whether observation succeeded.
 - **Pane Reference**: A shell layout reference to a terminal session that may be live, stale, or recoverable.
 - **Workspace Session Alias**: A higher-level session record that may point at the same runtime terminal session.
 - **Stale State Marker**: A user-visible indicator that Matrix is showing last-known state because refresh or attach evidence is incomplete.
@@ -244,6 +283,7 @@ Engineers can change terminal behavior without editing a giant UI component that
 - **SC-008**: Terminal session state tests can exercise refresh/reconcile behavior without rendering unrelated file-tree, project-list, or agent-install menu UI.
 - **SC-009**: User-facing terminal/session recovery errors expose no raw provider errors, filesystem paths, tokens, or host internals in 100% of tested failures.
 - **SC-010**: Operator diagnostics can confirm terminal session health for a customer runtime without requiring direct SSH access in at least one supported path.
+- **SC-011**: The tested `Terminal → Claude → Terminal → Codex → Terminal` lifecycle updates identity, enrichment, logos, labels, and compact card height within each five-second refresh, with zero prior-provider fields remaining after an exit or switch.
 
 ## Assumptions
 

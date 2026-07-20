@@ -183,6 +183,15 @@ describe("shell registry", () => {
     expect(inferAgentFromCommand("--unsafe codex")).toBeUndefined();
   });
 
+  it.each([
+    "claude-helper",
+    "my-codex-wrapper",
+    "bash -lc claude",
+    "env -S 'codex --full-auto'",
+  ])("does not infer agents from substrings or unsupported wrappers: %s", (command) => {
+    expect(inferAgentFromCommand(command)).toBeUndefined();
+  });
+
   it("uses agent lifecycle evidence before a long-running outer CLI process", async () => {
     const root = await tempRoot();
     const agentStateStore = new AgentSessionStateStore({ homePath: root });
@@ -401,6 +410,34 @@ describe("shell registry", () => {
     vi.setSystemTime(new Date("2026-07-18T10:00:12.001Z"));
     const expired = await registry.get("launch-hint");
     expect(expired).not.toHaveProperty("agent");
+  });
+
+  it("does not expose an ended hook snapshot when pane inspection is unavailable", async () => {
+    const root = await tempRoot();
+    const agentStateStore = new AgentSessionStateStore({ homePath: root });
+    await agentStateStore.apply({
+      sessionName: "main",
+      agent: "claude",
+      type: "session-ended",
+      occurredAt: "2026-07-18T10:00:00.000Z",
+      subtitle: "Finished Claude task",
+      model: "claude-opus-4-6",
+      strength: "high",
+    });
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+      focusedPaneRuntime: vi.fn(async () => ({ cwd: null, command: null, observed: false })),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, agentStateStore });
+
+    const [session] = await registry.list();
+    expect(session).not.toHaveProperty("agent");
+    expect(session).not.toHaveProperty("subtitle");
+    expect(session).not.toHaveProperty("model");
+    expect(session).not.toHaveProperty("strength");
+    expect(session.visualStatus).toBe("idle");
   });
 
   it("keeps session rename available when agent metadata rename fails", async () => {

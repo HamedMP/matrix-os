@@ -2,6 +2,14 @@
 
 ## Completed In This PR
 
+### Focused-Pane Live Agent Detection
+
+The focused Zellij pane's validated foreground command is now the primary source of truth for active terminal agent identity. Exact allowlisted command parsing recognizes Claude, Codex, OpenCode, and Pi, including supported `env` wrappers, without substring matching. Successful shell observations clear every agent-only response field, while recognized processes appear immediately even before provider hooks start.
+
+Provider hooks remain optional enrichment. Matching non-ended snapshots can supply subtitle, action, model, strength, timestamp, and semantic visual status. Mismatched or ended snapshots are not exposed, and a recognized process without compatible enrichment is shown as running. When pane inspection is unavailable, the gateway falls back to a non-ended hook snapshot and then a persisted launch hint for at most 12 seconds.
+
+Session-start and provider-change events clear old enrichment before accepting fields from the new event. An ended snapshot no longer derives an active visual status, so correctness does not depend on any provider emitting a session-end event.
+
 ### Sticky Visual Status
 
 Older bundles could persist terminal `visualStatus` metadata such as `waiting` or `running` in `system/shell-sessions.json`. When a newer bundle loaded that owner metadata, the saved visual state could keep a live terminal looking stuck even after current scrollback showed newer command activity, command completion, or a quiet live shell.
@@ -46,6 +54,10 @@ Rename consumes an existing alias when the canonical session is renamed to that 
 
 ## Expected User Experience
 
+- A single session follows `Terminal → Claude → Terminal → Codex → Terminal` within successive five-second refreshes, changing logos and compact card height without retaining the prior provider's metadata.
+- Manually launched agents and first-run/authentication screens receive the correct agent identity before hook metadata exists.
+- In multi-pane sessions, the focused pane alone determines which agent appears on the session card.
+
 - A terminal with newer command-start or recent-output evidence shows as running even if old metadata says waiting.
 - A terminal with command-finished evidence or unread output shows finished/idle according to current scrollback and unread state.
 - A quiet live terminal with old waiting metadata settles back to idle instead of staying visually stuck.
@@ -71,6 +83,8 @@ Rename consumes an existing alias when the canonical session is renamed to that 
 
 ```bash
 bun run test tests/gateway/shell-registry.test.ts
+bun run test tests/gateway/shell-zellij.test.ts
+bun run test tests/gateway/agent-session-state.test.ts
 bun run test tests/gateway/shell-routes.test.ts
 bun run test tests/gateway/terminal-zellij-ws.test.ts
 bun run test tests/shell/terminal-session-state.test.ts

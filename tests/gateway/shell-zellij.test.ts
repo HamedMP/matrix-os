@@ -182,6 +182,34 @@ describe("zellij adapter", () => {
     });
   });
 
+  it("expires focused runtime observations before the next five-second refresh", async () => {
+    let now = 0;
+    let paneCommand = "claude";
+    const execFile = vi.fn((_file, args: string[], _opts, cb) => {
+      cb(null, args.includes("current-tab-info")
+        ? JSON.stringify({ tab_id: 1 })
+        : JSON.stringify([{
+          id: 1,
+          is_plugin: false,
+          is_focused: true,
+          tab_id: 1,
+          pane_cwd: "/home/alice/project",
+          pane_command: paneCommand,
+        }]), "");
+      return childProcess();
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25, nowMs: () => now });
+
+    await expect(adapter.focusedPaneRuntime("main")).resolves.toMatchObject({ command: "claude" });
+    paneCommand = "codex";
+    now = 3_999;
+    await expect(adapter.focusedPaneRuntime("main")).resolves.toMatchObject({ command: "claude" });
+    now = 5_000;
+    await expect(adapter.focusedPaneRuntime("main")).resolves.toMatchObject({ command: "codex" });
+
+    expect(execFile).toHaveBeenCalledTimes(4);
+  });
+
   it("treats zellij's no-active-sessions response as an empty session list", async () => {
     const execFile = vi.fn((_file, _args, _opts, cb) => {
       cb(Object.assign(new Error("zellij exited"), { code: 1 }), "", "NO ACTIVE ZELLIJ SESSIONS FOUND\n");
