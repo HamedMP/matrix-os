@@ -71,7 +71,7 @@
     "electron-builder": "~25.1.8",
     "electron-vite": "^5.0.0",
     "tailwindcss": "^4.1.18",
-    "typescript": "^5.9.3",
+    "typescript": "^7.0.2",
     "vite": "^7.2.6"
   }
 }
