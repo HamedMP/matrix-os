@@ -502,5 +502,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current Spec Kit plan: `specs/106-terminal-rich-paste/plan.md`.
+Current Spec Kit feature: `specs/109-persist-terminal-sessions/spec.md`.
 <!-- SPECKIT END -->

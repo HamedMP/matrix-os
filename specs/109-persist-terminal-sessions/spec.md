@@ -49,7 +49,8 @@ S1 passes only when:
 - browser, shell, and gateway lifecycle events do not change the keeper, server, shell, or agent PIDs;
 - stopping the runtime unit makes its cgroup report `populated 0`;
 - unexpected keeper or server loss produces exactly one deterministic interrupted/failed outcome;
-- readiness is withheld until the exact Zellij session responds and all required cgroup membership checks pass.
+- readiness is withheld until the exact Zellij session responds and all required cgroup membership checks pass;
+- with at least three concurrent runtime units driven above the relevant thresholds, each unit's `MemoryHigh=50%` applies independently while the slice's `MemoryHigh=75%` applies to their combined usage; these are layered pressure thresholds, not additive per-session capacity budgets.
 
 ### Gate S2 — Zellij 0.44.1 resurrection and bounded history
 
@@ -442,7 +443,7 @@ No external network fetch is required in the supervisor lifecycle path. Any futu
 - no initial per-session `MemoryMax`;
 - complete cgroup termination on delete.
 
-Percent limits MUST be proven accepted and enforced on the target systemd version during Gate S1; otherwise equivalent explicitly calculated host values require a spec amendment.
+Percent limits MUST be proven accepted and enforced on the target systemd version during Gate S1, including the required multi-runtime layered-pressure scenario; otherwise equivalent explicitly calculated host values require a spec amendment.
 
 ### Persistence controls
 
