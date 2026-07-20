@@ -24,8 +24,10 @@ contains this harness only for preview builds. The spike workflow derives the
 existing gateway bearer from `PLATFORM_SECRET`, connects to the exact live VPS
 with correct `app.matrix-os.com` TLS/SNI, and calls the already bounded
 `/api/terminal/run` contract. That fixed command invokes this harness through the
-legacy `matrix` sudo grant; removing that broad grant remains a later blocked
-production layer. A fixed packer returns at most 512 KiB of base64 evidence,
+legacy `matrix` sudo grant and a fixed-prefix, detached transient system service;
+otherwise the required gateway crash checks would kill the harness itself.
+Removing that broad grant remains a later blocked production layer. After the
+gateway recovers, a fixed packer returns at most 512 KiB of base64 evidence,
 which is validated locally before upload. No SSH credential is required.
 
 ## Evidence contract
@@ -48,6 +50,7 @@ any failed/missing gate.
 
 ```bash
 bash -n scripts/spikes/terminal-runtime/run-remote.sh
+bash -n scripts/spikes/terminal-runtime/launch-remote.sh
 bash -n scripts/spikes/terminal-runtime/pack-evidence.sh
 node --check scripts/spikes/terminal-runtime/keeper.mjs
 node --check scripts/spikes/terminal-runtime/build-evidence.mjs

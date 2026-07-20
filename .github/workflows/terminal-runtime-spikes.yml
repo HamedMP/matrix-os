@@ -112,7 +112,7 @@ jobs:
           echo "::add-mask::$public_ipv4"
           echo "public_ipv4=$public_ipv4" >>"$GITHUB_OUTPUT"
 
-      - name: Run bounded spike through authenticated gateway
+      - name: Launch detached spike through authenticated gateway
         id: remote
         env:
           PUBLIC_IPV4: ${{ steps.preview.outputs.public_ipv4 }}
@@ -128,17 +128,17 @@ jobs:
           run_body="$(jq -cn --arg sha "$HEAD_SHA" '{
             command: [
               "/usr/bin/sudo",
-              "/opt/matrix/app/scripts/spikes/terminal-runtime/run-remote.sh",
+              "/opt/matrix/app/scripts/spikes/terminal-runtime/launch-remote.sh",
               $sha
             ],
-            timeoutMs: 1800000
+            timeoutMs: 30000
           }')"
           run_response="$RUNNER_TEMP/terminal-runtime-spike-run.json"
           # Customer VPS nginx uses the same per-host self-signed certificate
           # accepted by the platform's CUSTOMER_VPS_TLS_VERIFY=false transport.
           # Only this disposable preview's derived gateway token crosses it;
           # PLATFORM_SECRET never leaves the runner.
-          http_code="$(curl --silent --show-error --max-time 1810 --connect-timeout 15 \
+          http_code="$(curl --silent --show-error --max-time 45 --connect-timeout 15 \
             --insecure \
             --resolve "app.matrix-os.com:443:${PUBLIC_IPV4}" \
             -o "$run_response" -w '%{http_code}' \
@@ -151,14 +151,15 @@ jobs:
             echo "Authenticated spike execution failed." >&2
             exit 1
           fi
-          remote_status="$(jq -er '
-            if (type == "object" and (.exitCode | type == "number") and
-                (.timedOut == false) and (.truncated | type == "boolean"))
-            then .exitCode else error("invalid response") end
-          ' "$run_response")"
+          if ! jq -e '
+            type == "object" and .exitCode == 0 and .timedOut == false and
+            .truncated == false and .signal == null
+          ' "$run_response" >/dev/null; then
+            echo "Detached spike launch failed." >&2
+            exit 1
+          fi
           jq -r '.stdout, .stderr' "$run_response" |
-            grep -E '^(s1|s2):[A-Za-z]+=(pass|fail)$|^S[12]=(pass|fail)( S[12]=(pass|fail))?$|^spike_[a-z_]+$' || true
-          echo "remote_status=$remote_status" >>"$GITHUB_OUTPUT"
+            grep -E '^spike_launch_(started|existing)$' || true
 
       - name: Retrieve bounded evidence through authenticated gateway
         id: retrieve
@@ -183,20 +184,30 @@ jobs:
             timeoutMs: 30000
           }')"
           pack_response="$RUNNER_TEMP/terminal-runtime-spike-pack.json"
-          http_code="$(curl --silent --show-error --max-time 45 --connect-timeout 15 \
-            --insecure \
-            --resolve "app.matrix-os.com:443:${PUBLIC_IPV4}" \
-            -o "$pack_response" -w '%{http_code}' \
-            -X POST 'https://app.matrix-os.com/api/terminal/run' \
-            -H "authorization: Bearer ${gateway_token}" \
-            -H 'content-type: application/json' \
-            --data-binary "$pack_body")"
+          evidence_deadline=$((SECONDS + 2100))
+          pack_ready=false
+          http_code="000"
+          while [ "$SECONDS" -lt "$evidence_deadline" ]; do
+            if http_code="$(curl --silent --max-time 45 --connect-timeout 15 \
+              --insecure \
+              --resolve "app.matrix-os.com:443:${PUBLIC_IPV4}" \
+              -o "$pack_response" -w '%{http_code}' \
+              -X POST 'https://app.matrix-os.com/api/terminal/run' \
+              -H "authorization: Bearer ${gateway_token}" \
+              -H 'content-type: application/json' \
+              --data-binary "$pack_body")" && [ "$http_code" = 200 ] && jq -e '
+                type == "object" and .exitCode == 0 and .timedOut == false and
+                .truncated == false and .signal == null and
+                (.stdout | type == "string" and length > 0 and length <= 700000)
+              ' "$pack_response" >/dev/null; then
+              pack_ready=true
+              break
+            fi
+            echo "Waiting for detached spike evidence."
+            sleep 15
+          done
           echo "gateway_http_status=$http_code"
-          if [ "$http_code" != 200 ] || ! jq -e '
-            type == "object" and .exitCode == 0 and .timedOut == false and
-            .truncated == false and .signal == null and
-            (.stdout | type == "string" and length > 0 and length <= 700000)
-          ' "$pack_response" >/dev/null; then
+          if [ "$pack_ready" != true ]; then
             echo "Bounded evidence retrieval failed." >&2
             exit 1
           fi
@@ -212,14 +223,9 @@ jobs:
         id: validate
         env:
           EVIDENCE: ${{ steps.retrieve.outputs.evidence }}
-          REMOTE_STATUS: ${{ steps.remote.outputs.remote_status }}
         run: |
           set -euo pipefail
           result="$(node scripts/spikes/terminal-runtime/verify-evidence.mjs "$EVIDENCE")"
-          if [ "$REMOTE_STATUS" != "0" ]; then
-            echo "Remote spike did not complete successfully." >&2
-            exit 1
-          fi
           digest="$(jq -r '.summarySha256' <<<"$result")"
           if ! printf '%s' "$digest" | grep -Eq '^[0-9a-f]{64}$'; then
             echo "Invalid evidence digest." >&2

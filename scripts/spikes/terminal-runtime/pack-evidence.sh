@@ -20,6 +20,10 @@ if [ ! -d "$evidence_root" ] || [ -L "$evidence_root" ]; then
   echo "spike_pack_evidence_unavailable" >&2
   exit 3
 fi
+if [ ! -f "$evidence_root/summary.json" ] || [ -L "$evidence_root/summary.json" ]; then
+  echo "spike_pack_evidence_incomplete" >&2
+  exit 3
+fi
 
 cleanup() {
   rm -f -- "$archive"

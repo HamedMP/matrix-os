@@ -5,9 +5,13 @@
 **Decision**: extend the existing `preview-vps` path with a separate
 same-repository, label-gated pull-request workflow that waits for the exact-head
 PR VPS, includes throwaway assets only in that preview host bundle, invokes one
-fixed harness command through the existing authenticated/bounded terminal runner
-and legacy sudo grant, retrieves a capped evidence archive through the same
-contract, validates it, and uploads it as a GitHub artifact. Retain
+fixed launcher through the existing authenticated/bounded terminal runner and
+legacy sudo grant, then runs the harness in a detached, fixed-prefix transient
+system service. The workflow polls the recovered gateway for a completed,
+capped evidence archive, validates it, and uploads it as a GitHub artifact. The
+detachment is required because S1 intentionally restarts and crashes the gateway;
+a gateway-owned harness is killed with that cgroup and cannot return its own
+result. Retain
 `workflow_dispatch` for reruns after the workflow exists on the default branch;
 GitHub cannot manually dispatch a brand-new workflow from an unmerged PR.
 

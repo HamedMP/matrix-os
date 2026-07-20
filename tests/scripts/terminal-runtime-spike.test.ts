@@ -113,6 +113,25 @@ describe('terminal runtime spike evidence', () => {
     expect(buildScript).toContain('scripts/spikes/terminal-runtime');
   });
 
+  it('detaches the spike from the gateway cgroup and waits for completed evidence', async () => {
+    const [workflow, launcher, packer] = await Promise.all([
+      readFile(join(process.cwd(), '.github/workflows/terminal-runtime-spikes.yml'), 'utf8'),
+      readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/launch-remote.sh'), 'utf8'),
+      readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/pack-evidence.sh'), 'utf8'),
+    ]);
+
+    expect(workflow).toContain('/opt/matrix/app/scripts/spikes/terminal-runtime/launch-remote.sh');
+    expect(workflow).toContain('evidence_deadline=$((SECONDS + 2100))');
+    expect(workflow).not.toContain('REMOTE_STATUS:');
+    expect(launcher).toContain('systemd-run');
+    expect(launcher).toContain('--collect');
+    expect(launcher).toContain('--no-block');
+    expect(launcher).toContain('StandardOutput=null');
+    expect(launcher).toContain('StandardError=null');
+    expect(packer).toContain('summary.json');
+    expect(packer).toContain('spike_pack_evidence_incomplete');
+  });
+
   it('keeps the fixed notify unit shape and accepts readiness from the keeper helper', async () => {
     const unit = await readFile(
       join(process.cwd(), 'scripts/spikes/terminal-runtime/matrix-terminal-spike@.service'),
