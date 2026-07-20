@@ -41,10 +41,28 @@ describe("DotGrid OS-design gating", () => {
     expect(container.querySelector("canvas")).not.toBeNull();
   });
 
-  it("keeps the grid off in Developer mode even when the Canvas preference is enabled", () => {
-    useDesktopMode.setState({ mode: "dev", previousMode: "canvas" });
+  it("preserves the enabled Canvas grid across a Developer mode round trip", async () => {
     const { container } = render(<DotGrid />);
+
+    expect(container.querySelector("canvas")).not.toBeNull();
+
+    await act(async () => {
+      useDesktopMode.setState({ mode: "dev", previousMode: "canvas" });
+    });
     expect(container.querySelector("canvas")).toBeNull();
+    expect(useDotGrid.getState().enabled).toBe(true);
+
+    await act(async () => {
+      useDesktopMode.setState({ mode: "canvas", previousMode: "dev" });
+    });
+    expect(container.querySelector("canvas")).not.toBeNull();
+    expect(useDotGrid.getState().enabled).toBe(true);
+  });
+
+  it("does not silently suppress the grid in the hidden legacy Desktop mode", () => {
+    useDesktopMode.setState({ mode: "desktop", previousMode: "canvas" });
+    const { container } = render(<DotGrid />);
+    expect(container.querySelector("canvas")).not.toBeNull();
   });
 
   it("renders the grid canvas in the neumorphic design", () => {
