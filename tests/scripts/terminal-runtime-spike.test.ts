@@ -182,10 +182,16 @@ describe('terminal runtime spike evidence', () => {
       `${JSON.stringify({ stage: 'readiness', code: 'readiness_timeout' })}\n`,
       'utf8',
     );
+    await writeFile(
+      join(root, 's1', 'base-startup-unit.txt'),
+      'ActiveState=failed\nSubState=failed\nResult=timeout\nExecMainCode=1\nExecMainStatus=16\n',
+      'utf8',
+    );
 
     await expect(reportGateChecks(root)).resolves.toEqual([
       's1:stopEmptiesCgroup=fail',
       's1:startup=readiness/readiness_timeout',
+      's1:unit=failed/failed/timeout/1/16',
     ]);
   });
 

@@ -203,6 +203,43 @@ export async function reportGateChecks(inputRoot) {
     const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
     if (code !== 'ENOENT') throw error;
   }
+  const unitPath = join(root, 's1', 'base-startup-unit.txt');
+  try {
+    const unitStat = await lstat(unitPath);
+    if (!unitStat.isFile() || unitStat.isSymbolicLink() || unitStat.nlink !== 1) {
+      fail('evidence_file_type');
+    }
+    const unitResult = await readNoFollow(unitPath, 4096);
+    scanPrivacy(unitResult.body);
+    const fields = {};
+    for (const line of unitResult.body.toString('utf8').trim().split(/\r?\n/)) {
+      const match = line.match(/^([A-Za-z]+)=([A-Za-z0-9-]+)$/);
+      if (!match || Object.hasOwn(fields, match[1])) fail('evidence_summary_schema');
+      fields[match[1]] = match[2];
+    }
+    const activeStates = new Set(['inactive', 'failed', 'activating', 'deactivating', 'active']);
+    const subStates = new Set([
+      'dead', 'failed', 'start', 'start-pre', 'start-post', 'running', 'stop',
+      'stop-sigterm', 'stop-sigkill', 'stop-post', 'auto-restart',
+    ]);
+    const results = new Set([
+      'success', 'exit-code', 'signal', 'core-dump', 'watchdog', 'start-limit-hit',
+      'timeout', 'resources', 'protocol',
+    ]);
+    if (
+      hasExactKeys(fields, ['ActiveState', 'SubState', 'Result', 'ExecMainCode', 'ExecMainStatus']) &&
+      activeStates.has(fields.ActiveState) && subStates.has(fields.SubState) &&
+      results.has(fields.Result) && /^[0-3]$/.test(fields.ExecMainCode) &&
+      /^(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$/.test(fields.ExecMainStatus)
+    ) {
+      failures.push(
+        `s1:unit=${fields.ActiveState}/${fields.SubState}/${fields.Result}/${fields.ExecMainCode}/${fields.ExecMainStatus}`,
+      );
+    }
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
+    if (code !== 'ENOENT') throw error;
+  }
   return failures;
 }
 
