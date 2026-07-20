@@ -427,6 +427,23 @@ describe("T711: GET /api/apps", () => {
     expect(missing).toEqual([]);
   });
 
+  it("ships exactly one visible Minesweeper app for every supported design", () => {
+    const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+    const manifests = [
+      "home/apps/games/minesweeper/matrix.json",
+      "home/apps/winxp-minesweeper/matrix.json",
+    ].map((path) => JSON.parse(readFileSync(join(repoRoot, path), "utf8")) as {
+      name: string;
+      designs?: string[];
+    });
+
+    for (const design of ["flat", "neumorphic", "macos-glass", "winxp", "win11"]) {
+      const visible = manifests.filter((manifest) => !manifest.designs || manifest.designs.includes(design));
+      expect(visible, design).toHaveLength(1);
+      expect(visible[0]?.name).toBe("Minesweeper");
+    }
+  });
+
   it("ships default apps as Vite apps with explicit build output", () => {
     const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
     const appsRoot = join(repoRoot, "home/apps");

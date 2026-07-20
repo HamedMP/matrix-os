@@ -20,6 +20,7 @@
 
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { AnimatePresence, motion, MotionConfig, type PanInfo } from "framer-motion";
 import { toast } from "sonner";
 import { MobileQuickActions } from "@/components/mobile/MobileQuickActions";
@@ -189,7 +190,6 @@ interface MobileShellProps {
 // react-doctor-disable-next-line react-doctor/prefer-useReducer -- the five states (apps, openStack, view, settingsOpen, time) are independent concerns with separate update sites and lifecycles (registry load, foreground stack, view mode, settings dialog, clock tick), not one related state machine; collapsing them into a reducer would couple unrelated transitions and is not a mechanical, behavior-identical change.
 export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }: MobileShellProps) {
   const chat = useChatContext();
-  const cacheKey = cacheScope?.storageKey;
 
   const [apps, setApps] = useState<MobileApp[]>(() => mergeMobileApps(
     BUILT_IN_APPS,
@@ -239,29 +239,38 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
     }
   }, [terminalInputActiveId, top?.id, topIsTerminal]);
 
+  const refreshInstalledApps = useCallback(async (isCancelled: () => boolean = () => false) => {
+    try {
+      const res = await fetch(`${getGatewayUrl()}/api/shell/bootstrap`, {
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      if (!res.ok) return;
+      const bootstrap = await res.json() as ShellBootstrapSnapshot | { name: string; path: string; icon?: string }[];
+      if (isCancelled()) return;
+      if (!Array.isArray(bootstrap)) {
+        saveShellSnapshot(cacheScope, { bootstrap });
+      }
+      setApps(mergeMobileApps(BUILT_IN_APPS, mobileAppsFromBootstrap(bootstrap)));
+    } catch (err: unknown) {
+      console.warn("[mobile-shell] failed to load /api/shell/bootstrap:", err instanceof Error ? err.message : err);
+    }
+  }, [cacheScope]);
+
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- guarded mount load of the installed-apps registry: it runs once on mount, aborts via AbortSignal.timeout, and is cancellation-guarded by the `cancelled` flag in cleanup. A data-fetching library would be overkill for this single shell-bootstrap read.
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch(`${getGatewayUrl()}/api/shell/bootstrap`, {
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-        });
-        if (!res.ok) return;
-        const bootstrap = await res.json() as ShellBootstrapSnapshot | { name: string; path: string; icon?: string }[];
-        if (cancelled) return;
-        if (!Array.isArray(bootstrap)) {
-          saveShellSnapshot(cacheScope, { bootstrap });
-        }
-        setApps((prev) => mergeMobileApps(prev, mobileAppsFromBootstrap(bootstrap)));
-      } catch (err: unknown) {
-        console.warn("[mobile-shell] failed to load /api/shell/bootstrap:", err instanceof Error ? err.message : err);
-      }
-    })();
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- refreshInstalledApps always awaits the bounded bootstrap fetch and JSON parse before setApps, so this invocation cannot update state synchronously inside the effect.
+    void refreshInstalledApps(() => cancelled);
     return () => {
       cancelled = true;
     };
-  }, [cacheKey, cacheScope]);
+  }, [refreshInstalledApps]);
+
+  useFileWatcher((path) => {
+    if (path === "system/theme.json") {
+      void refreshInstalledApps();
+    }
+  });
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the launch-path useEffect dependency array below; removing useCallback would re-run that effect on every render and could re-open the launch app.
   const openApp = useCallback((app: MobileApp) => {
