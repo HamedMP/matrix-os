@@ -202,6 +202,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
   const [terminalInputActiveId, setTerminalInputActiveId] = useState<string | null>(null);
   const stackRef = useRef(openStack);
   const launchPathConsumedRef = useRef<string | null>(null);
+  const appsRefreshGenerationRef = useRef(0);
   useEffect(() => {
     stackRef.current = openStack;
   }, [openStack]);
@@ -240,13 +241,14 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
   }, [terminalInputActiveId, top?.id, topIsTerminal]);
 
   const refreshInstalledApps = useCallback(async (isCancelled: () => boolean = () => false) => {
+    const generation = ++appsRefreshGenerationRef.current;
     try {
       const res = await fetch(`${getGatewayUrl()}/api/shell/bootstrap`, {
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       if (!res.ok) return;
       const bootstrap = await res.json() as ShellBootstrapSnapshot | { name: string; path: string; icon?: string }[];
-      if (isCancelled()) return;
+      if (isCancelled() || generation !== appsRefreshGenerationRef.current) return;
       if (!Array.isArray(bootstrap)) {
         saveShellSnapshot(cacheScope, { bootstrap });
       }

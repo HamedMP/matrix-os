@@ -332,6 +332,54 @@ describe("mobile shell", () => {
     });
   });
 
+  it("ignores an older bootstrap response after a newer theme refresh wins", async () => {
+    let resolveInitial: ((response: Response) => void) | undefined;
+    let resolveThemeRefresh: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
+        resolveInitial = resolve;
+      }))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
+        resolveThemeRefresh = resolve;
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const MobileShell = await loadMobileShell();
+    render(<MobileShell />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    act(() => {
+      fileChangeHandler?.("system/theme.json", "change");
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    resolveThemeRefresh?.({
+      ok: true,
+      json: async () => ({
+        layout: { windows: [] },
+        modules: [],
+        apps: [{ name: "Sticky Notes", path: "/files/apps/win-sticky-notes/index.html" }],
+        icons: {},
+      }),
+    } as Response);
+    expect(await screen.findByTestId("mobile-launcher-app-apps/win-sticky-notes/index.html")).toBeTruthy();
+
+    resolveInitial?.({
+      ok: true,
+      json: async () => ({
+        layout: { windows: [] },
+        modules: [],
+        apps: [{ name: "XP Minesweeper", path: "/files/apps/winxp-minesweeper/index.html" }],
+        icons: {},
+      }),
+    } as Response);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("mobile-launcher-app-apps/win-sticky-notes/index.html")).toBeTruthy();
+    expect(screen.queryByTestId("mobile-launcher-app-apps/winxp-minesweeper/index.html")).toBeNull();
+  });
+
   it("hydrates installed mobile apps from the scoped shell snapshot before network refresh", async () => {
     const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
     expect(scope).not.toBeNull();

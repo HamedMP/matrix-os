@@ -13,6 +13,7 @@ import {
 import { getGatewayUrl } from "@/lib/gateway";
 import { openAppSession } from "@/lib/app-session";
 import { capturePostHogEvent } from "@/lib/posthog-client";
+import { createSerializedBridgeDataHandler, type BridgeDataRequest } from "@/lib/app-data-write-queue";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 import {
   APP_IFRAME_SANDBOX,
@@ -78,9 +79,29 @@ async function handleBridgeFetch(appName: string, payload: unknown, port: Messag
   }
 }
 
+const requestBridgeData: BridgeDataRequest = async (action, app, key, value) => {
+  try {
+    const response = await fetch(`${GATEWAY_URL}/api/bridge/data`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(BRIDGE_FETCH_TIMEOUT_MS),
+      body: JSON.stringify({ action, app, key, value }),
+    });
+    const body = await response.json() as { value?: unknown };
+    if (!response.ok) return Promise.reject(new Error("Bridge data request failed"));
+    return action === "read" ? body.value : undefined;
+  } catch (err: unknown) {
+    console.warn("[app-viewer] bridge data fetch failed:", err instanceof Error ? err.message : String(err));
+    return Promise.reject(new Error("Bridge data request failed"));
+  }
+};
+
 export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [iframeHtml, setIframeHtml] = useState<string | null>(null);
+  const [bridgeDataHandler] = useState<BridgeDataRequest>(() =>
+    createSerializedBridgeDataHandler(requestBridgeData),
+  );
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { send, subscribe } = useSocket();
   // react-doctor-disable-next-line react-doctor/no-event-handler -- pure derived value computed from the `path` prop during render, not a DOM event handler or effect-driven side effect.
@@ -164,22 +185,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       sendToKernel(text) {
         send({ type: "message", text, sessionId });
       },
-      async fetchData(action, app, key, value) {
-        try {
-          const response = await fetch(`${GATEWAY_URL}/api/bridge/data`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            signal: AbortSignal.timeout(BRIDGE_FETCH_TIMEOUT_MS),
-            body: JSON.stringify({ action, app, key, value }),
-          });
-          const body = await response.json() as { value?: unknown };
-          if (!response.ok) return Promise.reject(new Error("Bridge data request failed"));
-          return action === "read" ? body.value : undefined;
-        } catch (err: unknown) {
-          console.warn("[app-viewer] bridge data fetch failed:", err instanceof Error ? err.message : String(err));
-          return Promise.reject(new Error("Bridge data request failed"));
-        }
-      },
+      fetchData: bridgeDataHandler,
       openApp: onOpenApp,
     };
 
@@ -204,7 +210,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [send, sessionId, onOpenApp, appName]);
+  }, [send, sessionId, onOpenApp, appName, bridgeDataHandler]);
 
   // Forward data:change events to iframe for auto-update
   useEffect(() => {

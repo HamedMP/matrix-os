@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import StickiesApp from "../../home/apps/stickies/src/App";
 import { parseBestTimes } from "../../home/apps/winxp-minesweeper/src/minesweeper-model";
@@ -22,6 +22,7 @@ describe("design-scoped app persistence", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     window.MatrixOS = originalMatrixOs;
   });
 
@@ -57,28 +58,34 @@ describe("design-scoped app persistence", () => {
     expect(screen.queryByRole("textbox", { name: "Sticky note" })).toBeNull();
   });
 
-  it("flushes the latest macOS Sticky edit when the app closes during the debounce", async () => {
-    const view = render(<StickiesApp />);
+  it("persists macOS Sticky edits immediately so iframe removal cannot lose them", async () => {
+    render(<StickiesApp />);
     const note = await screen.findByRole("textbox", { name: "Sticky note" });
+    vi.useFakeTimers();
 
     fireEvent.change(note, { target: { value: "Keep this Mac note" } });
-    view.unmount();
+    await act(async () => {
+      await Promise.resolve();
+    });
 
-    await waitFor(() => expect(writeData).toHaveBeenCalledTimes(1));
+    expect(writeData).toHaveBeenCalledTimes(1);
     expect(writeData).toHaveBeenCalledWith(
       "macos-stickies/notes",
       expect.arrayContaining([expect.objectContaining({ text: "Keep this Mac note" })]),
     );
   });
 
-  it("flushes the latest Windows Widgets note when the app closes during the debounce", async () => {
-    const view = render(<WidgetsApp />);
+  it("persists Windows Widgets edits immediately so iframe removal cannot lose them", async () => {
+    render(<WidgetsApp />);
     const note = await screen.findByRole("textbox", { name: "Notes" });
+    vi.useFakeTimers();
 
     fireEvent.change(note, { target: { value: "Keep this Windows note" } });
-    view.unmount();
+    await act(async () => {
+      await Promise.resolve();
+    });
 
-    await waitFor(() => expect(writeData).toHaveBeenCalledTimes(1));
+    expect(writeData).toHaveBeenCalledTimes(1);
     expect(writeData).toHaveBeenCalledWith("win11-widgets/notes", "Keep this Windows note");
   });
 

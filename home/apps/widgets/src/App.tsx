@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CalendarDays, Clock3, CloudOff, StickyNote } from "lucide-react";
 
 const NOTES_KEY = "win11-widgets/notes";
-const NOTES_DEBOUNCE_MS = 500;
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -102,8 +101,7 @@ function NotesWidget() {
   const [text, setText] = useState("");
   const [saveState, setSaveState] = useState<SaveState>("loading");
   const loaded = useRef(false);
-  const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingText = useRef<string | null>(null);
+  const saveGeneration = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,42 +125,23 @@ function NotesWidget() {
     };
   }, []);
 
-  useEffect(() => () => {
-    const value = pendingText.current;
-    if (pending.current) clearTimeout(pending.current);
-    pending.current = null;
-    pendingText.current = null;
-    if (value === null) return;
-    void (async () => {
-      try {
-        await window.MatrixOS?.writeData?.(NOTES_KEY, value);
-      } catch (err: unknown) {
-        console.warn("[widgets] notes save-on-close failed:", errMsg(err));
-      }
-    })();
-  }, []);
-
   const handleChange = (value: string) => {
     if (!loaded.current) return;
     setText(value);
     setSaveState("saving");
-    if (pending.current) clearTimeout(pending.current);
-    pendingText.current = value;
-    pending.current = setTimeout(() => {
-      const valueToSave = pendingText.current;
-      pending.current = null;
-      pendingText.current = null;
-      if (valueToSave === null) return;
-      void (async () => {
-        try {
-          await window.MatrixOS?.writeData?.(NOTES_KEY, valueToSave);
-          setSaveState("saved");
-        } catch (err: unknown) {
-          console.warn("[widgets] notes save failed:", errMsg(err));
-          setSaveState("error");
-        }
-      })();
-    }, NOTES_DEBOUNCE_MS);
+    const generation = ++saveGeneration.current;
+    // Call writeData in the input event rather than relying on iframe-unmount
+    // cleanup: removing an AppViewer can destroy the child document before
+    // React runs passive effect cleanup.
+    void (async () => {
+      try {
+        await window.MatrixOS?.writeData?.(NOTES_KEY, value);
+        if (saveGeneration.current === generation) setSaveState("saved");
+      } catch (err: unknown) {
+        console.warn("[widgets] notes save failed:", errMsg(err));
+        if (saveGeneration.current === generation) setSaveState("error");
+      }
+    })();
   };
 
   const statusText =

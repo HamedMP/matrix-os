@@ -11,7 +11,6 @@ import {
 } from "./stickies-model";
 
 const NOTES_KEY = "macos-stickies/notes";
-const SAVE_DEBOUNCE_MS = 600;
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -32,8 +31,6 @@ export default function App() {
   }, [notes]);
   const zCounter = useRef(1);
   const canvasRef = useRef<HTMLDivElement | null>(null);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingNotes = useRef<StickyNote[] | null>(null);
   const dragCleanupRef = useRef<(() => void) | null>(null);
 
   // Remove window-level drag listeners if the app unmounts mid-gesture.
@@ -48,10 +45,15 @@ export default function App() {
         if (cancelled) return;
         const initial = stored ?? [welcomeNote()];
         zCounter.current = initial.reduce((max, n) => Math.max(max, n.z), 1);
+        notesRef.current = initial;
         setNotes(initial);
       } catch (err: unknown) {
         console.warn("[stickies] notes load failed:", errMsg(err));
-        if (!cancelled) setNotes([welcomeNote()]);
+        if (!cancelled) {
+          const initial = [welcomeNote()];
+          notesRef.current = initial;
+          setNotes(initial);
+        }
       } finally {
         if (!cancelled) setLoaded(true);
       }
@@ -61,52 +63,30 @@ export default function App() {
     };
   }, []);
 
-  // Debounced autosave; skips until the initial load settles so an empty
-  // first render can never clobber stored notes.
-  useEffect(() => {
-    if (!loaded) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    pendingNotes.current = notes;
-    saveTimer.current = setTimeout(() => {
-      const value = pendingNotes.current;
-      pendingNotes.current = null;
-      saveTimer.current = null;
-      if (!value) return;
-      void (async () => {
-        try {
-          await window.MatrixOS?.writeData?.(NOTES_KEY, value);
-        } catch (err: unknown) {
-          console.warn("[stickies] notes save failed:", errMsg(err));
-        }
-      })();
-    }, SAVE_DEBOUNCE_MS);
-    return () => {
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-    };
-  }, [notes, loaded]);
-
-  // A window can close inside the debounce window. Flush the latest value so
-  // authentic window chrome never turns a quick close into silent data loss.
-  useEffect(() => () => {
-    const value = pendingNotes.current;
-    if (!value) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    pendingNotes.current = null;
-    saveTimer.current = null;
+  const persistNotes = useCallback((value: StickyNote[]) => {
+    // Call writeData in the user event rather than relying on iframe-unmount
+    // cleanup, which is not guaranteed when the parent removes the document.
     void (async () => {
       try {
         await window.MatrixOS?.writeData?.(NOTES_KEY, value);
       } catch (err: unknown) {
-        console.warn("[stickies] notes save-on-close failed:", errMsg(err));
+        console.warn("[stickies] notes save failed:", errMsg(err));
       }
     })();
   }, []);
+
+  const updateNotes = useCallback((updater: (current: StickyNote[]) => StickyNote[], persist = true) => {
+    const next = updater(notesRef.current);
+    notesRef.current = next;
+    setNotes(next);
+    if (persist) persistNotes(next);
+  }, [persistNotes]);
 
   const addNote = useCallback(() => {
     if (!loaded) return;
     zCounter.current += 1;
     const z = zCounter.current;
-    setNotes((current) => {
+    updateNotes((current) => {
       const color = STICKY_COLORS[current.length % STICKY_COLORS.length].id;
       const offset = 40 + (current.length % 6) * 28;
       return [
@@ -114,21 +94,21 @@ export default function App() {
         { id: newId(), x: offset, y: offset + 24, z, text: "", color },
       ];
     });
-  }, [loaded]);
+  }, [loaded, updateNotes]);
 
   const closeNote = useCallback((id: string) => {
-    setNotes((current) => current.filter((note) => note.id !== id));
-  }, []);
+    updateNotes((current) => current.filter((note) => note.id !== id));
+  }, [updateNotes]);
 
   const editNote = useCallback((id: string, text: string) => {
-    setNotes((current) => current.map((note) => (note.id === id ? { ...note, text } : note)));
-  }, []);
+    updateNotes((current) => current.map((note) => (note.id === id ? { ...note, text } : note)));
+  }, [updateNotes]);
 
   const bringToFront = useCallback((id: string) => {
     zCounter.current += 1;
     const z = zCounter.current;
-    setNotes((current) => current.map((note) => (note.id === id ? { ...note, z } : note)));
-  }, []);
+    updateNotes((current) => current.map((note) => (note.id === id ? { ...note, z } : note)));
+  }, [updateNotes]);
 
   const handleHeaderPointerDown = useCallback(
     (e: React.PointerEvent, id: string) => {
@@ -147,11 +127,12 @@ export default function App() {
         const maxY = Math.max(0, rect.height - 48);
         const x = Math.max(0, Math.min(maxX, ev.clientX - grabDx));
         const y = Math.max(0, Math.min(maxY, ev.clientY - grabDy));
-        setNotes((current) => current.map((n) => (n.id === id ? { ...n, x, y } : n)));
+        updateNotes((current) => current.map((n) => (n.id === id ? { ...n, x, y } : n)), false);
       };
       const endDrag = () => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
+        persistNotes(notesRef.current);
         if (dragCleanupRef.current === endDrag) dragCleanupRef.current = null;
       };
       const onUp = () => endDrag();
@@ -162,7 +143,7 @@ export default function App() {
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
     },
-    [bringToFront],
+    [bringToFront, persistNotes, updateNotes],
   );
 
   return (
