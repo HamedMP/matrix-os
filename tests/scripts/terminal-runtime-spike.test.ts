@@ -115,10 +115,11 @@ describe('terminal runtime spike evidence', () => {
   });
 
   it('detaches the spike from the gateway cgroup and waits for completed evidence', async () => {
-    const [workflow, launcher, packer] = await Promise.all([
+    const [workflow, launcher, packer, runner] = await Promise.all([
       readFile(join(process.cwd(), '.github/workflows/terminal-runtime-spikes.yml'), 'utf8'),
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/launch-remote.sh'), 'utf8'),
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/pack-evidence.sh'), 'utf8'),
+      readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/run-remote.sh'), 'utf8'),
     ]);
 
     expect(workflow).toContain('/opt/matrix/app/scripts/spikes/terminal-runtime/launch-remote.sh');
@@ -132,6 +133,8 @@ describe('terminal runtime spike evidence', () => {
     expect(launcher).toContain('StandardError=null');
     expect(packer).toContain('summary.json');
     expect(packer).toContain('spike_pack_evidence_incomplete');
+    expect(runner).toContain('base_id="1${pr_head_sha:0:31}"');
+    expect(runner).toContain('zellij delete-session "matrix-t-${runtime_id}" --force');
   });
 
   it('keeps the fixed notify unit shape and accepts readiness from the keeper helper', async () => {

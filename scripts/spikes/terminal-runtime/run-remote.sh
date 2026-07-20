@@ -21,15 +21,21 @@ owner_home="/home/matrix/home"
 cache_root="$owner_home/system/terminal-runtime-spike/cache"
 config_root="$owner_home/system/terminal-runtime-spike/config"
 unit_prefix="matrix-terminal-spike@"
-base_id="11111111111111111111111111111111"
-keeper_id="22222222222222222222222222222222"
-server_id="33333333333333333333333333333333"
-memory_ids=("44444444444444444444444444444444" "55555555555555555555555555555555" "66666666666666666666666666666666")
-recovery_id="77777777777777777777777777777777"
+base_id="1${pr_head_sha:0:31}"
+keeper_id="2${pr_head_sha:0:31}"
+server_id="3${pr_head_sha:0:31}"
+memory_ids=("4${pr_head_sha:0:31}" "5${pr_head_sha:0:31}" "6${pr_head_sha:0:31}")
+recovery_id="7${pr_head_sha:0:31}"
 
 cleanup() {
   for runtime_id in "$base_id" "$keeper_id" "$server_id" "${memory_ids[@]}" "$recovery_id"; do
     systemctl stop "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true
+    runuser -u matrix -- env \
+      HOME="$owner_home" MATRIX_HOME="$owner_home" PATH="/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin" \
+      XDG_CACHE_HOME="$cache_root" XDG_CONFIG_HOME="$owner_home/system/terminal-runtime-spike/config-home" \
+      XDG_DATA_HOME="$owner_home/system/terminal-runtime-spike/data" XDG_RUNTIME_DIR="/run/user/$(id -u matrix)" \
+      ZELLIJ_CONFIG_DIR="$config_root" ZELLIJ_CONFIG_FILE="$config_root/config.kdl" \
+      /opt/matrix/bin/zellij delete-session "matrix-t-${runtime_id}" --force >/dev/null 2>&1 || true
     systemctl reset-failed "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true
   done
   pkill -f 'zellij attach matrix-t-[0-9a-f]{32}' >/dev/null 2>&1 || true
@@ -39,6 +45,7 @@ build_summary() {
   /opt/matrix/runtime/node/bin/node "$source_dir/build-evidence.mjs" "$evidence_root" "$pr_head_sha" || true
 }
 
+cleanup
 trap 'status=$?; cleanup; build_summary; exit $status' EXIT
 
 rm -rf -- "$evidence_root" "$runtime_root"
