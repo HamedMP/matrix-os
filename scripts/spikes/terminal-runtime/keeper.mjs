@@ -4,7 +4,6 @@ import { execFile } from 'node:child_process';
 import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
-import { hasResurrectionConfirmation } from './terminal-text.mjs';
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -186,26 +185,6 @@ async function main() {
     rows: 40,
     cwd: '/home/matrix/home',
     env,
-  });
-  let confirmationRecorded = false;
-  let confirmationBuffer = '';
-  pty.onData((data) => {
-    confirmationBuffer = `${confirmationBuffer}${data}`.slice(-4096);
-    if (
-      descriptor.intent === 'recover' &&
-      !confirmationRecorded &&
-      hasResurrectionConfirmation(confirmationBuffer)
-    ) {
-      confirmationRecorded = true;
-      void writeFile(`${runtimeRoot}/confirmations/${runtimeId}.pass`, 'pass\n', {
-        encoding: 'utf8',
-        flag: 'wx',
-        mode: 0o600,
-      }).catch((error) => {
-        const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
-        if (code !== 'EEXIST') exit(19);
-      });
-    }
   });
   pty.onExit((event) => {
     clientExited = true;

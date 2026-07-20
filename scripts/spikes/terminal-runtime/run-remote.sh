@@ -56,7 +56,7 @@ install -d -o matrix -g matrix -m 0700 "/run/user/$(id -u matrix)"
 
 rm -rf -- "$support_root.next"
 install -d -o root -g root -m 0755 "$support_root.next" "$support_root.next/node_modules"
-for file in attach-probe.mjs keeper.mjs record-outcome.mjs record-runtime-roles.mjs terminal-text.mjs pane-probe.sh memory-hog.mjs layout.kdl; do
+for file in attach-probe.mjs keeper.mjs record-outcome.mjs record-runtime-roles.mjs pane-probe.sh memory-hog.mjs layout.kdl; do
   install -o root -g root -m 0755 "$source_dir/$file" "$support_root.next/$file"
 done
 cp -aL /opt/matrix/app/node_modules/node-pty "$support_root.next/node_modules/node-pty"
@@ -203,10 +203,14 @@ zellij_cmd() {
   runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/bin/zellij "$@"
 }
 
-wait_events_fd_empty() {
+wait_cgroup_empty() {
   events_fd="$1"
+  cgroup_path="$2"
+  unit="$3"
   for _ in $(seq 1 300); do
     if grep -Eq '^populated 0$' "/proc/self/fd/${events_fd}" 2>/dev/null; then return 0; fi
+    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    if [ ! -e "$cgroup_path/cgroup.events" ] && [ "$state" != active ] && [ "$state" != activating ] && [ "$state" != deactivating ]; then return 0; fi
     sleep 0.1
   done
   return 1
@@ -318,8 +322,8 @@ fi
 
 exec {base_events_fd}<"/sys/fs/cgroup${base_cgroup}/cgroup.events"
 systemctl stop --no-block "$base_unit" >/dev/null 2>&1 || true
-if wait_events_fd_empty "$base_events_fd"; then
-  cat "/proc/self/fd/${base_events_fd}" >"$evidence_root/s1/stopped-cgroup.events"
+if wait_cgroup_empty "$base_events_fd" "/sys/fs/cgroup${base_cgroup}" "$base_unit"; then
+  if [ -e "/sys/fs/cgroup${base_cgroup}/cgroup.events" ]; then cat "/proc/self/fd/${base_events_fd}" >"$evidence_root/s1/stopped-cgroup.events"; else printf 'cgroup_removed\n' >"$evidence_root/s1/stopped-cgroup.events"; fi
   mark_pass s1 stopEmptiesCgroup
 fi
 exec {base_events_fd}<&-
@@ -332,7 +336,7 @@ if wait_state "$keeper_unit" active; then
   keeper_cgroup="$(runtime_cgroup "$keeper_id")"
   exec {keeper_events_fd}<"/sys/fs/cgroup${keeper_cgroup}/cgroup.events"
   kill -KILL "$(systemctl show "$keeper_unit" -p MainPID --value)" 2>/dev/null || true
-  if wait_not_active "$keeper_unit" && [ -f "$runtime_root/outcomes/${keeper_id}.json" ] && wait_events_fd_empty "$keeper_events_fd"; then
+  if wait_not_active "$keeper_unit" && [ -f "$runtime_root/outcomes/${keeper_id}.json" ] && wait_cgroup_empty "$keeper_events_fd" "/sys/fs/cgroup${keeper_cgroup}" "$keeper_unit"; then
     mark_pass s1 keeperLossDeterministic
     cp "$runtime_root/outcomes/${keeper_id}.json" "$evidence_root/s1/keeper-loss.json"
   fi
@@ -351,7 +355,7 @@ if wait_state "$server_unit" active; then
     if(selected) process.stdout.write(String(selected));
   ' "$runtime_root/readiness/${server_id}.json")"
   if printf '%s' "$server_pid" | grep -Eq '^[1-9][0-9]*$'; then kill -KILL "$server_pid" 2>/dev/null || true; fi
-  if wait_not_active "$server_unit" && [ -f "$runtime_root/outcomes/${server_id}.json" ] && wait_events_fd_empty "$server_events_fd"; then
+  if wait_not_active "$server_unit" && [ -f "$runtime_root/outcomes/${server_id}.json" ] && wait_cgroup_empty "$server_events_fd" "/sys/fs/cgroup${server_cgroup}" "$server_unit"; then
     mark_pass s1 serverLossDeterministic
     cp "$runtime_root/outcomes/${server_id}.json" "$evidence_root/s1/server-loss.json"
   fi
@@ -436,11 +440,13 @@ if wait_state "$recovery_unit" active; then
   systemctl stop "$recovery_unit" >/dev/null 2>&1 || true
 
   start_runtime "$recovery_id" recover
+  confirmation_dump="/tmp/matrix-terminal-confirmation-${short_sha}.txt"
   for _ in $(seq 1 150); do
-    [ -f "$runtime_root/confirmations/${recovery_id}.pass" ] && break
+    zellij_cmd --session "$recovery_session" action dump-screen --path "$confirmation_dump" >/dev/null 2>&1 || true
+    if grep -Fq '<ENTER> run' "$confirmation_dump" 2>/dev/null; then mark_pass s2 commandsConfirmationGated; break; fi
     sleep 0.1
   done
-  if [ -f "$runtime_root/confirmations/${recovery_id}.pass" ]; then mark_pass s2 commandsConfirmationGated; fi
+  rm -f -- "$confirmation_dump"
   if ! pgrep -a zellij | grep -F -- '--force-run-commands' >/dev/null 2>&1; then mark_pass s2 forceRunAbsent; fi
   zellij_cmd --session "$recovery_session" action write 13 >/dev/null 2>&1 || true
   release_pane "$recovery_id"
