@@ -139,10 +139,11 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).not.toContain('script -qefc');
     expect(runner).toContain('cgroup_removed');
     expect(runner).toContain("grep -Fq '<ENTER> run'");
-    expect(runner).toContain('action send-keys --pane-id "$pane_id" Enter');
+    expect(runner).toContain('action write --pane-id "$pane_id" 13');
     expect(runner).toContain('console.log(p.id)');
     expect(runner).toContain('pkill -f -x');
     expect(runner).toContain('for runtime_id in "${memory_ids[@]}"; do');
+    expect(runner).toContain('slice_current=');
     expect(runner).toContain('wait_file');
   });
 
@@ -214,7 +215,7 @@ describe('terminal runtime spike evidence', () => {
       `${JSON.stringify({ stage: 'readiness', code: 'readiness_timeout' })}\n`,
       'utf8',
     );
-    await writeFile(join(root, 's1', 'memory-stage.txt'), 'unit_no_pressure\n', 'utf8');
+    await writeFile(join(root, 's1', 'memory-stage.txt'), 'slice_no_pressure unit=2 slice=0 current=3 high=4 hogs=3\n', 'utf8');
 
     await expect(reportGateChecks(root)).resolves.toEqual([
       's1:stopEmptiesCgroup=fail',
@@ -223,14 +224,15 @@ describe('terminal runtime spike evidence', () => {
       's1:unit=failed/failed/timeout/1/16',
       's1:roles=initial/keeper:1/zellij:1of2/shell:1/agent:0',
       's2:recovery=readiness/readiness_timeout',
-      's1:memory=unit_no_pressure',
+      's1:memory=slice_no_pressure/unit:2/slice:0/current:3/high:4/hogs:3',
     ]);
     await rm(join(root, 's1', 'base-runtime-roles.json'));
     await symlink('/etc/passwd', join(root, 's1', 'base-runtime-roles.json'));
     await expect(reportGateChecks(root)).resolves.toEqual([
       's1:stopEmptiesCgroup=fail', 's1:startup=readiness/client_exit',
       's1:pty-exit=1/0', 's1:unit=failed/failed/timeout/1/16',
-      's2:recovery=readiness/readiness_timeout', 's1:memory=unit_no_pressure',
+      's2:recovery=readiness/readiness_timeout',
+      's1:memory=slice_no_pressure/unit:2/slice:0/current:3/high:4/hogs:3',
     ]);
   });
 

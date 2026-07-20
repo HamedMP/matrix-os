@@ -287,9 +287,11 @@ export async function reportGateChecks(inputRoot) {
     if (!ignorableDiagnosticError(error)) throw error;
   }
   try {
-    const memory = (await readNoFollow(join(root, 's1', 'memory-stage.txt'), 64)).body.toString('utf8').trim();
-    if (new Set(['not_ready', 'limits_invalid', 'unit_no_pressure', 'slice_no_pressure']).has(memory)) {
-      failures.push(`s1:memory=${memory}`);
+    const memory = (await readNoFollow(join(root, 's1', 'memory-stage.txt'), 160)).body.toString('utf8').trim();
+    const match = memory.match(/^(not_ready|limits_invalid|unit_no_pressure|slice_no_pressure)(?: unit=(\d{1,16}) slice=(\d{1,16}) current=(\d{1,16}) high=(\d{1,16}) hogs=(\d{1,3}))?$/);
+    if (match) {
+      const detail = match[2] ? `/unit:${match[2]}/slice:${match[3]}/current:${match[4]}/high:${match[5]}/hogs:${match[6]}` : '';
+      failures.push(`s1:memory=${match[1]}${detail}`);
     }
   } catch (error) {
     if (!ignorableDiagnosticError(error)) throw error;

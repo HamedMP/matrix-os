@@ -411,7 +411,11 @@ if [ "$memory_ready" = true ]; then
     if [ "${unit_after:-0}" -gt "$unit_before" ] && [ "${slice_after:-0}" -gt "$slice_before" ]; then memory_stage=pass; mark_pass s1 layeredMemoryHigh; fi
   fi
 fi
-printf '%s\n' "$memory_stage" >"$evidence_root/s1/memory-stage.txt"
+if [ "$memory_stage" = slice_no_pressure ]; then
+  slice_current="$(cat "/sys/fs/cgroup${slice_cgroup}/memory.current")"
+  hog_count="$(pgrep -f -c -- "$support_root/memory-hog.mjs" || true)"
+  printf '%s unit=%s slice=%s current=%s high=%s hogs=%s\n' "$memory_stage" "$unit_after" "$slice_after" "$slice_current" "$slice_high" "$hog_count" >"$evidence_root/s1/memory-stage.txt"
+else printf '%s\n' "$memory_stage" >"$evidence_root/s1/memory-stage.txt"; fi
 for runtime_id in "${memory_ids[@]}"; do systemctl stop "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true; done
 
 # S2: bounded serialized state and explicit resurrection.
@@ -461,7 +465,7 @@ if wait_state "$recovery_unit" active; then
   if ! pgrep -a zellij | grep -F -- '--force-run-commands' >/dev/null 2>&1; then mark_pass s2 forceRunAbsent; fi
   panes_json="$(zellij_cmd --session "$recovery_session" action list-panes --all --json 2>/dev/null || true)"
   while read -r pane_id; do
-    zellij_cmd --session "$recovery_session" action send-keys --pane-id "$pane_id" Enter >/dev/null 2>&1 || true
+    zellij_cmd --session "$recovery_session" action write --pane-id "$pane_id" 13 >/dev/null 2>&1 || true
   done < <(printf '%s' "$panes_json" | /opt/matrix/runtime/node/bin/node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{for(const p of JSON.parse(s))if(!p.is_plugin)console.log(p.id)}catch(error){}})')
   release_pane "$recovery_id"
   if wait_state "$recovery_unit" active 300; then
