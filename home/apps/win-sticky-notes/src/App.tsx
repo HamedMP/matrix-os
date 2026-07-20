@@ -32,6 +32,7 @@ export default function App() {
   const [notes, setNotes] = useState<StickyNote[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [persistenceReady, setPersistenceReady] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
@@ -44,6 +45,7 @@ export default function App() {
       try {
         const read = window.MatrixOS?.readData;
         stored = read ? parseStickyNotes(await read(NOTES_KEY)) : [];
+        if (!cancelled && read) setPersistenceReady(true);
       } catch (err: unknown) {
         console.warn("[sticky-notes] load failed:", errMsg(err));
       }
@@ -61,7 +63,7 @@ export default function App() {
   // Debounced autosave; skips until the initial load settles so an empty
   // first render can never clobber stored notes.
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || !persistenceReady) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       saveTimer.current = null;
@@ -76,7 +78,7 @@ export default function App() {
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [notes, loaded]);
+  }, [notes, loaded, persistenceReady]);
 
   const notesRef = useRef(notes);
   useEffect(() => {
@@ -111,6 +113,7 @@ export default function App() {
   const selected = sorted.find((note) => note.id === selectedId) ?? null;
 
   const addNote = useCallback(() => {
+    if (!loaded) return;
     // Match the persistence cap: creating beyond MAX_NOTES would silently
     // drop the oldest notes on the next load.
     if (notesRef.current.length >= MAX_NOTES) return;
@@ -122,7 +125,7 @@ export default function App() {
     if (typeof requestAnimationFrame === "function") {
       requestAnimationFrame(() => editorRef.current?.focus());
     }
-  }, []);
+  }, [loaded]);
 
   const updateSelectedText = useCallback(
     (text: string) => {
@@ -167,7 +170,7 @@ export default function App() {
             <span>{loaded ? `${notes.length} ${notes.length === 1 ? "note" : "notes"}` : "Loading…"}</span>
           </div>
         </div>
-        <button className="sn-new" type="button" onClick={addNote}>
+        <button className="sn-new" type="button" onClick={addNote} disabled={!loaded}>
           <Plus size={16} /> New note
         </button>
       </header>
@@ -215,7 +218,7 @@ export default function App() {
               </span>
               <strong>No note selected</strong>
               <span>Jot something down — notes save automatically as you type.</span>
-              <button className="sn-new" type="button" onClick={addNote}>
+              <button className="sn-new" type="button" onClick={addNote} disabled={!loaded}>
                 <Plus size={16} /> New note
               </button>
             </div>

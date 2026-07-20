@@ -151,16 +151,42 @@ function beep(times = 1): void {
 
 const fallbackData: Record<string, unknown> = {};
 
-async function readAppData<T>(key: string, fallback: T): Promise<T> {
+type AppDataRead<T> = { ok: true; value: T } | { ok: false };
+
+function decodeAppData<T>(value: unknown): T {
+  if (typeof value !== "string" || value.length > 1_000_000) return value as T;
   try {
-    if (window.MatrixOS?.readData) {
-      const value = await window.MatrixOS.readData(key);
-      return value === undefined || value === null ? fallback : (value as T);
-    }
-  } catch (err) {
-    console.warn("[clock] MatrixOS data read failed:", err instanceof Error ? err.message : String(err));
+    return JSON.parse(value) as T;
+  } catch (err: unknown) {
+    if (err instanceof SyntaxError) return value as T;
+    throw err;
   }
-  return Object.prototype.hasOwnProperty.call(fallbackData, key) ? (fallbackData[key] as T) : fallback;
+}
+
+async function tryReadAppData<T>(key: string, fallback: T): Promise<AppDataRead<T>> {
+  if (window.MatrixOS?.readData) {
+    try {
+      const value = await window.MatrixOS.readData(key);
+      return {
+        ok: true,
+        value: value === undefined || value === null ? fallback : decodeAppData<T>(value),
+      };
+    } catch (err: unknown) {
+      console.warn("[clock] MatrixOS data read failed:", err instanceof Error ? err.message : String(err));
+      return { ok: false };
+    }
+  }
+  return {
+    ok: true,
+    value: Object.prototype.hasOwnProperty.call(fallbackData, key)
+      ? (fallbackData[key] as T)
+      : fallback,
+  };
+}
+
+async function readAppData<T>(key: string, fallback: T): Promise<T> {
+  const result = await tryReadAppData(key, fallback);
+  return result.ok ? result.value : fallback;
 }
 
 async function writeAppData<T>(key: string, value: T): Promise<void> {
@@ -225,6 +251,15 @@ function hasKvBridge(): boolean {
 
 function defaultZoneRows(): ZoneRow[] {
   return DEFAULT_WORLD_ZONES.map((tz, position) => ({ id: `seed-${tz}`, tz, position }));
+}
+
+function hasAllDefaultZones(zones: readonly ZoneRow[]): boolean {
+  const timeZones = new Set(zones.map((zone) => zone.tz));
+  return DEFAULT_WORLD_ZONES.every((timeZone) => timeZones.has(timeZone));
+}
+
+function hasCustomZone(zones: readonly ZoneRow[]): boolean {
+  return zones.some((zone) => !DEFAULT_WORLD_ZONES.includes(zone.tz));
 }
 
 function coerceZones(rows: unknown[]): ZoneRow[] {
@@ -319,7 +354,12 @@ function WorldClock({ now }: { now: Date }) {
   const reload = useCallback(async () => {
     setError(null);
     if (!window.MatrixOS?.db) {
-      const stored = await readAppData<ZoneRow[] | null>(ZONES_KEY, null);
+      const readResult = await tryReadAppData<ZoneRow[] | null>(ZONES_KEY, null);
+      if (!readResult.ok) {
+        setError("Saved cities could not be loaded.");
+        return;
+      }
+      const stored = readResult.value;
       // First run on KV storage: nothing ever written, so seed the default cities.
       if (stored === null && hasKvBridge()) {
         const seeded = defaultZoneRows();
@@ -333,31 +373,33 @@ function WorldClock({ now }: { now: Date }) {
     try {
       const rows = await window.MatrixOS.db.find(ZONES_TABLE, { orderBy: { position: "asc" } });
       let zones = coerceZones(rows);
-      // First run on Postgres storage: the table is empty and we have never
-      // seeded before. The marker keeps "user deleted every city" distinct
-      // from "brand new install".
-      if (zones.length === 0 && hasKvBridge()) {
-        const seededBefore = await readAppData<boolean>(SEED_MARKER_KEY, false);
-        if (!seededBefore) {
-          try {
-            await Promise.all(
-              defaultZoneRows().map((zone) =>
-                window.MatrixOS?.db?.insert(ZONES_TABLE, { tz: zone.tz, position: zone.position }),
-              ),
-            );
-          } catch (insertErr: unknown) {
-            // A second tab racing the same first run hits the zones unique
-            // index; the defaults already exist in that case, which is fine.
-            console.warn(
-              "[clock] default cities insert failed or raced:",
-              insertErr instanceof Error ? insertErr.message : String(insertErr),
-            );
+      if (hasKvBridge()) {
+        const markerRead = await tryReadAppData<boolean>(SEED_MARKER_KEY, false);
+        if (!markerRead.ok) {
+          setZones(zones);
+          setError("Saved cities could not be loaded.");
+          return;
+        }
+        if (!markerRead.value) {
+          // A brand-new table or an interrupted older seed gets one atomic,
+          // idempotent multi-row insert. Existing custom rows are user state
+          // and only need the migration marker.
+          if (zones.length === 0 || (!hasCustomZone(zones) && !hasAllDefaultZones(zones))) {
+            try {
+              await window.MatrixOS.db.bulkInsert(
+                ZONES_TABLE,
+                defaultZoneRows().map((zone) => ({ tz: zone.tz, position: zone.position })),
+              );
+            } catch (insertErr: unknown) {
+              console.warn(
+                "[clock] default cities insert failed or raced:",
+                insertErr instanceof Error ? insertErr.message : String(insertErr),
+              );
+            }
+            const fresh = await window.MatrixOS.db.find(ZONES_TABLE, { orderBy: { position: "asc" } });
+            zones = coerceZones(fresh);
           }
-          const fresh = await window.MatrixOS.db.find(ZONES_TABLE, { orderBy: { position: "asc" } });
-          zones = coerceZones(fresh);
-          // Only mark seeded once rows are actually stored, so a failed
-          // first run retries instead of leaving the world clock empty.
-          if (zones.length > 0) {
+          if (hasCustomZone(zones) || hasAllDefaultZones(zones)) {
             await writeAppData(SEED_MARKER_KEY, true);
           }
         }

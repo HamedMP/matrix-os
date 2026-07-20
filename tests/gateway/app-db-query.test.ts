@@ -44,6 +44,17 @@ describe("QueryEngine", () => {
     expect(typeof result.id).toBe("string");
   });
 
+  it("bulk-inserts related rows in one atomic statement", async () => {
+    const result = await engine.bulkInsert("todo", "tasks", [
+      { title: "First", done: false, priority: 1 },
+      { title: "Second", done: false, priority: 2 },
+    ]);
+
+    expect(result.ids).toHaveLength(2);
+    const rows = await engine.find("todo", "tasks", { orderBy: { priority: "asc" } });
+    expect(rows.map((row) => row.title)).toEqual(["First", "Second"]);
+  });
+
   it("finds rows with no filter", async () => {
     await engine.insert("todo", "tasks", { title: "A", done: false });
     await engine.insert("todo", "tasks", { title: "B", done: true });

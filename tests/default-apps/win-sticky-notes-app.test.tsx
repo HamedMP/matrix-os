@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../../home/apps/win-sticky-notes/src/App";
-import { NOTES_KEY } from "../../home/apps/win-sticky-notes/src/sticky-notes-model";
+import { MAX_NOTES, NOTES_KEY } from "../../home/apps/win-sticky-notes/src/sticky-notes-model";
 
 function installMatrixDataBridge(data = new Map<string, unknown>()) {
   const bridge = {
@@ -47,6 +47,36 @@ describe("Sticky Notes (win11) app", () => {
     expect(screen.getByText(/no notes yet/i)).toBeTruthy();
   });
 
+  it("does not autosave an empty list after the initial bridge read fails", async () => {
+    const bridge = installMatrixDataBridge();
+    bridge.readData.mockRejectedValue(new Error("gateway unavailable"));
+    render(<App />);
+
+    expect(await screen.findByText(/no note selected/i)).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    expect(bridge.writeData).not.toHaveBeenCalled();
+  });
+
+  it("keeps note creation disabled until the initial bridge read settles", async () => {
+    let resolveRead: (value: unknown) => void = () => undefined;
+    const pendingRead = new Promise<unknown>((resolve) => {
+      resolveRead = resolve;
+    });
+    const bridge = installMatrixDataBridge();
+    bridge.readData.mockReturnValue(pendingRead);
+    render(<App />);
+
+    const newNoteButtons = screen.getAllByRole("button", { name: /new note/i });
+    expect(newNoteButtons.every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
+
+    resolveRead([]);
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("button", { name: /new note/i }).every((button) => !(button as HTMLButtonElement).disabled),
+      ).toBe(true);
+    });
+  });
+
   it("creates a note and autosaves it after the debounce", async () => {
     const bridge = installMatrixDataBridge();
     render(<App />);
@@ -77,7 +107,7 @@ describe("Sticky Notes (win11) app", () => {
   });
 
   it("refuses to create notes beyond MAX_NOTES instead of dropping the oldest on reload", async () => {
-    const full = Array.from({ length: 200 }, (_, i) => ({
+    const full = Array.from({ length: MAX_NOTES }, (_, i) => ({
       id: `n-${i}`,
       text: `note ${i}`,
       color: "yellow",
@@ -88,11 +118,11 @@ describe("Sticky Notes (win11) app", () => {
     render(<App />);
 
     const list = await screen.findByRole("complementary", { name: /notes list/i });
-    await within(list).findByText("note 199");
+    await within(list).findByText(`note ${MAX_NOTES - 1}`);
     fireEvent.click(screen.getAllByRole("button", { name: /new note/i })[0]);
 
-    // Still exactly 200 notes, and nothing new is written.
-    expect(within(list).getAllByRole("button").length).toBe(200);
+    // Still exactly MAX_NOTES notes, and nothing new is written.
+    expect(within(list).getAllByRole("button").length).toBe(MAX_NOTES);
     expect(bridge.writeData).not.toHaveBeenCalled();
   });
 

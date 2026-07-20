@@ -23,8 +23,11 @@ export const NOTE_COLORS: readonly NoteColor[] = [
 ];
 
 export const DEFAULT_NOTE_COLOR: NoteColorId = "yellow";
-export const MAX_NOTE_TEXT = 20_000;
-export const MAX_NOTES = 200;
+// Values are JSON-serialized by the app bridge and then embedded in the
+// /api/bridge/data request. These caps keep the worst-case double-escaped
+// document below that route's 1 MB body limit.
+export const MAX_NOTE_TEXT = 2_000;
+export const MAX_NOTES = 100;
 
 /** Bridge KV key for the persisted note list. */
 export const NOTES_KEY = "win-sticky-notes/notes";
@@ -55,6 +58,15 @@ function clampTime(value: unknown, fallback: number): number {
 
 /** Coerce a stored JSON value into notes; anything malformed is dropped. */
 export function parseStickyNotes(value: unknown): StickyNote[] {
+  if (typeof value === "string") {
+    if (value.length > 1_000_000) return [];
+    try {
+      return parseStickyNotes(JSON.parse(value));
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) return [];
+      throw err;
+    }
+  }
   if (!Array.isArray(value)) return [];
   const out: StickyNote[] = [];
   for (const item of value) {

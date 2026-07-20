@@ -41,6 +41,15 @@ function installMatrixDb(store: FakeStore) {
       (table === "zones" ? store.zones : store.alarms).push({ id, created_at: new Date().toISOString(), ...data });
       return { id };
     }),
+    bulkInsert: vi.fn(async (table: string, rows: DbRow[]) => {
+      const target = table === "zones" ? store.zones : store.alarms;
+      const ids = rows.map((data) => {
+        const id = `${table}-${Math.random().toString(36).slice(2)}`;
+        target.push({ id, created_at: new Date().toISOString(), ...data });
+        return id;
+      });
+      return { ids };
+    }),
     update: vi.fn(async (table: string, id: string, data: DbRow) => {
       const rows = table === "zones" ? store.zones : store.alarms;
       const index = rows.findIndex((row) => row.id === id);
@@ -373,6 +382,19 @@ describe("Clock app", () => {
     expect(zoneWrites).toHaveLength(0);
   });
 
+  it("does not seed defaults after a KV read failure", async () => {
+    const bridge = installMatrixDataBridge();
+    bridge.readData.mockRejectedValue(new Error("gateway unavailable"));
+    render(<App />);
+
+    expect(await screen.findByText(/saved cities could not be loaded/i)).toBeTruthy();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const zoneWrites = bridge.writeData.mock.calls.filter(([key]) => key === "clock.zones");
+    expect(zoneWrites).toHaveLength(0);
+  });
+
   it("seeds default cities into Postgres storage only once", async () => {
     const store: FakeStore = { zones: [], alarms: [] };
     const db = installMatrixDb(store);
@@ -389,13 +411,30 @@ describe("Clock app", () => {
       ]);
     });
     expect(bridge.writeData).toHaveBeenCalledWith("clock.seeded-v1", true);
-    expect(db.insert).toHaveBeenCalledTimes(4);
+    expect(db.bulkInsert).toHaveBeenCalledTimes(1);
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it("marks pre-existing Postgres clock rows as seeded", async () => {
+    const store: FakeStore = {
+      zones: [{ id: "existing", tz: "Europe/Paris", position: 0 }],
+      alarms: [],
+    };
+    const db = installMatrixDb(store);
+    const bridge = installMatrixDataBridge(new Map(), db);
+    render(<App />);
+
+    expect(await screen.findByText("Paris")).toBeTruthy();
+    await waitFor(() => {
+      expect(bridge.writeData).toHaveBeenCalledWith("clock.seeded-v1", true);
+    });
+    expect(db.bulkInsert).not.toHaveBeenCalled();
   });
 
   it("does not mark seeding done when the default-city inserts fail", async () => {
     const store: FakeStore = { zones: [], alarms: [] };
     const db = installMatrixDb(store);
-    db.insert.mockRejectedValue(new Error("database unavailable"));
+    db.bulkInsert.mockRejectedValue(new Error("database unavailable"));
     const bridge = installMatrixDataBridge(new Map(), db);
     render(<App />);
 
@@ -408,14 +447,38 @@ describe("Clock app", () => {
     expect(markerWrites).toHaveLength(0);
   });
 
+  it("does not mark seeding done when only part of the default set is stored", async () => {
+    const store: FakeStore = { zones: [], alarms: [] };
+    const db = installMatrixDb(store);
+    db.bulkInsert.mockImplementation(async (_table: string, rows: DbRow[]) => {
+      store.zones.push({ id: "partial", ...rows[0] });
+      return { ids: ["partial"] };
+    });
+    const bridge = installMatrixDataBridge(new Map(), db);
+    render(<App />);
+
+    expect(await screen.findByText("Los Angeles")).toBeTruthy();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const markerWrites = bridge.writeData.mock.calls.filter(([key]) => key === "clock.seeded-v1");
+    expect(markerWrites).toHaveLength(0);
+  });
+
   it("marks seeding done when a racing tab already inserted the defaults", async () => {
     const store: FakeStore = { zones: [], alarms: [] };
     const db = installMatrixDb(store);
-    // Simulate a unique-index race: every insert rejects, but the rows
+    // Simulate a unique-index race: the atomic insert rejects, but the rows
     // appear anyway because another tab wrote them concurrently.
-    db.insert.mockImplementation(async (table: string, data: DbRow) => {
+    db.bulkInsert.mockImplementation(async (table: string, rows: DbRow[]) => {
       if (table === "zones") {
-        store.zones.push({ id: `race-${String(data.tz)}`, created_at: new Date().toISOString(), ...data });
+        store.zones.push(
+          ...rows.map((data) => ({
+            id: `race-${String(data.tz)}`,
+            created_at: new Date().toISOString(),
+            ...data,
+          })),
+        );
       }
       throw new Error("unique constraint");
     });

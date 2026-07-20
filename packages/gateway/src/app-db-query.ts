@@ -18,6 +18,11 @@ export interface QueryEngine {
   find(schema: string, table: string, opts?: FindOptions): Promise<Record<string, unknown>[]>;
   findOne(schema: string, table: string, id: string): Promise<Record<string, unknown> | null>;
   insert(schema: string, table: string, data: Record<string, unknown>): Promise<{ id: string }>;
+  bulkInsert(
+    schema: string,
+    table: string,
+    rows: Array<Record<string, unknown>>,
+  ): Promise<{ ids: string[] }>;
   update(schema: string, table: string, id: string, data: Record<string, unknown>): Promise<void>;
   bulkUpdate(
     schema: string,
@@ -137,6 +142,41 @@ export function createQueryEngine(db: AppDb): QueryEngine {
         vals,
       );
       return { id: (result.rows[0] as any).id };
+    },
+
+    async bulkInsert(schema, table, rows) {
+      parseSafeName(schema, "schema");
+      parseSafeName(table, "table");
+      if (rows.length === 0) return { ids: [] };
+      if (rows.length > 200) throw new Error("bulkInsert: too many rows");
+
+      const cols = Object.keys(rows[0]);
+      for (const col of cols) parseSafeName(col, "column");
+      if (cols.length === 0) throw new Error("bulkInsert: data must have at least one column");
+      const columnSignature = [...cols].sort().join("\0");
+      const params: unknown[] = [];
+      const valueGroups = rows.map((row) => {
+        if ([...Object.keys(row)].sort().join("\0") !== columnSignature) {
+          throw new Error("bulkInsert: every row must have the same columns");
+        }
+        const placeholders = cols.map((col) => {
+          if (row[col] === undefined) {
+            throw new Error(`bulkInsert: value for column "${col}" must not be undefined`);
+          }
+          params.push(row[col]);
+          return `$${params.length}`;
+        });
+        return `(${placeholders.join(", ")})`;
+      });
+      const colNames = cols.map((col) => `"${col}"`).join(", ");
+      const result = await db.raw(
+        `INSERT INTO ${qualifiedTable(schema, table)} (${colNames})
+         VALUES ${valueGroups.join(", ")}
+         ON CONFLICT DO NOTHING
+         RETURNING id`,
+        params,
+      );
+      return { ids: result.rows.map((row) => String(row.id)) };
     },
 
     async update(schema, table, id, data) {

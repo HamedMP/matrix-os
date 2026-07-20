@@ -2981,6 +2981,22 @@ export async function createGateway(config: GatewayConfig) {
     if ((action === "insert" || action === "update") && JSON.stringify(body.data).length > 1_000_000) {
       return c.json({ error: "data too large (max 1MB)" }, 413);
     }
+    if (action === "bulkInsert") {
+      if (!Array.isArray(body.rows)) {
+        return c.json({ error: "rows must be an array" }, 400);
+      }
+      if (body.rows.length > 200) {
+        return c.json({ error: "rows too large (max 200 rows)" }, 413);
+      }
+      if (JSON.stringify(body.rows).length > 1_000_000) {
+        return c.json({ error: "rows too large (max 1MB)" }, 413);
+      }
+      for (const row of body.rows) {
+        if (!row || typeof row !== "object" || Array.isArray(row) || Object.keys(row).length === 0) {
+          return c.json({ error: "rows entries must be non-empty objects" }, 400);
+        }
+      }
+    }
     if (action === "bulkUpdate") {
       if (!Array.isArray(body.updates)) {
         return c.json({ error: "updates must be an array" }, 400);
@@ -3009,7 +3025,7 @@ export async function createGateway(config: GatewayConfig) {
     }
 
     // Validate table is present for actions that need it
-    const needsTable = ["find", "findOne", "insert", "update", "bulkUpdate", "delete", "count"].includes(action);
+    const needsTable = ["find", "findOne", "insert", "bulkInsert", "update", "bulkUpdate", "delete", "count"].includes(action);
     const safeTable = typeof body.table === "string" ? body.table.replace(/[^a-zA-Z0-9_-]/g, "") : "";
     if (needsTable && !safeTable) {
       return c.json({ error: "table is required and must contain valid characters" }, 400);
@@ -3069,6 +3085,15 @@ export async function createGateway(config: GatewayConfig) {
           broadcast({ type: "data:change", app: appSlug, key: safeTable });
           return c.json(result, 201);
         }
+        case "bulkInsert": {
+          const result = await queryEngine.bulkInsert(
+            appSlug,
+            safeTable,
+            body.rows as Array<Record<string, unknown>>,
+          );
+          broadcast({ type: "data:change", app: appSlug, key: safeTable });
+          return c.json(result, 201);
+        }
         case "update": {
           await queryEngine.update(appSlug, safeTable, body.id as string, body.data as Record<string, unknown>);
           broadcast({ type: "data:change", app: appSlug, key: safeTable });
@@ -3103,6 +3128,7 @@ export async function createGateway(config: GatewayConfig) {
       const isValidation =
         msg.startsWith("Invalid ") ||
         msg.startsWith("insert:") ||
+        msg.startsWith("bulkInsert:") ||
         msg.startsWith("update:") ||
         msg.startsWith("bulkUpdate:");
       const safe = isValidation ? msg : "Query failed";

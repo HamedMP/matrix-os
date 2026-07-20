@@ -272,6 +272,13 @@ describe("OS Bridge", () => {
       expect(script).toContain("__matrix_os_value_v1__:");
     });
 
+    it("exposes atomic bulk inserts to sandboxed apps", () => {
+      const script = buildBridgeScript("clock");
+
+      expect(script).toContain("bulkInsert: function(table, rows)");
+      expect(script).toContain('action: "bulkInsert"');
+    });
+
     it("includes app metadata", () => {
       const script = buildBridgeScript("expense-tracker");
       expect(script).toContain("expense-tracker");

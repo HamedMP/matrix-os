@@ -3,6 +3,7 @@ import {
   DEFAULT_NOTE_COLOR,
   MAX_NOTE_TEXT,
   MAX_NOTES,
+  NOTES_KEY,
   NOTE_COLORS,
   colorFor,
   createNote,
@@ -45,6 +46,14 @@ describe("parseStickyNotes", () => {
     expect(parseStickyNotes({})).toEqual([]);
   });
 
+  it("restores notes from string-backed bridge storage", () => {
+    expect(parseStickyNotes(JSON.stringify([
+      { id: "saved", text: "keep me", color: "blue", createdAt: 10, updatedAt: 20 },
+    ]))).toEqual([
+      { id: "saved", text: "keep me", color: "blue", createdAt: 10, updatedAt: 20 },
+    ]);
+  });
+
   it("coerces valid records and drops malformed ones", () => {
     const parsed = parseStickyNotes([
       { id: "a", text: "hello", color: "green", createdAt: 10, updatedAt: 20 },
@@ -72,6 +81,25 @@ describe("parseStickyNotes", () => {
     const parsed = parseStickyNotes(many);
     expect(parsed).toHaveLength(MAX_NOTES);
     expect(parsed.every((n) => n.updatedAt >= 0)).toBe(true);
+  });
+
+  it("keeps a maximum notes document below the bridge request limit", () => {
+    const notes = Array.from({ length: MAX_NOTES }, (_, index) => ({
+      id: `note-${index}`,
+      text: "\\".repeat(MAX_NOTE_TEXT),
+      color: "yellow",
+      createdAt: index,
+      updatedAt: index,
+    }));
+    const storedValue = JSON.stringify(notes);
+    const requestBody = JSON.stringify({
+      action: "write",
+      app: "win-sticky-notes",
+      key: NOTES_KEY,
+      value: storedValue,
+    });
+
+    expect(new TextEncoder().encode(requestBody).byteLength).toBeLessThan(1_000_000);
   });
 });
 
