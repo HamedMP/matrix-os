@@ -18,6 +18,7 @@ export const STICKY_COLORS: readonly StickyColor[] = [
 
 export const STICKY_WIDTH = 240;
 export const STICKY_MIN_HEIGHT = 170;
+export const MAX_STICKY_TEXT = 20_000;
 
 export interface StickyNote {
   id: string;
@@ -63,7 +64,7 @@ export function parseStickyNotes(value: unknown): StickyNote[] | null {
       x: clampNumber(record.x, 24, 4000),
       y: clampNumber(record.y, 24, 4000),
       z: clampNumber(record.z, 1, 100000),
-      text: typeof record.text === "string" ? record.text.slice(0, 20000) : "",
+      text: typeof record.text === "string" ? record.text.slice(0, MAX_STICKY_TEXT) : "",
       color: isStickyColorId(record.color) ? record.color : "yellow",
     });
   }

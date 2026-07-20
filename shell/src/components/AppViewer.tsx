@@ -13,7 +13,7 @@ import {
 import { getGatewayUrl } from "@/lib/gateway";
 import { openAppSession } from "@/lib/app-session";
 import { capturePostHogEvent } from "@/lib/posthog-client";
-import { createSerializedBridgeDataHandler, type BridgeDataRequest } from "@/lib/app-data-write-queue";
+import { createCoalescedBridgeDataHandler, type BridgeDataRequest } from "@/lib/app-data-write-queue";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 import {
   APP_IFRAME_SANDBOX,
@@ -100,7 +100,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [iframeHtml, setIframeHtml] = useState<string | null>(null);
   const [bridgeDataHandler] = useState<BridgeDataRequest>(() =>
-    createSerializedBridgeDataHandler(requestBridgeData),
+    createCoalescedBridgeDataHandler(requestBridgeData),
   );
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { send, subscribe } = useSocket();

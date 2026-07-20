@@ -4,6 +4,7 @@ import {
   STICKY_COLORS,
   STICKY_MIN_HEIGHT,
   STICKY_WIDTH,
+  MAX_STICKY_TEXT,
   colorFor,
   parseStickyNotes,
   welcomeNote,
@@ -101,7 +102,8 @@ export default function App() {
   }, [updateNotes]);
 
   const editNote = useCallback((id: string, text: string) => {
-    updateNotes((current) => current.map((note) => (note.id === id ? { ...note, text } : note)));
+    const boundedText = text.slice(0, MAX_STICKY_TEXT);
+    updateNotes((current) => current.map((note) => (note.id === id ? { ...note, text: boundedText } : note)));
   }, [updateNotes]);
 
   const bringToFront = useCallback((id: string) => {
@@ -200,6 +202,7 @@ export default function App() {
             <textarea
               className="sticky-body"
               value={note.text}
+              maxLength={MAX_STICKY_TEXT}
               placeholder="Type here…"
               aria-label="Sticky note"
               onChange={(e) => editNote(note.id, e.target.value)}

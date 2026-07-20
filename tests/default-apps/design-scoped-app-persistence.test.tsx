@@ -75,6 +75,19 @@ describe("design-scoped app persistence", () => {
     );
   });
 
+  it("clamps macOS Sticky text to the same limit used during restore", async () => {
+    render(<StickiesApp />);
+    const note = await screen.findByRole("textbox", { name: "Sticky note" }) as HTMLTextAreaElement;
+
+    fireEvent.change(note, { target: { value: "x".repeat(20_005) } });
+
+    expect(note.value).toHaveLength(20_000);
+    expect(writeData).toHaveBeenLastCalledWith(
+      "macos-stickies/notes",
+      expect.arrayContaining([expect.objectContaining({ text: "x".repeat(20_000) })]),
+    );
+  });
+
   it("persists Windows Widgets edits immediately so iframe removal cannot lose them", async () => {
     render(<WidgetsApp />);
     const note = await screen.findByRole("textbox", { name: "Notes" });
