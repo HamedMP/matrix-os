@@ -131,6 +131,23 @@ describe("SignInScreen email code flow", () => {
     expect(screen.getByLabelText("Verification code")).toBeTruthy();
   });
 
+  it("does not blame the code when the session fails to activate after it verified", async () => {
+    mockSetActive.mockImplementationOnce(() => Promise.reject(new Error("network down")));
+    render(<SignInScreen />);
+
+    fireEvent.changeText(screen.getByLabelText("Email address"), "neo@matrix-os.com");
+    fireEvent.press(screen.getByText("Email me a code"));
+    await screen.findByLabelText("Verification code");
+
+    fireEvent.changeText(screen.getByLabelText("Verification code"), "123456");
+    fireEvent.press(screen.getByText("Verify and sign in"));
+
+    expect(
+      await screen.findByText("We verified the code but could not start your session."),
+    ).toBeTruthy();
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
   it("surfaces an unknown account without moving to the code step", async () => {
     mockCreate.mockImplementationOnce(() =>
       Promise.reject({

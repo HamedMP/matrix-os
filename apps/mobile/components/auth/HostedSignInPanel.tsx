@@ -3,12 +3,14 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Ionicons } from "@expo/vector-icons";
 import { EmailCodeForm } from "./EmailCodeForm";
 
-/** Every sign-in route the hosted Clerk instance accepts. */
-export type HostedAuthProvider = "google" | "github" | "email" | "code";
+/** OAuth routes the hosted Clerk instance accepts. */
+export type HostedAuthProvider = "google" | "github";
 
 type HostedSignInPanelProps = {
-  /** Which route is mid-flight, or null when idle. */
+  /** Which OAuth route is mid-flight, or null when idle. */
   loadingProvider: HostedAuthProvider | "basic" | null;
+  sendingCode: boolean;
+  verifyingCode: boolean;
   onGoogle: () => void;
   onGithub: () => void;
   email: string;
@@ -23,6 +25,8 @@ type HostedSignInPanelProps = {
 
 export function HostedSignInPanel({
   loadingProvider,
+  sendingCode,
+  verifyingCode,
   onGoogle,
   onGithub,
   email,
@@ -35,7 +39,7 @@ export function HostedSignInPanel({
   onUseDifferentEmail,
 }: HostedSignInPanelProps) {
   const { theme } = useUnistyles();
-  const busy = loadingProvider !== null;
+  const busy = loadingProvider !== null || sendingCode || verifyingCode;
 
   return (
     <View style={styles.panel}>
@@ -89,8 +93,8 @@ export function HostedSignInPanel({
         code={code}
         onCodeChange={onCodeChange}
         codeSentTo={codeSentTo}
-        sending={loadingProvider === "email"}
-        verifying={loadingProvider === "code"}
+        sending={sendingCode}
+        verifying={verifyingCode}
         busy={busy}
         onSendCode={onSendCode}
         onVerify={onVerify}

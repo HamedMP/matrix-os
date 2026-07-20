@@ -5,15 +5,11 @@ import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { makeRedirectUri } from "expo-auth-session";
-import { useSSO, useAuth, useSignIn } from "@clerk/clerk-expo";
+import { useSSO, useAuth } from "@clerk/clerk-expo";
 import * as WebBrowser from "expo-web-browser";
 import { Image } from "expo-image";
-import {
-  describeSignInFailure,
-  requestEmailCode,
-  submitEmailCode,
-  type SignInAttemptLike,
-} from "@/lib/clerk-sign-in";
+import { describeSignInFailure } from "@/lib/clerk-sign-in";
+import { SignInStepError, useEmailCodeSignIn } from "@/lib/use-email-code-sign-in";
 import { HostedSignInPanel } from "@/components/auth/HostedSignInPanel";
 import { SelfHostedSignInPanel } from "@/components/auth/SelfHostedSignInPanel";
 import { GatewayUrlPanel } from "@/components/auth/GatewayUrlPanel";
@@ -34,14 +30,13 @@ const clerkOAuthRedirectUrl =
   makeRedirectUri({ scheme: "matrixos", path: "sso-callback" });
 
 type OAuthStrategy = "oauth_google" | "oauth_github";
-type AuthProvider = "google" | "github" | "basic" | "email" | "code";
+type AuthProvider = "google" | "github" | "basic";
 
 export default function SignInScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { isSignedIn } = useAuth();
   const { startSSOFlow } = useSSO();
-  const { signIn, setActive: setActiveSession, isLoaded: signInLoaded } = useSignIn();
   const { setGateway } = useGateway();
 
   const [loadingProvider, setLoadingProvider] = useState<AuthProvider | null>(null);
@@ -49,13 +44,7 @@ export default function SignInScreen() {
   const [basicUsername, setBasicUsername] = useState("matrix");
   const [basicPassword, setBasicPassword] = useState("");
   const [gatewayError, setGatewayError] = useState<string | null>(null);
-  const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
-  const [codeSentTo, setCodeSentTo] = useState<string | null>(null);
   const redirectedRef = useRef(false);
-  // The pending Clerk attempt is only read inside submit handlers, so a ref keeps
-  // it out of the render path.
-  const emailAttemptRef = useRef<SignInAttemptLike | null>(null);
   const normalizedGatewayUrl = useMemo(() => {
     try {
       return normalizeGatewayUrl(gatewayUrl);
@@ -125,77 +114,49 @@ export default function SignInScreen() {
     [handleOAuthSignIn],
   );
 
-  const handleSendEmailCode = useCallback(async () => {
-    if (!signInLoaded || !signIn) return;
+  const goToApps = useCallback(() => {
+    setGatewayError(null);
+    redirectedRef.current = true;
+    router.replace("/(tabs)/apps" as any);
+  }, [router]);
 
-    // Validate the target computer before starting a Clerk attempt, so a bad URL
-    // reports its own message instead of being normalised as a sign-in failure.
+  // Persist the chosen computer before Clerk is involved, so a bad URL reports
+  // its own message instead of being normalised as a sign-in failure.
+  const prepareGateway = useCallback(async () => {
     let targetGatewayUrl: string;
     try {
       targetGatewayUrl = normalizeGatewayUrl(gatewayUrl);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Enter a valid Matrix OS URL.";
-      setGatewayError(message);
-      return;
-    }
-
-    setLoadingProvider("email");
-    try {
-      await saveSelectedGatewayUrl(targetGatewayUrl);
-      setGatewayUrl(targetGatewayUrl);
-      setGatewayError(null);
-      const { attempt, maskedIdentifier } = await requestEmailCode(signIn, email);
-      emailAttemptRef.current = attempt;
-      setCodeSentTo(maskedIdentifier);
-      setCode("");
-    } catch (err: unknown) {
-      const message = describeSignInFailure(
-        err,
-        "We could not send the code. Try again in a moment.",
+      throw new SignInStepError(
+        err instanceof Error ? err.message : "Enter a valid Matrix OS URL.",
       );
-      console.warn("[mobile] email code request failed:", err);
-      setGatewayError(message);
-      Alert.alert("Sign in failed", message);
-    } finally {
-      setLoadingProvider(null);
     }
-  }, [email, gatewayUrl, signIn, signInLoaded]);
+    await saveSelectedGatewayUrl(targetGatewayUrl);
+    setGatewayUrl(targetGatewayUrl);
+    setGatewayError(null);
+  }, [gatewayUrl]);
 
-  const handleVerifyEmailCode = useCallback(async () => {
-    const attempt = emailAttemptRef.current;
-    if (!attempt || !setActiveSession) return;
-    setLoadingProvider("code");
-    try {
-      const createdSessionId = await submitEmailCode(attempt, code);
-      // The attempt is spent once it verifies; drop it before activating so a
-      // failing setActive cannot leave a completed attempt to be retried.
-      emailAttemptRef.current = null;
-      await setActiveSession({ session: createdSessionId });
+  const emailSignIn = useEmailCodeSignIn({
+    prepareGateway,
+    onError: setGatewayError,
+    onSuccess: goToApps,
+  });
+
+  const handleEmailChange = useCallback(
+    (value: string) => {
+      emailSignIn.setEmail(value);
       setGatewayError(null);
-      redirectedRef.current = true;
-      router.replace("/(tabs)/apps" as any);
-    } catch (err: unknown) {
-      const message = describeSignInFailure(
-        err,
-        "That code did not work. Request a new one and try again.",
-      );
-      console.warn("[mobile] email code verification failed:", err);
-      setGatewayError(message);
-      Alert.alert("Sign in failed", message);
-    } finally {
-      setLoadingProvider(null);
-    }
-  }, [code, router, setActiveSession]);
+    },
+    [emailSignIn],
+  );
 
-  const handleEmailChange = useCallback((value: string) => {
-    setEmail(value);
-    setGatewayError(null);
-  }, []);
-
-  const handleCodeChange = useCallback((value: string) => {
-    setCode(value);
-    setGatewayError(null);
-  }, []);
+  const handleCodeChange = useCallback(
+    (value: string) => {
+      emailSignIn.setCode(value);
+      setGatewayError(null);
+    },
+    [emailSignIn],
+  );
 
   const handleGatewayUrlChange = useCallback((value: string) => {
     setGatewayUrl(value);
@@ -222,11 +183,9 @@ export default function SignInScreen() {
   }, []);
 
   const handleUseDifferentEmail = useCallback(() => {
-    emailAttemptRef.current = null;
-    setCodeSentTo(null);
-    setCode("");
+    emailSignIn.reset();
     setGatewayError(null);
-  }, []);
+  }, [emailSignIn]);
 
   const handleBasicSignIn = useCallback(async () => {
     setLoadingProvider("basic");
@@ -312,15 +271,17 @@ export default function SignInScreen() {
           ) : (
             <HostedSignInPanel
               loadingProvider={loadingProvider}
+              sendingCode={emailSignIn.sending}
+              verifyingCode={emailSignIn.verifying}
               onGoogle={handleGoogleSignIn}
               onGithub={handleGithubSignIn}
-              email={email}
+              email={emailSignIn.email}
               onEmailChange={handleEmailChange}
-              code={code}
+              code={emailSignIn.code}
               onCodeChange={handleCodeChange}
-              codeSentTo={codeSentTo}
-              onSendCode={handleSendEmailCode}
-              onVerify={handleVerifyEmailCode}
+              codeSentTo={emailSignIn.codeSentTo}
+              onSendCode={emailSignIn.sendCode}
+              onVerify={emailSignIn.verifyCode}
               onUseDifferentEmail={handleUseDifferentEmail}
             />
           )}
