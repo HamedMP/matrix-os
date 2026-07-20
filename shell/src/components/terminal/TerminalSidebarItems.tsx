@@ -1289,7 +1289,9 @@ function ShellCard({
                   className="min-w-0 truncate"
                   onClick={(event) => {
                     event.stopPropagation();
-                    onOpen();
+                    if (event.detail <= 1) {
+                      onOpen();
+                    }
                   }}
                   onDoubleClick={(event) => {
                     event.preventDefault();

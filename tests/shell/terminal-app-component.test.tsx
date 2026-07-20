@@ -504,6 +504,45 @@ describe("TerminalApp", () => {
     expect(doesCompactGitContextFit({ availableWidth: 0, primaryWidth: 0, contextWidth: 0 })).toBe(false);
   });
 
+  it("opens once before a real double-click sequence enters rename mode", () => {
+    const shell = {
+      name: "review",
+      status: "active",
+      placement: "active",
+      visualStatus: "idle",
+      tabs: [],
+    } satisfies ShellSessionSummary;
+    const onOpen = vi.fn();
+
+    render(
+      <ShellSessionGroup
+        label="Active"
+        shells={[shell]}
+        deletingShellNames={[]}
+        foreground
+        selectedShellName={null}
+        onOpen={onOpen}
+        onToggle={vi.fn()}
+        onRename={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        draggingShellName={null}
+        dragOverShellName={null}
+        onDragStart={vi.fn()}
+        onDragOver={vi.fn()}
+        onDrop={vi.fn()}
+        onDragEnd={vi.fn()}
+      />,
+    );
+
+    const nameButton = screen.getByRole("button", { name: "Open review" });
+    fireEvent.click(nameButton, { detail: 1 });
+    fireEvent.click(nameButton, { detail: 2 });
+    fireEvent.doubleClick(nameButton, { detail: 2 });
+
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("textbox", { name: "Session name for review" })).toBeTruthy();
+  });
+
   it("marks restored codex-* shell sessions for Codex TUI compatibility", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
