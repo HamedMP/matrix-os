@@ -69,6 +69,20 @@ describe("proxy auth: route classification", () => {
     expect(isPublicShellPath("/sign-up/verify-email-address")).toBe(true);
   });
 
+  it("classifies only the exact runtime HTML route as public", () => {
+    expect(isPublicShellPath("/runtime")).toBe(true);
+    expect(isPublicShellPath("/runtime/other")).toBe(false);
+
+    for (const protectedPath of [
+      "/api/auth/computers",
+      "/billing/status",
+      "/billing/portal",
+      "/files/runtime.json",
+    ]) {
+      expect(isPublicShellPath(protectedPath)).toBe(false);
+    }
+  });
+
   it("classifies the billing setup shell entry as public without exposing the normal shell", () => {
     expect(isPublicShellPath("/", "?billing=setup")).toBe(true);
     expect(isPublicShellPath("/", "billing=setup")).toBe(true);
@@ -676,6 +690,55 @@ describe("proxy auth: billing setup entry", () => {
     expect(response).toEqual({ kind: "next", init: undefined });
     expect(clerkRequestHandler).not.toHaveBeenCalled();
     expect(nextResponseRedirect).not.toHaveBeenCalled();
+  });
+});
+
+describe("proxy auth: runtime shell entry", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.doUnmock("@clerk/nextjs/server");
+    vi.doUnmock("next/server");
+  });
+
+  it("bypasses Clerk for the production-shaped internal runtime proxy hop", async () => {
+    vi.resetModules();
+
+    const clerkRequestHandler = vi.fn(async (request: unknown, event: unknown) => ({
+      kind: "clerk",
+      request,
+      event,
+    }));
+    vi.doMock("@clerk/nextjs/server", () => ({
+      clerkMiddleware: vi.fn(() => clerkRequestHandler),
+    }));
+
+    const nextResponseNext = vi.fn((init?: unknown) => ({ kind: "next", init }));
+    class MockNextResponse extends Response {
+      static next = nextResponseNext;
+      static rewrite = vi.fn((url: URL, init?: unknown) => ({ kind: "rewrite", url, init }));
+      static redirect = vi.fn((url: URL) => ({ kind: "redirect", url }));
+    }
+    vi.doMock("next/server", () => ({ NextResponse: MockNextResponse }));
+
+    const { proxy } = await import("../../shell/src/proxy");
+    const response = proxy({
+      headers: new Headers({
+        host: "127.0.0.1:3200",
+        "x-forwarded-host": "app.matrix-os.com",
+        "x-forwarded-proto": "http",
+      }),
+      nextUrl: {
+        host: "127.0.0.1:3200",
+        pathname: "/runtime",
+        protocol: "http:",
+        search: "",
+      },
+    } as Parameters<typeof proxy>[0], {} as Parameters<typeof proxy>[1]);
+
+    expect(response).toEqual({ kind: "next", init: undefined });
+    expect(nextResponseNext).toHaveBeenCalledTimes(1);
+    expect(clerkRequestHandler).not.toHaveBeenCalled();
   });
 });
 

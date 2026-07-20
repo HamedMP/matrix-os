@@ -3,6 +3,7 @@
 import { useEffect, useEffectEvent, useRef, useCallback } from "react";
 import { create } from "zustand";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
+import { useDesktopMode } from "@/stores/desktop-mode";
 import { useThemeStyle } from "./window/useThemeStyle";
 
 interface DotGridStore {
@@ -30,10 +31,12 @@ const OS_DESIGN_STYLES = new Set(["macos-glass", "winxp", "win11"]);
 export function DotGrid() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gridEnabled = useDotGrid((s) => s.enabled);
+  const desktopMode = useDesktopMode((s) => s.mode);
   const themeStyle = useThemeStyle();
-  // The store toggle is untouched — CanvasToolbar keeps working and the grid
-  // returns when the design switches back to flat/neumorphic.
-  const enabled = gridEnabled && !OS_DESIGN_STYLES.has(themeStyle);
+  // The preference belongs to Canvas. Developer mode deliberately stays
+  // terminal-first and grid-free, while CanvasToolbar can still toggle the
+  // grid and the preference survives a round trip between modes.
+  const enabled = desktopMode === "canvas" && gridEnabled && !OS_DESIGN_STYLES.has(themeStyle);
   const mouseRef = useRef({ x: -1000, y: -1000, active: false });
   const idleTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const rafRef = useRef(0);

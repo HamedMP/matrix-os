@@ -3,6 +3,7 @@ import React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MissionControl } from "../../shell/src/components/MissionControl.js";
+import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering.js";
 import {
   computeLaunchpadColumns,
   computeLaunchpadRows,
@@ -90,7 +91,9 @@ describe("Launchpad (macos-glass launcher)", () => {
     for (const style of ["flat", "winxp", "win11", "neumorphic"]) {
       setDesign(style);
       const { container, unmount } = await renderLauncher();
-      expect(container.querySelector("[data-mission-control]")).toBeTruthy();
+      const launcher = container.querySelector<HTMLElement>("[data-mission-control]");
+      expect(launcher).toBeTruthy();
+      expect(launcher?.style.zIndex).toBe(String(SHELL_Z_INDEX.launchpad));
       expect(container.querySelector("[data-launchpad]")).toBeNull();
       unmount();
     }
