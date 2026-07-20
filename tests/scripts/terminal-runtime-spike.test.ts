@@ -226,6 +226,13 @@ describe('terminal runtime spike evidence', () => {
       's1:roles=initial/keeper:1/zellij:1of2/shell:1/agent:0',
       's2:recovery=readiness/readiness_timeout',
     ]);
+    await rm(join(root, 's1', 'base-runtime-roles.json'));
+    await symlink('/etc/passwd', join(root, 's1', 'base-runtime-roles.json'));
+    await expect(reportGateChecks(root)).resolves.toEqual([
+      's1:stopEmptiesCgroup=fail', 's1:startup=readiness/client_exit',
+      's1:pty-exit=1/0', 's1:unit=failed/failed/timeout/1/16',
+      's2:recovery=readiness/readiness_timeout',
+    ]);
   });
 
   it('rejects a binary other than the exact bundled Zellij 0.44.1', async () => {

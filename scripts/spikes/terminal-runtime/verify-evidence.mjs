@@ -152,6 +152,11 @@ function scanPrivacy(body) {
   if (PRIVACY_PATTERNS.some((pattern) => pattern.test(text))) fail('evidence_privacy');
 }
 
+function ignorableDiagnosticError(error) {
+  const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
+  return code === 'ENOENT' || (error instanceof Error && error.message === 'evidence_file_type');
+}
+
 export async function reportGateChecks(inputRoot) {
   const root = resolve(inputRoot);
   const summaryResult = await readNoFollow(join(root, 'summary.json'), MAX_EVIDENCE_FILE_BYTES);
@@ -206,8 +211,7 @@ export async function reportGateChecks(inputRoot) {
       if (clientExitShape) failures.push(`s1:pty-exit=${startup.exitCode}/${startup.signal}`);
     }
   } catch (error) {
-    const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
-    if (code !== 'ENOENT') throw error;
+    if (!ignorableDiagnosticError(error)) throw error;
   }
   const unitPath = join(root, 's1', 'base-startup-unit.txt');
   try {
@@ -243,8 +247,7 @@ export async function reportGateChecks(inputRoot) {
       );
     }
   } catch (error) {
-    const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
-    if (code !== 'ENOENT') throw error;
+    if (!ignorableDiagnosticError(error)) throw error;
   }
   const rolesPath = join(root, 's1', 'base-runtime-roles.json');
   try {
@@ -264,8 +267,7 @@ export async function reportGateChecks(inputRoot) {
       );
     }
   } catch (error) {
-    const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
-    if (code !== 'ENOENT') throw error;
+    if (!ignorableDiagnosticError(error)) throw error;
   }
   const recoveryPath = join(root, 's2', 'recovery-startup-failure.json');
   try {
@@ -282,8 +284,7 @@ export async function reportGateChecks(inputRoot) {
       failures.push(`s2:recovery=${recovery.stage}/${recovery.code}`);
     }
   } catch (error) {
-    const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
-    if (code !== 'ENOENT') throw error;
+    if (!ignorableDiagnosticError(error)) throw error;
   }
   return failures;
 }
