@@ -147,7 +147,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       return;
     }
 
-    const requestRuntimeSlot = readRuntimeSlot(webSocketProxyPath);
+    const requestRuntimeSlot = explicitVmRoute?.runtimeSlot ?? readRuntimeSlot(webSocketProxyPath);
     const wsToken = getWebSocketUpgradeToken(webSocketProxyPath);
     let identity: AppDomainIdentity | null;
     try {
@@ -206,7 +206,11 @@ export function registerPlatformWebSocketUpgradeHandler(
     let requestedActiveMachine: UserMachineRecord | undefined;
     let runningMachine: UserMachineRecord | undefined;
     if (explicitVmRoute) {
-      const explicitMachine = await getRunningUserMachineByHandle(db, explicitVmRoute.handle);
+      const explicitMachine = await getRunningUserMachineByHandle(
+        db,
+        explicitVmRoute.handle,
+        explicitVmRoute.runtimeSlot,
+      );
       if (!explicitMachine || (identity.userId && !canClerkUserAccessMachine(explicitMachine, identity.userId))) {
         socket.destroy();
         return;

@@ -59,13 +59,11 @@ describe("terminal agent options", () => {
     );
   });
 
-  it("launches Codex from the same Matrix runtime prefix used for verification", () => {
+  it("launches Codex through the Matrix terminal PATH as a single executable command", () => {
     const codex = TERMINAL_AGENT_OPTIONS.find((option) => option.id === "codex");
 
-    expect(codex?.launchCommand).toBe(
-      'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"; exec "$MATRIX_NODE_PREFIX/bin/codex"',
-    );
-    expect(codex?.launchCommand).not.toBe("codex");
+    expect(codex?.launchCommand).toBe("codex");
+    expect(codex?.launchCommand).not.toMatch(/\b(?:export|exec)\b|[;&|]/);
   });
 
   it("preserves agent-specific install flags in visible installer sessions", () => {

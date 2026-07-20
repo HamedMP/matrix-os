@@ -28,7 +28,7 @@ vi.mock("@/hooks/useDesktopConfig", () => ({
   buildMeshGradient: () => "linear-gradient(#111111, #222222)",
   BUNDLED_WALLPAPERS: new Set(["moraine-lake.jpg", "xp-bliss.jpg", "win11-bloom.jpg", "macos-light.svg"]),
   wallpaperUrl: (name: string, gatewayUrl: string) =>
-    `${gatewayUrl}/files/system/wallpapers/${name}`,
+    `${gatewayUrl}/api/files/blob?path=${encodeURIComponent(`system/wallpapers/${name}`)}`,
 }));
 
 vi.mock("@/stores/desktop-config", () => ({

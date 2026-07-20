@@ -360,6 +360,7 @@ describe("zellij terminal WebSocket", () => {
       adapter: { attachSession },
       maxReplayBytes: 4096,
       idleAttachGraceMs: 50,
+      attachStartupGraceMs: 0,
     });
 
     const first = await handler.open({ ws: socket(), session: "main", fromSeq: 0 });
@@ -555,15 +556,14 @@ describe("zellij terminal WebSocket", () => {
 
   it("returns a stable error frame if PTY attach throws before listeners are registered", async () => {
     const ws = socket();
+    const attachSession = vi.fn(() => {
+      throw new Error("spawn failed");
+    });
     const handler = createShellWsHandler({
       registry: {
         list: vi.fn(async () => [{ name: "main", status: "active" }]),
       },
-      adapter: {
-        attachSession: vi.fn(() => {
-          throw new Error("spawn failed");
-        }),
-      },
+      adapter: { attachSession },
     });
 
     await handler.open({ ws, session: "main", fromSeq: 0 });
@@ -572,6 +572,78 @@ describe("zellij terminal WebSocket", () => {
       { type: "error", code: "attach_failed", message: "Shell attach failed" },
     ]);
     expect(ws.closed).toBe(true);
+    // The transient-race retry gives up after three attempts.
+    expect(attachSession).toHaveBeenCalledTimes(3);
+  }, 15_000);
+
+  it("retries a transient attach failure and attaches on a later attempt", async () => {
+    const ws = socket();
+    let attempts = 0;
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => {
+          attempts += 1;
+          if (attempts < 3) throw new Error("zellij not ready");
+          return new FakePty();
+        }),
+      },
+    });
+
+    await handler.open({ ws, session: "main", fromSeq: 0 });
+
+    expect(attempts).toBe(3);
+    expect(ws.sent).toContainEqual(expect.objectContaining({ type: "attached", session: "main" }));
+  }, 15_000);
+
+  it("retries when zellij exits asynchronously during the attach startup window", async () => {
+    const firstPty = new FakePty();
+    const secondPty = new FakePty();
+    const ws = socket();
+    const attachSession = vi.fn()
+      .mockImplementationOnce(() => {
+        queueMicrotask(() => firstPty.emitExit({ exitCode: 1 }));
+        return firstPty;
+      })
+      .mockReturnValueOnce(secondPty);
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: { attachSession },
+    });
+
+    await handler.open({ ws, session: "main", fromSeq: 0 });
+
+    expect(attachSession).toHaveBeenCalledTimes(2);
+    expect(ws.sent).toContainEqual(expect.objectContaining({ type: "attached", session: "main" }));
+    expect(ws.sent).not.toContainEqual(expect.objectContaining({ type: "exit" }));
+  }, 15_000);
+
+  it("preserves output that crosses the attach startup buffer threshold", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const earlyOutput = "x".repeat(70 * 1024);
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => {
+          queueMicrotask(() => pty.emitData(earlyOutput));
+          return pty;
+        }),
+      },
+      attachStartupGraceMs: 10,
+    });
+
+    await handler.open({ ws, session: "main", fromSeq: 0 });
+
+    expect(ws.sent).toContainEqual({ type: "output", seq: 0, data: earlyOutput });
+    expect(pty.pauseCount).toBe(1);
+    expect(pty.resumeCount).toBe(1);
   });
 
   it("rejects missing sessions with a stable error", async () => {
