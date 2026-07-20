@@ -33,10 +33,13 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [persistenceReady, setPersistenceReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const notesRef = useRef(notes);
+  const failedSaveRef = useRef<StickyNote[] | null>(null);
+  const saveAttemptRef = useRef(0);
 
   // Initial load. With no bridge the app degrades to in-memory notes only.
   useEffect(() => {
@@ -73,16 +76,30 @@ export default function App() {
 
   const persistNotes = useCallback((value: StickyNote[]) => {
     if (!persistenceReady) return;
+    const attempt = ++saveAttemptRef.current;
     // Start persistence in the user event. AppViewer owns the ordered request
     // queue, so the write can finish after closing destroys this iframe.
     void (async () => {
       try {
-        await window.MatrixOS?.writeData?.(NOTES_KEY, value);
+        if (!window.MatrixOS?.writeData) throw new Error("data bridge unavailable");
+        await window.MatrixOS.writeData(NOTES_KEY, value);
+        if (attempt === saveAttemptRef.current) {
+          failedSaveRef.current = null;
+          setSaveError(null);
+        }
       } catch (err: unknown) {
         console.warn("[sticky-notes] save failed:", errMsg(err));
+        if (attempt === saveAttemptRef.current) {
+          failedSaveRef.current = value;
+          setSaveError("Changes could not be saved.");
+        }
       }
     })();
   }, [persistenceReady]);
+
+  const retrySave = useCallback(() => {
+    persistNotes(failedSaveRef.current ?? notesRef.current);
+  }, [persistNotes]);
 
   const updateNotes = useCallback((updater: (current: StickyNote[]) => StickyNote[]) => {
     const next = updater(notesRef.current);
@@ -162,6 +179,15 @@ export default function App() {
           <Plus size={16} /> New note
         </button>
       </header>
+
+      {saveError ? (
+        <div className="sn-save-error" role="alert">
+          <span>{saveError} Your edits are still here.</span>
+          <button type="button" onClick={retrySave}>
+            Retry save
+          </button>
+        </div>
+      ) : null}
 
       <div className="sn-body">
         <aside className="sn-list" aria-label="Notes list">

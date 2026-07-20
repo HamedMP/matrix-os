@@ -128,6 +128,33 @@ button {
   outline-offset: 2px;
 }
 
+.sn-save-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--app-danger) 35%, transparent);
+  background: color-mix(in srgb, var(--app-danger) 9%, var(--app-card));
+  color: var(--app-danger);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sn-save-error button {
+  border: 1px solid currentColor;
+  border-radius: var(--app-radius-sm);
+  padding: 3px 8px;
+  background: transparent;
+  color: inherit;
+  font-weight: 600;
+}
+
+.sn-save-error button:focus-visible {
+  outline: 2px solid var(--app-danger);
+  outline-offset: 2px;
+}
+
 /* layout ------------------------------------------------------------------ */
 
 .sn-body {

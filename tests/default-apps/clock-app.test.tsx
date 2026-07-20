@@ -440,6 +440,23 @@ describe("Clock app", () => {
     expect(db.bulkInsert).not.toHaveBeenCalled();
   });
 
+  it("treats a pre-existing subset of default cities as migrated user state", async () => {
+    const store: FakeStore = {
+      zones: [{ id: "existing", tz: "Europe/London", position: 0 }],
+      alarms: [],
+    };
+    const db = installMatrixDb(store);
+    const bridge = installMatrixDataBridge(new Map(), db);
+    render(<App />);
+
+    expect(await screen.findByText("London")).toBeTruthy();
+    await waitFor(() => {
+      expect(bridge.writeData).toHaveBeenCalledWith("clock.seeded-v1", true);
+    });
+    expect(screen.queryByText("Los Angeles")).toBeNull();
+    expect(db.bulkInsert).not.toHaveBeenCalled();
+  });
+
   it("keeps loaded Postgres cities visible when the seed marker write fails", async () => {
     const store: FakeStore = {
       zones: [{ id: "existing", tz: "Europe/Paris", position: 0 }],

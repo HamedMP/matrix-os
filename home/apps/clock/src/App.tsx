@@ -260,10 +260,6 @@ function hasAllDefaultZones(zones: readonly ZoneRow[]): boolean {
   return DEFAULT_WORLD_ZONES.every((timeZone) => timeZones.has(timeZone));
 }
 
-function hasCustomZone(zones: readonly ZoneRow[]): boolean {
-  return zones.some((zone) => !DEFAULT_WORLD_ZONES.includes(zone.tz));
-}
-
 function coerceZones(rows: unknown[]): ZoneRow[] {
   return dedupeZones(rows.map(coerceZone).filter((z): z is ZoneRow => z !== null));
 }
@@ -377,6 +373,7 @@ function WorldClock({ now }: { now: Date }) {
     try {
       const rows = await window.MatrixOS.db.find(ZONES_TABLE, { orderBy: { position: "asc" } });
       let zones = coerceZones(rows);
+      const hadExistingZones = zones.length > 0;
       if (hasKvBridge()) {
         const markerRead = await tryReadAppData<boolean>(SEED_MARKER_KEY, false);
         if (!markerRead.ok) {
@@ -385,10 +382,9 @@ function WorldClock({ now }: { now: Date }) {
           return;
         }
         if (!markerRead.value) {
-          // A brand-new table or an interrupted older seed gets one atomic,
-          // idempotent multi-row insert. Existing custom rows are user state
-          // and only need the migration marker.
-          if (zones.length === 0 || (!hasCustomZone(zones) && !hasAllDefaultZones(zones))) {
+          // Only a brand-new table gets the atomic, idempotent multi-row
+          // insert. Any existing row is user state and only needs the marker.
+          if (!hadExistingZones) {
             try {
               await window.MatrixOS.db.bulkInsert(
                 ZONES_TABLE,
@@ -403,7 +399,7 @@ function WorldClock({ now }: { now: Date }) {
             const fresh = await window.MatrixOS.db.find(ZONES_TABLE, { orderBy: { position: "asc" } });
             zones = coerceZones(fresh);
           }
-          if (hasCustomZone(zones) || hasAllDefaultZones(zones)) {
+          if (hadExistingZones || hasAllDefaultZones(zones)) {
             // A failed marker write is contained: the loaded rows stay visible,
             // and the idempotent seed check retries on the next load.
             await writeAppData(SEED_MARKER_KEY, true);

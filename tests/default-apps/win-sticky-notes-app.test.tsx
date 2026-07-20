@@ -117,6 +117,30 @@ describe("Sticky Notes (win11) app", () => {
     expect(within(list).getByText("Ship the win11 build")).toBeTruthy();
   });
 
+  it("keeps a failed final save visible and retries the dirty snapshot", async () => {
+    const bridge = installMatrixDataBridge();
+    render(<App />);
+
+    await screen.findByText(/no note selected/i);
+    fireEvent.click(screen.getAllByRole("button", { name: /new note/i })[0]);
+    await waitFor(() => expect(bridge.writeData).toHaveBeenCalled());
+    bridge.writeData.mockClear();
+    bridge.writeData.mockRejectedValueOnce(new Error("gateway unavailable"));
+
+    const editor = screen.getByLabelText(/note text/i) as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: "Do not lose this" } });
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(/changes could not be saved/i);
+    expect(editor.value).toBe("Do not lose this");
+    fireEvent.click(screen.getByRole("button", { name: /retry save/i }));
+
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(bridge.writeData).toHaveBeenLastCalledWith(
+      NOTES_KEY,
+      expect.arrayContaining([expect.objectContaining({ text: "Do not lose this" })]),
+    );
+  });
+
   it("refuses to create notes beyond MAX_NOTES instead of dropping the oldest on reload", async () => {
     const full = Array.from({ length: MAX_NOTES }, (_, i) => ({
       id: `n-${i}`,
