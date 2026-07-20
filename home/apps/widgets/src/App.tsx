@@ -143,8 +143,8 @@ function NotesWidget() {
   }, []);
 
   const handleChange = (value: string) => {
-    setText(value);
     if (!loaded.current) return;
+    setText(value);
     setSaveState("saving");
     if (pending.current) clearTimeout(pending.current);
     pendingText.current = value;
@@ -183,6 +183,7 @@ function NotesWidget() {
         placeholder="Jot something down…"
         value={text}
         onChange={(e) => handleChange(e.target.value)}
+        disabled={saveState === "loading"}
         aria-label="Notes"
       />
       <div className={saveState === "error" ? "notes-status error" : "notes-status"}>{statusText}</div>

@@ -41,6 +41,22 @@ describe("design-scoped app persistence", () => {
     expect(screen.queryByRole("textbox", { name: "Sticky note" })).toBeNull();
   });
 
+  it("does not allow a new macOS Sticky before persisted notes finish loading", async () => {
+    let finishRead: ((value: unknown) => void) | undefined;
+    readData.mockImplementationOnce(() => new Promise((resolve) => {
+      finishRead = resolve;
+    }));
+
+    render(<StickiesApp />);
+
+    const addButton = screen.getByRole("button", { name: "New note" }) as HTMLButtonElement;
+    expect(addButton.disabled).toBe(true);
+
+    finishRead?.("[]");
+    await waitFor(() => expect(addButton.disabled).toBe(false));
+    expect(screen.queryByRole("textbox", { name: "Sticky note" })).toBeNull();
+  });
+
   it("flushes the latest macOS Sticky edit when the app closes during the debounce", async () => {
     const view = render(<StickiesApp />);
     const note = await screen.findByRole("textbox", { name: "Sticky note" });
@@ -64,5 +80,21 @@ describe("design-scoped app persistence", () => {
 
     await waitFor(() => expect(writeData).toHaveBeenCalledTimes(1));
     expect(writeData).toHaveBeenCalledWith("win11-widgets/notes", "Keep this Windows note");
+  });
+
+  it("does not allow a Windows Widgets edit before persisted text finishes loading", async () => {
+    let finishRead: ((value: unknown) => void) | undefined;
+    readData.mockImplementationOnce(() => new Promise((resolve) => {
+      finishRead = resolve;
+    }));
+
+    render(<WidgetsApp />);
+
+    const note = screen.getByRole("textbox", { name: "Notes" }) as HTMLTextAreaElement;
+    expect(note.disabled).toBe(true);
+
+    finishRead?.("Saved before opening");
+    await waitFor(() => expect(note.disabled).toBe(false));
+    expect(note.value).toBe("Saved before opening");
   });
 });

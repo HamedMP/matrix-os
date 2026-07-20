@@ -57,6 +57,38 @@ const THEME_VAR_ALIASES: Record<string, string> = {
 
 export type ThemeVars = Record<string, string>;
 
+const BRIDGE_STORED_VALUE_PREFIX = "__matrix_os_value_v1__:";
+
+/**
+ * Persist bridge values in an explicit envelope. This preserves ordinary
+ * strings (including JSON-looking strings) while allowing structured values
+ * to round-trip through the string-backed app KV endpoint.
+ */
+export function encodeBridgeStoredValue(value: unknown): string {
+  const envelope = value === undefined ? { undefined: true } : { value };
+  return `${BRIDGE_STORED_VALUE_PREFIX}${JSON.stringify(envelope)}`;
+}
+
+export function decodeBridgeStoredValue(stored: unknown): unknown {
+  if (typeof stored !== "string" || !stored.startsWith(BRIDGE_STORED_VALUE_PREFIX)) return stored;
+  try {
+    const envelope = JSON.parse(stored.slice(BRIDGE_STORED_VALUE_PREFIX.length)) as unknown;
+    if (!envelope || typeof envelope !== "object") return stored;
+    if ((envelope as { undefined?: unknown }).undefined === true) return undefined;
+    if (Object.prototype.hasOwnProperty.call(envelope, "value")) {
+      return (envelope as { value: unknown }).value;
+    }
+  } catch (err: unknown) {
+    // A malformed or legacy value that happens to share the prefix remains a
+    // string. The bridge must never corrupt persisted data while decoding it.
+    console.warn(
+      "[os-bridge] stored value envelope could not be decoded:",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+  return stored;
+}
+
 function replyToDataRequest(event: MessageEvent, request: () => unknown | Promise<unknown>): void {
   const port = event.ports[0];
   if (!port) {
@@ -205,6 +237,26 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
   var app = ${JSON.stringify(appName)};
   var currentTheme = ${themeJson};
   var currentDesign = ${JSON.stringify(designId)};
+  var storedValuePrefix = ${JSON.stringify(BRIDGE_STORED_VALUE_PREFIX)};
+
+  function encodeStoredValue(value) {
+    var envelope = value === undefined ? { undefined: true } : { value: value };
+    return storedValuePrefix + JSON.stringify(envelope);
+  }
+
+  function decodeStoredValue(stored) {
+    if (typeof stored !== "string" || stored.indexOf(storedValuePrefix) !== 0) return stored;
+    try {
+      var envelope = JSON.parse(stored.slice(storedValuePrefix.length));
+      if (!envelope || typeof envelope !== "object") return stored;
+      if (envelope.undefined === true) return undefined;
+      if (Object.prototype.hasOwnProperty.call(envelope, "value")) return envelope.value;
+    } catch (err) {
+      // Preserve malformed and legacy strings instead of guessing their type.
+      console.warn("[MatrixOS bridge] stored value envelope could not be decoded");
+    }
+    return stored;
+  }
 
   // Tag the document with the active shell design system so app CSS can adapt
   // via :root[data-matrix-design="<id>"] selectors.
@@ -295,7 +347,7 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
         var channel = new MessageChannel();
         channel.port1.onmessage = function(e) {
           channel.port1.close();
-          if (e.data && e.data.ok) resolve(e.data.value);
+          if (e.data && e.data.ok) resolve(decodeStoredValue(e.data.value));
           else reject(new Error("MatrixOS bridge data request failed"));
         };
         window.parent.postMessage(
@@ -320,7 +372,7 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
             app: app,
             payload: {
               key: key,
-              value: typeof value === "string" ? value : JSON.stringify(value)
+              value: encodeStoredValue(value)
             }
           },
           "*",

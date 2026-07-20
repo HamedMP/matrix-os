@@ -103,6 +103,7 @@ export default function App() {
   }, []);
 
   const addNote = useCallback(() => {
+    if (!loaded) return;
     zCounter.current += 1;
     const z = zCounter.current;
     setNotes((current) => {
@@ -113,7 +114,7 @@ export default function App() {
         { id: newId(), x: offset, y: offset + 24, z, text: "", color },
       ];
     });
-  }, []);
+  }, [loaded]);
 
   const closeNote = useCallback((id: string) => {
     setNotes((current) => current.filter((note) => note.id !== id));
@@ -167,7 +168,13 @@ export default function App() {
   return (
     <div className="stickies-app" ref={canvasRef}>
       <div className="stickies-toolbar">
-        <button type="button" className="stickies-add" onClick={addNote} aria-label="New note">
+        <button
+          type="button"
+          className="stickies-add"
+          onClick={addNote}
+          aria-label="New note"
+          disabled={!loaded}
+        >
           <Plus size={16} />
           <span>New note</span>
         </button>

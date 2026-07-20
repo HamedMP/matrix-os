@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
+  decodeBridgeStoredValue,
+  encodeBridgeStoredValue,
   handleBridgeMessage,
   buildBridgeScript,
   type BridgeMessage,
@@ -11,6 +13,23 @@ function makeMessageEvent(data: BridgeMessage): MessageEvent {
 }
 
 describe("OS Bridge", () => {
+  describe("bridge storage values", () => {
+    it.each([
+      ["ordinary text", "ordinary text"],
+      ["3", "3"],
+      [3, 3],
+      [[{ id: "home" }], [{ id: "home" }]],
+      [{ enabled: true }, { enabled: true }],
+      [null, null],
+    ])("round-trips %j without guessing JSON-looking strings", (value, expected) => {
+      expect(decodeBridgeStoredValue(encodeBridgeStoredValue(value))).toEqual(expected);
+    });
+
+    it("leaves legacy untagged storage untouched", () => {
+      expect(decodeBridgeStoredValue('{"items":[]}')).toBe('{"items":[]}');
+    });
+  });
+
   describe("handleBridgeMessage", () => {
     it("routes os:generate to kernel with app context prefix", () => {
       const handler: BridgeHandler = {
@@ -247,9 +266,10 @@ describe("OS Bridge", () => {
       const script = buildBridgeScript("test-app");
       expect(script).toContain("readData");
       expect(script).toContain("writeData");
-      expect(script).toContain("resolve(e.data.value)");
       expect(script).toContain("reject(new Error(\"MatrixOS bridge data request failed\"))");
-      expect(script).toContain('typeof value === "string" ? value : JSON.stringify(value)');
+      expect(script).toContain("decodeStoredValue(e.data.value)");
+      expect(script).toContain("encodeStoredValue(value)");
+      expect(script).toContain("__matrix_os_value_v1__:");
     });
 
     it("includes app metadata", () => {
