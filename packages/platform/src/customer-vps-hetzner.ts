@@ -23,6 +23,7 @@ export interface CreateHetznerServerInput {
   userData: string;
   labels: Record<string, string>;
   serverType?: string;
+  location?: string;
 }
 
 export interface ResizeHetznerServerInput {
@@ -145,7 +146,7 @@ export function createHetznerClient(
           name: input.name,
           server_type: input.serverType ?? config.serverType,
           image: config.image,
-          location: config.location,
+          location: input.location ?? config.location,
           ssh_keys: config.sshKeyName ? [config.sshKeyName] : undefined,
           user_data: input.userData,
           labels: input.labels,

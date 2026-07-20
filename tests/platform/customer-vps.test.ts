@@ -21,6 +21,7 @@ import { createCustomerVpsService } from '../../packages/platform/src/customer-v
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { CustomerVpsError } from '../../packages/platform/src/customer-vps-errors.js';
+import { ProvisionRequestSchema } from '../../packages/platform/src/customer-vps-schema.js';
 import { isPreviewMachine } from '../../packages/platform/src/customer-vps-preview.js';
 import type { BillingEntitlement } from '../../packages/platform/src/billing.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
@@ -183,6 +184,64 @@ describe('platform/customer-vps', () => {
     await expect(getActiveUserMachineByClerkId(db, 'user_123')).resolves.toMatchObject({
       serverType: 'cpx32',
     });
+  });
+
+  it('normalizes billing entitlement server types before enforcing explicit selection', async () => {
+    const { service, hetzner } = createService({
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        defaultServerType: 'CPX32',
+        allowedServerTypes: ['CPX22', 'CPX32'],
+      })),
+    });
+
+    await service.provision({
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      serverType: 'cpx22',
+    });
+
+    expect(vi.mocked(hetzner.createServer).mock.calls[0]?.[0]).toMatchObject({
+      serverType: 'cpx22',
+    });
+    await expect(getActiveUserMachineByClerkId(db, 'user_123')).resolves.toMatchObject({
+      serverType: 'cpx22',
+    });
+  });
+
+  it('persists a selected region and uses it for provisioning', async () => {
+    const { service, hetzner } = createService({
+      config: createTestConfig({ location: 'nbg1' }),
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement()),
+    });
+
+    await service.provision({
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      serverType: 'cpx22',
+      location: 'hil',
+    });
+
+    expect(vi.mocked(hetzner.createServer).mock.calls[0]?.[0]).toMatchObject({
+      serverType: 'cpx22',
+      location: 'hil',
+    });
+    await expect(getActiveUserMachineByClerkId(db, 'user_123')).resolves.toMatchObject({
+      serverType: 'cpx22',
+      location: 'hil',
+    });
+  });
+
+  it('accepts only supported Hetzner locations at the provisioning boundary', () => {
+    expect(ProvisionRequestSchema.safeParse({
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      location: 'hil',
+    }).success).toBe(true);
+    expect(ProvisionRequestSchema.safeParse({
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      location: 'untrusted-region',
+    }).success).toBe(false);
   });
 
   it('falls back to the first allowed billing server type when the default is missing', async () => {
@@ -1486,7 +1545,7 @@ describe('platform/customer-vps', () => {
       systemStore,
       machineIdFactory: () => machineIds.shift()!,
     });
-    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice', location: 'hil' });
     await service.register('registration-token', {
       machineId: provisioned.machineId,
       hetznerServerId: 123456,
@@ -1508,7 +1567,10 @@ describe('platform/customer-vps', () => {
     ).toBeLessThan(vi.mocked(hetzner.deleteServer).mock.invocationCallOrder[0]);
     const secondCreate = vi.mocked(hetzner.createServer).mock.calls[1][0];
     expect(secondCreate.name).toBe('matrix-alice-f973bb98');
-    expect(secondCreate.labels).toMatchObject({ runtime_slot: 'primary' });
+    expect(secondCreate).toMatchObject({
+      location: 'hil',
+      labels: { runtime_slot: 'primary' },
+    });
     const row = (await getUserMachine(db, recovered.machineId))!;
     expect(row).toMatchObject({
       clerkUserId: 'user_123',
@@ -1516,6 +1578,7 @@ describe('platform/customer-vps', () => {
       status: 'recovering',
       hetznerServerId: 789012,
       publicIPv4: '203.0.113.11',
+      location: 'hil',
     });
     await expect(getUserMachine(db, provisioned.machineId)).resolves.toBeUndefined();
   });

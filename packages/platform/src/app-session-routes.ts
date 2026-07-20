@@ -13,7 +13,7 @@ import { getRuntimeAccessDecision } from './billing.js';
 import type { ClerkAuth } from './clerk-auth.js';
 import type { CustomerVpsService } from './customer-vps.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
-import { RuntimeSlotSchema } from './customer-vps-schema.js';
+import { HetznerLocationSchema, HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schema.js';
 import { DeveloperToolsSchema } from './developer-tools.js';
 import type { MatrixProvisioner } from './matrix-provisioning.js';
 import {
@@ -40,6 +40,8 @@ const AppSessionExchangeBodySchema = z.object({
 const AppSessionProvisionBodySchema = z.object({
   runtime: RuntimeSlotSchema.optional().default('primary'),
   developerTools: DeveloperToolsSchema.optional(),
+  serverType: HetznerServerTypeSchema.optional(),
+  location: HetznerLocationSchema.optional(),
 }).strict();
 
 interface ProvisionIdentity {
@@ -192,6 +194,8 @@ export function createAppSessionRoutes(opts: {
         clerkUserId: result.userId,
         runtimeSlot: parsed.data.runtime,
         ...(developerTools ? { developerTools } : {}),
+        ...(parsed.data.serverType ? { serverType: parsed.data.serverType } : {}),
+        ...(parsed.data.location ? { location: parsed.data.location } : {}),
       });
       await opts.ensureProvisionedPlatformUser(opts.db, {
         clerkUserId: result.userId,

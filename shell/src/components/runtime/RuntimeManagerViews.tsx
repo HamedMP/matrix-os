@@ -18,8 +18,6 @@ import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
-import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
-import { DeveloperToolsSelector } from "@/components/onboarding/DefaultInstallsStep";
 import { platformShellAssetPath } from "@/lib/platform-shell-assets";
 import type { JourneyState, OverviewState } from "./RuntimeManager";
 import { runtimeSlotTitle } from "./runtime-name";
@@ -221,7 +219,7 @@ export function NameStep({
   return (
     <StepFrame onBack={onBack}>
       <BrandCard className="p-6 sm:p-9">
-        <Eyebrow>New computer · 1 of 2</Eyebrow>
+        <Eyebrow>New computer · 1 of 3</Eyebrow>
         <h1 className="mt-3 text-3xl font-semibold tracking-tight">Name your computer</h1>
         <p className="mt-3 max-w-xl text-sm leading-6 text-forest/65">
           Give this computer a short name. We’ll turn it into a safe slot used only inside your account.
@@ -242,40 +240,6 @@ export function NameStep({
         {error ? <p id="name-error" className="mt-3 rounded-xl bg-ember/10 px-3 py-2 text-sm text-deep" role="alert">{error}</p> : null}
         <div className="mt-7 flex justify-end">
           <button type="button" onClick={onContinue} className="primary-action">Continue <ChevronRightIcon className="size-4" aria-hidden="true" /></button>
-        </div>
-      </BrandCard>
-    </StepFrame>
-  );
-}
-
-export function InstallsStep({
-  title,
-  selectedTools,
-  onToggle,
-  onBack,
-  onBuild,
-}: {
-  title: string;
-  selectedTools: DeveloperToolId[];
-  onToggle: (tool: DeveloperToolId) => void;
-  onBack: () => void;
-  onBuild: () => void;
-}) {
-  return (
-    <StepFrame onBack={onBack}>
-      <BrandCard className="p-6 sm:p-9">
-        <Eyebrow>New computer · 2 of 2</Eyebrow>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight">Choose default installs</h1>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-forest/65">
-          {title} is a fresh computer with independent files and data. Your account stays the same, but apps and tools install separately.
-        </p>
-        <div className="mt-7">
-          <DeveloperToolsSelector selectedTools={selectedTools} onToggle={onToggle} />
-        </div>
-        <div className="mt-7 flex justify-end">
-          <button type="button" onClick={onBuild} className="primary-action">
-            <ServerIcon className="size-4" aria-hidden="true" /> Build computer
-          </button>
         </div>
       </BrandCard>
     </StepFrame>
