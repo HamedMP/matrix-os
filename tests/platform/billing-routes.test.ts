@@ -468,20 +468,20 @@ describe('platform billing routes', () => {
     const response = await app.request('/billing/portal', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ intent: 'add_computer', returnPath: '/runtime?new=1' }),
+      body: JSON.stringify({ intent: 'add_computer', returnPath: '/onboarding/computer' }),
     });
 
     expect(response.status).toBe(200);
     expect(stripe.createPortalSession).toHaveBeenCalledWith({
       customerId: 'cus_123',
-      returnUrl: 'https://app.matrix-os.com/runtime?new=1',
+      returnUrl: 'https://app.matrix-os.com/onboarding/computer',
       flow: {
         type: 'subscription_update',
         subscriptionId: 'sub_123',
         priceId: 'price_extra_runtime_annual',
         interval: 'annual',
         configurationId: 'bpc_extra_runtime_annual',
-        afterCompletionReturnUrl: 'https://app.matrix-os.com/runtime?new=1',
+        afterCompletionReturnUrl: 'https://app.matrix-os.com/onboarding/computer',
       },
     });
   });

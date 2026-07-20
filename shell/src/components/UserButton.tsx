@@ -2,6 +2,7 @@
 
 import { useAuth, useClerk, useUser } from "@clerk/nextjs";
 import { useIsClient } from "@/hooks/useIsClient";
+import { ADD_COMPUTER_ONBOARDING_PATH } from "@/lib/runtime-routes";
 import { cn } from "@/lib/utils";
 import {
   Tooltip,
@@ -244,7 +245,7 @@ function MountedUserButton({
               </Link>
             </DropdownMenuPrimitive.Item>
             <DropdownMenuPrimitive.Item asChild>
-              <Link className={itemClass} href="/runtime?new=1">
+              <Link className={itemClass} href={ADD_COMPUTER_ONBOARDING_PATH}>
                 <PlusCircleIcon className="size-4 text-muted-foreground" aria-hidden="true" />
                 Get another computer
               </Link>
