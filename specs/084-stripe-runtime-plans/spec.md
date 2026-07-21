@@ -279,7 +279,7 @@ This row remains for legacy summary and audit consumers. Runtime routing, recove
 - `status`: `creating`, `open`, `paid`, `expired`, `abandoned`.
 - `created_at`, `resolved_at`.
 
-At most one `creating` or `open` attempt may exist per `(clerk_user_id, runtime_slot)`. Interrupted `creating` claims use a shorter bounded sweep than open Stripe Sessions, and a repeated identical request reuses the stored Checkout URL.
+At most one `creating` or `open` attempt may exist per `(clerk_user_id, runtime_slot)`. A `creating` claim is retained because a missing Stripe response is ambiguous: repeated identical requests within Matrix's bounded provider-idempotency window retry with that same attempt ID and Stripe idempotency key until the provider result can be finalized. Matrix fails closed after that window instead of risking a retry after Stripe may have pruned the key. Open Stripe Sessions are swept only after their payment window has elapsed, and a different selection cannot replace a provider session that may still be payable.
 
 ### `billing_entitlement_overrides`
 
@@ -411,7 +411,8 @@ First implementation should avoid in-place resizing.
 - Stripe checkout completed but subscription webhook is delayed.
 - Webhook arrives before the platform has linked a Clerk user to a Stripe customer.
 - Two tabs start Checkout for the same runtime slot: a unique active-attempt claim and Stripe idempotency key converge on one session.
-- Checkout session creation succeeds but storing the URL fails: the same attempt ID remains the Stripe idempotency key; the interrupted claim is abandoned or swept before a bounded retry.
+- Checkout session creation succeeds but storing the URL fails: the attempt remains `creating`, and a bounded client retry reuses the same attempt ID as the Stripe idempotency key so the provider result can be finalized without creating a second session.
+- An obsolete subscription receives a later cancellation event after a replacement activates the same runtime slot: exact-slot reads prefer an active or in-grace projection before terminal projections, so the obsolete event cannot shadow paid access.
 - User changes plans twice before the first webhook finishes processing.
 - Stripe sends duplicate events.
 - Stripe sends events out of order.

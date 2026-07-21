@@ -24,7 +24,7 @@ export async function resolveEffectiveBillingEntitlementForSlot(
   const override = parseBillingOverrideRecord(state.override);
   let stripeEntitlement = parseBillingEntitlementRecord(state.entitlement);
   if (runtimeSlot && !override) {
-    const subscription = await getBillingSubscription(db, clerkUserId, runtimeSlot);
+    const subscription = await getBillingSubscription(db, clerkUserId, runtimeSlot, now.toISOString());
     stripeEntitlement = subscription
       ? deriveStripeEntitlement({
         clerkUserId: subscription.clerkUserId,

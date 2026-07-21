@@ -444,6 +444,7 @@ export interface UserMachineRecord {
 }
 
 export type BillingCheckoutAttemptStatus = 'creating' | 'open' | 'paid' | 'expired' | 'abandoned';
+const CHECKOUT_IDEMPOTENCY_RETRY_WINDOW_MS = 23 * 60 * 60 * 1000;
 
 export interface BillingCheckoutAttemptRecord {
   id: string;
@@ -1988,6 +1989,7 @@ export async function getBillingSubscription(
   db: PlatformDB,
   clerkUserId: string,
   runtimeSlot: string,
+  atIso: string,
 ): Promise<BillingSubscriptionRecord | undefined> {
   await db.ready;
   const row = await db.executor
@@ -1995,6 +1997,12 @@ export async function getBillingSubscription(
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
     .where('runtime_slot', '=', runtimeSlot)
+    .orderBy(sql<number>`CASE
+      WHEN billing_subscriptions.status IN ('active', 'trialing') THEN 0
+      WHEN billing_subscriptions.grace_period_ends_at IS NOT NULL
+        AND billing_subscriptions.grace_period_ends_at >= ${atIso} THEN 1
+      ELSE 2
+    END`)
     .orderBy('latest_event_created_at', 'desc')
     .orderBy('latest_event_id', 'desc')
     .executeTakeFirst();
@@ -2004,6 +2012,7 @@ export async function getBillingSubscription(
 export async function listCurrentBillingSubscriptions(
   db: PlatformDB,
   clerkUserId: string,
+  atIso: string,
 ): Promise<BillingSubscriptionRecord[]> {
   await db.ready;
   const rows = await db.executor
@@ -2012,6 +2021,12 @@ export async function listCurrentBillingSubscriptions(
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
     .orderBy('runtime_slot', 'asc')
+    .orderBy(sql<number>`CASE
+      WHEN billing_subscriptions.status IN ('active', 'trialing') THEN 0
+      WHEN billing_subscriptions.grace_period_ends_at IS NOT NULL
+        AND billing_subscriptions.grace_period_ends_at >= ${atIso} THEN 1
+      ELSE 2
+    END`)
     .orderBy('latest_event_created_at', 'desc')
     .orderBy('latest_event_id', 'desc')
     .execute();
@@ -2915,7 +2930,7 @@ export async function claimCheckoutAttempt(
     developerTools?: DeveloperToolId[];
     createdAt: string;
   },
-): Promise<{ attempt: BillingCheckoutAttemptRecord; claimed: boolean }> {
+): Promise<{ attempt: BillingCheckoutAttemptRecord; claimed: boolean; selectionMatches: boolean }> {
   await db.ready;
   const row: BillingCheckoutAttemptsTable = {
     id: record.id,
@@ -2948,26 +2963,27 @@ export async function claimCheckoutAttempt(
     .executeTakeFirst();
 
   const inserted = await tryInsert();
-  if (inserted) return { attempt: mapCheckoutAttempt(inserted), claimed: true };
+  if (inserted) return { attempt: mapCheckoutAttempt(inserted), claimed: true, selectionMatches: true };
   const activeRow = await getActiveAttempt();
   if (!activeRow) throw new Error('active checkout claim conflict could not be reconciled');
   const sameSelection = activeRow.plan_slug === record.planSlug
     && activeRow.billing_interval === record.billingInterval
     && activeRow.region_slug === record.regionSlug;
-  if (activeRow.status === 'creating' || sameSelection) {
-    return { attempt: mapCheckoutAttempt(activeRow), claimed: false };
+  const retryAgeMs = Date.parse(record.createdAt) - Date.parse(activeRow.created_at);
+  const withinIdempotencyWindow = Number.isFinite(retryAgeMs)
+    && retryAgeMs >= 0
+    && retryAgeMs <= CHECKOUT_IDEMPOTENCY_RETRY_WINDOW_MS;
+  if (activeRow.status === 'creating' && sameSelection && withinIdempotencyWindow) {
+    // A previous Stripe response may have timed out after creating the
+    // provider session. Re-run with this persisted attempt id so Stripe's
+    // idempotency key reconciles the ambiguous result instead of creating a
+    // second Checkout Session.
+    return { attempt: mapCheckoutAttempt(activeRow), claimed: true, selectionMatches: true };
   }
-  await db.executor
-    .updateTable('billing_checkout_attempts')
-    .set({ status: 'abandoned', resolved_at: record.createdAt })
-    .where('id', '=', activeRow.id)
-    .where('status', '=', 'open')
-    .execute();
-  const replacement = await tryInsert();
-  if (replacement) return { attempt: mapCheckoutAttempt(replacement), claimed: true };
-  const concurrent = await getActiveAttempt();
-  if (!concurrent) throw new Error('replacement checkout claim conflict could not be reconciled');
-  return { attempt: mapCheckoutAttempt(concurrent), claimed: false };
+  // Never replace a provider session that may still be payable, and never
+  // retry after Stripe may have pruned the idempotency key. Resolution then
+  // requires the signed provider lifecycle or an operator reconciliation.
+  return { attempt: mapCheckoutAttempt(activeRow), claimed: false, selectionMatches: sameSelection };
 }
 
 export async function finalizeCheckoutAttempt(
@@ -2984,21 +3000,15 @@ export async function finalizeCheckoutAttempt(
     .where('status', '=', 'creating')
     .returning('id')
     .executeTakeFirst();
-  return Boolean(updated);
-}
-
-export async function abandonCreatingCheckoutAttempt(
-  db: PlatformDB,
-  id: string,
-  resolvedAt: string,
-): Promise<void> {
-  await db.ready;
-  await db.executor
-    .updateTable('billing_checkout_attempts')
-    .set({ status: 'abandoned', resolved_at: resolvedAt })
+  if (updated) return true;
+  const existing = await db.executor
+    .selectFrom('billing_checkout_attempts')
+    .select(['stripe_session_id', 'checkout_url', 'status'])
     .where('id', '=', id)
-    .where('status', '=', 'creating')
-    .execute();
+    .executeTakeFirst();
+  return existing?.status === 'open'
+    && existing.stripe_session_id === stripeSessionId
+    && existing.checkout_url === checkoutUrl;
 }
 
 export async function getLatestCheckoutAttempt(
@@ -3057,23 +3067,21 @@ export async function resolveCheckoutAttempt(
     .execute();
 }
 
-/** Sweeps stale provider sessions and interrupted `creating` claims to
- * `abandoned` so a crashed request cannot block a runtime slot indefinitely. */
+/** Sweeps stale open provider sessions after their payment window has elapsed.
+ * `creating` claims are deliberately retained: an ambiguous Stripe response
+ * must be retried with the same persisted idempotency key. */
 export async function sweepStaleCheckoutAttempts(
   db: PlatformDB,
   openOlderThanIso: string,
   resolvedAt: string,
   limit: number,
-  creatingOlderThanIso = openOlderThanIso,
 ): Promise<number> {
   await db.ready;
   const stale = await db.executor
     .selectFrom('billing_checkout_attempts')
     .select('id')
-    .where((eb) => eb.or([
-      eb.and([eb('status', '=', 'open'), eb('created_at', '<', openOlderThanIso)]),
-      eb.and([eb('status', '=', 'creating'), eb('created_at', '<', creatingOlderThanIso)]),
-    ]))
+    .where('status', '=', 'open')
+    .where('created_at', '<', openOlderThanIso)
     .limit(limit)
     .execute();
   if (stale.length === 0) return 0;
@@ -3083,7 +3091,7 @@ export async function sweepStaleCheckoutAttempts(
     .where('id', 'in', stale.map((r) => r.id))
     // Re-check status in the UPDATE: a concurrent webhook may have resolved the
     // row to paid/expired between the SELECT and here; never overwrite it.
-    .where('status', 'in', ['creating', 'open'])
+    .where('status', '=', 'open')
     .returning('id')
     .execute();
   return updated.length;

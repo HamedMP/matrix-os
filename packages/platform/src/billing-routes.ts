@@ -5,7 +5,6 @@ import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
 import { z } from 'zod/v4';
 import { appOrigin, resolveReturnPath } from './origins.js';
 import {
-  abandonCreatingCheckoutAttempt,
   claimCheckoutAttempt,
   finalizeCheckoutAttempt,
   getBillingCustomerByClerkUserId,
@@ -203,7 +202,6 @@ export function createBillingRoutes(options: {
       return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
     }
 
-    let claimedAttemptId: string | null = null;
     try {
       if (options.stripe.apiTimeoutMs > MAX_STRIPE_API_TIMEOUT_MS) {
         throw new Error('stripe_timeout_exceeds_budget');
@@ -213,6 +211,7 @@ export function createBillingRoutes(options: {
         options.db,
         clerkUserId,
         parsed.data.runtimeSlot,
+        currentTime.toISOString(),
       );
       if (existingSubscription) {
         const existingEntitlement = deriveStripeEntitlement({
@@ -264,12 +263,11 @@ export function createBillingRoutes(options: {
         ...(serverType ? { serverType } : {}),
       });
       if (!attempt.claimed) {
-        if (attempt.attempt.status === 'open' && attempt.attempt.checkoutUrl) {
+        if (attempt.selectionMatches && attempt.attempt.status === 'open' && attempt.attempt.checkoutUrl) {
           return c.json({ url: attempt.attempt.checkoutUrl }, 200);
         }
         return c.json({ error: 'Checkout is already starting', code: 'checkout_pending' }, 409);
       }
-      claimedAttemptId = attempt.attempt.id;
       const customer = await getBillingCustomerByClerkUserId(options.db, clerkUserId);
       const session = await options.stripe.createCheckoutSession({
         idempotencyKey: attempt.attempt.id,
@@ -294,13 +292,6 @@ export function createBillingRoutes(options: {
       return c.json({ url: session.url }, 200);
     } catch (err: unknown) {
       console.error('[billing] checkout creation failed:', err instanceof Error ? err.message : String(err));
-      if (claimedAttemptId) {
-        try {
-          await abandonCreatingCheckoutAttempt(options.db, claimedAttemptId, now().toISOString());
-        } catch (cleanupError: unknown) {
-          console.error('[billing] checkout attempt cleanup failed:', cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
-        }
-      }
       emitTelemetry(BILLING_CHECKOUT_FAILED_EVENT, {
         distinctId: clerkUserId,
         properties: {
@@ -357,7 +348,12 @@ export function createBillingRoutes(options: {
       const state = await getBillingEntitlementState(options.db, clerkUserId, currentTime.toISOString());
       let stripeEntitlement = parseBillingEntitlementRecord(state.entitlement);
       if (query.data.runtimeSlot) {
-        const subscription = await getBillingSubscription(options.db, clerkUserId, query.data.runtimeSlot);
+        const subscription = await getBillingSubscription(
+          options.db,
+          clerkUserId,
+          query.data.runtimeSlot,
+          currentTime.toISOString(),
+        );
         stripeEntitlement = subscription
           ? deriveStripeEntitlement({
             clerkUserId: subscription.clerkUserId,
@@ -648,7 +644,7 @@ async function recomputeStripeSummary(
   env: NodeJS.ProcessEnv,
   now: Date,
 ): Promise<BillingEntitlement | null> {
-  const subscriptions = await listCurrentBillingSubscriptions(db, clerkUserId);
+  const subscriptions = await listCurrentBillingSubscriptions(db, clerkUserId, now.toISOString());
   if (subscriptions.length === 0) return null;
   const runtimeCatalog = loadRuntimeCatalog(env);
   const projected = subscriptions.map((subscription) => ({

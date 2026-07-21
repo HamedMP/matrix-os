@@ -4,6 +4,7 @@ import {
   getBillingEntitlement,
   getBillingSubscription,
   getBillingCustomerByClerkUserId,
+  getLatestCheckoutAttempt,
   insertCheckoutAttempt,
   insertBillingWebhookEvent,
   upsertBillingOverride,
@@ -295,8 +296,10 @@ describe('platform billing routes', () => {
 
   it('claims one active checkout per runtime slot when concurrent requests have no customer yet', async () => {
     const checkoutCustomerIds: Array<string | undefined> = [];
-    vi.mocked(stripe.createCheckoutSession).mockImplementation(async ({ customerId }) => {
+    const idempotencyKeys: string[] = [];
+    vi.mocked(stripe.createCheckoutSession).mockImplementation(async ({ customerId, idempotencyKey }) => {
       checkoutCustomerIds.push(customerId);
+      idempotencyKeys.push(idempotencyKey);
       return { url: 'https://checkout.stripe.test/session', id: 'cs_concurrent' };
     });
     const app = createApp();
@@ -314,9 +317,10 @@ describe('platform billing routes', () => {
       }),
     ]);
 
-    expect([first.status, second.status].sort()).toEqual([200, 409]);
-    expect(stripe.createCheckoutSession).toHaveBeenCalledOnce();
-    expect(checkoutCustomerIds).toEqual([undefined]);
+    expect([first.status, second.status].sort()).toEqual([200, 200]);
+    expect(stripe.createCheckoutSession).toHaveBeenCalledTimes(2);
+    expect(checkoutCustomerIds).toEqual([undefined, undefined]);
+    expect(new Set(idempotencyKeys).size).toBe(1);
   });
 
   it('reuses the stored checkout URL for a repeated slot and selection', async () => {
@@ -338,6 +342,76 @@ describe('platform billing routes', () => {
     expect(first.status).toBe(200);
     expect(repeated.status).toBe(200);
     await expect(repeated.json()).resolves.toEqual({ url: 'https://checkout.stripe.test/session' });
+    expect(stripe.createCheckoutSession).toHaveBeenCalledOnce();
+  });
+
+  it('retries an ambiguous Checkout failure with the same persisted idempotency key', async () => {
+    const idempotencyKeys: string[] = [];
+    vi.mocked(stripe.createCheckoutSession)
+      .mockImplementationOnce(async (input) => {
+        idempotencyKeys.push(input.idempotencyKey);
+        throw new Error('stripe response timeout');
+      })
+      .mockImplementationOnce(async (input) => {
+        idempotencyKeys.push(input.idempotencyKey);
+        return { url: 'https://checkout.stripe.test/recovered', id: 'cs_recovered' };
+      });
+    const app = createApp();
+    const request = () => app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'studio',
+      }),
+    });
+
+    const ambiguous = await request();
+    const recovered = await request();
+
+    expect(ambiguous.status).toBe(503);
+    expect(recovered.status).toBe(200);
+    expect(idempotencyKeys).toHaveLength(2);
+    expect(new Set(idempotencyKeys).size).toBe(1);
+    await expect(getLatestCheckoutAttempt(db, 'user_123')).resolves.toMatchObject({
+      id: idempotencyKeys[0],
+      runtimeSlot: 'studio',
+      stripeSessionId: 'cs_recovered',
+      status: 'open',
+    });
+  });
+
+  it('does not replace a payable open Checkout with a different selection', async () => {
+    const app = createApp();
+    const first = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'studio',
+      }),
+    });
+    const replacement = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_max',
+        interval: 'annual',
+        regionSlug: 'region_nbg1',
+        runtimeSlot: 'studio',
+      }),
+    });
+
+    expect(first.status).toBe(200);
+    expect(replacement.status).toBe(409);
+    await expect(replacement.json()).resolves.toEqual({
+      error: 'Checkout is already starting',
+      code: 'checkout_pending',
+    });
     expect(stripe.createCheckoutSession).toHaveBeenCalledOnce();
   });
 
@@ -676,7 +750,7 @@ describe('platform billing routes', () => {
       defaultServerType: 'cpx52',
       allowedServerTypes: ['cpx22', 'cpx32', 'cpx52'],
     });
-    await expect(getBillingSubscription(db, 'user_123', 'studio')).resolves.toMatchObject({
+    await expect(getBillingSubscription(db, 'user_123', 'studio', '2026-05-30T00:00:00.000Z')).resolves.toMatchObject({
       stripeSubscriptionId: 'sub_123',
       runtimeSlot: 'studio',
       planSlug: 'matrix_max',
@@ -726,7 +800,7 @@ describe('platform billing routes', () => {
       entitlement: { stripeSubscriptionId: 'sub_studio', planSlug: 'matrix_max', status: 'canceled' },
       access: { runtimeProxyAllowed: false },
     });
-    await expect(getBillingSubscription(db, 'user_123', 'primary')).resolves.toMatchObject({ status: 'active' });
+    await expect(getBillingSubscription(db, 'user_123', 'primary', '2026-05-30T00:00:00.000Z')).resolves.toMatchObject({ status: 'active' });
   });
 
   it('captures subscription revenue metrics from Stripe webhook projections', async () => {

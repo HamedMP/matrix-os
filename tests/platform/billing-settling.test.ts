@@ -139,9 +139,9 @@ describe('platform billing checkout-attempt settling (spec 092)', () => {
     expect((await getLatestCheckoutAttempt(db, 'user_123'))?.status).toBe('abandoned');
   });
 
-  it('sweeps an interrupted creating claim on the shorter cutoff', async () => {
+  it('retains an ambiguous creating claim for an idempotent retry', async () => {
     const { claimCheckoutAttempt } = await import('../../packages/platform/src/db.js');
-    await claimCheckoutAttempt(db, {
+    const first = await claimCheckoutAttempt(db, {
       id: 'creating-1',
       clerkUserId: 'user_123',
       runtimeSlot: 'studio',
@@ -150,17 +150,39 @@ describe('platform billing checkout-attempt settling (spec 092)', () => {
       regionSlug: 'region_fsn1',
       createdAt: '2026-06-11T11:00:00.000Z',
     });
+    const retry = await claimCheckoutAttempt(db, {
+      id: 'creating-2',
+      clerkUserId: 'user_123',
+      runtimeSlot: 'studio',
+      planSlug: 'matrix_builder',
+      billingInterval: 'monthly',
+      regionSlug: 'region_fsn1',
+      createdAt: '2026-06-11T12:00:00.000Z',
+    });
+    const outsideProviderWindow = await claimCheckoutAttempt(db, {
+      id: 'creating-3',
+      clerkUserId: 'user_123',
+      runtimeSlot: 'studio',
+      planSlug: 'matrix_builder',
+      billingInterval: 'monthly',
+      regionSlug: 'region_fsn1',
+      createdAt: '2026-06-12T11:00:01.000Z',
+    });
 
     const swept = await sweepStaleCheckoutAttempts(
       db,
       '2026-05-12T00:00:00.000Z',
       '2026-06-11T12:00:00.000Z',
       50,
-      '2026-06-11T11:45:00.000Z',
     );
 
-    expect(swept).toBe(1);
-    expect((await getLatestCheckoutAttempt(db, 'user_123'))?.status).toBe('abandoned');
+    expect(first.claimed).toBe(true);
+    expect(retry).toMatchObject({ claimed: true, selectionMatches: true });
+    expect(retry.attempt.id).toBe('creating-1');
+    expect(outsideProviderWindow).toMatchObject({ claimed: false, selectionMatches: true });
+    expect(outsideProviderWindow.attempt.id).toBe('creating-1');
+    expect(swept).toBe(0);
+    expect((await getLatestCheckoutAttempt(db, 'user_123'))?.status).toBe('creating');
   });
 
   it('does not sweep an attempt that resolved to paid (status guard)', async () => {

@@ -474,13 +474,11 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
             }
             try {
               const thirtyDaysAgoIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-              const fifteenMinutesAgoIso = new Date(Date.now() - 15 * 60 * 1000).toISOString();
               await sweepStaleCheckoutAttempts(
                 db,
                 thirtyDaysAgoIso,
                 new Date().toISOString(),
                 200,
-                fifteenMinutesAgoIso,
               );
             } catch (err: unknown) {
               logPlatformRouteError('checkout attempt sweep', err);

@@ -201,15 +201,55 @@ describe('platform billing db', () => {
       updatedAt: '2026-06-01T00:00:07.000Z',
     });
 
-    await expect(getBillingSubscription(db, 'user_123', 'primary')).resolves.toMatchObject({
+    await expect(getBillingSubscription(db, 'user_123', 'primary', '2026-06-02T00:00:00.000Z')).resolves.toMatchObject({
       stripeSubscriptionId: 'sub_primary',
       planSlug: 'matrix_builder',
       status: 'active',
     });
-    await expect(listCurrentBillingSubscriptions(db, 'user_123')).resolves.toEqual([
+    await expect(listCurrentBillingSubscriptions(db, 'user_123', '2026-06-02T00:00:00.000Z')).resolves.toEqual([
       expect.objectContaining({ runtimeSlot: 'primary', stripeSubscriptionId: 'sub_primary' }),
       expect.objectContaining({ runtimeSlot: 'studio', stripeSubscriptionId: 'sub_studio' }),
     ]);
+  });
+
+  it('prefers an accessible replacement over a newer terminal subscription event for one slot', async () => {
+    await upsertBillingSubscription(db, {
+      stripeSubscriptionId: 'sub_replacement',
+      stripeCustomerId: 'cus_123',
+      clerkUserId: 'user_123',
+      runtimeSlot: 'studio',
+      planSlug: 'matrix_builder',
+      stripePriceId: 'price_builder_monthly',
+      billingInterval: 'monthly',
+      status: 'active',
+      currentPeriodEnd: '2026-07-01T00:00:00.000Z',
+      gracePeriodEndsAt: '2026-07-04T00:00:00.000Z',
+      latestEventCreatedAt: '2026-06-01T00:00:01.000Z',
+      latestEventId: 'evt_replacement',
+      updatedAt: '2026-06-01T00:00:01.000Z',
+    });
+    await upsertBillingSubscription(db, {
+      stripeSubscriptionId: 'sub_obsolete',
+      stripeCustomerId: 'cus_123',
+      clerkUserId: 'user_123',
+      runtimeSlot: 'studio',
+      planSlug: 'matrix_starter',
+      stripePriceId: 'price_starter_monthly',
+      billingInterval: 'monthly',
+      status: 'canceled',
+      currentPeriodEnd: '2026-05-31T00:00:00.000Z',
+      gracePeriodEndsAt: '2026-06-03T00:00:00.000Z',
+      latestEventCreatedAt: '2026-06-02T00:00:00.000Z',
+      latestEventId: 'evt_obsolete_canceled',
+      updatedAt: '2026-06-02T00:00:00.000Z',
+    });
+
+    await expect(getBillingSubscription(db, 'user_123', 'studio', '2026-06-04T00:00:00.000Z'))
+      .resolves.toMatchObject({ stripeSubscriptionId: 'sub_replacement', status: 'active' });
+    await expect(listCurrentBillingSubscriptions(db, 'user_123', '2026-06-04T00:00:00.000Z'))
+      .resolves.toEqual([
+        expect.objectContaining({ stripeSubscriptionId: 'sub_replacement', runtimeSlot: 'studio' }),
+      ]);
   });
 
   it('ignores revoked internal overrides in the effective override lookup', async () => {
