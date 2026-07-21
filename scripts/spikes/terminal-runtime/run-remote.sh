@@ -49,7 +49,7 @@ build_summary() {
 cleanup
 trap 'status=$?; cleanup; build_summary; exit $status' EXIT
 
-rm -rf -- "$evidence_root" "$runtime_root"
+rm -rf -- "$evidence_root" "$runtime_root" "$cache_root"
 install -d -o root -g root -m 0700 "$evidence_root" "$evidence_root/s1" "$evidence_root/s1/checks" "$evidence_root/s2" "$evidence_root/s2/checks"
 install -d -o matrix -g matrix -m 0700 "$runtime_root" "$runtime_root/descriptors" "$runtime_root/readiness" "$runtime_root/outcomes" "$runtime_root/startup-failures" "$runtime_root/confirmations" "$runtime_root/pane-release"
 install -d -o matrix -g matrix -m 0700 "$owner_home/system/terminal-runtime-spike" "$cache_root" "$config_root" "$owner_home/system/terminal-runtime-spike/config-home" "$owner_home/system/terminal-runtime-spike/data"
@@ -434,7 +434,13 @@ if wait_state "$recovery_unit" active; then
   zellij_cmd --session "$recovery_session" action scroll-up >/dev/null 2>&1 || true
   for _ in $(seq 1 20); do zellij_cmd --session "$recovery_session" action scroll-up >/dev/null 2>&1 || true; done
   viewport_before="/tmp/matrix-terminal-viewport-before-${short_sha}.txt"
-  zellij_cmd --session "$recovery_session" action dump-screen --path "$viewport_before" >/dev/null 2>&1 || true
+  pane_ids="$(zellij_cmd --session "$recovery_session" action list-panes --all --json 2>/dev/null | /opt/matrix/runtime/node/bin/node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{for(const p of JSON.parse(s))if(!p.is_plugin)console.log(p.id)}catch(error){}})' || true)"
+  serialized_pane_id=""
+  for pane_id in $pane_ids; do
+    zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$pane_id" --path "$viewport_before" --full >/dev/null 2>&1 || true
+    if grep -q '^MATRIX_SCROLL_' "$viewport_before" 2>/dev/null; then serialized_pane_id="$pane_id"; break; fi
+  done
+  zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$serialized_pane_id" --path "$viewport_before" >/dev/null 2>&1 || true
   viewport_anchor="$(grep -m1 '^MATRIX_SCROLL_' "$viewport_before" 2>/dev/null || true)"
   rm -f -- "$viewport_before"
   before_save="$(date +%s)"
@@ -448,9 +454,10 @@ if wait_state "$recovery_unit" active; then
     sleep 0.5
   done
   find "$cache_root" -type f -printf '%P %s\n' | sort >"$evidence_root/s2/cache-inventory.txt"
-  mapped_count="$(grep -RIl -- "$recovery_session" "$cache_root" 2>/dev/null | wc -l)"
-  mapped_bytes="$(grep -RIl -- "$recovery_session" "$cache_root" 2>/dev/null | xargs -r stat -c '%s' | awk '{s+=$1} END{print s+0}')"
-  grep -RIl -- "$recovery_session" "$cache_root" 2>/dev/null >"/tmp/matrix-terminal-mapped-${short_sha}.txt" || true
+  recovery_cache_dir="$(find "$cache_root" -type d -name "$recovery_session" -print -quit 2>/dev/null)"
+  mapped_count="$(find "$recovery_cache_dir" -type f 2>/dev/null | wc -l)"
+  mapped_bytes="$(find "$recovery_cache_dir" -type f -printf '%s\n' 2>/dev/null | awk '{s+=$1} END{print s+0}')"
+  find "$recovery_cache_dir" -type f 2>/dev/null >"/tmp/matrix-terminal-mapped-${short_sha}.txt" || true
   printf 'runtime_files=%s\nruntime_bytes=%s\n' "$mapped_count" "$mapped_bytes" >"$evidence_root/s2/runtime-accounting.txt"
   if [ "$mapped_count" -gt 0 ]; then mark_pass s2 cacheMappedByRuntime; fi
   if [ "$mapped_bytes" -le 67108864 ]; then mark_pass s2 diskAccountingBounded; fi
@@ -465,21 +472,34 @@ if wait_state "$recovery_unit" active; then
     if [ "$pane_count" -ge 2 ]; then mark_pass s2 layoutRestored; fi
     dump_file="/tmp/matrix-terminal-dump-${short_sha}.txt"
     viewport_after="/tmp/matrix-terminal-viewport-after-${short_sha}.txt"
-    zellij_cmd --session "$recovery_session" action dump-screen --path "$viewport_after" >/dev/null 2>&1 || true
+    restored_pane_id=""
+    for pane_id in $(printf '%s' "$panes_json" | /opt/matrix/runtime/node/bin/node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{for(const p of JSON.parse(s))if(!p.is_plugin)console.log(p.id)}catch(error){}})'); do
+      zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$pane_id" --path "$dump_file" --full >/dev/null 2>&1 || true
+      if grep -q '^MATRIX_SCROLL_' "$dump_file" 2>/dev/null; then restored_pane_id="$pane_id"; break; fi
+    done
+    zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$restored_pane_id" --path "$viewport_after" >/dev/null 2>&1 || true
     restored_viewport_anchor="$(grep -m1 '^MATRIX_SCROLL_' "$viewport_after" 2>/dev/null || true)"
     if [ -n "$viewport_anchor" ] && [ "$restored_viewport_anchor" = "$viewport_anchor" ]; then mark_pass s2 viewportRestored; fi
     rm -f -- "$viewport_after"
-    zellij_cmd --session "$recovery_session" action dump-screen --path "$dump_file" --full >/dev/null 2>&1 || true
+    zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$restored_pane_id" --path "$dump_file" --full >/dev/null 2>&1 || true
     scroll_count="$(grep -c '^MATRIX_SCROLL_' "$dump_file" 2>/dev/null || true)"
     printf 'serialized_probe_lines=%s\n' "$scroll_count" >"$evidence_root/s2/restored-counts.txt"
     if [ "$scroll_count" -gt 0 ] && [ "$scroll_count" -le 10000 ]; then mark_pass s2 scrollbackBounded; fi
     rm -f -- "$dump_file"
 
-    newest_before_disable="$(find "$cache_root" -type f -printf '%T@\n' 2>/dev/null | sort -nr | head -1)"
-    if zellij_cmd --session "$recovery_session" options --session-serialization false >/dev/null 2>&1; then
+    corrupt_target="$recovery_cache_dir/session-layout.kdl"
+    if [ -n "$corrupt_target" ] && [[ "$recovery_cache_dir" == "$cache_root"/* ]] && [ "$(basename "$recovery_cache_dir")" = "$recovery_session" ]; then
+      recovery_cache_parent="$(dirname "$recovery_cache_dir")"
+      chown root:root "$recovery_cache_parent" && chmod 0755 "$recovery_cache_parent"
+      chown -R root:root "$recovery_cache_dir"
+      find "$recovery_cache_dir" -type d -exec chmod 0500 {} + && find "$recovery_cache_dir" -type f -exec chmod 0400 {} +
+      freeze_before="$(find "$recovery_cache_dir" -type f -printf '%P %s %T@\n' | sort | sha256sum)"
+      zellij_cmd --session "$recovery_session" action save-session >/dev/null 2>&1 || true
       sleep 6
-      newest_after_disable="$(find "$cache_root" -type f -printf '%T@\n' 2>/dev/null | sort -nr | head -1)"
-      if [ "$newest_before_disable" = "$newest_after_disable" ]; then mark_pass s2 liveSerializationDisableSafe; fi
+      freeze_after="$(find "$recovery_cache_dir" -type f -printf '%P %s %T@\n' | sort | sha256sum)"
+      if [ "$freeze_before" = "$freeze_after" ] && [ "$(systemctl is-active "$recovery_unit")" = active ] && ! runuser -u matrix -- mv "$recovery_cache_dir" "${recovery_cache_dir}.replaced" 2>/dev/null; then mark_pass s2 liveSerializationDisableSafe; fi
+      chown -R matrix:matrix "$recovery_cache_dir"
+      find "$recovery_cache_dir" -type d -exec chmod 0700 {} + && find "$recovery_cache_dir" -type f -exec chmod 0600 {} +
     fi
     systemctl stop "$recovery_unit" >/dev/null 2>&1 || true
   else
@@ -487,14 +507,12 @@ if wait_state "$recovery_unit" active; then
       cp "$runtime_root/startup-failures/${recovery_id}.json" "$evidence_root/s2/recovery-startup-failure.json"
     fi
   fi
-  corrupt_target="$(head -1 "/tmp/matrix-terminal-mapped-${short_sha}.txt" 2>/dev/null || true)"
   if [ -n "$corrupt_target" ] && [[ "$corrupt_target" == "$cache_root"/* ]]; then
     printf 'MATRIX_CORRUPT_STATE\n' >"$corrupt_target"
     start_runtime "$recovery_id" recover
     if wait_not_active "$recovery_unit"; then
-      while IFS= read -r mapped; do
-        if [ -n "$mapped" ] && [[ "$mapped" == "$cache_root"/* ]]; then rm -f -- "$mapped"; fi
-      done <"/tmp/matrix-terminal-mapped-${short_sha}.txt"
+      rm -rf -- "$recovery_cache_dir"
+      install -d -o matrix -g matrix -m 0700 "$recovery_cache_dir"
       zellij_cmd delete-session "$recovery_session" --force >/dev/null 2>&1 || true
       start_runtime "$recovery_id" create
       release_pane "$recovery_id"
@@ -503,7 +521,8 @@ if wait_state "$recovery_unit" active; then
   fi
   systemctl stop "$recovery_unit" >/dev/null 2>&1 || true
   zellij_cmd delete-session "$recovery_session" --force >/dev/null 2>&1 || true
-  remaining="$(grep -RIl -- "$recovery_session" "$cache_root" 2>/dev/null | wc -l)"
+  rm -rf -- "$recovery_cache_dir"
+  remaining="$(find "$recovery_cache_dir" -type f 2>/dev/null | wc -l)"
   if [ "$remaining" -eq 0 ]; then mark_pass s2 deletionComplete; fi
   rm -f -- "/tmp/matrix-terminal-mapped-${short_sha}.txt"
 fi

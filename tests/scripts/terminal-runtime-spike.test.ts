@@ -149,6 +149,8 @@ describe('terminal runtime spike evidence', () => {
     expect(keeper).toContain("cgroupRoles(cgroup.path, descriptor.intent === 'create')");
     expect(keeper).toContain("stripVTControlCharacters(renderWindow).includes('<ENTER> run')");
     expect(runner).toContain('confirmations/${recovery_id}.gated');
+    expect(runner).toContain('action dump-screen --pane-id "$restored_pane_id"');
+    expect(runner).toContain('chown -R root:root "$recovery_cache_dir"');
   });
 
   it('keeps the fixed notify unit shape and accepts readiness from the keeper helper', async () => {
