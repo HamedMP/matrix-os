@@ -15,10 +15,18 @@ named in PR #1053. A green targeted golden-snapshot gate does not rewrite that b
 baseline. Any new failure, changed failure identity, or failure in a snapshot-targeted
 suite fails this stack's gate; baseline entries are never silently reclassified.
 
+Run the complete snapshot gate in one Vitest process with one worker. This is the preferred low-CPU validation path; it builds shared prerequisites once and avoids concurrent PGlite migration suites.
+
+```bash
+bun run test:golden-snapshots
+```
+
+The narrower commands below are for isolating a failure. Keep `--maxWorkers=1` when CPU pressure matters.
+
 ## 2. Run the lifecycle and provider contract tests
 
 ```bash
-pnpm exec vitest run \
+pnpm exec vitest run --maxWorkers=1 --no-file-parallelism \
   tests/platform/golden-snapshot-repository.test.ts \
   tests/platform/golden-snapshot-selection.test.ts \
   tests/platform/golden-snapshot-service.test.ts \
@@ -33,7 +41,7 @@ reconciliation; retention never deletes leased/protected snapshots.
 ## 3. Run host sanitation contract tests
 
 ```bash
-pnpm exec vitest run tests/platform/golden-snapshot-host-scripts.test.ts
+pnpm exec vitest run --maxWorkers=1 --no-file-parallelism tests/platform/golden-snapshot-host-scripts.test.ts
 ```
 
 Expected: tests cover every sanitation category in the approved spec, verify services
@@ -45,10 +53,18 @@ keys, machine identity, credentials, and logs.
 ## 4. Run provisioning/fallback tests
 
 ```bash
-pnpm exec vitest run \
+pnpm exec vitest run --maxWorkers=1 --no-file-parallelism \
   tests/platform/golden-snapshot-provisioning.test.ts \
-  tests/platform/customer-vps.test.ts
+  tests/platform/customer-vps.test.ts \
+  tests/platform/customer-vps-cloud-init.test.ts \
+  tests/platform/customer-vps-hetzner.test.ts \
+  tests/platform/customer-vps-host-bundle.test.ts
 ```
+
+These are the explicit customer-VPS suites exercised by the combined gate. Do not use
+the broad `customer-vps*.test.ts` glob: it pulls unrelated fleet, telemetry, TLS, and
+release suites into the snapshot feedback loop and needlessly increases CPU and DB
+migration work.
 
 Required scenarios:
 
@@ -67,7 +83,7 @@ Required scenarios:
 ## 5. Run workflow tests and review gates
 
 ```bash
-pnpm exec vitest run tests/platform/host-bundle-snapshot-workflow.test.ts
+pnpm exec vitest run --maxWorkers=1 --no-file-parallelism tests/platform/host-bundle-snapshot-workflow.test.ts
 bun run check:patterns
 bun run typecheck
 bun run test
