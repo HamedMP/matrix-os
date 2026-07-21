@@ -469,9 +469,7 @@ if wait_state "$recovery_unit" active; then
   done
   rm -f -- "$confirmation_dump"
   if ! pgrep -a zellij | grep -F -- '--force-run-commands' >/dev/null 2>&1; then mark_pass s2 forceRunAbsent; fi
-  rm -f -- "$runtime_root/attach-${recovery_id}.json"
-  runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/runtime/node/bin/node "$support_root/attach-probe.mjs" "$recovery_id" confirm &
-  recovery_attach=$!
+  install -o matrix -g matrix -m 0600 /dev/null "$runtime_root/confirmations/${recovery_id}.pass"
   release_pane "$recovery_id"
   if wait_state "$recovery_unit" active 300; then
     panes_json="$(zellij_cmd --session "$recovery_session" action list-panes --all --json 2>/dev/null || true)"
@@ -501,8 +499,6 @@ if wait_state "$recovery_unit" active; then
       cp "$runtime_root/startup-failures/${recovery_id}.json" "$evidence_root/s2/recovery-startup-failure.json"
     fi
   fi
-  kill "$recovery_attach" 2>/dev/null || true
-
   corrupt_target="$(head -1 "/tmp/matrix-terminal-mapped-${short_sha}.txt" 2>/dev/null || true)"
   if [ -n "$corrupt_target" ] && [[ "$corrupt_target" == "$cache_root"/* ]]; then
     printf 'MATRIX_CORRUPT_STATE\n' >"$corrupt_target"

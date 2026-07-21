@@ -18,6 +18,7 @@ let startupStage = 'descriptor';
 let clientExited = false;
 let clientExitEvent = null;
 let ready = false;
+let confirmationSent = false;
 
 const STARTUP_FAILURE_CODES = new Set([
   'runtime_id',
@@ -206,6 +207,16 @@ async function main() {
   let roles = null;
   while (Date.now() < deadline) {
     if (clientExited) throw new Error('client_exit');
+    if (!confirmationSent) {
+      try {
+        await readFile(`${runtimeRoot}/confirmations/${runtimeId}.pass`);
+        pty.write("\r\x1bl\r\x1bh\r");
+        confirmationSent = true;
+      } catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
+        if (code !== 'ENOENT') throw error;
+      }
+    }
     const [responsive, detected] = await Promise.all([
       exactSessionResponds(sessionName, env),
       cgroupRoles(cgroup.path),
