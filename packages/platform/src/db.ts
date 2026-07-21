@@ -5,6 +5,7 @@ import { z } from 'zod/v4';
 import type {
   BillingEntitlementSource,
   BillingEntitlementStatus,
+  MatrixBillingInterval,
   MatrixBillingPlanSlug,
 } from './billing.js';
 import {
@@ -156,6 +157,22 @@ interface BillingEntitlementsTable {
   updated_at: string;
 }
 
+interface BillingSubscriptionsTable {
+  stripe_subscription_id: string;
+  stripe_customer_id: string;
+  clerk_user_id: string;
+  runtime_slot: string;
+  plan_slug: string;
+  stripe_price_id: string;
+  billing_interval: string | null;
+  status: string;
+  current_period_end: string | null;
+  grace_period_ends_at: string | null;
+  latest_event_created_at: string;
+  latest_event_id: string;
+  updated_at: string;
+}
+
 interface BillingEntitlementOverridesTable {
   id: string;
   clerk_user_id: string;
@@ -278,7 +295,13 @@ interface SocialFollowsTable {
 interface BillingCheckoutAttemptsTable {
   id: string;
   clerk_user_id: string;
-  stripe_session_id: string;
+  stripe_session_id: string | null;
+  checkout_url: string | null;
+  runtime_slot: string;
+  plan_slug: string | null;
+  billing_interval: string | null;
+  region_slug: string | null;
+  server_type: string | null;
   developer_tools: string;
   status: string;
   created_at: string;
@@ -315,6 +338,7 @@ export interface PlatformDatabase {
   host_bundle_release_channels: HostBundleReleaseChannelsTable;
   provider_deletion_queue: ProviderDeletionQueueTable;
   billing_customers: BillingCustomersTable;
+  billing_subscriptions: BillingSubscriptionsTable;
   billing_entitlements: BillingEntitlementsTable;
   billing_entitlement_overrides: BillingEntitlementOverridesTable;
   billing_webhook_events: BillingWebhookEventsTable;
@@ -419,12 +443,18 @@ export interface UserMachineRecord {
   attempt: number;
 }
 
-export type BillingCheckoutAttemptStatus = 'open' | 'paid' | 'expired' | 'abandoned';
+export type BillingCheckoutAttemptStatus = 'creating' | 'open' | 'paid' | 'expired' | 'abandoned';
 
 export interface BillingCheckoutAttemptRecord {
   id: string;
   clerkUserId: string;
-  stripeSessionId: string;
+  stripeSessionId: string | null;
+  checkoutUrl: string | null;
+  runtimeSlot: string;
+  planSlug: MatrixBillingPlanSlug | null;
+  billingInterval: MatrixBillingInterval | null;
+  regionSlug: string | null;
+  serverType: string | null;
   status: BillingCheckoutAttemptStatus;
   developerTools: DeveloperToolId[];
   createdAt: string;
@@ -549,6 +579,26 @@ export interface BillingEntitlementRecord {
   effectiveUntil: string | null;
   updatedAt: string;
 }
+
+export interface BillingSubscriptionRecord {
+  stripeSubscriptionId: string;
+  stripeCustomerId: string;
+  clerkUserId: string;
+  runtimeSlot: string;
+  planSlug: MatrixBillingPlanSlug;
+  stripePriceId: string;
+  billingInterval: MatrixBillingInterval | null;
+  status: BillingEntitlementStatus;
+  currentPeriodEnd: string | null;
+  gracePeriodEndsAt: string | null;
+  latestEventCreatedAt: string;
+  latestEventId: string;
+  updatedAt: string;
+}
+
+export type NewBillingSubscription = Omit<BillingSubscriptionRecord, 'billingInterval'> & {
+  billingInterval: MatrixBillingInterval;
+};
 
 export type NewBillingEntitlement = BillingEntitlementRecord;
 
@@ -774,15 +824,48 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     CREATE TABLE IF NOT EXISTS billing_checkout_attempts (
       id TEXT PRIMARY KEY,
       clerk_user_id TEXT NOT NULL,
-      stripe_session_id TEXT NOT NULL UNIQUE,
+      stripe_session_id TEXT UNIQUE,
+      checkout_url TEXT,
+      runtime_slot TEXT NOT NULL DEFAULT 'primary',
+      plan_slug TEXT,
+      billing_interval TEXT,
+      region_slug TEXT,
+      server_type TEXT,
       developer_tools TEXT NOT NULL DEFAULT '["codex","claude-code","opencode","pi"]',
       status TEXT NOT NULL DEFAULT 'open',
       created_at TEXT NOT NULL,
       resolved_at TEXT
     )
   `.execute(db);
+  await sql`ALTER TABLE billing_checkout_attempts ALTER COLUMN stripe_session_id DROP NOT NULL`.execute(db);
+  await sql`ALTER TABLE billing_checkout_attempts ADD COLUMN IF NOT EXISTS checkout_url TEXT`.execute(db);
   await sql`ALTER TABLE billing_checkout_attempts ADD COLUMN IF NOT EXISTS developer_tools TEXT NOT NULL DEFAULT '["codex","claude-code","opencode","pi"]'`.execute(db);
+  await sql`ALTER TABLE billing_checkout_attempts ADD COLUMN IF NOT EXISTS runtime_slot TEXT NOT NULL DEFAULT 'primary'`.execute(db);
+  await sql`ALTER TABLE billing_checkout_attempts ADD COLUMN IF NOT EXISTS plan_slug TEXT`.execute(db);
+  await sql`ALTER TABLE billing_checkout_attempts ADD COLUMN IF NOT EXISTS billing_interval TEXT`.execute(db);
+  await sql`ALTER TABLE billing_checkout_attempts ADD COLUMN IF NOT EXISTS region_slug TEXT`.execute(db);
+  await sql`ALTER TABLE billing_checkout_attempts ADD COLUMN IF NOT EXISTS server_type TEXT`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_checkout_attempts_clerk_created ON billing_checkout_attempts(clerk_user_id, created_at)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_checkout_attempts_clerk_slot_created ON billing_checkout_attempts(clerk_user_id, runtime_slot, created_at)`.execute(db);
+  await sql`
+    WITH ranked AS (
+      SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY clerk_user_id, runtime_slot
+        ORDER BY created_at DESC, id DESC
+      ) AS row_number
+      FROM billing_checkout_attempts
+      WHERE status IN ('creating', 'open')
+    )
+    UPDATE billing_checkout_attempts attempts
+    SET status = 'abandoned', resolved_at = COALESCE(attempts.resolved_at, attempts.created_at)
+    FROM ranked
+    WHERE attempts.id = ranked.id AND ranked.row_number > 1
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_checkout_attempts_active_slot
+    ON billing_checkout_attempts(clerk_user_id, runtime_slot)
+    WHERE status IN ('creating', 'open')
+  `.execute(db);
 
   await sql`
     CREATE TABLE IF NOT EXISTS onboarding_first_run (
@@ -816,6 +899,27 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   `.execute(db);
 
   await sql`
+    CREATE TABLE IF NOT EXISTS billing_subscriptions (
+      stripe_subscription_id TEXT PRIMARY KEY,
+      stripe_customer_id TEXT NOT NULL,
+      clerk_user_id TEXT NOT NULL,
+      runtime_slot TEXT NOT NULL,
+      plan_slug TEXT NOT NULL,
+      stripe_price_id TEXT NOT NULL,
+      billing_interval TEXT,
+      status TEXT NOT NULL,
+      current_period_end TEXT,
+      grace_period_ends_at TEXT,
+      latest_event_created_at TEXT NOT NULL,
+      latest_event_id TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`ALTER TABLE billing_subscriptions ALTER COLUMN billing_interval DROP NOT NULL`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_billing_subscriptions_user_slot ON billing_subscriptions(clerk_user_id, runtime_slot, latest_event_created_at DESC)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_billing_subscriptions_customer ON billing_subscriptions(stripe_customer_id)`.execute(db);
+
+  await sql`
     CREATE TABLE IF NOT EXISTS billing_entitlements (
       clerk_user_id TEXT PRIMARY KEY,
       source TEXT NOT NULL,
@@ -837,6 +941,66 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_billing_entitlements_status ON billing_entitlements(status)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_billing_entitlements_subscription ON billing_entitlements(stripe_subscription_id)`.execute(db);
 
+  // Existing production subscriptions predate runtime-slot metadata. Current
+  // fleet evidence guarantees all billable machines are primary; this
+  // idempotent backfill keeps them authorized before their next Stripe event.
+  await sql`
+    INSERT INTO billing_subscriptions (
+      stripe_subscription_id,
+      stripe_customer_id,
+      clerk_user_id,
+      runtime_slot,
+      plan_slug,
+      stripe_price_id,
+      billing_interval,
+      status,
+      current_period_end,
+      grace_period_ends_at,
+      latest_event_created_at,
+      latest_event_id,
+      updated_at
+    )
+    SELECT
+      e.stripe_subscription_id,
+      c.stripe_customer_id,
+      e.clerk_user_id,
+      'primary',
+      e.plan_slug,
+      e.stripe_price_id,
+      NULL,
+      e.status,
+      NULL,
+      e.grace_period_ends_at,
+      e.updated_at,
+      'legacy_backfill',
+      e.updated_at
+    FROM billing_entitlements e
+    JOIN billing_customers c ON c.clerk_user_id = e.clerk_user_id
+    WHERE e.source = 'stripe'
+      AND e.stripe_subscription_id IS NOT NULL
+      AND e.stripe_price_id IS NOT NULL
+    ON CONFLICT (stripe_subscription_id) DO NOTHING
+  `.execute(db);
+  await sql`
+    UPDATE billing_entitlements entitlements
+    SET max_runtime_slots = 1,
+        included_runtime_slots = 1,
+        addon_runtime_slots = 0
+    WHERE entitlements.source = 'stripe'
+      AND EXISTS (
+        SELECT 1
+        FROM billing_subscriptions subscriptions
+        WHERE subscriptions.clerk_user_id = entitlements.clerk_user_id
+          AND subscriptions.latest_event_id = 'legacy_backfill'
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM billing_subscriptions subscriptions
+        WHERE subscriptions.clerk_user_id = entitlements.clerk_user_id
+          AND subscriptions.latest_event_id <> 'legacy_backfill'
+      )
+  `.execute(db);
+
   await sql`
     CREATE TABLE IF NOT EXISTS billing_entitlement_overrides (
       id TEXT PRIMARY KEY,
@@ -856,6 +1020,31 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     )
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_billing_overrides_user ON billing_entitlement_overrides(clerk_user_id, revoked_at, expires_at)`.execute(db);
+
+  const unsupportedExistingComputers = await sql<{ count: string }>`
+    SELECT COUNT(*)::TEXT AS count
+    FROM user_machines m
+    WHERE m.deleted_at IS NULL
+      AND m.provisioning_class = 'customer'
+      AND m.runtime_slot <> 'primary'
+      AND m.provisioned_at <= '2026-07-21T16:28:00.000Z'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM billing_subscriptions s
+        WHERE s.clerk_user_id = m.clerk_user_id
+          AND s.runtime_slot = m.runtime_slot
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM billing_entitlement_overrides o
+        WHERE o.clerk_user_id = m.clerk_user_id
+          AND o.revoked_at IS NULL
+          AND (o.expires_at IS NULL OR o.expires_at::TIMESTAMPTZ > NOW())
+      )
+  `.execute(db);
+  if (Number(unsupportedExistingComputers.rows[0]?.count ?? '0') > 0) {
+    throw new Error('billing subscription migration blocked by existing unassigned customer computers');
+  }
 
   await sql`
     CREATE TABLE IF NOT EXISTS billing_webhook_events (
@@ -1448,6 +1637,42 @@ function toBillingEntitlementRow(record: NewBillingEntitlement): BillingEntitlem
   };
 }
 
+function mapBillingSubscription(row: BillingSubscriptionsTable): BillingSubscriptionRecord {
+  return {
+    stripeSubscriptionId: row.stripe_subscription_id,
+    stripeCustomerId: row.stripe_customer_id,
+    clerkUserId: row.clerk_user_id,
+    runtimeSlot: row.runtime_slot,
+    planSlug: row.plan_slug as MatrixBillingPlanSlug,
+    stripePriceId: row.stripe_price_id,
+    billingInterval: row.billing_interval as MatrixBillingInterval | null,
+    status: row.status as BillingEntitlementStatus,
+    currentPeriodEnd: row.current_period_end,
+    gracePeriodEndsAt: row.grace_period_ends_at,
+    latestEventCreatedAt: row.latest_event_created_at,
+    latestEventId: row.latest_event_id,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toBillingSubscriptionRow(record: NewBillingSubscription): BillingSubscriptionsTable {
+  return {
+    stripe_subscription_id: record.stripeSubscriptionId,
+    stripe_customer_id: record.stripeCustomerId,
+    clerk_user_id: record.clerkUserId,
+    runtime_slot: record.runtimeSlot,
+    plan_slug: record.planSlug,
+    stripe_price_id: record.stripePriceId,
+    billing_interval: record.billingInterval,
+    status: record.status,
+    current_period_end: record.currentPeriodEnd,
+    grace_period_ends_at: record.gracePeriodEndsAt,
+    latest_event_created_at: record.latestEventCreatedAt,
+    latest_event_id: record.latestEventId,
+    updated_at: record.updatedAt,
+  };
+}
+
 function mapBillingOverride(row: BillingEntitlementOverridesTable): BillingEntitlementOverrideRecord {
   return {
     id: row.id,
@@ -1728,6 +1953,69 @@ export async function getBillingCustomerByStripeCustomerId(
     .where('stripe_customer_id', '=', stripeCustomerId)
     .executeTakeFirst();
   return row ? mapBillingCustomer(row) : undefined;
+}
+
+export async function upsertBillingSubscription(db: PlatformDB, record: NewBillingSubscription): Promise<void> {
+  await db.ready;
+  const row = toBillingSubscriptionRow(record);
+  await db.executor
+    .insertInto('billing_subscriptions')
+    .values(row)
+    .onConflict((oc) => oc.column('stripe_subscription_id').doUpdateSet({
+      stripe_customer_id: row.stripe_customer_id,
+      clerk_user_id: row.clerk_user_id,
+      runtime_slot: row.runtime_slot,
+      plan_slug: row.plan_slug,
+      stripe_price_id: row.stripe_price_id,
+      billing_interval: row.billing_interval,
+      status: row.status,
+      current_period_end: row.current_period_end,
+      grace_period_ends_at: row.grace_period_ends_at,
+      latest_event_created_at: row.latest_event_created_at,
+      latest_event_id: row.latest_event_id,
+      updated_at: row.updated_at,
+    }).where((eb) => eb.or([
+      eb('billing_subscriptions.latest_event_created_at', '<', row.latest_event_created_at),
+      eb.and([
+        eb('billing_subscriptions.latest_event_created_at', '=', row.latest_event_created_at),
+        eb('billing_subscriptions.latest_event_id', '<', row.latest_event_id),
+      ]),
+    ])))
+    .execute();
+}
+
+export async function getBillingSubscription(
+  db: PlatformDB,
+  clerkUserId: string,
+  runtimeSlot: string,
+): Promise<BillingSubscriptionRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('billing_subscriptions')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .where('runtime_slot', '=', runtimeSlot)
+    .orderBy('latest_event_created_at', 'desc')
+    .orderBy('latest_event_id', 'desc')
+    .executeTakeFirst();
+  return row ? mapBillingSubscription(row) : undefined;
+}
+
+export async function listCurrentBillingSubscriptions(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<BillingSubscriptionRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('billing_subscriptions')
+    .distinctOn('runtime_slot')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .orderBy('runtime_slot', 'asc')
+    .orderBy('latest_event_created_at', 'desc')
+    .orderBy('latest_event_id', 'desc')
+    .execute();
+  return rows.map(mapBillingSubscription);
 }
 
 export async function upsertBillingEntitlement(db: PlatformDB, record: NewBillingEntitlement): Promise<void> {
@@ -2554,7 +2842,7 @@ export async function listStaleUserMachines(
 // ---------------------------------------------------------------------------
 
 function isCheckoutAttemptStatus(value: string): value is BillingCheckoutAttemptStatus {
-  return value === 'open' || value === 'paid' || value === 'expired' || value === 'abandoned';
+  return value === 'creating' || value === 'open' || value === 'paid' || value === 'expired' || value === 'abandoned';
 }
 
 function mapCheckoutAttempt(row: BillingCheckoutAttemptsTable): BillingCheckoutAttemptRecord {
@@ -2562,6 +2850,12 @@ function mapCheckoutAttempt(row: BillingCheckoutAttemptsTable): BillingCheckoutA
     id: row.id,
     clerkUserId: row.clerk_user_id,
     stripeSessionId: row.stripe_session_id,
+    checkoutUrl: row.checkout_url,
+    runtimeSlot: row.runtime_slot,
+    planSlug: row.plan_slug as MatrixBillingPlanSlug | null,
+    billingInterval: row.billing_interval as MatrixBillingInterval | null,
+    regionSlug: row.region_slug,
+    serverType: row.server_type,
     status: isCheckoutAttemptStatus(row.status) ? row.status : 'open',
     developerTools: parseDeveloperToolsJson(row.developer_tools),
     createdAt: row.created_at,
@@ -2575,6 +2869,11 @@ export async function insertCheckoutAttempt(
     id: string;
     clerkUserId: string;
     stripeSessionId: string;
+    runtimeSlot?: string;
+    planSlug?: MatrixBillingPlanSlug;
+    billingInterval?: MatrixBillingInterval;
+    regionSlug?: string;
+    serverType?: string;
     createdAt: string;
     status?: BillingCheckoutAttemptStatus;
     resolvedAt?: string | null;
@@ -2588,12 +2887,117 @@ export async function insertCheckoutAttempt(
       id: record.id,
       clerk_user_id: record.clerkUserId,
       stripe_session_id: record.stripeSessionId,
+      checkout_url: null,
+      runtime_slot: record.runtimeSlot ?? 'primary',
+      plan_slug: record.planSlug ?? null,
+      billing_interval: record.billingInterval ?? null,
+      region_slug: record.regionSlug ?? null,
+      server_type: record.serverType ?? null,
       developer_tools: serializeDeveloperTools(record.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
       status: record.status ?? 'open',
       created_at: record.createdAt,
       resolved_at: record.resolvedAt ?? null,
     })
     .onConflict((oc) => oc.column('stripe_session_id').doNothing())
+    .execute();
+}
+
+export async function claimCheckoutAttempt(
+  db: PlatformDB,
+  record: {
+    id: string;
+    clerkUserId: string;
+    runtimeSlot: string;
+    planSlug: MatrixBillingPlanSlug;
+    billingInterval: MatrixBillingInterval;
+    regionSlug: string;
+    serverType?: string;
+    developerTools?: DeveloperToolId[];
+    createdAt: string;
+  },
+): Promise<{ attempt: BillingCheckoutAttemptRecord; claimed: boolean }> {
+  await db.ready;
+  const row: BillingCheckoutAttemptsTable = {
+    id: record.id,
+    clerk_user_id: record.clerkUserId,
+    stripe_session_id: null,
+    checkout_url: null,
+    runtime_slot: record.runtimeSlot,
+    plan_slug: record.planSlug,
+    billing_interval: record.billingInterval,
+    region_slug: record.regionSlug,
+    server_type: record.serverType ?? null,
+    developer_tools: serializeDeveloperTools(record.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
+    status: 'creating',
+    created_at: record.createdAt,
+    resolved_at: null,
+  };
+  const tryInsert = async (): Promise<BillingCheckoutAttemptsTable | undefined> => db.executor
+    .insertInto('billing_checkout_attempts')
+    .values(row)
+    .onConflict((oc) => oc.doNothing())
+    .returningAll()
+    .executeTakeFirst();
+  const getActiveAttempt = async (): Promise<BillingCheckoutAttemptsTable | undefined> => db.executor
+    .selectFrom('billing_checkout_attempts')
+    .selectAll()
+    .where('clerk_user_id', '=', record.clerkUserId)
+    .where('runtime_slot', '=', record.runtimeSlot)
+    .where('status', 'in', ['creating', 'open'])
+    .orderBy('created_at', 'desc')
+    .executeTakeFirst();
+
+  const inserted = await tryInsert();
+  if (inserted) return { attempt: mapCheckoutAttempt(inserted), claimed: true };
+  const activeRow = await getActiveAttempt();
+  if (!activeRow) throw new Error('active checkout claim conflict could not be reconciled');
+  const sameSelection = activeRow.plan_slug === record.planSlug
+    && activeRow.billing_interval === record.billingInterval
+    && activeRow.region_slug === record.regionSlug;
+  if (activeRow.status === 'creating' || sameSelection) {
+    return { attempt: mapCheckoutAttempt(activeRow), claimed: false };
+  }
+  await db.executor
+    .updateTable('billing_checkout_attempts')
+    .set({ status: 'abandoned', resolved_at: record.createdAt })
+    .where('id', '=', activeRow.id)
+    .where('status', '=', 'open')
+    .execute();
+  const replacement = await tryInsert();
+  if (replacement) return { attempt: mapCheckoutAttempt(replacement), claimed: true };
+  const concurrent = await getActiveAttempt();
+  if (!concurrent) throw new Error('replacement checkout claim conflict could not be reconciled');
+  return { attempt: mapCheckoutAttempt(concurrent), claimed: false };
+}
+
+export async function finalizeCheckoutAttempt(
+  db: PlatformDB,
+  id: string,
+  stripeSessionId: string,
+  checkoutUrl: string,
+): Promise<boolean> {
+  await db.ready;
+  const updated = await db.executor
+    .updateTable('billing_checkout_attempts')
+    .set({ stripe_session_id: stripeSessionId, checkout_url: checkoutUrl, status: 'open' })
+    .where('id', '=', id)
+    .where('status', '=', 'creating')
+    .returning('id')
+    .executeTakeFirst();
+  return Boolean(updated);
+}
+
+export async function abandonCreatingCheckoutAttempt(
+  db: PlatformDB,
+  id: string,
+  resolvedAt: string,
+): Promise<void> {
+  await db.ready;
+  await db.executor
+    .updateTable('billing_checkout_attempts')
+    .set({ status: 'abandoned', resolved_at: resolvedAt })
+    .where('id', '=', id)
+    .where('status', '=', 'creating')
     .execute();
 }
 
@@ -2620,13 +3024,16 @@ export async function getLatestCheckoutAttempt(
 export async function getSettlingCheckoutAttempt(
   db: PlatformDB,
   clerkUserId: string,
+  runtimeSlot?: string,
 ): Promise<BillingCheckoutAttemptRecord | undefined> {
   await db.ready;
-  const row = await db.executor
+  let query = db.executor
     .selectFrom('billing_checkout_attempts')
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
-    .where('status', 'in', ['paid', 'open'])
+    .where('status', 'in', ['paid', 'open']);
+  if (runtimeSlot) query = query.where('runtime_slot', '=', runtimeSlot);
+  const row = await query
     .orderBy(sql`CASE status WHEN 'paid' THEN 0 ELSE 1 END`)
     .orderBy('created_at', 'desc')
     .executeTakeFirst();
@@ -2650,19 +3057,23 @@ export async function resolveCheckoutAttempt(
     .execute();
 }
 
-/** Sweeps stale `open` attempts to `abandoned` (resource-cleanup janitor). */
+/** Sweeps stale provider sessions and interrupted `creating` claims to
+ * `abandoned` so a crashed request cannot block a runtime slot indefinitely. */
 export async function sweepStaleCheckoutAttempts(
   db: PlatformDB,
-  olderThanIso: string,
+  openOlderThanIso: string,
   resolvedAt: string,
   limit: number,
+  creatingOlderThanIso = openOlderThanIso,
 ): Promise<number> {
   await db.ready;
   const stale = await db.executor
     .selectFrom('billing_checkout_attempts')
     .select('id')
-    .where('status', '=', 'open')
-    .where('created_at', '<', olderThanIso)
+    .where((eb) => eb.or([
+      eb.and([eb('status', '=', 'open'), eb('created_at', '<', openOlderThanIso)]),
+      eb.and([eb('status', '=', 'creating'), eb('created_at', '<', creatingOlderThanIso)]),
+    ]))
     .limit(limit)
     .execute();
   if (stale.length === 0) return 0;
@@ -2672,7 +3083,7 @@ export async function sweepStaleCheckoutAttempts(
     .where('id', 'in', stale.map((r) => r.id))
     // Re-check status in the UPDATE: a concurrent webhook may have resolved the
     // row to paid/expired between the SELECT and here; never overwrite it.
-    .where('status', '=', 'open')
+    .where('status', 'in', ['creating', 'open'])
     .returning('id')
     .execute();
   return updated.length;

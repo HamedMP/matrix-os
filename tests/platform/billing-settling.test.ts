@@ -139,6 +139,30 @@ describe('platform billing checkout-attempt settling (spec 092)', () => {
     expect((await getLatestCheckoutAttempt(db, 'user_123'))?.status).toBe('abandoned');
   });
 
+  it('sweeps an interrupted creating claim on the shorter cutoff', async () => {
+    const { claimCheckoutAttempt } = await import('../../packages/platform/src/db.js');
+    await claimCheckoutAttempt(db, {
+      id: 'creating-1',
+      clerkUserId: 'user_123',
+      runtimeSlot: 'studio',
+      planSlug: 'matrix_builder',
+      billingInterval: 'monthly',
+      regionSlug: 'region_fsn1',
+      createdAt: '2026-06-11T11:00:00.000Z',
+    });
+
+    const swept = await sweepStaleCheckoutAttempts(
+      db,
+      '2026-05-12T00:00:00.000Z',
+      '2026-06-11T12:00:00.000Z',
+      50,
+      '2026-06-11T11:45:00.000Z',
+    );
+
+    expect(swept).toBe(1);
+    expect((await getLatestCheckoutAttempt(db, 'user_123'))?.status).toBe('abandoned');
+  });
+
   it('does not sweep an attempt that resolved to paid (status guard)', async () => {
     // Simulate the race: the row is stale-and-open at SELECT time, but resolves
     // to paid before the UPDATE. The status='open' guard must skip it.

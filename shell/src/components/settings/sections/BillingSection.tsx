@@ -11,15 +11,18 @@ import {
 export function BillingSection({
   mode = "settings",
   onCheckoutIntent,
+  onCheckoutNavigate,
   checkoutReturnPath,
-  onComputerSetupContinue,
+  checkoutRuntimeSlot,
 }: {
   mode?: BillingPanelMode;
-  onCheckoutIntent?: () => void;
+  onCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
+  onCheckoutNavigate?: (url: string) => void;
   checkoutReturnPath?: string;
-  onComputerSetupContinue?: (selection: ComputerSetupSelection) => void;
+  checkoutRuntimeSlot?: string;
 }) {
   const { active, entitlement, accessReason, accessIssue } = useMatrixBillingAccess();
+  const startsNewSubscription = mode === "add-computer" && entitlement?.source !== "override";
 
   return (
     <div className="mx-auto max-w-5xl space-y-3 p-2 sm:p-4">
@@ -39,7 +42,9 @@ export function BillingSection({
         <Badge
           variant="outline"
           className={
-            active === true
+            startsNewSubscription
+              ? "border-ember/30 bg-ember/10 text-ember"
+              : active === true
               ? "border-forest/25 bg-forest/8 text-forest"
               : accessIssue === "auth"
                 ? "border-sky-500/30 bg-sky-500/10 text-sky-700"
@@ -48,7 +53,15 @@ export function BillingSection({
                 : "border-border/30 bg-muted/30 text-muted-foreground"
           }
         >
-          {active === true ? "Active" : accessIssue === "auth" ? "Reconnecting" : active === false ? "Not active" : "Checking"}
+          {startsNewSubscription
+            ? "New subscription"
+            : active === true
+              ? "Active"
+              : accessIssue === "auth"
+                ? "Reconnecting"
+                : active === false
+                  ? "Not active"
+                  : "Checking"}
         </Badge>
       </div>
 
@@ -59,8 +72,9 @@ export function BillingSection({
         accessIssue={accessIssue}
         mode={mode}
         onCheckoutIntent={onCheckoutIntent}
+        onCheckoutNavigate={onCheckoutNavigate}
         checkoutReturnPath={checkoutReturnPath}
-        onComputerSetupContinue={onComputerSetupContinue}
+        checkoutRuntimeSlot={checkoutRuntimeSlot}
       />
     </div>
   );

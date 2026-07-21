@@ -171,7 +171,11 @@ export interface CustomerVpsServiceDeps {
   provisioningJobIdFactory?: () => string;
   enqueueProvisioningJob?: (db: PlatformDB, job: NewProvisioningJob) => Promise<void>;
   fetchDispatcher?: import('undici').Dispatcher;
-  resolveBillingEntitlement?: (clerkUserId: string) => Promise<BillingEntitlement | null | undefined>;
+  resolveBillingEntitlement?: (
+    db: PlatformDB,
+    clerkUserId: string,
+    runtimeSlot: string,
+  ) => Promise<BillingEntitlement | null | undefined>;
 }
 
 const DEFAULT_CLOUD_INIT_TEMPLATE = [
@@ -396,13 +400,14 @@ function resolveDefaultEntitlementServerType(entitlement: BillingEntitlement): s
 
 async function resolveBillingProvisionContext(
   deps: CustomerVpsServiceDeps,
+  db: PlatformDB,
   input: ProvisionRequest,
   now: Date,
 ): Promise<{ entitlement: BillingEntitlement; serverType: string } | null> {
   if (!deps.resolveBillingEntitlement) {
     return null;
   }
-  const entitlement = await deps.resolveBillingEntitlement(input.clerkUserId);
+  const entitlement = await deps.resolveBillingEntitlement(db, input.clerkUserId, input.runtimeSlot ?? 'primary');
   const access = getRuntimeAccessDecision(entitlement, now);
   if (!entitlement || !access.runtimeProxyAllowed) {
     throw billingUpgradeRequired();
@@ -419,13 +424,14 @@ async function resolveBillingProvisionContext(
 async function resolveBillingRecoveryContext(
   deps: CustomerVpsServiceDeps,
   clerkUserId: string,
+  runtimeSlot: string,
   existingServerType: string | null,
   now: Date,
 ): Promise<{ serverType: string } | null> {
   if (!deps.resolveBillingEntitlement) {
     return null;
   }
-  const entitlement = await deps.resolveBillingEntitlement(clerkUserId);
+  const entitlement = await deps.resolveBillingEntitlement(deps.db, clerkUserId, runtimeSlot);
   const access = getRuntimeAccessDecision(entitlement, now);
   if (!entitlement || !access.runtimeProxyAllowed) {
     throw billingUpgradeRequired();
@@ -444,13 +450,14 @@ async function resolveBillingRecoveryContext(
 async function assertBillingResizeAllowed(
   deps: CustomerVpsServiceDeps,
   clerkUserId: string,
+  runtimeSlot: string,
   serverType: string,
   now: Date,
 ): Promise<void> {
   if (!deps.resolveBillingEntitlement) {
     return;
   }
-  const entitlement = await deps.resolveBillingEntitlement(clerkUserId);
+  const entitlement = await deps.resolveBillingEntitlement(deps.db, clerkUserId, runtimeSlot);
   const access = getRuntimeAccessDecision(entitlement, now);
   if (
     !entitlement ||
@@ -898,7 +905,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     }, deps.config.platformSecret);
     const billingContext = provisioningClass === 'preview'
       ? null
-      : await resolveBillingProvisionContext(deps, request, currentTime);
+      : await resolveBillingProvisionContext(deps, deps.db, request, currentTime);
 
     // A non-failed active machine (provisioning/running converge; recovering
     // is rejected by activeProvisionResponse). A `failed` row is retryable, so
@@ -932,6 +939,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       if (billingContext || provisioningClass === 'preview') {
         await lockUserMachineProvisioning(trx, request.clerkUserId);
       }
+      const transactionBillingContext = provisioningClass === 'preview'
+        ? null
+        : await resolveBillingProvisionContext(deps, trx, request, currentTime);
       const existing = await findExistingProvisioningMachine(trx, request, provisioningClass);
       const retireFailedProvisioningMachine = async (failedMachine: UserMachineRecord): Promise<void> => {
         await retireUserMachine(trx, failedMachine.machineId, currentTime.toISOString());
@@ -1003,10 +1013,10 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       if (provisioningClass === 'preview') {
         const retainedMachines = await listNonDeletedUserMachinesByClerkId(trx, request.clerkUserId);
         assertPreviewProvisioningCapacity(retainedMachines, deps.config.previewProvisioningLimit);
-      } else if (billingContext) {
+      } else if (transactionBillingContext?.entitlement.source === 'override') {
         const activeMachines = await listActiveUserMachinesByClerkId(trx, request.clerkUserId);
         const customerMachines = activeMachines.filter((machine) => !isPreviewMachine(machine));
-        if (customerMachines.length >= billingContext.entitlement.maxRuntimeSlots) {
+        if (customerMachines.length >= transactionBillingContext.entitlement.maxRuntimeSlots) {
           throw billingUpgradeRequired();
         }
       }
@@ -1019,7 +1029,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         accessClerkUserIds: request.accessClerkUserIds,
         status: 'provisioning',
         imageVersion: bundleRef.imageVersion,
-        serverType: billingContext?.serverType ?? deps.config.serverType,
+        serverType: transactionBillingContext?.serverType ?? deps.config.serverType,
         location: ('location' in request ? request.location : undefined) ?? deps.config.location,
         developerTools: request.developerTools,
         registrationTokenHash: registration.hash,
@@ -1188,6 +1198,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const billingContext = await resolveBillingRecoveryContext(
         deps,
         active.clerkUserId,
+        active.runtimeSlot,
         active.serverType,
         currentTime,
       );
@@ -1327,7 +1338,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         };
       }
 
-      await assertBillingResizeAllowed(deps, row.clerkUserId, input.serverType, now());
+      await assertBillingResizeAllowed(deps, row.clerkUserId, row.runtimeSlot, input.serverType, now());
       const claimed = await claimRunningUserMachineResize(
         deps.db,
         row.machineId,
