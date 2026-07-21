@@ -3,7 +3,7 @@
 import { execFile } from 'node:child_process';
 import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { promisify } from 'node:util';
+import { promisify, stripVTControlCharacters } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -191,7 +191,7 @@ async function main() {
   });
   pty.onData(async (data) => {
     renderWindow = `${renderWindow}${data}`.slice(-16_384);
-    if (!gateRecorded && renderWindow.includes('<ENTER> run')) {
+    if (!gateRecorded && stripVTControlCharacters(renderWindow).includes('<ENTER> run')) {
       gateRecorded = true;
       try {
         await writeFile(`${runtimeRoot}/confirmations/${runtimeId}.gated`, '', { flag: 'wx', mode: 0o600 });

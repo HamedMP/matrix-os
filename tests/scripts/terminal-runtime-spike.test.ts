@@ -148,7 +148,7 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).toContain('wait_file');
     const keeper = await readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/keeper.mjs'), 'utf8');
     expect(keeper).toContain('pty.write("\\r\\x1bl\\r\\x1bh\\r")');
-    expect(keeper).toContain("renderWindow.includes('<ENTER> run')");
+    expect(keeper).toContain("stripVTControlCharacters(renderWindow).includes('<ENTER> run')");
     expect(runner).toContain('confirmations/${recovery_id}.gated');
   });
 
