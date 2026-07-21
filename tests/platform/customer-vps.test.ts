@@ -134,6 +134,55 @@ describe('platform/customer-vps', () => {
     expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '2.5' }).previewProvisioningLimit).toBe(8);
   });
 
+  it('keeps golden snapshots disabled by default and bounds every control-plane budget', () => {
+    expect(loadCustomerVpsConfig({}).goldenSnapshots).toMatchObject({
+      enabled: false,
+      buildsEnabled: false,
+      rolloutPercent: 0,
+      maxBuildAttempts: 5,
+      maxConcurrentBuilds: 2,
+      retentionLimit: 20,
+    });
+
+    expect(loadCustomerVpsConfig({
+      GOLDEN_SNAPSHOTS_ENABLED: 'true',
+      GOLDEN_SNAPSHOT_BUILDS_ENABLED: 'true',
+      GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '25',
+      GOLDEN_SNAPSHOT_MAX_BUILD_ATTEMPTS: '3',
+      GOLDEN_SNAPSHOT_MAX_CONCURRENT_BUILDS: '4',
+      GOLDEN_SNAPSHOT_RETENTION_LIMIT: '12',
+      GOLDEN_SNAPSHOT_ARCHITECTURE: 'x86',
+      GOLDEN_SNAPSHOT_REGION: 'eu-central',
+    }).goldenSnapshots).toMatchObject({
+      enabled: true,
+      buildsEnabled: true,
+      rolloutPercent: 25,
+      maxBuildAttempts: 3,
+      maxConcurrentBuilds: 4,
+      retentionLimit: 12,
+      compatibility: expect.objectContaining({ architecture: 'x86', region: 'eu-central' }),
+    });
+
+    expect(loadCustomerVpsConfig({
+      GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '101',
+      GOLDEN_SNAPSHOT_MAX_BUILD_ATTEMPTS: '0',
+      GOLDEN_SNAPSHOT_MAX_CONCURRENT_BUILDS: '11',
+      GOLDEN_SNAPSHOT_RETENTION_LIMIT: '31',
+      GOLDEN_SNAPSHOT_BUILD_LEASE_MS: '999',
+    }).goldenSnapshots).toMatchObject({
+      rolloutPercent: 0,
+      maxBuildAttempts: 5,
+      maxConcurrentBuilds: 2,
+      retentionLimit: 20,
+      buildLeaseMs: 5 * 60 * 1000,
+    });
+
+    expect(loadCustomerVpsConfig({
+      GOLDEN_SNAPSHOT_BASE_IMAGE: '',
+      HETZNER_IMAGE: 'ubuntu-24.04',
+    }).goldenSnapshots.compatibility.baseImage).toBe('ubuntu-24.04');
+  });
+
   it('classifies only server-marked dedicated and legacy preview runtime slots as previews', () => {
     expect(isPreviewMachine({ handle: 'pr-897', runtimeSlot: 'pr-897', provisioningClass: 'preview' })).toBe(true);
     expect(isPreviewMachine({ handle: 'pr-703', runtimeSlot: 'preview', provisioningClass: 'preview' })).toBe(true);

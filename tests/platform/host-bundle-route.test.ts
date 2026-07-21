@@ -609,9 +609,9 @@ describe('platform host bundle route', () => {
 
     const updated = await upsertHostBundleRelease(db, {
       version: 'v2026.05.12-4',
-      gitCommit: 'updatedsha',
-      gitRef: 'refs/tags/v2026.05.12-4',
-      buildTime: '2026-05-12T02:00:00.000Z',
+      gitCommit: 'c1598218',
+      gitRef: 'refs/tags/v2026.05.12-1',
+      buildTime: '2026-05-12T00:00:00.000Z',
       bundleKey: 'system-bundles/v2026.05.12-4/matrix-host-bundle.tar.gz',
       checksumKey: 'system-bundles/v2026.05.12-4/matrix-host-bundle.tar.gz.sha256',
       sha256: 'a'.repeat(64),
@@ -623,7 +623,7 @@ describe('platform host bundle route', () => {
 
     expect(updated).toMatchObject({
       version: 'v2026.05.12-4',
-      gitCommit: 'updatedsha',
+      gitCommit: 'c1598218',
       severity: 'security',
       updateType: 'auto',
       changelog: 'metadata only',
