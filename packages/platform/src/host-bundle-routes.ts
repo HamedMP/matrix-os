@@ -9,12 +9,21 @@ import {
   HostBundleReleaseConflictError,
   listHostBundleReleases,
   promoteHostBundleChannel,
+  registerHostBundleRelease,
   upsertHostBundleRelease,
   type HostBundleReleaseRecord,
   type PlatformDB,
 } from './db.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
 import { timingSafeTokenEquals } from './platform-token.js';
+import {
+  getGoldenSnapshotCoarseStatus,
+  getGoldenSnapshotCoarseStatuses,
+} from './golden-snapshot-repository.js';
+import {
+  GoldenSnapshotBundleVersionSchema,
+  type GoldenSnapshotCompatibility,
+} from './golden-snapshot-schema.js';
 
 const HOST_BUNDLE_READ_TIMEOUT_MS = 30_000;
 const HOST_BUNDLE_IMAGE_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
@@ -32,6 +41,7 @@ const HostBundleReleaseBodySchema = z.object({
   version: z.string().regex(HOST_BUNDLE_IMAGE_VERSION_PATTERN),
   gitCommit: z.string().min(7).max(64),
   gitRef: z.string().max(256).nullable().optional(),
+  snapshotEligible: z.boolean().optional(),
   buildTime: z.string().datetime({ offset: true })
     .transform((value) => new Date(value).toISOString()),
   bundleKey: z.string().regex(/^system-bundles\/[A-Za-z0-9._-]{1,128}\/matrix-host-bundle\.tar\.gz$/),
@@ -44,6 +54,14 @@ const HostBundleReleaseBodySchema = z.object({
   updateType: z.enum(['manual', 'auto']).optional(),
   changelog: z.string().max(32_000).nullable().optional(),
   channel: z.string().regex(HOST_BUNDLE_CHANNEL_PATTERN).optional(),
+}).superRefine((value, ctx) => {
+  if (value.snapshotEligible === true
+    && !GoldenSnapshotBundleVersionSchema.safeParse(value.version).success) {
+    ctx.addIssue({
+      code: 'custom', path: ['version'],
+      message: 'Snapshot-eligible release version is invalid',
+    });
+  }
 });
 
 const HostBundleChannelBodySchema = z.object({
@@ -60,6 +78,7 @@ function isObjectNotFoundError(err: unknown): boolean {
 
 function hostBundleReleaseResponse(
   release: HostBundleReleaseRecord,
+  snapshotStatus: Awaited<ReturnType<typeof getGoldenSnapshotCoarseStatus>>,
   url?: string,
   channel?: string,
 ): Record<string, unknown> {
@@ -80,6 +99,7 @@ function hostBundleReleaseResponse(
     updateType: release.updateType,
     changelog: release.changelog,
     createdAt: release.createdAt,
+    snapshotStatus,
     ...(url ? { url } : {}),
   };
 }
@@ -101,6 +121,7 @@ export function createHostBundleRoutes(opts: {
     properties: Record<string, string | number | boolean | null | undefined>,
   ) => void;
   logRouteError: (route: string, err: unknown) => void;
+  goldenSnapshotCompatibility?: GoldenSnapshotCompatibility;
 }) {
   const { db, platformSecret, capturePlatformEvent, logRouteError } = opts;
   const routes = new Hono();
@@ -134,6 +155,20 @@ export function createHostBundleRoutes(opts: {
     return null;
   }
 
+  async function snapshotStatusOrUnavailable(
+    release: HostBundleReleaseRecord,
+    route: string,
+  ): Promise<Awaited<ReturnType<typeof getGoldenSnapshotCoarseStatus>>> {
+    try {
+      return await getGoldenSnapshotCoarseStatus(
+        db, release.version, opts.goldenSnapshotCompatibility,
+      );
+    } catch (err: unknown) {
+      logRouteError(`${route} snapshot status`, err);
+      return release.snapshotEligible ? 'unavailable' : 'not_requested';
+    }
+  }
+
   routes.get('/releases', async (c) => {
     const channel = c.req.query('channel');
     if (channel !== undefined && !HOST_BUNDLE_CHANNEL_PATTERN.test(channel)) {
@@ -141,9 +176,22 @@ export function createHostBundleRoutes(opts: {
     }
     try {
       const releases = await listHostBundleReleases(db, 100, channel);
+      let statuses = new Map<string, Awaited<ReturnType<typeof getGoldenSnapshotCoarseStatus>>>();
+      try {
+        statuses = await getGoldenSnapshotCoarseStatuses(
+          db,
+          releases.map((release) => release.version),
+          opts.goldenSnapshotCompatibility,
+        );
+      } catch (err: unknown) {
+        logRouteError('/system-bundles/releases snapshot statuses', err);
+      }
+      const releasesWithStatus = releases.map((release) => hostBundleReleaseResponse(
+        release, statuses.get(release.version) ?? (release.snapshotEligible ? 'unavailable' : 'not_requested'),
+      ));
       return c.json({
         generatedAt: new Date().toISOString(),
-        releases: releases.map((release) => hostBundleReleaseResponse(release)),
+        releases: releasesWithStatus,
       });
     } catch (err: unknown) {
       logRouteError('/system-bundles/releases', err);
@@ -163,7 +211,11 @@ export function createHostBundleRoutes(opts: {
         return c.json({ error: 'Not found' }, 404);
       }
       const url = await getSignedBundleUrl(release);
-      return c.json(hostBundleReleaseResponse(release, url), 200, {
+      return c.json(hostBundleReleaseResponse(
+        release,
+        await snapshotStatusOrUnavailable(release, '/system-bundles/releases/:version'),
+        url,
+      ), 200, {
         'cache-control': 'private, max-age=30',
       });
     } catch (err: unknown) {
@@ -187,10 +239,9 @@ export function createHostBundleRoutes(opts: {
       return c.json({ error: 'Invalid request' }, 400);
     }
     try {
-      const release = await upsertHostBundleRelease(db, parsed.data);
-      let channel;
-      if (parsed.data.channel) {
-        channel = await promoteHostBundleChannel(db, parsed.data.channel, release.version);
+      const registered = await registerHostBundleRelease(db, parsed.data, parsed.data.channel);
+      const { release, channel } = registered;
+      if (channel && parsed.data.channel) {
         capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.HOST_BUNDLE_CHANNEL_PROMOTED, {
           channel: parsed.data.channel,
           version: release.version,
@@ -206,8 +257,19 @@ export function createHostBundleRoutes(opts: {
         severity: release.severity,
         updateType: release.updateType,
       });
+      let snapshotStatus: Awaited<ReturnType<typeof getGoldenSnapshotCoarseStatus>> = 'unavailable';
+      try {
+        snapshotStatus = await getGoldenSnapshotCoarseStatus(
+          db, release.version, opts.goldenSnapshotCompatibility,
+        );
+      } catch (err: unknown) {
+        logRouteError('/system-bundles/releases snapshot status', err);
+      }
       return c.json({
-        release: hostBundleReleaseResponse(release),
+        release: hostBundleReleaseResponse(
+          release,
+          snapshotStatus,
+        ),
         ...(channel ? { channel } : {}),
       });
     } catch (err: unknown) {
@@ -322,7 +384,12 @@ export function createHostBundleRoutes(opts: {
           return c.json({ error: 'Not found' }, 404);
         }
         const url = await getSignedBundleUrl(release);
-        return c.json(hostBundleReleaseResponse(release, url, channel), 200, {
+        return c.json(hostBundleReleaseResponse(
+          release,
+          await snapshotStatusOrUnavailable(release, '/system-bundles/channels/:channel'),
+          url,
+          channel,
+        ), 200, {
           'cache-control': 'private, max-age=30',
         });
       } catch (err: unknown) {
@@ -425,7 +492,12 @@ export function createHostBundleRoutes(opts: {
     if (file.endsWith('.json')) {
       try {
         const url = await getSignedBundleUrl(release);
-        return c.json(hostBundleReleaseResponse(release, url, isChannelAlias ? imageVersion : undefined), 200, {
+        return c.json(hostBundleReleaseResponse(
+          release,
+          await getGoldenSnapshotCoarseStatus(db, release.version, opts.goldenSnapshotCompatibility),
+          url,
+          isChannelAlias ? imageVersion : undefined,
+        ), 200, {
           'cache-control': 'private, max-age=30',
         });
       } catch (err: unknown) {
@@ -483,7 +555,12 @@ export function createHostBundleRoutes(opts: {
         return c.json({ error: 'Not found' }, 404);
       }
       const url = await getSignedBundleUrl(release);
-      return c.json(hostBundleReleaseResponse(release, url, channel), 200, {
+      return c.json(hostBundleReleaseResponse(
+        release,
+        await snapshotStatusOrUnavailable(release, '/system-bundles/channels/:channel'),
+        url,
+        channel,
+      ), 200, {
         'cache-control': 'private, max-age=30',
       });
     } catch (err: unknown) {

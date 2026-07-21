@@ -354,7 +354,9 @@ describe('CI workflows', () => {
     expect(workflow).toContain("github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name == 'main'");
     expect(workflow).toContain('|| inputs.deploy_after_publish');
     expect(workflow).not.toContain("|| inputs.severity == 'security'");
-    expect(workflow).toContain('VERSION="${{ needs.build.outputs.version }}"');
+    expect(workflow).toContain('PUBLISH_VERSION: ${{ needs.build.outputs.version }}');
+    expect(workflow).toContain('VERSION="$PUBLISH_VERSION"');
+    expect(workflow).not.toContain('VERSION="${{ needs.build.outputs.version }}"');
     expect(workflow).toContain('DEPLOY_RESPONSE="$(curl --fail --silent --show-error --max-time 30 \\');
     expect(workflow).toContain('failed="$(printf \'%s\' "$DEPLOY_RESPONSE" | jq -r \'.failed // 0\')"');
     expect(workflow).toContain('triggered="$(printf \'%s\' "$DEPLOY_RESPONSE" | jq -r \'.triggered // 0\')"');

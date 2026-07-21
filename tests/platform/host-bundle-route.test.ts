@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { sql } from 'kysely';
 import { createApp } from '../../packages/platform/src/main.js';
 import type { CustomerVpsObjectStore } from '../../packages/platform/src/customer-vps-r2.js';
 import {
@@ -9,6 +10,7 @@ import {
   upsertHostBundleRelease,
 } from '../../packages/platform/src/db.js';
 import type { Orchestrator } from '../../packages/platform/src/orchestrator.js';
+import { enqueueGoldenSnapshotBuild } from '../../packages/platform/src/golden-snapshot-repository.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 
 describe('platform host bundle route', () => {
@@ -218,6 +220,32 @@ describe('platform host bundle route', () => {
       'system-bundles/v2026.05.12-1/matrix-host-bundle.tar.gz',
       3600,
     );
+  });
+
+  it('serves a channel manifest with unavailable status when snapshot lookup fails', async () => {
+    await seedRelease();
+    await db.executor.updateTable('host_bundle_releases').set({ snapshot_eligible: true })
+      .where('version', '=', 'v2026.05.12-1').execute();
+    await promoteHostBundleChannel(db, 'stable', 'v2026.05.12-1');
+    await db.executor.schema.dropTable('golden_snapshots').cascade().execute();
+    const app = createApp({
+      db,
+      orchestrator,
+      customerVpsObjectStore: {
+        getObject: vi.fn(),
+        getPresignedGetUrl: vi.fn().mockResolvedValue('https://r2.example/signed-host-bundle'),
+        putObject: vi.fn(),
+      } as unknown as CustomerVpsObjectStore,
+    });
+
+    const response = await app.request('/system-bundles/channels/stable.json');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      version: 'v2026.05.12-1',
+      channel: 'stable',
+      snapshotStatus: 'unavailable',
+    });
   });
 
   it('uses dedicated host bundle object storage for channel manifests', async () => {
@@ -558,6 +586,146 @@ describe('platform host bundle route', () => {
     });
   });
 
+  it('rejects snapshot eligibility for a version outside the snapshot identity schema', async () => {
+    const app = createApp({
+      db, orchestrator, platformSecret: 'secret',
+      customerVpsObjectStore: { getObject: vi.fn(), putObject: vi.fn() } as unknown as CustomerVpsObjectStore,
+    });
+    const response = await app.request('/system-bundles/releases', {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        version: '.rollback', gitCommit: 'c1598218', gitRef: 'main', snapshotEligible: true,
+        buildTime: '2026-07-19T00:00:00.000Z',
+        bundleKey: 'system-bundles/.rollback/matrix-host-bundle.tar.gz', checksumKey: null,
+        sha256: 'b'.repeat(64), size: 1234,
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: 'Invalid request' });
+  });
+
+  it('exposes only coarse snapshot lifecycle status with immutable release metadata', async () => {
+    await seedRelease();
+    await enqueueGoldenSnapshotBuild(db, {
+      bundleVersion: 'v2026.05.12-1',
+      compatibility: {
+        provider: 'hetzner',
+        architecture: 'x86',
+        region: 'eu-central',
+        baseImage: 'ubuntu-24.04',
+        baseGeneration: 'ubuntu-24.04-v1',
+        bootMode: 'bios',
+        activationAbi: 'host-v1',
+        minimumDiskGb: 40,
+      },
+      snapshotId: '10000000-0000-4000-8000-000000000099',
+      buildId: '20000000-0000-4000-8000-000000000099',
+      now: '2026-07-19T00:00:00.000Z',
+    });
+    const app = createApp({
+      db,
+      orchestrator,
+      customerVpsObjectStore: {
+        getObject: vi.fn(),
+        getPresignedGetUrl: vi.fn().mockResolvedValue('https://r2.example/signed-host-bundle'),
+        putObject: vi.fn(),
+      } as unknown as CustomerVpsObjectStore,
+    });
+
+    const response = await app.request('/system-bundles/releases/v2026.05.12-1.json');
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      version: 'v2026.05.12-1',
+      sha256: 'a'.repeat(64),
+      snapshotStatus: 'requested',
+    });
+  });
+
+  it('returns not_requested snapshot status for a valid release version that is not snapshot-eligible', async () => {
+    await upsertHostBundleRelease(db, {
+      version: '.rollback', gitCommit: 'c1598218', gitRef: 'main',
+      buildTime: '2026-07-19T00:00:00.000Z',
+      bundleKey: 'system-bundles/.rollback/matrix-host-bundle.tar.gz', checksumKey: null,
+      sha256: 'b'.repeat(64), size: 1234, snapshotEligible: false,
+    });
+    const app = createApp({
+      db,
+      orchestrator,
+      customerVpsObjectStore: {
+        getObject: vi.fn(),
+        getPresignedGetUrl: vi.fn().mockResolvedValue('https://r2.example/signed-host-bundle'),
+        putObject: vi.fn(),
+      } as unknown as CustomerVpsObjectStore,
+    });
+
+    const response = await app.request('/system-bundles/releases/.rollback.json');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      version: '.rollback', snapshotStatus: 'not_requested',
+    });
+  });
+
+  it('keeps release publication successful when snapshot status is unavailable', async () => {
+    await db.executor.schema.dropTable('golden_snapshots').cascade().execute();
+    const app = createApp({
+      db, orchestrator, platformSecret: 'secret',
+      customerVpsObjectStore: { getObject: vi.fn(), putObject: vi.fn() } as unknown as CustomerVpsObjectStore,
+    });
+
+    const response = await app.request('/system-bundles/releases', {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        version: 'v2026.07.21-status-isolation', gitCommit: 'c1598218', gitRef: 'main',
+        snapshotEligible: true, buildTime: '2026-07-21T00:00:00.000Z',
+        bundleKey: 'system-bundles/v2026.07.21-status-isolation/matrix-host-bundle.tar.gz',
+        checksumKey: null, sha256: 'c'.repeat(64), size: 1234,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      release: { version: 'v2026.07.21-status-isolation', snapshotStatus: 'unavailable' },
+    });
+    await expect(getHostBundleRelease(db, 'v2026.07.21-status-isolation')).resolves.toBeDefined();
+  });
+
+  it('rolls back release registration when its requested channel promotion fails', async () => {
+    await sql`
+      CREATE OR REPLACE FUNCTION reject_host_bundle_channel_promotion() RETURNS trigger AS $$
+      BEGIN
+        RAISE EXCEPTION 'injected channel promotion failure';
+      END;
+      $$ LANGUAGE plpgsql
+    `.execute(db.executor);
+    await sql`
+      CREATE TRIGGER reject_host_bundle_channel_promotion
+      BEFORE INSERT OR UPDATE ON host_bundle_channels
+      FOR EACH ROW EXECUTE FUNCTION reject_host_bundle_channel_promotion()
+    `.execute(db.executor);
+    const app = createApp({
+      db, orchestrator, platformSecret: 'secret',
+      customerVpsObjectStore: { getObject: vi.fn(), putObject: vi.fn() } as unknown as CustomerVpsObjectStore,
+    });
+
+    const response = await app.request('/system-bundles/releases', {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        version: 'v2026.07.21-atomic', gitCommit: 'c1598218', gitRef: 'main',
+        snapshotEligible: true, buildTime: '2026-07-21T00:00:00.000Z',
+        bundleKey: 'system-bundles/v2026.07.21-atomic/matrix-host-bundle.tar.gz',
+        checksumKey: null, sha256: 'd'.repeat(64), size: 1234, channel: 'dev',
+      }),
+    });
+
+    expect(response.status).toBe(502);
+    await expect(getHostBundleRelease(db, 'v2026.07.21-atomic')).resolves.toBeUndefined();
+  });
+
   it('only adds release channel history when channel promotion succeeds', async () => {
     await upsertHostBundleRelease(db, {
       version: 'v2026.05.12-6',
@@ -631,6 +799,86 @@ describe('platform host bundle route', () => {
       sha256: 'a'.repeat(64),
       size: 1234,
     });
+  });
+
+  it('preserves snapshot eligibility when metadata re-registration omits it', async () => {
+    await upsertHostBundleRelease(db, {
+      version: 'v2026.05.12-snapshot',
+      gitCommit: 'c1598218',
+      gitRef: 'refs/tags/v2026.05.12-1',
+      snapshotEligible: true,
+      buildTime: '2026-05-12T00:00:00.000Z',
+      bundleKey: 'system-bundles/v2026.05.12-snapshot/matrix-host-bundle.tar.gz',
+      checksumKey: 'system-bundles/v2026.05.12-snapshot/matrix-host-bundle.tar.gz.sha256',
+      sha256: 'a'.repeat(64),
+      size: 1234,
+    });
+
+    await expect(upsertHostBundleRelease(db, {
+      version: 'v2026.05.12-snapshot',
+      gitCommit: 'c1598218',
+      gitRef: 'refs/tags/v2026.05.12-1',
+      buildTime: '2026-05-12T00:00:00.000Z',
+      bundleKey: 'system-bundles/v2026.05.12-snapshot/matrix-host-bundle.tar.gz',
+      checksumKey: 'system-bundles/v2026.05.12-snapshot/matrix-host-bundle.tar.gz.sha256',
+      sha256: 'a'.repeat(64),
+      size: 1234,
+      severity: 'security',
+    })).resolves.toMatchObject({ snapshotEligible: true, severity: 'security' });
+  });
+
+  it('preserves snapshot eligibility when metadata re-registration explicitly sends false', async () => {
+    await upsertHostBundleRelease(db, {
+      version: 'v2026.05.12-snapshot-explicit-false',
+      gitCommit: 'c1598218',
+      gitRef: 'refs/tags/v2026.05.12-1',
+      snapshotEligible: true,
+      buildTime: '2026-05-12T00:00:00.000Z',
+      bundleKey: 'system-bundles/v2026.05.12-snapshot-explicit-false/matrix-host-bundle.tar.gz',
+      checksumKey: 'system-bundles/v2026.05.12-snapshot-explicit-false/matrix-host-bundle.tar.gz.sha256',
+      sha256: 'a'.repeat(64),
+      size: 1234,
+    });
+
+    await expect(upsertHostBundleRelease(db, {
+      version: 'v2026.05.12-snapshot-explicit-false',
+      gitCommit: 'c1598218',
+      gitRef: 'refs/tags/v2026.05.12-1',
+      snapshotEligible: false,
+      buildTime: '2026-05-12T00:00:00.000Z',
+      bundleKey: 'system-bundles/v2026.05.12-snapshot-explicit-false/matrix-host-bundle.tar.gz',
+      checksumKey: 'system-bundles/v2026.05.12-snapshot-explicit-false/matrix-host-bundle.tar.gz.sha256',
+      sha256: 'a'.repeat(64),
+      size: 1234,
+      severity: 'security',
+    })).resolves.toMatchObject({ snapshotEligible: true, severity: 'security' });
+  });
+
+  it('atomically promotes an identical release to snapshot eligible on trusted re-publication', async () => {
+    await upsertHostBundleRelease(db, {
+      version: 'v2026.05.12-snapshot-promoted',
+      gitCommit: 'c1598218',
+      gitRef: 'refs/tags/v2026.05.12-1',
+      snapshotEligible: false,
+      buildTime: '2026-05-12T00:00:00.000Z',
+      bundleKey: 'system-bundles/v2026.05.12-snapshot-promoted/matrix-host-bundle.tar.gz',
+      checksumKey: 'system-bundles/v2026.05.12-snapshot-promoted/matrix-host-bundle.tar.gz.sha256',
+      sha256: 'a'.repeat(64),
+      size: 1234,
+    });
+
+    await expect(upsertHostBundleRelease(db, {
+      version: 'v2026.05.12-snapshot-promoted',
+      gitCommit: 'c1598218',
+      gitRef: 'refs/tags/v2026.05.12-1',
+      snapshotEligible: true,
+      buildTime: '2026-05-12T00:00:00.000Z',
+      bundleKey: 'system-bundles/v2026.05.12-snapshot-promoted/matrix-host-bundle.tar.gz',
+      checksumKey: 'system-bundles/v2026.05.12-snapshot-promoted/matrix-host-bundle.tar.gz.sha256',
+      sha256: 'a'.repeat(64),
+      size: 1234,
+      severity: 'security',
+    })).resolves.toMatchObject({ snapshotEligible: true, severity: 'security' });
   });
 
   it('returns 409 when release registration would replace an immutable artifact', async () => {
