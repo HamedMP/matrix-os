@@ -2,16 +2,22 @@
 
 import { Badge } from "@/components/ui/badge";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
-import { BillingPanel, type BillingPanelMode } from "./BillingPanel";
+import {
+  BillingPanel,
+  type BillingPanelMode,
+  type ComputerSetupSelection,
+} from "./BillingPanel";
 
 export function BillingSection({
   mode = "settings",
   onCheckoutIntent,
   checkoutReturnPath,
+  onComputerSetupContinue,
 }: {
   mode?: BillingPanelMode;
   onCheckoutIntent?: () => void;
   checkoutReturnPath?: string;
+  onComputerSetupContinue?: (selection: ComputerSetupSelection) => void;
 }) {
   const { active, entitlement, accessReason, accessIssue } = useMatrixBillingAccess();
 
@@ -23,6 +29,8 @@ export function BillingSection({
           <p className="mt-1 text-sm text-muted-foreground">
             {mode === "device-setup"
               ? "Choose billing in Settings, then Matrix returns to CLI device approval."
+              : mode === "add-computer"
+              ? "Choose the strength and region for another Matrix computer."
               : mode === "provisioning"
               ? "Choose a hosted runtime plan and launch through secure checkout."
               : "Manage Matrix OS hosted runtime billing and payment details."}
@@ -52,6 +60,7 @@ export function BillingSection({
         mode={mode}
         onCheckoutIntent={onCheckoutIntent}
         checkoutReturnPath={checkoutReturnPath}
+        onComputerSetupContinue={onComputerSetupContinue}
       />
     </div>
   );

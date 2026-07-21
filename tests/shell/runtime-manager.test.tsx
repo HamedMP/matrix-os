@@ -22,6 +22,8 @@ vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({
     isLoaded: clerkState.isLoaded,
     isSignedIn: clerkState.isSignedIn,
+    userId: clerkState.isSignedIn ? "user_123" : null,
+    has: () => false,
     signOut: clerkState.signOut,
   }),
   useUser: () => ({ user: clerkState.user }),
@@ -269,7 +271,7 @@ describe("RuntimeManager", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Get another computer" }));
 
-    expect(navigate).toHaveBeenCalledWith("/onboarding/computer");
+    expect(navigate).toHaveBeenCalledWith("/?billing=setup&handoff=add-computer");
     expect(screen.queryByRole("textbox", { name: "Computer name" })).toBeNull();
   });
 
@@ -287,7 +289,7 @@ describe("RuntimeManager", () => {
     installFetchRouter();
     await renderManager({ onInternalNavigate: navigate });
 
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/onboarding/computer"));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/?billing=setup&handoff=add-computer"));
   });
 
   it("redirects a legacy new-computer link only once when the navigation callback changes", async () => {
@@ -340,6 +342,8 @@ describe("RuntimeManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     expect(await screen.findByRole("heading", { name: "Configure your next computer" })).toBeTruthy();
+    expect(screen.getByText("Settings")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
     expect(screen.queryByRole("button", { name: /Max.*CPX52/i })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Starter.*CPX22/i }));
@@ -475,20 +479,22 @@ describe("RuntimeManager", () => {
     expect(fetchMock).not.toHaveBeenCalledWith("/billing/portal", expect.anything());
   });
 
-  it("hands full Stripe capacity to the focused portal and keeps the draft for return", async () => {
+  it("hands full Stripe capacity to billing immediately after computer configuration", async () => {
     const navigate = vi.fn();
     const fetchMock = installFetchRouter({ billing: billingStatus(2) });
     await renderOnboarding({ onExternalNavigate: navigate });
-    await beginNamedComputer("Research Lab");
-
-    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Computer name" }), {
+      target: { value: "Research Lab" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Continue setup" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/billing/portal",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ intent: "add_computer", returnPath: "/onboarding/computer" }),
+          body: JSON.stringify({ intent: "add_computer", returnPath: "/?billing=setup&handoff=add-computer" }),
         }),
       );
       expect(navigate).toHaveBeenCalledWith("https://billing.stripe.test/session");
@@ -498,6 +504,7 @@ describe("RuntimeManager", () => {
       baselineMaxRuntimeSlots: 2,
     });
     expect(fetchMock).not.toHaveBeenCalledWith("/api/auth/provision-runtime", expect.anything());
+    expect(screen.queryByRole("heading", { name: "Preinstall coding agents?" })).toBeNull();
   });
 
   it("retries the billing handoff without bypassing capacity after a portal failure", async () => {
@@ -516,7 +523,6 @@ describe("RuntimeManager", () => {
     await renderOnboarding({ onExternalNavigate: navigate });
     await beginNamedComputer("Research Lab");
 
-    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/Billing is unavailable/i);
     now.mockReturnValue(121_001);
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
@@ -533,8 +539,6 @@ describe("RuntimeManager", () => {
     const fetchMock = installFetchRouter({ billing: billingStatus(2, "override") });
     await renderOnboarding();
     await beginNamedComputer("Research Lab");
-
-    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
 
     expect((await screen.findByRole("alert")).textContent).toMatch(/managed internally/i);
     expect(fetchMock).not.toHaveBeenCalledWith("/billing/portal", expect.anything());
@@ -726,19 +730,20 @@ describe("RuntimeManager", () => {
 
     await renderOnboarding({ billingPollIntervalMs: 10 });
     expect(await screen.findByRole("heading", { name: "Confirming computer capacity" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Preinstall coding agents?" })).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/auth/provision-runtime", expect.anything());
 
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/auth/provision-runtime",
-        expect.objectContaining({
-          body: JSON.stringify({
-            runtime: "research-lab",
-            developerTools: ["codex"],
-            serverType: "cpx32",
-            location: "fsn1",
-          }),
+    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/auth/provision-runtime",
+      expect.objectContaining({
+        body: JSON.stringify({
+          runtime: "research-lab",
+          developerTools: ["codex", "claude-code", "opencode", "pi"],
+          serverType: "cpx32",
+          location: "fsn1",
         }),
-      );
-    });
+      }),
+    ));
   });
 });

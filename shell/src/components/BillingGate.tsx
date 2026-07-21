@@ -15,6 +15,7 @@ import {
   DefaultInstallsStep,
 } from "@/components/onboarding/DefaultInstallsStep";
 import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
+import { AddComputerOnboarding } from "@/components/runtime/RuntimeManager";
 import { Settings } from "./Settings";
 
 const e2eBillingBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
@@ -263,18 +264,35 @@ export function BillingGate({
   children: ReactNode;
   platformSessionActive?: boolean;
 }) {
-  if (platformSessionActive) {
-    return <>{children}</>;
-  }
-
   // useSearchParams() (read inside BillingGateInner) requires a <Suspense> boundary so the page
   // is not forced into full client-side rendering; the fallback mirrors the gate's own loading
   // state so there is no visible change while search params resolve.
   return (
     <Suspense fallback={<BillingStatusLoading />}>
-      <BillingGateInner>{children}</BillingGateInner>
+      <BillingGateRoute platformSessionActive={platformSessionActive}>
+        {children}
+      </BillingGateRoute>
     </Suspense>
   );
+}
+
+function BillingGateRoute({
+  children,
+  platformSessionActive,
+}: {
+  children: ReactNode;
+  platformSessionActive: boolean;
+}) {
+  const searchParams = useSearchParams();
+  const isAddComputerHandoff = searchParams.get("handoff") === "add-computer";
+
+  if (isAddComputerHandoff) {
+    return <AddComputerOnboarding />;
+  }
+  if (platformSessionActive) {
+    return <>{children}</>;
+  }
+  return <BillingGateInner>{children}</BillingGateInner>;
 }
 
 function BillingGateInner({ children }: { children: ReactNode }) {

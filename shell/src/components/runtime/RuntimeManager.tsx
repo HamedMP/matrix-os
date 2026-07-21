@@ -9,10 +9,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { DefaultInstallsStep } from "@/components/onboarding/DefaultInstallsStep";
 import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
-import {
-  BillingPanel,
-  type ComputerSetupSelection,
-} from "@/components/settings/sections/BillingPanel";
+import { Settings } from "@/components/Settings";
+import type { ComputerSetupSelection } from "@/components/settings/sections/BillingPanel";
 import type { BillingEntitlementSummary } from "@/hooks/useMatrixBillingAccess";
 import { MATRIX_BILLING_REGIONS, MATRIX_BILLING_SERVER_PROFILES } from "@/lib/billing";
 import { platformShellAssetPath } from "@/lib/platform-shell-assets";
@@ -392,7 +390,8 @@ export function RuntimeManager({
     const currentMax = overview.status === "ready" ? overview.billing.entitlement?.maxRuntimeSlots ?? 0 : 0;
     if (overview.status === "ready" && currentMax > draft.baselineMaxRuntimeSlots) {
       resumeProvisionStartedRef.current = true;
-      void provisionComputer(draft, setStep, setJourney, setSafeError, setJourneyRefresh, setErrorRetryAction);
+      // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- the signed Stripe projection is external state; this transition must occur only after the polled entitlement reports the purchased slot and cannot be derived during render.
+      setStep("installs");
       return;
     }
     const projectionWaitRemaining = Math.max(0, BILLING_PROJECTION_WAIT_MS - (Date.now() - draft.createdAt));
@@ -512,35 +511,38 @@ export function RuntimeManager({
       !isServerTypeAllowedForEntitlement(selection.serverType, allowedServerTypes) ||
       !isKnownLocation(selection.location)
     ) return;
-    setDraft({
+    const nextDraft = {
       ...draft,
       serverType: selection.serverType.toLowerCase(),
       location: selection.location,
-    });
-    setStep("installs");
+    };
+    setDraft(nextDraft);
+    const entitlement = overview.status === "ready" ? overview.billing.entitlement : null;
+    const capacityAvailable = Boolean(
+      overview.status === "ready" &&
+      entitlement &&
+      activeCustomerCount(overview.inventory) < entitlement.maxRuntimeSlots
+    );
+    if (capacityAvailable) {
+      setStep("installs");
+      return;
+    }
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot currently lower this call to the hoisted async billing coordinator; the fire-and-handle helper owns every rejection and state transition, so awaiting it would not change correctness.
+    void requestAdditionalCapacity(nextDraft);
   }
 
   function setErrorRetryAction(action: ErrorRetryAction): void {
     errorRetryActionRef.current = action;
   }
 
-  async function buildComputer(draftOverride?: AddComputerDraft): Promise<void> {
-    const currentDraft = draftOverride ?? draft;
-    if (!currentDraft) return;
+  async function requestAdditionalCapacity(nextDraft: AddComputerDraft): Promise<void> {
     if (overview.status !== "ready") {
       setSafeError("Your computer inventory is still loading. Try again in a moment.");
       setErrorRetryAction("billing");
       setStep("error");
       return;
     }
-    const nextDraft = currentDraft;
-    setDraft(nextDraft);
     const entitlement = overview.billing.entitlement;
-    const capacityAvailable = Boolean(entitlement && activeCustomerCount(overview.inventory) < entitlement.maxRuntimeSlots);
-    if (capacityAvailable) {
-      await provisionComputer(nextDraft, setStep, setJourney, setSafeError, setJourneyRefresh, setErrorRetryAction);
-      return;
-    }
     if (entitlement?.source === "override") {
       setSafeError("This account is managed internally. Ask your Matrix administrator to add computer capacity.");
       setStep("managed");
@@ -558,6 +560,7 @@ export function RuntimeManager({
       setStep("error");
       return;
     }
+    setStep("billing_wait");
     try {
       const { response, body } = await fetchJson("/billing/portal", {
         method: "POST",
@@ -590,6 +593,26 @@ export function RuntimeManager({
       setErrorRetryAction("billing");
       setStep("error");
     }
+  }
+
+  async function buildComputer(draftOverride?: AddComputerDraft): Promise<void> {
+    const currentDraft = draftOverride ?? draft;
+    if (!currentDraft) return;
+    if (overview.status !== "ready") {
+      setSafeError("Your computer inventory is still loading. Try again in a moment.");
+      setErrorRetryAction("billing");
+      setStep("error");
+      return;
+    }
+    const nextDraft = currentDraft;
+    setDraft(nextDraft);
+    const entitlement = overview.billing.entitlement;
+    const capacityAvailable = Boolean(entitlement && activeCustomerCount(overview.inventory) < entitlement.maxRuntimeSlots);
+    if (capacityAvailable) {
+      await provisionComputer(nextDraft, setStep, setJourney, setSafeError, setJourneyRefresh, setErrorRetryAction);
+      return;
+    }
+    await requestAdditionalCapacity(nextDraft);
   }
 
   async function retryJourney(): Promise<void> {
@@ -689,22 +712,17 @@ export function RuntimeManager({
             />
           ) : null}
           {step === "configuration" && draft && overview.status === "ready" ? (
-            <div className="mx-auto w-full max-w-4xl">
-              <button
-                type="button"
-                onClick={() => setStep("name")}
-                className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-forest/65 hover:text-forest"
-              >
-                <ArrowLeftIcon className="size-4" aria-hidden="true" /> Back
-              </button>
-              <BillingPanel
-                active={overview.billing.access.runtimeProxyAllowed}
-                entitlement={overview.billing.entitlement}
-                accessReason={overview.billing.access.reason}
-                mode="add-computer"
-                onComputerSetupContinue={continueFromConfiguration}
-              />
-            </div>
+            <Settings
+              open
+              onOpenChange={(open) => {
+                if (!open) setStep("name");
+              }}
+              defaultSection="billing"
+              lockedSection="billing"
+              billingActiveOverride={overview.billing.access.runtimeProxyAllowed}
+              billingMode="add-computer"
+              onComputerSetupContinue={continueFromConfiguration}
+            />
           ) : null}
           {step === "installs" ? (
             <div className="mx-auto w-full max-w-4xl">

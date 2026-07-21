@@ -38,7 +38,7 @@ import { DeveloperToolsWithDefaultSchema } from './developer-tools.js';
 const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
 const MAX_STRIPE_API_TIMEOUT_MS = 10_000;
-const ADD_COMPUTER_RETURN_PATH = '/onboarding/computer';
+const ADD_COMPUTER_RETURN_PATH = '/?billing=setup&handoff=add-computer';
 const CLERK_USER_ID_PATTERN = /^user_[A-Za-z0-9]{1,128}$/;
 const BILLING_UNAVAILABLE_RESPONSE = {
   error: 'Billing unavailable',
