@@ -38,6 +38,7 @@ cleanup() {
       /opt/matrix/bin/zellij delete-session "matrix-t-${runtime_id}" --force >/dev/null 2>&1 || true
     systemctl reset-failed "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true
   done
+  systemctl set-property --runtime matrix-terminal-spike.slice MemoryHigh=75% >/dev/null 2>&1 || true
   pkill -f 'zellij attach matrix-t-[0-9a-f]{32}' >/dev/null 2>&1 || true
 }
 
@@ -68,6 +69,7 @@ mv "$support_root.next" "$support_root"
 install -o root -g root -m 0644 "$source_dir/matrix-terminal-spike.slice" /etc/systemd/system/matrix-terminal-spike.slice
 install -o root -g root -m 0644 "$source_dir/matrix-terminal-spike@.service" /etc/systemd/system/matrix-terminal-spike@.service
 systemctl daemon-reload
+systemctl set-property --runtime matrix-terminal-spike.slice MemoryHigh=75% >/dev/null
 
 zellij_version="$(/opt/matrix/bin/zellij --version 2>/dev/null || true)"
 if [ "$zellij_version" != "zellij 0.44.1" ]; then

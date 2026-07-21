@@ -14,6 +14,13 @@ const pty = spawn('/opt/matrix/bin/zellij', ['attach', `matrix-t-${runtimeId}`],
   name: 'xterm-256color', cols: 120, rows: 40,
   cwd: '/home/matrix/home', env: process.env,
 });
+let screen = '';
+let renderedResolve;
+const rendered = new Promise((resolve) => { renderedResolve = resolve; });
+pty.onData((data) => {
+  screen = `${screen}${data}`.slice(-16_384);
+  if (screen.includes('<ENTER> run')) renderedResolve();
+});
 const handle = await open(`/run/matrix-terminal-runtime-spike/attach-${runtimeId}.json`, 'wx', 0o600);
 try {
   await handle.writeFile(`${JSON.stringify({ helper: process.pid, client: pty.pid })}\n`, 'utf8');
@@ -22,6 +29,7 @@ try {
   await handle.close();
 }
 if (mode === 'confirm') {
+  await Promise.race([rendered, new Promise((resolve) => setTimeout(resolve, 5000))]);
   for (const input of ['\r', '\x1bl', '\r', '\x1bh', '\r']) {
     await new Promise((resolve) => setTimeout(resolve, 250));
     pty.write(input);

@@ -143,9 +143,12 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).toContain('pkill -f -x');
     expect(runner).toContain('for runtime_id in "${memory_ids[@]}"; do');
     expect(runner).toContain('systemctl set-property --runtime');
+    expect(runner).toContain('MemoryHigh=75%');
     expect(runner).toContain('timeout 15s runuser');
     expect(runner).toContain('slice_current=');
     expect(runner).toContain('wait_file');
+    expect(await readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/attach-probe.mjs'), 'utf8'))
+      .toContain("screen.includes('<ENTER> run')");
   });
 
   it('keeps the fixed notify unit shape and accepts readiness from the keeper helper', async () => {
