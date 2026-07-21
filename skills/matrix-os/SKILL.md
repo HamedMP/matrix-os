@@ -1,6 +1,7 @@
 ---
 name: matrix-os
 description: Set up and operate a Matrix OS cloud computer from a local AI agent. Use for Matrix CLI login and recovery, in-VPS Codex or Claude authentication, bounded remote commands, Matrix app creation, and collision-safe GitHub repository changes.
+author: Matrix OS
 license: AGPL-3.0-or-later
 metadata:
   matrix:

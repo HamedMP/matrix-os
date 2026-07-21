@@ -158,6 +158,7 @@ describe("Matrix OS Codex marketplace plugin", () => {
     const standalone = readFileSync(standaloneSkillPath, "utf8");
 
     expect(standalone).toContain("# Matrix OS");
+    expect(standalone).toMatch(/^author: Matrix OS$/m);
     expect(standalone).toMatch(/matrix run --json -C <dir> -- <argv...>/);
     expect(standalone).toMatch(/gh repo clone/);
     expect(standalone).toMatch(/--sandbox workspace-write/);
