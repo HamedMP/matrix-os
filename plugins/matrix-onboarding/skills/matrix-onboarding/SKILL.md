@@ -1,102 +1,95 @@
 ---
 name: matrix-onboarding
-description: "Use when a developer wants help setting up Matrix OS for coding: GitHub auth, Matrix CLI login, preferred coding-agent login, cloning a repo, running it inside a Matrix VPS shell, and opening a preview. Also use when the user asks to onboard a repo into Matrix, run their local coding agent inside Matrix, or make a Matrix-ready development preview."
+description: Set up, authenticate, diagnose, and recover a Matrix OS cloud computer. Use when Matrix CLI login, cloud profile selection, VPS provisioning, instance readiness, coding-agent authentication, GitHub authentication, shell attachment, or Matrix recovery needs attention.
 ---
 
-# Matrix Onboarding
+# Matrix OS Setup and Recovery
 
-Guide the human through a complete developer onboarding path without collecting secrets in chat.
+Prepare the user's Matrix cloud computer without collecting or transferring local secrets.
 
-## Ground Rules
+## Safety rules
 
-- Prefer browser/device login flows. Never ask the human to paste Matrix, GitHub, Claude, Codex, or provider tokens into chat.
-- Treat the Matrix VPS as the human's computer. Ask before deleting files, resetting auth, installing global packages, or changing long-lived shell sessions.
-- Use Matrix shell sessions for interactive work. Do not invent SSH instructions.
-- Use Docker only when the target repo already needs containers or cannot run directly with its normal dev command. Production Matrix OS customer runtime is VPS-native, not Docker Compose.
-- Use `https://matrix-os.com/skills.md` as the canonical Matrix CLI command reference. Its source lives in the private `FinnaAI/matrix-os-site` repository.
-- First-run hosted onboarding must use the cloud profile. Do not use `--dev`, `--profile local`, `matrix profile use local`, localhost URLs, `MATRIXOS_PLATFORM_URL`, or `MATRIXOS_GATEWAY_URL` unless the human explicitly asks for Matrix local-stack development.
+- Use the hosted `cloud` profile unless the user explicitly requests local Matrix development.
+- Use browser/device authentication inside Matrix. Never scan, read, or upload local credential files during onboarding.
+- Never ask for tokens, OAuth codes, API keys, or credential contents in chat.
+- Treat the Matrix VPS as the user's computer. Ask before deleting files, resetting auth or sessions, or installing global tools.
+- If a coding agent or GitHub CLI is missing, ask before installing it globally. Prefer Matrix's visible developer-tool picker or install action.
+- Use the existing Matrix CLI. Do not invent endpoints, SSH access, persistence, or detached-job APIs.
 
-## Workflow
+## Readiness gate
 
-1. **Identify the path**
-   - Determine whether you are running locally, inside Matrix, or inside another remote environment.
-   - Default the preferred coding agent to the one currently being used locally. If unknown, ask which one they want: Codex, Claude, another terminal agent, or Hermes.
-   - Identify the target repo URL and desired project name. If a repo is already open, use it as the starting point.
+Run the complete gate for setup and recovery. Task-specific Matrix skills repeat a minimal version so they remain safe when invoked directly.
 
-2. **Verify local prerequisites**
-   - Check `git --version`, `gh --version`, and `matrix --version` when available.
-   - If GitHub CLI is not authenticated, guide `gh auth login --hostname github.com --git-protocol ssh --web`, then verify with `gh auth status`.
-   - If Matrix CLI is missing, install using the latest `skills.md` instructions, then run `matrix login --profile cloud`.
-
-3. **Bring up Matrix**
-   - Run `matrix status`, `matrix instance info`, and `matrix doctor`.
-   - If `matrix doctor` reports a sync daemon issue, run `matrix sync` and then `matrix doctor` again.
-   - If no Matrix instance exists, send the human to `https://app.matrix-os.com`, wait for provisioning, then retry `matrix login --profile cloud`.
-
-4. **Create or reuse the setup shell**
-   - Prefer a named shell so the human, web terminal, and agent can reattach:
+1. Verify the local CLI and hosted profile:
 
 ```bash
-mos shell attach -c setup
+matrix --version
+matrix profile show cloud
 ```
 
-   - If the human already has a useful shell session, reuse it instead of forcing the `setup` name.
-   - For `zellij_failed`, do not retry the same command repeatedly. Use:
+If the CLI is missing, use the current install instructions from `https://matrix-os.com/skills.md`. If the cloud profile or login is missing or expired, run:
 
 ```bash
-mos shell ls
-mos shell attach <session-name>
+matrix login --profile cloud
 ```
 
-   - Set the chosen name as `<setup-session>` for every later command. Use `setup` only if that is the session actually chosen.
+Let the user finish the browser/device flow. If the account has no provisioned computer, direct the user to `https://app.matrix-os.com`, wait for provisioning to finish, and retry login.
 
-5. **Authenticate inside Matrix**
-   - Connect GitHub inside the Matrix VPS:
-
-```bash
-matrix run -it --session <setup-session> -- gh auth login
-matrix run -it --session <setup-session> -- gh auth status
-```
-
-   - Check that the preferred coding agent exists inside Matrix before starting it:
-
-```bash
-matrix run -it --session <setup-session> -- which codex
-matrix run -it --session <setup-session> -- which claude
-```
-
-   - Start only the preferred agent, not every example command. Use its normal login flow and then verify it can start:
-
-```bash
-matrix run -it --session <setup-session> -- codex
-matrix run -it --session <setup-session> -- claude
-```
-
-   - If the preferred agent is missing, ask before installing it globally. If another terminal agent is preferred, use the agent's normal login command inside `matrix run -it --session <setup-session> -- <command>`.
-
-6. **Clone and prepare the repo inside Matrix**
-   - Use `~/projects` unless the human requests another location.
-   - Clone with the authenticated GitHub path, then inspect the repo for package manager and dev scripts.
-   - Install dependencies using the repo's lockfile and package manager. For Matrix OS itself, prefer `flox activate` or the repo's `pnpm`/`bun` guidance.
-   - If subagents are available, delegate repo inspection to one bounded subagent: ask it to identify install commands, dev commands, required env vars, ports, Docker needs, and preview instructions. Do not pass secrets to the subagent.
-
-7. **Run and preview**
-   - Run the repo's normal dev command in a named Matrix shell session.
-   - Bind dev servers to `0.0.0.0` when the framework requires an explicit host, then verify from inside the VPS:
-
-```bash
-curl -fsS http://127.0.0.1:<port>/ >/dev/null
-```
-
-   - Open `https://app.matrix-os.com`, switch to the active runtime if needed, and use the shell Preview window or workspace preview surface for the verified port/app. If the current CLI/docs expose a concrete preview command, prefer that command and report the generated URL.
-   - If the repo is container-first, build or run the smallest needed Docker target. Keep source mounts and ports explicit, avoid privileged containers, and document how to stop it.
-
-8. **Hand off clearly**
-   - Report what was authenticated, where the repo lives, which shell session is running, the preview URL or local port, and the reattach command.
-   - Include the recovery commands:
+2. Verify Matrix health, identity, routing, and instance readiness:
 
 ```bash
 matrix doctor
-mos shell ls
-mos shell attach <session-name>
+matrix whoami
+matrix status
+matrix instance info
 ```
+
+Do not proceed with remote work until these checks identify the expected user and a ready instance. If `matrix doctor` reports a sync issue, run the documented `matrix sync` recovery only after explaining it, then repeat the gate.
+
+3. Check only the selected coding agent inside the VPS:
+
+```bash
+matrix run --json -- codex --version
+matrix run --json -- codex login status
+```
+
+or:
+
+```bash
+matrix run --json -- claude --version
+matrix run --json -- claude auth status
+```
+
+Treat a missing executable separately from an unauthenticated executable. Ask before any global installation and prefer Matrix's visible developer-tool installation path.
+
+4. Authenticate a present but disconnected tool in a unique interactive session. Replace `<suffix>` with a short collision-resistant value and report the chosen session name:
+
+```bash
+matrix run -it --session auth-codex-<suffix> -- codex login
+matrix shell connect auth-codex-<suffix>
+```
+
+For Claude, create `auth-claude-<suffix>` and start its native interactive login flow. Re-run the applicable status command after the user completes authentication.
+
+5. When GitHub access is needed, check it on Matrix rather than relying on the local computer:
+
+```bash
+matrix run --json -- gh auth status
+matrix run -it --session auth-github-<suffix> -- gh auth login --hostname github.com --git-protocol ssh --web
+matrix shell connect auth-github-<suffix>
+```
+
+Run the login command only when the status check shows authentication is missing. Re-run `gh auth status` afterward.
+
+## Recovery
+
+- For an expired Matrix login, repeat `matrix login --profile cloud`, then the full readiness gate.
+- For a provisioning delay, wait for the runtime page to report ready; do not switch to a local profile or localhost URL.
+- For a failed interactive attach, list sessions with `matrix shell ls`, then connect to the exact reported name with `matrix shell connect <session-name>`.
+- For `zellij_failed`, do not retry the same create command repeatedly. Reuse a listed session or ask the user to create one from the Matrix terminal.
+- For coding-agent or GitHub auth failure, keep the unique auth session visible and supervised. Do not replace browser/device login with copied local credentials.
+- If a command returns a timeout, non-zero status, or truncated output, report that state accurately. Do not claim readiness from partial output.
+
+## Handoff
+
+Report the selected cloud profile, Matrix identity, instance status, doctor result, selected agent and auth status, GitHub auth status when relevant, every active session name, and each `matrix shell connect <session-name>` command.

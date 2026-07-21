@@ -65,19 +65,36 @@ agent skills browse matrix
 
 ## Codex Plugin
 
-Matrix also exposes a repo-scoped Codex plugin marketplace at `.agents/plugins/marketplace.json`.
-Install it from a Matrix checkout when Codex should guide the whole onboarding flow, including
-GitHub auth, Matrix login, preferred coding-agent login, repo clone, Matrix shell setup, and preview.
+Matrix also exposes the repo-scoped **Matrix OS** Codex marketplace product at
+`.agents/plugins/marketplace.json`. It helps a local Codex set up and recover a Matrix cloud
+computer, run bounded commands or coding-agent tasks, and safely clone or modify GitHub projects.
+The package keeps the internal `matrix-onboarding` compatibility ID so existing users receive
+updates without reinstalling under a new ID.
 
 ```bash
 codex plugin marketplace add "$(pwd)"
 ```
 
-After Codex refreshes the marketplace, enable the `matrix-onboarding` plugin and ask:
+After Codex refreshes the marketplace, enable **Matrix OS** (compatibility ID
+`matrix-onboarding`) and try one of its starter prompts:
 
 ```text
-Help me onboard this repo into Matrix OS.
+Build a new app on my Matrix computer.
+Clone this GitHub repo on Matrix and make a change.
+Run this command on my Matrix computer.
 ```
+
+The product bundles three focused skills:
+
+| Skill | Purpose |
+| --- | --- |
+| `matrix-onboarding` | Matrix setup, authentication, diagnostics, and recovery. |
+| `matrix-cloud-run` | Bounded commands and sandboxed coding-agent tasks on Matrix. |
+| `matrix-github-project` | Collision-safe GitHub clone, checkout reuse, changes, and validation. |
+
+All authentication happens through browser/device flows inside Matrix. The skills never require
+copying local credential files to the cloud computer. Long coding work uses unique named sessions
+and reports the matching `matrix shell connect <session-name>` command.
 
 ## Preconfigure Agent In Matrix
 
@@ -106,27 +123,35 @@ The developer ICP should be able to sign up, receive a VPS, and let their coding
 Document this minimal command surface for agents and humans:
 
 ```bash
-matrix login
-matrix run -it -- claude
-matrix run -it -- codex
-matrix run -it --session setup -- gh auth login
-mos shell attach -c setup
+matrix login --profile cloud
+matrix doctor
+matrix whoami
+matrix status
+matrix instance info
+matrix run --json -C projects/example -- git status --short
+matrix run -it --session task-example-a1b2 -C projects/example -- codex --ask-for-approval never --sandbox workspace-write
+matrix shell connect task-example-a1b2
 ```
 
-`matrix run -it` creates a zellij-backed Matrix shell session, starts the requested command in a pane, and attaches the local terminal over `/ws/terminal`. The local terminal is a dumb TTY: stdin is put in raw mode, Ctrl-C/Ctrl-D are forwarded to the remote process, terminal resizes are forwarded as `resize` frames, and `Ctrl-\ Ctrl-\` detaches without killing the remote session.
+`matrix run --json -C <dir> -- <argv...>` runs a bounded command in an existing directory and
+returns its exit status, timeout state, and output-truncation state. `-C` does not create the
+directory. `matrix run -it` creates a zellij-backed Matrix shell session, starts the requested
+command in a pane, and attaches the local terminal over `/ws/terminal`. The local terminal is a
+dumb TTY: stdin is put in raw mode, Ctrl-C/Ctrl-D are forwarded to the remote process, terminal
+resizes are forwarded as `resize` frames, and `Ctrl-\ Ctrl-\` detaches without killing the remote
+session.
 
 Use named sessions for setup workflows so the user, Matrix web terminal, Claude, Codex, or Hermes can all reattach the same VPS context:
 
-```bash
-mos shell attach -c setup
-matrix run -it --session setup -- gh auth login
-matrix run -it --session setup -- claude
-mos shell attach setup
-```
+Use unique purpose-specific names such as `auth-codex-a1b2`, `auth-github-c3d4`, and
+`task-fix-search-e5f6` instead of sharing one setup session across unrelated workflows.
 
 If `matrix run -it`, `matrix shell new`, or `mos shell attach` fails with `zellij_failed`, do not keep retrying the same command. Run `mos shell ls`, then use `mos shell attach <session-name>` against an existing session. `mos shell attach -c <session-name>` is the create-if-missing path; if creation fails, ask the human to create or choose a session from the Matrix web terminal and attach to that existing session.
 
-Non-interactive `matrix run -- <command>` should return the remote command exit status once the gateway exposes status-bearing command execution on top of the same zellij session model. Until then, developer setup docs should prefer `matrix run -it -- <interactive-command>`.
+For unattended Codex work, pair `--ask-for-approval never` with `--sandbox read-only` or
+`--sandbox workspace-write` and scope `-C` to the narrow target. Keep Claude supervised unless a
+separately verified sandboxed noninteractive invocation is available. Never use
+`danger-full-access` without explicit user direction.
 
 ## Provisioning Hook
 

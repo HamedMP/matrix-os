@@ -1,7 +1,7 @@
 {
   "name": "matrix-onboarding",
-  "version": "0.1.0",
-  "description": "Guide a developer through GitHub, coding-agent, repo, Matrix VPS, and preview onboarding.",
+  "version": "0.2.0",
+  "description": "Run development work on your Matrix cloud computer",
   "author": {
     "name": "Matrix OS"
   },
@@ -9,14 +9,20 @@
   "repository": "https://github.com/HamedMP/matrix-os",
   "skills": "./skills/",
   "interface": {
-    "displayName": "Matrix Onboarding",
-    "shortDescription": "Onboard developers into Matrix OS",
-    "longDescription": "Helps a coding agent walk a developer through GitHub auth, Matrix login, preferred agent login, repository cloning, running work inside Matrix shell sessions, and exposing a preview.",
+    "displayName": "Matrix OS",
+    "shortDescription": "Run development work on your Matrix cloud computer",
+    "longDescription": "Set up and recover your Matrix cloud computer, run commands and coding-agent tasks, and safely clone or update GitHub projects without moving local credentials.",
     "developerName": "Matrix OS",
     "category": "Productivity",
     "capabilities": ["Read", "Write"],
     "websiteURL": "https://matrix-os.com",
-    "brandColor": "#33AAFF",
-    "defaultPrompt": "Help me onboard this repo into Matrix OS."
+    "brandColor": "#434E3F",
+    "composerIcon": "./assets/matrix-icon.png",
+    "logo": "./assets/matrix-rabbit.png",
+    "defaultPrompt": [
+      "Build a new app on my Matrix computer.",
+      "Clone this GitHub repo on Matrix and make a change.",
+      "Run this command on my Matrix computer."
+    ]
   }
 }
