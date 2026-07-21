@@ -143,6 +143,7 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).toContain('pkill -f -x');
     expect(runner).toContain('for runtime_id in "${memory_ids[@]}"; do');
     expect(runner).toContain('systemctl set-property --runtime');
+    expect(runner).toContain('timeout 15s runuser');
     expect(runner).toContain('slice_current=');
     expect(runner).toContain('wait_file');
   });

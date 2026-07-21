@@ -30,7 +30,7 @@ recovery_id="7${pr_head_sha:0:31}"
 cleanup() {
   for runtime_id in "$base_id" "$keeper_id" "$server_id" "${memory_ids[@]}" "$recovery_id"; do
     systemctl stop "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true
-    runuser -u matrix -- env \
+    /usr/bin/timeout 15s runuser -u matrix -- env \
       HOME="$owner_home" MATRIX_HOME="$owner_home" PATH="/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin" \
       XDG_CACHE_HOME="$cache_root" XDG_CONFIG_HOME="$owner_home/system/terminal-runtime-spike/config-home" \
       XDG_DATA_HOME="$owner_home/system/terminal-runtime-spike/data" XDG_RUNTIME_DIR="/run/user/$(id -u matrix)" \
@@ -205,7 +205,7 @@ runtime_cgroup() {
 
 zellij_env=(env HOME="$owner_home" MATRIX_HOME="$owner_home" PATH="/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin" LANG=C.UTF-8 TERM=xterm-256color XDG_CACHE_HOME="$cache_root" XDG_CONFIG_HOME="$owner_home/system/terminal-runtime-spike/config-home" XDG_DATA_HOME="$owner_home/system/terminal-runtime-spike/data" XDG_RUNTIME_DIR="/run/user/$(id -u matrix)" ZELLIJ_CONFIG_DIR="$config_root" ZELLIJ_CONFIG_FILE="$config_root/config.kdl")
 zellij_cmd() {
-  runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/bin/zellij "$@"
+  /usr/bin/timeout 15s runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/bin/zellij "$@"
 }
 
 wait_cgroup_empty() {
