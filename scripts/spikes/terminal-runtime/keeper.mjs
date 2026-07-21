@@ -226,9 +226,13 @@ async function main() {
     if (!confirmationSent) {
       try {
         await readFile(`${runtimeRoot}/confirmations/${runtimeId}.pass`);
-        await execFileAsync(zellij, ['--session', sessionName, 'action', 'send-keys', 'Enter'], {
-          env, timeout: 2000, maxBuffer: 16 * 1024,
-        });
+        const options = { env, timeout: 2000, maxBuffer: 16 * 1024 };
+        const { stdout } = await execFileAsync(zellij, ['--session', sessionName, 'action', 'list-panes', '--all', '--json'], options);
+        const listed = JSON.parse(stdout);
+        if (!Array.isArray(listed) || listed.length > 16) throw new Error('startup_failed');
+        const panes = listed.filter((pane) => !pane.is_plugin && pane.is_held);
+        if (!panes.length || panes.some((pane) => !Number.isInteger(pane.id) || pane.id < 0)) throw new Error('startup_failed');
+        for (const pane of panes) await execFileAsync(zellij, ['--session', sessionName, 'action', 'send-keys', 'Enter', '--pane-id', String(pane.id)], options);
         confirmationSent = true;
       } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
