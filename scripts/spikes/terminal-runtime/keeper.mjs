@@ -226,10 +226,9 @@ async function main() {
     if (!confirmationSent) {
       try {
         await readFile(`${runtimeRoot}/confirmations/${runtimeId}.pass`);
-        for (const key of ['\r', '\x1bl', '\r', '\x1bh', '\r']) {
-          pty.write(key);
-          await new Promise((resolve) => setTimeout(resolve, 250));
-        }
+        await execFileAsync(zellij, ['--session', sessionName, 'action', 'send-keys', 'Enter'], {
+          env, timeout: 2000, maxBuffer: 16 * 1024,
+        });
         confirmationSent = true;
       } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error ? error.code : '';

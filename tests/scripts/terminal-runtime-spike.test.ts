@@ -146,7 +146,7 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).toContain('timeout 15s runuser');
     expect(runner).toContain('wait_file');
     const keeper = await readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/keeper.mjs'), 'utf8');
-    expect(keeper).toContain("for (const key of ['\\r', '\\x1bl', '\\r', '\\x1bh', '\\r'])");
+    expect(keeper).toContain("['--session', sessionName, 'action', 'send-keys', 'Enter']");
     expect(keeper).toContain("stripVTControlCharacters(renderWindow).includes('<ENTER> run')");
     expect(runner).toContain('confirmations/${recovery_id}.gated');
   });
