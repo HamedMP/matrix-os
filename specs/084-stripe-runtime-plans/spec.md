@@ -172,11 +172,11 @@ A paid plan can include multiple Matrix runtimes, and the user can switch betwee
 4. Given a slot is failed, recovering, provisioning, over-limit, or suspended, then the manager shows its state and only exposes safe recovery or selection actions.
 5. Given the customer enters a computer name, then the browser normalizes it to a unique safe runtime-slot slug, rejects `primary`, empty results, duplicates, and names over 32 characters, and displays the slug in readable title case without storing another name column.
 6. Given unused `maxRuntimeSlots` capacity exists, then setup skips payment and provisions through the existing runtime contract.
-7. Given a Stripe customer is at capacity, then Matrix creates a focused subscription-update portal session for the existing subscription and matching monthly or annual add-on, returns to `/onboarding/computer`, and waits for the signed webhook projection to increase capacity before provisioning.
+7. Given a Stripe customer is at capacity, then Matrix creates a focused subscription-update portal session for the existing subscription and matching monthly or annual add-on, returns to `/?billing=setup&handoff=add-computer`, and waits for the signed webhook projection to increase capacity before continuing through default installs and provisioning.
 8. Given an internal override account is at capacity, then the manager explains that the account is managed and does not expose a Stripe action.
 9. Given a preview machine exists, then it is visible in inventory but does not consume customer entitlement capacity.
 10. Given a second computer becomes ready, then the manager refreshes inventory and opens it only through its returned `gatewayPath`; it never reconstructs a secondary URL.
-11. Given a user starts another computer from `/runtime`, then Matrix fully navigates to the platform-owned `/onboarding/computer` route and reuses the first-run computer-strength, region, and default-install controls; the selected server type is restricted to the active entitlement, and the selected region is retained for provisioning and recovery.
+11. Given a user starts another computer from `/runtime`, then Matrix fully navigates to the platform-owned root shell at `/?billing=setup&handoff=add-computer` and reuses the first-run Settings/Billing strength, region, and default-install controls; the selected server type is restricted to the active entitlement, and the selected region is retained for provisioning and recovery. The legacy exact `/onboarding/computer` route redirects to this shared entry point.
 
 ## Functional Requirements
 
@@ -195,7 +195,7 @@ A paid plan can include multiple Matrix runtimes, and the user can switch betwee
 - **FR-013**: Matrix MUST enforce max runtime count before provisioning a new VPS.
 - **FR-014**: Matrix MUST enforce allowed server types before provisioning or migrating a runtime.
 - **FR-015**: Matrix MUST preserve owner data and machine records on all billing lifecycle changes.
-- **FR-016**: Matrix MUST serve authenticated `/runtime` and exact `/onboarding/computer` from the platform app shell and send signed-out visitors through Clerk authentication; nested onboarding paths remain protected.
+- **FR-016**: Matrix MUST serve authenticated `/runtime` and the add-computer root-shell handoff from the platform app shell and send signed-out visitors through Clerk authentication; exact `/onboarding/computer` remains a platform-owned compatibility redirect and nested onboarding paths remain protected.
 - **FR-017**: Matrix MUST expose hosted profile actions for switching computers and starting another-computer setup, while self-hosted profiles MUST omit hosted-only actions.
 - **FR-018**: Matrix MUST compare non-preview customer inventory with webhook-projected `maxRuntimeSlots` and MUST NOT grant capacity from a Stripe return redirect.
 - **FR-019**: `POST /billing/portal` MUST accept an optional strict `{ intent, returnPath }` body, preserve empty-body management behavior, validate same-origin return paths, and choose subscription, price interval, and focused portal configuration exclusively on the server.
@@ -428,7 +428,7 @@ First implementation should avoid in-place resizing.
 - Never expose raw Stripe errors, provider IDs that are not needed by the client, database errors, stack traces, or environment values to browser clients.
 - Do not trust client-submitted price IDs. Clients submit Matrix plan slugs; the server maps slugs to allowed Stripe price IDs.
 - Use server-side allowlists for plan slug, price ID, server type, and runtime slot slug.
-- Validate `/onboarding/computer` return paths through the existing same-origin allowlist; reject absolute, protocol-relative, encoded traversal, nested onboarding, and non-allowlisted paths.
+- Validate `/?billing=setup&handoff=add-computer` return paths through the existing same-origin allowlist; reject absolute, protocol-relative, encoded traversal, nested onboarding, and non-allowlisted paths.
 - Never derive a secondary computer URL from a handle or slot in the browser. Only use inventory `gatewayPath` values validated by the shared contract.
 - Keep add-computer telemetry PII-free: fixed event names and bounded enums/counts only, never computer names, runtime slots, handles, Clerk IDs, or email addresses.
 - Audit all internal overrides and all machine-affecting entitlement decisions.
@@ -455,7 +455,7 @@ First implementation should avoid in-place resizing.
 - Webhook updates entitlement in one transaction with event recording.
 - Provisioning rejects new runtime slots when over entitlement.
 - Internal override grants entitlement without Stripe subscription.
-- Authenticated `/runtime` and exact `/onboarding/computer` proxy to the platform app shell while signed-out requests enter Clerk authentication.
+- Authenticated `/runtime` and the root-shell add-computer handoff proxy to the platform app shell while signed-out requests enter Clerk authentication; exact `/onboarding/computer` redirects to that shared handoff.
 - Free-capacity creation provisions and opens a second slot from refreshed inventory.
 - Stripe return resumes only after webhook-projected `maxRuntimeSlots` increases.
 - Concurrent same-slot creation remains idempotent and concurrent distinct-slot creation cannot exceed entitlement.
@@ -467,7 +467,7 @@ First implementation should avoid in-place resizing.
   entitlement projector, Stripe client, Clerk resolver, and customer VPS service
   into the existing billing, auth, inventory, journey, and provisioning routes.
   No new database, global registry, or cross-package singleton is introduced.
-- `/runtime` and exact `/onboarding/computer` are built into the platform-owned Next.js app shell. The profile menu
+- `/runtime`, the root-shell add-computer handoff, and the exact `/onboarding/computer` compatibility redirect are built into the platform-owned Next.js app shell. The profile menu
   ships in customer host bundles, while routing, billing, and both platform pages
   require a platform/app-shell deployment.
 - Browser API calls use 10-second timeouts. Billing projection and journey polls
