@@ -9,7 +9,10 @@ import {
   enqueueGoldenSnapshotBuild,
   getGoldenSnapshot,
   getGoldenSnapshotCreateIntent,
+  listCallbackWaitGoldenSnapshotBuildIds,
+  listClaimableGoldenSnapshotBuildIds,
   listPendingGoldenSnapshotCleanup,
+  listRunnableGoldenSnapshotBuildIds,
   markGoldenSnapshotReady,
   recordGoldenSnapshotProviderImage,
   reconcileExpiredGoldenSnapshotLeases,
@@ -129,13 +132,18 @@ describe('golden snapshot repository', () => {
       .where('table_name', '=', 'golden_snapshot_builds')
       .where('column_name', 'in', [
         'builder_machine_id_sha256', 'builder_ssh_host_key_sha256', 'provider_builder_action_id',
+        'validation_clone_ordinal', 'first_validation_machine_id_sha256',
+        'first_validation_ssh_host_key_sha256',
       ])
       .orderBy('column_name')
       .execute();
     expect(columns.map((row) => row.column_name)).toEqual([
       'builder_machine_id_sha256',
       'builder_ssh_host_key_sha256',
+      'first_validation_machine_id_sha256',
+      'first_validation_ssh_host_key_sha256',
       'provider_builder_action_id',
+      'validation_clone_ordinal',
     ]);
 
     const enqueued = await enqueueGoldenSnapshotBuild(db, {
@@ -149,6 +157,9 @@ describe('golden snapshot repository', () => {
       builderMachineIdSha256: null,
       builderSshHostKeySha256: null,
       providerBuilderActionId: null,
+      validationCloneOrdinal: 1,
+      firstValidationMachineIdSha256: null,
+      firstValidationSshHostKeySha256: null,
     });
   });
 
@@ -532,6 +543,78 @@ describe('golden snapshot repository', () => {
       .executeTakeFirstOrThrow()).resolves.toEqual({ status: 'queued', attempts: 0 });
   });
 
+  it('uses the configured retry budget when listing claimable builds', async () => {
+    const enqueued = await enqueueGoldenSnapshotBuild(db, {
+      bundleVersion: 'v1', compatibility,
+      snapshotId: '10000000-0000-4000-8000-000000000020',
+      buildId: '20000000-0000-4000-8000-000000000020',
+      now: '2026-07-03T00:00:00.000Z',
+    });
+    await db.executor.updateTable('golden_snapshot_builds').set({
+      attempts: 3, status: 'running', lease_expires_at: '2026-07-03T00:00:30.000Z',
+    })
+      .where('build_id', '=', enqueued.build.buildId).execute();
+
+    await expect(listClaimableGoldenSnapshotBuildIds(
+      db, '2026-07-03T00:01:00.000Z', 10, 3,
+    )).resolves.toEqual([enqueued.build.buildId]);
+    await expect(listClaimableGoldenSnapshotBuildIds(
+      db, '2026-07-03T00:01:00.000Z', 10, 4,
+    )).resolves.toEqual([enqueued.build.buildId]);
+  });
+
+  it('does not spend retry attempts while waiting for a bounded callback', async () => {
+    const enqueued = await enqueueGoldenSnapshotBuild(db, {
+      bundleVersion: 'v1', compatibility,
+      snapshotId: '10000000-0000-4000-8000-000000000026',
+      buildId: '20000000-0000-4000-8000-000000000026',
+      now: '2026-07-03T00:00:00.000Z',
+    });
+    await db.executor.updateTable('golden_snapshot_builds').set({
+      phase: 'builder_boot', status: 'running', attempts: 5,
+      lease_expires_at: '2026-07-03T00:05:00.000Z',
+      callback_expires_at: '2026-07-03T00:30:00.000Z',
+    }).where('build_id', '=', enqueued.build.buildId).execute();
+
+    await expect(listClaimableGoldenSnapshotBuildIds(
+      db, '2026-07-03T00:10:00.000Z', 10, 5,
+    )).resolves.toEqual([]);
+    await expect(claimGoldenSnapshotBuild(
+      db, enqueued.build.buildId, '2026-07-03T00:10:00.000Z', '2026-07-03T00:15:00.000Z', 5,
+    )).resolves.toBeUndefined();
+    await expect(listRunnableGoldenSnapshotBuildIds(
+      db, '2026-07-03T00:31:00.000Z', 10,
+    )).resolves.toEqual([]);
+    await expect(listCallbackWaitGoldenSnapshotBuildIds(db, 10))
+      .resolves.toEqual([enqueued.build.buildId]);
+    await expect(getGoldenSnapshot(db, enqueued.snapshot.snapshotId)).resolves.toMatchObject({ state: 'candidate' });
+    await expect(db.executor.selectFrom('golden_snapshot_builds').select(['status', 'attempts'])
+      .where('build_id', '=', enqueued.build.buildId).executeTakeFirstOrThrow())
+      .resolves.toEqual({ status: 'running', attempts: 5 });
+  });
+
+  it('rotates runnable polling builds when the dispatch batch is smaller than capacity', async () => {
+    const first = await enqueueGoldenSnapshotBuild(db, {
+      bundleVersion: 'v1', compatibility,
+      snapshotId: '10000000-0000-4000-8000-000000000054',
+      buildId: '20000000-0000-4000-8000-000000000054', now: '2026-07-03T00:00:00.000Z',
+    });
+    const second = await enqueueGoldenSnapshotBuild(db, {
+      bundleVersion: 'v2', compatibility,
+      snapshotId: '10000000-0000-4000-8000-000000000055',
+      buildId: '20000000-0000-4000-8000-000000000055', now: '2026-07-03T00:00:00.000Z',
+    });
+    await db.executor.updateTable('golden_snapshot_builds').set({
+      phase: 'builder_create', status: 'running', lease_expires_at: '2026-07-03T00:20:00.000Z',
+      updated_at: '2026-07-03T00:00:00.000Z',
+    }).where('build_id', 'in', [first.build.buildId, second.build.buildId]).execute();
+
+    await expect(listRunnableGoldenSnapshotBuildIds(db, '2026-07-03T00:01:00.000Z', 1))
+      .resolves.toEqual([first.build.buildId]);
+    await expect(listRunnableGoldenSnapshotBuildIds(db, '2026-07-03T00:02:00.000Z', 1))
+      .resolves.toEqual([second.build.buildId]);
+  });
+
   it('finalizes an expired build whose retry budget is exhausted', async () => {
     const enqueued = await enqueueGoldenSnapshotBuild(db, {
       bundleVersion: 'v1', compatibility,
@@ -540,7 +623,7 @@ describe('golden snapshot repository', () => {
       now: '2026-07-03T00:00:00.000Z',
     });
     await db.executor.updateTable('golden_snapshot_builds').set({
-      status: 'running', phase: 'builder_boot', attempts: 1,
+      status: 'running', phase: 'snapshot_create', attempts: 1,
       lease_expires_at: '2026-07-03T00:01:00.000Z', provider_builder_id: 808,
     }).where('build_id', '=', enqueued.build.buildId).execute();
 

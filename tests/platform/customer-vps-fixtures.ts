@@ -19,6 +19,22 @@ export function createMockHetznerClient(overrides: Partial<HetznerClient> = {}):
     resizeServer: vi.fn().mockResolvedValue(undefined),
     deleteServer: vi.fn().mockResolvedValue(undefined),
     listServersByLabel: vi.fn().mockResolvedValue([]),
+    createSnapshot: vi.fn().mockResolvedValue({
+      image: {
+        id: 234567,
+        status: 'available',
+        type: 'snapshot',
+        architecture: 'x86',
+        diskGb: 40,
+        labels: {},
+        deleteProtected: false,
+      },
+      action: { id: 345678, status: 'success', command: 'create_image' },
+    }),
+    getImage: vi.fn().mockResolvedValue(null),
+    listImagesByLabel: vi.fn().mockResolvedValue([]),
+    deleteImage: vi.fn().mockResolvedValue(undefined),
+    getAction: vi.fn().mockResolvedValue(null),
     ...overrides,
   };
 }

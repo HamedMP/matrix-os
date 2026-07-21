@@ -6,6 +6,7 @@ import {
   canTransitionGoldenSnapshot,
   compatibilityKey,
   GoldenSnapshotBaseGenerationSchema,
+  GoldenSnapshotBundleVersionSchema,
   GoldenSnapshotBuildPhaseSchema,
   GoldenSnapshotBuildStatusSchema,
   GoldenSnapshotCompatibilitySchema,
@@ -25,7 +26,7 @@ const BoundedCodeSchema = z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9._-]
 
 const SnapshotRowSchema = z.object({
   snapshot_id: UuidSchema,
-  bundle_version: z.string().min(1).max(128),
+  bundle_version: GoldenSnapshotBundleVersionSchema,
   bundle_sha256: Sha256Schema,
   source_git_commit: z.string().min(1).max(128),
   compatibility_key: Sha256Schema,
@@ -71,6 +72,9 @@ const BuildRowSchema = z.object({
   callback_outcome: z.unknown().nullable(),
   builder_machine_id_sha256: Sha256Schema.nullable(),
   builder_ssh_host_key_sha256: Sha256Schema.nullable(),
+  validation_clone_ordinal: z.number().int().min(1).max(2),
+  first_validation_machine_id_sha256: Sha256Schema.nullable(),
+  first_validation_ssh_host_key_sha256: Sha256Schema.nullable(),
   provider_builder_id: z.coerce.number().int().positive().nullable(),
   provider_builder_action_id: z.coerce.number().int().positive().nullable(),
   provider_snapshot_action_id: z.coerce.number().int().positive().nullable(),
@@ -193,6 +197,9 @@ function mapBuild(input: unknown) {
     callbackOutcome: row.callback_outcome,
     builderMachineIdSha256: row.builder_machine_id_sha256,
     builderSshHostKeySha256: row.builder_ssh_host_key_sha256,
+    validationCloneOrdinal: row.validation_clone_ordinal,
+    firstValidationMachineIdSha256: row.first_validation_machine_id_sha256,
+    firstValidationSshHostKeySha256: row.first_validation_ssh_host_key_sha256,
     providerBuilderId: row.provider_builder_id,
     providerBuilderActionId: row.provider_builder_action_id,
     providerSnapshotActionId: row.provider_snapshot_action_id,
@@ -259,7 +266,7 @@ function mapCleanup(input: unknown) {
 
 type AuditActor = 'release' | 'worker' | 'operator';
 
-async function appendGoldenSnapshotAuditEvent(
+export async function appendGoldenSnapshotAuditEvent(
   trx: PlatformDB,
   input: {
     snapshotId?: string | null;
@@ -291,7 +298,7 @@ async function appendGoldenSnapshotAuditEvent(
 }
 
 const EnqueueInputSchema = z.object({
-  bundleVersion: z.string().min(1).max(128),
+  bundleVersion: GoldenSnapshotBundleVersionSchema,
   compatibility: GoldenSnapshotCompatibilitySchema,
   snapshotId: UuidSchema,
   buildId: UuidSchema,
@@ -376,7 +383,11 @@ export async function enqueueGoldenSnapshotBuild(
       callback_outcome: null,
       builder_machine_id_sha256: null,
       builder_ssh_host_key_sha256: null,
+      validation_clone_ordinal: 1,
+      first_validation_machine_id_sha256: null,
+      first_validation_ssh_host_key_sha256: null,
       provider_builder_id: null,
+      provider_builder_action_id: null,
       provider_snapshot_action_id: null,
       provider_validation_id: null,
       provider_validation_action_id: null,
@@ -412,6 +423,17 @@ export async function getGoldenSnapshot(db: PlatformDB, rawSnapshotId: string): 
   await db.ready;
   const row = await db.executor.selectFrom('golden_snapshots').selectAll().where('snapshot_id', '=', snapshotId).executeTakeFirst();
   return row ? mapSnapshot(row) : undefined;
+}
+
+export async function getGoldenSnapshotBuild(
+  db: PlatformDB,
+  rawBuildId: string,
+): Promise<GoldenSnapshotBuildRecord | undefined> {
+  const buildId = UuidSchema.parse(rawBuildId);
+  await db.ready;
+  const row = await db.executor.selectFrom('golden_snapshot_builds').selectAll()
+    .where('build_id', '=', buildId).executeTakeFirst();
+  return row ? mapBuild(row) : undefined;
 }
 
 export async function claimGoldenSnapshotBuild(
@@ -455,6 +477,7 @@ export async function claimGoldenSnapshotBuild(
       status: 'running', attempts: sql<number>`attempts + 1`, claimed_at: now,
       lease_expires_at: leaseExpiresAt, updated_at: now,
     }).where('build_id', '=', buildId).where('attempts', '<', maxAttempts)
+      .where('phase', 'not in', ['builder_boot', 'validation_boot'])
       .where((eb) => eb.exists(
         eb.selectFrom('golden_snapshots').select('snapshot_id')
           .whereRef('golden_snapshots.snapshot_id', '=', 'golden_snapshot_builds.snapshot_id')
@@ -594,6 +617,7 @@ export async function claimGoldenSnapshotBuildBatch(
     const candidates = await trx.executor.selectFrom('golden_snapshot_builds')
       .select('build_id')
       .where('attempts', '<', maxAttempts)
+      .where('phase', 'not in', ['builder_boot', 'validation_boot'])
       .where((eb) => eb.exists(
         eb.selectFrom('golden_snapshots').select('snapshot_id')
           .whereRef('golden_snapshots.snapshot_id', '=', 'golden_snapshot_builds.snapshot_id')
@@ -627,6 +651,7 @@ export async function claimGoldenSnapshotBuildBatch(
         updated_at: now,
       }).where('build_id', '=', candidate.build_id)
         .where('attempts', '<', maxAttempts)
+        .where('phase', 'not in', ['builder_boot', 'validation_boot'])
         .where((eb) => eb.or([
           eb.and([eb('status', '=', 'queued'), eb('available_at', '<=', now)]),
           eb.and([eb('status', '=', 'running'), eb('lease_expires_at', '<=', now)]),
@@ -637,6 +662,84 @@ export async function claimGoldenSnapshotBuildBatch(
     }
     return claimed;
   });
+}
+
+export async function listClaimableGoldenSnapshotBuildIds(
+  db: PlatformDB,
+  rawNow: string,
+  rawLimit: number,
+  rawMaxAttempts: number,
+): Promise<string[]> {
+  const now = IsoDateSchema.parse(rawNow);
+  const limit = z.number().int().min(1).max(100).parse(rawLimit);
+  const maxAttempts = z.number().int().min(1).max(10).parse(rawMaxAttempts);
+  await db.ready;
+  const rows = await db.executor.selectFrom('golden_snapshot_builds').select('build_id')
+    .where((eb) => eb.or([
+      eb.and([
+        eb('status', '=', 'queued'), eb('attempts', '<', maxAttempts), eb('available_at', '<=', now),
+      ]),
+      eb.and([
+        eb('status', '=', 'running'),
+        eb('phase', 'not in', ['builder_boot', 'validation_boot']),
+        eb('lease_expires_at', '<=', now),
+      ]),
+    ])).orderBy('available_at').limit(limit).execute();
+  return rows.map((row) => row.build_id);
+}
+
+export async function listRunnableGoldenSnapshotBuildIds(
+  db: PlatformDB,
+  rawNow: string,
+  rawLimit: number,
+): Promise<string[]> {
+  const now = IsoDateSchema.parse(rawNow);
+  const limit = z.number().int().min(1).max(100).parse(rawLimit);
+  await db.ready;
+  return db.transaction(async (trx) => {
+    const rows = await trx.executor.selectFrom('golden_snapshot_builds').select('build_id')
+      .where('status', '=', 'running')
+      .where('lease_expires_at', '>', now)
+      .where('phase', 'in', [
+        'requested', 'builder_create', 'snapshot_create', 'snapshot_wait', 'validation_create',
+      ])
+      .orderBy('updated_at').orderBy('build_id').forUpdate().skipLocked().limit(limit).execute();
+    const ids = rows.map((row) => row.build_id);
+    if (ids.length > 0) {
+      await trx.executor.updateTable('golden_snapshot_builds').set({ updated_at: now })
+        .where('build_id', 'in', ids).execute();
+    }
+    return ids;
+  });
+}
+
+export async function listCallbackWaitGoldenSnapshotBuildIds(
+  db: PlatformDB,
+  rawLimit: number,
+): Promise<string[]> {
+  const limit = z.number().int().min(1).max(100).parse(rawLimit);
+  await db.ready;
+  const rows = await db.executor.selectFrom('golden_snapshot_builds').select('build_id')
+    .where('status', '=', 'running')
+    .where('phase', 'in', ['builder_boot', 'validation_boot'])
+    .orderBy('callback_expires_at').orderBy('build_id').limit(limit).execute();
+  return rows.map((row) => row.build_id);
+}
+
+export async function listUnresolvedGoldenSnapshotBuildIds(
+  db: PlatformDB,
+  rawLimit: number,
+): Promise<string[]> {
+  const limit = z.number().int().min(1).max(100).parse(rawLimit);
+  await db.ready;
+  const rows = await db.executor.selectFrom('golden_snapshot_builds').select('build_id')
+    .where('status', '=', 'failed')
+    .where('pending_operation', 'is not', null)
+    .where('callback_expires_at', 'is not', null)
+    .orderBy('updated_at')
+    .limit(limit)
+    .execute();
+  return rows.map((row) => row.build_id);
 }
 
 export async function advanceGoldenSnapshot(
