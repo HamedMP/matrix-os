@@ -144,10 +144,9 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).toContain('systemctl set-property --runtime');
     expect(runner).toContain('MemoryHigh=75%');
     expect(runner).toContain('timeout 15s runuser');
-    expect(runner).toContain('slice_current=');
     expect(runner).toContain('wait_file');
     const keeper = await readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/keeper.mjs'), 'utf8');
-    expect(keeper).toContain('pty.write("\\r\\x1bl\\r\\x1bh\\r")');
+    expect(keeper).toContain("for (const key of ['\\r', '\\x1bl', '\\r', '\\x1bh', '\\r'])");
     expect(keeper).toContain("stripVTControlCharacters(renderWindow).includes('<ENTER> run')");
     expect(runner).toContain('confirmations/${recovery_id}.gated');
   });
@@ -220,7 +219,7 @@ describe('terminal runtime spike evidence', () => {
       `${JSON.stringify({ stage: 'readiness', code: 'readiness_timeout', confirmationSent: true, responsive: true, zellij: 2, shell: true, agent: false })}\n`,
       'utf8',
     );
-    await writeFile(join(root, 's1', 'memory-stage.txt'), 'slice_no_pressure unit=2 slice=0 current=3 high=4 hogs=3\n', 'utf8');
+    await writeFile(join(root, 's1', 'memory-stage.txt'), 'slice_no_pressure\n', 'utf8');
 
     await expect(reportGateChecks(root)).resolves.toEqual([
       's1:stopEmptiesCgroup=fail',
@@ -229,7 +228,7 @@ describe('terminal runtime spike evidence', () => {
       's1:unit=failed/failed/timeout/1/16',
       's1:roles=initial/keeper:1/zellij:1of2/shell:1/agent:0',
       's2:recovery=readiness/readiness_timeout/confirm:1/roles:1,2,1,0',
-      's1:memory=slice_no_pressure/unit:2/slice:0/current:3/high:4/hogs:3',
+      's1:memory=slice_no_pressure',
     ]);
     await rm(join(root, 's1', 'base-runtime-roles.json'));
     await symlink('/etc/passwd', join(root, 's1', 'base-runtime-roles.json'));
@@ -237,7 +236,7 @@ describe('terminal runtime spike evidence', () => {
       's1:stopEmptiesCgroup=fail', 's1:startup=readiness/client_exit',
       's1:pty-exit=1/0', 's1:unit=failed/failed/timeout/1/16',
       's2:recovery=readiness/readiness_timeout/confirm:1/roles:1,2,1,0',
-      's1:memory=slice_no_pressure/unit:2/slice:0/current:3/high:4/hogs:3',
+      's1:memory=slice_no_pressure',
     ]);
   });
 

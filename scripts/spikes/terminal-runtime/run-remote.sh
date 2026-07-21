@@ -417,11 +417,7 @@ if [ "$memory_ready" = true ]; then
     if [ "${unit_after:-0}" -gt "$unit_before" ] && [ "${slice_after:-0}" -gt "$slice_before" ]; then memory_stage=pass; mark_pass s1 layeredMemoryHigh; fi
   fi
 fi
-if [ "$memory_stage" = slice_no_pressure ]; then
-  slice_current="$(cat "/sys/fs/cgroup${slice_cgroup}/memory.current")"
-  hog_count="$(pgrep -f -c -- "$support_root/memory-hog.mjs" || true)"
-  printf '%s unit=%s slice=%s current=%s high=%s hogs=%s\n' "$memory_stage" "$unit_after" "$slice_after" "$slice_current" "$slice_high" "$hog_count" >"$evidence_root/s1/memory-stage.txt"
-else printf '%s\n' "$memory_stage" >"$evidence_root/s1/memory-stage.txt"; fi
+printf '%s\n' "$memory_stage" >"$evidence_root/s1/memory-stage.txt"
 for runtime_id in "${memory_ids[@]}"; do systemctl stop "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true; done
 
 # S2: bounded serialized state and explicit resurrection.

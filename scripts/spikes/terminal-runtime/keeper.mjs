@@ -226,7 +226,10 @@ async function main() {
     if (!confirmationSent) {
       try {
         await readFile(`${runtimeRoot}/confirmations/${runtimeId}.pass`);
-        pty.write("\r\x1bl\r\x1bh\r");
+        for (const key of ['\r', '\x1bl', '\r', '\x1bh', '\r']) {
+          pty.write(key);
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
         confirmationSent = true;
       } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
