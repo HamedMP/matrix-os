@@ -104,12 +104,12 @@ function installFetchRouter(options: {
   billing?: ReturnType<typeof billingStatus>;
   provision?: Response;
   journey?: Record<string, unknown>;
-  portal?: Response | (() => Response);
+  checkout?: Response | (() => Response);
 } = {}) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/auth/computers") return json(options.computerInventory ?? inventory);
-    if (url === "/billing/status") return json(options.billing ?? billingStatus());
+    if (url.startsWith("/billing/status")) return json(options.billing ?? billingStatus());
     if (url === "/api/auth/provision-runtime") {
       return options.provision ?? json({ status: "provisioning", runtimeSlot: "new-computer" }, 202);
     }
@@ -124,10 +124,10 @@ function installFetchRouter(options: {
     if (url === "/api/journey/retry-provision") {
       return json({ status: "started", journey: { phase: "provisioning" } });
     }
-    if (url === "/billing/portal") {
-      return typeof options.portal === "function"
-        ? options.portal()
-        : options.portal ?? json({ url: "https://billing.stripe.test/session" });
+    if (url === "/billing/checkout") {
+      return typeof options.checkout === "function"
+        ? options.checkout()
+        : options.checkout ?? json({ url: "https://checkout.stripe.test/session" });
     }
     if (url === "/api/auth/app-session" && init?.method === "DELETE") return json({ cleared: true });
     throw new Error(`Unhandled test request: ${url}`);
@@ -139,8 +139,11 @@ async function renderManager(props: Record<string, unknown> = {}) {
   return render(<RuntimeManager {...props} />);
 }
 
-async function renderOnboarding(props: Record<string, unknown> = {}) {
-  window.history.replaceState({}, "", "/onboarding/computer");
+async function renderOnboarding(
+  props: Record<string, unknown> = {},
+  path = "/onboarding/computer",
+) {
+  window.history.replaceState({}, "", path);
   return renderManager({ ...props, surface: "onboarding" });
 }
 
@@ -148,7 +151,7 @@ async function beginNamedComputer(name: string) {
   const input = await screen.findByRole("textbox", { name: "Computer name" });
   fireEvent.change(input, { target: { value: name } });
   fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Continue setup" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Continue (setup|to pay)/ }));
 }
 
 describe("RuntimeManager", () => {
@@ -185,16 +188,6 @@ describe("RuntimeManager", () => {
       slot: "design-studio",
       title: "Design Studio",
     });
-  });
-
-  it("checks configured server types against the entitlement allowlist case-insensitively", async () => {
-    const { isServerTypeAllowedForEntitlement } = await import(
-      "../../shell/src/components/runtime/RuntimeManager.js"
-    );
-
-    expect(isServerTypeAllowedForEntitlement("cpx22", ["CPX22", "CPX32"])).toBe(true);
-    expect(isServerTypeAllowedForEntitlement("cpx52", ["CPX22", "CPX32"])).toBe(false);
-    expect(isServerTypeAllowedForEntitlement("untrusted", ["untrusted"])).toBe(false);
   });
 
   it("shows the Clerk profile fallback and authoritative computer links", async () => {
@@ -327,48 +320,71 @@ describe("RuntimeManager", () => {
     fireEvent.change(input, { target: { value: "New Design Studio" } });
     expect(screen.getByText("new-design-studio")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    expect(await screen.findByRole("heading", { name: "Configure your next computer" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Pick the cloud computer Matrix boots on" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Change computer" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Change region" })).toBeTruthy();
   });
 
-  it("reuses onboarding strength, region, and install steps for another computer", async () => {
+  it("reuses first-time strength, region, interval, and Checkout for another computer", async () => {
+    const navigate = vi.fn();
     const fetchMock = installFetchRouter({ billing: billingStatus(3) });
-    await renderOnboarding();
+    await renderOnboarding({ onExternalNavigate: navigate });
 
     fireEvent.change(await screen.findByRole("textbox", { name: "Computer name" }), {
       target: { value: "Research Lab" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
-    expect(await screen.findByRole("heading", { name: "Configure your next computer" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Pick the cloud computer Matrix boots on" })).toBeTruthy();
     expect(screen.getByText("Settings")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
+    expect(screen.getByText("New subscription")).toBeTruthy();
+    expect(screen.queryByText("Active")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
-    expect(screen.queryByRole("button", { name: /Max.*CPX52/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /Max.*CPX52/i })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Starter.*CPX22/i }));
     fireEvent.click(screen.getByRole("button", { name: "Change region" }));
     fireEvent.click(screen.getByRole("button", { name: /US West.*hil/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Continue setup" }));
-
-    expect(await screen.findByRole("heading", { name: "Preinstall coding agents?" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
+    fireEvent.click(screen.getByRole("button", { name: "Annual" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/auth/provision-runtime",
+        "/billing/checkout",
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({
-            runtime: "research-lab",
-            developerTools: ["codex", "claude-code", "opencode", "pi"],
-            serverType: "cpx22",
-            location: "hil",
+            planSlug: "matrix_starter",
+            interval: "annual",
+            regionSlug: "region_hil",
+            runtimeSlot: "research-lab",
+            returnPath: "/?billing=setup&handoff=add-computer",
           }),
         }),
       );
+      expect(navigate).toHaveBeenCalledWith("https://checkout.stripe.test/session");
     });
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/auth/provision-runtime", expect.anything());
+  });
+
+  it("does not open Checkout when the additional-computer setup cannot be saved", async () => {
+    const navigate = vi.fn();
+    const fetchMock = installFetchRouter();
+    await renderOnboarding({ onExternalNavigate: navigate });
+    fireEvent.change(await screen.findByRole("textbox", { name: "Computer name" }), {
+      target: { value: "Research Lab" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("storage unavailable", "SecurityError");
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Continue to pay" }));
+
+    expect(await screen.findByRole("heading", { name: "Computer setup paused" })).toBeTruthy();
+    expect(screen.getByText(/could not safely save/i)).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalledWith("/billing/checkout", expect.anything());
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it("waits for inventory before showing the naming step so duplicate validation cannot be bypassed", async () => {
@@ -379,7 +395,7 @@ describe("RuntimeManager", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url === "/api/auth/computers") return inventoryResponse;
-      if (url === "/billing/status") return json(billingStatus(3));
+      if (url.startsWith("/billing/status")) return json(billingStatus(3));
       throw new Error(`Unhandled test request: ${url}`);
     });
     await renderOnboarding();
@@ -392,7 +408,7 @@ describe("RuntimeManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     expect(screen.getByRole("alert").textContent).toMatch(/already uses/i);
-    expect(screen.queryByRole("heading", { name: "Configure your next computer" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Pick the cloud computer Matrix boots on" })).toBeNull();
   });
 
   it("recovers when the dedicated onboarding surface cannot load inventory", async () => {
@@ -404,7 +420,7 @@ describe("RuntimeManager", () => {
         if (inventoryReads === 1) throw new Error("inventory unavailable");
         return json(inventory);
       }
-      if (url === "/billing/status") return json(billingStatus(3));
+      if (url.startsWith("/billing/status")) return json(billingStatus(3));
       throw new Error(`Unhandled test request: ${url}`);
     });
     await renderOnboarding();
@@ -419,44 +435,16 @@ describe("RuntimeManager", () => {
     expect(inventoryReads).toBe(2);
   });
 
-  it("surfaces and recovers a billing-wait inventory refresh failure immediately", async () => {
-    window.sessionStorage.setItem("matrix:add-computer-draft:v1", JSON.stringify({
-      name: "Research Lab",
-      slot: "research-lab",
-      developerTools: ["codex"],
-      serverType: "cpx32",
-      location: "fsn1",
-      baselineMaxRuntimeSlots: 2,
-      createdAt: Date.now(),
-    }));
-    let inventoryReads = 0;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url === "/api/auth/computers") {
-        inventoryReads += 1;
-        if (inventoryReads === 1) throw new Error("inventory database path leaked");
-        return json(inventory);
-      }
-      if (url === "/billing/status") return json(billingStatus(2));
-      throw new Error(`Unhandled test request: ${url}`);
-    });
-    await renderOnboarding({ billingPollIntervalMs: 60_000 });
-
-    expect(await screen.findByRole("heading", { name: "Computer setup paused" })).toBeTruthy();
-    const alert = screen.getByRole("alert");
-    expect(alert.textContent).toMatch(/capacity could not be refreshed/i);
-    expect(alert.textContent).not.toMatch(/database path leaked/i);
-
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-
-    expect(await screen.findByRole("heading", { name: "Confirming computer capacity" })).toBeTruthy();
-    expect(inventoryReads).toBe(2);
-  });
-
-  it("skips payment when subscription capacity is available and starts provisioning", async () => {
-    const fetchMock = installFetchRouter({ billing: billingStatus(3) });
+  it("lets an internal override bypass Checkout and starts provisioning", async () => {
+    const fetchMock = installFetchRouter({ billing: billingStatus(3, "override") });
     await renderOnboarding();
-    await beginNamedComputer("Research Lab");
+    fireEvent.change(await screen.findByRole("textbox", { name: "Computer name" }), {
+      target: { value: "Research Lab" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Change computer" }));
+    expect(screen.queryByRole("button", { name: /Max.*CPX52/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Continue setup" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
 
@@ -476,77 +464,40 @@ describe("RuntimeManager", () => {
     });
     expect(await screen.findByRole("heading", { name: "Building Research Lab" })).toBeTruthy();
     expect(await screen.findByText(/Booting/i)).toBeTruthy();
-    expect(fetchMock).not.toHaveBeenCalledWith("/billing/portal", expect.anything());
+    expect(fetchMock).not.toHaveBeenCalledWith("/billing/checkout", expect.anything());
   });
 
-  it("hands full Stripe capacity to billing immediately after computer configuration", async () => {
-    const navigate = vi.fn();
-    const fetchMock = installFetchRouter({ billing: billingStatus(2) });
-    await renderOnboarding({ onExternalNavigate: navigate });
-    fireEvent.change(await screen.findByRole("textbox", { name: "Computer name" }), {
-      target: { value: "Research Lab" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Continue setup" }));
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/billing/portal",
-        expect.objectContaining({
-          method: "POST",
-          body: JSON.stringify({ intent: "add_computer", returnPath: "/?billing=setup&handoff=add-computer" }),
-        }),
-      );
-      expect(navigate).toHaveBeenCalledWith("https://billing.stripe.test/session");
-    });
-    expect(JSON.parse(window.sessionStorage.getItem("matrix:add-computer-draft:v1") ?? "null")).toMatchObject({
-      slot: "research-lab",
-      baselineMaxRuntimeSlots: 2,
-    });
-    expect(fetchMock).not.toHaveBeenCalledWith("/api/auth/provision-runtime", expect.anything());
-    expect(screen.queryByRole("heading", { name: "Preinstall coding agents?" })).toBeNull();
-  });
-
-  it("retries the billing handoff without bypassing capacity after a portal failure", async () => {
+  it("retries Stripe Checkout in place without provisioning after a failure", async () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
-    let portalAttempts = 0;
+    let checkoutAttempts = 0;
     const fetchMock = installFetchRouter({
       billing: billingStatus(2),
-      portal: () => {
-        portalAttempts += 1;
-        return portalAttempts === 1
+      checkout: () => {
+        checkoutAttempts += 1;
+        return checkoutAttempts === 1
           ? json({ error: "raw Stripe failure" }, 503)
-          : json({ url: "https://billing.stripe.test/retry" });
+          : json({ url: "https://checkout.stripe.test/retry" });
       },
     });
     const navigate = vi.fn();
     await renderOnboarding({ onExternalNavigate: navigate });
     await beginNamedComputer("Research Lab");
 
-    expect((await screen.findByRole("alert")).textContent).toMatch(/Billing is unavailable/i);
+    expect((await screen.findByText(/Checkout is unavailable/i)).textContent).not.toMatch(/raw Stripe/i);
     now.mockReturnValue(121_001);
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith("https://billing.stripe.test/retry"));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("https://checkout.stripe.test/retry"));
     expect(JSON.parse(window.sessionStorage.getItem("matrix:add-computer-draft:v1") ?? "null")).toMatchObject({
       createdAt: 121_001,
     });
-    expect(fetchMock.mock.calls.filter(([url]) => url === "/billing/portal")).toHaveLength(2);
-    expect(fetchMock).not.toHaveBeenCalledWith("/api/auth/provision-runtime", expect.anything());
-  });
-
-  it("explains managed-account capacity without exposing a Stripe action", async () => {
-    const fetchMock = installFetchRouter({ billing: billingStatus(2, "override") });
-    await renderOnboarding();
-    await beginNamedComputer("Research Lab");
-
-    expect((await screen.findByRole("alert")).textContent).toMatch(/managed internally/i);
-    expect(fetchMock).not.toHaveBeenCalledWith("/billing/portal", expect.anything());
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/billing/checkout")).toHaveLength(2);
     expect(fetchMock).not.toHaveBeenCalledWith("/api/auth/provision-runtime", expect.anything());
   });
 
   it("shows retryable slot progress failures without leaking raw server errors", async () => {
     const fetchMock = installFetchRouter({
+      billing: billingStatus(3, "override"),
       provision: json({ error: "Hetzner raw database /var/lib secret", code: "provider_unavailable" }, 503),
     });
     await renderOnboarding();
@@ -565,6 +516,7 @@ describe("RuntimeManager", () => {
 
   it("retries a failed slot build through the journey contract", async () => {
     const fetchMock = installFetchRouter({
+      billing: billingStatus(3, "override"),
       journey: {
         phase: "provisioning_failed",
         detail: "Hetzner database /var/lib provider failure",
@@ -593,6 +545,7 @@ describe("RuntimeManager", () => {
   it("lets users return to their computers after a non-retryable slot build failure", async () => {
     const navigate = vi.fn();
     installFetchRouter({
+      billing: billingStatus(3, "override"),
       journey: {
         phase: "provisioning_failed",
         detail: "raw provider failure",
@@ -617,7 +570,7 @@ describe("RuntimeManager", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url === "/api/auth/computers") return json(inventory);
-      if (url === "/billing/status") return json(billingStatus(3));
+      if (url.startsWith("/billing/status")) return json(billingStatus(3, "override"));
       if (url === "/api/auth/provision-runtime") return json({ status: "provisioning" }, 202);
       if (url.startsWith("/api/journey?runtimeSlot=")) {
         journeyReads += 1;
@@ -658,7 +611,7 @@ describe("RuntimeManager", () => {
         inventoryReads += 1;
         return json(inventoryReads > 1 ? { ...inventory, items: [...inventory.items, completedComputer] } : inventory);
       }
-      if (url === "/billing/status") return json(billingStatus(4));
+      if (url.startsWith("/billing/status")) return json(billingStatus(4, "override"));
       if (url === "/api/auth/provision-runtime") return json({ status: "provisioning" }, 202);
       if (url.startsWith("/api/journey?runtimeSlot=")) {
         return json({ phase: "ready", detail: "Ready", nextAction: { kind: "open_shell" } });
@@ -681,22 +634,25 @@ describe("RuntimeManager", () => {
       developerTools: ["codex"],
       serverType: "cpx32",
       location: "fsn1",
-      baselineMaxRuntimeSlots: 2,
       createdAt: 1_000,
     }));
     let billingReads = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url === "/api/auth/computers") return json(inventory);
-      if (url === "/billing/status") {
+      if (url === "/billing/status") return json(billingStatus(2));
+      if (url.startsWith("/billing/status?runtimeSlot=")) {
         billingReads += 1;
-        return json(billingStatus(2));
+        return json({ entitlement: null, access: { runtimeProxyAllowed: false, reason: "missing" } });
       }
       throw new Error(`Unhandled test request: ${url}`);
     });
 
-    await renderOnboarding({ billingPollIntervalMs: 10 });
-    expect(await screen.findByRole("heading", { name: "Confirming computer capacity" })).toBeTruthy();
+    await renderOnboarding(
+      { billingPollIntervalMs: 10 },
+      "/?billing=success&handoff=add-computer",
+    );
+    expect(await screen.findByRole("heading", { name: "Activating your computer subscription" })).toBeTruthy();
     await waitFor(() => expect(billingReads).toBeGreaterThanOrEqual(2));
     now.mockReturnValue(121_001);
 
@@ -704,22 +660,25 @@ describe("RuntimeManager", () => {
     expect(alert.textContent).toMatch(/taking longer than expected/i);
   });
 
-  it("resumes after a signed billing projection increases capacity", async () => {
+  it("resumes only after the signed billing projection activates the exact runtime slot", async () => {
     window.sessionStorage.setItem("matrix:add-computer-draft:v1", JSON.stringify({
       name: "Research Lab",
       slot: "research-lab",
       developerTools: ["codex"],
       serverType: "cpx32",
       location: "fsn1",
-      baselineMaxRuntimeSlots: 2,
+      createdAt: Date.now(),
     }));
     let billingReads = 0;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url === "/api/auth/computers") return json(inventory);
-      if (url === "/billing/status") {
+      if (url === "/billing/status") return json(billingStatus(2));
+      if (url.startsWith("/billing/status?runtimeSlot=")) {
         billingReads += 1;
-        return json(billingStatus(billingReads > 1 ? 3 : 2));
+        return billingReads > 1
+          ? json(billingStatus(1))
+          : json({ entitlement: null, access: { runtimeProxyAllowed: false, reason: "missing" } });
       }
       if (url === "/api/auth/provision-runtime") return json({ status: "provisioning" }, 202);
       if (url.startsWith("/api/journey?runtimeSlot=")) {
@@ -728,8 +687,11 @@ describe("RuntimeManager", () => {
       throw new Error(`Unhandled test request: ${url}`);
     });
 
-    await renderOnboarding({ billingPollIntervalMs: 10 });
-    expect(await screen.findByRole("heading", { name: "Confirming computer capacity" })).toBeTruthy();
+    await renderOnboarding(
+      { billingPollIntervalMs: 10 },
+      "/?billing=success&handoff=add-computer",
+    );
+    expect(await screen.findByRole("heading", { name: "Activating your computer subscription" })).toBeTruthy();
     expect(await screen.findByRole("heading", { name: "Preinstall coding agents?" })).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalledWith("/api/auth/provision-runtime", expect.anything());
 
@@ -745,5 +707,23 @@ describe("RuntimeManager", () => {
         }),
       }),
     ));
+  });
+
+  it("returns a canceled checkout to the saved plan selection without polling activation", async () => {
+    window.sessionStorage.setItem("matrix:add-computer-draft:v1", JSON.stringify({
+      name: "Research Lab",
+      slot: "research-lab",
+      developerTools: [],
+      serverType: "cpx32",
+      location: "fsn1",
+      createdAt: Date.now(),
+    }));
+    const fetchMock = installFetchRouter();
+
+    await renderOnboarding({}, "/?billing=canceled&handoff=add-computer");
+
+    expect(await screen.findByRole("heading", { name: "Pick the cloud computer Matrix boots on" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Activating your computer subscription" })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("runtimeSlot=research-lab"));
   });
 });

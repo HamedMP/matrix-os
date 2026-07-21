@@ -291,7 +291,7 @@ describe('platform/customer-vps', () => {
     expect(hetzner.createServer).not.toHaveBeenCalled();
   });
 
-  it('blocks extra machines beyond the entitlement slot count without deleting existing machines', async () => {
+  it('blocks a new runtime slot without its own subscription and preserves the existing machine', async () => {
     let nextId = 0;
     const ids = [
       '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
@@ -299,7 +299,8 @@ describe('platform/customer-vps', () => {
     ];
     const { service, hetzner } = createService({
       machineIdFactory: () => ids[nextId++] ?? ids[1]!,
-      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({ maxRuntimeSlots: 1 })),
+      resolveBillingEntitlement: vi.fn(async (_billingDb, _clerkUserId, runtimeSlot) =>
+        runtimeSlot === 'primary' ? activeEntitlement({ maxRuntimeSlots: 1 }) : null),
     });
 
     const primary = await service.provision({ clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary' });
@@ -313,6 +314,26 @@ describe('platform/customer-vps', () => {
       handle: 'alice',
       deletedAt: null,
     });
+  });
+
+  it('rechecks the exact slot subscription inside the machine-claim transaction', async () => {
+    const resolveBillingEntitlement = vi.fn()
+      .mockResolvedValueOnce(activeEntitlement({ maxRuntimeSlots: 1 }))
+      .mockResolvedValueOnce(null);
+    const { service, hetzner } = createService({ resolveBillingEntitlement });
+
+    await expect(service.provision({
+      clerkUserId: 'user_123',
+      handle: 'alice-studio',
+      runtimeSlot: 'studio',
+    })).rejects.toMatchObject({
+      status: 402,
+      publicMessage: 'Billing upgrade required',
+    });
+
+    expect(resolveBillingEntitlement).toHaveBeenCalledTimes(2);
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+    await expect(getActiveUserMachineByClerkId(db, 'user_123', 'studio')).resolves.toBeUndefined();
   });
 
   it('provisions operator previews outside customer billing slots while enforcing the preview cap', async () => {
@@ -358,7 +379,7 @@ describe('platform/customer-vps', () => {
       name: 'matrix-pr-897',
       serverType: 'cpx22',
     });
-    expect(resolveBillingEntitlement).toHaveBeenCalledOnce();
+    expect(resolveBillingEntitlement).toHaveBeenCalledTimes(2);
     await expect(getUserMachine(db, preview.machineId)).resolves.toMatchObject({
       provisioningClass: 'preview',
       accessClerkUserIds: ['user_789'],
@@ -386,7 +407,7 @@ describe('platform/customer-vps', () => {
     expect(hetzner.createServer).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps customer-provisioned preview-shaped machines in billing slot counts', async () => {
+  it('requires an exact subscription even for customer-provisioned preview-shaped slots', async () => {
     let nextId = 0;
     const ids = [
       '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
@@ -394,7 +415,8 @@ describe('platform/customer-vps', () => {
     ];
     const { service, hetzner } = createService({
       machineIdFactory: () => ids[nextId++] ?? ids[1]!,
-      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({ maxRuntimeSlots: 1 })),
+      resolveBillingEntitlement: vi.fn(async (_billingDb, _clerkUserId, runtimeSlot) =>
+        runtimeSlot === 'pr-897' ? activeEntitlement({ maxRuntimeSlots: 1 }) : null),
     });
 
     await service.provision({

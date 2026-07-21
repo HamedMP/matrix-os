@@ -138,6 +138,8 @@ interface CreateSessionRoutingMiddlewareOpts {
     db: PlatformDB,
     clerkUserId: string,
     env: NodeJS.ProcessEnv,
+    runtimeSlot?: string,
+    provisioningClass?: string,
   ) => Promise<EntitlementAccessDecision>;
   getGatewayUrlForHandle: (handle: string) => string;
   logRouteError: (context: string, err: unknown) => void;
@@ -639,7 +641,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         return c.text('Matrix OS computer unavailable', 404);
       }
-      const entitlement = await getRuntimeEntitlementDecisionForUser(db, machine.clerkUserId, appEnv);
+      const entitlement = await getRuntimeEntitlementDecisionForUser(
+        db,
+        machine.clerkUserId,
+        appEnv,
+        machine.runtimeSlot,
+        machine.provisioningClass,
+      );
       if (
         !entitlement.runtimeProxyAllowed &&
         !shouldProxyShellForBillingGate({
@@ -781,9 +789,21 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       runtimeSlot = runningMachine.runtimeSlot;
     }
     const entitlement = runningMachine
-      ? await getRuntimeEntitlementDecisionForUser(db, runningMachine.clerkUserId, appEnv)
+      ? await getRuntimeEntitlementDecisionForUser(
+        db,
+        runningMachine.clerkUserId,
+        appEnv,
+        runningMachine.runtimeSlot,
+        runningMachine.provisioningClass,
+      )
       : requestedActiveMachine
-        ? await getRuntimeEntitlementDecisionForUser(db, requestedActiveMachine.clerkUserId, appEnv)
+        ? await getRuntimeEntitlementDecisionForUser(
+          db,
+          requestedActiveMachine.clerkUserId,
+          appEnv,
+          requestedActiveMachine.runtimeSlot,
+          requestedActiveMachine.provisioningClass,
+        )
         : getRuntimeEntitlementDecision(appEnv);
     if (runningMachine) {
       const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);

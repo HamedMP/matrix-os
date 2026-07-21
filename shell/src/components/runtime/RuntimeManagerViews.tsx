@@ -12,7 +12,6 @@ import {
   PlusIcon,
   RefreshCwIcon,
   ServerIcon,
-  ShieldCheckIcon,
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -251,7 +250,7 @@ export function BillingWait({ title }: { title: string }) {
     <StepFrame>
       <BrandCard className="p-8 text-center sm:p-12" aria-live="polite">
         <Loader2Icon className="mx-auto size-9 animate-spin text-ember" aria-hidden="true" />
-        <h1 className="mt-5 text-2xl font-semibold">Confirming computer capacity</h1>
+        <h1 className="mt-5 text-2xl font-semibold">Activating your computer subscription</h1>
         <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-forest/65">
           We’re waiting for Stripe’s signed update before building {title}. The redirect alone never starts provisioning.
         </p>
@@ -310,15 +309,15 @@ export function ReadyStep({ title, computer, onReturn }: { title: string; comput
   );
 }
 
-export function ErrorStep({ message, managed, onRetry, onBack }: { message: string; managed: boolean; onRetry: () => void; onBack: () => void }) {
+export function ErrorStep({ message, onRetry, onBack }: { message: string; onRetry: () => void; onBack: () => void }) {
   return (
     <StepFrame>
       <BrandCard className="p-8 text-center sm:p-12">
-        {managed ? <ShieldCheckIcon className="mx-auto size-9 text-forest" aria-hidden="true" /> : <CircleAlertIcon className="mx-auto size-9 text-ember" aria-hidden="true" />}
-        <h1 className="mt-5 text-2xl font-semibold">{managed ? "Managed computer capacity" : "Computer setup paused"}</h1>
+        <CircleAlertIcon className="mx-auto size-9 text-ember" aria-hidden="true" />
+        <h1 className="mt-5 text-2xl font-semibold">Computer setup paused</h1>
         <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-forest/65" role="alert">{message}</p>
         <div className="mt-7 flex flex-col justify-center gap-3 sm:flex-row">
-          {!managed ? <button type="button" onClick={onRetry} className="primary-action">Try again</button> : null}
+          <button type="button" onClick={onRetry} className="primary-action">Try again</button>
           <button type="button" onClick={onBack} className="secondary-action">Back to computers</button>
         </div>
       </BrandCard>

@@ -124,9 +124,10 @@ interface SettingsProps {
   billingActiveOverride?: boolean | null;
   closeDisabled?: boolean;
   billingMode?: "settings" | "provisioning" | "device-setup" | "add-computer";
-  onBillingCheckoutIntent?: () => void;
+  onBillingCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
+  onBillingCheckoutNavigate?: (url: string) => void;
   billingCheckoutReturnPath?: string;
-  onComputerSetupContinue?: (selection: ComputerSetupSelection) => void;
+  billingCheckoutRuntimeSlot?: string;
 }
 
 export function Settings({
@@ -161,8 +162,9 @@ function SettingsFrame({
   closeDisabled = false,
   billingMode = "settings",
   onBillingCheckoutIntent,
+  onBillingCheckoutNavigate,
   billingCheckoutReturnPath,
-  onComputerSetupContinue,
+  billingCheckoutRuntimeSlot,
   billingActive,
   showBillingSection,
 }: SettingsFrameProps) {
@@ -334,8 +336,9 @@ function SettingsFrame({
                 <BillingSection
                   mode={billingMode}
                   onCheckoutIntent={onBillingCheckoutIntent}
+                  onCheckoutNavigate={onBillingCheckoutNavigate}
                   checkoutReturnPath={billingCheckoutReturnPath}
-                  onComputerSetupContinue={onComputerSetupContinue}
+                  checkoutRuntimeSlot={billingCheckoutRuntimeSlot}
                 />
               )}
               {activeSection === "plugins" && <PluginsSection />}

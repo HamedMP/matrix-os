@@ -105,6 +105,7 @@ export interface JourneyRoutesOptions {
    */
   resolveHandleOwner?: (handle: string) => Promise<string | null>;
   appOrigin: string;
+  env?: NodeJS.ProcessEnv;
   maxProvisionAttempts: number;
   settlingWindowMs?: number;
   now?: () => Date;
@@ -130,6 +131,7 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
       settlingWindowMs: options.settlingWindowMs,
       maxProvisionAttempts: options.maxProvisionAttempts,
       appOrigin: options.appOrigin,
+      env: options.env,
       runtimeSlot,
       readiness,
     });

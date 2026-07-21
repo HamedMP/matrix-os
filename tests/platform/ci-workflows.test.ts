@@ -10,8 +10,6 @@ describe('CI workflows', () => {
     ['STRIPE_PRICE_MATRIX_BUILDER_ANNUAL', 'stripe-price-matrix-builder-annual'],
     ['STRIPE_PRICE_MATRIX_MAX_MONTHLY', 'stripe-price-matrix-max-monthly'],
     ['STRIPE_PRICE_MATRIX_MAX_ANNUAL', 'stripe-price-matrix-max-annual'],
-    ['STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY', 'stripe-price-extra-runtime-monthly'],
-    ['STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL', 'stripe-price-extra-runtime-annual'],
   ] as const;
 
   it('exposes a stable aggregate CI result job for branch protection', () => {
@@ -199,16 +197,14 @@ describe('CI workflows', () => {
     }
   });
 
-  it('requires focused Stripe portal configurations before platform deployment', () => {
+  it('does not require add-on prices or focused portal configurations for platform deployment', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 
     expect(workflow).toContain('required_billing_secrets=(');
-    expect(workflow).toContain('STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_MONTHLY=stripe-portal-configuration-extra-runtime-monthly');
-    expect(workflow).toContain('STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_ANNUAL=stripe-portal-configuration-extra-runtime-annual');
-    expect(workflow).toContain('PORTAL_CONFIGURATION_SECRET_BINDINGS=');
-    expect(workflow).not.toContain('Add-computer billing will remain unavailable');
-    expect(workflow).toContain(',${PORTAL_CONFIGURATION_SECRET_BINDINGS}"');
+    expect(workflow).not.toContain('STRIPE_PRICE_EXTRA_RUNTIME');
+    expect(workflow).not.toContain('STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME');
+    expect(workflow).not.toContain('PORTAL_CONFIGURATION_SECRET_BINDINGS');
   });
 
   it('wires Pipedream integration secrets into platform Cloud Run', () => {

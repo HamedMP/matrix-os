@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import {
   appendJourneyEvent,
   getActiveUserMachineByClerkId,
-  getBillingEntitlementState,
   getSettlingCheckoutAttempt,
   getLatestJourneyEvent,
   getOnboardingFirstRun,
@@ -13,13 +12,8 @@ import {
   type PlatformDB,
   type UserMachineRecord,
 } from './db.js';
-import {
-  computeEffectiveEntitlement,
-  getRuntimeAccessDecision,
-  parseBillingEntitlementRecord,
-  parseBillingOverrideRecord,
-  type BillingEntitlement,
-} from './billing.js';
+import { getRuntimeAccessDecision, type BillingEntitlement } from './billing.js';
+import { resolveEffectiveBillingEntitlementForSlot } from './billing-entitlement-resolver.js';
 
 export const DEFAULT_SETTLING_WINDOW_MS = 10 * 60 * 1000;
 
@@ -198,19 +192,11 @@ export interface LoadJourneyDeps {
   settlingWindowMs?: number;
   maxProvisionAttempts: number;
   appOrigin: string;
+  env?: NodeJS.ProcessEnv;
   runtimeSlot?: string;
   readiness?: JourneyReadinessAnnotation;
   /** Records a telemetry event when the phase changes. Defaults to true. */
   recordTransition?: boolean;
-}
-
-async function resolveEffectiveEntitlement(db: PlatformDB, clerkUserId: string, now: Date): Promise<BillingEntitlement | null> {
-  const state = await getBillingEntitlementState(db, clerkUserId, now.toISOString());
-  return computeEffectiveEntitlement({
-    stripeEntitlement: parseBillingEntitlementRecord(state.entitlement),
-    override: parseBillingOverrideRecord(state.override),
-    now,
-  });
 }
 
 /**
@@ -221,8 +207,8 @@ async function resolveEffectiveEntitlement(db: PlatformDB, clerkUserId: string, 
 export async function loadJourney(clerkUserId: string, deps: LoadJourneyDeps): Promise<JourneyState> {
   const now = (deps.now ?? (() => new Date()))();
   const [entitlement, checkoutAttempt, liveMachine, firstRun] = await Promise.all([
-    resolveEffectiveEntitlement(deps.db, clerkUserId, now),
-    getSettlingCheckoutAttempt(deps.db, clerkUserId),
+    resolveEffectiveBillingEntitlementForSlot(deps.db, clerkUserId, now, deps.runtimeSlot, deps.env),
+    getSettlingCheckoutAttempt(deps.db, clerkUserId, deps.runtimeSlot),
     getActiveUserMachineByClerkId(deps.db, clerkUserId, deps.runtimeSlot),
     getOnboardingFirstRun(deps.db, clerkUserId),
   ]);

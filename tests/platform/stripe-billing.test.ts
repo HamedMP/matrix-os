@@ -7,7 +7,7 @@ import {
 
 describe('platform/stripe-billing', () => {
   it('creates subscription checkout sessions with tax and promotion-code support', async () => {
-    const sessionsCreate = vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.test/session' });
+    const sessionsCreate = vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.test/session', id: 'cs_123' });
     const stripe = fakeStripe({
       checkout: { sessions: { create: sessionsCreate } },
     });
@@ -16,15 +16,17 @@ describe('platform/stripe-billing', () => {
     expect(client.apiTimeoutMs).toBe(MATRIX_STRIPE_API_TIMEOUT_MS);
     await expect(client.createCheckoutSession({
       clerkUserId: 'user_123',
+      idempotencyKey: 'attempt_123',
       customerId: 'cus_123',
       priceId: 'price_builder_monthly',
       mode: 'subscription',
       automaticTax: true,
       allowPromotionCodes: true,
       regionSlug: 'region_nbg1',
+      runtimeSlot: 'studio',
       successUrl: 'https://app.matrix-os.com/?checkout=success',
       cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
-    })).resolves.toEqual({ url: 'https://checkout.stripe.test/session' });
+    })).resolves.toEqual({ url: 'https://checkout.stripe.test/session', id: 'cs_123' });
 
     expect(sessionsCreate).toHaveBeenCalledWith({
       mode: 'subscription',
@@ -38,11 +40,13 @@ describe('platform/stripe-billing', () => {
       metadata: {
         clerk_user_id: 'user_123',
         matrix_region_slug: 'region_nbg1',
+        matrix_runtime_slot: 'studio',
       },
       subscription_data: {
         metadata: {
           clerk_user_id: 'user_123',
           matrix_region_slug: 'region_nbg1',
+          matrix_runtime_slot: 'studio',
         },
       },
       tax_id_collection: { enabled: true },
@@ -50,12 +54,12 @@ describe('platform/stripe-billing', () => {
         address: 'auto',
         name: 'auto',
       },
-    });
+    }, { idempotencyKey: 'attempt_123' });
     expect(sessionsCreate.mock.calls[0]?.[0]).not.toHaveProperty('payment_method_types');
   });
 
   it('creates checkout sessions without customer-write permission when no customer exists yet', async () => {
-    const sessionsCreate = vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.test/session' });
+    const sessionsCreate = vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.test/session', id: 'cs_456' });
     const stripe = fakeStripe({
       checkout: { sessions: { create: sessionsCreate } },
     });
@@ -63,20 +67,22 @@ describe('platform/stripe-billing', () => {
 
     await expect(client.createCheckoutSession({
       clerkUserId: 'user_123',
+      idempotencyKey: 'attempt_456',
       priceId: 'price_builder_monthly',
       mode: 'subscription',
       automaticTax: true,
       allowPromotionCodes: true,
       regionSlug: 'region_nbg1',
+      runtimeSlot: 'primary',
       successUrl: 'https://app.matrix-os.com/?checkout=success',
       cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
-    })).resolves.toEqual({ url: 'https://checkout.stripe.test/session' });
+    })).resolves.toEqual({ url: 'https://checkout.stripe.test/session', id: 'cs_456' });
     expect(sessionsCreate.mock.calls[0]?.[0]).not.toHaveProperty('customer');
     expect(sessionsCreate.mock.calls[0]?.[0]).not.toHaveProperty('customer_update');
     expect(sessionsCreate.mock.calls[0]?.[0]).toMatchObject({
       client_reference_id: 'user_123',
-      metadata: { clerk_user_id: 'user_123' },
-      subscription_data: { metadata: { clerk_user_id: 'user_123' } },
+      metadata: { clerk_user_id: 'user_123', matrix_runtime_slot: 'primary' },
+      subscription_data: { metadata: { clerk_user_id: 'user_123', matrix_runtime_slot: 'primary' } },
     });
   });
 
@@ -94,41 +100,6 @@ describe('platform/stripe-billing', () => {
     expect(portalCreate).toHaveBeenCalledWith({
       customer: 'cus_123',
       return_url: 'https://app.matrix-os.com/?billing=portal',
-    });
-  });
-
-  it('creates a focused subscription-update flow with a completion redirect', async () => {
-    const portalCreate = vi.fn().mockResolvedValue({ url: 'https://billing.stripe.test/session' });
-    const client = createStripeBillingClient({
-      secretKey: 'sk_test_123',
-      stripe: fakeStripe({ billingPortal: { sessions: { create: portalCreate } } }),
-    });
-
-    await client.createPortalSession({
-      customerId: 'cus_123',
-      returnUrl: 'https://app.matrix-os.com/runtime?new=1',
-      flow: {
-        type: 'subscription_update',
-        subscriptionId: 'sub_123',
-        priceId: 'price_extra_runtime_monthly',
-        interval: 'monthly',
-        configurationId: 'bpc_extra_monthly',
-        afterCompletionReturnUrl: 'https://app.matrix-os.com/runtime?new=1',
-      },
-    });
-
-    expect(portalCreate).toHaveBeenCalledWith({
-      customer: 'cus_123',
-      return_url: 'https://app.matrix-os.com/runtime?new=1',
-      configuration: 'bpc_extra_monthly',
-      flow_data: {
-        type: 'subscription_update',
-        subscription_update: { subscription: 'sub_123' },
-        after_completion: {
-          type: 'redirect',
-          redirect: { return_url: 'https://app.matrix-os.com/runtime?new=1' },
-        },
-      },
     });
   });
 
