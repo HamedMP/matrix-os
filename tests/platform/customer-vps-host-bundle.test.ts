@@ -165,7 +165,7 @@ describe('customer VPS host bundle', () => {
     }
   });
 
-  it('packages an asynchronous developer tools first-boot service', () => {
+  it('packages a blocking developer tools first-boot readiness service', () => {
     const root = process.cwd();
     const unit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-developer-tools.service'), 'utf8');
     const gatewayUnit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-gateway.service'), 'utf8');
@@ -176,9 +176,15 @@ describe('customer VPS host bundle', () => {
     expect(unit).toContain('Description=Matrix OS optional developer tools');
     expect(gatewayUnit).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1');
     expect(unit).toContain('After=network-online.target matrix-restore.service');
+    expect(unit).toContain('Before=matrix-gateway.service');
     expect(unit).toContain('EnvironmentFile=/opt/matrix/env/host.env');
     expect(unit).toContain('ExecStart=/opt/matrix/bin/matrix-install-developer-tools --tools-only');
-    expect(unit).toContain('Restart=on-failure');
+    expect(unit).toContain('RemainAfterExit=yes');
+    expect(unit).toContain('TimeoutStartSec=7200');
+    expect(unit).not.toContain('Restart=on-failure');
+    expect(unit).not.toContain('RestartSec=120');
+    expect(gatewayUnit).toContain('After=matrix-restore.service docker.service matrix-developer-tools.service');
+    expect(gatewayUnit).toContain('Requires=matrix-restore.service docker.service matrix-developer-tools.service');
     expect(installer).toContain('is_tool_installed()');
     expect(installer).toContain('grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]');
     expect(installer).toContain('optional developer tool ${tool} already installed; skipping');

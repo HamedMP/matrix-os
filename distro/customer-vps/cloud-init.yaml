@@ -78,8 +78,8 @@ write_files:
     content: |
       [Unit]
       Description=Matrix OS customer gateway
-      After=matrix-restore.service docker.service
-      Requires=matrix-restore.service docker.service
+      After=matrix-restore.service docker.service matrix-developer-tools.service
+      Requires=matrix-restore.service docker.service matrix-developer-tools.service
       ConditionPathExists=/opt/matrix/restore-complete
       ConditionPathExists=/opt/matrix/bin/matrix-gateway
 
@@ -628,13 +628,14 @@ runcmd:
     loginctl enable-linger matrix
     systemctl start "user@$(id -u matrix).service"
     systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
-    systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service
+    systemctl start matrix-restore.service
+    systemctl start matrix-developer-tools.service
+    systemctl start matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service
     systemctl start --no-block matrix-code-server.service || echo "matrix-host: code-server runtime install will retry via systemd" >&2
     systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2
     systemctl start --no-block matrix-hermes.service || echo "matrix-host: optional Hermes install will retry via systemd" >&2
     systemctl start --no-block matrix-hermes-dashboard.service || echo "matrix-host: optional Hermes dashboard will retry via systemd" >&2
     systemctl start --no-block matrix-linux-tools.service || echo "matrix-host: optional Linux tools install will retry via systemd" >&2
-    systemctl start --no-block matrix-developer-tools.service || echo "matrix-host: optional developer tools install will retry via systemd" >&2
     if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then
       systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service
       systemctl start --no-block matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service || echo "matrix-host: optional messaging services will retry via systemd" >&2

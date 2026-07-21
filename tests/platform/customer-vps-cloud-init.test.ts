@@ -280,14 +280,20 @@ exit 99
     expect(cloudInit).not.toContain('    home: /home/matrix');
   });
 
-  it('starts Matrix services before optional Hermes install work', () => {
+  it('gates gateway registration on selected developer tool installs before optional Hermes work', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const gatewayBlock = cloudInit.slice(
+      cloudInit.indexOf('path: /etc/systemd/system/matrix-gateway.service'),
+      cloudInit.indexOf('path: /etc/systemd/system/matrix-shell.service'),
+    );
     const codeServerBlock = cloudInit.slice(
       cloudInit.indexOf('path: /etc/systemd/system/matrix-code-server.service'),
       cloudInit.indexOf('path: /etc/systemd/system/matrix-sync-agent.service'),
     );
 
+    expect(gatewayBlock).toContain('After=matrix-restore.service docker.service matrix-developer-tools.service');
+    expect(gatewayBlock).toContain('Requires=matrix-restore.service docker.service matrix-developer-tools.service');
     expect(cloudInit).toContain('path: /etc/systemd/system/matrix-hermes.service');
     expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-install-hermes');
     expect(cloudInit).toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
@@ -300,17 +306,26 @@ exit 99
     expect(cloudInit).toContain(
       'systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
     );
+    expect(cloudInit).toContain('systemctl start matrix-restore.service');
+    expect(cloudInit).toContain('systemctl start matrix-developer-tools.service');
     expect(cloudInit).toContain(
-      'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service',
+      'systemctl start matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service',
     );
     expect(cloudInit).not.toContain(
       'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service',
     );
+    expect(cloudInit).not.toContain('systemctl start --no-block matrix-developer-tools.service');
     expect(cloudInit).toContain('systemctl start --no-block matrix-code-server.service || echo "matrix-host: code-server runtime install will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-hermes.service || echo "matrix-host: optional Hermes install will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-hermes-dashboard.service || echo "matrix-host: optional Hermes dashboard will retry via systemd" >&2');
-    expect(cloudInit.indexOf('systemctl start matrix-restore.service matrix-gateway.service')).toBeLessThan(
+    expect(cloudInit.indexOf('systemctl start matrix-restore.service')).toBeLessThan(
+      cloudInit.indexOf('systemctl start matrix-developer-tools.service'),
+    );
+    expect(cloudInit.indexOf('systemctl start matrix-developer-tools.service')).toBeLessThan(
+      cloudInit.indexOf('systemctl start matrix-gateway.service matrix-shell.service'),
+    );
+    expect(cloudInit.indexOf('systemctl start matrix-gateway.service matrix-shell.service')).toBeLessThan(
       cloudInit.indexOf('systemctl start --no-block matrix-hermes.service'),
     );
     expect(cloudInit.indexOf('systemctl start --no-block matrix-hermes.service')).toBeLessThan(
@@ -452,7 +467,8 @@ exit 99
     expect(toolPackInstaller).toContain('/opt/matrix/runtime/code-server/bin/code-server "$@"');
     expect(cloudInit).toContain("MATRIX_DEVELOPER_TOOLS='{{developerTools}}'");
     expect(cloudInit).toContain('matrix-developer-tools.service');
-    expect(cloudInit).toContain('systemctl start --no-block matrix-developer-tools.service');
+    expect(cloudInit).toContain('systemctl start matrix-developer-tools.service');
+    expect(cloudInit).not.toContain('systemctl start --no-block matrix-developer-tools.service');
     expect(cloudInit).toContain('path: /etc/profile.d/matrix-runtime.sh');
     expect(cloudInit).toContain('export MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"');
     expect(cloudInit).toContain('export HOME="$MATRIX_HOME"');

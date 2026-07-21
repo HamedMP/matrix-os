@@ -54,7 +54,9 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(cloudInit).toContain("UPGRADE_TOKEN={{platformVerificationToken}}");
     expect(cloudInit).toContain("Environment=SYMPHONY_PORT=4766");
     expect(cloudInit).toContain("systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service");
-    expect(cloudInit).toContain("systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service");
+    expect(cloudInit).toContain("systemctl start matrix-restore.service");
+    expect(cloudInit).toContain("systemctl start matrix-developer-tools.service");
+    expect(cloudInit).toContain("systemctl start matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service");
     expect(cloudInit).toContain("systemctl start --no-block matrix-code-server.service");
     expect(cloudInit).toContain("systemctl start --no-block matrix-code.service");
   });
