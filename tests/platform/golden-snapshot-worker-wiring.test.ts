@@ -49,6 +49,36 @@ describe('golden snapshot worker wiring', () => {
     expect(worker).toContain('quotaPressure,');
   });
 
+  it('claims builds through the transactionally enforced concurrent-infrastructure cap', async () => {
+    const source = await readFile('packages/platform/src/platform-startup.ts', 'utf8');
+    const worker = source.slice(
+      source.indexOf('const runGoldenSnapshotWorker = async () => {'),
+      source.indexOf('const reconciliationIntervalMs = Number'),
+    );
+    expect(worker).toContain('claimGoldenSnapshotBuildBatch(');
+    expect(worker).toContain('goldenSnapshotConfig.maxConcurrentBuilds');
+    expect(worker).not.toContain('listClaimableGoldenSnapshotBuildIds(');
+  });
+
+  it('reconciles durable base-generation revocations in bounded pages even when builds are disabled', async () => {
+    const source = await readFile('packages/platform/src/platform-startup.ts', 'utf8');
+    const worker = source.slice(
+      source.indexOf('const runGoldenSnapshotWorker = async () => {'),
+      source.indexOf('const reconciliationIntervalMs = Number'),
+    );
+    expect(worker).toContain('listRevokedGoldenSnapshotBaseGenerations');
+    expect(worker).toContain('reconcileRevokedGoldenSnapshotBaseGeneration');
+    expect(worker.indexOf('listRevokedGoldenSnapshotBaseGenerations'))
+      .toBeLessThan(worker.indexOf('if (goldenSnapshotConfig.buildsEnabled)'));
+    expect(worker.indexOf('listRevokedGoldenSnapshotBaseGenerations'))
+      .toBeLessThan(worker.indexOf('reconcileMissingGoldenSnapshotBuilds'));
+    expect(worker.indexOf('listRevokedGoldenSnapshotBaseGenerations'))
+      .toBeLessThan(worker.indexOf('claimGoldenSnapshotBuildBatch'));
+    expect(worker.indexOf('listRevokedGoldenSnapshotBaseGenerations'))
+      .toBeLessThan(worker.indexOf('listUnresolvedGoldenSnapshotBuildIds'));
+    expect(worker).toContain('goldenSnapshotConfig.reconciliationBatchSize');
+  });
+
   it('mounts snapshot status routes before the generic bundle catch-all', async () => {
     const source = await readFile('packages/platform/src/main.ts', 'utf8');
     expect(source.indexOf('createGoldenSnapshotRoutes({'))

@@ -38,6 +38,75 @@ const RetirementPolicySchema = z.object({
   rollbackVersionsPerChannel: z.number().int().min(0).max(20).default(2),
   freshnessMaxAgeMs: z.number().int().min(60_000).max(365 * 24 * 60 * 60 * 1000).optional(),
 }).strict();
+const GoldenSnapshotOperationalCursorSchema = z.object({
+  createdAt: IsoDateSchema,
+  snapshotId: UuidSchema,
+}).strict();
+const OperationalStatusPageInputSchema = z.object({
+  limit: z.number().int().min(1).max(100),
+  cursor: GoldenSnapshotOperationalCursorSchema.optional(),
+}).strict();
+const AffectedMachineCursorSchema = z.object({
+  machineId: UuidSchema,
+}).strict();
+const AffectedMachinePageInputSchema = z.object({
+  limit: z.number().int().min(1).max(100),
+  cursor: AffectedMachineCursorSchema.optional(),
+}).strict();
+
+export type GoldenSnapshotOperationalCursor = z.infer<typeof GoldenSnapshotOperationalCursorSchema>;
+export type GoldenSnapshotAffectedMachineCursor = z.infer<typeof AffectedMachineCursorSchema>;
+
+export interface GoldenSnapshotAffectedMachine {
+  machineId: string;
+  runtimeSlot: string;
+  sourceSnapshotId: string;
+  targetBundleVersion: string;
+  status: string;
+  updatedAt: string;
+}
+
+export function encodeGoldenSnapshotOperationalCursor(rawCursor: GoldenSnapshotOperationalCursor): string {
+  const cursor = GoldenSnapshotOperationalCursorSchema.parse(rawCursor);
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+export function decodeGoldenSnapshotOperationalCursor(rawCursor: string): GoldenSnapshotOperationalCursor {
+  const cursor = z.string().min(16).max(512).regex(/^[A-Za-z0-9_-]+$/).parse(rawCursor);
+  const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
+  if (Buffer.byteLength(decoded, 'utf8') > 256) throw new Error('Invalid snapshot status cursor');
+  try {
+    return GoldenSnapshotOperationalCursorSchema.parse(JSON.parse(decoded));
+  } catch (err: unknown) {
+    if (err instanceof SyntaxError || err instanceof z.ZodError) {
+      throw new Error('Invalid snapshot status cursor');
+    }
+    throw err;
+  }
+}
+
+export function encodeGoldenSnapshotAffectedMachineCursor(
+  rawCursor: GoldenSnapshotAffectedMachineCursor,
+): string {
+  const cursor = AffectedMachineCursorSchema.parse(rawCursor);
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+export function decodeGoldenSnapshotAffectedMachineCursor(
+  rawCursor: string,
+): GoldenSnapshotAffectedMachineCursor {
+  const cursor = z.string().min(16).max(512).regex(/^[A-Za-z0-9_-]+$/).parse(rawCursor);
+  const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
+  if (Buffer.byteLength(decoded, 'utf8') > 256) throw new Error('Invalid affected-machine cursor');
+  try {
+    return AffectedMachineCursorSchema.parse(JSON.parse(decoded));
+  } catch (err: unknown) {
+    if (err instanceof SyntaxError || err instanceof z.ZodError) {
+      throw new Error('Invalid affected-machine cursor');
+    }
+    throw err;
+  }
+}
 
 const SnapshotRowSchema = z.object({
   snapshot_id: UuidSchema,
@@ -1659,6 +1728,80 @@ export async function revokeGoldenSnapshotBaseGeneration(
   });
 }
 
+export async function listRevokedGoldenSnapshotBaseGenerations(
+  db: PlatformDB,
+  rawLimit = 25,
+): Promise<string[]> {
+  const limit = z.number().int().min(1).max(100).parse(rawLimit);
+  await db.ready;
+  const rows = await db.executor.selectFrom('golden_snapshot_revoked_base_generations')
+    .select('base_generation')
+    .where(({ exists, selectFrom }) => exists(
+      selectFrom('golden_snapshots').select('snapshot_id')
+        .whereRef(
+          'golden_snapshots.base_generation',
+          '=',
+          'golden_snapshot_revoked_base_generations.base_generation',
+        )
+        .where('golden_snapshots.state', 'in', [
+          'candidate', 'building', 'sanitizing', 'validating', 'ready', 'failed',
+        ]),
+    ))
+    .orderBy('updated_at')
+    .orderBy('base_generation')
+    .limit(limit)
+    .execute();
+  return rows.map((row) => GoldenSnapshotBaseGenerationSchema.parse(row.base_generation));
+}
+
+export async function listGoldenSnapshotAffectedMachines(
+  db: PlatformDB,
+  rawBaseGeneration: string,
+  rawInput: z.input<typeof AffectedMachinePageInputSchema>,
+): Promise<{
+  machines: GoldenSnapshotAffectedMachine[];
+  nextCursor?: GoldenSnapshotAffectedMachineCursor;
+}> {
+  const baseGeneration = GoldenSnapshotBaseGenerationSchema.parse(rawBaseGeneration);
+  const input = AffectedMachinePageInputSchema.parse(rawInput);
+  const updatedAt = sql<string>`GREATEST(last_seen_at, failure_at, resize_started_at, provisioned_at)`;
+  await db.ready;
+  let query = db.executor.selectFrom('user_machines').select([
+    'machine_id', 'runtime_slot', 'source_snapshot_id', 'target_bundle_version', 'status',
+    updatedAt.as('provenance_updated_at'),
+  ])
+    .where('source_base_generation', '=', baseGeneration)
+    .where('source_snapshot_id', 'is not', null)
+    .where('target_bundle_version', 'is not', null)
+    .where('deleted_at', 'is', null)
+    .where('status', 'in', ['running', 'recovering', 'resizing']);
+  if (input.cursor) {
+    query = query.where('machine_id', '>', input.cursor.machineId);
+  }
+  const rows = await query.orderBy('machine_id').limit(input.limit + 1).execute();
+  const pageRows = rows.slice(0, input.limit);
+  const machines = pageRows.map((row): GoldenSnapshotAffectedMachine => {
+    if (!row.source_snapshot_id || !row.target_bundle_version) {
+      throw new Error('Affected machine provenance is incomplete');
+    }
+    return {
+      machineId: UuidSchema.parse(row.machine_id),
+      runtimeSlot: z.string().min(1).max(32).parse(row.runtime_slot),
+      sourceSnapshotId: UuidSchema.parse(row.source_snapshot_id),
+      targetBundleVersion: GoldenSnapshotBundleVersionSchema.parse(row.target_bundle_version),
+      status: z.enum(['running', 'recovering', 'resizing']).parse(row.status),
+      updatedAt: IsoDateSchema.parse(row.provenance_updated_at),
+    };
+  });
+  const last = machines.at(-1);
+  return {
+    machines,
+    ...(rows.length > input.limit && last ? {
+      nextCursor: { machineId: last.machineId },
+    } : {}),
+  };
+}
+
 export async function reconcileRevokedGoldenSnapshotBaseGeneration(
   db: PlatformDB,
   rawBaseGeneration: string,
@@ -1687,6 +1830,10 @@ export async function reconcileRevokedGoldenSnapshotBaseGeneration(
       .where('state', 'in', ['candidate', 'building', 'sanitizing', 'validating', 'ready', 'failed'])
       .orderBy('snapshot_id').forUpdate().execute();
     if (snapshots.length === 0) return { processed: 0, hasMore };
+    await trx.executor.updateTable('golden_snapshot_revoked_base_generations')
+      .set({ updated_at: now })
+      .where('base_generation', '=', baseGeneration)
+      .execute();
     const leasedSnapshots = new Set((await trx.executor.selectFrom('golden_snapshot_leases')
       .select('snapshot_id').where('snapshot_id', 'in', snapshotIds)
       .where('released_at', 'is', null).execute()).map((lease) => lease.snapshot_id));
@@ -1927,26 +2074,53 @@ export async function enforceGoldenSnapshotRetention(
 
 export async function listGoldenSnapshotOperationalStatus(
   db: PlatformDB,
-  rawLimit: number,
-): Promise<Array<{
+  rawInput: z.input<typeof OperationalStatusPageInputSchema>,
+): Promise<{
+  snapshots: Array<{
   snapshotId: string;
   bundleVersion: string;
   state: GoldenSnapshotState;
   failureCode: string | null;
   updatedAt: string;
-}>> {
-  const limit = z.number().int().min(1).max(100).parse(rawLimit);
+  }>;
+  nextCursor?: GoldenSnapshotOperationalCursor;
+}> {
+  const input = OperationalStatusPageInputSchema.parse(rawInput);
   await db.ready;
-  const rows = await db.executor.selectFrom('golden_snapshots').select([
-    'snapshot_id', 'bundle_version', 'state', 'failure_code', 'updated_at',
-  ]).orderBy('updated_at', 'desc').limit(limit).execute();
-  return rows.map((row) => ({
+  let query = db.executor.selectFrom('golden_snapshots').select([
+    'snapshot_id', 'bundle_version', 'state', 'failure_code', 'created_at', 'updated_at',
+  ]);
+  if (input.cursor) {
+    query = query.where((eb) => eb.or([
+      eb('created_at', '<', input.cursor!.createdAt),
+      eb.and([
+        eb('created_at', '=', input.cursor!.createdAt),
+        eb('snapshot_id', '<', input.cursor!.snapshotId),
+      ]),
+    ]));
+  }
+  const rows = await query.orderBy('created_at', 'desc').orderBy('snapshot_id', 'desc')
+    .limit(input.limit + 1).execute();
+  const pageRows = rows.slice(0, input.limit);
+  const snapshots = pageRows.map((row) => ({
     snapshotId: UuidSchema.parse(row.snapshot_id),
     bundleVersion: z.string().min(1).max(128).parse(row.bundle_version),
     state: GoldenSnapshotStateSchema.parse(row.state),
     failureCode: row.failure_code === null ? null : BoundedCodeSchema.parse(row.failure_code),
     updatedAt: IsoDateSchema.parse(row.updated_at),
   }));
+  const last = pageRows.at(-1);
+  return {
+    snapshots,
+    ...(rows.length > input.limit && last
+      ? {
+          nextCursor: {
+            createdAt: IsoDateSchema.parse(last.created_at),
+            snapshotId: UuidSchema.parse(last.snapshot_id),
+          },
+        }
+      : {}),
+  };
 }
 
 export async function retryGoldenSnapshotBuild(

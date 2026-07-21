@@ -7,14 +7,24 @@ import { bearerTokenMatches } from './customer-vps-auth.js';
 import {
   enqueueGoldenSnapshotBuild,
   GoldenSnapshotBuildRequiresRetryError,
+  decodeGoldenSnapshotAffectedMachineCursor,
+  decodeGoldenSnapshotOperationalCursor,
+  encodeGoldenSnapshotAffectedMachineCursor,
+  encodeGoldenSnapshotOperationalCursor,
   getGoldenSnapshot,
   getGoldenSnapshotBuild,
+  listGoldenSnapshotAffectedMachines,
   listGoldenSnapshotOperationalStatus,
+  retryGoldenSnapshotCleanup,
   retryGoldenSnapshotBuild,
   revokeGoldenSnapshot,
+  revokeGoldenSnapshotBaseGeneration,
 } from './golden-snapshot-repository.js';
 import type { GoldenSnapshotRuntimeConfig } from './golden-snapshot-schema.js';
-import { GoldenSnapshotBundleVersionSchema } from './golden-snapshot-schema.js';
+import {
+  GoldenSnapshotBaseGenerationSchema,
+  GoldenSnapshotBundleVersionSchema,
+} from './golden-snapshot-schema.js';
 import {
   GoldenSnapshotCallbackSchema,
   GoldenSnapshotCallbackError,
@@ -27,7 +37,38 @@ const SNAPSHOT_RETRY_BODY_LIMIT = 1024;
 const SNAPSHOT_REVOKE_BODY_LIMIT = 4 * 1024;
 const BuildIdSchema = z.string().uuid();
 const SnapshotIdSchema = z.string().uuid();
-const StatusQuerySchema = z.coerce.number().int().min(1).max(100).default(25);
+const CleanupIdSchema = z.string().uuid();
+const StatusCursorSchema = z.string().min(16).max(512).regex(/^[A-Za-z0-9_-]+$/).transform((value, ctx) => {
+  try {
+    return decodeGoldenSnapshotOperationalCursor(value);
+  } catch (err: unknown) {
+    if (err instanceof Error) {
+      ctx.addIssue({ code: 'custom', message: 'Invalid cursor' });
+      return z.NEVER;
+    }
+    throw err;
+  }
+});
+const StatusQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  cursor: StatusCursorSchema.optional(),
+}).strict();
+const AffectedMachineCursorParamSchema = z.string().min(16).max(512)
+  .regex(/^[A-Za-z0-9_-]+$/).transform((value, ctx) => {
+    try {
+      return decodeGoldenSnapshotAffectedMachineCursor(value);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        ctx.addIssue({ code: 'custom', message: 'Invalid cursor' });
+        return z.NEVER;
+      }
+      throw err;
+    }
+  });
+const AffectedMachineQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  cursor: AffectedMachineCursorParamSchema.optional(),
+}).strict();
 const RevokeSchema = z.object({ reason: z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9._-]*$/) }).strict();
 const EnqueueSchema = z.object({
   bundleVersion: GoldenSnapshotBundleVersionSchema,
@@ -131,10 +172,17 @@ export function createGoldenSnapshotRoutes(deps: GoldenSnapshotRoutesDeps): Hono
   routes.get('/snapshots', async (c) => {
     const authError = requireBearerAuth(c, deps.operatorSecret);
     if (authError) return authError;
-    const limit = StatusQuerySchema.safeParse(c.req.query('limit'));
-    if (!limit.success) return c.json({ error: 'Invalid request' }, 400);
+    const query = StatusQuerySchema.safeParse({
+      limit: c.req.query('limit'),
+      cursor: c.req.query('cursor'),
+    });
+    if (!query.success) return c.json({ error: 'Invalid request' }, 400);
     try {
-      return c.json({ snapshots: await listGoldenSnapshotOperationalStatus(deps.db, limit.data) });
+      const page = await listGoldenSnapshotOperationalStatus(deps.db, query.data);
+      return c.json({
+        snapshots: page.snapshots,
+        ...(page.nextCursor ? { nextCursor: encodeGoldenSnapshotOperationalCursor(page.nextCursor) } : {}),
+      });
     } catch (err: unknown) {
       console.error(`[golden-snapshot] status failed: ${err instanceof Error ? err.name : typeof err}`);
       return c.json({ error: 'Snapshot status unavailable' }, 500);
@@ -165,6 +213,66 @@ export function createGoldenSnapshotRoutes(deps: GoldenSnapshotRoutesDeps): Hono
     } catch (err: unknown) {
       console.error(`[golden-snapshot] revocation failed: ${err instanceof Error ? err.name : typeof err}`);
       return c.json({ error: 'Snapshot revocation unavailable' }, 500);
+    }
+  });
+
+  routes.post(
+    '/snapshot-base-generations/:baseGeneration/revoke',
+    bodyLimit({ maxSize: SNAPSHOT_REVOKE_BODY_LIMIT }),
+    async (c) => {
+      const authError = requireBearerAuth(c, deps.operatorSecret);
+      if (authError) return authError;
+      const baseGeneration = GoldenSnapshotBaseGenerationSchema.safeParse(c.req.param('baseGeneration'));
+      const body = RevokeSchema.safeParse(await readJson(c));
+      if (!baseGeneration.success || !body.success) return c.json({ error: 'Invalid request' }, 400);
+      try {
+        await revokeGoldenSnapshotBaseGeneration(
+          deps.db,
+          baseGeneration.data,
+          body.data.reason,
+          now(),
+        );
+        return c.json({ revoked: true });
+      } catch (err: unknown) {
+        console.error(`[golden-snapshot] base generation revocation failed: ${err instanceof Error ? err.name : typeof err}`);
+        return c.json({ error: 'Snapshot revocation unavailable' }, 500);
+      }
+    },
+  );
+
+  routes.get('/snapshot-base-generations/:baseGeneration/affected-machines', async (c) => {
+    const authError = requireBearerAuth(c, deps.operatorSecret);
+    if (authError) return authError;
+    const baseGeneration = GoldenSnapshotBaseGenerationSchema.safeParse(c.req.param('baseGeneration'));
+    const query = AffectedMachineQuerySchema.safeParse({
+      limit: c.req.query('limit'),
+      cursor: c.req.query('cursor'),
+    });
+    if (!baseGeneration.success || !query.success) return c.json({ error: 'Invalid request' }, 400);
+    try {
+      const page = await listGoldenSnapshotAffectedMachines(deps.db, baseGeneration.data, query.data);
+      return c.json({
+        machines: page.machines,
+        ...(page.nextCursor ? {
+          nextCursor: encodeGoldenSnapshotAffectedMachineCursor(page.nextCursor),
+        } : {}),
+      });
+    } catch (err: unknown) {
+      console.error(`[golden-snapshot] affected machines failed: ${err instanceof Error ? err.name : typeof err}`);
+      return c.json({ error: 'Affected machine inventory unavailable' }, 500);
+    }
+  });
+
+  routes.post('/snapshot-cleanup/:cleanupId/retry', bodyLimit({ maxSize: SNAPSHOT_RETRY_BODY_LIMIT }), async (c) => {
+    const authError = requireBearerAuth(c, deps.operatorSecret);
+    if (authError) return authError;
+    const cleanupId = CleanupIdSchema.safeParse(c.req.param('cleanupId'));
+    if (!cleanupId.success) return c.json({ error: 'Invalid request' }, 400);
+    try {
+      return c.json({ retried: await retryGoldenSnapshotCleanup(deps.db, cleanupId.data, now()) });
+    } catch (err: unknown) {
+      console.error(`[golden-snapshot] cleanup retry failed: ${err instanceof Error ? err.name : typeof err}`);
+      return c.json({ error: 'Snapshot cleanup retry unavailable' }, 500);
     }
   });
 
