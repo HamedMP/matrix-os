@@ -201,8 +201,8 @@ export async function reportGateChecks(inputRoot) {
       'descriptor_intent', 'descriptor_size', 'client_exit', 'cgroup_unified',
       'cgroup_unit', 'readiness_timeout', 'startup_failed',
     ]);
-    const baseShape = hasExactKeys(startup, ['stage', 'code']);
-    const clientExitShape = hasExactKeys(startup, ['stage', 'code', 'exitCode', 'signal']) &&
+    const baseShape = hasExactKeys(startup, ['stage', 'code', 'confirmationSent']) && typeof startup.confirmationSent === 'boolean';
+    const clientExitShape = hasExactKeys(startup, ['stage', 'code', 'confirmationSent', 'exitCode', 'signal']) && typeof startup.confirmationSent === 'boolean' &&
       startup.code === 'client_exit' && Number.isInteger(startup.exitCode) &&
       startup.exitCode >= 0 && startup.exitCode <= 255 && Number.isInteger(startup.signal) &&
       startup.signal >= 0 && startup.signal <= 255;
@@ -280,8 +280,8 @@ export async function reportGateChecks(inputRoot) {
       'descriptor_intent', 'descriptor_size', 'client_exit', 'cgroup_unified',
       'cgroup_unit', 'readiness_timeout', 'startup_failed',
     ]);
-    if (hasExactKeys(recovery, ['stage', 'code']) && stages.has(recovery.stage) && codes.has(recovery.code)) {
-      failures.push(`s2:recovery=${recovery.stage}/${recovery.code}`);
+    if (hasExactKeys(recovery, ['stage', 'code', 'confirmationSent']) && typeof recovery.confirmationSent === 'boolean' && stages.has(recovery.stage) && codes.has(recovery.code)) {
+      failures.push(`s2:recovery=${recovery.stage}/${recovery.code}/confirm:${Number(recovery.confirmationSent)}`);
     }
   } catch (error) {
     if (!ignorableDiagnosticError(error)) throw error;

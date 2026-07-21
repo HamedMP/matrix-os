@@ -147,7 +147,7 @@ async function recordStartupFailure(error) {
   const code = error instanceof Error && STARTUP_FAILURE_CODES.has(error.message)
     ? error.message
     : 'startup_failed';
-  const receipt = { stage: startupStage, code };
+  const receipt = { stage: startupStage, code, confirmationSent };
   if (code === 'client_exit' && clientExitEvent) {
     receipt.exitCode = clientExitEvent.exitCode;
     receipt.signal = clientExitEvent.signal;
