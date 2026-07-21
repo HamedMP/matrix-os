@@ -16,6 +16,7 @@ import {
 } from '../../packages/platform/src/golden-snapshot-repository.js';
 import type { GoldenSnapshotRuntimeConfig } from '../../packages/platform/src/golden-snapshot-schema.js';
 import { createMockHetznerClient } from './customer-vps-fixtures.js';
+import { CustomerVpsError } from '../../packages/platform/src/customer-vps-errors.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 
 const compatibility = {
@@ -651,6 +652,24 @@ describe('golden snapshot build service', () => {
     expect(await service.runBuildStep(enqueued.build.buildId)).toBe('snapshot_wait');
     expect(await service.runBuildStep(enqueued.build.buildId)).toBe('snapshot_wait');
     expect(hetzner.createServer).toHaveBeenCalledTimes(1);
+  });
+
+  it('requeues snapshot creation after provider quota pressure', async () => {
+    const { enqueued, service } = await setup({
+      createSnapshot: vi.fn().mockRejectedValue(
+        new CustomerVpsError(429, 'quota_exceeded', 'Provisioning capacity unavailable'),
+      ),
+    });
+    await service.runBuildStep(enqueued.build.buildId);
+    await service.consumeCallback(enqueued.build.buildId, 'phase-token-long-enough', {
+      eventId: randomUUID(),
+      phase: 'sanitized', bundleVersion: 'v1', bundleSha256: '1'.repeat(64), ...builderFingerprints,
+    });
+    await expect(service.runBuildStep(enqueued.build.buildId))
+      .rejects.toMatchObject({ code: 'snapshot_quota_exceeded' });
+    await expect(getGoldenSnapshotBuild(db, enqueued.build.buildId)).resolves.toMatchObject({
+      phase: 'snapshot_create', pendingOperation: null,
+    });
   });
 
   it('uses a bounded hard power-off fallback when graceful shutdown stalls', async () => {

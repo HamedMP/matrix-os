@@ -5,6 +5,7 @@ import type { PlatformDB } from './db.js';
 import {
   canTransitionGoldenSnapshot,
   compatibilityKey,
+  DEFAULT_GOLDEN_SNAPSHOT_FRESHNESS_MAX_AGE_MS,
   GoldenSnapshotBaseGenerationSchema,
   GoldenSnapshotBundleVersionSchema,
   GoldenSnapshotBuildPhaseSchema,
@@ -23,6 +24,17 @@ const IsoDateSchema = z.string().datetime({ offset: true })
   .transform((value) => new Date(value).toISOString());
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const BoundedCodeSchema = z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9._-]*$/);
+const RetentionInputSchema = z.object({
+  retentionLimit: z.number().int().min(1).max(29),
+  rollbackVersionsPerChannel: z.number().int().min(0).max(10),
+  freshnessMaxAgeMs: z.number().int().min(60_000).max(365 * 24 * 60 * 60 * 1000).optional(),
+  now: IsoDateSchema,
+  quotaPressure: z.boolean(),
+}).strict();
+const RetirementPolicySchema = z.object({
+  rollbackVersionsPerChannel: z.number().int().min(0).max(20).default(2),
+  freshnessMaxAgeMs: z.number().int().min(60_000).max(365 * 24 * 60 * 60 * 1000).optional(),
+}).strict();
 
 const SnapshotRowSchema = z.object({
   snapshot_id: UuidSchema,
@@ -996,6 +1008,9 @@ const SelectInputSchema = z.object({
   now: IsoDateSchema,
   expiresAt: IsoDateSchema,
   maxLeaseMs: z.number().int().min(60_000).max(60 * 60 * 1000).default(10 * 60 * 1000),
+  freshnessMaxAgeMs: z.number().int().min(60_000).max(365 * 24 * 60 * 60 * 1000)
+    .default(DEFAULT_GOLDEN_SNAPSHOT_FRESHNESS_MAX_AGE_MS),
+  provisioningJobId: UuidSchema.optional(),
 }).strict();
 
 async function retireQuarantinedSnapshotAfterLeaseDrain(
@@ -1054,6 +1069,9 @@ export async function selectAndLeaseGoldenSnapshot(
   if (leaseDurationMs > input.maxLeaseMs) {
     throw new Error('Golden snapshot lease exceeds maximum TTL');
   }
+  const freshnessCutoff = new Date(
+    new Date(input.now).getTime() - input.freshnessMaxAgeMs,
+  ).toISOString();
   await db.ready;
   return db.transaction(async (trx) => {
     await sql`SELECT pg_advisory_xact_lock(hashtext(${input.compatibility.baseGeneration}))`.execute(trx.executor);
@@ -1081,6 +1099,7 @@ export async function selectAndLeaseGoldenSnapshot(
         && existingSnapshot.providerImageId !== null
         && existingSnapshot.providerImageStatus === 'available'
         && existingSnapshot.readyAt !== null
+        && existingSnapshot.readyAt > freshnessCutoff
         && !existingSnapshot.testMode
         && existingSnapshot.compatibilityKey === key
         && existingSnapshot.compatibility.activationAbi === input.compatibility.activationAbi
@@ -1121,6 +1140,7 @@ export async function selectAndLeaseGoldenSnapshot(
       .innerJoin('host_bundle_releases', 'host_bundle_releases.version', 'golden_snapshots.bundle_version')
       .selectAll('golden_snapshots').select('host_bundle_releases.build_time as source_release_build_time')
       .where('golden_snapshots.state', '=', 'ready').where('golden_snapshots.compatibility_key', '=', key)
+      .where('golden_snapshots.ready_at', '>', freshnessCutoff)
       .where('golden_snapshots.test_mode', '=', false)
       .where((eb) => eb.not(eb.exists(
         eb.selectFrom('golden_snapshot_revoked_base_generations').select('base_generation')
@@ -1161,7 +1181,7 @@ export async function selectAndLeaseGoldenSnapshot(
       .where('snapshot_id', '=', chosen.snapshotId).where('state', '=', 'ready').forUpdate().executeTakeFirst();
     if (!locked) return undefined;
     const snapshot = mapSnapshot(locked);
-    if (snapshot.providerImageId === null || snapshot.readyAt === null) return undefined;
+    if (snapshot.providerImageId === null || snapshot.readyAt === null || snapshot.readyAt <= freshnessCutoff) return undefined;
     const leaseRow = await trx.executor.insertInto('golden_snapshot_leases').values({
       lease_id: input.leaseId,
       snapshot_id: snapshot.snapshotId,
@@ -1174,6 +1194,20 @@ export async function selectAndLeaseGoldenSnapshot(
     }).onConflict((oc) => oc.column('machine_id').where('released_at', 'is', null).doNothing())
       .returningAll().executeTakeFirst();
     if (!leaseRow) return undefined;
+    if (input.provisioningJobId) {
+      const job = await trx.executor.updateTable('provisioning_jobs').set({
+        target_bundle_version: input.targetBundleVersion,
+        target_bundle_sha256: target.sha256,
+        image_source: 'snapshot',
+        snapshot_id: snapshot.snapshotId,
+        snapshot_lease_id: input.leaseId,
+        activation_step: 'creating',
+        fallback_reason: null,
+        updated_at: input.now,
+      }).where('job_id', '=', input.provisioningJobId).where('machine_id', '=', input.machineId)
+        .where('status', '=', 'running').returning('job_id').executeTakeFirst();
+      if (!job) throw new Error('Provisioning job lost before snapshot lease commit');
+    }
     return { snapshot, lease: mapLease(leaseRow) };
   });
 }
@@ -1370,6 +1404,12 @@ export async function reconcileExpiredGoldenSnapshotLeases(
     .where((eb) => eb.or([
       eb('user_machines.machine_id', 'is', null),
       eb('user_machines.status', 'in', ['running', 'failed', 'deleted']),
+      eb.and([
+        eb('user_machines.status', '=', 'recovering'),
+        eb('user_machines.hetzner_server_id', 'is not', null),
+        eb('user_machines.recovery_create_action_id', 'is', null),
+        eb('user_machines.recovery_encrypted_payload', 'is', null),
+      ]),
     ]))
     .orderBy('golden_snapshot_leases.expires_at').orderBy('golden_snapshot_leases.lease_id')
     .limit(remaining).execute();
@@ -1378,6 +1418,43 @@ export async function reconcileExpiredGoldenSnapshotLeases(
     if (await releaseExpiredGoldenSnapshotLease(db, lease.lease_id, now)) released += 1;
   }
   return released;
+}
+
+export async function getGoldenSnapshotRecoveryRegistrationTarget(
+  db: PlatformDB,
+  rawMachineId: string,
+): Promise<{
+  leaseId: string;
+  snapshotId: string;
+  baseGeneration: string;
+  targetBundleVersion: string;
+  targetBundleSha256: string;
+} | undefined> {
+  const machineId = UuidSchema.parse(rawMachineId);
+  await db.ready;
+  const row = await db.executor.selectFrom('golden_snapshot_leases')
+    .innerJoin('golden_snapshots', 'golden_snapshots.snapshot_id', 'golden_snapshot_leases.snapshot_id')
+    .innerJoin('host_bundle_releases', 'host_bundle_releases.version', 'golden_snapshot_leases.target_bundle_version')
+    .select([
+      'golden_snapshot_leases.lease_id',
+      'golden_snapshot_leases.snapshot_id',
+      'golden_snapshot_leases.target_bundle_version',
+      'golden_snapshots.base_generation',
+      'host_bundle_releases.sha256 as target_bundle_sha256',
+    ])
+    .where('golden_snapshot_leases.machine_id', '=', machineId)
+    .where('golden_snapshot_leases.purpose', '=', 'recover')
+    .where('golden_snapshot_leases.released_at', 'is', null)
+    .orderBy('golden_snapshot_leases.created_at', 'desc')
+    .limit(1).executeTakeFirst();
+  if (!row) return undefined;
+  return {
+    leaseId: UuidSchema.parse(row.lease_id),
+    snapshotId: UuidSchema.parse(row.snapshot_id),
+    baseGeneration: z.string().min(1).max(64).parse(row.base_generation),
+    targetBundleVersion: GoldenSnapshotBundleVersionSchema.parse(row.target_bundle_version),
+    targetBundleSha256: Sha256Schema.parse(row.target_bundle_sha256),
+  };
 }
 
 export async function revokeGoldenSnapshot(
@@ -1573,16 +1650,12 @@ export async function retireGoldenSnapshot(
   rawSnapshotId: string,
   rawReason: string,
   rawNow: string,
-  rawRollbackVersionsPerChannel = 2,
-  rawFreshnessMaxAgeMs?: number,
+  rawPolicy: z.input<typeof RetirementPolicySchema> = {},
 ): Promise<boolean> {
   const snapshotId = UuidSchema.parse(rawSnapshotId);
   const reason = BoundedCodeSchema.parse(rawReason);
   const now = IsoDateSchema.parse(rawNow);
-  const rollbackVersionsPerChannel = z.number().int().min(0).max(20).parse(rawRollbackVersionsPerChannel);
-  const freshnessMaxAgeMs = rawFreshnessMaxAgeMs === undefined
-    ? undefined
-    : z.number().int().min(60_000).max(365 * 24 * 60 * 60 * 1000).parse(rawFreshnessMaxAgeMs);
+  const policy = RetirementPolicySchema.parse(rawPolicy);
   await db.ready;
   return db.transaction(async (trx) => {
     const retirementTarget = await trx.executor.selectFrom('golden_snapshots').selectAll()
@@ -1599,9 +1672,9 @@ export async function retireGoldenSnapshot(
     const snapshotRow = compatibilityRows.find((row) => row?.snapshot_id === snapshotId);
     if (!snapshotRow || !['ready', 'failed', 'quarantined'].includes(snapshotRow.state)) return false;
     const freshnessExpired = snapshotRow.state === 'ready'
-      && freshnessMaxAgeMs !== undefined
+      && policy.freshnessMaxAgeMs !== undefined
       && snapshotRow.ready_at !== null
-      && new Date(snapshotRow.ready_at).getTime() <= new Date(now).getTime() - freshnessMaxAgeMs;
+      && new Date(snapshotRow.ready_at).getTime() <= new Date(now).getTime() - policy.freshnessMaxAgeMs;
     const release = await trx.executor.selectFrom('host_bundle_releases').select('version')
       .where('version', '=', snapshotRow.bundle_version).forUpdate().executeTakeFirst();
     if (!release) return false;
@@ -1612,7 +1685,7 @@ export async function retireGoldenSnapshot(
     const currentChannel = await trx.executor.selectFrom('host_bundle_channels').select('channel')
       .where('version', '=', snapshotRow.bundle_version).executeTakeFirst();
     if (snapshotRow.state === 'ready' && currentChannel && !freshnessExpired) return false;
-    if (snapshotRow.state === 'ready' && rollbackVersionsPerChannel > 0 && !freshnessExpired) {
+    if (snapshotRow.state === 'ready' && policy.rollbackVersionsPerChannel > 0 && !freshnessExpired) {
       const rollbackReference = await sql<{ channel: string }>`
         SELECT channel
         FROM (
@@ -1621,7 +1694,7 @@ export async function retireGoldenSnapshot(
           FROM host_bundle_release_channels
         ) AS ranked_release_channels
         WHERE version = ${snapshotRow.bundle_version}
-          AND rollback_rank <= ${rollbackVersionsPerChannel}
+          AND rollback_rank <= ${policy.rollbackVersionsPerChannel}
         LIMIT 1
       `.execute(trx.executor);
       if (rollbackReference.rows.length > 0) return false;
@@ -1631,8 +1704,10 @@ export async function retireGoldenSnapshot(
       if (!otherReady) return false;
     }
     if (snapshotRow.provider_image_id !== null) {
+      const build = await trx.executor.selectFrom('golden_snapshot_builds').select('build_id')
+        .where('snapshot_id', '=', snapshotId).executeTakeFirst();
       await trx.executor.insertInto('golden_snapshot_cleanup').values({
-        cleanup_id: randomUUID(), snapshot_id: snapshotId, build_id: null,
+        cleanup_id: randomUUID(), snapshot_id: snapshotId, build_id: build?.build_id ?? null,
         resource_type: 'snapshot_image', provider_resource_id: snapshotRow.provider_image_id,
         provenance_key: `snapshot:${snapshotId}`, reason, status: 'queued', attempts: 0,
         next_attempt_at: now, lease_expires_at: null, last_error_code: null,
@@ -1651,6 +1726,185 @@ export async function retireGoldenSnapshot(
       });
     }
     return updated !== undefined;
+  });
+}
+
+export async function enforceGoldenSnapshotRetention(
+  db: PlatformDB,
+  rawInput: z.input<typeof RetentionInputSchema>,
+): Promise<{ retiredSnapshotIds: string[]; blocked: boolean }> {
+  const input = RetentionInputSchema.parse(rawInput);
+  await db.ready;
+  try {
+    await reconcileExpiredGoldenSnapshotLeases(db, input.now, 100);
+  } catch (err: unknown) {
+    console.error(`[golden-snapshot] lease reconciliation failed: ${err instanceof Error ? err.name : typeof err}`);
+  }
+  const [readyRows, disposableRows, channels] = await Promise.all([
+    db.executor.selectFrom('golden_snapshots').select([
+      'snapshot_id', 'bundle_version', 'compatibility_key', 'ready_at',
+    ]).where('state', '=', 'ready').orderBy('ready_at', 'desc').limit(100).execute(),
+    db.executor.selectFrom('golden_snapshots').select('snapshot_id')
+      .where('state', 'in', ['failed', 'quarantined']).where('provider_image_id', 'is not', null)
+      .orderBy('updated_at').limit(100).execute(),
+    db.executor.selectFrom('host_bundle_channels').select(['channel', 'version']).limit(20).execute(),
+  ]);
+  const candidateSnapshotIds = [...new Set([
+    ...readyRows.map((row) => row.snapshot_id), ...disposableRows.map((row) => row.snapshot_id),
+  ])];
+  const activeLeases = candidateSnapshotIds.length === 0 ? [] : await db.executor
+    .selectFrom('golden_snapshot_leases').select('snapshot_id')
+    .where('released_at', 'is', null)
+    .where('snapshot_id', 'in', candidateSnapshotIds).execute();
+  const channelHistory = (await Promise.all(channels.map((current) =>
+    db.executor.selectFrom('host_bundle_release_channels').select(['channel', 'version', 'promoted_at'])
+      .where('channel', '=', current.channel).orderBy('promoted_at', 'desc')
+      .limit(input.rollbackVersionsPerChannel + 1).execute()))).flat();
+  const targetCount = input.quotaPressure ? Math.max(0, input.retentionLimit - 1) : input.retentionLimit;
+  const freshnessCutoff = input.freshnessMaxAgeMs === undefined
+    ? undefined
+    : new Date(new Date(input.now).getTime() - input.freshnessMaxAgeMs).toISOString();
+  const freshnessExpired = new Set(readyRows
+    .filter((row) => freshnessCutoff !== undefined && row.ready_at !== null && row.ready_at <= freshnessCutoff)
+    .map((row) => row.snapshot_id));
+  const retirementCount = Math.max(0, readyRows.length - freshnessExpired.size - targetCount);
+
+  const protectedVersions = new Set(channels.map((row) => row.version));
+  const currentByChannel = new Map(channels.map((row) => [row.channel, row.version]));
+  const rollbackCount = new Map<string, number>();
+  for (const row of channelHistory) {
+    if (currentByChannel.get(row.channel) === row.version) continue;
+    const count = rollbackCount.get(row.channel) ?? 0;
+    if (count >= input.rollbackVersionsPerChannel) continue;
+    protectedVersions.add(row.version);
+    rollbackCount.set(row.channel, count + 1);
+  }
+  const protectedSnapshots = new Set(activeLeases.map((row) => row.snapshot_id));
+  const newestByCompatibility = new Map<string, string>();
+  for (const row of readyRows) {
+    if (freshnessExpired.has(row.snapshot_id)) continue;
+    if (!newestByCompatibility.has(row.compatibility_key)) {
+      newestByCompatibility.set(row.compatibility_key, row.snapshot_id);
+      protectedSnapshots.add(row.snapshot_id);
+    }
+  }
+
+  const freshnessCandidates = [...readyRows].reverse().filter((row) =>
+    freshnessExpired.has(row.snapshot_id) && !protectedSnapshots.has(row.snapshot_id));
+  const candidates = [...readyRows].reverse().filter((row) =>
+    !freshnessExpired.has(row.snapshot_id)
+    && !protectedSnapshots.has(row.snapshot_id)
+    && !protectedVersions.has(row.bundle_version));
+  const retiredSnapshotIds: string[] = [];
+  const tryRetire = async (snapshotId: string, reason: string): Promise<boolean> => {
+    try {
+      return await retireGoldenSnapshot(db, snapshotId, reason, input.now, {
+        rollbackVersionsPerChannel: input.rollbackVersionsPerChannel,
+        freshnessMaxAgeMs: input.freshnessMaxAgeMs,
+      });
+    } catch (err: unknown) {
+      console.error(
+        `[golden-snapshot] retention failed snapshot=${snapshotId}: ${err instanceof Error ? err.name : typeof err}`,
+      );
+      return false;
+    }
+  };
+  for (const disposable of disposableRows) {
+    if (await tryRetire(disposable.snapshot_id, 'invalid_snapshot_cleanup')) {
+      retiredSnapshotIds.push(disposable.snapshot_id);
+    }
+  }
+  for (const stale of freshnessCandidates) {
+    if (await tryRetire(stale.snapshot_id, 'freshness_expired')) {
+      retiredSnapshotIds.push(stale.snapshot_id);
+    }
+  }
+  for (const candidate of candidates.slice(0, retirementCount)) {
+    if (await tryRetire(candidate.snapshot_id, input.quotaPressure ? 'quota_pressure' : 'retention')) {
+      retiredSnapshotIds.push(candidate.snapshot_id);
+    }
+  }
+  return {
+    retiredSnapshotIds,
+    blocked: retiredSnapshotIds.length < disposableRows.length + freshnessCandidates.length + retirementCount,
+  };
+}
+
+export async function listGoldenSnapshotOperationalStatus(
+  db: PlatformDB,
+  rawLimit: number,
+): Promise<Array<{
+  snapshotId: string;
+  bundleVersion: string;
+  state: GoldenSnapshotState;
+  failureCode: string | null;
+  updatedAt: string;
+}>> {
+  const limit = z.number().int().min(1).max(100).parse(rawLimit);
+  await db.ready;
+  const rows = await db.executor.selectFrom('golden_snapshots').select([
+    'snapshot_id', 'bundle_version', 'state', 'failure_code', 'updated_at',
+  ]).orderBy('updated_at', 'desc').limit(limit).execute();
+  return rows.map((row) => ({
+    snapshotId: UuidSchema.parse(row.snapshot_id),
+    bundleVersion: z.string().min(1).max(128).parse(row.bundle_version),
+    state: GoldenSnapshotStateSchema.parse(row.state),
+    failureCode: row.failure_code === null ? null : BoundedCodeSchema.parse(row.failure_code),
+    updatedAt: IsoDateSchema.parse(row.updated_at),
+  }));
+}
+
+export async function retryGoldenSnapshotBuild(
+  db: PlatformDB,
+  rawBuildId: string,
+  rawNow: string,
+): Promise<boolean> {
+  const buildId = UuidSchema.parse(rawBuildId);
+  const now = IsoDateSchema.parse(rawNow);
+  await db.ready;
+  return db.transaction(async (trx) => {
+    const build = await trx.executor.selectFrom('golden_snapshot_builds').selectAll()
+      .where('build_id', '=', buildId).forUpdate().executeTakeFirst();
+    if (!build || build.status !== 'failed') return false;
+    const snapshot = await trx.executor.selectFrom('golden_snapshots').selectAll()
+      .where('snapshot_id', '=', build.snapshot_id).forUpdate().executeTakeFirst();
+    if (!snapshot || snapshot.state !== 'failed' || snapshot.provider_image_id !== null) return false;
+    const updatedSnapshot = await trx.executor.updateTable('golden_snapshots').set({
+      state: 'candidate', failure_code: null, updated_at: now,
+      revision: sql<number>`revision + 1`,
+    }).where('snapshot_id', '=', snapshot.snapshot_id).where('revision', '=', snapshot.revision)
+      .returning('snapshot_id').executeTakeFirst();
+    if (!updatedSnapshot) return false;
+    const staleResources = [
+      build.provider_builder_id === null ? undefined : {
+        type: 'builder_server' as const, id: build.provider_builder_id,
+      },
+      build.provider_validation_id === null ? undefined : {
+        type: 'validation_server' as const, id: build.provider_validation_id,
+      },
+    ].filter((resource): resource is {
+      type: 'builder_server' | 'validation_server'; id: number;
+    } => resource !== undefined);
+    for (const resource of staleResources) {
+      await trx.executor.insertInto('golden_snapshot_cleanup').values({
+        cleanup_id: randomUUID(), snapshot_id: snapshot.snapshot_id, build_id: buildId,
+        resource_type: resource.type, provider_resource_id: resource.id,
+        provenance_key: `build:${buildId}:${resource.type}`, reason: 'operator_retry',
+        status: 'queued', attempts: 0, next_attempt_at: now, lease_expires_at: null,
+        last_error_code: null, created_at: now, completed_at: null,
+      }).onConflict((oc) => oc.columns(['resource_type', 'provider_resource_id'])
+        .where('completed_at', 'is', null).doNothing()).execute();
+    }
+    await trx.executor.updateTable('golden_snapshot_builds').set({
+      phase: 'requested', status: 'queued', available_at: now, claimed_at: null,
+      lease_expires_at: null, last_error_code: null, attempts: 0,
+      provider_builder_id: null, provider_builder_action_id: null, provider_snapshot_action_id: null,
+      provider_validation_id: null, provider_validation_action_id: null,
+      callback_phase: null, callback_token_hash: null, callback_expires_at: null,
+      pending_operation: null,
+      updated_at: now, completed_at: null,
+    }).where('build_id', '=', buildId).where('status', '=', 'failed').executeTakeFirstOrThrow();
+    return true;
   });
 }
 

@@ -407,10 +407,30 @@ describe('platform/customer-vps', () => {
       name: 'matrix-pr-897',
       serverType: 'cpx22',
     });
-    expect(resolveBillingEntitlement).toHaveBeenCalledOnce();
+    expect(resolveBillingEntitlement).toHaveBeenCalledTimes(2);
     await expect(getUserMachine(db, preview.machineId)).resolves.toMatchObject({
       provisioningClass: 'preview',
       accessClerkUserIds: ['user_789'],
+    });
+  });
+
+  it('keeps operator preview creation outside customer billing authorization', async () => {
+    const resolveBillingEntitlement = vi.fn().mockResolvedValue(null);
+    const { service, hetzner } = createService({
+      config: createTestConfig({ previewProvisioningLimit: 1 }),
+      resolveBillingEntitlement,
+    });
+
+    const preview = await service.provisionPreview({
+      clerkUserId: 'user_123',
+      handle: 'pr-899',
+      runtimeSlot: 'pr-899',
+    });
+    expect(preview).toMatchObject({ status: 'provisioning' });
+    expect(hetzner.createServer).toHaveBeenCalledOnce();
+    expect(resolveBillingEntitlement).not.toHaveBeenCalled();
+    await expect(getUserMachine(db, preview.machineId)).resolves.toMatchObject({
+      handle: 'pr-899', provisioningClass: 'preview',
     });
   });
 
@@ -1348,6 +1368,21 @@ describe('platform/customer-vps', () => {
     expect(systemStore.writtenMeta).toHaveLength(1);
   });
 
+  it('completes registration after an already-authorized create when entitlement later changes', async () => {
+    const resolveBillingEntitlement = vi.fn().mockResolvedValue(activeEntitlement());
+    const { service } = createService({ resolveBillingEntitlement });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    resolveBillingEntitlement.mockResolvedValue(null);
+
+    await expect(service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+      healthy: true,
+    })).resolves.toMatchObject({ registered: true, status: 'running' });
+  });
+
   it('returns a warning when registration metadata cannot be persisted', async () => {
     const { service } = createService({
       systemStore: createMockCustomerVpsSystemStore({
@@ -1565,7 +1600,7 @@ describe('platform/customer-vps', () => {
     expect(hetzner.deleteServer).not.toHaveBeenCalled();
   });
 
-  it('creates a replacement machine in recovering state from R2 preflight', async () => {
+  it('keeps the old server until the replacement from R2 preflight registers healthy', async () => {
     const machineIds = [
       '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
       'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
@@ -1610,6 +1645,17 @@ describe('platform/customer-vps', () => {
       runtimeSlot: 'primary',
       status: 'recovering',
     });
+    expect(hetzner.deleteServer).not.toHaveBeenCalledWith(123456);
+    await service.register('registration-token', {
+      machineId: recovered.machineId,
+      hetznerServerId: 789012,
+      publicIPv4: '203.0.113.11',
+      imageVersion: 'stable',
+      bundleSha256: '0'.repeat(64),
+      healthy: true,
+    });
+    expect(hetzner.deleteServer).not.toHaveBeenCalledWith(123456);
+    await service.reconcileProvisioning();
     expect(hetzner.deleteServer).toHaveBeenCalledWith(123456);
     expect(
       vi.mocked(hetzner.createServer).mock.invocationCallOrder[1],
@@ -1624,11 +1670,38 @@ describe('platform/customer-vps', () => {
     expect(row).toMatchObject({
       clerkUserId: 'user_123',
       handle: 'alice',
-      status: 'recovering',
+      status: 'running',
       hetznerServerId: 789012,
       publicIPv4: '203.0.113.11',
       location: 'hil',
     });
+    await expect(getUserMachine(db, provisioned.machineId)).resolves.toBeUndefined();
+  });
+
+  it('falls back to a clean image when recovery snapshot selection is unavailable', async () => {
+    const { service } = createService();
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId, hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10', imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+    const enabled = loadCustomerVpsConfig({
+      GOLDEN_SNAPSHOTS_ENABLED: 'true', GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100',
+      GOLDEN_SNAPSHOT_REGION: 'eu-central', PLATFORM_SECRET: 'platform-secret',
+    }).goldenSnapshots;
+    const { service: recoveryService, hetzner } = createService({
+      config: createTestConfig({ goldenSnapshots: enabled }),
+      machineIdFactory: () => 'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+      systemStore: createMockCustomerVpsSystemStore({ hasDbLatest: vi.fn().mockResolvedValue(true) }),
+    });
+
+    await expect(recoveryService.recover({ clerkUserId: 'user_123' })).resolves.toMatchObject({
+      oldMachineId: provisioned.machineId,
+      machineId: 'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+      status: 'recovering',
+    });
+    expect(hetzner.createServer).toHaveBeenCalledWith(expect.not.objectContaining({ image: expect.anything() }));
+    expect(vi.mocked(hetzner.createServer).mock.calls[0]![0].userData).toContain('MATRIX_IMAGE_SOURCE=clean_image');
     await expect(getUserMachine(db, provisioned.machineId)).resolves.toBeUndefined();
   });
 
@@ -1721,6 +1794,7 @@ describe('platform/customer-vps', () => {
   });
 
   it('queues failed old-server cleanup after recovery and retries it during reconciliation', async () => {
+    let currentNow = new Date('2026-04-26T12:00:00.000Z');
     const machineIds = [
       '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
       'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
@@ -1748,6 +1822,7 @@ describe('platform/customer-vps', () => {
         hasDbLatest: vi.fn().mockResolvedValue(true),
       }),
       machineIdFactory: () => machineIds.shift()!,
+      now: () => currentNow,
     });
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
     await service.register('registration-token', {
@@ -1757,21 +1832,31 @@ describe('platform/customer-vps', () => {
       imageVersion: 'matrix-os-host-2026.04.26-1',
     });
 
-    await service.recover({ clerkUserId: 'user_123' });
+    const recovered = await service.recover({ clerkUserId: 'user_123' });
+    await service.register('registration-token', {
+      machineId: recovered.machineId,
+      hetznerServerId: 789012,
+      publicIPv4: '203.0.113.11',
+      imageVersion: 'stable',
+      bundleSha256: '0'.repeat(64),
+      healthy: true,
+    });
 
     const queued = await listPendingProviderDeletions(db, '2026-04-26T12:00:00.000Z', 10);
     expect(queued).toHaveLength(1);
     expect(queued[0]).toMatchObject({
       providerServerId: 123456,
       reason: 'recover_old_server',
-      machineId: provisioned.machineId,
+      machineId: recovered.machineId,
       handle: 'alice',
     });
 
     await service.reconcileProvisioning();
+    currentNow = new Date('2026-04-26T12:15:00.000Z');
+    await service.reconcileProvisioning();
 
     expect(deleteServer).toHaveBeenCalledTimes(2);
-    expect(await listPendingProviderDeletions(db, '2026-04-26T12:00:00.000Z', 10)).toHaveLength(0);
+    expect(await listPendingProviderDeletions(db, currentNow.toISOString(), 10)).toHaveLength(0);
   });
 
   it('rejects concurrent recover calls before creating a second replacement server', async () => {

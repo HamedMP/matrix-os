@@ -1,4 +1,5 @@
 import {
+  DEFAULT_GOLDEN_SNAPSHOT_FRESHNESS_MAX_AGE_MS,
   GoldenSnapshotRuntimeConfigSchema,
   type GoldenSnapshotRuntimeConfig,
 } from './golden-snapshot-schema.js';
@@ -125,6 +126,25 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
         10 * 60 * 1000,
         60_000,
         30 * 60 * 1000,
+      ),
+      retentionLimit: boundedInteger(env.GOLDEN_SNAPSHOT_RETENTION_LIMIT, 20, 1, 29),
+      freshnessMaxAgeMs: boundedInteger(
+        env.GOLDEN_SNAPSHOT_FRESHNESS_MAX_AGE_MS,
+        DEFAULT_GOLDEN_SNAPSHOT_FRESHNESS_MAX_AGE_MS,
+        60_000,
+        365 * 24 * 60 * 60 * 1000,
+      ),
+      testModeTtlMs: boundedInteger(
+        env.GOLDEN_SNAPSHOT_TEST_MODE_TTL_MS,
+        24 * 60 * 60 * 1000,
+        60_000,
+        30 * 24 * 60 * 60 * 1000,
+      ),
+      auditRetentionMs: boundedInteger(
+        env.GOLDEN_SNAPSHOT_AUDIT_RETENTION_MS,
+        90 * 24 * 60 * 60 * 1000,
+        24 * 60 * 60 * 1000,
+        365 * 24 * 60 * 60 * 1000,
       ),
       reconciliationBatchSize: boundedInteger(env.GOLDEN_SNAPSHOT_RECONCILIATION_BATCH_SIZE, 25, 1, 100),
     }),

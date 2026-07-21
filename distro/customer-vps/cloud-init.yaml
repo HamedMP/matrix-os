@@ -389,6 +389,9 @@ write_files:
       MATRIX_RUNTIME_SLOT={{runtimeSlot}}
       MATRIX_DEVELOPER_TOOLS='{{developerTools}}'
       MATRIX_IMAGE_VERSION={{imageVersion}}
+      MATRIX_IMAGE_SOURCE={{imageSource}}
+      MATRIX_TARGET_BUNDLE_SHA256={{targetBundleSha256}}
+      MATRIX_SNAPSHOT_SOURCE_VERSION={{snapshotSourceVersion}}
       MATRIX_UPDATE_CHANNEL={{updateChannel}}
       MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}
       PLATFORM_INTERNAL_URL={{platformInternalUrl}}
@@ -435,6 +438,19 @@ write_files:
       MATRIX_REGISTRATION_TOKEN={{registrationToken}}
 
 runcmd:
+  - |
+    set -eu
+    # Snapshot images are sanitized with blank/absent host identity. Recreate
+    # it before any Matrix service or owner-scoped state is initialized.
+    rm -f /var/lib/matrix/golden-snapshot-sanitized
+    systemd-machine-id-setup
+    ssh-keygen -A
+    # Sanitation disables container services so no reusable runtime state can
+    # be recreated before capture. Snapshot clones must explicitly restore them.
+    . /opt/matrix/env/host.env
+    if [ "${MATRIX_IMAGE_SOURCE:-clean_image}" = "snapshot" ]; then
+      systemctl enable --now docker.service containerd.service
+    fi
   - |
     set -eu
     # Hetzner marks the root password expired when a server is created without
@@ -560,8 +576,17 @@ runcmd:
     curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 900 "$MATRIX_HOST_BUNDLE_URL" -o /tmp/matrix-host.tgz
     curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 30 "${MATRIX_HOST_BUNDLE_URL}.sha256" -o /tmp/matrix-host.tgz.sha256
     expected="$(awk '{print $1}' /tmp/matrix-host.tgz.sha256)"
+    if [ -n "${MATRIX_TARGET_BUNDLE_SHA256:-}" ] && [ "$expected" != "$MATRIX_TARGET_BUNDLE_SHA256" ]; then
+      echo "matrix-host: target bundle provenance mismatch" >&2
+      exit 1
+    fi
     actual="$(sha256sum /tmp/matrix-host.tgz | awk '{print $1}')"
     [ "$expected" = "$actual" ] || { echo "matrix-host: bundle sha256 mismatch" >&2; exit 1; }
+    if [ "${MATRIX_IMAGE_SOURCE:-clean_image}" = "snapshot" ] \
+      && [ -n "${MATRIX_SNAPSHOT_SOURCE_VERSION:-}" ] \
+      && [ "$MATRIX_SNAPSHOT_SOURCE_VERSION" != "${MATRIX_IMAGE_VERSION:-}" ]; then
+      rm -rf /opt/matrix/app /opt/matrix/bin /opt/matrix/runtime /opt/matrix/systemd
+    fi
     tar -xzf /tmp/matrix-host.tgz -C /opt/matrix
     chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
     chmod -R g+rwX /opt/matrix/app

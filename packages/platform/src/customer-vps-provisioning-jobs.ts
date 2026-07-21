@@ -12,6 +12,29 @@ const MachineIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
 const ProvisioningPayloadSchema = z.object({
   registrationToken: z.string().min(8).max(512),
   postgresPassword: z.string().min(8).max(512),
+  recovery: z.object({
+    oldMachineId: MachineIdSchema,
+    oldStatus: z.string().min(1).max(32),
+    oldPublicIPv4: z.string().min(1).max(64).nullable(),
+    oldPublicIPv6: z.string().min(1).max(64).nullable(),
+    oldImageVersion: z.string().min(1).max(128).nullable(),
+    oldSourceSnapshotId: z.uuid().nullable(),
+    oldSourceBaseGeneration: z.string().min(1).max(64).nullable(),
+    oldTargetBundleVersion: z.string().min(1).max(128).nullable(),
+    oldTargetBundleSha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+    oldServerType: z.string().min(1).max(64).nullable(),
+    oldRegistrationTokenHash: z.string().min(1).max(128).nullable(),
+    oldRegistrationTokenExpiresAt: z.string().min(1).max(64).nullable(),
+    oldProvisionedAt: z.string().min(1).max(64),
+    oldLastSeenAt: z.string().min(1).max(64).nullable(),
+    oldFailureCode: z.string().min(1).max(128).nullable(),
+    oldFailureAt: z.string().min(1).max(64).nullable(),
+    imageSource: z.enum(['snapshot', 'clean_image']),
+    targetBundleVersion: z.string().min(1).max(128),
+    targetBundleSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    sourceSnapshotId: z.uuid().nullable(),
+    sourceBaseGeneration: z.string().min(1).max(64).nullable(),
+  }).strict().optional(),
 }).strict();
 
 const ProvisioningJobRowSchema = z.object({
@@ -27,6 +50,14 @@ const ProvisioningJobRowSchema = z.object({
   created_at: z.string().min(1).max(64),
   updated_at: z.string().min(1).max(64),
   completed_at: z.string().min(1).max(64).nullable(),
+  target_bundle_version: z.string().min(1).max(128).nullable(),
+  target_bundle_sha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  image_source: z.enum(['unresolved', 'snapshot', 'clean_image']),
+  snapshot_id: z.uuid().nullable(),
+  snapshot_lease_id: z.uuid().nullable(),
+  activation_step: z.enum(['selecting', 'creating', 'created', 'activating', 'registered', 'cleanup_pending', 'fallback_pending']),
+  provider_create_action_id: z.coerce.number().int().positive().nullable(),
+  fallback_reason: z.string().min(1).max(64).nullable(),
 });
 
 export interface ProvisioningJobRecord {
@@ -42,6 +73,14 @@ export interface ProvisioningJobRecord {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+  targetBundleVersion: string | null;
+  targetBundleSha256: string | null;
+  imageSource: 'unresolved' | 'snapshot' | 'clean_image';
+  snapshotId: string | null;
+  snapshotLeaseId: string | null;
+  activationStep: 'selecting' | 'creating' | 'created' | 'activating' | 'registered' | 'cleanup_pending' | 'fallback_pending';
+  providerCreateActionId: number | null;
+  fallbackReason: string | null;
 }
 
 export interface NewProvisioningJob {
@@ -55,6 +94,29 @@ export interface NewProvisioningJob {
 export interface ProvisioningPayload {
   registrationToken: string;
   postgresPassword: string;
+  recovery?: {
+    oldMachineId: string;
+    oldStatus: string;
+    oldPublicIPv4: string | null;
+    oldPublicIPv6: string | null;
+    oldImageVersion: string | null;
+    oldSourceSnapshotId: string | null;
+    oldSourceBaseGeneration: string | null;
+    oldTargetBundleVersion: string | null;
+    oldTargetBundleSha256: string | null;
+    oldServerType: string | null;
+    oldRegistrationTokenHash: string | null;
+    oldRegistrationTokenExpiresAt: string | null;
+    oldProvisionedAt: string;
+    oldLastSeenAt: string | null;
+    oldFailureCode: string | null;
+    oldFailureAt: string | null;
+    imageSource: 'snapshot' | 'clean_image';
+    targetBundleVersion: string;
+    targetBundleSha256: string;
+    sourceSnapshotId: string | null;
+    sourceBaseGeneration: string | null;
+  };
 }
 
 function mapProvisioningJob(value: unknown): ProvisioningJobRecord {
@@ -72,6 +134,14 @@ function mapProvisioningJob(value: unknown): ProvisioningJobRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     completedAt: row.completed_at,
+    targetBundleVersion: row.target_bundle_version,
+    targetBundleSha256: row.target_bundle_sha256,
+    imageSource: row.image_source,
+    snapshotId: row.snapshot_id,
+    snapshotLeaseId: row.snapshot_lease_id,
+    activationStep: row.activation_step,
+    providerCreateActionId: row.provider_create_action_id,
+    fallbackReason: row.fallback_reason,
   };
 }
 
@@ -141,6 +211,14 @@ export async function insertProvisioningJob(db: PlatformDB, job: NewProvisioning
     created_at: job.createdAt,
     updated_at: job.createdAt,
     completed_at: null,
+    target_bundle_version: null,
+    target_bundle_sha256: null,
+    image_source: 'unresolved',
+    snapshot_id: null,
+    snapshot_lease_id: null,
+    activation_step: 'selecting',
+    provider_create_action_id: null,
+    fallback_reason: null,
   }).execute();
 }
 
@@ -240,6 +318,7 @@ export async function completeProvisioningJob(db: PlatformDB, jobId: string, now
       updated_at: now,
       completed_at: now,
       last_error_code: null,
+      activation_step: 'created',
     })
     .where('job_id', '=', jobId)
     .where('status', '=', 'running')

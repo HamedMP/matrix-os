@@ -38,6 +38,7 @@ import { resolvePlatformIntegrationConfig } from './integration-config.js';
 import { buildPlatformVerificationToken } from './platform-token.js';
 import { backfillFirstRunRecords } from './journey.js';
 import { logPlatformRouteError } from './platform-route-utils.js';
+import { CustomerVpsError } from './customer-vps-errors.js';
 import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
 
 interface GatewayPlatformUser {
@@ -467,6 +468,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
         {
           claimGoldenSnapshotBuildBatch,
           listCallbackWaitGoldenSnapshotBuildIds,
+          enforceGoldenSnapshotRetention,
           listPendingGoldenSnapshotCleanup,
           listRunnableGoldenSnapshotBuildIds,
           listUnresolvedGoldenSnapshotBuildIds,
@@ -494,6 +496,7 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
         goldenSnapshotPromise = (async () => {
           try {
             const workerNow = new Date().toISOString();
+            let quotaPressure = false;
             if (goldenSnapshotConfig.buildsEnabled) {
               await claimGoldenSnapshotBuildBatch(
                 db,
@@ -510,6 +513,9 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
                 try {
                   await goldenSnapshotService!.runBuildStep(buildId);
                 } catch (err: unknown) {
+                  if (err instanceof CustomerVpsError && err.code === 'snapshot_quota_exceeded') {
+                    quotaPressure = true;
+                  }
                   console.error(`[golden-snapshot] worker step failed: ${err instanceof Error ? err.name : typeof err}`);
                 }
               }
@@ -543,6 +549,18 @@ export async function startPlatformServer(opts: StartPlatformServerOptions): Pro
               } catch (err: unknown) {
                 console.error(`[golden-snapshot] cleanup step failed: ${err instanceof Error ? err.name : typeof err}`);
               }
+            }
+            const retention = await enforceGoldenSnapshotRetention(db, {
+              retentionLimit: goldenSnapshotConfig.retentionLimit,
+              rollbackVersionsPerChannel: 2,
+              freshnessMaxAgeMs: goldenSnapshotConfig.freshnessMaxAgeMs,
+              now: new Date().toISOString(),
+              quotaPressure,
+            });
+            if (retention.retiredSnapshotIds.length > 0 || retention.blocked) {
+              console.log(
+                `[golden-snapshot] retention retired=${retention.retiredSnapshotIds.length} blocked=${retention.blocked}`,
+              );
             }
           } catch (err: unknown) {
             logPlatformRouteError('golden snapshot reconciliation', err);

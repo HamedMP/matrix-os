@@ -15,7 +15,7 @@ const config: GoldenSnapshotRuntimeConfig = {
     baseGeneration: 'ubuntu-24.04-v1', bootMode: 'bios', activationAbi: 'host-v1', minimumDiskGb: 40,
   },
   maxBuildAttempts: 5, maxConcurrentBuilds: 2, buildLeaseMs: 300_000, provisioningLeaseMs: 600_000,
-  reconciliationBatchSize: 25,
+  retentionLimit: 20, freshnessMaxAgeMs: 7 * 24 * 60 * 60 * 1000, reconciliationBatchSize: 25,
 };
 
 describe('golden snapshot control-plane routes', () => {
@@ -117,6 +117,15 @@ describe('golden snapshot control-plane routes', () => {
     })).status).toBe(200);
   });
 
+  it('uses the scoped operator credential for snapshot administration', async () => {
+    expect((await app().request('/snapshots', {
+      headers: { authorization: 'Bearer platform-secret' },
+    })).status).toBe(401);
+    expect((await app().request('/snapshots', {
+      headers: { authorization: 'Bearer operator-secret' },
+    })).status).toBe(200);
+  });
+
   it('passes phase tokens to the service and returns only generic callback errors', async () => {
     service.consumeCallback.mockRejectedValueOnce(new GoldenSnapshotCallbackError('unauthorized'));
     const response = await app().request('/snapshot-builds/20000000-0000-4000-8000-000000000001/callback', {
@@ -182,5 +191,95 @@ describe('golden snapshot control-plane routes', () => {
     );
     expect(callback.status).toBe(400);
 
+    const headers = { authorization: 'Bearer platform-secret', 'content-type': 'application/json' };
+    const retryBody = JSON.stringify({ padding: 'x'.repeat(2_000) });
+    const retry = await app().request(
+      '/snapshot-builds/20000000-0000-4000-8000-000000000001/retry',
+      {
+        method: 'POST',
+        headers: { ...headers, 'content-length': String(Buffer.byteLength(retryBody)) },
+        body: retryBody,
+      },
+    );
+    expect(retry.status).toBe(413);
+
+    const revoke = await app().request(
+      '/snapshots/10000000-0000-4000-8000-000000000001/revoke',
+      { method: 'POST', headers, body: JSON.stringify({ reason: 'unsafe', padding: 'x'.repeat(5_000) }) },
+    );
+    expect(revoke.status).toBe(413);
+  });
+
+  it('provides authenticated bounded status and immediate revocation controls without provider details', async () => {
+    const enqueue = await app().request('/snapshot-builds', {
+      method: 'POST', headers: { authorization: 'Bearer platform-secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ bundleVersion: 'v1' }),
+    });
+    const { snapshotId } = await enqueue.json() as { snapshotId: string };
+    const status = await app().request('/snapshots?limit=10', {
+      headers: { authorization: 'Bearer platform-secret' },
+    });
+    expect(status.status).toBe(200);
+    expect(await status.json()).toEqual({ snapshots: [expect.objectContaining({ snapshotId, state: 'candidate' })] });
+    expect(JSON.stringify(await app().request('/snapshots?limit=10', {
+      headers: { authorization: 'Bearer platform-secret' },
+    }).then((response) => response.json()))).not.toContain('providerImageId');
+
+    const revoked = await app().request(`/snapshots/${snapshotId}/revoke`, {
+      method: 'POST', headers: { authorization: 'Bearer platform-secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ reason: 'operator_revoked' }),
+    });
+    expect(revoked.status).toBe(200);
+    expect(await revoked.json()).toEqual({ revoked: true });
+  });
+
+  it('retries only a persisted failed build through the authenticated bounded control', async () => {
+    const enqueue = await app().request('/snapshot-builds', {
+      method: 'POST', headers: { authorization: 'Bearer platform-secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ bundleVersion: 'v1' }),
+    });
+    const ids = await enqueue.json() as { snapshotId: string; buildId: string };
+    await db.executor.updateTable('golden_snapshots').set({ state: 'failed', failure_code: 'synthetic_failure' })
+      .where('snapshot_id', '=', ids.snapshotId).execute();
+    await db.executor.updateTable('golden_snapshot_builds').set({ status: 'failed', phase: 'failed' })
+      .where('build_id', '=', ids.buildId).execute();
+
+    const retried = await app().request(`/snapshot-builds/${ids.buildId}/retry`, {
+      method: 'POST', headers: { authorization: 'Bearer platform-secret' },
+    });
+    expect(retried.status).toBe(200);
+    expect(await retried.json()).toEqual({ retried: true });
+    expect(await db.executor.selectFrom('golden_snapshot_builds').select(['status', 'phase'])
+      .where('build_id', '=', ids.buildId).executeTakeFirst()).toMatchObject({ status: 'queued', phase: 'requested' });
+    expect(await db.executor.selectFrom('golden_snapshots').select('state')
+      .where('snapshot_id', '=', ids.snapshotId).executeTakeFirst()).toEqual({ state: 'candidate' });
+  });
+
+  it('returns generic JSON when retry or revoke persistence is unavailable', async () => {
+    const brokenDb = {
+      ...db,
+      transaction: async () => { throw new Error('synthetic database path'); },
+      executor: new Proxy(db.executor, {
+        get(target, property, receiver) {
+          if (property === 'updateTable') return () => { throw new Error('synthetic database path'); };
+          return Reflect.get(target, property, receiver);
+        },
+      }),
+    } as PlatformDB;
+    const brokenApp = createGoldenSnapshotRoutes({
+      db: brokenDb, service, config, platformSecret: 'platform-secret',
+      now: () => '2026-07-03T00:00:00.000Z', idFactory: () => ids.shift()!,
+    });
+    const retry = await brokenApp.request('/snapshot-builds/20000000-0000-4000-8000-000000000001/retry', {
+      method: 'POST', headers: { authorization: 'Bearer platform-secret' },
+    });
+    expect(retry.status).toBe(500);
+    expect(await retry.json()).toEqual({ error: 'Snapshot retry unavailable' });
+    const revoke = await brokenApp.request('/snapshots/10000000-0000-4000-8000-000000000001/revoke', {
+      method: 'POST', headers: { authorization: 'Bearer platform-secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ reason: 'operator_revoked' }),
+    });
+    expect(revoke.status).toBe(500);
+    expect(await revoke.json()).toEqual({ error: 'Snapshot revocation unavailable' });
   });
 });

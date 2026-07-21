@@ -90,8 +90,10 @@ else
 fi
 gateway_pid="$!"
 
+gateway_healthy=false
 for _ in $(seq 1 90); do
   if curl --fail --silent --show-error --max-time 2 "http://127.0.0.1:${GATEWAY_PORT}/health" >/dev/null; then
+    gateway_healthy=true
     break
   fi
   if ! kill -0 "$gateway_pid" 2>/dev/null; then
@@ -104,6 +106,7 @@ register_once() {
   [ ! -f "$REGISTER_FLAG" ] || return 0
   [ -n "${MATRIX_PLATFORM_REGISTER_URL:-}" ] || return 0
   [ -n "${MATRIX_REGISTRATION_TOKEN:-}" ] || return 0
+  [ "$gateway_healthy" = true ] || return 1
   case "$MATRIX_PLATFORM_REGISTER_URL" in
     */vps/register) ;;
     *) echo "matrix-gateway: MATRIX_PLATFORM_REGISTER_URL must end with /vps/register" >&2; return 1 ;;
@@ -112,8 +115,13 @@ register_once() {
   local instance_id public_ipv4 payload
   instance_id="$(curl --fail --silent --show-error --max-time 10 http://169.254.169.254/hetzner/v1/metadata/instance-id)"
   public_ipv4="$(curl --fail --silent --show-error --max-time 10 http://169.254.169.254/hetzner/v1/metadata/public-ipv4)"
-  payload="$(printf '{"machineId":"%s","hetznerServerId":%s,"publicIPv4":"%s","imageVersion":"%s"}' \
-    "$MATRIX_MACHINE_ID" "$instance_id" "$public_ipv4" "$MATRIX_IMAGE_VERSION")"
+  if [ -n "${MATRIX_TARGET_BUNDLE_SHA256:-}" ]; then
+    payload="$(printf '{"machineId":"%s","hetznerServerId":%s,"publicIPv4":"%s","imageVersion":"%s","bundleSha256":"%s","healthy":true}' \
+      "$MATRIX_MACHINE_ID" "$instance_id" "$public_ipv4" "$MATRIX_IMAGE_VERSION" "$MATRIX_TARGET_BUNDLE_SHA256")"
+  else
+    payload="$(printf '{"machineId":"%s","hetznerServerId":%s,"publicIPv4":"%s","imageVersion":"%s"}' \
+      "$MATRIX_MACHINE_ID" "$instance_id" "$public_ipv4" "$MATRIX_IMAGE_VERSION")"
+  fi
 
   for attempt in $(seq 1 30); do
     if curl --fail --silent --show-error --max-time 10 \

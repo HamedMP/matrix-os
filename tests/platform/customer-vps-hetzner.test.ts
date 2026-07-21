@@ -53,6 +53,42 @@ describe('platform/customer-vps-hetzner', () => {
     }
   });
 
+  it('does not misclassify an unrelated HTTP 400 as a snapshot clone rejection', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const fetchImpl = vi.fn().mockResolvedValue(
+        new Response('{"error":{"code":"invalid_input","message":"invalid server name","details":{"fields":[{"name":"name","messages":["is invalid"]}]}}}', {
+          status: 400,
+        }),
+      );
+      const client = createHetznerClient(config, fetchImpl as unknown as typeof fetch);
+
+      await expect(client.createServer({ ...createInput, image: 302 })).rejects.toMatchObject({
+        code: 'provider_unavailable',
+      });
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it('classifies a bounded provider image-field rejection as a snapshot clone rejection', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const fetchImpl = vi.fn().mockResolvedValue(
+        new Response('{"error":{"code":"invalid_input","message":"invalid input","details":{"fields":[{"name":"image","messages":["is incompatible"]}]}}}', {
+          status: 422,
+        }),
+      );
+      const client = createHetznerClient(config, fetchImpl as unknown as typeof fetch);
+
+      await expect(client.createServer({ ...createInput, image: 302 })).rejects.toMatchObject({
+        code: 'snapshot_clone_rejected',
+      });
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it('maps 429 to quota_exceeded without logging a rejection', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response('', { status: 429 }));
     const client = createHetznerClient(config, fetchImpl as unknown as typeof fetch);
