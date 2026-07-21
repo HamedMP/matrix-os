@@ -1,8 +1,10 @@
 import { useCallback, useRef, useState } from "react";
 import { useSignIn } from "@clerk/clerk-expo";
 import {
+  PasswordUnavailableError,
   describeSignInFailure,
   requestEmailCode,
+  signInWithPassword,
   submitEmailCode,
   type SignInAttemptLike,
 } from "./clerk-sign-in";
@@ -23,12 +25,18 @@ type EmailCodeSignInOptions = {
 export type EmailCodeSignIn = {
   email: string;
   setEmail: (value: string) => void;
+  password: string;
+  setPassword: (value: string) => void;
   code: string;
   setCode: (value: string) => void;
-  /** Masked address the code went to; null while still collecting the address. */
+  /** Masked address the code went to; null while still collecting credentials. */
   codeSentTo: string | null;
+  /** True once the account has been shown to have no password. */
+  passwordUnavailable: boolean;
+  signingIn: boolean;
   sending: boolean;
   verifying: boolean;
+  signInWithPassword: () => Promise<void>;
   sendCode: () => Promise<void>;
   verifyCode: () => Promise<void>;
   reset: () => void;
@@ -45,12 +53,41 @@ export function useEmailCodeSignIn({
 }: EmailCodeSignInOptions): EmailCodeSignIn {
   const { signIn, setActive, isLoaded } = useSignIn();
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [codeSentTo, setCodeSentTo] = useState<string | null>(null);
+  const [passwordUnavailable, setPasswordUnavailable] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
   // Only read inside the submit handlers, so a ref keeps it out of the render path.
   const attemptRef = useRef<SignInAttemptLike | null>(null);
+
+  const submitPassword = useCallback(async () => {
+    if (!isLoaded || !signIn || !setActive) return;
+    setSigningIn(true);
+    try {
+      await prepareGateway();
+      const createdSessionId = await signInWithPassword(signIn, email, password);
+      await setActive({ session: createdSessionId });
+      onSuccess();
+    } catch (err: unknown) {
+      console.warn("[mobile] password sign-in failed:", err);
+      if (err instanceof PasswordUnavailableError) {
+        // OAuth-only account. The form renders its own inline hint pointing at
+        // the code path, so an error banner would just repeat it.
+        setPasswordUnavailable(true);
+        return;
+      }
+      onError(
+        err instanceof SignInStepError
+          ? err.message
+          : describeSignInFailure(err, "We could not sign you in. Try again in a moment."),
+      );
+    } finally {
+      setSigningIn(false);
+    }
+  }, [email, isLoaded, onError, onSuccess, password, prepareGateway, setActive, signIn]);
 
   const sendCode = useCallback(async () => {
     if (!isLoaded || !signIn) return;
@@ -117,16 +154,22 @@ export function useEmailCodeSignIn({
     attemptRef.current = null;
     setCodeSentTo(null);
     setCode("");
+    setPasswordUnavailable(false);
   }, []);
 
   return {
     email,
     setEmail,
+    password,
+    setPassword,
     code,
     setCode,
     codeSentTo,
+    passwordUnavailable,
+    signingIn,
     sending,
     verifying,
+    signInWithPassword: submitPassword,
     sendCode,
     verifyCode,
     reset,
