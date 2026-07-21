@@ -147,7 +147,7 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).toContain('wait_file');
     const keeper = await readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/keeper.mjs'), 'utf8');
     expect(keeper).toContain("['--session', sessionName, 'action', 'list-panes', '--all', '--json']");
-    expect(keeper).toContain("'send-keys', 'Enter', '--pane-id', String(pane.id)");
+    expect(keeper).toContain("'write', '13', '--pane-id', String(pane.id)");
     expect(keeper).toContain("stripVTControlCharacters(renderWindow).includes('<ENTER> run')");
     expect(runner).toContain('confirmations/${recovery_id}.gated');
   });

@@ -232,7 +232,7 @@ async function main() {
         if (!Array.isArray(listed) || listed.length > 16) throw new Error('startup_failed');
         const panes = listed.filter((pane) => !pane.is_plugin && pane.is_held);
         if (!panes.length || panes.some((pane) => !Number.isInteger(pane.id) || pane.id < 0)) throw new Error('startup_failed');
-        for (const pane of panes) await execFileAsync(zellij, ['--session', sessionName, 'action', 'send-keys', 'Enter', '--pane-id', String(pane.id)], options);
+        for (const pane of panes) await execFileAsync(zellij, ['--session', sessionName, 'action', 'write', '13', '--pane-id', String(pane.id)], options);
         confirmationSent = true;
       } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
