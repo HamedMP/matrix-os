@@ -115,6 +115,48 @@ describe("SignInScreen email code flow", () => {
     expect(screen.getByText("Email me a code instead")).toBeTruthy();
   });
 
+  it("does not start a second attempt when the keyboard submits again mid-flight", async () => {
+    let releaseFirstAttempt: (value: unknown) => void = () => {};
+    mockCreate.mockImplementationOnce(
+      () => new Promise((resolve) => { releaseFirstAttempt = resolve; }),
+    );
+    render(<SignInScreen />);
+
+    fireEvent.changeText(screen.getByLabelText("Email address"), "nima@finna.ai");
+    fireEvent.changeText(screen.getByLabelText("Password"), "hunter2");
+
+    const passwordInput = screen.getByLabelText("Password");
+    fireEvent(passwordInput, "submitEditing");
+    fireEvent(passwordInput, "submitEditing");
+    fireEvent(passwordInput, "submitEditing");
+
+    await waitFor(() => {
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+    });
+
+    releaseFirstAttempt({ status: "complete", createdSessionId: "sess_pw" });
+    await waitFor(() => {
+      expect(mockSetActive).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("drops the no-password hint once the email is changed to another account", async () => {
+    mockCreate.mockImplementationOnce(() =>
+      Promise.reject({ errors: [{ code: "strategy_for_user_invalid" }] }),
+    );
+    render(<SignInScreen />);
+
+    fireEvent.changeText(screen.getByLabelText("Email address"), "oauth-only@matrix-os.com");
+    fireEvent.changeText(screen.getByLabelText("Password"), "hunter2");
+    fireEvent.press(screen.getByText("Sign in"));
+
+    expect(await screen.findByText(/no password/i)).toBeTruthy();
+
+    fireEvent.changeText(screen.getByLabelText("Email address"), "someone-else@matrix-os.com");
+
+    expect(screen.queryByText(/no password/i)).toBeNull();
+  });
+
   it("keeps Sign in disabled until both fields are filled", () => {
     render(<SignInScreen />);
 

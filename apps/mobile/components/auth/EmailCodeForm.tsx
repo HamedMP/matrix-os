@@ -87,7 +87,9 @@ export function EmailCodeForm({
             secureTextEntry
             textContentType="password"
             returnKeyType="go"
-            onSubmitEditing={onSignIn}
+            onSubmitEditing={() => {
+              if (canSignIn) onSignIn();
+            }}
             style={styles.input}
             accessibilityLabel="Password"
           />
@@ -154,7 +156,9 @@ export function EmailCodeForm({
           textContentType="oneTimeCode"
           maxLength={MAX_VERIFICATION_CODE_INPUT_LENGTH}
           returnKeyType="go"
-          onSubmitEditing={onVerify}
+          onSubmitEditing={() => {
+            if (canVerify) onVerify();
+          }}
           style={styles.input}
           accessibilityLabel="Verification code"
         />
