@@ -138,7 +138,7 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).toContain('attach-probe.mjs');
     expect(runner).not.toContain('script -qefc');
     expect(runner).toContain('cgroup_removed');
-    expect(runner).toContain('confirmations/${recovery_id}.pass');
+    expect(runner).not.toContain('install -o matrix -g matrix -m 0600 /dev/null "$runtime_root/confirmations/${recovery_id}.pass"');
     expect(runner).toContain('pkill -f -x');
     expect(runner).toContain('for runtime_id in "${memory_ids[@]}"; do');
     expect(runner).toContain('systemctl set-property --runtime');
@@ -146,8 +146,7 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).toContain('timeout 15s runuser');
     expect(runner).toContain('wait_file');
     const keeper = await readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/keeper.mjs'), 'utf8');
-    expect(keeper).toContain("['--session', sessionName, 'action', 'list-panes', '--all', '--json']");
-    expect(keeper).toContain("'write', '13', '--pane-id', String(pane.id)");
+    expect(keeper).toContain("cgroupRoles(cgroup.path, descriptor.intent === 'create')");
     expect(keeper).toContain("stripVTControlCharacters(renderWindow).includes('<ENTER> run')");
     expect(runner).toContain('confirmations/${recovery_id}.gated');
   });

@@ -112,7 +112,7 @@ async function processInfo(pid) {
   }
 }
 
-async function cgroupRoles(cgroupPath) {
+async function cgroupRoles(cgroupPath, requireWorkload) {
   const raw = await readFile(`${cgroupPath}/cgroup.procs`, 'utf8');
   const pids = raw.split(/\s+/).filter(Boolean).map((value) => Number.parseInt(value, 10));
   const processes = (await Promise.all(pids.map(processInfo))).filter(Boolean);
@@ -122,12 +122,12 @@ async function cgroupRoles(cgroupPath) {
   const shell = processes.find((entry) => entry.comm === 'bash');
   const agent = processes.find((process) => process.cmdline[0] === 'matrix-agent-probe');
   roleSnapshot = { ...roleSnapshot, zellij: zellijPids.length, shell: Boolean(shell), agent: Boolean(agent) };
-  if (zellijPids.length < 2 || !shell || !agent) return null;
+  if (zellijPids.length < 2 || (requireWorkload && (!shell || !agent))) return null;
   return {
     keeper: process.pid,
     zellij: zellijPids.sort((a, b) => a - b),
-    shell: shell.pid,
-    agent: agent.pid,
+    shell: shell?.pid ?? 0,
+    agent: agent?.pid ?? 0,
   };
 }
 
@@ -223,28 +223,12 @@ async function main() {
   let roles = null;
   while (Date.now() < deadline) {
     if (clientExited) throw new Error('client_exit');
-    if (!confirmationSent) {
-      try {
-        await readFile(`${runtimeRoot}/confirmations/${runtimeId}.pass`);
-        const options = { env, timeout: 2000, maxBuffer: 16 * 1024 };
-        const { stdout } = await execFileAsync(zellij, ['--session', sessionName, 'action', 'list-panes', '--all', '--json'], options);
-        const listed = JSON.parse(stdout);
-        if (!Array.isArray(listed) || listed.length > 16) throw new Error('startup_failed');
-        const panes = listed.filter((pane) => !pane.is_plugin && pane.is_held);
-        if (!panes.length || panes.some((pane) => !Number.isInteger(pane.id) || pane.id < 0)) throw new Error('startup_failed');
-        for (const pane of panes) await execFileAsync(zellij, ['--session', sessionName, 'action', 'write', '13', '--pane-id', String(pane.id)], options);
-        confirmationSent = true;
-      } catch (error) {
-        const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
-        if (code !== 'ENOENT') throw error;
-      }
-    }
     const [responsive, detected] = await Promise.all([
       exactSessionResponds(sessionName, env),
-      cgroupRoles(cgroup.path),
+      cgroupRoles(cgroup.path, descriptor.intent === 'create'),
     ]);
     roleSnapshot.responsive = responsive;
-    if (responsive && detected) {
+    if (responsive && detected && (descriptor.intent === 'create' || gateRecorded)) {
       roles = detected;
       break;
     }
