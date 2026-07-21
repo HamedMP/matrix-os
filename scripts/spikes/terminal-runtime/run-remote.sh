@@ -126,7 +126,7 @@ start_runtime() {
   runtime_id="$1"
   intent="${2:-create}"
   session_name="matrix-t-${runtime_id}"
-  rm -f -- "$runtime_root/readiness/${runtime_id}.json" "$runtime_root/outcomes/${runtime_id}.json" "$runtime_root/startup-failures/${runtime_id}.json" "$runtime_root/confirmations/${runtime_id}.pass" "$runtime_root/pane-release/${session_name}"
+  rm -f -- "$runtime_root/readiness/${runtime_id}.json" "$runtime_root/outcomes/${runtime_id}.json" "$runtime_root/startup-failures/${runtime_id}.json" "$runtime_root/confirmations/${runtime_id}.pass" "$runtime_root/confirmations/${runtime_id}.gated" "$runtime_root/pane-release/${session_name}"
   descriptor "$runtime_id" "$intent"
   systemctl reset-failed "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true
   systemctl start --no-block "${unit_prefix}${runtime_id}.service"
@@ -461,13 +461,7 @@ if wait_state "$recovery_unit" active; then
   systemctl stop "$recovery_unit" >/dev/null 2>&1 || true
 
   start_runtime "$recovery_id" recover
-  confirmation_dump="/tmp/matrix-terminal-confirmation-${short_sha}.txt"
-  for _ in $(seq 1 150); do
-    zellij_cmd --session "$recovery_session" action dump-screen --path "$confirmation_dump" >/dev/null 2>&1 || true
-    if grep -Fq '<ENTER> run' "$confirmation_dump" 2>/dev/null; then mark_pass s2 commandsConfirmationGated; break; fi
-    sleep 0.1
-  done
-  rm -f -- "$confirmation_dump"
+  if wait_file "$runtime_root/confirmations/${recovery_id}.gated"; then mark_pass s2 commandsConfirmationGated; fi
   if ! pgrep -a zellij | grep -F -- '--force-run-commands' >/dev/null 2>&1; then mark_pass s2 forceRunAbsent; fi
   install -o matrix -g matrix -m 0600 /dev/null "$runtime_root/confirmations/${recovery_id}.pass"
   release_pane "$recovery_id"

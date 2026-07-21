@@ -19,6 +19,8 @@ let clientExited = false;
 let clientExitEvent = null;
 let ready = false;
 let confirmationSent = false;
+let renderWindow = '';
+let gateRecorded = false;
 
 const STARTUP_FAILURE_CODES = new Set([
   'runtime_id',
@@ -186,6 +188,18 @@ async function main() {
     rows: 40,
     cwd: '/home/matrix/home',
     env,
+  });
+  pty.onData(async (data) => {
+    renderWindow = `${renderWindow}${data}`.slice(-16_384);
+    if (!gateRecorded && renderWindow.includes('<ENTER> run')) {
+      gateRecorded = true;
+      try {
+        await writeFile(`${runtimeRoot}/confirmations/${runtimeId}.gated`, '', { flag: 'wx', mode: 0o600 });
+      } catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
+        if (code !== 'EEXIST') exit(20);
+      }
+    }
   });
   pty.onExit((event) => {
     clientExited = true;

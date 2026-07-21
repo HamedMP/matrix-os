@@ -138,7 +138,6 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).toContain('attach-probe.mjs');
     expect(runner).not.toContain('script -qefc');
     expect(runner).toContain('cgroup_removed');
-    expect(runner).toContain("grep -Fq '<ENTER> run'");
     expect(runner).toContain('confirmations/${recovery_id}.pass');
     expect(runner).toContain('pkill -f -x');
     expect(runner).toContain('for runtime_id in "${memory_ids[@]}"; do');
@@ -149,6 +148,8 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).toContain('wait_file');
     const keeper = await readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/keeper.mjs'), 'utf8');
     expect(keeper).toContain('pty.write("\\r\\x1bl\\r\\x1bh\\r")');
+    expect(keeper).toContain("renderWindow.includes('<ENTER> run')");
+    expect(runner).toContain('confirmations/${recovery_id}.gated');
   });
 
   it('keeps the fixed notify unit shape and accepts readiness from the keeper helper', async () => {
