@@ -198,7 +198,7 @@ describe('terminal runtime spike evidence', () => {
     });
     await writeFile(
       join(root, 's1', 'base-startup-failure.json'),
-      `${JSON.stringify({ stage: 'readiness', code: 'client_exit', confirmationSent: false, exitCode: 1, signal: 0 })}\n`,
+      `${JSON.stringify({ stage: 'readiness', code: 'client_exit', confirmationSent: false, responsive: false, zellij: 1, shell: false, agent: false, exitCode: 1, signal: 0 })}\n`,
       'utf8',
     );
     await writeFile(
@@ -217,7 +217,7 @@ describe('terminal runtime spike evidence', () => {
     await mkdir(join(root, 's2'));
     await writeFile(
       join(root, 's2', 'recovery-startup-failure.json'),
-      `${JSON.stringify({ stage: 'readiness', code: 'readiness_timeout', confirmationSent: true })}\n`,
+      `${JSON.stringify({ stage: 'readiness', code: 'readiness_timeout', confirmationSent: true, responsive: true, zellij: 2, shell: true, agent: false })}\n`,
       'utf8',
     );
     await writeFile(join(root, 's1', 'memory-stage.txt'), 'slice_no_pressure unit=2 slice=0 current=3 high=4 hogs=3\n', 'utf8');
@@ -228,7 +228,7 @@ describe('terminal runtime spike evidence', () => {
       's1:pty-exit=1/0',
       's1:unit=failed/failed/timeout/1/16',
       's1:roles=initial/keeper:1/zellij:1of2/shell:1/agent:0',
-      's2:recovery=readiness/readiness_timeout/confirm:1',
+      's2:recovery=readiness/readiness_timeout/confirm:1/roles:1,2,1,0',
       's1:memory=slice_no_pressure/unit:2/slice:0/current:3/high:4/hogs:3',
     ]);
     await rm(join(root, 's1', 'base-runtime-roles.json'));
@@ -236,7 +236,7 @@ describe('terminal runtime spike evidence', () => {
     await expect(reportGateChecks(root)).resolves.toEqual([
       's1:stopEmptiesCgroup=fail', 's1:startup=readiness/client_exit',
       's1:pty-exit=1/0', 's1:unit=failed/failed/timeout/1/16',
-      's2:recovery=readiness/readiness_timeout/confirm:1',
+      's2:recovery=readiness/readiness_timeout/confirm:1/roles:1,2,1,0',
       's1:memory=slice_no_pressure/unit:2/slice:0/current:3/high:4/hogs:3',
     ]);
   });

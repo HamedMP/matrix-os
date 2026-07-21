@@ -201,8 +201,9 @@ export async function reportGateChecks(inputRoot) {
       'descriptor_intent', 'descriptor_size', 'client_exit', 'cgroup_unified',
       'cgroup_unit', 'readiness_timeout', 'startup_failed',
     ]);
-    const baseShape = hasExactKeys(startup, ['stage', 'code', 'confirmationSent']) && typeof startup.confirmationSent === 'boolean';
-    const clientExitShape = hasExactKeys(startup, ['stage', 'code', 'confirmationSent', 'exitCode', 'signal']) && typeof startup.confirmationSent === 'boolean' &&
+    const roleShape = typeof startup.responsive === 'boolean' && Number.isInteger(startup.zellij) && startup.zellij >= 0 && startup.zellij <= 16 && typeof startup.shell === 'boolean' && typeof startup.agent === 'boolean';
+    const baseShape = hasExactKeys(startup, ['stage', 'code', 'confirmationSent', 'responsive', 'zellij', 'shell', 'agent']) && typeof startup.confirmationSent === 'boolean' && roleShape;
+    const clientExitShape = hasExactKeys(startup, ['stage', 'code', 'confirmationSent', 'responsive', 'zellij', 'shell', 'agent', 'exitCode', 'signal']) && typeof startup.confirmationSent === 'boolean' && roleShape &&
       startup.code === 'client_exit' && Number.isInteger(startup.exitCode) &&
       startup.exitCode >= 0 && startup.exitCode <= 255 && Number.isInteger(startup.signal) &&
       startup.signal >= 0 && startup.signal <= 255;
@@ -280,8 +281,8 @@ export async function reportGateChecks(inputRoot) {
       'descriptor_intent', 'descriptor_size', 'client_exit', 'cgroup_unified',
       'cgroup_unit', 'readiness_timeout', 'startup_failed',
     ]);
-    if (hasExactKeys(recovery, ['stage', 'code', 'confirmationSent']) && typeof recovery.confirmationSent === 'boolean' && stages.has(recovery.stage) && codes.has(recovery.code)) {
-      failures.push(`s2:recovery=${recovery.stage}/${recovery.code}/confirm:${Number(recovery.confirmationSent)}`);
+    if (hasExactKeys(recovery, ['stage', 'code', 'confirmationSent', 'responsive', 'zellij', 'shell', 'agent']) && typeof recovery.confirmationSent === 'boolean' && typeof recovery.responsive === 'boolean' && Number.isInteger(recovery.zellij) && recovery.zellij >= 0 && recovery.zellij <= 16 && typeof recovery.shell === 'boolean' && typeof recovery.agent === 'boolean' && stages.has(recovery.stage) && codes.has(recovery.code)) {
+      failures.push(`s2:recovery=${recovery.stage}/${recovery.code}/confirm:${Number(recovery.confirmationSent)}/roles:${Number(recovery.responsive)},${recovery.zellij},${Number(recovery.shell)},${Number(recovery.agent)}`);
     }
   } catch (error) {
     if (!ignorableDiagnosticError(error)) throw error;

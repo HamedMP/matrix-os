@@ -21,6 +21,7 @@ let ready = false;
 let confirmationSent = false;
 let renderWindow = '';
 let gateRecorded = false;
+let roleSnapshot = { responsive: false, zellij: 0, shell: false, agent: false };
 
 const STARTUP_FAILURE_CODES = new Set([
   'runtime_id',
@@ -120,6 +121,7 @@ async function cgroupRoles(cgroupPath) {
     .map((process) => process.pid);
   const shell = processes.find((entry) => entry.comm === 'bash');
   const agent = processes.find((process) => process.cmdline[0] === 'matrix-agent-probe');
+  roleSnapshot = { ...roleSnapshot, zellij: zellijPids.length, shell: Boolean(shell), agent: Boolean(agent) };
   if (zellijPids.length < 2 || !shell || !agent) return null;
   return {
     keeper: process.pid,
@@ -149,7 +151,7 @@ async function recordStartupFailure(error) {
   const code = error instanceof Error && STARTUP_FAILURE_CODES.has(error.message)
     ? error.message
     : 'startup_failed';
-  const receipt = { stage: startupStage, code, confirmationSent };
+  const receipt = { stage: startupStage, code, confirmationSent, ...roleSnapshot };
   if (code === 'client_exit' && clientExitEvent) {
     receipt.exitCode = clientExitEvent.exitCode;
     receipt.signal = clientExitEvent.signal;
@@ -235,6 +237,7 @@ async function main() {
       exactSessionResponds(sessionName, env),
       cgroupRoles(cgroup.path),
     ]);
+    roleSnapshot.responsive = responsive;
     if (responsive && detected) {
       roles = detected;
       break;
