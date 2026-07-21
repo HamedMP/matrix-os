@@ -918,7 +918,22 @@ export function inferAgentFromCommand(command: string | undefined): AgentKind | 
   }
   const executable = tokens[index]?.split("/").pop();
   const parsed = AgentKindSchema.safeParse(executable);
-  return parsed.success ? parsed.data : undefined;
+  if (parsed.success) return parsed.data;
+
+  const wrappedScript = tokens[index + 1];
+  const matrixNodePrefix = process.env.MATRIX_NODE_PREFIX?.trim() || "/opt/matrix/runtime/node";
+  const managedCodexLaunchers = [
+    join(matrixNodePrefix, "bin", "codex"),
+    join(matrixNodePrefix, "lib", "node_modules", "@openai", "codex", "bin", "codex.js"),
+  ];
+  if (
+    executable === "node"
+    && wrappedScript !== undefined
+    && managedCodexLaunchers.includes(wrappedScript)
+  ) {
+    return "codex";
+  }
+  return undefined;
 }
 
 function inferAliasSource(name: string): ShellSessionAliasSource {

@@ -165,6 +165,11 @@ describe("zellij adapter", () => {
   it.each([
     ["env FOO=bar codex --full-auto", "codex"],
     ["/usr/bin/env --ignore-environment claude", "claude"],
+    [
+      "/opt/matrix/runtime/node/bin/node /opt/matrix/runtime/node/lib/node_modules/@openai/codex/bin/codex.js",
+      "codex",
+    ],
+    ["/opt/matrix/runtime/node/bin/node /opt/matrix/runtime/node/bin/codex", "codex"],
     ["env -u DEBUG opencode .", "opencode"],
     ["env --unset=DEBUG pi", "pi"],
   ] as const)("keeps wrapped focused commands available for exact agent classification: %s", async (paneCommand, agent) => {

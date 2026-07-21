@@ -162,6 +162,11 @@ describe("shell registry", () => {
     ["claude --resume", "claude"],
     ["env FOO=bar codex --full-auto", "codex"],
     ["/usr/bin/env --ignore-environment FOO=bar codex --full-auto", "codex"],
+    [
+      "/opt/matrix/runtime/node/bin/node /opt/matrix/runtime/node/lib/node_modules/@openai/codex/bin/codex.js --full-auto",
+      "codex",
+    ],
+    ["/opt/matrix/runtime/node/bin/node /opt/matrix/runtime/node/bin/codex", "codex"],
     ["opencode .", "opencode"],
     ["pi", "pi"],
   ] as const)("infers %s as a recognized agent launch", async (cmd, expectedAgent) => {
@@ -188,6 +193,10 @@ describe("shell registry", () => {
     "my-codex-wrapper",
     "bash -lc claude",
     "env -S 'codex --full-auto'",
+    "node codex.js",
+    "node /tmp/my-codex-wrapper.js",
+    "node /tmp/lib/node_modules/@openai/codex/bin/not-codex.js",
+    "node /tmp/lib/node_modules/@openai/codex/bin/codex.js",
   ])("does not infer agents from substrings or unsupported wrappers: %s", (command) => {
     expect(inferAgentFromCommand(command)).toBeUndefined();
   });
@@ -291,6 +300,42 @@ describe("shell registry", () => {
     }]);
   });
 
+  it("exposes matching Codex enrichment for the managed npm launcher", async () => {
+    const root = await tempRoot();
+    const agentStateStore = new AgentSessionStateStore({ homePath: root });
+    await agentStateStore.apply({
+      sessionName: "main",
+      agent: "codex",
+      type: "turn-started",
+      occurredAt: "2026-07-21T08:00:00.000Z",
+      subtitle: "Fix live terminal detection",
+      action: "Editing registry.ts",
+      model: "gpt-5.4",
+      strength: "high",
+    });
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+      focusedPaneRuntime: vi.fn(async () => ({
+        cwd: root,
+        command: "/opt/matrix/runtime/node/bin/node /opt/matrix/runtime/node/lib/node_modules/@openai/codex/bin/codex.js",
+        observed: true,
+      })),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, agentStateStore });
+
+    await expect(registry.list()).resolves.toMatchObject([{
+      name: "main",
+      agent: "codex",
+      subtitle: "Fix live terminal detection",
+      lastAction: "Editing registry.ts",
+      model: "gpt-5.4",
+      strength: "high",
+      visualStatus: "running",
+    }]);
+  });
+
   it("follows Terminal to Claude to Terminal to Codex to Terminal without stale enrichment", async () => {
     const root = await tempRoot();
     const agentStateStore = new AgentSessionStateStore({ homePath: root });
@@ -333,7 +378,7 @@ describe("shell registry", () => {
     }]);
     command = "zsh";
     await expectPlainTerminal();
-    command = "/opt/matrix/bin/codex";
+    command = "/opt/matrix/runtime/node/bin/node /opt/matrix/runtime/node/lib/node_modules/@openai/codex/bin/codex.js";
     const [codex] = await registry.list();
     expect(codex).toMatchObject({ agent: "codex", visualStatus: "running" });
     expect(codex).not.toHaveProperty("subtitle");

@@ -4,7 +4,7 @@
 
 ### Focused-Pane Live Agent Detection
 
-The focused Zellij pane's validated foreground command is now the primary source of truth for active terminal agent identity. Exact allowlisted command parsing recognizes Claude, Codex, OpenCode, and Pi, including supported `env` wrappers, without substring matching. Successful shell observations clear every agent-only response field, while recognized processes appear immediately even before provider hooks start.
+The focused Zellij pane's validated foreground command is now the primary source of truth for active terminal agent identity. Exact allowlisted command parsing recognizes Claude, Codex, OpenCode, and Pi, including supported `env` wrappers and the managed npm Codex Node entrypoint, without accepting generic Node scripts or substring matches. Successful shell observations clear every agent-only response field, while recognized processes appear immediately even before provider hooks start.
 
 Provider hooks remain optional enrichment. Matching non-ended snapshots can supply subtitle, action, model, strength, timestamp, and semantic visual status. Mismatched or ended snapshots are not exposed, and a recognized process without compatible enrichment is shown as running. When pane inspection is unavailable, the gateway falls back to a non-ended hook snapshot and then a persisted launch hint for at most 12 seconds.
 
@@ -56,6 +56,7 @@ Rename consumes an existing alias when the canonical session is renamed to that 
 
 - A single session follows `Terminal → Claude → Terminal → Codex → Terminal` within successive five-second refreshes, changing logos and compact card height without retaining the prior provider's metadata.
 - Manually launched agents and first-run/authentication screens receive the correct agent identity before hook metadata exists.
+- VPS Codex sessions installed through the managed npm package expose the Codex identity and matching hook subtitle/model metadata even though Zellij reports the Node launcher as the foreground process-group leader.
 - In multi-pane sessions, the focused pane alone determines which agent appears on the session card.
 
 - A terminal with newer command-start or recent-output evidence shows as running even if old metadata says waiting.

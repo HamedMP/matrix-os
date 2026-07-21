@@ -199,7 +199,7 @@ A developer can launch and exit different coding agents in the same terminal and
 - **FR-017**: Matrix MUST provide an operator-readable status path for terminal/session health that does not depend solely on direct SSH access to the customer VPS.
 - **FR-018**: Matrix MUST avoid exposing provider errors, raw filesystem paths, or raw runtime failures in user-facing terminal recovery messages.
 - **FR-019**: Matrix MUST derive live agent identity from the focused terminal pane's validated foreground command whenever pane inspection succeeds.
-- **FR-020**: Matrix MUST recognize only the exact allowlisted commands `claude`, `codex`, `opencode`, and `pi`, including safely parsed `env` wrappers, and MUST NOT use substring matching.
+- **FR-020**: Matrix MUST recognize only the exact allowlisted commands `claude`, `codex`, `opencode`, and `pi`, including safely parsed known launchers such as `env` and the managed npm Codex Node entrypoint, and MUST NOT treat generic Node scripts or substring matches as agents.
 - **FR-021**: A successful observation of a shell, missing command, or unrecognized command MUST omit `agent`, `subtitle`, `lastAction`, `agentUpdatedAt`, `model`, and `strength` from the session response.
 - **FR-022**: Hook enrichment MUST be exposed only when its provider matches the observed agent and its phase is not `ended`; an observed recognized agent without compatible enrichment MUST fall back to `running`.
 - **FR-023**: When focused-pane inspection is unavailable, Matrix MAY fall back to a non-ended hook snapshot, then to the persisted launch hint for at most 12 seconds.
