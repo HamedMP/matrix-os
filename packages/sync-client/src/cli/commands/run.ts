@@ -25,7 +25,7 @@ export function parseRunCommand(rawArgs: string[] | undefined): string[] {
   const command: string[] = [];
   for (let i = 0; i < rawArgs.length; i += 1) {
     const arg = rawArgs[i];
-    if (arg === "-i" || arg === "-t" || arg === "-it" || arg === "--interactive") {
+    if (arg === "-i" || arg === "-t" || arg === "-it" || arg === "--interactive" || arg === "--tty") {
       continue;
     }
     const [option] = arg.split("=", 1);
@@ -106,7 +106,7 @@ export function inferRunAgent(command: string[]): "claude" | "codex" | "opencode
 }
 
 function isInteractive(args: Record<string, unknown>, rawArgs: string[] | undefined): boolean {
-  if (args.interactive === true || args.i === true || args.t === true) {
+  if (args.interactive === true || args.i === true || args.tty === true || args.t === true) {
     return true;
   }
   return Array.isArray(rawArgs) && rawArgs.some((arg) => arg === "-it" || arg === "-ti");
@@ -158,8 +158,9 @@ export const runCommand = defineCommand({
       default: false,
       description: "Attach an interactive terminal to the remote command",
     },
-    t: {
+    tty: {
       type: "boolean",
+      alias: "t",
       required: false,
       default: false,
       description: "Request a TTY; combine with -i as -it",

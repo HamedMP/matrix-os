@@ -1,0 +1,4 @@
+interface:
+  display_name: "Matrix Cloud Run"
+  short_description: "Run commands and coding work on Matrix"
+  default_prompt: "Use $matrix-cloud-run to run this task on my Matrix computer."
