@@ -6,47 +6,22 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { rm } from 'node:fs/promises';
 import {
   MAX_EVIDENCE_FILE_BYTES,
+  packEvidenceDirectory,
   reportGateChecks,
+  unpackEvidenceEnvelope,
   validateEvidenceDirectory,
 } from '../../scripts/spikes/terminal-runtime/verify-evidence.mjs';
-
 const roots: string[] = [];
-
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
-
-const s1Checks = {
-  keeperMainPid: true,
-  runtimeCgroupMembers: true,
-  gatewayOutsideCgroup: true,
-  attachOutsideCgroup: true,
-  detachPreservesPids: true,
-  gatewayRestartPreservesPids: true,
-  gatewayCrashPreservesPids: true,
-  shellRestartPreservesPids: true,
-  stopEmptiesCgroup: true,
-  keeperLossDeterministic: true,
-  serverLossDeterministic: true,
-  readinessGated: true,
-  layeredMemoryHigh: true,
-};
-
-const s2Checks = {
-  exactOptionSyntax: true,
-  cacheMappedByRuntime: true,
-  layoutRestored: true,
-  viewportRestored: true,
-  scrollbackBounded: true,
-  lossWindowBounded: true,
-  commandsConfirmationGated: true,
-  forceRunAbsent: true,
-  corruptionFallback: true,
-  deletionComplete: true,
-  diskAccountingBounded: true,
-  liveSerializationDisableSafe: true,
-};
-
+const passing = (names: string) => Object.fromEntries(names.split(/\s+/).map((name) => [name, true]));
+const s1Checks = passing(`keeperMainPid runtimeCgroupMembers gatewayOutsideCgroup attachOutsideCgroup
+detachPreservesPids gatewayRestartPreservesPids gatewayCrashPreservesPids shellRestartPreservesPids
+stopEmptiesCgroup keeperLossDeterministic serverLossDeterministic readinessGated layeredMemoryHigh`);
+const s2Checks = passing(`exactOptionSyntax cacheMappedByRuntime layoutRestored viewportRestored
+scrollbackBounded lossWindowBounded commandsConfirmationGated forceRunAbsent corruptionFallback
+deletionComplete diskAccountingBounded liveSerializationDisableSafe`);
 async function evidence(overrides: Record<string, unknown> = {}): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'matrix-terminal-evidence-'));
   roots.push(root);
@@ -79,17 +54,20 @@ async function evidence(overrides: Record<string, unknown> = {}): Promise<string
   await writeFile(join(root, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
   return root;
 }
-
 describe('terminal runtime spike evidence', () => {
-  it('runs from a labeled same-repository PR before manual dispatch is available', async () => {
+  it('binds privileged execution to an explicitly approved immutable PR head', async () => {
     const workflow = await readFile(
       join(process.cwd(), '.github/workflows/terminal-runtime-spikes.yml'),
       'utf8',
     );
-
-    expect(workflow).toContain('pull_request:\n    types: [labeled, synchronize, reopened]');
+    expect(workflow).toContain('pull_request:\n    types: [labeled]');
+    expect(workflow).toContain("github.event.label.name == 'preview-vps'");
+    expect(workflow).not.toContain('types: [labeled, synchronize');
+    expect(workflow).toContain('head_sha:\n        description: Exact 40-character PR head SHA to approve');
+    expect(workflow).toContain('APPROVED_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.head_sha }}');
+    expect(workflow).toContain('if [ "$head_sha" != "$APPROVED_HEAD_SHA" ]');
     expect(workflow).toContain("github.event.pull_request.head.repo.full_name == github.repository");
-    expect(workflow).toContain("contains(github.event.pull_request.labels.*.name, 'preview-vps')");
+    expect(workflow).toContain('.labels | any(.name == "preview-vps")');
     expect(workflow).toContain('PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}');
     expect(workflow).toContain('deadline=$((SECONDS + 1500))');
     expect(workflow).toContain("runtime_version=\"$(jq -r '.runtimeVersion // \"\"' <<<\"$machine\")\"");
@@ -102,18 +80,15 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).not.toContain('VPS_SSH_KEY');
     expect(workflow).toContain('workflow_dispatch:');
   });
-
   it('packages the harness only for explicitly marked preview bundles', async () => {
     const [buildScript, previewWorkflow] = await Promise.all([
       readFile(join(process.cwd(), 'scripts/build-host-bundle.sh'), 'utf8'),
       readFile(join(process.cwd(), '.github/workflows/preview-vps.yml'), 'utf8'),
     ]);
-
     expect(previewWorkflow).toContain("MATRIX_TERMINAL_RUNTIME_SPIKE: '1'");
     expect(buildScript).toContain('if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then');
     expect(buildScript).toContain('scripts/spikes/terminal-runtime');
   });
-
   it('detaches the spike from the gateway cgroup and waits for completed evidence', async () => {
     const [workflow, launcher, packer, runner] = await Promise.all([
       readFile(join(process.cwd(), '.github/workflows/terminal-runtime-spikes.yml'), 'utf8'),
@@ -121,18 +96,26 @@ describe('terminal runtime spike evidence', () => {
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/pack-evidence.sh'), 'utf8'),
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/run-remote.sh'), 'utf8'),
     ]);
-
     expect(workflow).toContain('/opt/matrix/app/scripts/spikes/terminal-runtime/launch-remote.sh');
     expect(workflow).toContain('evidence_deadline=$((SECONDS + 2100))');
     expect(workflow).toContain('"$EVIDENCE" --report-gates');
+    expect(workflow).toContain('--unpack "$envelope" "$evidence_parent" "$HEAD_SHA"');
+    expect(workflow).not.toContain('tar --extract');
     expect(workflow).not.toContain('REMOTE_STATUS:');
     expect(launcher).toContain('systemd-run');
     expect(launcher).toContain('--collect');
     expect(launcher).toContain('--no-block');
     expect(launcher).toContain('StandardOutput=null');
     expect(launcher).toContain('StandardError=null');
+    expect(launcher).toContain('unit="matrix-terminal-runtime-spike-${pr_head_sha}.service"');
+    expect(launcher).toContain('summary="/tmp/matrix-terminal-spike-evidence-${pr_head_sha}/summary.json"');
+    expect(launcher).not.toContain('short_sha=');
     expect(packer).toContain('summary.json');
     expect(packer).toContain('spike_pack_evidence_incomplete');
+    expect(packer).toMatch(/verify-evidence\.mjs \\\n\s+"\$evidence_root" --pack "\$pr_head_sha"/);
+    expect(packer).not.toContain('tar --create');
+    expect(runner).toContain('run_key="$pr_head_sha"');
+    expect(runner).toContain('evidence_root="/tmp/matrix-terminal-spike-evidence-${run_key}"');
     expect(runner).toContain('base_id="1${pr_head_sha:0:31}"');
     expect(runner).toContain('zellij delete-session "matrix-t-${runtime_id}" --force');
     expect(runner).toContain('attach-probe.mjs');
@@ -152,13 +135,11 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).toContain('action dump-screen --pane-id "$restored_pane_id"');
     expect(runner).toContain('chown -R root:root "$recovery_cache_dir"');
   });
-
   it('keeps the fixed notify unit shape and accepts readiness from the keeper helper', async () => {
     const [unit, keeper] = await Promise.all([
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/matrix-terminal-spike@.service'), 'utf8'),
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/keeper.mjs'), 'utf8'),
     ]);
-
     expect(unit).toContain('Type=notify\nNotifyAccess=all\n');
     expect(unit).toContain('ExecStart=/opt/matrix/runtime/node/bin/node /opt/matrix/libexec/terminal-runtime-spike/keeper.mjs %i');
     expect(unit).toContain('KillMode=control-group');
@@ -167,10 +148,8 @@ describe('terminal runtime spike evidence', () => {
     expect(unit).not.toContain('[Install]');
     expect(keeper).toContain("!process.cmdline.includes('list-sessions')");
   });
-
   it('accepts complete bounded S1 and S2 evidence', async () => {
     const root = await evidence();
-
     await expect(validateEvidenceDirectory(root)).resolves.toMatchObject({
       prHeadSha: 'a'.repeat(40),
       s1: { status: 'pass' },
@@ -178,7 +157,44 @@ describe('terminal runtime spike evidence', () => {
       fileCount: 1,
     });
   });
-
+  it('packs and exclusively materializes only exact-head bounded evidence', async () => {
+    const headSha = 'a'.repeat(40);
+    const root = await evidence();
+    const envelope = await packEvidenceDirectory(root, headSha);
+    const envelopeRoot = await mkdtemp(join(tmpdir(), 'matrix-terminal-envelope-'));
+    roots.push(envelopeRoot);
+    const envelopePath = join(envelopeRoot, 'evidence.json');
+    await writeFile(envelopePath, JSON.stringify(envelope), 'utf8');
+    const outputRoot = await mkdtemp(join(tmpdir(), 'matrix-terminal-unpack-'));
+    roots.push(outputRoot);
+    const unpacked = await unpackEvidenceEnvelope(envelopePath, outputRoot, headSha);
+    await expect(validateEvidenceDirectory(unpacked, headSha)).resolves.toMatchObject({
+      prHeadSha: headSha,
+      fileCount: 1,
+    });
+    await expect(unpackEvidenceEnvelope(envelopePath, outputRoot, headSha)).rejects.toThrow(
+      'evidence_output_exists',
+    );
+  });
+  it('rejects stale heads and unsafe envelope paths before writing evidence', async () => {
+    const headSha = 'a'.repeat(40);
+    const root = await evidence();
+    await expect(validateEvidenceDirectory(root, 'b'.repeat(40))).rejects.toThrow(
+      'evidence_head_mismatch',
+    );
+    const envelope = await packEvidenceDirectory(root, headSha);
+    envelope.files[0].path = '../outside';
+    const envelopeRoot = await mkdtemp(join(tmpdir(), 'matrix-terminal-envelope-'));
+    roots.push(envelopeRoot);
+    const envelopePath = join(envelopeRoot, 'evidence.json');
+    await writeFile(envelopePath, JSON.stringify(envelope), 'utf8');
+    const outputRoot = await mkdtemp(join(tmpdir(), 'matrix-terminal-unpack-'));
+    roots.push(outputRoot);
+    await expect(unpackEvidenceEnvelope(envelopePath, outputRoot, headSha)).rejects.toThrow(
+      'evidence_file_path',
+    );
+    await expect(readFile(join(outputRoot, 'outside'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
   it('rejects a missing or failed mandatory check', async () => {
     const root = await evidence({
       s1: {
@@ -186,10 +202,8 @@ describe('terminal runtime spike evidence', () => {
         checks: { ...s1Checks, stopEmptiesCgroup: false },
       },
     });
-
     await expect(validateEvidenceDirectory(root)).rejects.toThrow('evidence_gate_failed');
   });
-
   it('reports only allowlisted gate names for rejected evidence', async () => {
     const root = await evidence({
       s1: {
@@ -222,7 +236,6 @@ describe('terminal runtime spike evidence', () => {
       'utf8',
     );
     await writeFile(join(root, 's1', 'memory-stage.txt'), 'slice_no_pressure\n', 'utf8');
-
     await expect(reportGateChecks(root)).resolves.toEqual([
       's1:stopEmptiesCgroup=fail',
       's1:startup=readiness/client_exit',
@@ -241,26 +254,21 @@ describe('terminal runtime spike evidence', () => {
       's1:memory=slice_no_pressure',
     ]);
   });
-
   it('rejects a binary other than the exact bundled Zellij 0.44.1', async () => {
     const root = await evidence({ zellijVersion: 'zellij 0.44.3' });
-
     await expect(validateEvidenceDirectory(root)).rejects.toThrow('evidence_zellij_version');
   });
-
   it('rejects traversal and symlink evidence entries', async () => {
     const traversalRoot = await evidence({
       files: [{ path: '../outside', bytes: 1, sha256: '0'.repeat(64) }],
       totalBytes: 1,
     });
     await expect(validateEvidenceDirectory(traversalRoot)).rejects.toThrow('evidence_file_path');
-
     const symlinkRoot = await evidence();
     await rm(join(symlinkRoot, 's1', 'processes.json'));
     await symlink('/etc/passwd', join(symlinkRoot, 's1', 'processes.json'));
     await expect(validateEvidenceDirectory(symlinkRoot)).rejects.toThrow('evidence_file_type');
   });
-
   it('rejects hard-linked and unlisted evidence files', async () => {
     const hardLinkRoot = await evidence();
     await link(
@@ -268,20 +276,16 @@ describe('terminal runtime spike evidence', () => {
       join(hardLinkRoot, 's1', 'processes-hard-link.json'),
     );
     await expect(validateEvidenceDirectory(hardLinkRoot)).rejects.toThrow('evidence_file_type');
-
     const unlistedRoot = await evidence();
     await writeFile(join(unlistedRoot, 'unlisted.txt'), 'unexpected\n', 'utf8');
     await expect(validateEvidenceDirectory(unlistedRoot)).rejects.toThrow('evidence_unlisted_file');
   });
-
   it('rejects oversized files before reading their contents', async () => {
     const root = await evidence();
     const body = 'x'.repeat(MAX_EVIDENCE_FILE_BYTES + 1);
     await writeFile(join(root, 's1', 'processes.json'), body, 'utf8');
-
     await expect(validateEvidenceDirectory(root)).rejects.toThrow('evidence_file_size');
   });
-
   it.each([
     'authorization: Bearer abcdef',
     'token=super-secret-value',
@@ -301,14 +305,11 @@ describe('terminal runtime spike evidence', () => {
     };
     summary.totalBytes = Buffer.byteLength(body);
     await writeFile(summaryPath, `${JSON.stringify(summary)}\n`, 'utf8');
-
     await expect(validateEvidenceDirectory(root)).rejects.toThrow('evidence_privacy');
   });
-
   it('rejects digest and declared-size mismatches', async () => {
     const root = await evidence();
     await writeFile(join(root, 's1', 'processes.json'), '{}\n', 'utf8');
-
     await expect(validateEvidenceDirectory(root)).rejects.toThrow('evidence_file_metadata');
   });
 });

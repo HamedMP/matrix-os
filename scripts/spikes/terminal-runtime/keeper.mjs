@@ -1,10 +1,8 @@
 #!/usr/bin/env node
-
 import { execFile } from 'node:child_process';
 import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { promisify, stripVTControlCharacters } from 'node:util';
-
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
 const { spawn } = require('node-pty');
@@ -22,7 +20,6 @@ let confirmationSent = false;
 let renderWindow = '';
 let gateRecorded = false;
 let roleSnapshot = { responsive: false, zellij: 0, shell: false, agent: false };
-
 const STARTUP_FAILURE_CODES = new Set([
   'runtime_id',
   'descriptor_schema',
@@ -35,7 +32,6 @@ const STARTUP_FAILURE_CODES = new Set([
   'cgroup_unit',
   'readiness_timeout',
 ]);
-
 function exit(code) {
   if (monitor) clearInterval(monitor);
   if (pty) {
@@ -47,7 +43,6 @@ function exit(code) {
   }
   process.exit(code);
 }
-
 function parseDescriptor(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('descriptor_schema');
   const keys = Object.keys(value).sort();
@@ -57,7 +52,6 @@ function parseDescriptor(value) {
   if (value.intent !== 'create' && value.intent !== 'recover') throw new Error('descriptor_intent');
   return value;
 }
-
 function zellijEnvironment() {
   return {
     HOME: '/home/matrix/home',
@@ -73,7 +67,6 @@ function zellijEnvironment() {
     ZELLIJ_CONFIG_FILE: '/home/matrix/home/system/terminal-runtime-spike/config/config.kdl',
   };
 }
-
 async function exactSessionResponds(sessionName, env) {
   try {
     const { stdout } = await execFileAsync(zellij, ['list-sessions', '--no-formatting'], {
@@ -86,7 +79,6 @@ async function exactSessionResponds(sessionName, env) {
     return false;
   }
 }
-
 async function ownCgroup() {
   const membership = await readFile('/proc/self/cgroup', 'utf8');
   const unified = membership.split(/\r?\n/).find((line) => line.startsWith('0::'));
@@ -95,7 +87,6 @@ async function ownCgroup() {
   if (!relative.includes('matrix-terminal-spike')) throw new Error('cgroup_unit');
   return { relative, path: `/sys/fs/cgroup${relative}` };
 }
-
 async function processInfo(pid) {
   try {
     const [comm, cmdline] = await Promise.all([
@@ -111,7 +102,6 @@ async function processInfo(pid) {
     return null;
   }
 }
-
 async function cgroupRoles(cgroupPath, requireWorkload) {
   const raw = await readFile(`${cgroupPath}/cgroup.procs`, 'utf8');
   const pids = raw.split(/\s+/).filter(Boolean).map((value) => Number.parseInt(value, 10));
@@ -130,7 +120,6 @@ async function cgroupRoles(cgroupPath, requireWorkload) {
     agent: agent?.pid ?? 0,
   };
 }
-
 async function writeReadiness(value) {
   await writeFile(`${runtimeRoot}/readiness/${runtimeId}.json`, `${JSON.stringify(value)}\n`, {
     encoding: 'utf8',
@@ -138,7 +127,6 @@ async function writeReadiness(value) {
     mode: 0o600,
   });
 }
-
 async function notifyReady() {
   await execFileAsync('/usr/bin/systemd-notify', ['--ready', `--pid=${process.pid}`, '--status=terminal-runtime-spike-ready'], {
     env: process.env,
@@ -146,7 +134,6 @@ async function notifyReady() {
     maxBuffer: 16 * 1024,
   });
 }
-
 async function recordStartupFailure(error) {
   const code = error instanceof Error && STARTUP_FAILURE_CODES.has(error.message)
     ? error.message
@@ -169,7 +156,6 @@ async function recordStartupFailure(error) {
     if (writeCode !== 'EEXIST') process.exitCode = 1;
   }
 }
-
 async function main() {
   if (!/^[0-9a-f]{32}$/.test(runtimeId)) throw new Error('runtime_id');
   const descriptorPath = `${runtimeRoot}/descriptors/${runtimeId}.json`;
@@ -177,7 +163,6 @@ async function main() {
   if (Buffer.byteLength(descriptorRaw) > 4096) throw new Error('descriptor_size');
   const descriptor = parseDescriptor(JSON.parse(descriptorRaw));
   await unlink(descriptorPath);
-
   startupStage = 'launch';
   const env = zellijEnvironment();
   const sessionName = `matrix-t-${runtimeId}`;
@@ -215,7 +200,6 @@ async function main() {
     };
     if (!stopping && ready) exit(17);
   });
-
   startupStage = 'cgroup';
   const cgroup = await ownCgroup();
   startupStage = 'readiness';
@@ -240,7 +224,6 @@ async function main() {
   await notifyReady();
   if (clientExited) throw new Error('client_exit');
   ready = true;
-
   let checking = false;
   monitor = setInterval(async () => {
     if (stopping || checking) return;
@@ -252,7 +235,6 @@ async function main() {
     }
   }, 1000);
 }
-
 process.on('SIGTERM', () => {
   stopping = true;
   exit(0);
@@ -261,7 +243,6 @@ process.on('SIGINT', () => {
   stopping = true;
   exit(0);
 });
-
 try {
   await main();
 } catch (error) {

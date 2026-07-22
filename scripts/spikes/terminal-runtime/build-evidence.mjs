@@ -1,11 +1,9 @@
 #!/usr/bin/env node
-
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { lstat, open, readdir, readFile } from 'node:fs/promises';
 import { basename, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-
 const execFileAsync = promisify(execFile);
 const root = resolve(process.argv[2] ?? '');
 const prHeadSha = process.argv[3] ?? '';
@@ -28,16 +26,13 @@ const required = {
     'liveSerializationDisableSafe',
   ],
 };
-
 function fail(code) {
   throw new Error(code);
 }
-
 async function command(file, args) {
   const { stdout } = await execFileAsync(file, args, { encoding: 'utf8', timeout: 5000, maxBuffer: 64 * 1024 });
   return stdout.trim().split(/\r?\n/)[0] ?? '';
 }
-
 async function filesBelow(directory) {
   const output = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -52,7 +47,6 @@ async function filesBelow(directory) {
   }
   return output;
 }
-
 async function checksFor(gate) {
   const checks = {};
   for (const name of required[gate]) {
@@ -67,11 +61,9 @@ async function checksFor(gate) {
   }
   return checks;
 }
-
 if (!root.startsWith('/tmp/matrix-terminal-spike-evidence-') || !/^[0-9a-f]{40}$/.test(prHeadSha)) {
   fail('evidence_arguments');
 }
-
 const zellijVersion = await command('/opt/matrix/bin/zellij', ['--version']);
 const ubuntuRelease = await readFile('/etc/os-release', 'utf8');
 const ubuntuVersion = ubuntuRelease.match(/^VERSION_ID="?([^"\n]+)"?$/m)?.[1] ?? 'unknown';
@@ -79,7 +71,6 @@ const systemdVersion = (await command('/usr/bin/systemctl', ['--version'])).repl
 const kernelVersion = await command('/usr/bin/uname', ['-r']);
 const s1Checks = await checksFor('s1');
 const s2Checks = await checksFor('s2');
-
 const paths = (await filesBelow(root))
   .filter((path) => basename(path) !== 'summary.json')
   .sort();
@@ -96,7 +87,6 @@ for (const path of paths) {
     sha256: createHash('sha256').update(body).digest('hex'),
   });
 }
-
 const s1Pass = Object.values(s1Checks).every(Boolean);
 const s2Pass = Object.values(s2Checks).every(Boolean);
 const summary = {

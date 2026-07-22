@@ -1,7 +1,5 @@
 #!/usr/bin/env node
-
 import { open } from 'node:fs/promises';
-
 const runtimeId = process.argv[2] ?? '';
 if (!/^[0-9a-f]{32}$/.test(runtimeId)) {
   process.exitCode = 2;

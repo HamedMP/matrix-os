@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-
 const bytes = Number.parseInt(process.argv[2] ?? '', 10);
 if (!Number.isSafeInteger(bytes) || bytes < 1024 * 1024 || bytes > 8 * 1024 * 1024 * 1024) {
   process.exitCode = 2;

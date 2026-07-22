@@ -1,30 +1,30 @@
 name: Terminal Runtime Spikes
-
 on:
   pull_request:
-    types: [labeled, synchronize, reopened]
+    types: [labeled]
   workflow_dispatch:
     inputs:
       pr:
         description: Pull request number with a deployed preview VPS
         required: true
         type: string
-
+      head_sha:
+        description: Exact 40-character PR head SHA to approve
+        required: true
+        type: string
 permissions:
   contents: read
   pull-requests: write
-
 concurrency:
   group: terminal-runtime-spikes-${{ github.event.pull_request.number || inputs.pr }}
   cancel-in-progress: true
-
 jobs:
   prove:
     name: Prove S1 and S2
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
-       contains(github.event.pull_request.labels.*.name, 'preview-vps'))
+      (github.event.label.name == 'preview-vps' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 55
     env:
@@ -36,6 +36,7 @@ jobs:
         id: resolve
         env:
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+          APPROVED_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.head_sha }}
         run: |
           set -euo pipefail
           if ! printf '%s' "$PR_NUMBER" | grep -Eq '^[0-9]+$'; then
@@ -45,8 +46,12 @@ jobs:
           pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           head_repo="$(jq -r '.head.repo.full_name' <<<"$pr_json")"
           head_sha="$(jq -r '.head.sha' <<<"$pr_json")"
-          if [ "$head_repo" != "$GITHUB_REPOSITORY" ] || ! printf '%s' "$head_sha" | grep -Eq '^[0-9a-f]{40}$'; then
+          if [ "$head_repo" != "$GITHUB_REPOSITORY" ] || ! printf '%s' "$APPROVED_HEAD_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "Only same-repository PR heads are accepted." >&2
+            exit 1
+          fi
+          if [ "$head_sha" != "$APPROVED_HEAD_SHA" ]; then
+            echo "The approved PR head is no longer current; approve the new head explicitly." >&2
             exit 1
           fi
           if ! jq -e '.labels | any(.name == "preview-vps")' <<<"$pr_json" >/dev/null; then
@@ -59,11 +64,9 @@ jobs:
             echo "short_sha=${head_sha:0:7}"
             echo "handle=pr-$PR_NUMBER"
           } >>"$GITHUB_OUTPUT"
-
       - uses: actions/checkout@v6
         with:
           ref: ${{ steps.resolve.outputs.head_sha }}
-
       - name: Resolve matching deployed preview
         id: preview
         env:
@@ -111,7 +114,6 @@ jobs:
           fi
           echo "::add-mask::$public_ipv4"
           echo "public_ipv4=$public_ipv4" >>"$GITHUB_OUTPUT"
-
       - name: Launch detached spike through authenticated gateway
         id: remote
         env:
@@ -160,13 +162,11 @@ jobs:
           fi
           jq -r '.stdout, .stderr' "$run_response" |
             grep -E '^spike_launch_(started|existing)$' || true
-
       - name: Retrieve bounded evidence through authenticated gateway
         id: retrieve
         env:
           PUBLIC_IPV4: ${{ steps.preview.outputs.public_ipv4 }}
           HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
-          SHORT_SHA: ${{ steps.resolve.outputs.short_sha }}
           HANDLE: ${{ steps.resolve.outputs.handle }}
         run: |
           set -euo pipefail
@@ -211,22 +211,23 @@ jobs:
             echo "Bounded evidence retrieval failed." >&2
             exit 1
           fi
-          archive="$RUNNER_TEMP/matrix-terminal-spike-evidence-${SHORT_SHA}.tar.gz"
+          envelope="$RUNNER_TEMP/matrix-terminal-spike-evidence-${HEAD_SHA}.json"
           evidence_parent="$RUNNER_TEMP/terminal-runtime-spike-evidence"
           install -d -m 0700 "$evidence_parent"
-          jq -r '.stdout' "$pack_response" | base64 --decode >"$archive"
-          tar --extract --gzip --file "$archive" --directory "$evidence_parent"
-          evidence="$evidence_parent/matrix-terminal-spike-evidence-${SHORT_SHA}"
+          jq -r '.stdout' "$pack_response" | base64 --decode >"$envelope"
+          evidence="$(node scripts/spikes/terminal-runtime/verify-evidence.mjs \
+            --unpack "$envelope" "$evidence_parent" "$HEAD_SHA")"
           echo "evidence=$evidence" >>"$GITHUB_OUTPUT"
-
       - name: Validate privacy and all mandatory evidence
         id: validate
         env:
           EVIDENCE: ${{ steps.retrieve.outputs.evidence }}
+          HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
         run: |
           set -euo pipefail
           set +e
-          result="$(node scripts/spikes/terminal-runtime/verify-evidence.mjs "$EVIDENCE")"
+          result="$(node scripts/spikes/terminal-runtime/verify-evidence.mjs \
+            "$EVIDENCE" --expected-head "$HEAD_SHA")"
           validation_status=$?
           set -e
           if [ "$validation_status" -ne 0 ]; then
@@ -239,7 +240,6 @@ jobs:
             exit 1
           fi
           echo "summary_sha256=$digest" >>"$GITHUB_OUTPUT"
-
       - name: Upload validated evidence
         uses: actions/upload-artifact@v7
         with:
@@ -247,7 +247,6 @@ jobs:
           path: ${{ steps.retrieve.outputs.evidence }}
           if-no-files-found: error
           retention-days: 14
-
       - name: Comment passing evidence
         env:
           PR_NUMBER: ${{ steps.resolve.outputs.pr }}
@@ -256,12 +255,10 @@ jobs:
         run: |
           set -euo pipefail
           body="**Terminal runtime spikes passed**
-
           - Commit: \`${HEAD_SHA}\`
           - Gate S1: pass
           - Gate S2: pass
           - Evidence SHA-256: \`${SUMMARY_SHA256}\`
           - Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
-
           The artifact is bounded and privacy-validated; it contains no terminal contents, credentials, host IPs, owner paths, or display names."
           gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$body" >/dev/null

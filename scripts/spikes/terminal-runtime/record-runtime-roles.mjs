@@ -1,11 +1,8 @@
 #!/usr/bin/env node
-
 import { access, open, readFile } from 'node:fs/promises';
-
 const [runtimeId = '', checkpoint = ''] = process.argv.slice(2);
 const checkpoints = new Set(['initial', 'detach', 'gateway-restart', 'gateway-crash', 'shell-restart']);
 if (!/^[0-9a-f]{32}$/.test(runtimeId) || !checkpoints.has(checkpoint)) process.exit(2);
-
 const root = '/run/matrix-terminal-runtime-spike';
 const readiness = JSON.parse(await readFile(`${root}/readiness/${runtimeId}.json`, 'utf8'));
 const alive = async (pid) => {

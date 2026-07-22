@@ -1,20 +1,17 @@
 #!/usr/bin/env bash
 set -uo pipefail
-
 if [ "$(id -u)" -ne 0 ]; then
   echo "spike_requires_root" >&2
   exit 2
 fi
-
 pr_head_sha="${1:-}"
 if ! printf '%s' "$pr_head_sha" | grep -Eq '^[0-9a-f]{40}$'; then
   echo "spike_invalid_sha" >&2
   exit 2
 fi
-
 source_dir="$(CDPATH='' cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-short_sha="${pr_head_sha:0:7}"
-evidence_root="/tmp/matrix-terminal-spike-evidence-${short_sha}"
+run_key="$pr_head_sha"
+evidence_root="/tmp/matrix-terminal-spike-evidence-${run_key}"
 runtime_root="/run/matrix-terminal-runtime-spike"
 support_root="/opt/matrix/libexec/terminal-runtime-spike"
 owner_home="/home/matrix/home"
@@ -26,7 +23,6 @@ keeper_id="2${pr_head_sha:0:31}"
 server_id="3${pr_head_sha:0:31}"
 memory_ids=("4${pr_head_sha:0:31}" "5${pr_head_sha:0:31}" "6${pr_head_sha:0:31}")
 recovery_id="7${pr_head_sha:0:31}"
-
 cleanup() {
   for runtime_id in "$base_id" "$keeper_id" "$server_id" "${memory_ids[@]}" "$recovery_id"; do
     systemctl stop "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true
@@ -41,20 +37,16 @@ cleanup() {
   systemctl set-property --runtime matrix-terminal-spike.slice MemoryHigh=75% >/dev/null 2>&1 || true
   pkill -f 'zellij attach matrix-t-[0-9a-f]{32}' >/dev/null 2>&1 || true
 }
-
 build_summary() {
   /opt/matrix/runtime/node/bin/node "$source_dir/build-evidence.mjs" "$evidence_root" "$pr_head_sha" || true
 }
-
 cleanup
 trap 'status=$?; cleanup; build_summary; exit $status' EXIT
-
 rm -rf -- "$evidence_root" "$runtime_root" "$cache_root"
 install -d -o root -g root -m 0700 "$evidence_root" "$evidence_root/s1" "$evidence_root/s1/checks" "$evidence_root/s2" "$evidence_root/s2/checks"
 install -d -o matrix -g matrix -m 0700 "$runtime_root" "$runtime_root/descriptors" "$runtime_root/readiness" "$runtime_root/outcomes" "$runtime_root/startup-failures" "$runtime_root/confirmations" "$runtime_root/pane-release"
 install -d -o matrix -g matrix -m 0700 "$owner_home/system/terminal-runtime-spike" "$cache_root" "$config_root" "$owner_home/system/terminal-runtime-spike/config-home" "$owner_home/system/terminal-runtime-spike/data"
 install -d -o matrix -g matrix -m 0700 "/run/user/$(id -u matrix)"
-
 rm -rf -- "$support_root.next"
 install -d -o root -g root -m 0755 "$support_root.next" "$support_root.next/node_modules"
 for file in attach-probe.mjs keeper.mjs record-outcome.mjs record-runtime-roles.mjs pane-probe.sh memory-hog.mjs layout.kdl; do
@@ -65,23 +57,19 @@ chown -R root:root "$support_root.next"
 rm -rf -- "$support_root.previous"
 if [ -d "$support_root" ]; then mv "$support_root" "$support_root.previous"; fi
 mv "$support_root.next" "$support_root"
-
 install -o root -g root -m 0644 "$source_dir/matrix-terminal-spike.slice" /etc/systemd/system/matrix-terminal-spike.slice
 install -o root -g root -m 0644 "$source_dir/matrix-terminal-spike@.service" /etc/systemd/system/matrix-terminal-spike@.service
 systemctl daemon-reload
 systemctl set-property --runtime matrix-terminal-spike.slice MemoryHigh=75% >/dev/null
-
 zellij_version="$(/opt/matrix/bin/zellij --version 2>/dev/null || true)"
 if [ "$zellij_version" != "zellij 0.44.1" ]; then
   echo "spike_wrong_zellij" >&2
   exit 3
 fi
-
-default_config_tmp="/tmp/matrix-terminal-default-config-${short_sha}.kdl"
+default_config_tmp="/tmp/matrix-terminal-default-config-${run_key}.kdl"
 runuser -u matrix -- env \
   HOME="$owner_home" XDG_CACHE_HOME="$cache_root" ZELLIJ_CONFIG_DIR="$config_root" \
   /opt/matrix/bin/zellij setup --dump-config >"$default_config_tmp"
-
 viewport_option=""
 if grep -Eq '^[[:space:]]*(//[[:space:]]*)?serialize_pane_viewport[[:space:]]' "$default_config_tmp"; then
   viewport_option="serialize_pane_viewport"
@@ -93,7 +81,6 @@ if [ -n "$viewport_option" ]; then
 fi
 grep -E '^[[:space:]]*(//[[:space:]]*)?(session_serialization|serialize_pane_viewport|pane_viewport_serialization|scrollback_lines_to_serialize|serialization_interval)[[:space:]]' "$default_config_tmp" >"$evidence_root/s2/default-options.txt" || true
 rm -f -- "$default_config_tmp"
-
 cat >"$config_root/config.kdl" <<EOF
 session_serialization true
 ${viewport_option:-serialize_pane_viewport} true
@@ -107,12 +94,10 @@ chmod 0600 "$config_root/config.kdl"
 if [ -n "$viewport_option" ] && runuser -u matrix -- env HOME="$owner_home" XDG_CACHE_HOME="$cache_root" ZELLIJ_CONFIG_DIR="$config_root" /opt/matrix/bin/zellij setup --check >/dev/null 2>&1; then
   printf 'pass\n' >"$evidence_root/s2/checks/exactOptionSyntax.pass"
 fi
-
 mark_pass() {
   printf 'pass\n' >"$evidence_root/$1/checks/$2.pass"
   echo "$1:$2=pass"
 }
-
 descriptor() {
   runtime_id="$1"
   intent="$2"
@@ -121,7 +106,6 @@ descriptor() {
   install -o matrix -g matrix -m 0600 "$descriptor_tmp" "$runtime_root/descriptors/${runtime_id}.json"
   rm -f -- "$descriptor_tmp"
 }
-
 start_runtime() {
   runtime_id="$1"
   intent="${2:-create}"
@@ -131,11 +115,9 @@ start_runtime() {
   systemctl reset-failed "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true
   systemctl start --no-block "${unit_prefix}${runtime_id}.service"
 }
-
 release_pane() {
   install -o root -g root -m 0644 /dev/null "$runtime_root/pane-release/matrix-t-$1"
 }
-
 wait_state() {
   unit="$1"
   desired="$2"
@@ -147,7 +129,6 @@ wait_state() {
   done
   return 1
 }
-
 wait_not_active() {
   unit="$1"
   for _ in $(seq 1 300); do
@@ -157,12 +138,10 @@ wait_not_active() {
   done
   return 1
 }
-
 wait_file() {
   for _ in $(seq 1 300); do [ -f "$1" ] && return 0; sleep 0.1; done
   return 1
 }
-
 roles_alive() {
   readiness_path="$runtime_root/readiness/$1.json"
   /opt/matrix/runtime/node/bin/node -e '
@@ -172,7 +151,6 @@ roles_alive() {
     process.exit(pids.every((pid) => Number.isInteger(pid) && fs.existsSync(`/proc/${pid}`)) ? 0 : 1);
   ' "$readiness_path"
 }
-
 record_pid_cgroup() {
   label="$1"
   pid="$2"
@@ -182,7 +160,6 @@ record_pid_cgroup() {
   if [ -z "$membership" ]; then return 1; fi
   printf '%s\t%s\t%s\n' "$label" "$pid" "$membership" >>"$output"
 }
-
 wait_main_pid_changed() {
   unit="$1"
   previous="$2"
@@ -197,19 +174,16 @@ wait_main_pid_changed() {
   done
   return 1
 }
-
 runtime_cgroup() {
   /opt/matrix/runtime/node/bin/node -e '
     const fs = require("fs");
     process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).cgroup);
   ' "$runtime_root/readiness/$1.json"
 }
-
 zellij_env=(env HOME="$owner_home" MATRIX_HOME="$owner_home" PATH="/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin" LANG=C.UTF-8 TERM=xterm-256color XDG_CACHE_HOME="$cache_root" XDG_CONFIG_HOME="$owner_home/system/terminal-runtime-spike/config-home" XDG_DATA_HOME="$owner_home/system/terminal-runtime-spike/data" XDG_RUNTIME_DIR="/run/user/$(id -u matrix)" ZELLIJ_CONFIG_DIR="$config_root" ZELLIJ_CONFIG_FILE="$config_root/config.kdl")
 zellij_cmd() {
   /usr/bin/timeout 15s runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/bin/zellij "$@"
 }
-
 wait_cgroup_empty() {
   events_fd="$1"
   cgroup_path="$2"
@@ -222,7 +196,6 @@ wait_cgroup_empty() {
   done
   return 1
 }
-
 # S1: readiness and stable ownership.
 start_runtime "$base_id"
 base_unit="${unit_prefix}${base_id}.service"
@@ -268,14 +241,12 @@ if roles_alive "$base_id"; then
 else
   /opt/matrix/runtime/node/bin/node "$support_root/record-runtime-roles.mjs" "$base_id" initial || true
 fi
-
 gateway_before_pid="$(systemctl show matrix-gateway.service -p MainPID --value 2>/dev/null || true)"
 gateway_before_cgroup="$(sed -n 's/^0:://p' "/proc/${gateway_before_pid}/cgroup" 2>/dev/null || true)"
 if [ -n "$gateway_before_cgroup" ] && [ "$gateway_before_cgroup" != "$base_cgroup" ]; then
   record_pid_cgroup gateway-before "$gateway_before_pid" "$pid_cgroups" || true
   mark_pass s1 gatewayOutsideCgroup
 fi
-
 runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/runtime/node/bin/node "$support_root/attach-probe.mjs" "$base_id" &
 attach_parent=$!
 attach_receipt="$runtime_root/attach-${base_id}.json"
@@ -296,7 +267,6 @@ sleep 0.5
 if roles_alive "$base_id"; then mark_pass s1 detachPreservesPids; else
   /opt/matrix/runtime/node/bin/node "$support_root/record-runtime-roles.mjs" "$base_id" detach || true
 fi
-
 if systemctl restart matrix-gateway.service >/dev/null 2>&1; then
   gateway_restart_pid="$(wait_main_pid_changed matrix-gateway.service "$gateway_before_pid" || true)"
   if [ -n "$gateway_restart_pid" ] && roles_alive "$base_id"; then
@@ -326,7 +296,6 @@ record_pid_cgroup runtime-main-after-events "$main_pid" "$pid_cgroups" || true
 if [ -f "$runtime_root/role-diagnostic-${base_id}.json" ]; then
   cp "$runtime_root/role-diagnostic-${base_id}.json" "$evidence_root/s1/base-runtime-roles.json"
 fi
-
 exec {base_events_fd}<"/sys/fs/cgroup${base_cgroup}/cgroup.events"
 systemctl stop --no-block "$base_unit" >/dev/null 2>&1 || true
 if wait_cgroup_empty "$base_events_fd" "/sys/fs/cgroup${base_cgroup}" "$base_unit"; then
@@ -334,7 +303,6 @@ if wait_cgroup_empty "$base_events_fd" "/sys/fs/cgroup${base_cgroup}" "$base_uni
   mark_pass s1 stopEmptiesCgroup
 fi
 exec {base_events_fd}<&-
-
 # S1: deterministic keeper and server failures.
 start_runtime "$keeper_id"
 release_pane "$keeper_id"
@@ -349,7 +317,6 @@ if wait_state "$keeper_unit" active; then
   fi
   exec {keeper_events_fd}<&-
 fi
-
 start_runtime "$server_id"
 release_pane "$server_id"
 server_unit="${unit_prefix}${server_id}.service"
@@ -368,7 +335,6 @@ if wait_state "$server_unit" active; then
   fi
   exec {server_events_fd}<&-
 fi
-
 # S1: layered percentage controls and pressure events.
 memory_ready=true
 memory_stage=not_ready
@@ -419,7 +385,6 @@ if [ "$memory_ready" = true ]; then
 fi
 printf '%s\n' "$memory_stage" >"$evidence_root/s1/memory-stage.txt"
 for runtime_id in "${memory_ids[@]}"; do systemctl stop "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true; done
-
 # S2: bounded serialized state and explicit resurrection.
 start_runtime "$recovery_id"
 release_pane "$recovery_id"
@@ -433,7 +398,7 @@ if wait_state "$recovery_unit" active; then
   sleep 2
   zellij_cmd --session "$recovery_session" action scroll-up >/dev/null 2>&1 || true
   for _ in $(seq 1 20); do zellij_cmd --session "$recovery_session" action scroll-up >/dev/null 2>&1 || true; done
-  viewport_before="/tmp/matrix-terminal-viewport-before-${short_sha}.txt"
+  viewport_before="/tmp/matrix-terminal-viewport-before-${run_key}.txt"
   pane_ids="$(zellij_cmd --session "$recovery_session" action list-panes --all --json 2>/dev/null | /opt/matrix/runtime/node/bin/node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{for(const p of JSON.parse(s))if(!p.is_plugin)console.log(p.id)}catch(error){}})' || true)"
   serialized_pane_id=""
   for pane_id in $pane_ids; do
@@ -457,12 +422,11 @@ if wait_state "$recovery_unit" active; then
   recovery_cache_dir="$(find "$cache_root" -type d -name "$recovery_session" -print -quit 2>/dev/null)"
   mapped_count="$(find "$recovery_cache_dir" -type f 2>/dev/null | wc -l)"
   mapped_bytes="$(find "$recovery_cache_dir" -type f -printf '%s\n' 2>/dev/null | awk '{s+=$1} END{print s+0}')"
-  find "$recovery_cache_dir" -type f 2>/dev/null >"/tmp/matrix-terminal-mapped-${short_sha}.txt" || true
+  find "$recovery_cache_dir" -type f 2>/dev/null >"/tmp/matrix-terminal-mapped-${run_key}.txt" || true
   printf 'runtime_files=%s\nruntime_bytes=%s\n' "$mapped_count" "$mapped_bytes" >"$evidence_root/s2/runtime-accounting.txt"
   if [ "$mapped_count" -gt 0 ]; then mark_pass s2 cacheMappedByRuntime; fi
   if [ "$mapped_bytes" -le 67108864 ]; then mark_pass s2 diskAccountingBounded; fi
   systemctl stop "$recovery_unit" >/dev/null 2>&1 || true
-
   start_runtime "$recovery_id" recover
   if wait_file "$runtime_root/confirmations/${recovery_id}.gated"; then mark_pass s2 commandsConfirmationGated; fi
   if ! pgrep -a zellij | grep -F -- '--force-run-commands' >/dev/null 2>&1; then mark_pass s2 forceRunAbsent; fi
@@ -470,8 +434,8 @@ if wait_state "$recovery_unit" active; then
     panes_json="$(zellij_cmd --session "$recovery_session" action list-panes --all --json 2>/dev/null || true)"
     pane_count="$(printf '%s' "$panes_json" | /opt/matrix/runtime/node/bin/node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{const v=JSON.parse(s);process.stdout.write(String(Array.isArray(v)?v.filter(p=>!p.is_plugin).length:0))}catch(error){process.stdout.write("0")}})' )"
     if [ "$pane_count" -ge 2 ]; then mark_pass s2 layoutRestored; fi
-    dump_file="/tmp/matrix-terminal-dump-${short_sha}.txt"
-    viewport_after="/tmp/matrix-terminal-viewport-after-${short_sha}.txt"
+    dump_file="/tmp/matrix-terminal-dump-${run_key}.txt"
+    viewport_after="/tmp/matrix-terminal-viewport-after-${run_key}.txt"
     restored_pane_id=""
     for pane_id in $(printf '%s' "$panes_json" | /opt/matrix/runtime/node/bin/node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{for(const p of JSON.parse(s))if(!p.is_plugin)console.log(p.id)}catch(error){}})'); do
       zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$pane_id" --path "$dump_file" --full >/dev/null 2>&1 || true
@@ -486,7 +450,6 @@ if wait_state "$recovery_unit" active; then
     printf 'serialized_probe_lines=%s\n' "$scroll_count" >"$evidence_root/s2/restored-counts.txt"
     if [ "$scroll_count" -gt 0 ] && [ "$scroll_count" -le 10000 ]; then mark_pass s2 scrollbackBounded; fi
     rm -f -- "$dump_file"
-
     corrupt_target="$recovery_cache_dir/session-layout.kdl"
     if [ -n "$corrupt_target" ] && [[ "$recovery_cache_dir" == "$cache_root"/* ]] && [ "$(basename "$recovery_cache_dir")" = "$recovery_session" ]; then
       recovery_cache_parent="$(dirname "$recovery_cache_dir")"
@@ -524,9 +487,8 @@ if wait_state "$recovery_unit" active; then
   rm -rf -- "$recovery_cache_dir"
   remaining="$(find "$recovery_cache_dir" -type f 2>/dev/null | wc -l)"
   if [ "$remaining" -eq 0 ]; then mark_pass s2 deletionComplete; fi
-  rm -f -- "/tmp/matrix-terminal-mapped-${short_sha}.txt"
+  rm -f -- "/tmp/matrix-terminal-mapped-${run_key}.txt"
 fi
-
 build_summary
 summary_status="$(/opt/matrix/runtime/node/bin/node -e 'const fs=require("fs");const v=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(`${v.s1.status}:${v.s2.status}`)' "$evidence_root/summary.json")"
 if [ "$summary_status" != 'pass:pass' ]; then
@@ -535,7 +497,6 @@ if [ "$summary_status" != 'pass:pass' ]; then
   cleanup
   exit 20
 fi
-
 trap - EXIT
 cleanup
 exit 0
