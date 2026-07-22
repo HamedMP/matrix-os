@@ -446,6 +446,8 @@ Read these on demand, not every session:
 - Owner-controlled Postgres/Kysely for readiness, integration capability, agent action, admin/control activity, company context, and audit data; owner home files for inspectable onboarding completion/profile/config exports under `~/system/`; no new embedded database or ORM (082-paid-beta-readiness)
 - TypeScript 5.9+, strict mode, ES modules; runtime target Node.js 24+ + Existing sync-client CLI, gateway shell routes, Hono, Zod 4, native Fetch/FormData/Blob, existing `ws` attach transport (106-terminal-rich-paste)
 - Owner-controlled filesystem under Matrix home for paste assets; no new database persistence (106-terminal-rich-paste)
+- TypeScript 5.5+ on Node.js 24; Bash for installer/spike orchestration; one minimal Linux C acceptor for `SO_PEERCRED` + Hono, Zod 4 (`zod/v4`), node-pty 1.1, Zellij 0.44.1, systemd, native Node runtime bundled under `/opt/matrix/runtime/node` (109-terminal-runtime-spikes)
+- Owner-controlled bounded JSON receipts/name index under `$MATRIX_HOME/system/terminal-runtime`; ephemeral descriptors/locks under `/run`; Zellij cache under owner storage (109-terminal-runtime-spikes)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
@@ -502,5 +504,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current Spec Kit feature: `specs/109-persist-terminal-sessions/spec.md`.
+Current Spec Kit plan: `specs/109-persist-terminal-sessions/plan.md`.
 <!-- SPECKIT END -->

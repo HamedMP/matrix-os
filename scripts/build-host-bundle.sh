@@ -96,6 +96,10 @@ cp -a "$ROOT_DIR/scripts/build-default-apps.mjs" "$STAGE_DIR/app/scripts/build-d
 cp -a "$ROOT_DIR/scripts/reset-shipped-icons.mjs" "$STAGE_DIR/app/scripts/reset-shipped-icons.mjs"
 cp -a "$ROOT_DIR/scripts/install-hermes-matrix-skills.sh" "$STAGE_DIR/app/scripts/install-hermes-matrix-skills.sh"
 cp -a "$ROOT_DIR/scripts/sync-matrix-agent-skills.sh" "$STAGE_DIR/app/scripts/sync-matrix-agent-skills.sh"
+if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then
+  install -d "$STAGE_DIR/app/scripts/spikes"
+  cp -a "$ROOT_DIR/scripts/spikes/terminal-runtime" "$STAGE_DIR/app/scripts/spikes/terminal-runtime"
+fi
 cp -a "$ROOT_DIR/skills" "$STAGE_DIR/app/skills"
 cp -a "$ROOT_DIR/package.json" "$ROOT_DIR/pnpm-workspace.yaml" "$ROOT_DIR/pnpm-lock.yaml" "$STAGE_DIR/app/"
 if [ -f "$ROOT_DIR/.npmrc" ]; then

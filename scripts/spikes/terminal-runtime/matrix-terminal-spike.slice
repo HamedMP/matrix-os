@@ -1,0 +1,12 @@
+[Unit]
+Description=Matrix terminal persistence spike aggregate slice
+
+[Slice]
+MemoryAccounting=yes
+TasksAccounting=yes
+CPUAccounting=yes
+IOAccounting=yes
+MemoryHigh=75%
+TasksMax=2048
+CPUWeight=80
+IOWeight=80
