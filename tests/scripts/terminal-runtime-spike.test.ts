@@ -265,13 +265,15 @@ describe('terminal runtime spike evidence', () => {
     );
     const recoveredPaneResolution = runner.indexOf('p.title==="MATRIX_SCROLL_PROBE"');
     const safeDismiss = runner.indexOf('action write --pane-id "$serialized_pane_id" 27');
-    const restoredViewport = runner.indexOf('restored_viewport_anchor=');
+    const heldViewport = runner.indexOf('held_viewport_anchor=');
     expect(gateProof).toBeGreaterThan(-1);
     expect(stablePaneName).toBeGreaterThan(-1);
     expect(recoveredPaneResolution).toBeGreaterThan(gateProof);
+    expect(heldViewport).toBeGreaterThan(recoveredPaneResolution);
+    expect(heldViewport).toBeLessThan(safeDismiss);
     expect(safeDismiss).toBeGreaterThan(recoveredPaneResolution);
     expect(safeDismiss).toBeGreaterThan(gateProof);
-    expect(restoredViewport).toBeGreaterThan(safeDismiss);
+    expect(runner).not.toContain('restored_viewport_anchor=');
     expect(runner).not.toContain('action send-keys --pane-id "$serialized_pane_id" Esc');
     expect(runner).toContain('recovery-resolution.txt');
     expect(runner).toContain('action dump-screen --pane-id "$restored_pane_id"');

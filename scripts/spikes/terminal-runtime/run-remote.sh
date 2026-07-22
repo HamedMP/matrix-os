@@ -487,6 +487,10 @@ if wait_state "$recovery_unit" active; then
     safe_drop_status=1
     post_drop_markers=0
     if [ -n "$serialized_pane_id" ]; then
+      zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$serialized_pane_id" --path "$viewport_after" >/dev/null 2>&1 || true
+      held_viewport_anchor="$(grep -m1 '^MATRIX_SCROLL_' "$viewport_after" 2>/dev/null || true)"
+      if [ -n "$viewport_anchor" ] && [ "$held_viewport_anchor" = "$viewport_anchor" ]; then mark_pass s2 viewportRestored; fi
+      rm -f -- "$viewport_after"
       if zellij_cmd --session "$recovery_session" action write --pane-id "$serialized_pane_id" 27 >/dev/null 2>&1; then safe_drop_status=0; fi
       for _ in $(seq 1 100); do
         zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$serialized_pane_id" --path "$dump_file" --full >/dev/null 2>&1 || true
@@ -503,10 +507,6 @@ if wait_state "$recovery_unit" active; then
       zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$pane_id" --path "$dump_file" --full >/dev/null 2>&1 || true
       if grep -q '^MATRIX_SCROLL_' "$dump_file" 2>/dev/null; then restored_pane_id="$pane_id"; break; fi
     done
-    zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$restored_pane_id" --path "$viewport_after" >/dev/null 2>&1 || true
-    restored_viewport_anchor="$(grep -m1 '^MATRIX_SCROLL_' "$viewport_after" 2>/dev/null || true)"
-    if [ -n "$viewport_anchor" ] && [ "$restored_viewport_anchor" = "$viewport_anchor" ]; then mark_pass s2 viewportRestored; fi
-    rm -f -- "$viewport_after"
     zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$restored_pane_id" --path "$dump_file" --full >/dev/null 2>&1 || true
     scroll_count="$(grep -c '^MATRIX_SCROLL_' "$dump_file" 2>/dev/null || true)"
     printf 'serialized_probe_lines=%s\n' "$scroll_count" >"$evidence_root/s2/restored-counts.txt"
