@@ -136,8 +136,8 @@ jobs:
     name: Build preview bundle
     needs: gate
     if: needs.gate.outputs.action == 'deploy'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     env:
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
       NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.NEXT_PUBLIC_POSTHOG_KEY || vars.NEXT_PUBLIC_POSTHOG_KEY }}
@@ -160,6 +160,20 @@ jobs:
           cache: pnpm
 
       - uses: oven-sh/setup-bun@v2
+
+      - name: Install patched Zellij build prerequisites
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+          rustup toolchain install 1.92.0 --profile minimal --component rustfmt \
+            --target x86_64-unknown-linux-musl
+          rustup default 1.92.0
+
+      - name: Build patched Zellij for terminal-runtime spike
+        run: |
+          set -euo pipefail
+          ./scripts/spikes/terminal-runtime/build-zellij.sh "$RUNNER_TEMP/matrix-zellij"
 
       - uses: erlef/setup-beam@v1
         with:
@@ -196,6 +210,8 @@ jobs:
           HOST_BUNDLE_CHANNEL: none
           MATRIX_BUILD_SHA: ${{ needs.gate.outputs.head_sha }}
           MATRIX_BUILD_REF: ${{ needs.gate.outputs.head_ref }}
+          HOST_BUNDLE_ZELLIJ_BINARY: ${{ runner.temp }}/matrix-zellij/zellij
+          HOST_BUNDLE_ZELLIJ_BUILD_METADATA: ${{ runner.temp }}/matrix-zellij/build.json
         run: |
           set -euo pipefail
           ./scripts/build-host-bundle.sh

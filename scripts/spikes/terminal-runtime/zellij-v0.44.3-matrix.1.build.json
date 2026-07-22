@@ -1,0 +1,13 @@
+{
+  "buildId": "v0.44.3-matrix.1",
+  "sourceVersion": "0.44.3",
+  "sourceSha256": "33ae61fc802b59462fed49b424893596d3aa819646bdce53d5602f714c1264fe",
+  "patchSha256": "a64cf9bb8f461236f6bdaed5316940c202f234ececeade65c0a0a9e62ead8193",
+  "rustVersion": "1.92.0",
+  "target": "x86_64-unknown-linux-musl",
+  "sourceDateEpoch": 1735689600,
+  "pathRemap": "/usr/src/matrix-zellij",
+  "builder": "github-actions-ubuntu-24.04",
+  "workRoot": "/tmp/matrix-zellij-build-v0.44.3-matrix.1",
+  "binarySha256": "b7154142f44d265932d342f23e5d7beb7933ab878e912131098501ca314df403"
+}

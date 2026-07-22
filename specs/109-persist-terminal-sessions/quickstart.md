@@ -8,8 +8,9 @@
 3. The same-repository labeled-PR workflow waits for the exact-head preview and
    starts automatically. Manual dispatch is available for later reruns after
    the workflow has landed on the default branch.
-4. The workflow validates the exact `zellij 0.44.1`, runs S1 and S2, retrieves a
-   bounded artifact, and verifies its manifest before reporting success.
+4. The workflow builds and validates the pinned `v0.44.3-matrix.1` source/patch
+   recipe, deploys those exact bytes, runs S1 and S2, retrieves a bounded
+   artifact, and verifies its build identity and manifest before reporting success.
 5. Download the artifact and review:
    - `summary.json` reports `s1=pass` and `s2=pass`;
    - each PID role has the expected cgroup before/after gateway/browser events;

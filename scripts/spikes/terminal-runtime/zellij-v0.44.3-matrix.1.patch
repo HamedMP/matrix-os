@@ -1,0 +1,361 @@
+diff --git a/zellij-server/src/panes/grid.rs b/zellij-server/src/panes/grid.rs
+index 9f6134c..8de6683 100644
+--- a/zellij-server/src/panes/grid.rs
++++ b/zellij-server/src/panes/grid.rs
+@@ -1530,15 +1530,26 @@ impl Grid {
+                 let first_index = if scrollback_lines_to_serialize == 0 {
+                     0
+                 } else {
++                    let viewport_lines_to_serialize =
++                        std::cmp::min(scrollback_lines_to_serialize, self.viewport.len());
++                    let lines_above_to_serialize =
++                        scrollback_lines_to_serialize.saturating_sub(viewport_lines_to_serialize);
+                     self.lines_above
+                         .len()
+-                        .saturating_sub(scrollback_lines_to_serialize)
++                        .saturating_sub(lines_above_to_serialize)
+                 };
+                 let mut to_serialize = vec![];
+                 for line in self.lines_above.iter().skip(first_index) {
+                     to_serialize.push(line.clone());
+                 }
+-                for line in &self.viewport {
++                let first_viewport_index = if scrollback_lines_to_serialize == 0 {
++                    0
++                } else {
++                    self.viewport
++                        .len()
++                        .saturating_sub(scrollback_lines_to_serialize)
++                };
++                for line in self.viewport.iter().skip(first_viewport_index) {
+                     to_serialize.push(line.clone())
+                 }
+                 self.output_buffer
+diff --git a/zellij-server/src/panes/terminal_pane.rs b/zellij-server/src/panes/terminal_pane.rs
+index 477185a..a216d0b 100644
+--- a/zellij-server/src/panes/terminal_pane.rs
++++ b/zellij-server/src/panes/terminal_pane.rs
+@@ -147,6 +147,7 @@ pub struct TerminalPane {
+     // possible user instruction to be re-run, or that the command has not yet been run
+     banner: Option<String>, // a banner to be rendered inside this TerminalPane, used for panes
+     // held on startup and can possibly be used to display some errors
++    grid_before_banner: Option<Grid>, // pristine resurrected state while the banner is rendered
+     pane_frame_color_override: Option<(PaletteColor, Option<String>)>,
+     has_bell_notification: bool,
+     invoked_with: Option<Run>,
+@@ -584,15 +585,36 @@ impl Pane for TerminalPane {
+         self.grid.clear_screen()
+     }
+     fn scroll_up(&mut self, count: usize, _client_id: ClientId) {
+-        self.grid.move_viewport_up(count);
++        if let Some(mut grid_before_banner) = self.grid_before_banner.take() {
++            grid_before_banner.move_viewport_up(count);
++            self.grid = grid_before_banner.clone();
++            self.grid_before_banner = Some(grid_before_banner);
++            self.render_first_run_banner();
++        } else {
++            self.grid.move_viewport_up(count);
++        }
+         self.set_should_render(true);
+     }
+     fn scroll_down(&mut self, count: usize, _client_id: ClientId) {
+-        self.grid.move_viewport_down(count);
++        if let Some(mut grid_before_banner) = self.grid_before_banner.take() {
++            grid_before_banner.move_viewport_down(count);
++            self.grid = grid_before_banner.clone();
++            self.grid_before_banner = Some(grid_before_banner);
++            self.render_first_run_banner();
++        } else {
++            self.grid.move_viewport_down(count);
++        }
+         self.set_should_render(true);
+     }
+     fn clear_scroll(&mut self) {
+-        self.grid.reset_viewport();
++        if let Some(mut grid_before_banner) = self.grid_before_banner.take() {
++            grid_before_banner.reset_viewport();
++            self.grid = grid_before_banner.clone();
++            self.grid_before_banner = Some(grid_before_banner);
++            self.render_first_run_banner();
++        } else {
++            self.grid.reset_viewport();
++        }
+         self.set_should_render(true);
+     }
+     fn is_scrolled(&self) -> bool {
+@@ -842,6 +864,7 @@ impl Pane for TerminalPane {
+             }
+         }
+         if is_first_run {
++            self.grid_before_banner = Some(self.grid.clone());
+             self.render_first_run_banner();
+         }
+         self.set_should_render(true);
+@@ -921,7 +944,10 @@ impl Pane for TerminalPane {
+         self.set_should_render(true);
+     }
+     fn serialize(&self, scrollback_lines_to_serialize: Option<usize>) -> Option<String> {
+-        self.grid.serialize(scrollback_lines_to_serialize)
++        self.grid_before_banner
++            .as_ref()
++            .unwrap_or(&self.grid)
++            .serialize(scrollback_lines_to_serialize)
+     }
+     fn rerun(&mut self) -> Option<RunCommand> {
+         // if this is a command pane that has exited or is waiting to be rerun, will return its
+@@ -929,23 +955,30 @@ impl Pane for TerminalPane {
+         // is not in the right sort of state
+         self.is_held.take().map(|(_, _, run_command)| {
+             self.is_held = None;
+-            self.grid.reset_terminal_state();
+-            self.set_should_render(true);
+             self.remove_banner();
+             run_command.clone()
+         })
+     }
+     fn update_theme(&mut self, theme: Styling) {
+         self.style.colors = theme.clone();
+-        self.grid.update_theme(theme);
++        self.grid.update_theme(theme.clone());
++        if let Some(grid_before_banner) = self.grid_before_banner.as_mut() {
++            grid_before_banner.update_theme(theme);
++        }
+         if self.banner.is_some() {
+             // we do this so that the banner will be updated with the new theme colors
+-            self.render_first_run_banner();
++            self.redraw_banner();
+         }
+     }
+     fn update_arrow_fonts(&mut self, should_support_arrow_fonts: bool) {
+         self.arrow_fonts = should_support_arrow_fonts;
+         self.grid.update_arrow_fonts(should_support_arrow_fonts);
++        if let Some(grid_before_banner) = self.grid_before_banner.as_mut() {
++            grid_before_banner.update_arrow_fonts(should_support_arrow_fonts);
++        }
++        if self.banner.is_some() {
++            self.redraw_banner();
++        }
+     }
+     fn update_rounded_corners(&mut self, rounded_corners: bool) {
+         self.style.rounded_corners = rounded_corners;
+@@ -1133,6 +1166,7 @@ impl TerminalPane {
+             search_term: String::new(),
+             is_held: None,
+             banner: None,
++            grid_before_banner: None,
+             pane_frame_color_override: None,
+             has_bell_notification: false,
+             invoked_with,
+@@ -1169,10 +1203,13 @@ impl TerminalPane {
+     fn reflow_lines(&mut self) {
+         let rows = self.get_content_rows();
+         let cols = self.get_content_columns();
+-        self.grid.force_change_size(rows, cols);
+-        if self.banner.is_some() {
+-            self.grid.reset_terminal_state();
++        if let Some(mut grid_before_banner) = self.grid_before_banner.take() {
++            grid_before_banner.force_change_size(rows, cols);
++            self.grid = grid_before_banner.clone();
++            self.grid_before_banner = Some(grid_before_banner);
+             self.render_first_run_banner();
++        } else {
++            self.grid.force_change_size(rows, cols);
+         }
+         self.set_should_render(true);
+     }
+@@ -1201,11 +1238,23 @@ impl TerminalPane {
+     }
+     fn remove_banner(&mut self) {
+         if self.banner.is_some() {
+-            self.grid.reset_terminal_state();
++            self.restore_grid_before_banner();
++            self.grid.render_full_viewport();
+             self.set_should_render(true);
+             self.banner = None;
+         }
+     }
++    fn redraw_banner(&mut self) {
++        if let Some(grid_before_banner) = self.grid_before_banner.as_ref() {
++            self.grid = grid_before_banner.clone();
++            self.render_first_run_banner();
++        }
++    }
++    fn restore_grid_before_banner(&mut self) {
++        if let Some(grid_before_banner) = self.grid_before_banner.take() {
++            self.grid = grid_before_banner;
++        }
++    }
+     fn adjust_input_to_terminal_with_kitty_keyboard_protocol(
+         &self,
+         key: &Option<KeyWithModifier>,
+@@ -1314,8 +1363,6 @@ impl TerminalPane {
+     fn handle_held_run(&mut self) -> Option<AdjustedInput> {
+         self.is_held.take().map(|(_, _, run_command)| {
+             self.is_held = None;
+-            self.grid.reset_terminal_state();
+-            self.set_should_render(true);
+             self.remove_banner();
+             AdjustedInput::ReRunCommandInThisPane(run_command.clone())
+         })
+@@ -1325,8 +1372,6 @@ impl TerminalPane {
+             // Drop to shell in the same working directory as the command was run
+             let working_dir = run_command.cwd.clone();
+             self.is_held = None;
+-            self.grid.reset_terminal_state();
+-            self.set_should_render(true);
+             self.remove_banner();
+             AdjustedInput::DropToShellInThisPane { working_dir }
+         })
+diff --git a/zellij-server/src/panes/unit/terminal_pane_tests.rs b/zellij-server/src/panes/unit/terminal_pane_tests.rs
+index 2e34b27..1a04289 100644
+--- a/zellij-server/src/panes/unit/terminal_pane_tests.rs
++++ b/zellij-server/src/panes/unit/terminal_pane_tests.rs
+@@ -8,11 +8,94 @@ use std::collections::HashMap;
+ use std::rc::Rc;
+ use zellij_utils::{
+     data::{Palette, Style},
++    input::command::RunCommand,
+     pane_size::{Offset, PaneGeom, SizeInPixels},
+     position::Position,
+ };
+ 
+ use std::fmt::Write;
++use std::path::PathBuf;
++
++fn make_resurrected_terminal_pane(rows: usize) -> TerminalPane {
++    let mut geom = PaneGeom::default();
++    geom.cols.set_inner(80);
++    geom.rows.set_inner(rows);
++    TerminalPane::new(
++        1,
++        geom,
++        Style::default(),
++        0,
++        String::new(),
++        Rc::new(RefCell::new(LinkHandler::new())),
++        Rc::new(RefCell::new(None)),
++        Rc::new(RefCell::new(SixelImageStore::default())),
++        Rc::new(RefCell::new(Palette::default())),
++        Rc::new(RefCell::new(HashMap::new())),
++        None,
++        None,
++        false,
++        true,
++        true,
++        true,
++        false,
++        None,
++    )
++}
++
++#[test]
++fn held_resurrected_pane_preserves_viewport_and_history_across_reflow() {
++    let mut terminal_pane = make_resurrected_terminal_pane(10);
++    let mut contents = String::new();
++    for line in 1..=30 {
++        writeln!(&mut contents, "\rMATRIX_SCROLL_{line:05}").unwrap();
++    }
++    terminal_pane.handle_pty_bytes(contents.into_bytes());
++    terminal_pane.scroll_up(5, 1);
++    let viewport_before = terminal_pane.dump_screen(false, None);
++    let anchor_before = viewport_before
++        .lines()
++        .find(|line| line.starts_with("MATRIX_SCROLL_"))
++        .unwrap()
++        .to_owned();
++
++    terminal_pane.hold(None, true, RunCommand::new(PathBuf::from("/bin/false")));
++    let mut resized = terminal_pane.position_and_size();
++    resized.cols.set_inner(81);
++    terminal_pane.set_geom(resized);
++
++    let viewport_after = terminal_pane.dump_screen(false, None);
++    assert_eq!(
++        viewport_after
++            .lines()
++            .find(|line| line.starts_with("MATRIX_SCROLL_"))
++            .unwrap(),
++        anchor_before
++    );
++    assert!(viewport_after.contains("<ENTER> run"));
++    assert!(terminal_pane
++        .dump_screen(true, None)
++        .contains("MATRIX_SCROLL_00001"));
++}
++
++#[test]
++fn serialized_pane_content_is_bounded_including_the_viewport() {
++    let mut terminal_pane = make_resurrected_terminal_pane(10);
++    let mut contents = String::new();
++    for line in 1..=30 {
++        writeln!(&mut contents, "\rMATRIX_SCROLL_{line:05}").unwrap();
++    }
++    terminal_pane.handle_pty_bytes(contents.into_bytes());
++
++    let serialized = terminal_pane.serialize(Some(20)).unwrap();
++    assert!(serialized.matches("MATRIX_SCROLL_").count() <= 20);
++    let serialized_smaller_than_viewport = terminal_pane.serialize(Some(5)).unwrap();
++    assert!(
++        serialized_smaller_than_viewport
++            .matches("MATRIX_SCROLL_")
++            .count()
++            <= 5
++    );
++}
+ 
+ fn read_fixture(fixture_name: &str) -> Vec<u8> {
+     let mut path_to_file = std::path::PathBuf::new();
+diff --git a/zellij-utils/src/session_serialization.rs b/zellij-utils/src/session_serialization.rs
+index 7c644d6..7530cd9 100644
+--- a/zellij-utils/src/session_serialization.rs
++++ b/zellij-utils/src/session_serialization.rs
+@@ -310,7 +310,7 @@ fn serialize_pane_title_and_attributes(
+             .push(KdlEntry::new_prop("focus", KdlValue::Bool(true)));
+     }
+     if let Some(initial_pane_contents) = initial_pane_contents.as_ref() {
+-        if command.is_none() && edit.is_none() {
++        if edit.is_none() {
+             let file_name = format!("initial_contents_{}", pane_contents.keys().len() + 1);
+             kdl_node
+                 .entries_mut()
+@@ -1137,6 +1137,37 @@ mod tests {
+     use expect_test::expect;
+     use insta::assert_snapshot;
+     use serde_json::Value;
+     use std::collections::HashMap;
++
++    #[test]
++    fn command_panes_serialize_initial_contents_for_gated_resurrection() {
++        let command = Some("/bin/bash".to_owned());
++        let edit = None;
++        let name = Some("MATRIX_SCROLL_PROBE".to_owned());
++        let initial_pane_contents = Some("MATRIX_SCROLL_00001\nMATRIX_SCROLL_00002".to_owned());
++        let mut pane_contents = BTreeMap::new();
++        let mut pane_node = KdlNode::new("pane");
++
++        serialize_pane_title_and_attributes(
++            &command,
++            &edit,
++            &name,
++            None,
++            Some(true),
++            &initial_pane_contents,
++            &mut pane_contents,
++            false,
++            &mut pane_node,
++        );
++
++        let serialized_node = pane_node.to_string();
++        assert!(serialized_node.contains("command=\"/bin/bash\""));
++        assert!(serialized_node.contains("contents_file=\"initial_contents_1\""));
++        assert_eq!(
++            pane_contents.get("initial_contents_1").map(String::as_str),
++            Some("MATRIX_SCROLL_00001\nMATRIX_SCROLL_00002")
++        );
++    }
++
+     const PANEGEOMS_JSON: &[&[&str]] = &[
+         &[
+             r#"{ "x": 0, "y": 1, "rows": { "constraint": "Percent(100.0)", "inner": 43 }, "cols": { "constraint": "Percent(100.0)", "inner": 211 }, "is_stacked": false }"#,
+             r#"{ "x": 0, "y": 0, "rows": { "constraint": "Fixed(1)", "inner": 1 }, "cols": { "constraint": "Percent(100.0)", "inner": 211 }, "is_stacked": false }"#,
+             r#"{ "x": 0, "y": 44, "rows": { "constraint": "Fixed(2)", "inner": 2 }, "cols": { "constraint": "Percent(100.0)", "inner": 211 }, "is_stacked": false }"#,

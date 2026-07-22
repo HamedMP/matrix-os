@@ -28,7 +28,7 @@ Out of scope:
 
 ## Verdict and Mandatory Implementation Gate
 
-The target architecture is selected, but implementation MUST NOT begin until both disposable-VPS spikes below pass with the exact bundled Zellij 0.44.1 binary on a production-representative Ubuntu customer VPS. Throwaway spike code and units are evidence, not production implementation. Failure of either spike requires revising this spec's service or recovery model; it does not permit weakening an invariant.
+The target architecture is selected, but implementation MUST NOT begin until both disposable-VPS spikes below pass with the exact production-candidate Zellij build `v0.44.3-matrix.1` on a production-representative Ubuntu customer VPS. This build is Zellij 0.44.3 source plus the reviewed Matrix resurrection patch, compiled with Rust 1.92.0 for `x86_64-unknown-linux-musl`; its source archive and patch are SHA-256 pinned by the spike. Throwaway spike code and units are evidence, not production implementation. Failure of either spike requires revising this spec's service or recovery model; it does not permit weakening an invariant.
 
 ### Gate S1 — Foreground supervision and cgroup ownership
 
@@ -52,9 +52,9 @@ S1 passes only when:
 - readiness is withheld until the exact Zellij session responds and all required cgroup membership checks pass;
 - with at least three concurrent runtime units driven above the relevant thresholds, each unit's `MemoryHigh=50%` applies independently while the slice's `MemoryHigh=75%` applies to their combined usage; these are layered pressure thresholds, not additive per-session capacity budgets.
 
-### Gate S2 — Zellij 0.44.1 resurrection and bounded history
+### Gate S2 — Patched Zellij resurrection and bounded history
 
-The spike MUST establish the exact Zellij 0.44.1 configuration spelling and observed behavior equivalent to:
+The spike MUST establish the exact `v0.44.3-matrix.1` configuration spelling and observed behavior equivalent to:
 
 ```kdl
 session_serialization true
@@ -76,13 +76,28 @@ S2 passes only when it proves:
 
 The current Zellij guide documents session serialization, optional viewport/scrollback serialization, cache-backed resurrection, and confirmation-gated command restoration, but this documentation is not a substitute for the exact-version spike: [Zellij options](https://zellij.dev/documentation/options.html) and [session resurrection](https://zellij.dev/documentation/session-resurrection.html).
 
+#### S2 architecture revision
+
+The released Zellij 0.44.1 and 0.44.3 code paths, as well as upstream `main` when investigated, have two independent defects for confirmation-gated resurrection. Session serialization omits `contents_file` whenever a pane has a command, so a restored command pane is held without any serialized viewport or scrollback. When initial contents are present, the native held-command confirmation banner also destructively calls `reset_terminal_state()` during reflow. A released-binary upgrade therefore does not satisfy S2, and replacing native resurrection with Matrix-owned plaintext replay would lose terminal fidelity and duplicate Zellij's command-gating state machine.
+
+The selected candidate is a minimal source patch over 0.44.3 that:
+
+- emits the bounded `contents_file` for command panes as well as shell panes while retaining `start_suspended true` command gating;
+- retains a pristine pane grid while the native first-run command banner is visible;
+- redraws the banner from that grid on resize, theme change, and viewport movement;
+- serializes the pristine grid and restores it when the owner confirms or drops to a shell;
+- counts the visible viewport inside the configured 10,000-row serialization ceiling;
+- leaves Zellij's native held-command input handling intact and never enables `--force-run-commands`.
+
+The checked-in `zellij-v0.44.3-matrix.1.build.json` is the single authoritative candidate record consumed by the builder, updater candidate path, remote spike, and evidence verifier. It records source archive digest `33ae61fc802b59462fed49b424893596d3aa819646bdce53d5602f714c1264fe`, patch digest `a64cf9bb8f461236f6bdaed5316940c202f234ececeade65c0a0a9e62ead8193`, Rust 1.92.0, the musl target, reproducibility inputs, the exclusive build root `/tmp/matrix-zellij-build-v0.44.3-matrix.1`, and the candidate binary digest in that build record. The build fixes locale, timezone, source epoch, and incremental behavior, and remaps the complete fixed build root to `/usr/src/matrix-zellij`. The fixed root is also required because vendored OpenSSL embeds its build/install paths before Rust path remapping can act; a random temporary root therefore changes the final bytes. A clean `ubuntu-24.04` build MUST reproduce the record before deployment. Every bundle that replaces Zellij MUST preserve the prior binary and metadata as part of the same one-level application rollback generation: after services stop, the updater builds the complete root-owned snapshot under a temporary path inside the current app and moves it into place only after every copy succeeds; the existing app-to-rollback rename then commits the app and matching Zellij snapshot together. A non-candidate replacement removes stale candidate metadata after the binary copy. A bundle carrying candidate metadata MUST additionally validate the bundled digest, atomically rename the executable into place, and validate the installed digest. Failed or explicit application rollback MUST restore both prior Zellij files before restarting the gateway; the remote spike MUST independently reject installed bytes that differ. The later production-binary layer MUST publish the proven bytes as an immutable verified artifact and install that exact digest; rebuilding an unverified equivalent is not sufficient.
+
 ## Background and Repository Evidence
 
 1. Normal sessions are launched through a gateway-owned `node-pty` and retained in a gateway in-memory map (`packages/gateway/src/shell/zellij.ts`). Interactive coding-agent Zellij sessions use the same ownership pattern (`packages/gateway/src/zellij-runtime.ts`).
 2. `matrix-gateway.service` runs as `matrix` under systemd's default control-group lifecycle and hard memory controls. The updater stops the gateway on both successful deployment and rollback (`distro/customer-vps/systemd/matrix-gateway.service`, `distro/customer-vps/host-bin/matrix-sync-agent`).
 3. The browser recreates saved names that are absent from the live Zellij list (`shell/src/components/terminal/TerminalApp.tsx`), which turns an interrupted session into a misleading empty replacement shell.
 4. The mutable display name is currently the runtime identity. Rename changes the Zellij identity plus name-keyed registry, scrollback, preference, and agent-state records (`packages/gateway/src/shell/registry.ts`).
-5. The generated Zellij config does not explicitly enable viewport serialization, while the bundle pins Zellij 0.44.1 (`packages/gateway/src/shell/zellij-config.ts`, `scripts/build-host-bundle.sh`).
+5. The generated Zellij config does not explicitly enable viewport serialization, while the normal bundle still pins unpatched Zellij 0.44.1 (`packages/gateway/src/shell/zellij-config.ts`, `scripts/build-host-bundle.sh`). The spike-only preview override builds `v0.44.3-matrix.1`; changing the production default remains blocked on a fully green S1/S2 run.
 6. Agent prompts, settings, working directories, commands, arguments, and dynamic configuration currently enter process arguments and durable KDL layouts (`packages/gateway/src/agent-launcher.ts`, `packages/gateway/src/zellij-runtime.ts`).
 7. Customer VPS provisioning grants `matrix` unrestricted `NOPASSWD:ALL`. A terminal-only supervisor protocol is not a narrow privilege boundary until that grant is removed and other privileged flows use separately typed root-owned services/helpers (`distro/customer-vps/cloud-init.yaml`).
 8. User-systemd lingering is enabled, but that does not provide an independently proven narrow authority or per-runtime resource-control model.
@@ -210,7 +225,7 @@ As an existing Matrix OS owner, I want saved terminal names and working director
 
 #### Implementation gates
 
-- **FR-001**: Production implementation MUST remain blocked until Gate S1 and Gate S2 pass on a disposable production-representative Ubuntu VPS using the exact bundled `/opt/matrix/bin/zellij` 0.44.1 and their evidence is committed or linked from the implementation plan.
+- **FR-001**: Production implementation MUST remain blocked until Gate S1 and Gate S2 pass on a disposable production-representative Ubuntu VPS using the exact `/opt/matrix/bin/zellij` `v0.44.3-matrix.1` candidate bytes and their source, patch, toolchain, target, and binary digests are committed or linked from the implementation plan.
 - **FR-002**: Failure of either mandatory spike MUST trigger a service/recovery architecture revision and renewed spec review; acceptance criteria, security boundaries, or resource limits MUST NOT be weakened merely to pass.
 
 #### Runtime ownership and service model

@@ -9,8 +9,9 @@ Move production terminal ownership out of the replaceable gateway into a stable,
 root-owned supervisor and one fixed systemd template unit per immutable runtime.
 The gateway becomes an unprivileged protocol client and owns only browser attach
 PTYs. Durable receipts describe identity and recovery intent; ephemeral one-shot
-descriptors carry bounded launch data; Zellij 0.44.1 provides confirmation-gated,
-bounded resurrection after explicit owner recovery.
+descriptors carry bounded launch data; the S2-proven `v0.44.3-matrix.1` Zellij
+build provides confirmation-gated, bounded resurrection after explicit owner
+recovery without destructive banner reflow.
 
 Production implementation is gated by two disposable-VPS proofs. The first stack
 layer adds a production-representative spike harness and records S1/S2 evidence.
@@ -20,7 +21,7 @@ updater layers.
 ## Technical Context
 
 **Language/Version**: TypeScript 5.5+ on Node.js 24; Bash for installer/spike orchestration; one minimal Linux C acceptor for `SO_PEERCRED`
-**Primary Dependencies**: Hono, Zod 4 (`zod/v4`), node-pty 1.1, Zellij 0.44.1, systemd, native Node runtime bundled under `/opt/matrix/runtime/node`
+**Primary Dependencies**: Hono, Zod 4 (`zod/v4`), node-pty 1.1, Zellij `v0.44.3-matrix.1` (pinned 0.44.3 source plus reviewed resurrection patch), systemd, native Node runtime bundled under `/opt/matrix/runtime/node`
 **Storage**: Owner-controlled bounded JSON receipts/name index under `$MATRIX_HOME/system/terminal-runtime`; ephemeral descriptors/locks under `/run`; Zellij cache under owner storage
 **Testing**: Vitest contract/unit/integration tests; shell contract tests; disposable Ubuntu preview-VPS spike and acceptance workflows
 **Target Platform**: Ubuntu customer VPS, systemd system manager, cgroup v2, x86_64, `matrix` owner account
@@ -139,7 +140,7 @@ copied outside `/opt/matrix/app` by the host-bundle installer.
 
 | Layer | Branch/PR intent | Exit gate |
 |---|---|---|
-| 1 | `test(terminal): prove persistent runtime invariants` | S1 and S2 evidence pass on exact 0.44.1 |
+| 1 | `test(terminal): prove persistent runtime invariants` | S1 and S2 evidence pass on exact `v0.44.3-matrix.1` bytes |
 | 2 | `feat(terminal): add supervised runtime foundation` | protocol/storage/security tests and stable services pass |
 | 3 | `feat(terminal): migrate shell and agent runtimes` | create/list/attach/delete and argv scans pass |
 | 4 | `feat(terminal): add explicit recovery experience` | recovery API, Canvas-first UI, React Doctor, screenshots pass |

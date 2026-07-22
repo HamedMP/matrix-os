@@ -40,7 +40,20 @@ async function evidence(overrides: Record<string, unknown> = {}): Promise<string
   const summary = {
     schemaVersion: 1,
     prHeadSha: 'a'.repeat(40),
-    zellijVersion: 'zellij 0.44.1',
+    zellijVersion: 'zellij 0.44.3',
+    zellijBuild: {
+      buildId: 'v0.44.3-matrix.1',
+      sourceVersion: '0.44.3',
+      sourceSha256: '33ae61fc802b59462fed49b424893596d3aa819646bdce53d5602f714c1264fe',
+      patchSha256: 'a64cf9bb8f461236f6bdaed5316940c202f234ececeade65c0a0a9e62ead8193',
+      rustVersion: '1.92.0',
+      target: 'x86_64-unknown-linux-musl',
+      sourceDateEpoch: 1735689600,
+      pathRemap: '/usr/src/matrix-zellij',
+      builder: 'github-actions-ubuntu-24.04',
+      workRoot: '/tmp/matrix-zellij-build-v0.44.3-matrix.1',
+      binarySha256: 'b7154142f44d265932d342f23e5d7beb7933ab878e912131098501ca314df403',
+    },
     ubuntuVersion: '24.04',
     systemdVersion: '255',
     kernelVersion: '6.8.0-probe',
@@ -55,6 +68,117 @@ async function evidence(overrides: Record<string, unknown> = {}): Promise<string
   return root;
 }
 describe('terminal runtime spike evidence', () => {
+  it('builds and verifies the pinned Matrix Zellij resurrection patch', async () => {
+    const [builder, zellijPatch, candidateRecordRaw, previewWorkflow, buildScript, syncAgent, remoteRunner, verifier] =
+      await Promise.all([
+      readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/build-zellij.sh'), 'utf8'),
+      readFile(
+        join(process.cwd(), 'scripts/spikes/terminal-runtime/zellij-v0.44.3-matrix.1.patch'),
+        'utf8',
+      ),
+      readFile(
+        join(
+          process.cwd(),
+          'scripts/spikes/terminal-runtime/zellij-v0.44.3-matrix.1.build.json',
+        ),
+        'utf8',
+      ),
+      readFile(join(process.cwd(), '.github/workflows/preview-vps.yml'), 'utf8'),
+      readFile(join(process.cwd(), 'scripts/build-host-bundle.sh'), 'utf8'),
+      readFile(join(process.cwd(), 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8'),
+      readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/run-remote.sh'), 'utf8'),
+      readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/verify-evidence.mjs'), 'utf8'),
+    ]);
+    const candidateRecord = JSON.parse(candidateRecordRaw) as Record<string, unknown>;
+    expect(candidateRecord).toEqual({
+      buildId: 'v0.44.3-matrix.1',
+      sourceVersion: '0.44.3',
+      sourceSha256: '33ae61fc802b59462fed49b424893596d3aa819646bdce53d5602f714c1264fe',
+      patchSha256: 'a64cf9bb8f461236f6bdaed5316940c202f234ececeade65c0a0a9e62ead8193',
+      rustVersion: '1.92.0',
+      target: 'x86_64-unknown-linux-musl',
+      sourceDateEpoch: 1735689600,
+      pathRemap: '/usr/src/matrix-zellij',
+      builder: 'github-actions-ubuntu-24.04',
+      workRoot: '/tmp/matrix-zellij-build-v0.44.3-matrix.1',
+      binarySha256: 'b7154142f44d265932d342f23e5d7beb7933ab878e912131098501ca314df403',
+    });
+    expect(builder).toContain('zellij-v0.44.3-matrix.1.build.json');
+    expect(builder).toContain('cp -- "$candidate_record" "$output_dir/build.json"');
+    expect(remoteRunner).toContain('zellij-v0.44.3-matrix.1.build.json');
+    expect(remoteRunner).not.toMatch(/\bjq\b/);
+    expect(remoteRunner).toContain('record_preflight binary_manifest_read');
+    expect(remoteRunner).toContain(
+      'rm -rf -- "$evidence_root" "$runtime_root" "$cache_root" "$config_root" "$config_home_root" "$data_root"',
+    );
+    expect(verifier).toContain('zellij-v0.44.3-matrix.1.build.json');
+    expect(builder).toContain('ZELLIJ_SOURCE_VERSION="$(jq -er .sourceVersion "$candidate_record")"');
+    expect(builder).toContain('cargo test -p zellij-server');
+    expect(builder).toContain('ZELLIJ_TARGET="$(jq -er .target "$candidate_record")"');
+    expect(builder).toContain('zellij_binary_digest_mismatch');
+    expect(builder).toContain('--target "$ZELLIJ_TARGET"');
+    expect(builder).toContain('export CARGO_HOME="$work_dir/cargo-home"');
+    expect(builder).toContain('work_dir="$ZELLIJ_WORK_ROOT"');
+    expect(builder).toContain('mkdir -m 0700 -- "$work_dir"');
+    expect(builder).toContain('export CARGO_INCREMENTAL=0');
+    expect(builder).toContain('export SOURCE_DATE_EPOCH="$ZELLIJ_SOURCE_DATE_EPOCH"');
+    expect(builder).toContain('--remap-path-prefix=$work_dir=$ZELLIJ_PATH_REMAP');
+    expect(zellijPatch).toContain('grid_before_banner');
+    expect(zellijPatch).toContain('scrollback_lines_to_serialize.saturating_sub(viewport_lines_to_serialize)');
+    expect(zellijPatch).toContain('.saturating_sub(scrollback_lines_to_serialize)');
+    expect(zellijPatch).toContain('held_resurrected_pane_preserves_viewport_and_history_across_reflow');
+    expect(zellijPatch).toContain('serialized_pane_content_is_bounded_including_the_viewport');
+    expect(zellijPatch).toContain(
+      'command_panes_serialize_initial_contents_for_gated_resurrection',
+    );
+    expect(zellijPatch).toContain('+        if edit.is_none() {');
+    expect(builder).toContain(
+      'command_panes_serialize_initial_contents_for_gated_resurrection',
+    );
+    expect(previewWorkflow).toContain('Build patched Zellij for terminal-runtime spike');
+    expect(previewWorkflow).toContain('runs-on: ubuntu-24.04');
+    expect(previewWorkflow).toContain('HOST_BUNDLE_ZELLIJ_BINARY:');
+    expect(buildScript).toContain('HOST_BUNDLE_ZELLIJ_BINARY');
+    expect(syncAgent).toContain('zellij_candidate_digest_mismatch');
+    expect(syncAgent).toContain('mv -f "$zellij_next" "$BIN_DIR/zellij"');
+    expect(syncAgent).toContain('zellij_installed_digest_mismatch');
+    expect(syncAgent).toContain("! -name 'zellij' ! -name 'zellij.build.json'");
+    expect(syncAgent).toContain('backup_zellij_for_rollback');
+    expect(syncAgent).toContain('restore_zellij_after_rollback');
+    expect(syncAgent).toContain('readonly ZELLIJ_ROLLBACK_DIR="$APP_DIR/.zellij.rollback"');
+    expect(syncAgent).toContain('local rollback_next="${ZELLIJ_ROLLBACK_DIR}.next"');
+    expect(syncAgent).toContain('sudo mv -- "$rollback_next" "$ZELLIJ_ROLLBACK_DIR"');
+    const rollbackBackup = syncAgent.slice(
+      syncAgent.indexOf('backup_zellij_for_rollback()'),
+      syncAgent.indexOf('restore_zellij_after_rollback()'),
+    );
+    expect(rollbackBackup.indexOf('"$rollback_next/zellij"')).toBeLessThan(
+      rollbackBackup.indexOf('clear_zellij_rollback'),
+    );
+    expect(rollbackBackup.indexOf('clear_zellij_rollback')).toBeLessThan(
+      rollbackBackup.indexOf('sudo mv -- "$rollback_next" "$ZELLIJ_ROLLBACK_DIR"'),
+    );
+    expect(syncAgent).toContain(
+      'if [ -f "$extract_dir/bin/zellij" ]; then\n    backup_zellij_for_rollback',
+    );
+    expect(syncAgent.indexOf('systemctl stop matrix-symphony matrix-gateway matrix-shell')).toBeLessThan(
+      syncAgent.lastIndexOf('backup_zellij_for_rollback'),
+    );
+    expect(syncAgent).toContain(
+      'if [ -f "$extract_dir/bin/zellij" ]; then\n        sudo rm -f -- "$ZELLIJ_BUILD_METADATA"',
+    );
+    expect(syncAgent.indexOf('backup_zellij_for_rollback')).toBeLessThan(
+      syncAgent.indexOf('mv -f "$zellij_next" "$BIN_DIR/zellij"'),
+    );
+    const rollbackBody = syncAgent.slice(syncAgent.indexOf('do_rollback()'));
+    expect(rollbackBody.indexOf('restore_zellij_after_rollback')).toBeLessThan(
+      rollbackBody.indexOf('sudo chown -R matrix:matrix "$APP_DIR"'),
+    );
+    expect(rollbackBody.indexOf('restore_zellij_after_rollback')).toBeLessThan(
+      rollbackBody.indexOf('systemctl start matrix-gateway matrix-shell'),
+    );
+    expect(verifier).toContain('const EXPECTED_ZELLIJ_BUILD = Object.freeze(');
+  });
   it('binds privileged execution to an explicitly approved immutable PR head', async () => {
     const workflow = await readFile(
       join(process.cwd(), '.github/workflows/terminal-runtime-spikes.yml'),
@@ -90,11 +214,12 @@ describe('terminal runtime spike evidence', () => {
     expect(buildScript).toContain('scripts/spikes/terminal-runtime');
   });
   it('detaches the spike from the gateway cgroup and waits for completed evidence', async () => {
-    const [workflow, launcher, packer, runner] = await Promise.all([
+    const [workflow, launcher, packer, runner, attachProbe] = await Promise.all([
       readFile(join(process.cwd(), '.github/workflows/terminal-runtime-spikes.yml'), 'utf8'),
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/launch-remote.sh'), 'utf8'),
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/pack-evidence.sh'), 'utf8'),
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/run-remote.sh'), 'utf8'),
+      readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/attach-probe.mjs'), 'utf8'),
     ]);
     expect(workflow).toContain('/opt/matrix/app/scripts/spikes/terminal-runtime/launch-remote.sh');
     expect(workflow).toContain('evidence_deadline=$((SECONDS + 2100))');
@@ -119,6 +244,8 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).toContain('base_id="1${pr_head_sha:0:31}"');
     expect(runner).toContain('zellij delete-session "matrix-t-${runtime_id}" --force');
     expect(runner).toContain('attach-probe.mjs');
+    expect(attachProbe).toContain('clientCgroup');
+    expect(runner).toContain("value.clientCgroup");
     expect(runner).not.toContain('script -qefc');
     expect(runner).toContain('cgroup_removed');
     expect(runner).not.toContain('install -o matrix -g matrix -m 0600 /dev/null "$runtime_root/confirmations/${recovery_id}.pass"');
@@ -132,6 +259,21 @@ describe('terminal runtime spike evidence', () => {
     expect(keeper).toContain("cgroupRoles(cgroup.path, descriptor.intent === 'create')");
     expect(keeper).toContain("stripVTControlCharacters(renderWindow).includes('<ENTER> run')");
     expect(runner).toContain('confirmations/${recovery_id}.gated');
+    const gateProof = runner.indexOf('confirmations/${recovery_id}.gated');
+    const stablePaneName = runner.indexOf(
+      'action rename-pane --pane-id "$serialized_pane_id" MATRIX_SCROLL_PROBE',
+    );
+    const recoveredPaneResolution = runner.indexOf('p.title==="MATRIX_SCROLL_PROBE"');
+    const safeDismiss = runner.indexOf('action write --pane-id "$serialized_pane_id" 27');
+    const restoredViewport = runner.indexOf('restored_viewport_anchor=');
+    expect(gateProof).toBeGreaterThan(-1);
+    expect(stablePaneName).toBeGreaterThan(-1);
+    expect(recoveredPaneResolution).toBeGreaterThan(gateProof);
+    expect(safeDismiss).toBeGreaterThan(recoveredPaneResolution);
+    expect(safeDismiss).toBeGreaterThan(gateProof);
+    expect(restoredViewport).toBeGreaterThan(safeDismiss);
+    expect(runner).not.toContain('action send-keys --pane-id "$serialized_pane_id" Esc');
+    expect(runner).toContain('recovery-resolution.txt');
     expect(runner).toContain('action dump-screen --pane-id "$restored_pane_id"');
     expect(runner).toContain('chown -R root:root "$recovery_cache_dir"');
   });
@@ -236,6 +378,17 @@ describe('terminal runtime spike evidence', () => {
       'utf8',
     );
     await writeFile(join(root, 's1', 'memory-stage.txt'), 'slice_no_pressure\n', 'utf8');
+    await writeFile(join(root, 'preflight-stage.txt'), 'binary_version_checked\n', 'utf8');
+    await writeFile(
+      join(root, 's2', 'binary-digest.txt'),
+      `expected=${'a'.repeat(64)}\nactual=${'b'.repeat(64)}\n`,
+      'utf8',
+    );
+    await writeFile(
+      join(root, 's2', 'recovery-resolution.txt'),
+      'original_pane_id=2\nrecovered_pane_id=1\nrecovered_pane_count=2\nheld_pane_count=2\nsafe_drop_status=0\npost_drop_markers=9999\n',
+      'utf8',
+    );
     await expect(reportGateChecks(root)).resolves.toEqual([
       's1:stopEmptiesCgroup=fail',
       's1:startup=readiness/client_exit',
@@ -243,7 +396,10 @@ describe('terminal runtime spike evidence', () => {
       's1:unit=failed/failed/timeout/1/16',
       's1:roles=initial/keeper:1/zellij:1of2/shell:1/agent:0',
       's2:recovery=readiness/readiness_timeout/confirm:1/roles:1,2,1,0',
+      's2:resolution=original:2/recovered:1/panes:2/held:2/drop:0/markers:9999',
       's1:memory=slice_no_pressure',
+      'spike:preflight=binary_version_checked',
+      `s2:binary=expected:${'a'.repeat(64)}/actual:${'b'.repeat(64)}`,
     ]);
     await rm(join(root, 's1', 'base-runtime-roles.json'));
     await symlink('/etc/passwd', join(root, 's1', 'base-runtime-roles.json'));
@@ -251,12 +407,31 @@ describe('terminal runtime spike evidence', () => {
       's1:stopEmptiesCgroup=fail', 's1:startup=readiness/client_exit',
       's1:pty-exit=1/0', 's1:unit=failed/failed/timeout/1/16',
       's2:recovery=readiness/readiness_timeout/confirm:1/roles:1,2,1,0',
+      's2:resolution=original:2/recovered:1/panes:2/held:2/drop:0/markers:9999',
       's1:memory=slice_no_pressure',
+      'spike:preflight=binary_version_checked',
+      `s2:binary=expected:${'a'.repeat(64)}/actual:${'b'.repeat(64)}`,
     ]);
   });
-  it('rejects a binary other than the exact bundled Zellij 0.44.1', async () => {
-    const root = await evidence({ zellijVersion: 'zellij 0.44.3' });
+  it('rejects a binary other than the exact patched Zellij build', async () => {
+    const root = await evidence({ zellijVersion: 'zellij 0.44.1' });
     await expect(validateEvidenceDirectory(root)).rejects.toThrow('evidence_zellij_version');
+    const wrongPatch = await evidence({
+      zellijBuild: {
+        buildId: 'v0.44.3-matrix.2',
+        sourceVersion: '0.44.3',
+        sourceSha256: '33ae61fc802b59462fed49b424893596d3aa819646bdce53d5602f714c1264fe',
+        patchSha256: 'c676df6a455cb508920397d7b9f7490b855e7212b42105247cf41269d466e6bf',
+        rustVersion: '1.92.0',
+        target: 'x86_64-unknown-linux-musl',
+        sourceDateEpoch: 1735689600,
+        pathRemap: '/usr/src/matrix-zellij',
+        builder: 'github-actions-ubuntu-24.04',
+        workRoot: '/tmp/matrix-zellij-build-v0.44.3-matrix.1',
+        binarySha256: 'b7154142f44d265932d342f23e5d7beb7933ab878e912131098501ca314df403',
+      },
+    });
+    await expect(validateEvidenceDirectory(wrongPatch)).rejects.toThrow('evidence_zellij_build');
   });
   it('rejects traversal and symlink evidence entries', async () => {
     const traversalRoot = await evidence({

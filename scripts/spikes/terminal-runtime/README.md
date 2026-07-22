@@ -5,9 +5,11 @@ spec 109. It is not the production supervisor implementation.
 
 The harness must run on the PR's disposable Ubuntu preview VPS after the exact
 PR host bundle is deployed. It verifies `/opt/matrix/bin/zellij --version` is
-exactly `zellij 0.44.1`, installs fixed temporary units/support files, runs both
-mandatory gates, produces bounded evidence, then stops and resets every spike
-unit. The preview VPS is deleted by the existing PR-close/72-hour reaper flow.
+`zellij 0.44.3` and verifies the installed binary metadata is exactly
+`v0.44.3-matrix.1` from the checked-in authoritative build record (pinned source, patch, Rust 1.92.0, musl target, fixed exclusive build root, and candidate
+binary SHA-256 `b7154142f44d265932d342f23e5d7beb7933ab878e912131098501ca314df403`). The build fixes and remaps its source, Cargo registry, target, generated-file, and vendored-C build paths; a clean `ubuntu-24.04` builder must reproduce those exact bytes before the VPS can install them. Every Zellij-bearing bundle stages the complete prior binary/metadata snapshot inside the stopped current app, then carries that snapshot into the updater's one-level rollback generation with the app-directory rename. An ordinary replacement removes stale candidate metadata after copying its binary; candidate-bearing bundles additionally validate the bundled digest, atomically rename the executable into place, and validate the installed digest. Failed or explicit application rollback restores both prior Zellij files before the gateway restarts. The spike then installs fixed temporary units/support files, runs both mandatory
+gates, produces bounded evidence, and stops/resets every spike unit. The preview
+VPS is deleted by the existing PR-close/72-hour reaper flow.
 
 ## Run
 
@@ -19,8 +21,12 @@ unit. The preview VPS is deleted by the existing PR-close/72-hour reaper flow.
 4. Do not treat the workflow as passing unless its validator accepts every S1
    and S2 check and uploads the evidence artifact.
 
-The preview workflow sets `MATRIX_TERMINAL_RUNTIME_SPIKE=1`, so the host bundle
-contains this harness only for preview builds. The spike workflow derives the
+The preview workflow builds the patched binary from the SHA-256-pinned 0.44.3
+source archive and reviewed patch, runs its upstream regression tests, and passes
+it to the host bundle through a spike-only override. Normal production bundle
+defaults are unchanged by this PR. The workflow also sets
+`MATRIX_TERMINAL_RUNTIME_SPIKE=1`, so the host bundle contains this harness only
+for preview builds. The spike workflow derives the
 existing gateway bearer from `PLATFORM_SECRET`, connects to the exact live VPS
 with correct `app.matrix-os.com` TLS/SNI, and calls the already bounded
 `/api/terminal/run` contract. That fixed command invokes this harness through the
@@ -35,7 +41,7 @@ which is validated locally before upload. No SSH credential is required.
 - maximum 256 files;
 - maximum 256 KiB per file;
 - maximum 8 MiB total;
-- exact PR head SHA and Zellij version;
+- exact PR head SHA plus Zellij source, patch, toolchain, target, and binary identity;
 - strict complete S1/S2 check maps;
 - relative cache paths and aggregate sizes only;
 - no terminal contents, credentials, IP addresses, owner-home paths, names, or
@@ -50,6 +56,7 @@ any failed/missing gate.
 
 ```bash
 bash -n scripts/spikes/terminal-runtime/run-remote.sh
+bash -n scripts/spikes/terminal-runtime/build-zellij.sh
 bash -n scripts/spikes/terminal-runtime/launch-remote.sh
 bash -n scripts/spikes/terminal-runtime/pack-evidence.sh
 node --check scripts/spikes/terminal-runtime/keeper.mjs

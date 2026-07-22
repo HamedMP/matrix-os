@@ -65,6 +65,7 @@ if (!root.startsWith('/tmp/matrix-terminal-spike-evidence-') || !/^[0-9a-f]{40}$
   fail('evidence_arguments');
 }
 const zellijVersion = await command('/opt/matrix/bin/zellij', ['--version']);
+const zellijBuild = JSON.parse(await readFile('/opt/matrix/bin/zellij.build.json', 'utf8'));
 const ubuntuRelease = await readFile('/etc/os-release', 'utf8');
 const ubuntuVersion = ubuntuRelease.match(/^VERSION_ID="?([^"\n]+)"?$/m)?.[1] ?? 'unknown';
 const systemdVersion = (await command('/usr/bin/systemctl', ['--version'])).replace(/^systemd\s+/, '');
@@ -93,6 +94,7 @@ const summary = {
   schemaVersion: 1,
   prHeadSha,
   zellijVersion,
+  zellijBuild,
   ubuntuVersion,
   systemdVersion,
   kernelVersion,

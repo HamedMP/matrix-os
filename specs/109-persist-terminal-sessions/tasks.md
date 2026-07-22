@@ -5,7 +5,7 @@
 
 ## Phase 1: Mandatory Spike Gate
 
-**Goal**: produce auditable S1/S2 evidence on the exact bundled Zellij 0.44.1 before production implementation.
+**Goal**: produce auditable S1/S2 evidence on the exact `v0.44.3-matrix.1` production-candidate bytes before production implementation.
 
 - [X] T001 Add failing manifest/redaction/limit tests for the spike evidence validator in `tests/scripts/terminal-runtime-spike.test.ts`
 - [X] T002 Implement the bounded evidence validator in `scripts/spikes/terminal-runtime/verify-evidence.mjs`
@@ -15,9 +15,9 @@
 - [X] T006 Implement S2 exact-option/cache/viewport/scrollback/gating/corruption/deletion/pressure orchestration in `scripts/spikes/terminal-runtime/run-remote.sh`
 - [X] T007 Add the secret-safe same-repository preview-VPS workflow and post-merge manual rerun path in `.github/workflows/terminal-runtime-spikes.yml`
 - [X] T008 Document local and remote spike operation in `scripts/spikes/terminal-runtime/README.md`
-- [ ] T009 Run the workflow on the PR preview VPS and record the run/artifact digest and S1/S2 result in `specs/109-persist-terminal-sessions/evidence/README.md`
+- [ ] T009 Run the workflow on the PR preview VPS and record the run/artifact digest, source/patch/binary digests, and S1/S2 result in `specs/109-persist-terminal-sessions/evidence/README.md`
 
-**Independent test**: the workflow fails for any missing invariant or privacy violation and succeeds only with `summary.json` reporting both gates passed on Zellij 0.44.1.
+**Independent test**: the workflow fails for any missing invariant, build-identity mismatch, or privacy violation and succeeds only with `summary.json` reporting both gates passed on the exact `v0.44.3-matrix.1` bytes.
 
 ---
 
@@ -68,7 +68,7 @@
 - [ ] T036 [P] [US2] Add failing interrupted-state and no-silent-recreation client/store tests in `shell/src/components/terminal/__tests__/TerminalApp.test.tsx`
 - [ ] T037 [US2] Add `POST /api/terminal/sessions/:name/recover` with shared limiter and strict empty body in `packages/gateway/src/shell/routes.ts` and `packages/gateway/src/server.ts`
 - [ ] T038 [US2] Implement explicit serialized/fresh-shell recovery and bounded reasons in `packages/terminal-runtime/src/reconciliation.ts` and `packages/terminal-runtime/src/keeper.ts`
-- [ ] T039 [US2] Configure the S2-proven Zellij 0.44.1 serialization/cache options without force-run in `packages/gateway/src/shell/zellij-config.ts` and `packages/terminal-runtime/src/zellij.ts`
+- [ ] T039 [US2] Publish and install the exact S2-proven `v0.44.3-matrix.1` binary digest, then configure its serialization/cache options without force-run in `packages/gateway/src/shell/zellij-config.ts` and `packages/terminal-runtime/src/zellij.ts`
 - [ ] T040 [US2] Render Interrupted/Recoverable state and explicit Recover action Canvas-first in `shell/src/components/terminal/TerminalApp.tsx` and shared terminal stores
 - [ ] T041 [US2] Add terminal-history privacy disclosure and safe bounded client error allowlisting in `shell/src/components/terminal/` and `docs/platform/user/terminal.md`
 - [ ] T042 [US2] Run `npx react-doctor@latest shell` and capture Canvas/Desktop recovery screenshot evidence in the PR body
