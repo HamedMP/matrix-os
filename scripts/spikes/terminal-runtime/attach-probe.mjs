@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { open } from 'node:fs/promises';
+import { open, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { spawn } = require('node-pty');
@@ -9,9 +9,13 @@ const pty = spawn('/opt/matrix/bin/zellij', ['attach', `matrix-t-${runtimeId}`],
   name: 'xterm-256color', cols: 120, rows: 40,
   cwd: '/home/matrix/home', env: process.env,
 });
+const membership = await readFile(`/proc/${pty.pid}/cgroup`, 'utf8');
+const unified = membership.split(/\r?\n/).find((line) => line.startsWith('0::'));
+if (!unified) process.exit(3);
+const clientCgroup = unified.slice(3);
 const handle = await open(`/run/matrix-terminal-runtime-spike/attach-${runtimeId}.json`, 'wx', 0o600);
 try {
-  await handle.writeFile(`${JSON.stringify({ helper: process.pid, client: pty.pid })}\n`, 'utf8');
+  await handle.writeFile(`${JSON.stringify({ helper: process.pid, client: pty.pid, clientCgroup })}\n`, 'utf8');
   await handle.sync();
 } finally {
   await handle.close();

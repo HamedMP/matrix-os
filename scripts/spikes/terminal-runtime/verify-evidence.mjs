@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, mkdir, open, readdir, rm } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, readdir, rm } from 'node:fs/promises';
 import { join, posix, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 export const MAX_EVIDENCE_FILE_BYTES = 256 * 1024;
@@ -14,7 +14,11 @@ stopEmptiesCgroup keeperLossDeterministic serverLossDeterministic readinessGated
 const REQUIRED_S2_CHECKS = `exactOptionSyntax cacheMappedByRuntime layoutRestored viewportRestored
 scrollbackBounded lossWindowBounded commandsConfirmationGated forceRunAbsent corruptionFallback
 deletionComplete diskAccountingBounded liveSerializationDisableSafe`.split(/\s+/);
-const SUMMARY_KEYS = `schemaVersion prHeadSha zellijVersion ubuntuVersion systemdVersion kernelVersion
+const CANDIDATE_BUILD_RECORD_URL = new URL('./zellij-v0.44.3-matrix.1.build.json', import.meta.url);
+const EXPECTED_ZELLIJ_BUILD = Object.freeze(
+  JSON.parse(await readFile(CANDIDATE_BUILD_RECORD_URL, 'utf8')),
+);
+const SUMMARY_KEYS = `schemaVersion prHeadSha zellijVersion zellijBuild ubuntuVersion systemdVersion kernelVersion
 s1 s2 privacyScan files totalBytes`.split(/\s+/);
 const PRIVACY_PATTERNS = [
   /authorization\s*:\s*bearer\s+\S+/i,
@@ -238,8 +242,39 @@ export async function reportGateChecks(inputRoot) {
     if (!ignorableDiagnosticError(error)) throw error;
   }
   try {
+    const resolution = (await readNoFollow(join(root, 's2', 'recovery-resolution.txt'), 256)).body.toString('utf8').trim();
+    const match = resolution.match(/^original_pane_id=(none|[0-9]{1,10})\nrecovered_pane_id=(none|[0-9]{1,10})\nrecovered_pane_count=([0-9]{1,2})\nheld_pane_count=([0-9]{1,2})\nsafe_drop_status=([01])\npost_drop_markers=([0-9]{1,5})$/);
+    if (match) {
+      const bounded = [match[1], match[2]].every((value) => value === 'none' || Number(value) <= 1_000_000) &&
+        Number(match[3]) <= 16 && Number(match[4]) <= 16 && Number(match[6]) <= 10_050;
+      if (bounded) failures.push(`s2:resolution=original:${match[1]}/recovered:${match[2]}/panes:${match[3]}/held:${match[4]}/drop:${match[5]}/markers:${match[6]}`);
+    }
+  } catch (error) {
+    if (!ignorableDiagnosticError(error)) throw error;
+  }
+  try {
     const memory = (await readNoFollow(join(root, 's1', 'memory-stage.txt'), 160)).body.toString('utf8').trim();
     if (/^(not_ready|limits_invalid|unit_no_pressure|slice_no_pressure)$/.test(memory)) failures.push(`s1:memory=${memory}`);
+  } catch (error) {
+    if (!ignorableDiagnosticError(error)) throw error;
+  }
+  try {
+    const phase = (await readNoFollow(join(root, 'preflight-stage.txt'), 64)).body.toString('utf8').trim();
+    const phases = new Set([
+      'initialized', 'support_installed', 'units_installed', 'binary_version_checked',
+      'binary_manifest_read', 'binary_digest_checked', 'binary_metadata_checked', 'config_dumped',
+      'config_validated', 's1_started',
+    ]);
+    if (phases.has(phase)) failures.push(`spike:preflight=${phase}`);
+  } catch (error) {
+    if (!ignorableDiagnosticError(error)) throw error;
+  }
+  try {
+    const digest = (await readNoFollow(join(root, 's2', 'binary-digest.txt'), 160)).body.toString('utf8').trim();
+    const match = digest.match(/^expected=([0-9a-f]{64})\nactual=([0-9a-f]{64})$/);
+    if (match && match[1] !== match[2]) {
+      failures.push(`s2:binary=expected:${match[1]}/actual:${match[2]}`);
+    }
   } catch (error) {
     if (!ignorableDiagnosticError(error)) throw error;
   }
@@ -250,7 +285,13 @@ function validateSummary(summary) {
   if (typeof summary.prHeadSha !== 'string' || !/^[0-9a-f]{40}$/.test(summary.prHeadSha)) {
     fail('evidence_summary_schema');
   }
-  if (summary.zellijVersion !== 'zellij 0.44.1') fail('evidence_zellij_version');
+  if (summary.zellijVersion !== 'zellij 0.44.3') fail('evidence_zellij_version');
+  if (
+    !hasExactKeys(summary.zellijBuild, Object.keys(EXPECTED_ZELLIJ_BUILD)) ||
+    Object.entries(EXPECTED_ZELLIJ_BUILD).some(([key, value]) => summary.zellijBuild[key] !== value)
+  ) {
+    fail('evidence_zellij_build');
+  }
   for (const field of ['ubuntuVersion', 'systemdVersion', 'kernelVersion']) {
     if (!isBoundedText(summary[field], 128)) fail('evidence_summary_schema');
   }
@@ -452,6 +493,7 @@ export async function validateEvidenceDirectory(inputRoot, expectedHeadSha) {
   return {
     prHeadSha: summary.prHeadSha,
     zellijVersion: summary.zellijVersion,
+    zellijBuild: summary.zellijBuild,
     s1: summary.s1,
     s2: summary.s2,
     fileCount: seen.length,

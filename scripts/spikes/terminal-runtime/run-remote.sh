@@ -17,6 +17,8 @@ support_root="/opt/matrix/libexec/terminal-runtime-spike"
 owner_home="/home/matrix/home"
 cache_root="$owner_home/system/terminal-runtime-spike/cache"
 config_root="$owner_home/system/terminal-runtime-spike/config"
+config_home_root="$owner_home/system/terminal-runtime-spike/config-home"
+data_root="$owner_home/system/terminal-runtime-spike/data"
 unit_prefix="matrix-terminal-spike@"
 base_id="1${pr_head_sha:0:31}"
 keeper_id="2${pr_head_sha:0:31}"
@@ -28,8 +30,8 @@ cleanup() {
     systemctl stop "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true
     /usr/bin/timeout 15s runuser -u matrix -- env \
       HOME="$owner_home" MATRIX_HOME="$owner_home" PATH="/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin" \
-      XDG_CACHE_HOME="$cache_root" XDG_CONFIG_HOME="$owner_home/system/terminal-runtime-spike/config-home" \
-      XDG_DATA_HOME="$owner_home/system/terminal-runtime-spike/data" XDG_RUNTIME_DIR="/run/user/$(id -u matrix)" \
+      XDG_CACHE_HOME="$cache_root" XDG_CONFIG_HOME="$config_home_root" \
+      XDG_DATA_HOME="$data_root" XDG_RUNTIME_DIR="/run/user/$(id -u matrix)" \
       ZELLIJ_CONFIG_DIR="$config_root" ZELLIJ_CONFIG_FILE="$config_root/config.kdl" \
       /opt/matrix/bin/zellij delete-session "matrix-t-${runtime_id}" --force >/dev/null 2>&1 || true
     systemctl reset-failed "${unit_prefix}${runtime_id}.service" >/dev/null 2>&1 || true
@@ -42,10 +44,14 @@ build_summary() {
 }
 cleanup
 trap 'status=$?; cleanup; build_summary; exit $status' EXIT
-rm -rf -- "$evidence_root" "$runtime_root" "$cache_root"
+rm -rf -- "$evidence_root" "$runtime_root" "$cache_root" "$config_root" "$config_home_root" "$data_root"
 install -d -o root -g root -m 0700 "$evidence_root" "$evidence_root/s1" "$evidence_root/s1/checks" "$evidence_root/s2" "$evidence_root/s2/checks"
+record_preflight() {
+  printf '%s\n' "$1" >"$evidence_root/preflight-stage.txt"
+}
+record_preflight initialized
 install -d -o matrix -g matrix -m 0700 "$runtime_root" "$runtime_root/descriptors" "$runtime_root/readiness" "$runtime_root/outcomes" "$runtime_root/startup-failures" "$runtime_root/confirmations" "$runtime_root/pane-release"
-install -d -o matrix -g matrix -m 0700 "$owner_home/system/terminal-runtime-spike" "$cache_root" "$config_root" "$owner_home/system/terminal-runtime-spike/config-home" "$owner_home/system/terminal-runtime-spike/data"
+install -d -o matrix -g matrix -m 0700 "$owner_home/system/terminal-runtime-spike" "$cache_root" "$config_root" "$config_home_root" "$data_root"
 install -d -o matrix -g matrix -m 0700 "/run/user/$(id -u matrix)"
 rm -rf -- "$support_root.next"
 install -d -o root -g root -m 0755 "$support_root.next" "$support_root.next/node_modules"
@@ -57,19 +63,40 @@ chown -R root:root "$support_root.next"
 rm -rf -- "$support_root.previous"
 if [ -d "$support_root" ]; then mv "$support_root" "$support_root.previous"; fi
 mv "$support_root.next" "$support_root"
+record_preflight support_installed
 install -o root -g root -m 0644 "$source_dir/matrix-terminal-spike.slice" /etc/systemd/system/matrix-terminal-spike.slice
 install -o root -g root -m 0644 "$source_dir/matrix-terminal-spike@.service" /etc/systemd/system/matrix-terminal-spike@.service
 systemctl daemon-reload
 systemctl set-property --runtime matrix-terminal-spike.slice MemoryHigh=75% >/dev/null
+record_preflight units_installed
 zellij_version="$(/opt/matrix/bin/zellij --version 2>/dev/null || true)"
-if [ "$zellij_version" != "zellij 0.44.1" ]; then
+if [ "$zellij_version" != "zellij 0.44.3" ]; then
   echo "spike_wrong_zellij" >&2
   exit 3
 fi
+record_preflight binary_version_checked
+zellij_build_metadata="/opt/matrix/bin/zellij.build.json"
+candidate_build_record="$source_dir/zellij-v0.44.3-matrix.1.build.json"
+expected_zellij_binary_sha256="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["binarySha256"])' "$candidate_build_record")"
+record_preflight binary_manifest_read
+zellij_binary_sha256="$(sha256sum /opt/matrix/bin/zellij | awk '{print $1}')"
+printf 'expected=%s\nactual=%s\n' "$expected_zellij_binary_sha256" "$zellij_binary_sha256" >"$evidence_root/s2/binary-digest.txt"
+if [ "$zellij_binary_sha256" != "$expected_zellij_binary_sha256" ]; then
+  echo "spike_wrong_zellij_binary" >&2
+  exit 3
+fi
+record_preflight binary_digest_checked
+if ! python3 -c 'import json,sys; values=[json.load(open(path, encoding="utf-8")) for path in sys.argv[1:]]; raise SystemExit(0 if values[0] == values[1] else 1)' "$zellij_build_metadata" "$candidate_build_record"; then
+  echo "spike_wrong_zellij_build" >&2
+  exit 3
+fi
+record_preflight binary_metadata_checked
+install -m 0600 "$zellij_build_metadata" "$evidence_root/s2/zellij-build.json"
 default_config_tmp="/tmp/matrix-terminal-default-config-${run_key}.kdl"
 runuser -u matrix -- env \
   HOME="$owner_home" XDG_CACHE_HOME="$cache_root" ZELLIJ_CONFIG_DIR="$config_root" \
   /opt/matrix/bin/zellij setup --dump-config >"$default_config_tmp"
+record_preflight config_dumped
 viewport_option=""
 if grep -Eq '^[[:space:]]*(//[[:space:]]*)?serialize_pane_viewport[[:space:]]' "$default_config_tmp"; then
   viewport_option="serialize_pane_viewport"
@@ -93,6 +120,7 @@ chown matrix:matrix "$config_root/config.kdl"
 chmod 0600 "$config_root/config.kdl"
 if [ -n "$viewport_option" ] && runuser -u matrix -- env HOME="$owner_home" XDG_CACHE_HOME="$cache_root" ZELLIJ_CONFIG_DIR="$config_root" /opt/matrix/bin/zellij setup --check >/dev/null 2>&1; then
   printf 'pass\n' >"$evidence_root/s2/checks/exactOptionSyntax.pass"
+  record_preflight config_validated
 fi
 mark_pass() {
   printf 'pass\n' >"$evidence_root/$1/checks/$2.pass"
@@ -180,7 +208,7 @@ runtime_cgroup() {
     process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).cgroup);
   ' "$runtime_root/readiness/$1.json"
 }
-zellij_env=(env HOME="$owner_home" MATRIX_HOME="$owner_home" PATH="/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin" LANG=C.UTF-8 TERM=xterm-256color XDG_CACHE_HOME="$cache_root" XDG_CONFIG_HOME="$owner_home/system/terminal-runtime-spike/config-home" XDG_DATA_HOME="$owner_home/system/terminal-runtime-spike/data" XDG_RUNTIME_DIR="/run/user/$(id -u matrix)" ZELLIJ_CONFIG_DIR="$config_root" ZELLIJ_CONFIG_FILE="$config_root/config.kdl")
+zellij_env=(env HOME="$owner_home" MATRIX_HOME="$owner_home" PATH="/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/bin:/bin" LANG=C.UTF-8 TERM=xterm-256color XDG_CACHE_HOME="$cache_root" XDG_CONFIG_HOME="$config_home_root" XDG_DATA_HOME="$data_root" XDG_RUNTIME_DIR="/run/user/$(id -u matrix)" ZELLIJ_CONFIG_DIR="$config_root" ZELLIJ_CONFIG_FILE="$config_root/config.kdl")
 zellij_cmd() {
   /usr/bin/timeout 15s runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/bin/zellij "$@"
 }
@@ -197,6 +225,7 @@ wait_cgroup_empty() {
   return 1
 }
 # S1: readiness and stable ownership.
+record_preflight s1_started
 start_runtime "$base_id"
 base_unit="${unit_prefix}${base_id}.service"
 sleep 0.3
@@ -247,18 +276,24 @@ if [ -n "$gateway_before_cgroup" ] && [ "$gateway_before_cgroup" != "$base_cgrou
   record_pid_cgroup gateway-before "$gateway_before_pid" "$pid_cgroups" || true
   mark_pass s1 gatewayOutsideCgroup
 fi
+attach_receipt="$runtime_root/attach-${base_id}.json"
+rm -f -- "$attach_receipt"
 runuser -u matrix -- "${zellij_env[@]}" /opt/matrix/runtime/node/bin/node "$support_root/attach-probe.mjs" "$base_id" &
 attach_parent=$!
-attach_receipt="$runtime_root/attach-${base_id}.json"
 for _ in $(seq 1 100); do
   [ -f "$attach_receipt" ] && break
   sleep 0.1
 done
 attach_pid="$(/opt/matrix/runtime/node/bin/node -e 'const fs=require("fs");process.stdout.write(String(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).client))' "$attach_receipt")"
 attach_helper="$(/opt/matrix/runtime/node/bin/node -e 'const fs=require("fs");process.stdout.write(String(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).helper))' "$attach_receipt")"
-membership="$(sed -n 's/^0:://p' "/proc/${attach_pid}/cgroup" 2>/dev/null || true)"
+membership="$(/opt/matrix/runtime/node/bin/node -e '
+  const fs=require("fs");
+  const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+  if(typeof value.clientCgroup!=="string" || value.clientCgroup.length>512 || !/^\/[A-Za-z0-9_.@\/-]+$/.test(value.clientCgroup)) process.exit(1);
+  process.stdout.write(value.clientCgroup);
+' "$attach_receipt" 2>/dev/null || true)"
 if [ -n "$membership" ] && [ "$membership" != "$base_cgroup" ]; then
-  record_pid_cgroup attach-client "$attach_pid" "$pid_cgroups" || true
+  printf 'attach-client\t%s\t%s\n' "$attach_pid" "$membership" >>"$pid_cgroups"
   mark_pass s1 attachOutsideCgroup
 fi
 kill "$attach_helper" 2>/dev/null || true
@@ -405,6 +440,9 @@ if wait_state "$recovery_unit" active; then
     zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$pane_id" --path "$viewport_before" --full >/dev/null 2>&1 || true
     if grep -q '^MATRIX_SCROLL_' "$viewport_before" 2>/dev/null; then serialized_pane_id="$pane_id"; break; fi
   done
+  if [ -n "$serialized_pane_id" ]; then
+    zellij_cmd --session "$recovery_session" action rename-pane --pane-id "$serialized_pane_id" MATRIX_SCROLL_PROBE >/dev/null 2>&1 || true
+  fi
   zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$serialized_pane_id" --path "$viewport_before" >/dev/null 2>&1 || true
   viewport_anchor="$(grep -m1 '^MATRIX_SCROLL_' "$viewport_before" 2>/dev/null || true)"
   rm -f -- "$viewport_before"
@@ -436,15 +474,39 @@ if wait_state "$recovery_unit" active; then
     if [ "$pane_count" -ge 2 ]; then mark_pass s2 layoutRestored; fi
     dump_file="/tmp/matrix-terminal-dump-${run_key}.txt"
     viewport_after="/tmp/matrix-terminal-viewport-after-${run_key}.txt"
+    original_serialized_pane_id="$serialized_pane_id"
+    serialized_pane_id="$(printf '%s' "$panes_json" | /opt/matrix/runtime/node/bin/node -e '
+      let s=""; process.stdin.on("data",d=>s+=d); process.stdin.on("end",()=>{
+        try {
+          const panes=JSON.parse(s).filter((p)=>!p.is_plugin && p.title==="MATRIX_SCROLL_PROBE");
+          if(panes.length===1) process.stdout.write(String(panes[0].id));
+        } catch(error) {}
+      });
+    ')"
+    held_pane_count="$(printf '%s' "$panes_json" | /opt/matrix/runtime/node/bin/node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{const v=JSON.parse(s);process.stdout.write(String(Array.isArray(v)?v.filter(p=>!p.is_plugin&&p.is_held).length:0))}catch(error){process.stdout.write("0")}})' )"
+    safe_drop_status=1
+    post_drop_markers=0
+    if [ -n "$serialized_pane_id" ]; then
+      zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$serialized_pane_id" --path "$viewport_after" >/dev/null 2>&1 || true
+      held_viewport_anchor="$(grep -m1 '^MATRIX_SCROLL_' "$viewport_after" 2>/dev/null || true)"
+      if [ -n "$viewport_anchor" ] && [ "$held_viewport_anchor" = "$viewport_anchor" ]; then mark_pass s2 viewportRestored; fi
+      rm -f -- "$viewport_after"
+      if zellij_cmd --session "$recovery_session" action write --pane-id "$serialized_pane_id" 27 >/dev/null 2>&1; then safe_drop_status=0; fi
+      for _ in $(seq 1 100); do
+        zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$serialized_pane_id" --path "$dump_file" --full >/dev/null 2>&1 || true
+        grep -q '^MATRIX_SCROLL_' "$dump_file" 2>/dev/null && break
+        sleep 0.1
+      done
+      post_drop_markers="$(grep -c '^MATRIX_SCROLL_' "$dump_file" 2>/dev/null || true)"
+    fi
+    printf 'original_pane_id=%s\nrecovered_pane_id=%s\nrecovered_pane_count=%s\nheld_pane_count=%s\nsafe_drop_status=%s\npost_drop_markers=%s\n' \
+      "${original_serialized_pane_id:-none}" "${serialized_pane_id:-none}" "$pane_count" "$held_pane_count" "$safe_drop_status" "$post_drop_markers" \
+      >"$evidence_root/s2/recovery-resolution.txt"
     restored_pane_id=""
     for pane_id in $(printf '%s' "$panes_json" | /opt/matrix/runtime/node/bin/node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{for(const p of JSON.parse(s))if(!p.is_plugin)console.log(p.id)}catch(error){}})'); do
       zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$pane_id" --path "$dump_file" --full >/dev/null 2>&1 || true
       if grep -q '^MATRIX_SCROLL_' "$dump_file" 2>/dev/null; then restored_pane_id="$pane_id"; break; fi
     done
-    zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$restored_pane_id" --path "$viewport_after" >/dev/null 2>&1 || true
-    restored_viewport_anchor="$(grep -m1 '^MATRIX_SCROLL_' "$viewport_after" 2>/dev/null || true)"
-    if [ -n "$viewport_anchor" ] && [ "$restored_viewport_anchor" = "$viewport_anchor" ]; then mark_pass s2 viewportRestored; fi
-    rm -f -- "$viewport_after"
     zellij_cmd --session "$recovery_session" action dump-screen --pane-id "$restored_pane_id" --path "$dump_file" --full >/dev/null 2>&1 || true
     scroll_count="$(grep -c '^MATRIX_SCROLL_' "$dump_file" 2>/dev/null || true)"
     printf 'serialized_probe_lines=%s\n' "$scroll_count" >"$evidence_root/s2/restored-counts.txt"

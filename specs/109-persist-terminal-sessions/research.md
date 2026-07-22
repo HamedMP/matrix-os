@@ -117,19 +117,33 @@ new atomically installed version.
 
 ## Decision 6: Zellij recovery stays explicit and gated
 
-**Decision**: S2 discovers the exact 0.44.1 option spelling and cache mapping
-rather than assuming current documentation. Production recovery never passes
-`--force-run-commands`; cache corruption/incompatibility yields a fresh shell and
-bounded reason. A prior agent never resumes automatically.
+**Decision**: use the pinned `v0.44.3-matrix.1` build: upstream Zellij 0.44.3
+source plus a minimal Matrix patch that serializes bounded pane contents for
+command panes, preserves the pristine resurrected grid behind the native
+held-command banner, includes rows above, inside, and below the viewport inside
+one row limit, and restores a versioned numeric viewport offset only through
+Zellij's trusted resurrection-content path. Command panes retain Zellij's
+serialized `start_suspended true` gate.
+Production recovery never passes `--force-run-commands`; cache
+corruption/incompatibility yields a fresh shell and bounded reason. A prior agent
+never resumes automatically.
 
-**Rationale**: the repository pins 0.44.1 while newer local/documented versions
-may use different option names or cache formats. Safety requires observed command
-confirmation and deletion behavior on the shipped binary.
+**Rationale**: disposable-VPS evidence on 0.44.1 passed S1 but failed viewport
+and bounded-scrollback restoration. Source inspection found that released 0.44.3
+and upstream `main` omit serialized contents for command panes, retain the
+destructive held-pane reflow, and omit the rows below a scrolled viewport plus
+its offset. A released upgrade therefore fixes none of the three defects.
+Matrix-owned plaintext replay would duplicate terminal emulation and
+command-gating behavior. The narrow patch retains native gating while making
+the bounded history and viewport position explicit and non-destructive.
 
 **Alternatives considered**:
 
-- Upgrade Zellij as part of this feature: rejected because it changes the gate
-  target and introduces unrelated compatibility risk.
+- Use released Zellij 0.44.3 unchanged: rejected because its held-command banner
+  still clears restored viewport and scrollback on reflow.
+- Replace Zellij resurrection with Matrix-owned screen dumps/replay: rejected
+  because it loses terminal state fidelity and creates a second command-gating
+  state machine.
 - Treat any cache directory as recoverable: rejected because receipt/cache
   presence does not prove compatibility or safe command gating.
 

@@ -14,6 +14,9 @@ source /opt/matrix/env/host.env
 readonly APP_DIR="/opt/matrix/app"
 readonly STAGING_DIR="/opt/matrix/staging"
 readonly BIN_DIR="/opt/matrix/bin"
+readonly ZELLIJ_BINARY="$BIN_DIR/zellij"
+readonly ZELLIJ_BUILD_METADATA="$BIN_DIR/zellij.build.json"
+readonly ZELLIJ_ROLLBACK_DIR="$APP_DIR/.zellij.rollback"
 readonly VERSION_FILE="$APP_DIR/BUNDLE_VERSION"
 readonly RELEASE_FILE="/opt/matrix/release.json"
 readonly UPDATE_MARKER="$APP_DIR/.update-available.json"
@@ -82,6 +85,47 @@ write_symphony_env() {
   sudo install -o root -g matrix -m 0640 "$temp_file" "$SYMPHONY_ENV_FILE" || status=$?
   rm -f "$temp_file"
   return "$status"
+}
+
+clear_zellij_rollback() {
+  sudo rm -rf -- "$ZELLIJ_ROLLBACK_DIR"
+}
+
+backup_zellij_for_rollback() {
+  local rollback_next="${ZELLIJ_ROLLBACK_DIR}.next"
+  sudo rm -rf -- "$rollback_next"
+  sudo install -d -o root -g root -m 0700 "$rollback_next"
+  if [ -f "$ZELLIJ_BINARY" ]; then
+    sudo install -o root -g root -m 0755 "$ZELLIJ_BINARY" "$rollback_next/zellij"
+    sudo touch "$rollback_next/had-binary"
+  fi
+  if [ -f "$ZELLIJ_BUILD_METADATA" ]; then
+    sudo install -o root -g root -m 0644 "$ZELLIJ_BUILD_METADATA" "$rollback_next/zellij.build.json"
+    sudo touch "$rollback_next/had-build-metadata"
+  fi
+  sudo chmod 0600 "$rollback_next"/had-* 2>/dev/null || true
+  clear_zellij_rollback
+  sudo mv -- "$rollback_next" "$ZELLIJ_ROLLBACK_DIR"
+}
+
+restore_zellij_after_rollback() {
+  [ -d "$ZELLIJ_ROLLBACK_DIR" ] || return 0
+  local zellij_restore_next="$BIN_DIR/.zellij.rollback-next"
+  local metadata_restore_next="$BIN_DIR/.zellij.build.json.rollback-next"
+
+  if [ -f "$ZELLIJ_ROLLBACK_DIR/had-binary" ] && [ -f "$ZELLIJ_ROLLBACK_DIR/zellij" ]; then
+    sudo install -o root -g root -m 0755 "$ZELLIJ_ROLLBACK_DIR/zellij" "$zellij_restore_next"
+    sudo mv -f -- "$zellij_restore_next" "$ZELLIJ_BINARY"
+  else
+    sudo rm -f -- "$ZELLIJ_BINARY"
+  fi
+  if [ -f "$ZELLIJ_ROLLBACK_DIR/had-build-metadata" ] && [ -f "$ZELLIJ_ROLLBACK_DIR/zellij.build.json" ]; then
+    sudo install -o root -g root -m 0644 "$ZELLIJ_ROLLBACK_DIR/zellij.build.json" "$metadata_restore_next"
+    sudo mv -f -- "$metadata_restore_next" "$ZELLIJ_BUILD_METADATA"
+  else
+    sudo rm -f -- "$ZELLIJ_BUILD_METADATA"
+  fi
+  clear_zellij_rollback
 }
 default_update_channel() {
   local channel="${MATRIX_UPDATE_CHANNEL:-}"
@@ -223,6 +267,7 @@ apply_update() {
     log "No update available — nothing to apply"; return 1
   fi
   local manifest version sha256 bundle_url cur bundle_file extract_dir
+  local zellij_candidate=false zellij_expected_sha256="" zellij_actual_sha256="" zellij_next=""
   manifest="$(cat "$UPDATE_MARKER")"
   version="$(json_field "$manifest" version)"
   sha256="$(json_field "$manifest" sha256)"
@@ -268,10 +313,35 @@ apply_update() {
     log "ERROR: extracted bundle missing 'app' directory"
     rm -rf "$extract_dir" "$bundle_file"; return 1
   fi
+  if [ -f "$extract_dir/bin/zellij.build.json" ] || [ -f "$extract_dir/bin/zellij" ]; then
+    if [ -f "$extract_dir/bin/zellij.build.json" ]; then
+      if [ ! -f "$extract_dir/bin/zellij" ]; then
+        log "ERROR: zellij candidate metadata has no binary"
+        rm -rf "$extract_dir" "$bundle_file"; return 1
+      fi
+      if ! zellij_expected_sha256="$(json_field "$(cat "$extract_dir/bin/zellij.build.json")" binarySha256 2>/dev/null)"; then
+        log "ERROR: invalid zellij candidate metadata"
+        rm -rf "$extract_dir" "$bundle_file"; return 1
+      fi
+      zellij_actual_sha256="$(sha256sum "$extract_dir/bin/zellij" | awk '{print $1}')"
+      if [[ ! "$zellij_expected_sha256" =~ ^[0-9a-f]{64}$ ]] || [ "$zellij_actual_sha256" != "$zellij_expected_sha256" ]; then
+        log "ERROR: zellij_candidate_digest_mismatch"
+        rm -rf "$extract_dir" "$bundle_file"; return 1
+      fi
+      zellij_candidate=true
+    fi
+  fi
 
-  # Stop services, backup, install
+  # Any bundle that replaces Zellij extends the existing one-level app rollback
+  # to the exact binary and identity record. Candidate status controls only the
+  # additional digest checks and atomic candidate install path.
+  # Stop services before placing the root-owned snapshot inside the current app;
+  # moving that app to app.rollback then commits both as one filesystem rename.
   log "Stopping services..."
   sudo systemctl stop matrix-symphony matrix-gateway matrix-shell || true
+  if [ -f "$extract_dir/bin/zellij" ]; then
+    backup_zellij_for_rollback
+  fi
   sudo rm -rf "$APP_DIR.rollback"
   if [ -d "$APP_DIR" ]; then
     sudo mv "$APP_DIR" "$APP_DIR.rollback"
@@ -286,7 +356,42 @@ apply_update() {
     log "Updated release metadata"
   fi
   if [ -d "$extract_dir/bin" ]; then
-    sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec cp -a {} "$BIN_DIR/" \;
+    if [ "$zellij_candidate" = true ]; then
+      zellij_next="$BIN_DIR/.zellij.next"
+      sudo rm -f -- "$zellij_next"
+      if ! sudo install -o root -g root -m 0755 "$extract_dir/bin/zellij" "$zellij_next"; then
+        log "ERROR: zellij candidate staging failed"
+        do_rollback || log "ERROR: rollback after zellij staging failure failed"
+        rm -rf "$extract_dir" "$bundle_file"
+        return 1
+      fi
+      if ! sudo mv -f "$zellij_next" "$BIN_DIR/zellij"; then
+        sudo rm -f -- "$zellij_next"
+        log "ERROR: zellij candidate commit failed"
+        do_rollback || log "ERROR: rollback after zellij commit failure failed"
+        rm -rf "$extract_dir" "$bundle_file"
+        return 1
+      fi
+      if ! sudo install -o root -g root -m 0644 "$extract_dir/bin/zellij.build.json" "$BIN_DIR/zellij.build.json"; then
+        log "ERROR: zellij candidate metadata commit failed"
+        do_rollback || log "ERROR: rollback after zellij metadata failure failed"
+        rm -rf "$extract_dir" "$bundle_file"
+        return 1
+      fi
+      zellij_actual_sha256="$(sha256sum "$BIN_DIR/zellij" | awk '{print $1}')"
+      if [ "$zellij_actual_sha256" != "$zellij_expected_sha256" ]; then
+        log "ERROR: zellij_installed_digest_mismatch"
+        do_rollback || log "ERROR: rollback after zellij digest failure failed"
+        rm -rf "$extract_dir" "$bundle_file"
+        return 1
+      fi
+      sudo find "$extract_dir/bin" -maxdepth 1 -type f ! -name 'zellij' ! -name 'zellij.build.json' -exec cp -a {} "$BIN_DIR/" \;
+    else
+      sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec cp -a {} "$BIN_DIR/" \;
+      if [ -f "$extract_dir/bin/zellij" ]; then
+        sudo rm -f -- "$ZELLIJ_BUILD_METADATA"
+      fi
+    fi
     sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +
     log "Updated bin scripts"
   fi
@@ -365,6 +470,7 @@ do_rollback() {
     sudo mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"
   fi
   sudo mv "$APP_DIR.rollback" "$APP_DIR"
+  restore_zellij_after_rollback
   sudo chown -R matrix:matrix "$APP_DIR"
   sudo systemctl start matrix-gateway matrix-shell
   sudo systemctl start --no-block matrix-symphony || true

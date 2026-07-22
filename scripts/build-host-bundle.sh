@@ -64,8 +64,17 @@ grep "  ${NODE_ARCHIVE}$" "$DIST_DIR/SHASUMS256.txt" > "$DIST_DIR/${NODE_ARCHIVE
 tar -xJf "$DIST_DIR/$NODE_ARCHIVE" -C "$STAGE_DIR/runtime"
 mv "$STAGE_DIR/runtime/$NODE_DIST" "$STAGE_DIR/runtime/node"
 
-curl --fail --location --max-time 180 "$ZELLIJ_URL" -o "$DIST_DIR/$ZELLIJ_ARCHIVE"
-tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij
+if [ -n "${HOST_BUNDLE_ZELLIJ_BINARY:-}" ]; then
+  test -x "$HOST_BUNDLE_ZELLIJ_BINARY"
+  install -m 0755 "$HOST_BUNDLE_ZELLIJ_BINARY" "$STAGE_DIR/bin/zellij"
+  if [ -n "${HOST_BUNDLE_ZELLIJ_BUILD_METADATA:-}" ]; then
+    test -f "$HOST_BUNDLE_ZELLIJ_BUILD_METADATA"
+    install -m 0644 "$HOST_BUNDLE_ZELLIJ_BUILD_METADATA" "$STAGE_DIR/bin/zellij.build.json"
+  fi
+else
+  curl --fail --location --max-time 180 "$ZELLIJ_URL" -o "$DIST_DIR/$ZELLIJ_ARCHIVE"
+  tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij
+fi
 chmod 0755 "$STAGE_DIR/bin/zellij"
 test -x "$STAGE_DIR/bin/zellij"
 curl --fail --location --max-time 180 "$GH_URL" -o "$DIST_DIR/$GH_ARCHIVE"
