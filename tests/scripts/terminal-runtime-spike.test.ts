@@ -52,7 +52,7 @@ async function evidence(overrides: Record<string, unknown> = {}): Promise<string
       pathRemap: '/usr/src/matrix-zellij',
       builder: 'github-actions-ubuntu-24.04',
       workRoot: '/tmp/matrix-zellij-build-v0.44.3-matrix.1',
-      binarySha256: 'b7154142f44d265932d342f23e5d7beb7933ab878e912131098501ca314df403',
+      binarySha256: '534455dc62c8e3753918d012547d10159ee07929f570a5873a754957502a49c4',
     },
     ubuntuVersion: '24.04',
     systemdVersion: '255',
@@ -101,7 +101,7 @@ describe('terminal runtime spike evidence', () => {
       pathRemap: '/usr/src/matrix-zellij',
       builder: 'github-actions-ubuntu-24.04',
       workRoot: '/tmp/matrix-zellij-build-v0.44.3-matrix.1',
-      binarySha256: 'b7154142f44d265932d342f23e5d7beb7933ab878e912131098501ca314df403',
+      binarySha256: '534455dc62c8e3753918d012547d10159ee07929f570a5873a754957502a49c4',
     });
     expect(builder).toContain('zellij-v0.44.3-matrix.1.build.json');
     expect(builder).toContain('cp -- "$candidate_record" "$output_dir/build.json"');
@@ -434,7 +434,7 @@ describe('terminal runtime spike evidence', () => {
         pathRemap: '/usr/src/matrix-zellij',
         builder: 'github-actions-ubuntu-24.04',
         workRoot: '/tmp/matrix-zellij-build-v0.44.3-matrix.1',
-        binarySha256: 'b7154142f44d265932d342f23e5d7beb7933ab878e912131098501ca314df403',
+        binarySha256: '534455dc62c8e3753918d012547d10159ee07929f570a5873a754957502a49c4',
       },
     });
     await expect(validateEvidenceDirectory(wrongPatch)).rejects.toThrow('evidence_zellij_build');
