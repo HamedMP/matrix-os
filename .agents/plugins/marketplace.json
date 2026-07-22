@@ -5,10 +5,10 @@
   },
   "plugins": [
     {
-      "name": "matrix-onboarding",
+      "name": "matrix-os",
       "source": {
         "source": "local",
-        "path": "./plugins/matrix-onboarding"
+        "path": "./plugins/matrix-os"
       },
       "policy": {
         "installation": "AVAILABLE",
