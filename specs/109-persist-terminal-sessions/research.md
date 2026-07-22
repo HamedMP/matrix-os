@@ -120,19 +120,22 @@ new atomically installed version.
 **Decision**: use the pinned `v0.44.3-matrix.1` build: upstream Zellij 0.44.3
 source plus a minimal Matrix patch that serializes bounded pane contents for
 command panes, preserves the pristine resurrected grid behind the native
-held-command banner, and includes the viewport inside the serialization row
-limit. Command panes retain Zellij's serialized `start_suspended true` gate.
+held-command banner, includes rows above, inside, and below the viewport inside
+one row limit, and restores a versioned numeric viewport offset only through
+Zellij's trusted resurrection-content path. Command panes retain Zellij's
+serialized `start_suspended true` gate.
 Production recovery never passes `--force-run-commands`; cache
 corruption/incompatibility yields a fresh shell and bounded reason. A prior agent
 never resumes automatically.
 
 **Rationale**: disposable-VPS evidence on 0.44.1 passed S1 but failed viewport
 and bounded-scrollback restoration. Source inspection found that released 0.44.3
-and upstream `main` both omit serialized contents for command panes and retain
-the destructive held-pane reflow, so a released upgrade does not fix either
-defect. Matrix-owned plaintext replay would duplicate terminal emulation and
-command-gating behavior. The narrow patch retains native gating while making the
-history state explicit and non-destructive.
+and upstream `main` omit serialized contents for command panes, retain the
+destructive held-pane reflow, and omit the rows below a scrolled viewport plus
+its offset. A released upgrade therefore fixes none of the three defects.
+Matrix-owned plaintext replay would duplicate terminal emulation and
+command-gating behavior. The narrow patch retains native gating while making
+the bounded history and viewport position explicit and non-destructive.
 
 **Alternatives considered**:
 

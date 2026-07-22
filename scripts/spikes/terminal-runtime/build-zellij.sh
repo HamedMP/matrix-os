@@ -81,6 +81,9 @@ export RUSTFLAGS="--remap-path-prefix=$work_dir=$ZELLIJ_PATH_REMAP"
   cargo test -p zellij-server --locked --features zellij-utils/vendored_curl \
     --target "$ZELLIJ_TARGET" \
     serialized_pane_content_is_bounded_including_the_viewport
+  cargo test -p zellij-server --locked --features zellij-utils/vendored_curl \
+    --target "$ZELLIJ_TARGET" \
+    serialized_pane_restores_bounded_viewport_offset
   cargo test -p zellij-utils --locked --features vendored_curl \
     --target "$ZELLIJ_TARGET" \
     command_panes_serialize_initial_contents_for_gated_resurrection

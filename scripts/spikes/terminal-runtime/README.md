@@ -36,11 +36,14 @@ Removing that broad grant remains a later blocked production layer. After the
 gateway recovers, a fixed packer returns at most 512 KiB of base64 evidence,
 which is validated locally before upload. No SSH credential is required.
 
-The viewport assertion is captured from the named recovered pane while its
-command is still held. Only after that comparison does the probe dismiss the
-gate to a fresh shell and count the complete restored history. This prevents
-new prompt output from being mistaken for a resurrection failure while still
-proving that the original command never ran.
+The patched serializer includes the visible viewport, the bounded rows required
+below it, and a versioned numeric offset inside one 10,000-row ceiling. Only the
+trusted Zellij resurrection-content path consumes that offset. The viewport
+assertion is captured from the named recovered pane while its command is still
+held. Only after that comparison does the probe dismiss the gate to a fresh
+shell and count the complete restored history. This prevents new prompt output
+from being mistaken for a resurrection failure while still proving that the
+original command never ran.
 
 ## Evidence contract
 

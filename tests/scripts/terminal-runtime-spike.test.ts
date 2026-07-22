@@ -45,7 +45,7 @@ async function evidence(overrides: Record<string, unknown> = {}): Promise<string
       buildId: 'v0.44.3-matrix.1',
       sourceVersion: '0.44.3',
       sourceSha256: '33ae61fc802b59462fed49b424893596d3aa819646bdce53d5602f714c1264fe',
-      patchSha256: 'a64cf9bb8f461236f6bdaed5316940c202f234ececeade65c0a0a9e62ead8193',
+      patchSha256: 'bee3d6c227402258faee58c9f57ed282a368ab39fd38e619b39d4bd5ec8f2571',
       rustVersion: '1.92.0',
       target: 'x86_64-unknown-linux-musl',
       sourceDateEpoch: 1735689600,
@@ -94,7 +94,7 @@ describe('terminal runtime spike evidence', () => {
       buildId: 'v0.44.3-matrix.1',
       sourceVersion: '0.44.3',
       sourceSha256: '33ae61fc802b59462fed49b424893596d3aa819646bdce53d5602f714c1264fe',
-      patchSha256: 'a64cf9bb8f461236f6bdaed5316940c202f234ececeade65c0a0a9e62ead8193',
+      patchSha256: 'bee3d6c227402258faee58c9f57ed282a368ab39fd38e619b39d4bd5ec8f2571',
       rustVersion: '1.92.0',
       target: 'x86_64-unknown-linux-musl',
       sourceDateEpoch: 1735689600,
@@ -114,6 +114,7 @@ describe('terminal runtime spike evidence', () => {
     expect(verifier).toContain('zellij-v0.44.3-matrix.1.build.json');
     expect(builder).toContain('ZELLIJ_SOURCE_VERSION="$(jq -er .sourceVersion "$candidate_record")"');
     expect(builder).toContain('cargo test -p zellij-server');
+    expect(builder).toContain('serialized_pane_restores_bounded_viewport_offset');
     expect(builder).toContain('ZELLIJ_TARGET="$(jq -er .target "$candidate_record")"');
     expect(builder).toContain('zellij_binary_digest_mismatch');
     expect(builder).toContain('--target "$ZELLIJ_TARGET"');
@@ -125,9 +126,12 @@ describe('terminal runtime spike evidence', () => {
     expect(builder).toContain('--remap-path-prefix=$work_dir=$ZELLIJ_PATH_REMAP');
     expect(zellijPatch).toContain('grid_before_banner');
     expect(zellijPatch).toContain('scrollback_lines_to_serialize.saturating_sub(viewport_lines_to_serialize)');
-    expect(zellijPatch).toContain('.saturating_sub(scrollback_lines_to_serialize)');
+    expect(zellijPatch).toContain('.take(lines_below_to_serialize)');
+    expect(zellijPatch).toContain('matrix-zellij-viewport-offset-v1=');
     expect(zellijPatch).toContain('held_resurrected_pane_preserves_viewport_and_history_across_reflow');
     expect(zellijPatch).toContain('serialized_pane_content_is_bounded_including_the_viewport');
+    expect(zellijPatch).toContain('serialized_pane_restores_bounded_viewport_offset');
+    expect(zellijPatch).toContain('restore_serialized_contents');
     expect(zellijPatch).toContain(
       'command_panes_serialize_initial_contents_for_gated_resurrection',
     );
