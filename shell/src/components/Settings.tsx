@@ -23,6 +23,7 @@ import { SecuritySection } from "./settings/sections/SecuritySection";
 import { PluginsSection } from "./settings/sections/PluginsSection";
 import { SystemSection } from "./settings/sections/SystemSection";
 import { BillingSection } from "./settings/sections/BillingSection";
+import type { ComputerSetupSelection } from "./settings/sections/BillingPanel";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { UserButton as AccountButton } from "./UserButton";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
@@ -122,9 +123,11 @@ interface SettingsProps {
   lockedSection?: SectionId;
   billingActiveOverride?: boolean | null;
   closeDisabled?: boolean;
-  billingMode?: "settings" | "provisioning" | "device-setup";
-  onBillingCheckoutIntent?: () => void;
+  billingMode?: "settings" | "provisioning" | "device-setup" | "add-computer";
+  onBillingCheckoutIntent?: (selection: ComputerSetupSelection) => boolean | void;
+  onBillingCheckoutNavigate?: (url: string) => void;
   billingCheckoutReturnPath?: string;
+  billingCheckoutRuntimeSlot?: string;
 }
 
 export function Settings({
@@ -159,7 +162,9 @@ function SettingsFrame({
   closeDisabled = false,
   billingMode = "settings",
   onBillingCheckoutIntent,
+  onBillingCheckoutNavigate,
   billingCheckoutReturnPath,
+  billingCheckoutRuntimeSlot,
   billingActive,
   showBillingSection,
 }: SettingsFrameProps) {
@@ -331,7 +336,9 @@ function SettingsFrame({
                 <BillingSection
                   mode={billingMode}
                   onCheckoutIntent={onBillingCheckoutIntent}
+                  onCheckoutNavigate={onBillingCheckoutNavigate}
                   checkoutReturnPath={billingCheckoutReturnPath}
+                  checkoutRuntimeSlot={billingCheckoutRuntimeSlot}
                 />
               )}
               {activeSection === "plugins" && <PluginsSection />}

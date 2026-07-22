@@ -73,6 +73,8 @@ export function createAppSessionRoutes(opts: {
     db: PlatformDB,
     clerkUserId: string,
     now?: Date,
+    runtimeSlot?: string,
+    env?: NodeJS.ProcessEnv,
   ) => Promise<BillingEntitlement | null>;
   selectProvisionIdentityForClerkUser: (
     db: PlatformDB,
@@ -163,7 +165,13 @@ export function createAppSessionRoutes(opts: {
     try {
       if (opts.stripeBillingEntitlementsEnabled(opts.appEnv)) {
         const now = new Date();
-        const entitlement = await opts.resolveEffectiveBillingEntitlement(opts.db, result.userId, now);
+        const entitlement = await opts.resolveEffectiveBillingEntitlement(
+          opts.db,
+          result.userId,
+          now,
+          parsed.data.runtime,
+          opts.appEnv,
+        );
         const access = getRuntimeAccessDecision(entitlement, now);
         if (!access.runtimeProxyAllowed) {
           opts.applyNoStoreHeaders(c);
@@ -182,7 +190,7 @@ export function createAppSessionRoutes(opts: {
       }
       const checkoutAttempt = parsed.data.developerTools
         ? null
-        : await getSettlingCheckoutAttempt(opts.db, result.userId);
+        : await getSettlingCheckoutAttempt(opts.db, result.userId, parsed.data.runtime);
       const developerTools = parsed.data.developerTools ?? (
         checkoutAttempt &&
         (checkoutAttempt.status === 'paid' || checkoutAttempt.status === 'open')
@@ -311,7 +319,13 @@ export function createAppSessionRoutes(opts: {
       c.header('Set-Cookie', buildClearNativeAppSessionCookie(), { append: true });
       if (opts.stripeBillingEntitlementsEnabled(opts.appEnv)) {
         const now = new Date();
-        const entitlement = await opts.resolveEffectiveBillingEntitlement(opts.db, result.userId, now);
+        const entitlement = await opts.resolveEffectiveBillingEntitlement(
+          opts.db,
+          result.userId,
+          now,
+          requestedRuntimeSlot,
+          opts.appEnv,
+        );
         const access = getRuntimeAccessDecision(entitlement, now);
         if (!access.runtimeProxyAllowed) {
           return opts.jsonCustomerVpsError(

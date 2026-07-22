@@ -9,10 +9,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { DefaultInstallsStep } from "@/components/onboarding/DefaultInstallsStep";
 import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
-import {
-  BillingPanel,
-  type ComputerSetupSelection,
-} from "@/components/settings/sections/BillingPanel";
+import { Settings } from "@/components/Settings";
+import type { ComputerSetupSelection } from "@/components/settings/sections/BillingPanel";
 import type { BillingEntitlementSummary } from "@/hooks/useMatrixBillingAccess";
 import { MATRIX_BILLING_REGIONS, MATRIX_BILLING_SERVER_PROFILES } from "@/lib/billing";
 import { platformShellAssetPath } from "@/lib/platform-shell-assets";
@@ -58,7 +56,6 @@ type AddComputerDraft = {
   developerTools: DeveloperToolId[];
   serverType: string;
   location: string;
-  baselineMaxRuntimeSlots: number;
   createdAt: number;
 };
 
@@ -75,7 +72,6 @@ type FlowStep =
   | "billing_wait"
   | "provisioning"
   | "ready"
-  | "managed"
   | "error";
 
 type ErrorRetryAction = "billing" | "journey" | "overview" | "provision";
@@ -93,6 +89,11 @@ function hasNewComputerIntent(): boolean {
   return new URLSearchParams(window.location.search).get("new") === "1";
 }
 
+function hasSuccessfulCheckoutReturn(): boolean {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("billing") === "success";
+}
+
 function navigateWithinApp(target: string): void {
   window.location.assign(target);
 }
@@ -104,15 +105,6 @@ function isDeveloperToolId(value: unknown): value is DeveloperToolId {
 function isKnownServerType(value: unknown): value is string {
   return typeof value === "string" && MATRIX_BILLING_SERVER_PROFILES.some(
     (profile) => profile.hetznerType.toLowerCase() === value.toLowerCase(),
-  );
-}
-
-export function isServerTypeAllowedForEntitlement(
-  serverType: unknown,
-  allowedServerTypes: readonly string[],
-): serverType is string {
-  return isKnownServerType(serverType) && allowedServerTypes.some(
-    (allowedServerType) => allowedServerType.toLowerCase() === serverType.toLowerCase(),
   );
 }
 
@@ -138,10 +130,7 @@ function safeReadDraft(): AddComputerDraft | null {
       !Array.isArray(value.developerTools) ||
       !value.developerTools.every(isDeveloperToolId) ||
       !isKnownServerType(value.serverType) ||
-      !isKnownLocation(value.location) ||
-      typeof value.baselineMaxRuntimeSlots !== "number" ||
-      !Number.isInteger(value.baselineMaxRuntimeSlots) ||
-      value.baselineMaxRuntimeSlots < 0
+      !isKnownLocation(value.location)
     ) {
       return null;
     }
@@ -155,7 +144,6 @@ function safeReadDraft(): AddComputerDraft | null {
       developerTools: value.developerTools as DeveloperToolId[],
       serverType: value.serverType.toLowerCase(),
       location: value.location,
-      baselineMaxRuntimeSlots: value.baselineMaxRuntimeSlots,
       createdAt,
     };
   } catch (error: unknown) {
@@ -299,10 +287,6 @@ async function readOverview(): Promise<{ inventory: MatrixComputerList; billing:
   return { inventory: inventory.data, billing };
 }
 
-function activeCustomerCount(inventory: MatrixComputerList): number {
-  return inventory.items.filter((computer) => computer.kind === "customer").length;
-}
-
 // react-doctor-disable-next-line react-doctor/no-giant-component -- This finite-state orchestration root delegates every screen to focused view components; keeping shared billing and provisioning transitions together avoids duplicated or divergent flow state.
 export function RuntimeManager({
   onExternalNavigate,
@@ -318,7 +302,13 @@ export function RuntimeManager({
     const storedDraft = safeReadDraft();
     return {
       draft: surface === "onboarding" ? storedDraft : null,
-      step: surface === "onboarding" ? (storedDraft ? "billing_wait" : "name") : "list",
+      step: surface === "onboarding"
+        ? storedDraft
+          ? hasSuccessfulCheckoutReturn()
+            ? "billing_wait"
+            : "configuration"
+          : "name"
+        : "list",
     } satisfies { draft: AddComputerDraft | null; step: FlowStep };
   });
   const [draft, setDraft] = useState<AddComputerDraft | null>(initialFlow.draft);
@@ -351,10 +341,11 @@ export function RuntimeManager({
     navigateInternalRef.current(ADD_COMPUTER_ONBOARDING_PATH);
   }, [surface]);
 
-  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this authenticated client inventory depends on Clerk state; the disposed guard prevents stale writes after refresh or unmount.
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this authenticated client inventory depends on Clerk state; the disposed guard prevents stale writes and the promise chain enters the bounded error state.
   useEffect(() => {
     if (!isLoaded || !isSignedIn) return;
     let disposed = false;
+    // react-doctor-disable-next-line react-doctor/no-promise-then-side-effect-in-effect-without-catch -- false positive: this exact chain terminates in the explicit catch below.
     readOverview()
       .then((value) => {
         if (!disposed) setOverview({ status: "ready", ...value });
@@ -369,7 +360,7 @@ export function RuntimeManager({
           const failedStep = stepRef.current;
           if (surface === "onboarding" && (failedStep === "name" || failedStep === "billing_wait")) {
             setSafeError(failedStep === "billing_wait"
-              ? "Your computer capacity could not be refreshed. Try again in a moment."
+              ? "Your computer subscription could not be refreshed. Try again in a moment."
               : "Your computer setup could not be loaded. Try again in a moment.");
             errorRetryActionRef.current = "overview";
             setStep("error");
@@ -386,27 +377,52 @@ export function RuntimeManager({
     capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.RUNTIME_MANAGER_VIEWED, { entry: surface === "onboarding" ? "new" : "manager" });
   }, [isLoaded, isSignedIn, surface]);
 
-  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this bounded poll waits for the signed Stripe webhook projection; each iteration owns and clears its timer.
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this bounded poll waits for the signed Stripe webhook projection; each iteration owns and clears its timer, and failures schedule the bounded retry.
   useEffect(() => {
     if (step !== "billing_wait" || !draft || resumeProvisionStartedRef.current) return;
-    const currentMax = overview.status === "ready" ? overview.billing.entitlement?.maxRuntimeSlots ?? 0 : 0;
-    if (overview.status === "ready" && currentMax > draft.baselineMaxRuntimeSlots) {
-      resumeProvisionStartedRef.current = true;
-      void provisionComputer(draft, setStep, setJourney, setSafeError, setJourneyRefresh, setErrorRetryAction);
-      return;
-    }
+    let disposed = false;
+    let timeoutId: number | undefined;
     const projectionWaitRemaining = Math.max(0, BILLING_PROJECTION_WAIT_MS - (Date.now() - draft.createdAt));
-    const timeoutId = window.setTimeout(() => {
-      if (projectionWaitRemaining === 0) {
-        setSafeError("Your subscription update is taking longer than expected. You can try again without losing your computer name.");
-        setErrorRetryAction("billing");
-        setStep("error");
-        return;
-      }
-      setOverviewRefresh((value) => value + 1);
-    }, Math.min(billingPollIntervalMs, projectionWaitRemaining));
-    return () => window.clearTimeout(timeoutId);
-  }, [billingPollIntervalMs, draft, overview, step]);
+    const scheduleRetry = () => {
+      timeoutId = window.setTimeout(() => setOverviewRefresh((value) => value + 1), Math.min(billingPollIntervalMs, projectionWaitRemaining));
+    };
+    // react-doctor-disable-next-line react-doctor/no-promise-then-side-effect-in-effect-without-catch -- false positive: this exact chain terminates in the explicit catch below.
+    fetchJson(`/billing/status?runtimeSlot=${encodeURIComponent(draft.slot)}`)
+      .then(({ response, body }) => {
+        if (disposed) return;
+        const billing = response.ok ? parseBillingStatus(body) : null;
+        if (billing?.access.runtimeProxyAllowed) {
+          resumeProvisionStartedRef.current = true;
+          setStep("installs");
+          return;
+        }
+        if (projectionWaitRemaining === 0) {
+          setSafeError("Your subscription is taking longer than expected to activate. Your computer setup is saved.");
+          setErrorRetryAction("billing");
+          setStep("error");
+          return;
+        }
+        scheduleRetry();
+      })
+      .catch((error: unknown) => {
+        capturePostHogLog("warn", "runtime_manager billing_projection_failed", {
+          surface: "runtime_manager",
+          error_kind: error instanceof Error ? error.name : typeof error,
+        });
+        if (disposed) return;
+        if (projectionWaitRemaining === 0) {
+          setSafeError("Your subscription is taking longer than expected to activate. Your computer setup is saved.");
+          setErrorRetryAction("billing");
+          setStep("error");
+          return;
+        }
+        scheduleRetry();
+      });
+    return () => {
+      disposed = true;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    };
+  }, [billingPollIntervalMs, draft, overviewRefresh, step]);
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- slot-specific journey polling is client-authenticated, bounded to one timer, and cancelled on cleanup.
   useEffect(() => {
@@ -497,31 +513,42 @@ export function RuntimeManager({
       developerTools: [],
       serverType: overview.billing.entitlement?.defaultServerType.toLowerCase() ?? "cpx22",
       location: MATRIX_BILLING_REGIONS[0]?.location ?? "fsn1",
-      baselineMaxRuntimeSlots: overview.billing.entitlement?.maxRuntimeSlots ?? 0,
       createdAt: Date.now(),
     });
     setStep("configuration");
   }
 
-  function continueFromConfiguration(selection: ComputerSetupSelection): void {
-    const allowedServerTypes = overview.status === "ready"
-      ? overview.billing.entitlement?.allowedServerTypes ?? []
-      : [];
+  function setErrorRetryAction(action: ErrorRetryAction): void {
+    errorRetryActionRef.current = action;
+  }
+
+  function rememberAdditionalCheckout(selection: ComputerSetupSelection): boolean {
     if (
       !draft ||
-      !isServerTypeAllowedForEntitlement(selection.serverType, allowedServerTypes) ||
-      !isKnownLocation(selection.location)
-    ) return;
-    setDraft({
+      !isKnownLocation(selection.location) ||
+      !MATRIX_BILLING_SERVER_PROFILES.some(
+        (profile) => profile.hetznerType.toLowerCase() === selection.serverType.toLowerCase(),
+      )
+    ) return false;
+    const nextDraft = {
       ...draft,
       serverType: selection.serverType.toLowerCase(),
       location: selection.location,
-    });
-    setStep("installs");
-  }
-
-  function setErrorRetryAction(action: ErrorRetryAction): void {
-    errorRetryActionRef.current = action;
+      createdAt: Date.now(),
+    };
+    setDraft(nextDraft);
+    if (!safeWriteDraft(nextDraft)) {
+      setSafeError("We could not safely save this setup before opening billing. Try again.");
+      setErrorRetryAction("billing");
+      setStep("error");
+      return false;
+    }
+    if (overview.status === "ready" && overview.billing.entitlement?.source === "override") {
+      setStep("installs");
+      return true;
+    }
+    capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.ADD_COMPUTER_BILLING_HANDOFF, { result: "checkout_started" });
+    return true;
   }
 
   async function buildComputer(draftOverride?: AddComputerDraft): Promise<void> {
@@ -535,61 +562,7 @@ export function RuntimeManager({
     }
     const nextDraft = currentDraft;
     setDraft(nextDraft);
-    const entitlement = overview.billing.entitlement;
-    const capacityAvailable = Boolean(entitlement && activeCustomerCount(overview.inventory) < entitlement.maxRuntimeSlots);
-    if (capacityAvailable) {
-      await provisionComputer(nextDraft, setStep, setJourney, setSafeError, setJourneyRefresh, setErrorRetryAction);
-      return;
-    }
-    if (entitlement?.source === "override") {
-      setSafeError("This account is managed internally. Ask your Matrix administrator to add computer capacity.");
-      setStep("managed");
-      return;
-    }
-    if (entitlement?.source !== "stripe" || !entitlement.stripeSubscriptionId) {
-      setSafeError("Computer capacity is unavailable right now. Try again in a moment.");
-      setErrorRetryAction("billing");
-      setStep("error");
-      return;
-    }
-    if (!safeWriteDraft(nextDraft)) {
-      setSafeError("We could not safely save this setup before opening billing. Try again.");
-      setErrorRetryAction("billing");
-      setStep("error");
-      return;
-    }
-    try {
-      const { response, body } = await fetchJson("/billing/portal", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ intent: "add_computer", returnPath: ADD_COMPUTER_ONBOARDING_PATH }),
-      });
-      const url = body && typeof body === "object" && typeof (body as { url?: unknown }).url === "string"
-        ? (body as { url: string }).url
-        : null;
-      if (!response.ok || !url) {
-        capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.ADD_COMPUTER_FAILED, { stage: "billing_handoff" });
-        capturePostHogLog("error", "runtime_manager billing_handoff_failed", {
-          surface: "runtime_manager",
-          error_kind: "portal_unavailable",
-        });
-        setSafeError("Billing is unavailable right now. Your computer setup is saved; try again in a moment.");
-        setErrorRetryAction("billing");
-        setStep("error");
-        return;
-      }
-      capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.ADD_COMPUTER_BILLING_HANDOFF, { result: "portal_created" });
-      (onExternalNavigate ?? ((target: string) => window.location.assign(target)))(url);
-    } catch (error: unknown) {
-      capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.ADD_COMPUTER_FAILED, { stage: "billing_handoff" });
-      capturePostHogLog("error", "runtime_manager billing_handoff_failed", {
-        surface: "runtime_manager",
-        error_kind: error instanceof Error ? error.name : typeof error,
-      });
-      setSafeError("Billing is unavailable right now. Your computer setup is saved; try again in a moment.");
-      setErrorRetryAction("billing");
-      setStep("error");
-    }
+    await provisionComputer(nextDraft, setStep, setJourney, setSafeError, setJourneyRefresh, setErrorRetryAction);
   }
 
   async function retryJourney(): Promise<void> {
@@ -689,22 +662,20 @@ export function RuntimeManager({
             />
           ) : null}
           {step === "configuration" && draft && overview.status === "ready" ? (
-            <div className="mx-auto w-full max-w-4xl">
-              <button
-                type="button"
-                onClick={() => setStep("name")}
-                className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-forest/65 hover:text-forest"
-              >
-                <ArrowLeftIcon className="size-4" aria-hidden="true" /> Back
-              </button>
-              <BillingPanel
-                active={overview.billing.access.runtimeProxyAllowed}
-                entitlement={overview.billing.entitlement}
-                accessReason={overview.billing.access.reason}
-                mode="add-computer"
-                onComputerSetupContinue={continueFromConfiguration}
-              />
-            </div>
+            <Settings
+              open
+              onOpenChange={(open) => {
+                if (!open) setStep("name");
+              }}
+              defaultSection="billing"
+              lockedSection="billing"
+              billingActiveOverride={overview.billing.access.runtimeProxyAllowed}
+              billingMode="add-computer"
+              onBillingCheckoutIntent={rememberAdditionalCheckout}
+              onBillingCheckoutNavigate={onExternalNavigate}
+              billingCheckoutReturnPath={ADD_COMPUTER_ONBOARDING_PATH}
+              billingCheckoutRuntimeSlot={draft.slot}
+            />
           ) : null}
           {step === "installs" ? (
             <div className="mx-auto w-full max-w-4xl">
@@ -741,14 +712,12 @@ export function RuntimeManager({
               onReturn={returnToRuntimeManager}
             />
           ) : null}
-          {step === "managed" || step === "error" ? (
+          {step === "error" ? (
             <ErrorStep
               message={safeError ?? "Computer setup is unavailable right now."}
-              managed={step === "managed"}
               onRetry={() => {
                 setSafeError(null);
-                if (step === "managed") setStep("installs");
-                else if (errorRetryActionRef.current === "overview") {
+                if (errorRetryActionRef.current === "overview") {
                   setOverview({ status: "loading", inventory: null, billing: null });
                   setStep(draft ? "billing_wait" : surface === "onboarding" ? "name" : "list");
                   setOverviewRefresh((value) => value + 1);
@@ -758,7 +727,7 @@ export function RuntimeManager({
                   resumeProvisionStartedRef.current = false;
                   setDraft(refreshedDraft);
                   safeWriteDraft(refreshedDraft);
-                  void buildComputer(refreshedDraft);
+                  setStep("configuration");
                 } else if (errorRetryActionRef.current === "journey") {
                   void retryJourney();
                 } else {

@@ -195,7 +195,7 @@ account and production platform env:
 1. Create production Products and recurring Prices (Starter, Builder, Max —
    monthly and annual; extra-runtime add-on if launching multiple machines).
 2. Copy the production Price IDs into the production platform env
-   (`STRIPE_PRICE_MATRIX_*`, `STRIPE_PRICE_EXTRA_RUNTIME_*`).
+   (`STRIPE_PRICE_MATRIX_*`). Each billable computer uses its own full plan subscription.
 3. Enable automatic tax for Checkout and Portal; add required tax registrations.
 4. Enable promotion codes in Checkout and Customer Portal (Stripe Coupons /
    Promotion Codes, not hardcoded discounts).

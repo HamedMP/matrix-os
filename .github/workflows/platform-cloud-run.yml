@@ -119,39 +119,33 @@ jobs:
       - name: Verify Stripe billing secrets
         run: |
           set -euo pipefail
-          required_price_secrets=(
+          required_billing_secrets=(
             STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly
             STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual
             STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly
             STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual
             STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly
             STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual
-            STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY=stripe-price-extra-runtime-monthly
-            STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL=stripe-price-extra-runtime-annual
-          )
-          optional_portal_configuration_secrets=(
-            STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_MONTHLY=stripe-portal-configuration-extra-runtime-monthly
-            STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_ANNUAL=stripe-portal-configuration-extra-runtime-annual
           )
 
-          for entry in "${required_price_secrets[@]}"; do
+          for entry in "${required_billing_secrets[@]}"; do
             env_name="${entry%%=*}"
             secret_name="${entry#*=}"
             gcloud secrets describe "$secret_name" \
               --project "$GCP_PROJECT_ID" >/dev/null
-            price_secret_tmpfile="$(mktemp)"
+            billing_secret_tmpfile="$(mktemp)"
             if ! gcloud secrets versions access latest --secret "$secret_name" \
-              --project "$GCP_PROJECT_ID" >"$price_secret_tmpfile"; then
-              rm -f "$price_secret_tmpfile"
+              --project "$GCP_PROJECT_ID" >"$billing_secret_tmpfile"; then
+              rm -f "$billing_secret_tmpfile"
               echo "$secret_name must have an accessible latest version for $env_name." >&2
               exit 1
             fi
-            if [ ! -s "$price_secret_tmpfile" ]; then
-              rm -f "$price_secret_tmpfile"
+            if [ ! -s "$billing_secret_tmpfile" ]; then
+              rm -f "$billing_secret_tmpfile"
               echo "$secret_name must not be empty for $env_name." >&2
               exit 1
             fi
-            rm -f "$price_secret_tmpfile"
+            rm -f "$billing_secret_tmpfile"
             accessor_member="$(
               gcloud secrets get-iam-policy "$secret_name" \
                 --project "$GCP_PROJECT_ID" \
@@ -165,67 +159,6 @@ jobs:
               exit 1
             fi
           done
-
-          available_portal_configuration_secrets=0
-          for entry in "${optional_portal_configuration_secrets[@]}"; do
-            secret_name="${entry#*=}"
-            describe_error_tmpfile="$(mktemp)"
-            if gcloud secrets describe "$secret_name" \
-              --project "$GCP_PROJECT_ID" >/dev/null 2>"$describe_error_tmpfile"; then
-              available_portal_configuration_secrets=$((available_portal_configuration_secrets + 1))
-            elif ! grep -Fq 'NOT_FOUND' "$describe_error_tmpfile"; then
-              cat "$describe_error_tmpfile" >&2
-              rm -f "$describe_error_tmpfile"
-              exit 1
-            fi
-            rm -f "$describe_error_tmpfile"
-          done
-
-          expected_portal_configuration_secrets="${#optional_portal_configuration_secrets[@]}"
-          if [ "$available_portal_configuration_secrets" -gt 0 ] && \
-            [ "$available_portal_configuration_secrets" -lt "$expected_portal_configuration_secrets" ]; then
-            echo "Focused Stripe portal configuration secrets are incomplete; configure both intervals or neither." >&2
-            exit 1
-          fi
-
-          if [ "$available_portal_configuration_secrets" -eq 0 ]; then
-            echo "Focused Stripe portal configurations are not provisioned. Add-computer billing will remain unavailable."
-            echo 'PORTAL_CONFIGURATION_SECRET_BINDINGS=' >> "$GITHUB_ENV"
-          else
-            portal_configuration_secret_bindings=()
-            for entry in "${optional_portal_configuration_secrets[@]}"; do
-              env_name="${entry%%=*}"
-              secret_name="${entry#*=}"
-              portal_secret_tmpfile="$(mktemp)"
-              if ! gcloud secrets versions access latest --secret "$secret_name" \
-                --project "$GCP_PROJECT_ID" >"$portal_secret_tmpfile"; then
-                rm -f "$portal_secret_tmpfile"
-                echo "$secret_name must have an accessible latest version for $env_name." >&2
-                exit 1
-              fi
-              if [ ! -s "$portal_secret_tmpfile" ]; then
-                rm -f "$portal_secret_tmpfile"
-                echo "$secret_name must not be empty for $env_name." >&2
-                exit 1
-              fi
-              rm -f "$portal_secret_tmpfile"
-              accessor_member="$(
-                gcloud secrets get-iam-policy "$secret_name" \
-                  --project "$GCP_PROJECT_ID" \
-                  --flatten='bindings[].members' \
-                  --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
-                  --format='value(bindings.members)' \
-                  | head -1
-              )"
-              if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
-                echo "$secret_name must grant roles/secretmanager.secretAccessor to ${CLOUD_RUN_SERVICE_ACCOUNT}" >&2
-                exit 1
-              fi
-              portal_configuration_secret_bindings+=("${env_name}=${secret_name}:latest")
-            done
-            PORTAL_CONFIGURATION_SECRET_BINDINGS="$(IFS=,; echo "${portal_configuration_secret_bindings[*]}")"
-            echo "PORTAL_CONFIGURATION_SECRET_BINDINGS=${PORTAL_CONFIGURATION_SECRET_BINDINGS}" >> "$GITHUB_ENV"
-          fi
 
       - name: Verify Pipedream integration secrets
         run: |
@@ -376,7 +309,7 @@ jobs:
             --allow-unauthenticated \
             "${traffic_flags[@]}" \
             --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL},MATRIX_API_ORIGIN=${MATRIX_API_ORIGIN},CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_TLS_VERIFY=false,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_APP_DOMAIN_HOSTS=${MATRIX_APP_DOMAIN_HOSTS},MATRIX_CODE_DOMAIN_HOSTS=${MATRIX_CODE_DOMAIN_HOSTS},NEXT_PUBLIC_MATRIX_APP_URL=${MATRIX_APP_URL},MATRIX_BILLING_PROVIDER=stripe,POSTHOG_HOST=https://eu.i.posthog.com,POSTHOG_API_HOST=https://eu.i.posthog.com,NEXT_PUBLIC_POSTHOG_HOST=${POSTHOG_PUBLIC_HOST},NEXT_PUBLIC_POSTHOG_API_HOST=${POSTHOG_PUBLIC_API_HOST},R2_PREFIX_ROOT=matrixos-sync" \
-            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual:latest,STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY=stripe-price-extra-runtime-monthly:latest,STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL=stripe-price-extra-runtime-annual:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,PIPEDREAM_ENVIRONMENT=pipedream-environment:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest${PORTAL_CONFIGURATION_SECRET_BINDINGS:+,${PORTAL_CONFIGURATION_SECRET_BINDINGS}}" \
+            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,PIPEDREAM_ENVIRONMENT=pipedream-environment:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest" \
             --format=json); then
             exit 1
           fi

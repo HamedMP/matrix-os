@@ -72,6 +72,8 @@ export interface RegisterPlatformWebSocketUpgradeHandlerOpts {
     db: PlatformDB,
     clerkUserId: string,
     env?: NodeJS.ProcessEnv,
+    runtimeSlot?: string,
+    provisioningClass?: string,
   ): Promise<EntitlementAccessDecision>;
 }
 
@@ -238,9 +240,21 @@ export function registerPlatformWebSocketUpgradeHandler(
       : undefined;
     if (!runningMachine && !record) { socket.destroy(); return; }
     const entitlement = runningMachine
-      ? await getRuntimeEntitlementDecisionForUser(db, runningMachine.clerkUserId, env)
+      ? await getRuntimeEntitlementDecisionForUser(
+        db,
+        runningMachine.clerkUserId,
+        env,
+        runningMachine.runtimeSlot,
+        runningMachine.provisioningClass,
+      )
       : requestedActiveMachine
-        ? await getRuntimeEntitlementDecisionForUser(db, requestedActiveMachine.clerkUserId, env)
+        ? await getRuntimeEntitlementDecisionForUser(
+          db,
+          requestedActiveMachine.clerkUserId,
+          env,
+          requestedActiveMachine.runtimeSlot,
+          requestedActiveMachine.provisioningClass,
+        )
         : getRuntimeEntitlementDecision(env);
     let activeUpstream: Socket | null = null;
     const onSocketError = () => activeUpstream?.destroy();
