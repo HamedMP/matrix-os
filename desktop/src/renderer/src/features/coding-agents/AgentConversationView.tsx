@@ -18,7 +18,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../design/primitives";
 import { cn } from "../../lib/cn";
 import { redactCredentialsForDisplay } from "../../lib/transcript-redaction";
@@ -44,17 +44,20 @@ import { PromptInput, type PromptSubmitSource } from "../chat/elements/prompt-in
 import { abortAgentThread, agentThreadAbortSupported } from "./abort-thread";
 import { EMPTY_QUEUED_MESSAGES, useCodingAgentMessageQueue } from "./message-queue-store";
 import { ToolCallDetailMeta } from "./tool-call-detail";
+import { deriveTurnSummaries } from "./turn-summary";
 
 type ConversationStatus = "idle" | "loading" | "ready" | "error";
 type AssistantEvent = Extract<AgentThreadEvent, { type: "assistant.text.delta" | "assistant.text.completed" }>;
 type ToolEvent = Extract<AgentThreadEvent, { type: "tool.started" | "tool.output" | "tool.completed" }>;
+// `order` is the index of the item's first event; `endOrder` the index of its
+// last — turn summaries anchor to the row containing a turn's final event.
 type ConversationItem =
-  | { kind: "assistant"; key: string; events: AssistantEvent[]; order: number }
-  | { kind: "tool"; key: string; events: ToolEvent[]; order: number }
-  | { kind: "event"; event: AgentThreadEvent; order: number };
+  | { kind: "assistant"; key: string; events: AssistantEvent[]; order: number; endOrder: number }
+  | { kind: "tool"; key: string; events: ToolEvent[]; order: number; endOrder: number }
+  | { kind: "event"; event: AgentThreadEvent; order: number; endOrder: number };
 type TimelineItem =
   | Exclude<ConversationItem, { kind: "tool" }>
-  | { kind: "tool-run"; key: string; runs: Array<Extract<ConversationItem, { kind: "tool" }>>; order: number };
+  | { kind: "tool-run"; key: string; runs: Array<Extract<ConversationItem, { kind: "tool" }>>; order: number; endOrder: number };
 
 // Defensive ceiling for one rendered message; each delta is already bounded by
 // the event schema (4,000 chars / 16KB), so this only guards runaway joins.
@@ -69,31 +72,47 @@ const TRANSCRIPT_MARKDOWN_CLASS =
   "prose-sm max-w-none text-sm leading-relaxed [&_a]:text-[var(--highlight)] [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--border-default)] [&_blockquote]:pl-3 [&_blockquote]:text-[var(--text-secondary)] [&_code]:rounded [&_code]:bg-[var(--bg-sunken)] [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[12px] [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:text-md [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:mb-1 [&_h3]:font-semibold [&_hr]:my-4 [&_hr]:border-[var(--border-subtle)] [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-[var(--border-subtle)] [&_pre]:bg-[var(--bg-sunken)] [&_pre]:p-3 [&_pre_code]:bg-transparent [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-[var(--border-subtle)] [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-[var(--border-subtle)] [&_th]:bg-[var(--bg-sunken)] [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_ul]:list-disc [&_ul]:pl-5";
 
 function conversationItems(events: AgentThreadEvent[]): ConversationItem[] {
-  const assistants = new Map<string, AssistantEvent[]>();
-  const tools = new Map<string, ToolEvent[]>();
+  const assistants = new Map<string, Extract<ConversationItem, { kind: "assistant" }>>();
+  const tools = new Map<string, Extract<ConversationItem, { kind: "tool" }>>();
   const items: ConversationItem[] = [];
   for (const [order, event] of events.entries()) {
     if (event.type === "assistant.text.delta" || event.type === "assistant.text.completed") {
       const group = assistants.get(event.messageId);
-      if (group) group.push(event);
-      else {
-        const next = [event];
-        assistants.set(event.messageId, next);
-        items.push({ kind: "assistant", key: `assistant:${event.messageId}`, events: next, order });
+      if (group) {
+        group.events.push(event);
+        group.endOrder = order;
+      } else {
+        const item: Extract<ConversationItem, { kind: "assistant" }> = {
+          kind: "assistant",
+          key: `assistant:${event.messageId}`,
+          events: [event],
+          order,
+          endOrder: order,
+        };
+        assistants.set(event.messageId, item);
+        items.push(item);
       }
       continue;
     }
     if (event.type === "tool.started" || event.type === "tool.output" || event.type === "tool.completed") {
       const group = tools.get(event.toolCallId);
-      if (group) group.push(event);
-      else {
-        const next = [event];
-        tools.set(event.toolCallId, next);
-        items.push({ kind: "tool", key: `tool:${event.toolCallId}`, events: next, order });
+      if (group) {
+        group.events.push(event);
+        group.endOrder = order;
+      } else {
+        const item: Extract<ConversationItem, { kind: "tool" }> = {
+          kind: "tool",
+          key: `tool:${event.toolCallId}`,
+          events: [event],
+          order,
+          endOrder: order,
+        };
+        tools.set(event.toolCallId, item);
+        items.push(item);
       }
       continue;
     }
-    items.push({ kind: "event", event, order });
+    items.push({ kind: "event", event, order, endOrder: order });
   }
   return items.sort((left, right) => left.order - right.order);
 }
@@ -109,9 +128,10 @@ function timelineItems(items: ConversationItem[]): TimelineItem[] {
     const previous = timeline.at(-1);
     if (previous?.kind === "tool-run") {
       previous.runs.push(item);
+      previous.endOrder = item.endOrder;
       continue;
     }
-    timeline.push({ kind: "tool-run", key: `run:${item.key}`, runs: [item], order: item.order });
+    timeline.push({ kind: "tool-run", key: `run:${item.key}`, runs: [item], order: item.order, endOrder: item.endOrder });
   }
   return timeline;
 }
@@ -421,6 +441,19 @@ function WorkingRow() {
   );
 }
 
+// Subtle per-turn receipt ("Worked for 5m 35s"), rendered after a turn's
+// terminal signal. Deliberately non-interactive this wave — no collapse.
+function WorkedRow({ label }: { label: string }) {
+  return (
+    <Marker aria-label={label}>
+      <MarkerIcon>
+        <Check className="size-3.5" style={{ color: "var(--text-tertiary)" }} />
+      </MarkerIcon>
+      <MarkerContent className="text-[11px]">{label}</MarkerContent>
+    </Marker>
+  );
+}
+
 function eventCopy(event: AgentThreadEvent): { title: string; detail: string } {
   switch (event.type) {
     case "turn.accepted": return { title: "Message accepted", detail: "Waiting for the agent run" };
@@ -600,8 +633,10 @@ function ConversationComposer({
   }
 
   return (
-    <div className="shrink-0 px-4 pb-4">
-      <div className="mx-auto w-full max-w-[760px]">
+    <div className="shrink-0 px-6 pb-5">
+      {/* Floating composer card: same centered column as the transcript; the
+          rounded/shadowed surface itself lives on PromptInput's prompt-card. */}
+      <div className="mx-auto w-full max-w-[46rem]" data-slot="conversation-composer">
         {queuedMessages.length > 0 ? (
           <div aria-label="Queued follow-ups" className="mb-2 flex flex-col gap-1">
             {queuedMessages.map((queued, index) => (
@@ -669,7 +704,18 @@ export function AgentConversationView({
   error: string | null;
   canSendTurns: boolean;
 }) {
+  const threadRunning = snapshot?.thread.status === "running"
+    || snapshot?.thread.status === "starting"
+    || snapshot?.thread.status === "queued";
   const items = useMemo(() => timelineItems(conversationItems(snapshot?.events.items ?? [])), [snapshot?.events.items]);
+  // Per-turn "Worked for Xs" rows, derived from event timestamps only.
+  const turnSummaryByEndOrder = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const summary of deriveTurnSummaries(snapshot?.events.items ?? [], threadRunning)) {
+      map.set(summary.endOrder, summary.label);
+    }
+    return map;
+  }, [snapshot?.events.items, threadRunning]);
   const answeredInputs = useMemo(() => new Set((snapshot?.events.items ?? [])
     .filter((event) => event.type === "user_input.answered")
     .map((event) => codingAgentInputActionKey(event.threadId, event.requestId))), [snapshot?.events.items]);
@@ -684,7 +730,7 @@ export function AgentConversationView({
   if (status === "error") return <div className="flex min-h-[360px] items-center justify-center p-6 text-sm" style={{ color: "var(--danger)" }}>{error ?? "Thread state unavailable"}</div>;
   if (!snapshot) return <div className="flex min-h-[360px] items-center justify-center p-6 text-center text-sm" style={{ color: "var(--text-secondary)" }}>Choose a conversation from the project navigator, or start a new chat.</div>;
 
-  const running = snapshot.thread.status === "running" || snapshot.thread.status === "starting" || snapshot.thread.status === "queued";
+  const running = threadRunning;
   const lastItem = items.at(-1);
   const streamingAssistant = lastItem?.kind === "assistant"
     && !lastItem.events.some((event) => event.type === "assistant.text.completed");
@@ -704,25 +750,36 @@ export function AgentConversationView({
       </header>
       <Conversation key={`transcript:${snapshot.thread.id}`}>
         <ConversationContent>
-          {items.map((item) =>
-            item.kind === "assistant" ? (
-              <ConversationItem key={item.key} messageId={item.key}>
-                <AssistantRow events={item.events} />
-              </ConversationItem>
-            ) : item.kind === "tool-run" ? (
-              <ConversationItem key={item.key} messageId={item.key}>
-                <ToolRun runs={item.runs} />
-              </ConversationItem>
-            ) : item.event.type === "user.message" ? (
-              <ConversationItem key={item.event.eventId} messageId={`user:${item.event.messageId}`} scrollAnchor>
-                <UserRow event={item.event} />
-              </ConversationItem>
-            ) : (
-              <ConversationItem key={item.event.eventId} messageId={`event:${item.event.eventId}`}>
-                <SystemEvent event={item.event} answeredInputs={answeredInputs} resolvedApprovals={resolvedApprovals} />
-              </ConversationItem>
-            ),
-          )}
+          {items.map((item) => {
+            const workedLabel = turnSummaryByEndOrder.get(item.endOrder);
+            const itemKey = item.kind === "event" ? `event:${item.event.eventId}` : item.key;
+            return (
+              <Fragment key={itemKey}>
+                {item.kind === "assistant" ? (
+                  <ConversationItem messageId={item.key}>
+                    <AssistantRow events={item.events} />
+                  </ConversationItem>
+                ) : item.kind === "tool-run" ? (
+                  <ConversationItem messageId={item.key}>
+                    <ToolRun runs={item.runs} />
+                  </ConversationItem>
+                ) : item.event.type === "user.message" ? (
+                  <ConversationItem messageId={`user:${item.event.messageId}`} scrollAnchor>
+                    <UserRow event={item.event} />
+                  </ConversationItem>
+                ) : (
+                  <ConversationItem messageId={`event:${item.event.eventId}`}>
+                    <SystemEvent event={item.event} answeredInputs={answeredInputs} resolvedApprovals={resolvedApprovals} />
+                  </ConversationItem>
+                )}
+                {workedLabel ? (
+                  <ConversationItem messageId={`turn-summary:${itemKey}`}>
+                    <WorkedRow label={workedLabel} />
+                  </ConversationItem>
+                ) : null}
+              </Fragment>
+            );
+          })}
           {showWorking ? <WorkingRow /> : null}
           {items.length === 0 && !showWorking ? (
             <p className="py-12 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>

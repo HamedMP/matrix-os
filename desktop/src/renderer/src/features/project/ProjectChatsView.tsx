@@ -35,6 +35,7 @@ import { capabilityEnabled } from "../coding-agents/capabilities";
 import { CreatedThreadHandleList, ThreadList } from "../coding-agents/AgentThreadLists";
 import { ReviewList, reviewHunkFollowUpDraft } from "../coding-agents/AgentReviewPanel";
 import { openCodingAgentThread } from "../../lib/project-chat";
+import { ProjectChatHero } from "./ProjectChatHero";
 import { ProjectThreadList } from "./ProjectThreadList";
 
 export { mergeAttachments, mergeComposerSeed, clearComposerLaunchContext } from "../coding-agents/AgentComposer";
@@ -283,6 +284,18 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     store.setWidthPct(projectId, pct);
   };
 
+  // A created chat must always surface: select it, close/reset the composer,
+  // and refresh the rail. Shared by the hero composer (no chat selected) and
+  // the inspector composer (chat selected).
+  const handleComposerCreated = () => {
+    const createdId = useCodingAgentWorkspace.getState().activeThreadId;
+    if (createdId) setSelectedThread(projectId, createdId);
+    if (!projectWorkspaceEnabled) return;
+    setComposerOpen(false);
+    setComposerSeed(null);
+    void refreshWorkspace(projectId);
+  };
+
   const conversationColumn = (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       {selectedThreadId ? (
@@ -292,15 +305,16 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
           error={activeThreadId === selectedThreadId ? threadSnapshotError : null}
           canSendTurns={canSendTurns}
         />
-      ) : (
+      ) : projectWorkspaceEnabled ? (
         <div className="relative flex min-h-0 flex-1 flex-col">
-          <EmptyState
-            icon={<MessageSquare size={28} />}
-            headline="Select a chat"
-            description="Pick a conversation from the list, or start a new chat for this project."
-            action={canCreate && projectWorkspaceEnabled ? (
-              <Button variant="primary" onClick={() => void openNewChat()}>New chat</Button>
-            ) : undefined}
+          <ProjectChatHero
+            summary={summary}
+            projectLabel={projectLabel}
+            seed={composerSeed}
+            focusRequestId={composerFocusRequestId}
+            canCreate={canCreate}
+            onCreated={handleComposerCreated}
+            onSuggestion={(prompt) => void openNewChat(undefined, prompt)}
           />
           {typeToStartEnabled && !composerOpen ? (
             <p
@@ -310,6 +324,16 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
               Start typing to begin a new chat
             </p>
           ) : null}
+        </div>
+      ) : (
+        // Without the project-workspace capability the composer lives in the
+        // inspector; the pane keeps the plain picker hint.
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <EmptyState
+            icon={<MessageSquare size={28} />}
+            headline="Select a chat"
+            description="Pick a conversation from the list, or start a new chat for this project."
+          />
         </div>
       )}
     </div>
@@ -354,24 +378,18 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
             ) : null}
           </div>
         )}
-        composer={!projectWorkspaceEnabled || composerOpen ? (
-          <AgentComposer
-            summary={summary}
-            seed={composerSeed}
-            focusRequestId={composerFocusRequestId}
-            onCreated={() => {
-              // Surface the new chat in the list and select it, whatever
-              // the capability shape — a created conversation must never
-              // land on the empty state.
-              const createdId = useCodingAgentWorkspace.getState().activeThreadId;
-              if (createdId) setSelectedThread(projectId, createdId);
-              if (!projectWorkspaceEnabled) return;
-              setComposerOpen(false);
-              setComposerSeed(null);
-              void refreshWorkspace(projectId);
-            }}
-          />
-        ) : undefined}
+        composer={
+          // While no chat is selected the composer lives in the hero pane —
+          // mounting it here too would duplicate the seeded form.
+          !projectWorkspaceEnabled || (composerOpen && selectedThreadId) ? (
+            <AgentComposer
+              summary={summary}
+              seed={composerSeed}
+              focusRequestId={composerFocusRequestId}
+              onCreated={handleComposerCreated}
+            />
+          ) : undefined
+        }
         changes={reviewEnabled ? (
           <ReviewList
             canReadFiles={capabilityEnabled(summary, "codingAgentsFiles")}

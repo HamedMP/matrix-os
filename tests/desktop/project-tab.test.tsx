@@ -293,12 +293,14 @@ describe("ProjectTab", () => {
     expect(useProjectChatLauncher.getState().composerRequest?.projectId).toBe("website");
   });
 
-  it("shows an empty conversation state until a chat is selected", async () => {
+  it("shows the hero empty state until a chat is selected", async () => {
     render(<ProjectChatsView projectId="matrix-os" active />);
     await screen.findByRole("button", { name: "Chat Plan the auth work" });
     useProjectView.getState().setSelectedThread("matrix-os", null);
 
-    expect(await screen.findByText("Select a chat")).toBeTruthy();
+    // The hero replaces the conversation pane; the rail keeps its chats.
+    expect(await screen.findByText("What should we work on?")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Chat Plan the auth work" })).toBeTruthy();
   });
 
   it("keeps working from the runtime summary when the project workspace capability is off", async () => {

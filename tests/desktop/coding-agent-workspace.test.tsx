@@ -4009,7 +4009,9 @@ describe("ProjectChatsView", () => {
     fireEvent.click(newChat);
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
-    expect(screen.queryByLabelText("Agent run prompt")).toBeNull();
+    // With no chat selected the hero composer is always rendered; a failed
+    // resolve must not seed it.
+    expect((screen.getByLabelText("Agent run prompt") as HTMLTextAreaElement).value).toBe("");
     expect(screen.getByRole("button", { name: "New chat in selected project" })).toBeTruthy();
   });
 });
