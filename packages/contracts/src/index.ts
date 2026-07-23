@@ -381,7 +381,7 @@ export type CodingAgentNotificationPreferences =
 export type CodingAgentNotificationPreferencesUpdate =
   z.infer<typeof CodingAgentNotificationPreferencesUpdateSchema>;
 
-export const ProviderKindSchema = z.enum(["claude", "codex", "opencode", "cursor", "custom"]);
+export const ProviderKindSchema = z.enum(["claude", "codex", "opencode", "cursor", "pi", "custom"]);
 export const ProviderAvailabilitySchema = z.enum([
   "available",
   "setup_required",
