@@ -410,7 +410,9 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
           defaultLayout={{ conversation: 100 - inspectorWidthPct, inspector: inspectorWidthPct }}
           onLayoutChange={handleSplitLayout}
         >
-          <Panel id="conversation" minSize={100 - MAX_INSPECTOR_WIDTH_PCT} className="flex min-h-0 min-w-0 flex-col">
+          {/* v4 reads numeric minSize/maxSize as PIXELS — always pass "%"
+              strings or the inspector clamps to a tiny pixel sliver. */}
+          <Panel id="conversation" minSize={`${100 - MAX_INSPECTOR_WIDTH_PCT}%`} className="flex min-h-0 min-w-0 flex-col">
             <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
               {conversationColumn}
               <InspectorToggle
@@ -428,8 +430,8 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
           </Separator>
           <Panel
             id="inspector"
-            minSize={MIN_INSPECTOR_WIDTH_PCT}
-            maxSize={MAX_INSPECTOR_WIDTH_PCT}
+            minSize={`${MIN_INSPECTOR_WIDTH_PCT}%`}
+            maxSize={`${MAX_INSPECTOR_WIDTH_PCT}%`}
             className="flex min-h-0 min-w-0 flex-col"
           >
             {inspectorPanel}
