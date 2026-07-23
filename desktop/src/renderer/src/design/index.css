@@ -5,6 +5,7 @@
 @import "@fontsource/jetbrains-mono/400.css";
 @import "@fontsource/jetbrains-mono/500.css";
 @import "./tokens.css";
+@import "./chat.css";
 
 /* Map tokens into Tailwind v4 theme so utilities like bg-surface work. */
 @theme inline {
