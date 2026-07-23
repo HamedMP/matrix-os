@@ -14,7 +14,8 @@ import {
   type UnifiedThreadItem,
 } from "../../stores/unified-threads";
 import ThreadView from "../threads/ThreadView";
-import { Conversation, ConversationContent } from "./elements/conversation";
+import { Bubble, BubbleContent } from "./elements/bubble";
+import { Conversation, ConversationContent, ConversationItem } from "./elements/conversation";
 import { Message, MessageContent, MessageResponse } from "./elements/message";
 import { PromptInput } from "./elements/prompt-input";
 import { Reasoning } from "./elements/reasoning";
@@ -66,8 +67,6 @@ function HermesPane() {
   const projectName = projects[0]?.name ?? projects[0]?.slug ?? "Matrix OS";
   const groups = groupMessages(messages);
   const empty = messages.length === 0;
-  const lastMessage = messages.at(-1);
-  const scrollKey = lastMessage ? `${lastMessage.id}:${lastMessage.content.length}:${status}` : status;
 
   const submit = () => {
     if (!canSubmitChatDraft(draft, status)) return;
@@ -103,31 +102,49 @@ function HermesPane() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <Conversation scrollKey={scrollKey}>
+      <Conversation>
         <ConversationContent>
           {groups.map((group) =>
             group.type === "tool_group" ? (
-              <div key={group.messages[0]?.id ?? "tools"} className="flex flex-col gap-1.5">
-                {group.messages.map((m) => (
-                  <Tool key={m.id} name={m.content} detail={m.toolInput ? JSON.stringify(m.toolInput, null, 2) : undefined} />
-                ))}
-              </div>
+              <ConversationItem key={group.messages[0]?.id ?? "tools"} messageId={group.messages[0]?.id}>
+                <div className="flex flex-col gap-1.5">
+                  {group.messages.map((m) => (
+                    <Tool key={m.id} name={m.content} detail={m.toolInput ? JSON.stringify(m.toolInput, null, 2) : undefined} />
+                  ))}
+                </div>
+              </ConversationItem>
             ) : group.message.role === "user" ? (
-              <Message key={group.message.id} from="user">
-                <MessageContent from="user">{group.message.content}</MessageContent>
-              </Message>
+              <ConversationItem key={group.message.id} messageId={`user:${group.message.id}`} scrollAnchor>
+                <Message align="end">
+                  <MessageContent>
+                    <Bubble variant="secondary" align="end">
+                      <BubbleContent className="whitespace-pre-wrap" data-selectable>
+                        {group.message.content}
+                      </BubbleContent>
+                    </Bubble>
+                  </MessageContent>
+                </Message>
+              </ConversationItem>
             ) : (
-              <Message key={group.message.id} from="assistant">
-                <MessageContent from="assistant">
-                  <MessageResponse>{group.message.content}</MessageResponse>
-                </MessageContent>
-              </Message>
+              <ConversationItem key={group.message.id} messageId={`assistant:${group.message.id}`}>
+                <Message>
+                  <MessageContent>
+                    <Bubble variant="ghost">
+                      <BubbleContent className="overflow-visible">
+                        <MessageResponse>{group.message.content}</MessageResponse>
+                      </BubbleContent>
+                    </Bubble>
+                  </MessageContent>
+                </Message>
+              </ConversationItem>
             ),
           )}
           {status === "thinking" ? (
-            <Reasoning streaming>
-              <span className="status-pulse">Working on it…</span>
-            </Reasoning>
+            <ConversationItem messageId="hermes:working">
+              <Reasoning streaming>
+                <span className="shimmer">Working on it…</span>
+              </Reasoning>
+            </ConversationItem>
           ) : null}
         </ConversationContent>
       </Conversation>
