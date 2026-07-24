@@ -1,4 +1,5 @@
 import {
+  Blocks,
   ChevronRight,
   Home,
   FolderTree,
@@ -152,6 +153,7 @@ export default function Sidebar() {
           <NavRow icon={<SquareTerminal size={15} />} label="Terminal" collapsed={collapsed} active={activeTab?.kind === "terminals"} onClick={() => openTab({ kind: "terminals", title: "Terminal" })} />
           <NavRow icon={<FolderTree size={15} />} label="Files" collapsed={collapsed} active={activeTab?.kind === "files"} onClick={() => openTab(FILES_WORKSPACE_TAB_SPEC)} />
           <NavRow icon={<LayoutGrid size={15} />} label="Apps" collapsed={collapsed} active={activeTab?.kind === "apps" || activeTab?.kind === "app"} onClick={() => openTab({ kind: "apps", title: "Apps" })} />
+          <NavRow icon={<Blocks size={15} />} label="Plugins" collapsed={collapsed} active={activeTab?.kind === "plugins"} onClick={() => openTab({ kind: "plugins", title: "Plugins" })} />
         </nav>
 
         {!collapsed ? (

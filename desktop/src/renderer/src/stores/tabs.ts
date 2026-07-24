@@ -14,6 +14,7 @@ export type TabKind =
   | "files"
   | "apps"
   | "app"
+  | "plugins"
   | "settings";
 
 export interface Tab {
