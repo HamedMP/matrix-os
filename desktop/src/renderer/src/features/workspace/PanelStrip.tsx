@@ -140,7 +140,9 @@ function PanelHost({
           <span className="absolute inset-y-0 -left-1 -right-1 transition-colors duration-100 group-hover/sep:bg-[var(--accent-muted)]" />
         </Separator>
       ) : null}
-      <Panel id={panel} minSize={PANEL_MIN_PCT[panel]} className="flex min-h-0 min-w-0 flex-col">
+      {/* react-resizable-panels v4 reads numeric minSize as PIXELS; percent
+          sizes must be strings or panels clamp to tiny pixel boxes. */}
+      <Panel id={panel} minSize={`${PANEL_MIN_PCT[panel]}%`} className="flex min-h-0 min-w-0 flex-col">
         <header
           className="flex h-7 shrink-0 items-center border-b px-2.5 text-xs font-semibold tracking-wide uppercase"
           style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)", background: "var(--bg-surface)" }}
