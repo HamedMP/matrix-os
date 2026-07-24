@@ -7,6 +7,7 @@ import ProjectTab from "../project/ProjectTab";
 import TaskWorkspace from "../workspace/TaskWorkspace";
 import TerminalView from "../terminal/TerminalView";
 import SettingsView from "../settings/SettingsView";
+import PluginsHub from "../plugins/PluginsHub";
 import HomeTab from "./HomeTab";
 import ChatTab from "../chat/ChatTab";
 import { AppLauncher } from "../embeds";
@@ -66,6 +67,8 @@ function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
       return tab.sessionName ? <TerminalView sessionName={tab.sessionName} active={active} /> : null;
     case "settings":
       return <SettingsView />;
+    case "plugins":
+      return <PluginsHub />;
     default:
       return null;
   }
