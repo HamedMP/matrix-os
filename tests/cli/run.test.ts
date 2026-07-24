@@ -8,6 +8,7 @@ import { WebSocketServer } from "ws";
 import {
   createOrAttachRunSession,
   exitCodeFromRunResult,
+  hasUnsupportedLongTtySpelling,
   inferRunAgent,
   parseRunCommand,
   quoteCommandArg,
@@ -157,6 +158,8 @@ describe("run CLI command", () => {
     expect(parseRunCommand(["-it", "--cwd=projects/app", "pnpm", "test"])).toEqual(["pnpm", "test"]);
     expect(parseRunCommand(["-it", "--session=setup", "claude"])).toEqual(["claude"]);
     expect(parseRunCommand(["--tty", "--", "claude"])).toEqual(["claude"]);
+    expect(hasUnsupportedLongTtySpelling(["--t", "--", "claude"])).toBe(true);
+    expect(hasUnsupportedLongTtySpelling(["--", "echo", "--t"])).toBe(false);
   });
 
   it("shows the standard -t and --tty flags in help", async () => {
@@ -166,6 +169,14 @@ describe("run CLI command", () => {
     expect(result.stderr).toBe("");
     expect(result.stdout).toMatch(/-t, --tty/);
     expect(result.stdout).not.toMatch(/\s--t(?:\s|$)/m);
+  });
+
+  it("rejects the unsupported --t spelling", async () => {
+    const result = await runMatrixCli(["run", "--t", "--", "echo", "ok"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("`--t` is not supported; use `-t` or `--tty`");
   });
 
   it("infers agents behind env and inline environment assignments", () => {
