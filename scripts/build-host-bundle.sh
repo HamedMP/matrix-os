@@ -10,9 +10,7 @@ NODE_DIST="node-v${NODE_VERSION}-linux-x64"
 NODE_ARCHIVE="${NODE_DIST}.tar.xz"
 NODE_BASE_URL="https://nodejs.org/dist/v${NODE_VERSION}"
 NODE_URL="${NODE_BASE_URL}/${NODE_ARCHIVE}"
-ZELLIJ_VERSION="${HOST_BUNDLE_ZELLIJ_VERSION:-0.44.1}"
-ZELLIJ_ARCHIVE="zellij-x86_64-unknown-linux-musl.tar.gz"
-ZELLIJ_URL="https://github.com/zellij-org/zellij/releases/download/v${ZELLIJ_VERSION}/${ZELLIJ_ARCHIVE}"
+ZELLIJ_BUILD_DIR="${HOST_BUNDLE_ZELLIJ_BUILD_DIR:-$DIST_DIR/zellij-production}"
 GH_VERSION="${HOST_BUNDLE_GH_VERSION:-2.86.0}"
 GH_DIST="gh_${GH_VERSION}_linux_amd64"
 GH_ARCHIVE="${GH_DIST}.tar.gz"
@@ -64,19 +62,18 @@ grep "  ${NODE_ARCHIVE}$" "$DIST_DIR/SHASUMS256.txt" > "$DIST_DIR/${NODE_ARCHIVE
 tar -xJf "$DIST_DIR/$NODE_ARCHIVE" -C "$STAGE_DIR/runtime"
 mv "$STAGE_DIR/runtime/$NODE_DIST" "$STAGE_DIR/runtime/node"
 
-if [ -n "${HOST_BUNDLE_ZELLIJ_BINARY:-}" ]; then
-  test -x "$HOST_BUNDLE_ZELLIJ_BINARY"
-  install -m 0755 "$HOST_BUNDLE_ZELLIJ_BINARY" "$STAGE_DIR/bin/zellij"
-  if [ -n "${HOST_BUNDLE_ZELLIJ_BUILD_METADATA:-}" ]; then
-    test -f "$HOST_BUNDLE_ZELLIJ_BUILD_METADATA"
-    install -m 0644 "$HOST_BUNDLE_ZELLIJ_BUILD_METADATA" "$STAGE_DIR/bin/zellij.build.json"
-  fi
-else
-  curl --fail --location --max-time 180 "$ZELLIJ_URL" -o "$DIST_DIR/$ZELLIJ_ARCHIVE"
-  tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij
+if [ -z "${HOST_BUNDLE_ZELLIJ_BUILD_DIR:-}" ]; then
+  "$ROOT_DIR/scripts/terminal-runtime/zellij/build.sh" "$ZELLIJ_BUILD_DIR"
 fi
-chmod 0755 "$STAGE_DIR/bin/zellij"
-test -x "$STAGE_DIR/bin/zellij"
+"$ROOT_DIR/scripts/terminal-runtime/zellij/verify-build.sh" "$ZELLIJ_BUILD_DIR"
+install -m 0755 "$ZELLIJ_BUILD_DIR/zellij" "$STAGE_DIR/bin/zellij"
+install -m 0644 "$ZELLIJ_BUILD_DIR/build.json" "$STAGE_DIR/bin/zellij.build.json"
+expected_zellij_sha256="$(jq -er '.binarySha256' "$STAGE_DIR/bin/zellij.build.json")"
+actual_zellij_sha256="$(sha256sum "$STAGE_DIR/bin/zellij" | awk '{print $1}')"
+if [ "$actual_zellij_sha256" != "$expected_zellij_sha256" ]; then
+  echo "zellij_staged_binary_digest_mismatch" >&2
+  exit 1
+fi
 curl --fail --location --max-time 180 "$GH_URL" -o "$DIST_DIR/$GH_ARCHIVE"
 tar -xzf "$DIST_DIR/$GH_ARCHIVE" -C "$DIST_DIR"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/runtime/node/bin/gh"
@@ -108,6 +105,10 @@ cp -a "$ROOT_DIR/scripts/sync-matrix-agent-skills.sh" "$STAGE_DIR/app/scripts/sy
 if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then
   install -d "$STAGE_DIR/app/scripts/spikes"
   cp -a "$ROOT_DIR/scripts/spikes/terminal-runtime" "$STAGE_DIR/app/scripts/spikes/terminal-runtime"
+  install -d "$STAGE_DIR/app/scripts/terminal-runtime/zellij"
+  install -m 0644 \
+    "$ROOT_DIR/scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json" \
+    "$STAGE_DIR/app/scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json"
 fi
 cp -a "$ROOT_DIR/skills" "$STAGE_DIR/app/skills"
 cp -a "$ROOT_DIR/package.json" "$ROOT_DIR/pnpm-workspace.yaml" "$ROOT_DIR/pnpm-lock.yaml" "$STAGE_DIR/app/"

@@ -15,7 +15,10 @@
 - [X] T006 Implement S2 exact-option/cache/viewport/scrollback/gating/corruption/deletion/pressure orchestration in `scripts/spikes/terminal-runtime/run-remote.sh`
 - [X] T007 Add the secret-safe same-repository preview-VPS workflow and post-merge manual rerun path in `.github/workflows/terminal-runtime-spikes.yml`
 - [X] T008 Document local and remote spike operation in `scripts/spikes/terminal-runtime/README.md`
-- [ ] T009 Run the workflow on the PR preview VPS and record the run/artifact digest, source/patch/binary digests, and S1/S2 result in `specs/109-persist-terminal-sessions/evidence/README.md`
+- [X] T009 Run the workflow on the PR preview VPS and record the run/artifact digest, source/patch/binary digests, and S1/S2 result in `specs/109-persist-terminal-sessions/evidence/README.md`
+- [X] T009A Add failing production bundle contracts for missing, mismatched, or fallback Zellij inputs in `tests/platform/customer-vps-host-bundle.test.ts`
+- [X] T009B Promote the candidate builder, patch, record, and verifier to `scripts/terminal-runtime/zellij/` and make `scripts/build-host-bundle.sh` fail closed
+- [X] T009C Rebuild and verify the production candidate in preview and release workflows before bundle packaging
 
 **Independent test**: the workflow fails for any missing invariant, build-identity mismatch, or privacy violation and succeeds only with `summary.json` reporting both gates passed on the exact `v0.44.3-matrix.1` bytes.
 
@@ -68,7 +71,7 @@
 - [ ] T036 [P] [US2] Add failing interrupted-state and no-silent-recreation client/store tests in `shell/src/components/terminal/__tests__/TerminalApp.test.tsx`
 - [ ] T037 [US2] Add `POST /api/terminal/sessions/:name/recover` with shared limiter and strict empty body in `packages/gateway/src/shell/routes.ts` and `packages/gateway/src/server.ts`
 - [ ] T038 [US2] Implement explicit serialized/fresh-shell recovery and bounded reasons in `packages/terminal-runtime/src/reconciliation.ts` and `packages/terminal-runtime/src/keeper.ts`
-- [ ] T039 [US2] Publish and install the exact S2-proven `v0.44.3-matrix.1` binary digest, then configure its serialization/cache options without force-run in `packages/gateway/src/shell/zellij-config.ts` and `packages/terminal-runtime/src/zellij.ts`
+- [ ] T039 [US2] Configure the production Zellij serialization/cache options without force-run in `packages/gateway/src/shell/zellij-config.ts` and `packages/terminal-runtime/src/zellij.ts`
 - [ ] T040 [US2] Render Interrupted/Recoverable state and explicit Recover action Canvas-first in `shell/src/components/terminal/TerminalApp.tsx` and shared terminal stores
 - [ ] T041 [US2] Add terminal-history privacy disclosure and safe bounded client error allowlisting in `shell/src/components/terminal/` and `docs/platform/user/terminal.md`
 - [ ] T042 [US2] Run `npx react-doctor@latest shell` and capture Canvas/Desktop recovery screenshot evidence in the PR body
@@ -161,12 +164,15 @@ Spike Gate -> Foundation -> US1 runtime ownership -> US2 recovery
 
 | Stack | Tasks | Conventional PR title |
 |---:|---|---|
-| 1/6 | T001–T009 plus plan artifacts | `test(terminal): prove persistent runtime invariants` |
-| 2/6 | T010–T025 | `feat(terminal): add supervised runtime foundation` |
-| 3/6 | T026–T033, T043–T048, T049–T052 | `feat(terminal): migrate shell and agent runtimes` |
-| 4/6 | T034–T042 | `feat(terminal): add explicit recovery experience` |
-| 5/6 | T053–T063 | `feat(terminal): preserve runtimes through updates` |
-| 6/6 | T064–T067 | `docs(terminal): verify persistent runtime rollout` |
+| 1/9 | T009–T009C | `build(terminal): ship verified Zellij runtime` |
+| 2/9 | T010–T016, T018–T019 | `feat(terminal): define runtime contracts and durable state` |
+| 3/9 | T017, T020–T024 | `feat(terminal): install supervised runtime services` |
+| 4/9 | updater portion of T025, T058, and T060 | `refactor(host): move updates behind a root service` |
+| 5/9 | privilege-removal portion of T025 | `security(host): remove unrestricted Matrix sudo` |
+| 6/9 | T026–T033, T043–T048 | `feat(terminal): migrate gateway and agent runtimes` |
+| 7/9 | T034–T039, T049–T057 | `feat(terminal): add recovery lifecycle APIs` |
+| 8/9 | T036, T040–T042, T044, T047 | `feat(terminal): add explicit recovery experience` |
+| 9/9 | T058–T067 excluding completed updater work | `feat(terminal): activate persistent runtimes` |
 
 Use `gt create`, `gt modify`, `gt restack`, and `gt submit --stack`. Never flatten
 the stack. If a layer approaches 3,000 additions or 50 files, split it again at
@@ -174,7 +180,7 @@ the test/host/gateway boundary before publication.
 
 ## MVP
 
-The minimum safe increment is Stack 1 only: reproducible proof that the selected
-architecture is viable. It deliberately delivers no production behavior. The
-minimum user-visible feature is Stacks 1–4; delete, privilege reduction, updater,
-and migration remain release blockers even if reviewed in later layers.
+The completed spike stack plus production Stack 1 prove and ship the selected
+binary without changing runtime ownership. There is no partial production MVP:
+Stacks 2–8 remain dormant or independently safe infrastructure, and only Stack
+9 activates supervised terminal ownership after every release blocker passes.

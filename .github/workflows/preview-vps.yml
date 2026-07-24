@@ -170,10 +170,10 @@ jobs:
             --target x86_64-unknown-linux-musl
           rustup default 1.92.0
 
-      - name: Build patched Zellij for terminal-runtime spike
+      - name: Build verified production Zellij
         run: |
           set -euo pipefail
-          ./scripts/spikes/terminal-runtime/build-zellij.sh "$RUNNER_TEMP/matrix-zellij"
+          ./scripts/terminal-runtime/zellij/build.sh "$RUNNER_TEMP/matrix-zellij"
 
       - uses: erlef/setup-beam@v1
         with:
@@ -210,8 +210,7 @@ jobs:
           HOST_BUNDLE_CHANNEL: none
           MATRIX_BUILD_SHA: ${{ needs.gate.outputs.head_sha }}
           MATRIX_BUILD_REF: ${{ needs.gate.outputs.head_ref }}
-          HOST_BUNDLE_ZELLIJ_BINARY: ${{ runner.temp }}/matrix-zellij/zellij
-          HOST_BUNDLE_ZELLIJ_BUILD_METADATA: ${{ runner.temp }}/matrix-zellij/build.json
+          HOST_BUNDLE_ZELLIJ_BUILD_DIR: ${{ runner.temp }}/matrix-zellij
         run: |
           set -euo pipefail
           ./scripts/build-host-bundle.sh

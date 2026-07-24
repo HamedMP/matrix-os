@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -68,8 +77,8 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/runtime/node/bin/gh"');
     expect(script).toContain('install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"');
     expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway"');
-    expect(script).toContain('tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij');
-    expect(script).toContain('test -x "$STAGE_DIR/bin/zellij"');
+    expect(script).toContain('scripts/terminal-runtime/zellij/verify-build.sh');
+    expect(script).toContain('install -m 0755 "$ZELLIJ_BUILD_DIR/zellij" "$STAGE_DIR/bin/zellij"');
     expect(script).toContain('rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e" "$STAGE_DIR/app/shell/node_modules"');
     expect(script).toContain('find "$STAGE_DIR/app/home/apps" -type d -name node_modules -prune -exec rm -rf {} +');
     expect(script).toContain('matrix-update');
@@ -77,6 +86,127 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-messaging-health');
     expect(script).toContain('"$STAGE_DIR/runtime/node/bin/gh"');
     expect(script).toContain('bin app runtime systemd release.json');
+  });
+
+  it('ships only the reproducible production Zellij candidate', () => {
+    const root = process.cwd();
+    const script = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
+    const builder = readFileSync(
+      join(root, 'scripts/terminal-runtime/zellij/build.sh'),
+      'utf8',
+    );
+    const verifier = readFileSync(
+      join(root, 'scripts/terminal-runtime/zellij/verify-build.sh'),
+      'utf8',
+    );
+    const buildRecord = JSON.parse(
+      readFileSync(
+        join(root, 'scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json'),
+        'utf8',
+      ),
+    ) as Record<string, unknown>;
+    const previewWorkflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+    const releaseWorkflow = readFileSync(
+      join(root, '.github/workflows/host-bundle-release.yml'),
+      'utf8',
+    );
+
+    expect(buildRecord).toMatchObject({
+      buildId: 'v0.44.3-matrix.1',
+      sourceVersion: '0.44.3',
+      patchSha256: 'bee3d6c227402258faee58c9f57ed282a368ab39fd38e619b39d4bd5ec8f2571',
+      binarySha256: '534455dc62c8e3753918d012547d10159ee07929f570a5873a754957502a49c4',
+    });
+    expect(builder).toContain('held_resurrected_pane_preserves_viewport_and_history_across_reflow');
+    expect(builder).toContain('serialized_pane_content_is_bounded_including_the_viewport');
+    expect(builder).toContain('serialized_pane_restores_bounded_viewport_offset');
+    expect(builder).toContain('command_panes_serialize_initial_contents_for_gated_resurrection');
+    expect(verifier).toContain('zellij_production_build_metadata_mismatch');
+    expect(verifier).toContain('zellij_production_binary_digest_mismatch');
+    expect(script).toContain('scripts/terminal-runtime/zellij/build.sh');
+    expect(script).toContain('scripts/terminal-runtime/zellij/verify-build.sh');
+    expect(script).toContain('HOST_BUNDLE_ZELLIJ_BUILD_DIR');
+    expect(script).not.toContain('HOST_BUNDLE_ZELLIJ_BINARY');
+    expect(script).not.toContain('HOST_BUNDLE_ZELLIJ_VERSION');
+    expect(script).not.toContain('zellij-org/zellij/releases/download');
+    expect(previewWorkflow).toContain('./scripts/terminal-runtime/zellij/build.sh');
+    expect(releaseWorkflow).toContain('./scripts/terminal-runtime/zellij/build.sh');
+    expect(previewWorkflow).toContain('runs-on: ubuntu-24.04');
+    expect(releaseWorkflow).toContain('runs-on: ubuntu-24.04');
+    expect(previewWorkflow).toContain('HOST_BUNDLE_ZELLIJ_BUILD_DIR:');
+    expect(releaseWorkflow).toContain('HOST_BUNDLE_ZELLIJ_BUILD_DIR:');
+  });
+
+  it('fails closed when a supplied production Zellij build is missing or mismatched', () => {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-zellij-production-'));
+    const verifier = join(root, 'scripts/terminal-runtime/zellij/verify-build.sh');
+
+    try {
+      const missing = spawnSync('bash', [verifier, tempDir], {
+        cwd: root,
+        encoding: 'utf8',
+      });
+      expect(missing.status).not.toBe(0);
+      expect(missing.stderr).toContain('zellij_production_build_missing');
+
+      writeFileSync(join(tempDir, 'zellij'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      writeFileSync(
+        join(tempDir, 'build.json'),
+        readFileSync(
+          join(root, 'scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json'),
+          'utf8',
+        ),
+      );
+      writeFileSync(join(tempDir, 'build-id'), 'v0.44.3-matrix.1\n');
+      writeFileSync(
+        join(tempDir, 'zellij.sha256'),
+        '534455dc62c8e3753918d012547d10159ee07929f570a5873a754957502a49c4\n',
+      );
+
+      const mismatched = spawnSync('bash', [verifier, tempDir], {
+        cwd: root,
+        encoding: 'utf8',
+      });
+      expect(mismatched.status).not.toBe(0);
+      expect(mismatched.stderr).toContain('zellij_production_binary_digest_mismatch');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects symlinked production Zellij build inputs before verification', () => {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-zellij-production-symlink-'));
+    const externalDir = mkdtempSync(join(tmpdir(), 'matrix-zellij-production-external-'));
+    const verifier = join(root, 'scripts/terminal-runtime/zellij/verify-build.sh');
+
+    try {
+      writeFileSync(join(externalDir, 'zellij'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      symlinkSync(join(externalDir, 'zellij'), join(tempDir, 'zellij'));
+      writeFileSync(
+        join(tempDir, 'build.json'),
+        readFileSync(
+          join(root, 'scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json'),
+          'utf8',
+        ),
+      );
+      writeFileSync(join(tempDir, 'build-id'), 'v0.44.3-matrix.1\n');
+      writeFileSync(
+        join(tempDir, 'zellij.sha256'),
+        '534455dc62c8e3753918d012547d10159ee07929f570a5873a754957502a49c4\n',
+      );
+
+      const result = spawnSync('bash', [verifier, tempDir], {
+        cwd: root,
+        encoding: 'utf8',
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('zellij_production_build_unsafe');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+      rmSync(externalDir, { recursive: true, force: true });
+    }
   });
 
   it('host bundle defers heavy optional tools to selectable boot-time packs', () => {
