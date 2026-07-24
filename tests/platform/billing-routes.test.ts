@@ -2,11 +2,15 @@ import { Hono } from 'hono';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import {
   getBillingEntitlement,
+  getBillingSubscription,
   getBillingCustomerByClerkUserId,
+  getLatestCheckoutAttempt,
+  insertCheckoutAttempt,
   insertBillingWebhookEvent,
   upsertBillingOverride,
   upsertBillingCustomer,
   upsertBillingEntitlement,
+  upsertBillingSubscription,
   type PlatformDB,
 } from '../../packages/platform/src/db.js';
 import {
@@ -24,10 +28,6 @@ const env = {
   STRIPE_PRICE_MATRIX_BUILDER_ANNUAL: 'price_builder_annual',
   STRIPE_PRICE_MATRIX_MAX_MONTHLY: 'price_max_monthly',
   STRIPE_PRICE_MATRIX_MAX_ANNUAL: 'price_max_annual',
-  STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY: 'price_extra_runtime_monthly',
-  STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL: 'price_extra_runtime_annual',
-  STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_MONTHLY: 'bpc_extra_runtime_monthly',
-  STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_ANNUAL: 'bpc_extra_runtime_annual',
   STRIPE_WEBHOOK_SECRET: 'whsec_test',
 };
 
@@ -72,12 +72,18 @@ describe('platform billing routes', () => {
     const res = await app.request('/billing/checkout', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ planSlug: 'matrix_builder', interval: 'annual', regionSlug: 'region_nbg1' }),
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'annual',
+        regionSlug: 'region_nbg1',
+        runtimeSlot: 'studio',
+      }),
     });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ url: 'https://checkout.stripe.test/session' });
     expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: expect.any(String),
       clerkUserId: 'user_123',
       customerId: undefined,
       priceId: 'price_builder_annual',
@@ -85,6 +91,7 @@ describe('platform billing routes', () => {
       automaticTax: true,
       allowPromotionCodes: true,
       regionSlug: 'region_nbg1',
+      runtimeSlot: 'studio',
       successUrl: 'https://app.matrix-os.com/?billing=success&checkout=success',
       cancelUrl: 'https://app.matrix-os.com/?billing=canceled',
     }));
@@ -287,11 +294,13 @@ describe('platform billing routes', () => {
     }));
   });
 
-  it('lets Stripe create customers during checkout when no customer link exists yet', async () => {
+  it('claims one active checkout per runtime slot when concurrent requests have no customer yet', async () => {
     const checkoutCustomerIds: Array<string | undefined> = [];
-    vi.mocked(stripe.createCheckoutSession).mockImplementation(async ({ customerId }) => {
+    const idempotencyKeys: string[] = [];
+    vi.mocked(stripe.createCheckoutSession).mockImplementation(async ({ customerId, idempotencyKey }) => {
       checkoutCustomerIds.push(customerId);
-      return { url: 'https://checkout.stripe.test/session' };
+      idempotencyKeys.push(idempotencyKey);
+      return { url: 'https://checkout.stripe.test/session', id: 'cs_concurrent' };
     });
     const app = createApp();
 
@@ -308,10 +317,173 @@ describe('platform billing routes', () => {
       }),
     ]);
 
-    expect(first.status).toBe(200);
-    expect(second.status).toBe(200);
+    expect([first.status, second.status].sort()).toEqual([200, 200]);
     expect(stripe.createCheckoutSession).toHaveBeenCalledTimes(2);
     expect(checkoutCustomerIds).toEqual([undefined, undefined]);
+    expect(new Set(idempotencyKeys).size).toBe(1);
+  });
+
+  it('reuses the stored checkout URL for a repeated slot and selection', async () => {
+    const app = createApp();
+    const request = () => app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'studio',
+      }),
+    });
+
+    const first = await request();
+    const repeated = await request();
+
+    expect(first.status).toBe(200);
+    expect(repeated.status).toBe(200);
+    await expect(repeated.json()).resolves.toEqual({ url: 'https://checkout.stripe.test/session' });
+    expect(stripe.createCheckoutSession).toHaveBeenCalledOnce();
+  });
+
+  it('retries an ambiguous Checkout failure with the same persisted idempotency key', async () => {
+    const idempotencyKeys: string[] = [];
+    vi.mocked(stripe.createCheckoutSession)
+      .mockImplementationOnce(async (input) => {
+        idempotencyKeys.push(input.idempotencyKey);
+        throw new Error('stripe response timeout');
+      })
+      .mockImplementationOnce(async (input) => {
+        idempotencyKeys.push(input.idempotencyKey);
+        return { url: 'https://checkout.stripe.test/recovered', id: 'cs_recovered' };
+      });
+    const app = createApp();
+    const request = () => app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'studio',
+      }),
+    });
+
+    const ambiguous = await request();
+    const recovered = await request();
+
+    expect(ambiguous.status).toBe(503);
+    expect(recovered.status).toBe(200);
+    expect(idempotencyKeys).toHaveLength(2);
+    expect(new Set(idempotencyKeys).size).toBe(1);
+    await expect(getLatestCheckoutAttempt(db, 'user_123')).resolves.toMatchObject({
+      id: idempotencyKeys[0],
+      runtimeSlot: 'studio',
+      stripeSessionId: 'cs_recovered',
+      status: 'open',
+    });
+  });
+
+  it('does not replace a payable open Checkout with a different selection', async () => {
+    const app = createApp();
+    const first = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'studio',
+      }),
+    });
+    const replacement = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_max',
+        interval: 'annual',
+        regionSlug: 'region_nbg1',
+        runtimeSlot: 'studio',
+      }),
+    });
+
+    expect(first.status).toBe(200);
+    expect(replacement.status).toBe(409);
+    await expect(replacement.json()).resolves.toEqual({
+      error: 'Checkout is already starting',
+      code: 'checkout_pending',
+    });
+    expect(stripe.createCheckoutSession).toHaveBeenCalledOnce();
+  });
+
+  it('does not create another subscription for an already entitled runtime slot', async () => {
+    await upsertBillingSubscription(db, {
+      stripeSubscriptionId: 'sub_studio',
+      stripeCustomerId: 'cus_123',
+      clerkUserId: 'user_123',
+      runtimeSlot: 'studio',
+      planSlug: 'matrix_builder',
+      stripePriceId: 'price_builder_monthly',
+      billingInterval: 'monthly',
+      status: 'active',
+      currentPeriodEnd: '2026-06-30T00:00:00.000Z',
+      gracePeriodEndsAt: null,
+      latestEventCreatedAt: '2026-05-29T00:00:00.000Z',
+      latestEventId: 'evt_studio',
+      updatedAt: '2026-05-29T00:00:01.000Z',
+    });
+    const app = createApp();
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_max',
+        interval: 'annual',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'studio',
+      }),
+    });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({
+      error: 'Computer already has billing',
+      code: 'runtime_already_subscribed',
+    });
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it('does not create another Checkout while a paid slot is awaiting its subscription webhook', async () => {
+    await insertCheckoutAttempt(db, {
+      id: 'attempt_paid_studio',
+      clerkUserId: 'user_123',
+      stripeSessionId: 'cs_paid_studio',
+      runtimeSlot: 'studio',
+      planSlug: 'matrix_builder',
+      billingInterval: 'monthly',
+      regionSlug: 'region_fsn1',
+      createdAt: '2026-05-29T00:00:00.000Z',
+      status: 'paid',
+      resolvedAt: '2026-05-29T00:01:00.000Z',
+    });
+    const app = createApp();
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+        runtimeSlot: 'studio',
+      }),
+    });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({
+      error: 'Checkout is already starting',
+      code: 'checkout_pending',
+    });
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
   });
 
   it('terminates unknown billing paths inside the billing namespace', async () => {
@@ -439,144 +611,24 @@ describe('platform billing routes', () => {
     });
   });
 
-  it('creates a focused add-computer portal flow from server-owned subscription and interval data', async () => {
-    await upsertBillingCustomer(db, {
-      clerkUserId: 'user_123',
-      stripeCustomerId: 'cus_123',
-      createdAt: '2026-05-30T00:00:00.000Z',
-      updatedAt: '2026-05-30T00:00:00.000Z',
-    });
-    await upsertBillingEntitlement(db, {
-      clerkUserId: 'user_123',
-      source: 'stripe',
-      stripeSubscriptionId: 'sub_123',
-      stripePriceId: 'price_builder_annual',
-      planSlug: 'matrix_builder',
-      status: 'active',
-      maxRuntimeSlots: 1,
-      includedRuntimeSlots: 1,
-      addonRuntimeSlots: 0,
-      defaultServerType: 'cpx32',
-      allowedServerTypes: ['cpx22', 'cpx32'],
-      gracePeriodEndsAt: null,
-      effectiveFrom: '2026-05-30T00:00:00.000Z',
-      effectiveUntil: null,
-      updatedAt: '2026-05-30T00:00:00.000Z',
-    });
-    const app = createApp();
-
-    const response = await app.request('/billing/portal', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ intent: 'add_computer', returnPath: '/runtime?new=1' }),
-    });
-
-    expect(response.status).toBe(200);
-    expect(stripe.createPortalSession).toHaveBeenCalledWith({
-      customerId: 'cus_123',
-      returnUrl: 'https://app.matrix-os.com/runtime?new=1',
-      flow: {
-        type: 'subscription_update',
-        subscriptionId: 'sub_123',
-        priceId: 'price_extra_runtime_annual',
-        interval: 'annual',
-        configurationId: 'bpc_extra_runtime_annual',
-        afterCompletionReturnUrl: 'https://app.matrix-os.com/runtime?new=1',
-      },
-    });
-  });
-
-  it('fails closed when the focused portal configuration for the matching interval is missing', async () => {
-    await upsertBillingCustomer(db, {
-      clerkUserId: 'user_123', stripeCustomerId: 'cus_123',
-      createdAt: '2026-05-30T00:00:00.000Z', updatedAt: '2026-05-30T00:00:00.000Z',
-    });
-    await upsertBillingEntitlement(db, {
-      clerkUserId: 'user_123', source: 'stripe', stripeSubscriptionId: 'sub_123',
-      stripePriceId: 'price_builder_annual', planSlug: 'matrix_builder', status: 'active',
-      maxRuntimeSlots: 1, includedRuntimeSlots: 1, addonRuntimeSlots: 0,
-      defaultServerType: 'cpx32', allowedServerTypes: ['cpx32'], gracePeriodEndsAt: null,
-      effectiveFrom: '2026-05-30T00:00:00.000Z', effectiveUntil: null,
-      updatedAt: '2026-05-30T00:00:00.000Z',
-    });
-    const { STRIPE_PORTAL_CONFIGURATION_EXTRA_RUNTIME_ANNUAL: _omitted, ...missingConfigurationEnv } = env;
-    const app = createApp('user_123', missingConfigurationEnv);
-
-    const response = await app.request('/billing/portal', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ intent: 'add_computer', returnPath: '/runtime?new=1' }),
-    });
-
-    expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toEqual({ error: 'Billing unavailable', code: 'billing_unavailable' });
-    expect(stripe.createPortalSession).not.toHaveBeenCalled();
-  });
-
-  it('rejects invalid portal bodies and unsafe return paths without calling Stripe', async () => {
+  it('rejects the removed add-computer portal intent and unsafe return paths without calling Stripe', async () => {
     await upsertBillingCustomer(db, {
       clerkUserId: 'user_123', stripeCustomerId: 'cus_123',
       createdAt: '2026-05-30T00:00:00.000Z', updatedAt: '2026-05-30T00:00:00.000Z',
     });
     const app = createApp();
 
-    const extra = await app.request('/billing/portal', {
+    const removedIntent = await app.request('/billing/portal', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ intent: 'manage', unexpected: true }),
+      body: JSON.stringify({ intent: 'add_computer', returnPath: '/runtime?new=1' }),
     });
     const unsafe = await app.request('/billing/portal', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ intent: 'add_computer', returnPath: 'https://evil.example' }),
+      body: JSON.stringify({ intent: 'manage', returnPath: 'https://evil.example' }),
     });
 
-    expect(extra.status).toBe(400);
+    expect(removedIntent.status).toBe(400);
     expect(unsafe.status).toBe(400);
-    expect(stripe.createPortalSession).not.toHaveBeenCalled();
-  });
-
-  it('does not expose Stripe add-computer flows for internally managed accounts', async () => {
-    await upsertBillingCustomer(db, {
-      clerkUserId: 'user_123', stripeCustomerId: 'cus_123',
-      createdAt: '2026-05-30T00:00:00.000Z', updatedAt: '2026-05-30T00:00:00.000Z',
-    });
-    await upsertBillingOverride(db, {
-      id: 'override_internal', clerkUserId: 'user_123', planSlug: 'internal', status: 'active',
-      maxRuntimeSlots: 1, includedRuntimeSlots: 1, addonRuntimeSlots: 0,
-      defaultServerType: 'cpx52', allowedServerTypes: ['cpx52'], reason: 'managed',
-      createdBy: 'test', expiresAt: null, revokedAt: null,
-      createdAt: '2026-05-30T00:00:00.000Z',
-    });
-    const app = createApp();
-
-    const response = await app.request('/billing/portal', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ intent: 'add_computer', returnPath: '/runtime?new=1' }),
-    });
-
-    expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toEqual({
-      error: 'Account managed internally',
-      code: 'managed_account',
-    });
-    expect(stripe.createPortalSession).not.toHaveBeenCalled();
-  });
-
-  it('identifies internally managed add-computer capacity without requiring a Stripe customer', async () => {
-    await upsertBillingOverride(db, {
-      id: 'override_internal', clerkUserId: 'user_123', planSlug: 'internal', status: 'active',
-      maxRuntimeSlots: 1, includedRuntimeSlots: 1, addonRuntimeSlots: 0,
-      defaultServerType: 'cpx52', allowedServerTypes: ['cpx52'], reason: 'managed',
-      createdBy: 'test', expiresAt: null, revokedAt: null,
-      createdAt: '2026-05-30T00:00:00.000Z',
-    });
-    const app = createApp();
-
-    const response = await app.request('/billing/portal', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ intent: 'add_computer', returnPath: '/runtime?new=1' }),
-    });
-
-    expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toMatchObject({ code: 'managed_account' });
     expect(stripe.createPortalSession).not.toHaveBeenCalled();
   });
 
@@ -694,10 +746,61 @@ describe('platform billing routes', () => {
     expect(await duplicate.json()).toEqual({ received: true, duplicate: true });
     await expect(getBillingEntitlement(db, 'user_123')).resolves.toMatchObject({
       planSlug: 'matrix_max',
-      maxRuntimeSlots: 4,
+      maxRuntimeSlots: 1,
       defaultServerType: 'cpx52',
       allowedServerTypes: ['cpx22', 'cpx32', 'cpx52'],
     });
+    await expect(getBillingSubscription(db, 'user_123', 'studio', '2026-05-30T00:00:00.000Z')).resolves.toMatchObject({
+      stripeSubscriptionId: 'sub_123',
+      runtimeSlot: 'studio',
+      planSlug: 'matrix_max',
+      status: 'active',
+    });
+  });
+
+  it('keeps subscriptions independent when one additional computer is canceled', async () => {
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(subscriptionEvent('evt_primary', {
+        subscriptionId: 'sub_primary',
+        runtimeSlot: 'primary',
+        priceId: 'price_starter_monthly',
+      }))
+      .mockReturnValueOnce(subscriptionEvent('evt_studio', {
+        subscriptionId: 'sub_studio',
+        runtimeSlot: 'studio',
+        priceId: 'price_max_monthly',
+      }))
+      .mockReturnValueOnce(subscriptionEvent('evt_studio_canceled', {
+        subscriptionId: 'sub_studio',
+        runtimeSlot: 'studio',
+        priceId: 'price_max_monthly',
+        status: 'canceled',
+        created: 1_779_753_700,
+        currentPeriodEnd: 1_700_000_000,
+      }));
+    const webhookApp = createApp(null);
+    for (let index = 0; index < 3; index += 1) {
+      const response = await webhookApp.request('/billing/webhooks/stripe', {
+        method: 'POST',
+        headers: { 'stripe-signature': 'valid' },
+        body: '{}',
+      });
+      expect(response.status).toBe(200);
+    }
+
+    const statusApp = createApp();
+    const primary = await statusApp.request('/billing/status?runtimeSlot=primary');
+    const studio = await statusApp.request('/billing/status?runtimeSlot=studio');
+
+    await expect(primary.json()).resolves.toMatchObject({
+      entitlement: { stripeSubscriptionId: 'sub_primary', planSlug: 'matrix_starter', status: 'active' },
+      access: { runtimeProxyAllowed: true },
+    });
+    await expect(studio.json()).resolves.toMatchObject({
+      entitlement: { stripeSubscriptionId: 'sub_studio', planSlug: 'matrix_max', status: 'canceled' },
+      access: { runtimeProxyAllowed: false },
+    });
+    await expect(getBillingSubscription(db, 'user_123', 'primary', '2026-05-30T00:00:00.000Z')).resolves.toMatchObject({ status: 'active' });
   });
 
   it('captures subscription revenue metrics from Stripe webhook projections', async () => {
@@ -719,9 +822,9 @@ describe('platform billing routes', () => {
         subscription_status: 'active',
         billing_interval: 'monthly',
         price_usd: 49,
-        included_runtime_slots: 3,
-        addon_runtime_slots: 1,
-        max_runtime_slots: 4,
+        included_runtime_slots: 1,
+        addon_runtime_slots: 0,
+        max_runtime_slots: 1,
       },
     });
     expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('sub_123');
@@ -857,7 +960,7 @@ describe('platform billing routes', () => {
     expect(await retry.json()).toEqual({ received: true, processed: true });
     await expect(getBillingEntitlement(db, 'user_123')).resolves.toMatchObject({
       planSlug: 'matrix_max',
-      maxRuntimeSlots: 4,
+      maxRuntimeSlots: 1,
     });
   });
 
@@ -981,24 +1084,32 @@ describe('platform billing routes', () => {
   });
 });
 
-function subscriptionEvent(id: string): StripeWebhookEvent {
+function subscriptionEvent(id: string, overrides: {
+  subscriptionId?: string;
+  runtimeSlot?: string;
+  priceId?: string;
+  status?: string;
+  created?: number;
+  currentPeriodEnd?: number;
+} = {}): StripeWebhookEvent {
   return {
     id,
     type: 'customer.subscription.updated',
-    created: 1_779_753_600,
+    created: overrides.created ?? 1_779_753_600,
     data: {
       object: {
-        id: 'sub_123',
+        id: overrides.subscriptionId ?? 'sub_123',
         customer: 'cus_123',
-        status: 'active',
-        current_period_end: 1_782_432_000,
+        status: overrides.status ?? 'active',
+        current_period_end: overrides.currentPeriodEnd ?? 1_782_432_000,
         metadata: {
           clerk_user_id: 'user_123',
           matrix_region_slug: 'region_fsn1',
+          matrix_runtime_slot: overrides.runtimeSlot ?? 'studio',
         },
         items: {
           data: [
-            { price: { id: 'price_max_monthly' }, quantity: 1 },
+            { price: { id: overrides.priceId ?? 'price_max_monthly' }, quantity: 1 },
             { price: { id: 'price_extra_runtime_monthly' }, quantity: 1 },
           ],
         },

@@ -14,6 +14,14 @@ const clerkState = vi.hoisted(() => ({
 const navigationState = vi.hoisted(() => ({
   replace: vi.fn(),
 }));
+const addComputerRender = vi.hoisted(() => vi.fn());
+
+vi.mock("@/components/runtime/RuntimeManager", () => ({
+  AddComputerOnboarding: () => {
+    addComputerRender();
+    return <div data-testid="add-computer-onboarding">Shared add-computer onboarding</div>;
+  },
+}));
 
 function installClerkMock() {
   vi.doMock("@clerk/nextjs", () => ({
@@ -100,6 +108,7 @@ describe("BillingGate", () => {
     window.history.replaceState({}, "", "/");
     window.sessionStorage.clear();
     navigationState.replace.mockReset();
+    addComputerRender.mockReset();
     vi.restoreAllMocks();
   });
 
@@ -122,6 +131,33 @@ describe("BillingGate", () => {
     expect(screen.getByText("Matrix workspace")).toBeTruthy();
     expect(screen.queryByText("Opening Matrix OS sign in")).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps an active subscriber in shared onboarding for an add-computer billing handoff", async () => {
+    vi.unstubAllEnvs();
+    window.history.replaceState({}, "", "/?billing=setup&handoff=add-computer");
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.activePlan = null;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ access: { runtimeProxyAllowed: true, reason: "active" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.resetModules();
+
+    const { BillingGate } = await loadBillingGate();
+
+    render(
+      <BillingGate platformSessionActive>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByTestId("add-computer-onboarding")).toBeTruthy();
+    expect(screen.queryByText("Matrix workspace")).toBeNull();
+    expect(addComputerRender).toHaveBeenCalledTimes(1);
   });
 
   it("renders the shell for app-session billing access without Clerk client auth", async () => {

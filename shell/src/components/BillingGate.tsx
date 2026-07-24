@@ -20,6 +20,7 @@ import {
   isSignupBillingHandoffSearch,
   type SignupBillingHandoffLoadingSurface,
 } from "@/lib/signup-billing-handoff";
+import { AddComputerOnboarding } from "@/components/runtime/RuntimeManager";
 import { Settings } from "./Settings";
 
 const e2eBillingBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
@@ -273,11 +274,6 @@ export function BillingGate({
   handoffStartedAt?: number;
 }) {
   const [handoffStartedAt] = useState(() => initialHandoffStartedAt ?? Date.now());
-
-  if (platformSessionActive) {
-    return <>{children}</>;
-  }
-
   // useSearchParams() (read inside BillingGateInner) requires a <Suspense> boundary so the page
   // is not forced into full client-side rendering; the fallback mirrors the gate's own loading
   // state so there is no visible change while search params resolve.
@@ -289,10 +285,41 @@ export function BillingGate({
           : <BillingStatusLoading />
       }
     >
-      <BillingGateInner loadingSurface={loadingSurface} handoffStartedAt={handoffStartedAt}>
+      <BillingGateRoute
+        platformSessionActive={platformSessionActive}
+        loadingSurface={loadingSurface}
+        handoffStartedAt={handoffStartedAt}
+      >
         {children}
-      </BillingGateInner>
+      </BillingGateRoute>
     </Suspense>
+  );
+}
+
+function BillingGateRoute({
+  children,
+  platformSessionActive,
+  loadingSurface,
+  handoffStartedAt,
+}: {
+  children: ReactNode;
+  platformSessionActive: boolean;
+  loadingSurface: SignupBillingHandoffLoadingSurface;
+  handoffStartedAt: number;
+}) {
+  const searchParams = useSearchParams();
+  const isAddComputerHandoff = searchParams.get("handoff") === "add-computer";
+
+  if (isAddComputerHandoff) {
+    return <AddComputerOnboarding />;
+  }
+  if (platformSessionActive) {
+    return <>{children}</>;
+  }
+  return (
+    <BillingGateInner loadingSurface={loadingSurface} handoffStartedAt={handoffStartedAt}>
+      {children}
+    </BillingGateInner>
   );
 }
 

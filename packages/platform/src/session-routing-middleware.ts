@@ -100,7 +100,11 @@ import {
 } from './container-endpoint.js';
 import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
 
-export function shouldServeRuntimeManager(input: {
+export function isPlatformRuntimeShellPath(path: string): boolean {
+  return path === '/runtime' || path === '/onboarding/computer';
+}
+
+export function shouldServePlatformRuntimeShell(input: {
   isAppDomain: boolean;
   path: string;
   userId: string;
@@ -109,7 +113,7 @@ export function shouldServeRuntimeManager(input: {
   return Boolean(
     input.isAppDomain &&
     input.userId &&
-    input.path === '/runtime' &&
+    isPlatformRuntimeShellPath(input.path) &&
     input.identitySource !== 'mobile-session' &&
     input.identitySource !== 'static-route'
   );
@@ -136,6 +140,8 @@ interface CreateSessionRoutingMiddlewareOpts {
     db: PlatformDB,
     clerkUserId: string,
     env: NodeJS.ProcessEnv,
+    runtimeSlot?: string,
+    provisioningClass?: string,
   ) => Promise<EntitlementAccessDecision>;
   getGatewayUrlForHandle: (handle: string) => string;
   logRouteError: (context: string, err: unknown) => void;
@@ -200,10 +206,11 @@ function applyAuthPageHeaders(
   );
 }
 
-function runtimeShellUnavailableResponse(
+function platformRuntimeShellUnavailableResponse(
   c: Context,
   applyNoStoreHeaders: (c: Context) => void,
 ): Response {
+  const retryPath = isPlatformRuntimeShellPath(c.req.path) ? c.req.path : '/runtime';
   applyNoStoreHeaders(c);
   c.header('Retry-After', '5');
   c.header('X-Frame-Options', 'DENY');
@@ -230,8 +237,8 @@ function runtimeShellUnavailableResponse(
 <body>
   <main>
     <h1>Matrix OS shell unavailable</h1>
-    <p>The computer manager could not be loaded. Please try again in a moment.</p>
-    <a href="/runtime">Try again</a>
+    <p>The computer setup shell could not be loaded. Please try again in a moment.</p>
+    <a href="${retryPath}">Try again</a>
   </main>
 </body>
 </html>`, 503);
@@ -304,8 +311,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       });
     } catch (err: unknown) {
       logRouteError('app-domain auth-shell proxy', err);
-      if (c.req.path === '/runtime') {
-        return runtimeShellUnavailableResponse(c, applyNoStoreHeaders);
+      if (isPlatformRuntimeShellPath(c.req.path)) {
+        return platformRuntimeShellUnavailableResponse(c, applyNoStoreHeaders);
       }
       if (proxyOpts.assetRequest) {
         applyNoStoreHeaders(c);
@@ -528,7 +535,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       isAppDomain,
       method: c.req.method,
       path,
-    }) && (!legacyContainerRoutingEnabled || path === '/runtime' || signupBillingHandoff);
+    }) && (
+      !legacyContainerRoutingEnabled ||
+      isPlatformRuntimeShellPath(path) ||
+      signupBillingHandoff
+    );
     const publishableKey = appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
     const authMode = path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
     const requestedRouteHandle = !explicitVmRoute && isAppDomain
@@ -652,7 +663,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         return c.text('Matrix OS computer unavailable', 404);
       }
-      const entitlement = await getRuntimeEntitlementDecisionForUser(db, machine.clerkUserId, appEnv);
+      const entitlement = await getRuntimeEntitlementDecisionForUser(
+        db,
+        machine.clerkUserId,
+        appEnv,
+        machine.runtimeSlot,
+        machine.provisioningClass,
+      );
       if (
         !entitlement.runtimeProxyAllowed &&
         !shouldProxyShellForBillingGate({
@@ -766,13 +783,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       });
     }
 
-    const serveRuntimeManager = shouldServeRuntimeManager({
+    const servePlatformRuntimeShell = shouldServePlatformRuntimeShell({
       isAppDomain,
       path,
       userId: identity.userId,
       identitySource: identity.source,
     });
-    if (serveRuntimeManager) {
+    if (servePlatformRuntimeShell) {
       return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
     }
 
@@ -794,9 +811,21 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       runtimeSlot = runningMachine.runtimeSlot;
     }
     const entitlement = runningMachine
-      ? await getRuntimeEntitlementDecisionForUser(db, runningMachine.clerkUserId, appEnv)
+      ? await getRuntimeEntitlementDecisionForUser(
+        db,
+        runningMachine.clerkUserId,
+        appEnv,
+        runningMachine.runtimeSlot,
+        runningMachine.provisioningClass,
+      )
       : requestedActiveMachine
-        ? await getRuntimeEntitlementDecisionForUser(db, requestedActiveMachine.clerkUserId, appEnv)
+        ? await getRuntimeEntitlementDecisionForUser(
+          db,
+          requestedActiveMachine.clerkUserId,
+          appEnv,
+          requestedActiveMachine.runtimeSlot,
+          requestedActiveMachine.provisioningClass,
+        )
         : getRuntimeEntitlementDecision(appEnv);
     if (runningMachine) {
       const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);

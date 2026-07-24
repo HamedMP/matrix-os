@@ -1,6 +1,9 @@
 import {
   EmailCodeSignInError,
   MAX_VERIFICATION_CODE_INPUT_LENGTH,
+  PasswordUnavailableError,
+  signInWithPassword,
+  supportsPassword,
   describeClerkError,
   describeSignInFailure,
   findEmailCodeFactor,
@@ -135,6 +138,106 @@ describe("MAX_VERIFICATION_CODE_INPUT_LENGTH", () => {
   it("still admits a code pasted with its separating space", () => {
     expect("123 456".length).toBe(MAX_VERIFICATION_CODE_INPUT_LENGTH);
     expect(isValidVerificationCode("123 456")).toBe(true);
+  });
+});
+
+describe("supportsPassword", () => {
+  it("is true when Clerk lists password for the account", () => {
+    // A real response for an account that has one, alongside the code options.
+    expect(
+      supportsPassword([
+        { strategy: "password" },
+        { strategy: "email_code", emailAddressId: "idn_1" },
+        { strategy: "reset_password_email_code", emailAddressId: "idn_1" },
+      ]),
+    ).toBe(true);
+  });
+
+  it("is false for an OAuth-only account, which Clerk gives no password factor", () => {
+    expect(
+      supportsPassword([
+        { strategy: "email_code", emailAddressId: "idn_1" },
+        { strategy: "oauth_google" },
+        { strategy: "reset_password_email_code", emailAddressId: "idn_1" },
+      ]),
+    ).toBe(false);
+  });
+
+  it("is false for a missing factor list", () => {
+    expect(supportsPassword(null)).toBe(false);
+    expect(supportsPassword(undefined)).toBe(false);
+  });
+});
+
+describe("signInWithPassword", () => {
+  function passwordSignIn(result: Record<string, unknown>) {
+    return { create: jest.fn(() => Promise.resolve(result)) };
+  }
+
+  it("signs in with one call and returns the session id", async () => {
+    const signIn = passwordSignIn({ status: "complete", createdSessionId: "sess_1" });
+
+    const sessionId = await signInWithPassword(signIn as never, "Neo@Matrix-OS.com", "hunter2");
+
+    expect(signIn.create).toHaveBeenCalledWith({
+      identifier: "neo@matrix-os.com",
+      strategy: "password",
+      password: "hunter2",
+    });
+    expect(sessionId).toBe("sess_1");
+  });
+
+  it("flags an account with no password so the caller can offer a code", async () => {
+    const signIn = {
+      create: jest.fn(() =>
+        Promise.reject({
+          errors: [
+            {
+              code: "strategy_for_user_invalid",
+              longMessage: "The verification strategy is not valid for this account",
+            },
+          ],
+        }),
+      ),
+    };
+
+    await expect(
+      signInWithPassword(signIn as never, "neo@matrix-os.com", "hunter2"),
+    ).rejects.toBeInstanceOf(PasswordUnavailableError);
+  });
+
+  it("surfaces the Clerk message for a wrong password", async () => {
+    const signIn = {
+      create: jest.fn(() =>
+        Promise.reject({
+          errors: [{ code: "form_password_incorrect", longMessage: "Password is incorrect." }],
+        }),
+      ),
+    };
+
+    await expect(
+      signInWithPassword(signIn as never, "neo@matrix-os.com", "wrong"),
+    ).rejects.toThrow("Password is incorrect.");
+  });
+
+  it.each([
+    ["   ", "hunter2"],
+    ["neo@matrix-os.com", ""],
+  ])("rejects incomplete credentials before calling Clerk (%s)", async (identifier, password) => {
+    const signIn = passwordSignIn({ status: "complete", createdSessionId: "sess_1" });
+
+    await expect(
+      signInWithPassword(signIn as never, identifier, password),
+    ).rejects.toBeInstanceOf(EmailCodeSignInError);
+    expect(signIn.create).not.toHaveBeenCalled();
+  });
+
+  it("reports an incomplete sign-in instead of silently succeeding", async () => {
+    const signIn = passwordSignIn({ status: "needs_second_factor" });
+
+    await expect(
+      signInWithPassword(signIn as never, "neo@matrix-os.com", "hunter2"),
+    ).rejects.toThrow(/could not be completed/i);
   });
 });
 

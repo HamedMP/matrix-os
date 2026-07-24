@@ -687,6 +687,19 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL}/vps/deploy"');
   });
 
+  it('preview VPS workflow waits for the exact healthy runtime before advertising it', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain('Waiting for ${HANDLE} to install ${VERSION}');
+    expect(workflow).toContain('select(.handle == $h and .runtimeSlot == $h and .status != "deleted")');
+    expect(workflow).toContain('.healthy == true and .runtimeVersion == $v');
+    expect(workflow).toContain('Preview ready: ${HANDLE} is healthy on ${VERSION}');
+    expect(workflow).toContain('Timed out waiting for ${HANDLE} to install ${VERSION}');
+    expect(workflow.indexOf('Preview ready: ${HANDLE} is healthy on ${VERSION}'))
+      .toBeLessThan(workflow.indexOf('name: Comment preview URL on PR'));
+  });
+
   it('preview VPS workflow uses the durable preview provision contract', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');

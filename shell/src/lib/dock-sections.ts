@@ -42,16 +42,12 @@ export interface LauncherAppGroups {
 }
 
 /**
- * Group + order the full app list into the launcher's Main / My Apps / Games
- * sections. Shared by the classic MissionControl grid (sections with
- * dividers) and the macOS Launchpad (one flattened grid) so both launchers
- * always show apps in the same order.
+ * Group the full app list into the launcher's Main / My Apps / Games sections
+ * without changing the order supplied by the app registry. Launcher positions
+ * are stable: opening, focusing, pinning, or dock-reordering an app must not
+ * move it. Shared by the classic MissionControl grid and macOS Launchpad.
  */
-export function groupLauncherApps(
-  apps: AppEntry[],
-  dockOrder: { systemApps?: string[]; userApps?: string[] } | undefined,
-  launchTimes: Record<string, number>,
-): LauncherAppGroups {
+export function groupLauncherApps(apps: AppEntry[]): LauncherAppGroups {
   const main: AppEntry[] = [];
   const gen: AppEntry[] = [];
   const games: AppEntry[] = [];
@@ -60,11 +56,7 @@ export function groupLauncherApps(
     else if (isGameApp(app.path)) games.push(app);
     else gen.push(app);
   }
-  return {
-    mainApps: applyOrder(main, dockOrder?.systemApps, launchTimes),
-    generatedApps: applyOrder(gen, dockOrder?.userApps, launchTimes),
-    gameApps: applyOrder(games, dockOrder?.userApps, launchTimes),
-  };
+  return { mainApps: main, generatedApps: gen, gameApps: games };
 }
 
 /**

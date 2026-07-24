@@ -72,12 +72,12 @@ describe("shell registry", () => {
       listSessions: vi.fn(async () => sessionNames),
       createSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
-      focusedPaneCwd: vi.fn(async () => {
+      focusedPaneRuntime: vi.fn(async () => {
         activeLookups += 1;
         peakLookups = Math.max(peakLookups, activeLookups);
         await lookupGate;
         activeLookups -= 1;
-        return null;
+        return { cwd: null, command: null, observed: true };
       }),
     };
     const registry = new ShellRegistry({
@@ -87,13 +87,13 @@ describe("shell registry", () => {
     });
 
     const listPromise = registry.list();
-    await vi.waitFor(() => expect(adapter.focusedPaneCwd).toHaveBeenCalledTimes(8));
+    await vi.waitFor(() => expect(adapter.focusedPaneRuntime).toHaveBeenCalledTimes(8));
     expect(peakLookups).toBe(8);
     releaseLookups();
 
     const sessions = await listPromise;
     expect(sessions.map((session) => session.name)).toEqual(sessionNames);
-    expect(adapter.focusedPaneCwd).toHaveBeenCalledTimes(sessionNames.length);
+    expect(adapter.focusedPaneRuntime).toHaveBeenCalledTimes(sessionNames.length);
   });
 
   it("adds gateway-owned project and Git context while preserving the session cwd", async () => {
@@ -105,7 +105,7 @@ describe("shell registry", () => {
       listSessions: vi.fn(async () => Array.from(live)),
       createSession: vi.fn(async ({ name }: { name: string }) => { live.add(name); }),
       deleteSession: vi.fn(async () => undefined),
-      focusedPaneCwd: vi.fn(async () => cwd),
+      focusedPaneRuntime: vi.fn(async () => ({ cwd, command: "zsh", observed: true })),
     };
     const gitContextResolver = {
       resolve: vi.fn(async () => ({
@@ -162,6 +162,11 @@ describe("shell registry", () => {
     ["claude --resume", "claude"],
     ["env FOO=bar codex --full-auto", "codex"],
     ["/usr/bin/env --ignore-environment FOO=bar codex --full-auto", "codex"],
+    [
+      "/opt/matrix/runtime/node/bin/node /opt/matrix/runtime/node/lib/node_modules/@openai/codex/bin/codex.js --full-auto",
+      "codex",
+    ],
+    ["/opt/matrix/runtime/node/bin/node /opt/matrix/runtime/node/bin/codex", "codex"],
     ["opencode .", "opencode"],
     ["pi", "pi"],
   ] as const)("infers %s as a recognized agent launch", async (cmd, expectedAgent) => {
@@ -181,6 +186,19 @@ describe("shell registry", () => {
 
   it("does not skip arbitrary leading command flags when inferring an agent", () => {
     expect(inferAgentFromCommand("--unsafe codex")).toBeUndefined();
+  });
+
+  it.each([
+    "claude-helper",
+    "my-codex-wrapper",
+    "bash -lc claude",
+    "env -S 'codex --full-auto'",
+    "node codex.js",
+    "node /tmp/my-codex-wrapper.js",
+    "node /tmp/lib/node_modules/@openai/codex/bin/not-codex.js",
+    "node /tmp/lib/node_modules/@openai/codex/bin/codex.js",
+  ])("does not infer agents from substrings or unsupported wrappers: %s", (command) => {
+    expect(inferAgentFromCommand(command)).toBeUndefined();
   });
 
   it("uses agent lifecycle evidence before a long-running outer CLI process", async () => {
@@ -263,6 +281,208 @@ describe("shell registry", () => {
       name: "calm-otter",
       visualStatus: "running",
     }]);
+  });
+
+  it("detects a manually launched Claude process in a plain terminal", async () => {
+    const root = await tempRoot();
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+      focusedPaneRuntime: vi.fn(async () => ({ cwd: root, command: "claude", observed: true })),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    await expect(registry.list()).resolves.toMatchObject([{
+      name: "main",
+      agent: "claude",
+      visualStatus: "running",
+    }]);
+  });
+
+  it("exposes matching Codex enrichment for the managed npm launcher", async () => {
+    const root = await tempRoot();
+    const agentStateStore = new AgentSessionStateStore({ homePath: root });
+    await agentStateStore.apply({
+      sessionName: "main",
+      agent: "codex",
+      type: "turn-started",
+      occurredAt: "2026-07-21T08:00:00.000Z",
+      subtitle: "Fix live terminal detection",
+      action: "Editing registry.ts",
+      model: "gpt-5.4",
+      strength: "high",
+    });
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+      focusedPaneRuntime: vi.fn(async () => ({
+        cwd: root,
+        command: "/opt/matrix/runtime/node/bin/node /opt/matrix/runtime/node/lib/node_modules/@openai/codex/bin/codex.js",
+        observed: true,
+      })),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, agentStateStore });
+
+    await expect(registry.list()).resolves.toMatchObject([{
+      name: "main",
+      agent: "codex",
+      subtitle: "Fix live terminal detection",
+      lastAction: "Editing registry.ts",
+      model: "gpt-5.4",
+      strength: "high",
+      visualStatus: "running",
+    }]);
+  });
+
+  it("follows Terminal to Claude to Terminal to Codex to Terminal without stale enrichment", async () => {
+    const root = await tempRoot();
+    const agentStateStore = new AgentSessionStateStore({ homePath: root });
+    await agentStateStore.apply({
+      sessionName: "main",
+      agent: "claude",
+      type: "turn-started",
+      occurredAt: "2026-07-18T10:00:00.000Z",
+      subtitle: "Claude task",
+      action: "Edited registry.ts",
+      model: "claude-opus-4-6",
+      strength: "high",
+    });
+    let command = "zsh";
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+      focusedPaneRuntime: vi.fn(async () => ({ cwd: root, command, observed: true })),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, agentStateStore });
+
+    const expectPlainTerminal = async () => {
+      const [session] = await registry.list();
+      expect(session).not.toHaveProperty("agent");
+      expect(session).not.toHaveProperty("subtitle");
+      expect(session).not.toHaveProperty("lastAction");
+      expect(session).not.toHaveProperty("agentUpdatedAt");
+      expect(session).not.toHaveProperty("model");
+      expect(session).not.toHaveProperty("strength");
+    };
+
+    await expectPlainTerminal();
+    command = "claude";
+    await expect(registry.list()).resolves.toMatchObject([{
+      agent: "claude",
+      subtitle: "Claude task",
+      model: "claude-opus-4-6",
+      strength: "high",
+    }]);
+    command = "zsh";
+    await expectPlainTerminal();
+    command = "/opt/matrix/runtime/node/bin/node /opt/matrix/runtime/node/lib/node_modules/@openai/codex/bin/codex.js";
+    const [codex] = await registry.list();
+    expect(codex).toMatchObject({ agent: "codex", visualStatus: "running" });
+    expect(codex).not.toHaveProperty("subtitle");
+    expect(codex).not.toHaveProperty("lastAction");
+    expect(codex).not.toHaveProperty("agentUpdatedAt");
+    expect(codex).not.toHaveProperty("model");
+    expect(codex).not.toHaveProperty("strength");
+    command = "bash";
+    await expectPlainTerminal();
+  });
+
+  it("lets a successful runtime observation override stale persisted and hook providers", async () => {
+    const root = await tempRoot();
+    const agentStateStore = new AgentSessionStateStore({ homePath: root });
+    await agentStateStore.apply({
+      sessionName: "main",
+      agent: "claude",
+      type: "attention-requested",
+      occurredAt: "2026-07-18T10:00:00.000Z",
+      subtitle: "Stale Claude task",
+      action: "Requested approval",
+      model: "claude-opus-4-6",
+      strength: "high",
+    });
+    const live = new Set<string>();
+    const adapter = {
+      listSessions: vi.fn(async () => Array.from(live)),
+      createSession: vi.fn(async ({ name }: { name: string }) => { live.add(name); }),
+      deleteSession: vi.fn(async () => undefined),
+      focusedPaneRuntime: vi.fn(async () => ({ cwd: root, command: "opencode", observed: true })),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, agentStateStore });
+    await registry.create({ name: "main", cmd: "codex", agent: "codex" });
+
+    const [session] = await registry.list();
+    expect(session).toMatchObject({ agent: "opencode", visualStatus: "running" });
+    expect(session).not.toHaveProperty("subtitle");
+    expect(session).not.toHaveProperty("lastAction");
+    expect(session).not.toHaveProperty("agentUpdatedAt");
+    expect(session).not.toHaveProperty("model");
+    expect(session).not.toHaveProperty("strength");
+  });
+
+  it("uses non-ended hooks and then a 12-second launch hint when pane inspection is unavailable", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-18T10:00:00.000Z"));
+    const root = await tempRoot();
+    const live = new Set<string>();
+    const adapter = {
+      listSessions: vi.fn(async () => Array.from(live)),
+      createSession: vi.fn(async ({ name }: { name: string }) => { live.add(name); }),
+      deleteSession: vi.fn(async () => undefined),
+      focusedPaneRuntime: vi.fn(async () => { throw new Error("pane inspection failed"); }),
+    };
+    const agentStateStore = new AgentSessionStateStore({ homePath: root });
+    await agentStateStore.apply({
+      sessionName: "hooked",
+      agent: "claude",
+      type: "turn-started",
+      occurredAt: "2026-07-18T10:00:00.000Z",
+      subtitle: "Hook fallback",
+    });
+    const registry = new ShellRegistry({ homePath: root, adapter, agentStateStore });
+    await registry.create({ name: "hooked" });
+    await registry.create({ name: "launch-hint", cmd: "codex", agent: "codex" });
+
+    await expect(registry.get("hooked")).resolves.toMatchObject({
+      agent: "claude",
+      subtitle: "Hook fallback",
+      visualStatus: "running",
+    });
+    await expect(registry.get("launch-hint")).resolves.toMatchObject({ agent: "codex", visualStatus: "running" });
+
+    vi.setSystemTime(new Date("2026-07-18T10:00:12.001Z"));
+    const expired = await registry.get("launch-hint");
+    expect(expired).not.toHaveProperty("agent");
+  });
+
+  it("does not expose an ended hook snapshot when pane inspection is unavailable", async () => {
+    const root = await tempRoot();
+    const agentStateStore = new AgentSessionStateStore({ homePath: root });
+    await agentStateStore.apply({
+      sessionName: "main",
+      agent: "claude",
+      type: "session-ended",
+      occurredAt: "2026-07-18T10:00:00.000Z",
+      subtitle: "Finished Claude task",
+      model: "claude-opus-4-6",
+      strength: "high",
+    });
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+      focusedPaneRuntime: vi.fn(async () => ({ cwd: null, command: null, observed: false })),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, agentStateStore });
+
+    const [session] = await registry.list();
+    expect(session).not.toHaveProperty("agent");
+    expect(session).not.toHaveProperty("subtitle");
+    expect(session).not.toHaveProperty("model");
+    expect(session).not.toHaveProperty("strength");
+    expect(session.visualStatus).toBe("idle");
   });
 
   it("keeps session rename available when agent metadata rename fails", async () => {

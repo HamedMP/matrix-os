@@ -76,7 +76,13 @@ describe("OnboardingGate", () => {
     });
   });
 
-  it.each(["/?billing=setup", "/?plans=1", "/?checkout=success", "/?checkout=success&billing=success"])(
+  it.each([
+    "/?billing=setup",
+    "/?billing=setup&handoff=add-computer",
+    "/?plans=1",
+    "/?checkout=success",
+    "/?checkout=success&billing=success",
+  ])(
     "keeps explicit billing entrypoint %s on BillingGate",
     async (path) => {
       window.history.replaceState({}, "", path);
