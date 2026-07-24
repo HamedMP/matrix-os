@@ -38,7 +38,7 @@ import { openCodingAgentThread } from "../../lib/project-chat";
 import { ProjectChatHero } from "./ProjectChatHero";
 import { ProjectThreadList } from "./ProjectThreadList";
 
-export { mergeAttachments, mergeComposerSeed, clearComposerLaunchContext } from "../coding-agents/AgentComposer";
+export { mergeAttachments, mergeComposerSeed, clearComposerLaunchContext } from "../coding-agents/composer-seed";
 
 /**
  * The project's Chats view: thread list on the left, the selected
