@@ -1,8 +1,12 @@
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 
 export const PLATFORM_SHELL_ASSET_PREFIX = '/__platform-shell';
+const MAX_SIGNUP_BILLING_HANDOFF_URL_LENGTH = 4_096;
 
 const PLATFORM_SHELL_PUBLIC_ASSET_PATHS = [
+  '/agents/claude-code.svg',
+  '/agents/codex.svg',
+  '/agents/cursor.svg',
   '/icon-192.png',
   '/icon-512.png',
   '/icon-maskable-512.png',
@@ -11,6 +15,7 @@ const PLATFORM_SHELL_PUBLIC_ASSET_PATHS = [
   '/matrix-logo.svg',
   '/og.png',
   '/runtime-shell-backdrop.webp',
+  '/rabbit.svg',
 ] as const;
 
 export function isPlatformShellAssetNamespacePath(path: string): boolean {
@@ -211,6 +216,29 @@ export function isBillingSetupPath(rawUrl: string): boolean {
     return url.pathname === '/' && url.searchParams.get('billing') === 'setup';
   } catch (err: unknown) {
     console.warn('[platform] Failed to parse billing setup URL:', err instanceof Error ? err.message : String(err));
+    return false;
+  }
+}
+
+export function isSignupBillingHandoff(rawUrl: string): boolean {
+  if (rawUrl.length > MAX_SIGNUP_BILLING_HANDOFF_URL_LENGTH) return false;
+
+  try {
+    const url = new URL(rawUrl, 'https://app.matrix-os.com');
+    const billingValues = url.searchParams.getAll('billing');
+    const handoffValues = url.searchParams.getAll('handoff');
+    return (
+      url.pathname === '/' &&
+      billingValues.length === 1 &&
+      billingValues[0] === 'setup' &&
+      handoffValues.length === 1 &&
+      handoffValues[0] === 'signup'
+    );
+  } catch (err: unknown) {
+    console.warn(
+      '[platform] Failed to parse signup billing handoff URL:',
+      err instanceof Error ? err.name : typeof err,
+    );
     return false;
   }
 }

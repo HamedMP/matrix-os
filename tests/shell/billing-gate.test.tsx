@@ -78,6 +78,7 @@ async function loadBillingGate() {
 }
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => window.location.pathname,
   useRouter: () => ({
     replace: navigationState.replace,
   }),
@@ -157,6 +158,46 @@ describe("BillingGate", () => {
     expect(await screen.findByTestId("add-computer-onboarding")).toBeTruthy();
     expect(screen.queryByText("Matrix workspace")).toBeNull();
     expect(addComputerRender).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the full signup handoff visible while marked billing status resolves", async () => {
+    window.history.replaceState({}, "", "/?billing=setup&handoff=signup");
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.activePlan = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>(() => {}));
+    vi.resetModules();
+
+    const { BillingGate } = await loadBillingGate();
+    const { container } = render(
+      <BillingGate loadingSurface="signup-handoff">
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(container.querySelector('[data-matrix-signup-billing-handoff="true"]')).toBeTruthy();
+    expect(screen.getByText("Loading billing status")).toBeTruthy();
+    expect(screen.queryByText("Confirming your subscription")).toBeNull();
+    expect(screen.queryByText("Welcome back to Matrix")).toBeNull();
+  });
+
+  it("opens locked Billing settings directly after the marked handoff resolves inactive", async () => {
+    window.history.replaceState({}, "", "/?billing=setup&handoff=signup");
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.activePlan = null;
+    vi.resetModules();
+
+    const { BillingGate } = await loadBillingGate();
+    render(
+      <BillingGate loadingSurface="signup-handoff">
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Billing" })).toBeTruthy();
+    expect(screen.queryByText("Loading billing status")).toBeNull();
+    expect(screen.queryByText("Confirming your subscription")).toBeNull();
   });
 
   it("renders the shell for app-session billing access without Clerk client auth", async () => {
