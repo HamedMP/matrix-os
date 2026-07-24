@@ -168,16 +168,18 @@ describe("ProjectChatsView hero empty state", () => {
     render(<ProjectChatsView projectId="matrix-os" active />);
 
     expect(await screen.findByText("What should we work on?")).toBeTruthy();
-    // The new-chat composer sits inside the hero itself.
-    expect(screen.getByLabelText("Agent run prompt")).toBeTruthy();
+    // The draft composer (same floating bar threads use) sits under the hero.
+    expect(screen.getByLabelText("Message new chat")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Fix a failing test" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Review my recent changes" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Explore the codebase" })).toBeTruthy();
     // The rail and the type-to-start affordance survive the hero swap.
     expect(screen.getByRole("navigation", { name: "Project conversations" })).toBeTruthy();
     expect(screen.getByText("Start typing to begin a new chat")).toBeTruthy();
-    // The old picker-style empty state is gone.
+    // The old picker-style empty state and the form composer are gone.
     expect(screen.queryByText("Select a chat")).toBeNull();
+    expect(screen.queryByLabelText("Agent run prompt")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start run" })).toBeNull();
   });
 
   it("keeps the rail visible and swaps only the conversation pane when threads exist but none is selected", async () => {
@@ -204,10 +206,10 @@ describe("ProjectChatsView hero empty state", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Review my recent changes" }));
 
-    const prompt = (await screen.findByLabelText("Agent run prompt")) as HTMLTextAreaElement;
+    const prompt = (await screen.findByLabelText("Message new chat")) as HTMLTextAreaElement;
     await waitFor(() => expect(prompt.value).toBe("Review my recent changes"));
-    // The chip opens the composer in place — never a second inspector copy.
-    expect(screen.getAllByLabelText("Agent run prompt")).toHaveLength(1);
+    // The chip seeds the draft in place — never a second inspector copy.
+    expect(screen.getAllByLabelText("Message new chat")).toHaveLength(1);
   });
 
   it("never mounts a duplicate composer in the inspector while the hero is visible", async () => {
@@ -215,15 +217,15 @@ describe("ProjectChatsView hero empty state", () => {
     render(<ProjectChatsView projectId="matrix-os" active />);
     await screen.findByText("What should we work on?");
 
-    // Even after a type-to-start seed opens the composer, only the hero's
-    // instance exists.
+    // Even after a type-to-start seed appends to the draft, only the draft
+    // pane's instance exists.
     await act(async () => {});
     fireEvent.keyDown(window, { key: "h" });
 
     await waitFor(() => {
-      expect(screen.getAllByLabelText("Agent run prompt")).toHaveLength(1);
+      expect(screen.getAllByLabelText("Message new chat")).toHaveLength(1);
     });
-    const prompt = screen.getByLabelText("Agent run prompt") as HTMLTextAreaElement;
+    const prompt = screen.getByLabelText("Message new chat") as HTMLTextAreaElement;
     await waitFor(() => expect(prompt.value).toBe("h"));
   });
 });

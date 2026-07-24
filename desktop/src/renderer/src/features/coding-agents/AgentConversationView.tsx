@@ -1,4 +1,4 @@
-import type { AgentAttachment, AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
+import type { AgentAttachment, AgentThreadEvent, AgentThreadSnapshot, RuntimeSummary } from "@matrix-os/contracts";
 import {
   Check,
   Copy,
@@ -18,7 +18,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "../../design/primitives";
 import { cn } from "../../lib/cn";
 import { redactCredentialsForDisplay } from "../../lib/transcript-redaction";
@@ -42,6 +42,7 @@ import { Marker, MarkerContent, MarkerIcon } from "../chat/elements/marker";
 import { Message, MessageContent, MessageFooter } from "../chat/elements/message";
 import { PromptInput, type PromptSubmitSource } from "../chat/elements/prompt-input";
 import { abortAgentThread, agentThreadAbortSupported } from "./abort-thread";
+import { AgentComposerPickers } from "./composer-pickers";
 import { EMPTY_QUEUED_MESSAGES, useCodingAgentMessageQueue } from "./message-queue-store";
 import { ToolCallDetailMeta } from "./tool-call-detail";
 import { deriveTurnSummaries } from "./turn-summary";
@@ -69,7 +70,7 @@ const TOOL_RUN_COLLAPSE_THRESHOLD = 5;
 const TOOL_RUN_VISIBLE_TAIL = 3;
 
 const TRANSCRIPT_MARKDOWN_CLASS =
-  "prose-sm max-w-none text-sm leading-relaxed [&_a]:text-[var(--highlight)] [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--border-default)] [&_blockquote]:pl-3 [&_blockquote]:text-[var(--text-secondary)] [&_code]:rounded [&_code]:bg-[var(--bg-sunken)] [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[12px] [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:text-md [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:mb-1 [&_h3]:font-semibold [&_hr]:my-4 [&_hr]:border-[var(--border-subtle)] [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-[var(--border-subtle)] [&_pre]:bg-[var(--bg-sunken)] [&_pre]:p-3 [&_pre_code]:bg-transparent [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-[var(--border-subtle)] [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-[var(--border-subtle)] [&_th]:bg-[var(--bg-sunken)] [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_ul]:list-disc [&_ul]:pl-5";
+  "prose-sm max-w-none text-sm leading-relaxed [&_a]:text-[var(--highlight)] [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--border-default)] [&_blockquote]:pl-3 [&_blockquote]:text-[var(--text-secondary)] [&_code]:rounded [&_code]:bg-[var(--bg-sunken)] [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[12px] [&_h1]:mb-2 [&_h1]:mt-5 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mb-1.5 [&_h2]:mt-4 [&_h2]:text-md [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-3 [&_h3]:font-semibold [&_hr]:my-5 [&_hr]:border-[var(--border-subtle)] [&_li]:my-1 [&_li]:marker:text-[var(--text-tertiary)] [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-[var(--border-subtle)] [&_pre]:bg-[var(--bg-sunken)] [&_pre]:p-3 [&_pre_code]:bg-transparent [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_table]:text-[13px] [&_td]:border [&_td]:border-[var(--border-subtle)] [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-[var(--border-subtle)] [&_th]:bg-[var(--bg-sunken)] [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-semibold [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5";
 
 function conversationItems(events: AgentThreadEvent[]): ConversationItem[] {
   const assistants = new Map<string, Extract<ConversationItem, { kind: "assistant" }>>();
@@ -430,7 +431,7 @@ function ToolRun({ runs }: { runs: Array<Extract<ConversationItem, { kind: "tool
 
 function WorkingRow() {
   return (
-    <Marker role="status" aria-label="Agent is working">
+    <Marker role="status" aria-label="Agent is working" className="px-1">
       <MarkerIcon className="flex items-center gap-1">
         <span className="h-1 w-1 animate-pulse rounded-full" style={{ background: "var(--text-tertiary)" }} />
         <span className="h-1 w-1 animate-pulse rounded-full [animation-delay:200ms]" style={{ background: "var(--text-tertiary)" }} />
@@ -445,7 +446,7 @@ function WorkingRow() {
 // terminal signal. Deliberately non-interactive this wave — no collapse.
 function WorkedRow({ label }: { label: string }) {
   return (
-    <Marker aria-label={label}>
+    <Marker aria-label={label} className="px-1">
       <MarkerIcon>
         <Check className="size-3.5" style={{ color: "var(--text-tertiary)" }} />
       </MarkerIcon>
@@ -547,10 +548,13 @@ function ConversationComposer({
   threadId,
   waitingForAction,
   threadBusy,
+  composerControls,
 }: {
   threadId: string;
   waitingForAction: boolean;
   threadBusy: boolean;
+  // Left side of the composer bottom row (provider/mode pickers).
+  composerControls?: ReactNode;
 }) {
   const [message, setMessage] = useState("");
   const [queueNotice, setQueueNotice] = useState<string | null>(null);
@@ -682,6 +686,7 @@ function ConversationComposer({
           maxLength={24_000}
           ariaLabel="Message conversation"
           placeholder={waitingForAction ? "Respond to the pending request above to continue" : "Ask a follow-up…"}
+          controls={composerControls}
           footer={
             threadBusy && !waitingForAction ? (
               <span className="text-xs">Agent is working — press Enter to queue a follow-up</span>
@@ -698,11 +703,15 @@ export function AgentConversationView({
   snapshot,
   error,
   canSendTurns,
+  summary,
 }: {
   status: ConversationStatus;
   snapshot: AgentThreadSnapshot | null;
   error: string | null;
   canSendTurns: boolean;
+  // When provided, the composer bar shows the thread's provider as a
+  // display-only picker (turns cannot change provider or mode).
+  summary?: RuntimeSummary;
 }) {
   const threadRunning = snapshot?.thread.status === "running"
     || snapshot?.thread.status === "starting"
@@ -780,7 +789,11 @@ export function AgentConversationView({
               </Fragment>
             );
           })}
-          {showWorking ? <WorkingRow /> : null}
+          {showWorking ? (
+            <ConversationItem messageId="working">
+              <WorkingRow />
+            </ConversationItem>
+          ) : null}
           {items.length === 0 && !showWorking ? (
             <p className="py-12 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>
               {canSendTurns ? "Send a message to start the conversation." : "No messages yet."}
@@ -797,6 +810,16 @@ export function AgentConversationView({
           threadId={snapshot.thread.id}
           waitingForAction={snapshot.thread.status === "waiting_for_approval" || snapshot.thread.status === "waiting_for_input"}
           threadBusy={running}
+          composerControls={
+            summary ? (
+              <AgentComposerPickers
+                summary={summary}
+                providerId={snapshot.thread.providerId}
+                mode={undefined}
+                readOnly
+              />
+            ) : undefined
+          }
         />
       ) : (
         <p

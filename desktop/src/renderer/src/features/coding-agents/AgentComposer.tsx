@@ -10,81 +10,21 @@ import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useProviderPreferences } from "../settings/provider-preferences";
 import { AgentWorkspaceSection as Section } from "./AgentWorkspaceSection";
 import { capabilityEnabled } from "./capabilities";
+import { clearComposerLaunchContext, hasComposerContent, mergeComposerSeed, type ComposerSeed } from "./composer-seed";
 
-export type ComposerSeed = {
-  seedId: number;
-  draft: AgentThreadComposerDraft;
-};
+// The seed helpers live in composer-seed.ts so the draft-chat pane and this
+// legacy panel composer share one implementation; re-export for existing
+// imports (ProjectChatsView re-exports them for tests).
+export { mergeAttachments, mergeComposerSeed, clearComposerLaunchContext, type ComposerSeed } from "./composer-seed";
 
-export function mergeAttachments(
-  current: AgentThreadComposerDraft["attachments"],
-  seeded: AgentThreadComposerDraft["attachments"],
-): AgentThreadComposerDraft["attachments"] {
-  const currentAttachments = current ?? [];
-  const seededById = new Map((seeded ?? []).map((attachment) => [attachment.id, attachment]));
-  const merged = currentAttachments.map((attachment) => seededById.get(attachment.id) ?? attachment);
-  const seen = new Set(merged.map((attachment) => attachment.id));
-  for (const attachment of seeded ?? []) {
-    if (seen.has(attachment.id) || merged.length >= 8) continue;
-    seen.add(attachment.id);
-    merged.push(attachment);
-  }
-  return merged.length ? merged : undefined;
-}
-
-export function mergeComposerSeed(current: AgentThreadComposerDraft, seeded: AgentThreadComposerDraft): AgentThreadComposerDraft {
-  const currentPrompt = current.prompt.trim();
-  const seededPrompt = seeded.prompt.trim();
-  const attachments = mergeAttachments(current.attachments, seeded.attachments);
-  const missingRequiredReference = (seeded.attachments ?? [])
-    .some((attachment) => attachment.kind === "structured_ref"
-      && !attachments?.some((candidate) => candidate.id === attachment.id));
-  if (missingRequiredReference) return current;
-
-  return {
-    ...seeded,
-    providerId: current.providerId ?? seeded.providerId,
-    mode: current.mode ?? seeded.mode,
-    approvalPolicy: current.approvalPolicy ?? seeded.approvalPolicy,
-    sandboxMode: current.sandboxMode ?? seeded.sandboxMode,
-    prompt: !seededPrompt
-      ? current.prompt
-      : currentPrompt && currentPrompt !== seededPrompt
-        ? `${current.prompt.trimEnd()}\n\n---\n\n${seeded.prompt}`
-        : seeded.prompt,
-    attachments,
-  };
-}
-
-export function clearComposerLaunchContext(current: AgentThreadComposerDraft): AgentThreadComposerDraft {
-  const attachments = current.attachments?.filter((attachment) => attachment.kind !== "structured_ref");
-  return {
-    ...current,
-    projectId: undefined,
-    taskId: undefined,
-    terminalSessionId: undefined,
-    worktreeId: undefined,
-    attachments: attachments?.length ? attachments : undefined,
-  };
-}
-
-function hasComposerContent(current: AgentThreadComposerDraft): boolean {
-  return current.prompt.trim().length > 0
-    || Boolean(current.projectId)
-    || Boolean(current.taskId)
-    || Boolean(current.terminalSessionId)
-    || Boolean(current.worktreeId)
-    || Boolean(current.attachments?.length);
-}
-
-export function AgentComposer({ summary, seed, focusRequestId, onCreated, variant = "panel" }: {
+// The form-based composer now serves only the legacy path: runtimes without
+// the project-workspace capability keep it in the conversation inspector.
+// Project Chats uses the draft pane (ProjectChatDraft) instead.
+export function AgentComposer({ summary, seed, focusRequestId, onCreated }: {
   summary: RuntimeSummary;
   seed: ComposerSeed | null;
   focusRequestId: number;
   onCreated?: () => void;
-  // "panel" keeps the inspector's titled Section card; "hero" renders the bare
-  // form as a floating prompt-card for the project Chats hero empty state.
-  variant?: "panel" | "hero";
 }) {
   const preferredProviderId = useProviderPreferences((s) => s.defaultProviderId);
   const initialDraft = useMemo(() => {
@@ -121,15 +61,16 @@ export function AgentComposer({ summary, seed, focusRequestId, onCreated, varian
   }, [focusRequestId]);
 
   if (!canCreate) {
-    const notice = (
-      <div
-        className="rounded-md border p-3 text-sm"
-        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)", color: "var(--text-secondary)" }}
-      >
-        Agent runs are not available on this runtime yet.
-      </div>
+    return (
+      <Section title="New Run">
+        <div
+          className="rounded-md border p-3 text-sm"
+          style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)", color: "var(--text-secondary)" }}
+        >
+          Agent runs are not available on this runtime yet.
+        </div>
+      </Section>
     );
-    return variant === "hero" ? notice : <Section title="New Run">{notice}</Section>;
   }
 
   const selectedProvider = summary.providers.find((provider) => provider.id === draft.providerId);
@@ -147,14 +88,13 @@ export function AgentComposer({ summary, seed, focusRequestId, onCreated, varian
     onCreated?.();
   }
 
-  const form = (
-    <form
-      onSubmit={(event) => void submit(event)}
-      className={variant === "hero"
-        ? "prompt-card grid gap-3 rounded-2xl border p-4"
-        : "grid gap-3 rounded-md border p-3"}
-      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
-    >
+  return (
+    <Section title="New Run">
+      <form
+        onSubmit={(event) => void submit(event)}
+        className="grid gap-3 rounded-md border p-3"
+        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+      >
       <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_180px]">
         <label className="grid gap-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
           Provider
@@ -230,7 +170,7 @@ export function AgentComposer({ summary, seed, focusRequestId, onCreated, varian
           {createStatus === "submitting" ? "Starting" : "Start run"}
         </Button>
       </div>
-    </form>
+      </form>
+    </Section>
   );
-  return variant === "hero" ? form : <Section title="New Run">{form}</Section>;
 }
