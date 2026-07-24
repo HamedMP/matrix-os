@@ -1,6 +1,11 @@
 import { ArrowUp, CircleStop } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 
+// How a submit was triggered: Enter in the textarea vs the Send button.
+// Composers can diverge (e.g. Enter queues while an agent runs, the button
+// still attempts a direct send). Existing `() => void` handlers keep working.
+export type PromptSubmitSource = "keyboard" | "button";
+
 // AI-Elements-style PromptInput: a card with a growing textarea and a
 // submit/stop control. Decorative action buttons were removed — every
 // rendered control must have a working handler.
@@ -19,7 +24,7 @@ export function PromptInput({
 }: {
   value: string;
   onChange: (v: string) => void;
-  onSubmit: () => void;
+  onSubmit: (source?: PromptSubmitSource) => void;
   onAbort?: () => void;
   busy: boolean;
   autoFocus?: boolean;
@@ -58,7 +63,7 @@ export function PromptInput({
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
-            onSubmit();
+            onSubmit("keyboard");
           }
         }}
       />
@@ -79,7 +84,7 @@ export function PromptInput({
               type="button"
               aria-label="Send"
               disabled={disabled || value.trim().length === 0}
-              onClick={onSubmit}
+              onClick={() => onSubmit("button")}
               className="flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:opacity-40"
               style={{ background: value.trim().length ? "var(--accent)" : "var(--bg-active)", color: value.trim().length ? "var(--text-on-accent)" : "var(--text-tertiary)" }}
             >
