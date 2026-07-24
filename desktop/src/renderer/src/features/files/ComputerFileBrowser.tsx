@@ -9,7 +9,15 @@ import {
   List,
   RefreshCw,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import { Button, IconButton } from "../../design/primitives";
 import { toUserMessage } from "../../lib/errors";
 import { useConnection } from "../../stores/connection";
@@ -25,6 +33,13 @@ import { FileGlyph, kindForEntry } from "./file-kind";
 import { formatEntrySize, formatModified } from "./format";
 
 type BrowserStatus = "loading" | "ready" | "error";
+
+const NO_ENTRIES: BrowserEntry[] = [];
+
+const VIEW_OPTIONS: Array<{ mode: BrowserViewMode; label: string; icon: typeof LayoutGrid }> = [
+  { mode: "grid", label: "Grid view", icon: LayoutGrid },
+  { mode: "list", label: "List view", icon: List },
+];
 
 function joinPath(parent: string, name: string): string {
   return parent ? `${parent}/${name}` : name;
@@ -58,10 +73,6 @@ function ViewSwitcher({
   view: BrowserViewMode;
   onChange: (view: BrowserViewMode) => void;
 }) {
-  const options: Array<{ mode: BrowserViewMode; label: string; icon: typeof LayoutGrid }> = [
-    { mode: "grid", label: "Grid view", icon: LayoutGrid },
-    { mode: "list", label: "List view", icon: List },
-  ];
   return (
     <div
       role="group"
@@ -69,7 +80,7 @@ function ViewSwitcher({
       className="flex shrink-0 items-center gap-0.5 rounded-md p-0.5"
       style={{ background: "var(--bg-hover)" }}
     >
-      {options.map(({ mode, label, icon: Icon }) => {
+      {VIEW_OPTIONS.map(({ mode, label, icon: Icon }) => {
         const active = view === mode;
         return (
           <button
@@ -130,6 +141,155 @@ function SortHeader({
   );
 }
 
+// One browser entry, rendered as a grid tile or a list row depending on the
+// active view. The row/tile is a single button so click, double-click, and
+// keyboard handling stay identical across views.
+function EntryButton({
+  entry,
+  grid,
+  listColumns,
+  selected,
+  pressed,
+  buttonRef,
+  onSelect,
+  onNavigate,
+  onKeyDown,
+}: {
+  entry: BrowserEntry;
+  grid: boolean;
+  listColumns: string;
+  selected: boolean;
+  pressed: boolean | undefined;
+  buttonRef: (el: HTMLButtonElement | null) => void;
+  onSelect: () => void;
+  onNavigate: () => void;
+  onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
+}) {
+  const kind = kindForEntry(entry);
+  const glyphColor = entry.type === "directory" ? "var(--accent)" : "var(--text-tertiary)";
+
+  if (grid) {
+    return (
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-label={`Open ${entry.name}`}
+        aria-pressed={pressed}
+        data-grid-tile
+        className="flex w-24 flex-col items-center gap-1.5 rounded-lg px-1.5 py-2.5 outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
+        style={{ background: selected ? "var(--bg-selected)" : "transparent" }}
+        onClick={onSelect}
+        onDoubleClick={onNavigate}
+        onKeyDown={onKeyDown}
+      >
+        <span style={{ color: glyphColor }}>
+          <FileGlyph kind={kind} size={34} />
+        </span>
+        <span
+          className="line-clamp-2 w-full break-words text-center text-xs leading-tight"
+          style={{ color: "var(--text-primary)" }}
+          title={entry.name}
+        >
+          {entry.name}
+        </span>
+      </button>
+    );
+  }
+
+  return (
+    <button
+      ref={buttonRef}
+      type="button"
+      aria-label={`Open ${entry.name}`}
+      aria-pressed={pressed}
+      className="grid h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
+      style={{
+        gridTemplateColumns: listColumns,
+        background: selected ? "var(--bg-selected)" : "transparent",
+        color: "var(--text-primary)",
+      }}
+      onClick={onSelect}
+      onDoubleClick={onNavigate}
+      onKeyDown={onKeyDown}
+    >
+      <span className="flex min-w-0 items-center gap-2">
+        <span className="shrink-0" style={{ color: glyphColor }}>
+          <FileGlyph kind={kind} size={16} />
+        </span>
+        <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+      </span>
+      <span className="truncate text-right text-xs" style={{ color: "var(--text-tertiary)" }}>
+        {formatEntrySize(entry)}
+      </span>
+      <span className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
+        {formatModified(entry.modifiedAt)}
+      </span>
+    </button>
+  );
+}
+
+function BrowserToolbar({
+  compact,
+  currentPath,
+  crumbs,
+  view,
+  onViewChange,
+  onUp,
+  onNavigate,
+  onRefresh,
+}: {
+  compact: boolean;
+  currentPath: string;
+  crumbs: Array<{ label: string; path: string }>;
+  view: BrowserViewMode;
+  onViewChange: (view: BrowserViewMode) => void;
+  onUp: () => void;
+  onNavigate: (path: string) => void;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="flex h-10 shrink-0 items-center gap-1 border-b px-2" style={{ borderColor: "var(--border-subtle)" }}>
+      <IconButton
+        label="Up one level"
+        className="shrink-0 disabled:opacity-40"
+        disabled={!currentPath}
+        onClick={onUp}
+      >
+        <ArrowUp size={13} />
+      </IconButton>
+      <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+        <button
+          type="button"
+          aria-label="Matrix home"
+          className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium hover:bg-[var(--bg-hover)]"
+          style={{ color: currentPath ? "var(--text-secondary)" : "var(--text-primary)" }}
+          onClick={() => onNavigate("")}
+        >
+          <Home size={13} />
+          {!compact ? "Matrix home" : "Home"}
+        </button>
+        {crumbs.map((crumb) => (
+          <span key={crumb.path} className="flex min-w-0 items-center gap-1">
+            <ChevronRight size={11} style={{ color: "var(--text-tertiary)" }} />
+            <button
+              type="button"
+              className="max-w-[150px] truncate rounded px-1.5 py-1 text-xs hover:bg-[var(--bg-hover)]"
+              style={{ color: crumb.path === currentPath ? "var(--text-primary)" : "var(--text-secondary)" }}
+              onClick={() => onNavigate(crumb.path)}
+            >
+              {crumb.label}
+            </button>
+          </span>
+        ))}
+      </div>
+      <ViewSwitcher view={view} onChange={onViewChange} />
+      <IconButton label="Refresh folder" className="shrink-0" onClick={onRefresh}>
+        <RefreshCw size={13} />
+      </IconButton>
+    </div>
+  );
+}
+
 export default function ComputerFileBrowser({
   compact = false,
   mode = "browse",
@@ -169,11 +329,17 @@ export default function ComputerFileBrowser({
   const viewCurrentPath = scoped ? currentPath : "";
   const viewCandidatePath = scoped ? candidatePath : "";
   const viewSelectedPath = scoped ? selectedPath : null;
-  const viewEntries = scoped
-    ? (mode === "folder-picker" ? entries.filter((entry) => entry.type === "directory") : entries)
-    : [];
   const viewStatus: BrowserStatus = scoped ? status : "loading";
   const viewError = scoped ? error : null;
+  const viewEntries = useMemo(
+    () =>
+      scoped
+        ? mode === "folder-picker"
+          ? entries.filter((entry) => entry.type === "directory")
+          : entries
+        : NO_ENTRIES,
+    [scoped, mode, entries],
+  );
 
   const sortedEntries = useMemo(
     () => sortBrowserEntries(viewEntries, sortKey, sortDirection),
@@ -296,176 +462,108 @@ export default function ComputerFileBrowser({
   const chosenName = (viewCandidatePath.split("/").pop() || "Matrix home");
   const listColumns = compact ? "minmax(0,1fr) 72px 104px" : "minmax(0,1fr) 88px 140px";
 
-  const renderEntryButton = (entry: BrowserEntry, index: number) => {
-    const path = joinPath(viewCurrentPath, entry.name);
-    const isCandidate = entry.type === "directory" && viewCandidatePath === path;
-    const selected = viewSelectedPath === path || isCandidate;
-    const shared = {
-      key: `${entry.type}:${path}`,
-      ref: (el: HTMLButtonElement | null) => {
-        entryRefs.current[index] = el;
-      },
-      type: "button" as const,
-      "aria-label": `Open ${entry.name}`,
-      "aria-pressed": mode === "folder-picker" && entry.type === "directory" ? isCandidate : undefined,
-      onClick: () => selectEntry(entry, path),
-      onDoubleClick: () => {
-        if (entry.type === "directory") navigate(path);
-      },
-      onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => onEntryKeyDown(event, entry, path, index),
-    };
-    const glyphColor = entry.type === "directory" ? "var(--accent)" : "var(--text-tertiary)";
-    const kind = kindForEntry(entry);
-
-    if (view === "grid") {
-      return (
-        <button
-          {...shared}
-          data-grid-tile
-          className="flex w-24 flex-col items-center gap-1.5 rounded-lg px-1.5 py-2.5 outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
-          style={{ background: selected ? "var(--bg-selected)" : "transparent" }}
-        >
-          <span style={{ color: glyphColor }}>
-            <FileGlyph kind={kind} size={34} />
-          </span>
-          <span
-            className="line-clamp-2 w-full break-words text-center text-xs leading-tight"
-            style={{ color: "var(--text-primary)" }}
-            title={entry.name}
-          >
-            {entry.name}
-          </span>
-        </button>
-      );
-    }
-
-    return (
-      <button
-        {...shared}
-        className="grid h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
-        style={{
-          gridTemplateColumns: listColumns,
-          background: selected ? "var(--bg-selected)" : "transparent",
-          color: "var(--text-primary)",
-        }}
-      >
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="shrink-0" style={{ color: glyphColor }}>
-            <FileGlyph kind={kind} size={16} />
-          </span>
-          <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-        </span>
-        <span className="truncate text-right text-xs" style={{ color: "var(--text-tertiary)" }}>
-          {formatEntrySize(entry)}
-        </span>
-        <span className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
-          {formatModified(entry.modifiedAt)}
-        </span>
-      </button>
+  let content: ReactNode;
+  if (viewStatus === "loading") {
+    content = (
+      <div className="flex h-full items-center justify-center text-xs" style={{ color: "var(--text-tertiary)" }}>Loading folder…</div>
     );
-  };
+  } else if (viewStatus === "error") {
+    content = (
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+        <span className="text-sm" style={{ color: "var(--danger)" }}>{viewError}</span>
+        <Button variant="subtle" onClick={() => void load(viewCurrentPath)}>Try again</Button>
+      </div>
+    );
+  } else if (sortedEntries.length === 0) {
+    content = (
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-sm" style={{ color: "var(--text-tertiary)" }}>
+        <FolderOpen size={22} aria-hidden />
+        <span>{mode === "folder-picker" ? "No subfolders here." : "This folder is empty."}</span>
+      </div>
+    );
+  } else {
+    const buttons = sortedEntries.map((entry, index) => {
+      const path = joinPath(viewCurrentPath, entry.name);
+      const isCandidate = entry.type === "directory" && viewCandidatePath === path;
+      return (
+        <EntryButton
+          key={`${entry.type}:${path}`}
+          entry={entry}
+          grid={view === "grid"}
+          listColumns={listColumns}
+          selected={viewSelectedPath === path || isCandidate}
+          pressed={mode === "folder-picker" && entry.type === "directory" ? isCandidate : undefined}
+          buttonRef={(el) => {
+            entryRefs.current[index] = el;
+          }}
+          onSelect={() => selectEntry(entry, path)}
+          onNavigate={() => {
+            if (entry.type === "directory") navigate(path);
+          }}
+          onKeyDown={(event) => onEntryKeyDown(event, entry, path, index)}
+        />
+      );
+    });
+    content =
+      view === "grid" ? (
+        <div ref={gridRef} className="flex flex-wrap content-start gap-1">
+          {buttons}
+        </div>
+      ) : (
+        <div>
+          <div
+            className="sticky top-0 z-10 grid items-center gap-2 border-b px-2 pb-1 text-[11px] font-medium"
+            style={{
+              gridTemplateColumns: listColumns,
+              borderColor: "var(--border-subtle)",
+              background: "var(--bg-surface)",
+            }}
+          >
+            <SortHeader
+              label="Name"
+              sortLabel="Sort by name"
+              active={sortKey === "name"}
+              direction={sortDirection}
+              onClick={() => toggleSort("name")}
+            />
+            <SortHeader
+              label="Size"
+              sortLabel="Sort by size"
+              active={sortKey === "size"}
+              direction={sortDirection}
+              alignEnd
+              onClick={() => toggleSort("size")}
+            />
+            <SortHeader
+              label="Modified"
+              sortLabel="Sort by modified"
+              active={sortKey === "modified"}
+              direction={sortDirection}
+              onClick={() => toggleSort("modified")}
+            />
+          </div>
+          <div className="grid grid-cols-1 gap-0.5 pt-0.5">{buttons}</div>
+        </div>
+      );
+  }
 
   return (
     <div
       className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border"
       style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}
     >
-      <div className="flex h-10 shrink-0 items-center gap-1 border-b px-2" style={{ borderColor: "var(--border-subtle)" }}>
-        <IconButton
-          label="Up one level"
-          className="shrink-0 disabled:opacity-40"
-          disabled={!viewCurrentPath}
-          onClick={goUp}
-        >
-          <ArrowUp size={13} />
-        </IconButton>
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-          <button
-            type="button"
-            aria-label="Matrix home"
-            className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium hover:bg-[var(--bg-hover)]"
-            style={{ color: viewCurrentPath ? "var(--text-secondary)" : "var(--text-primary)" }}
-            onClick={() => navigate("")}
-          >
-            <Home size={13} />
-            {!compact ? "Matrix home" : "Home"}
-          </button>
-          {crumbs.map((crumb) => (
-            <span key={crumb.path} className="flex min-w-0 items-center gap-1">
-              <ChevronRight size={11} style={{ color: "var(--text-tertiary)" }} />
-              <button
-                type="button"
-                className="max-w-[150px] truncate rounded px-1.5 py-1 text-xs hover:bg-[var(--bg-hover)]"
-                style={{ color: crumb.path === viewCurrentPath ? "var(--text-primary)" : "var(--text-secondary)" }}
-                onClick={() => navigate(crumb.path)}
-              >
-                {crumb.label}
-              </button>
-            </span>
-          ))}
-        </div>
-        <ViewSwitcher view={view} onChange={setView} />
-        <IconButton label="Refresh folder" className="shrink-0" onClick={() => void load(viewCurrentPath)}>
-          <RefreshCw size={13} />
-        </IconButton>
-      </div>
+      <BrowserToolbar
+        compact={compact}
+        currentPath={viewCurrentPath}
+        crumbs={crumbs}
+        view={view}
+        onViewChange={setView}
+        onUp={goUp}
+        onNavigate={navigate}
+        onRefresh={() => void load(viewCurrentPath)}
+      />
 
-      <div className={`${compact ? "h-52" : "min-h-0 flex-1"} overflow-y-auto p-1.5`}>
-        {viewStatus === "loading" ? (
-          <div className="flex h-full items-center justify-center text-xs" style={{ color: "var(--text-tertiary)" }}>Loading folder…</div>
-        ) : viewStatus === "error" ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
-            <span className="text-sm" style={{ color: "var(--danger)" }}>{viewError}</span>
-            <Button variant="subtle" onClick={() => void load(viewCurrentPath)}>Try again</Button>
-          </div>
-        ) : sortedEntries.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-sm" style={{ color: "var(--text-tertiary)" }}>
-            <FolderOpen size={22} aria-hidden />
-            <span>{mode === "folder-picker" ? "No subfolders here." : "This folder is empty."}</span>
-          </div>
-        ) : view === "grid" ? (
-          <div ref={gridRef} className="flex flex-wrap content-start gap-1">
-            {sortedEntries.map(renderEntryButton)}
-          </div>
-        ) : (
-          <div>
-            <div
-              className="sticky top-0 z-10 grid items-center gap-2 border-b px-2 pb-1 text-[11px] font-medium"
-              style={{
-                gridTemplateColumns: listColumns,
-                borderColor: "var(--border-subtle)",
-                background: "var(--bg-surface)",
-              }}
-            >
-              <SortHeader
-                label="Name"
-                sortLabel="Sort by name"
-                active={sortKey === "name"}
-                direction={sortDirection}
-                onClick={() => toggleSort("name")}
-              />
-              <SortHeader
-                label="Size"
-                sortLabel="Sort by size"
-                active={sortKey === "size"}
-                direction={sortDirection}
-                alignEnd
-                onClick={() => toggleSort("size")}
-              />
-              <SortHeader
-                label="Modified"
-                sortLabel="Sort by modified"
-                active={sortKey === "modified"}
-                direction={sortDirection}
-                onClick={() => toggleSort("modified")}
-              />
-            </div>
-            <div className="grid grid-cols-1 gap-0.5 pt-0.5">
-              {sortedEntries.map(renderEntryButton)}
-            </div>
-          </div>
-        )}
-      </div>
+      <div className={`${compact ? "h-52" : "min-h-0 flex-1"} overflow-y-auto p-1.5`}>{content}</div>
 
       {onChooseFolder ? (
         <div className="flex shrink-0 items-center justify-between gap-3 border-t px-3 py-2" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }}>
