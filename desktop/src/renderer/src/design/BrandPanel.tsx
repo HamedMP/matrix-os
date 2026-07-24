@@ -106,8 +106,8 @@ export function BrandPanel({
       className="relative flex flex-col justify-between overflow-hidden p-10"
       style={{
         background:
-          "radial-gradient(circle at 80% 10%, rgba(250,250,245,0.12), transparent 28%), radial-gradient(circle at 12% 88%, rgba(208,111,37,0.13), transparent 32%), linear-gradient(160deg, var(--forest) 0%, var(--forest-deep) 100%)",
-        color: "var(--forest-foreground)",
+          "radial-gradient(circle at 80% 10%, rgba(250,250,245,0.12), transparent 28%), radial-gradient(circle at 12% 88%, rgba(208,111,37,0.13), transparent 32%), linear-gradient(160deg, var(--brand-forest) 0%, var(--brand-forest-deep) 100%)",
+        color: "var(--brand-forest-foreground)",
       }}
     >
       <MeshBackdrop />
@@ -116,7 +116,7 @@ export function BrandPanel({
 
       <div className="relative flex items-center gap-3">
         <span className="flex size-11 items-center justify-center rounded-2xl bg-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_18px_38px_rgba(0,0,0,0.18)] ring-1 ring-white/12 backdrop-blur">
-          <BrandLogo size={25} color="var(--forest-foreground)" testId="matrix-brand-visible-mark" />
+          <BrandLogo size={25} color="var(--brand-forest-foreground)" testId="matrix-brand-visible-mark" />
         </span>
         <span className="text-lg font-semibold tracking-tight drop-shadow-[0_1px_12px_rgba(0,0,0,0.22)]">Matrix OS</span>
       </div>
@@ -129,7 +129,7 @@ export function BrandPanel({
         <h1 className="text-2xl leading-tight font-semibold tracking-tight drop-shadow-[0_18px_42px_rgba(0,0,0,0.22)]" style={{ fontSize: "var(--text-2xl)" }}>
           {title}
         </h1>
-        <p className="max-w-[330px] text-md leading-relaxed" style={{ color: "var(--forest-muted)" }}>
+        <p className="max-w-[330px] text-md leading-relaxed" style={{ color: "var(--brand-forest-muted)" }}>
           {subtitle}
         </p>
       </div>
@@ -137,10 +137,10 @@ export function BrandPanel({
       <ul className="relative flex w-fit flex-col gap-3 rounded-2xl border border-white/10 bg-black/10 p-4 shadow-[0_22px_60px_rgba(0,0,0,0.16)] backdrop-blur">
         {bullets.map((b) => (
           <li key={b.label} className="flex items-center gap-2.5 text-sm">
-            <span className="flex size-7 items-center justify-center rounded-lg bg-white/8 ring-1 ring-white/10" style={{ color: "var(--forest-foreground)", opacity: 0.92 }}>
+            <span className="flex size-7 items-center justify-center rounded-lg bg-white/8 ring-1 ring-white/10" style={{ color: "var(--brand-forest-foreground)", opacity: 0.92 }}>
               {b.icon}
             </span>
-            <span style={{ color: "var(--forest-muted)" }}>{b.label}</span>
+            <span style={{ color: "var(--brand-forest-muted)" }}>{b.label}</span>
           </li>
         ))}
       </ul>

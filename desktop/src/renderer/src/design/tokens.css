@@ -20,6 +20,14 @@
   --forest-foreground: #fafaf5;
   --forest-muted: rgba(250, 250, 245, 0.62);
 
+  /* Pinned brand tokens for pre-auth brand surfaces (sign-in panel).
+     Unlike --forest*, the theme engine never overrides these, so the
+     Matrix forest + orange identity survives every workspace theme. */
+  --brand-forest: #434e3f;
+  --brand-forest-deep: #32352e;
+  --brand-forest-foreground: #fafaf5;
+  --brand-forest-muted: rgba(250, 250, 245, 0.62);
+
   /* ── Hairlines & borders ────────────────────────────────────── */
   --border-subtle: #ebe9e1;
   --border-default: #d6d3c8;
@@ -103,6 +111,11 @@
   --forest-deep: #101210;
   --forest-foreground: #eaeceA;
   --forest-muted: rgba(234, 236, 234, 0.6);
+
+  --brand-forest: #1a1e1a;
+  --brand-forest-deep: #101210;
+  --brand-forest-foreground: #eaeceA;
+  --brand-forest-muted: rgba(234, 236, 234, 0.6);
 
   --border-subtle: rgba(140, 199, 190, 0.1);
   --border-default: rgba(140, 199, 190, 0.16);
