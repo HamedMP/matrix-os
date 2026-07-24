@@ -21,6 +21,8 @@ export function PromptInput({
   placeholder = "Do anything",
   ariaLabel,
   footer,
+  controls,
+  focusRequestId,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -33,8 +35,18 @@ export function PromptInput({
   placeholder?: string;
   ariaLabel?: string;
   footer?: ReactNode;
+  // Left side of the bottom row: compact pickers (provider, mode) rendered
+  // Codex-style next to the send/stop control. Purely presentational slot.
+  controls?: ReactNode;
+  // Bumping this id focuses the textarea (type-to-start, ⌘J, chip seeds).
+  focusRequestId?: number;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!focusRequestId || focusRequestId <= 0) return;
+    ref.current?.focus();
+  }, [focusRequestId]);
 
   useEffect(() => {
     const el = ref.current;
@@ -67,8 +79,11 @@ export function PromptInput({
           }
         }}
       />
-      <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5">
-        <div className="flex items-center gap-1.5">
+      <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          {controls}
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
           {busy && onAbort ? (
             <button
               type="button"

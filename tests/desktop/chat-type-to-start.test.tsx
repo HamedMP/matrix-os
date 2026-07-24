@@ -172,7 +172,7 @@ describe("ProjectChatsView type-to-start", () => {
     expect(await screen.findByText("Start typing to begin a new chat")).toBeTruthy();
   });
 
-  it("opens the new-chat composer seeded with the first typed character", async () => {
+  it("opens the draft composer seeded with the first typed character", async () => {
     mockOperator({ withThreads: false });
     render(<ProjectChatsView projectId="matrix-os" active />);
     await screen.findByText("Start typing to begin a new chat");
@@ -181,11 +181,11 @@ describe("ProjectChatsView type-to-start", () => {
 
     fireEvent.keyDown(window, { key: "h" });
 
-    const prompt = (await screen.findByLabelText("Agent run prompt")) as HTMLTextAreaElement;
+    const prompt = (await screen.findByLabelText("Message new chat")) as HTMLTextAreaElement;
     await waitFor(() => expect(prompt.value).toBe("h"));
   });
 
-  it("ignores printable keys while a chat is selected", async () => {
+  it("replaces the selected chat with a seeded draft when typing starts", async () => {
     mockOperator();
     useProjectView.getState().setSelectedThread("matrix-os", "thread_plan");
     render(<ProjectChatsView projectId="matrix-os" active />);
@@ -194,7 +194,12 @@ describe("ProjectChatsView type-to-start", () => {
 
     fireEvent.keyDown(window, { key: "h" });
 
-    expect(screen.queryByLabelText("Agent run prompt")).toBeNull();
+    // Codex-style: typing swaps the conversation for the draft composer,
+    // seeded with the first character, instead of ignoring the key.
+    const prompt = (await screen.findByLabelText("Message new chat")) as HTMLTextAreaElement;
+    await waitFor(() => expect(prompt.value).toBe("h"));
+    expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBeNull();
+    expect(screen.queryByRole("region", { name: "Conversation Plan the auth work" })).toBeNull();
   });
 
   it("ignores keys typed into an editable element", async () => {
@@ -211,9 +216,9 @@ describe("ProjectChatsView type-to-start", () => {
       foreign.remove();
     }
 
-    // The hero composer is always rendered while no chat is selected; typing
+    // The draft composer is always rendered while no chat is selected; typing
     // into another editable element must not seed it.
-    expect((screen.getByLabelText("Agent run prompt") as HTMLTextAreaElement).value).toBe("");
+    expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
   });
 
   it("ignores modified and non-printable keys", async () => {
@@ -227,8 +232,8 @@ describe("ProjectChatsView type-to-start", () => {
     fireEvent.keyDown(window, { key: "Enter" });
     fireEvent.keyDown(window, { key: "Escape" });
 
-    // The hero composer is always rendered while no chat is selected;
+    // The draft composer is always rendered while no chat is selected;
     // modified or non-printable keys must not seed it.
-    expect((screen.getByLabelText("Agent run prompt") as HTMLTextAreaElement).value).toBe("");
+    expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
   });
 });

@@ -3969,7 +3969,7 @@ describe("ProjectChatsView", () => {
     });
   }
 
-  it("opens the composer after a stale toolbar new chat resolves against a refreshed workspace", async () => {
+  it("opens the draft composer after a stale toolbar new chat resolves against a refreshed workspace", async () => {
     vi.mocked(toast.error).mockClear();
     wireProjectWorkspaceReadyIpc();
     // Seed the resolver before render so the component never observes the
@@ -3986,7 +3986,7 @@ describe("ProjectChatsView", () => {
 
     fireEvent.click(newChat);
 
-    expect(await screen.findByLabelText("Agent run prompt")).toBeTruthy();
+    expect(await screen.findByLabelText("Message new chat")).toBeTruthy();
     expect(resolveNewChatTarget).toHaveBeenCalledWith("matrix-os", undefined);
     expect(toast.error).not.toHaveBeenCalled();
   });
@@ -4009,9 +4009,9 @@ describe("ProjectChatsView", () => {
     fireEvent.click(newChat);
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
-    // With no chat selected the hero composer is always rendered; a failed
+    // With no chat selected the draft composer is always rendered; a failed
     // resolve must not seed it.
-    expect((screen.getByLabelText("Agent run prompt") as HTMLTextAreaElement).value).toBe("");
+    expect((screen.getByLabelText("Message new chat") as HTMLTextAreaElement).value).toBe("");
     expect(screen.getByRole("button", { name: "New chat in selected project" })).toBeTruthy();
   });
 });

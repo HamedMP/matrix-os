@@ -1,7 +1,4 @@
-import type { RuntimeSummary } from "@matrix-os/contracts";
-import { AgentComposer, type ComposerSeed } from "../coding-agents/AgentComposer";
-
-// Suggestion chips seed the same new-chat path as type-to-start; keep them
+// Suggestion chips seed the same new-chat draft as type-to-start; keep them
 // generic enough to be useful for any project shape.
 const SUGGESTIONS = [
   "Fix a failing test",
@@ -10,26 +7,20 @@ const SUGGESTIONS = [
 ] as const;
 
 /**
- * The project Chats hero: shown in the conversation pane while no chat is
- * selected. Centers a headline, the existing new-chat composer (hero variant,
- * not a fork), and suggestion chips that seed it. The thread rail and the
- * inspector are unaffected — this replaces only the old "Select a chat" pane.
+ * The draft-chat hero block: centered headline, suggestion chips (only while
+ * the draft prompt is empty), and the type-to-start hint. Presentational only —
+ * the draft composer itself lives in ProjectChatDraft, anchored at the bottom
+ * of the pane exactly like the thread composer.
  */
 export function ProjectChatHero({
-  summary,
   projectLabel,
-  seed,
-  focusRequestId,
-  canCreate,
-  onCreated,
+  suggestionsVisible,
+  typeToStartEnabled,
   onSuggestion,
 }: {
-  summary: RuntimeSummary;
   projectLabel: string;
-  seed: ComposerSeed | null;
-  focusRequestId: number;
-  canCreate: boolean;
-  onCreated: () => void;
+  suggestionsVisible: boolean;
+  typeToStartEnabled: boolean;
   onSuggestion: (prompt: string) => void;
 }) {
   return (
@@ -45,16 +36,7 @@ export function ProjectChatHero({
           Start a new chat in {projectLabel}
         </p>
       </div>
-      <div className="w-full max-w-[46rem]">
-        <AgentComposer
-          summary={summary}
-          seed={seed}
-          focusRequestId={focusRequestId}
-          onCreated={onCreated}
-          variant="hero"
-        />
-      </div>
-      {canCreate ? (
+      {suggestionsVisible ? (
         <div className="flex flex-wrap items-center justify-center gap-2">
           {SUGGESTIONS.map((suggestion) => (
             <button
@@ -72,6 +54,11 @@ export function ProjectChatHero({
             </button>
           ))}
         </div>
+      ) : null}
+      {typeToStartEnabled && suggestionsVisible ? (
+        <p className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>
+          Start typing to begin a new chat
+        </p>
       ) : null}
     </div>
   );
