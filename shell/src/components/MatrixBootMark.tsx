@@ -24,6 +24,7 @@ export function MatrixBootMark({
         "@keyframes matrix-boot-shimmer{0%,100%{background-position:0% 0}50%{background-position:100% 0}}"
       }</style>
       <div
+        data-matrix-boot-mark="true"
         // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- not a plain <img>: the logo is a CSS mask of the SVG over an animated shimmer gradient, which an <img> cannot reproduce
         role="img"
         aria-label="Matrix OS"

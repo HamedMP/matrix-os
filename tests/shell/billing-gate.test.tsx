@@ -203,12 +203,15 @@ describe("BillingGate", () => {
 
     const { BillingGate } = await loadBillingGate();
 
-    render(
+    const { container } = render(
       <BillingGate loadingSurface="signup-handoff">
         <div>Matrix workspace</div>
       </BillingGate>,
     );
 
+    expect(container.querySelector('[data-matrix-auth-layout="true"]')).toBeTruthy();
+    expect(container.querySelector('[data-matrix-feature-showcase="product"]')).toBeTruthy();
+    expect(container.querySelector('[data-matrix-boot-mark="true"]')).toBeTruthy();
     expect(screen.getByText("Loading billing status")).toBeTruthy();
     expect(screen.getByText("A computer in the cloud for your AI agents")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();

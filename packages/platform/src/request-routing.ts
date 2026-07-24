@@ -4,6 +4,9 @@ export const PLATFORM_SHELL_ASSET_PREFIX = '/__platform-shell';
 const MAX_SIGNUP_BILLING_HANDOFF_URL_LENGTH = 4_096;
 
 const PLATFORM_SHELL_PUBLIC_ASSET_PATHS = [
+  '/agents/claude-code.svg',
+  '/agents/codex.svg',
+  '/agents/cursor.svg',
   '/icon-192.png',
   '/icon-512.png',
   '/icon-maskable-512.png',

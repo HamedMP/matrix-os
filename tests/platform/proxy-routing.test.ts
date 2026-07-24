@@ -17,7 +17,10 @@ import {
   createApp,
   escapeInlineScriptJson,
 } from "../../packages/platform/src/main.js";
-import { isSignupBillingHandoff } from "../../packages/platform/src/request-routing.js";
+import {
+  getPlatformShellAssetUpstreamPath,
+  isSignupBillingHandoff,
+} from "../../packages/platform/src/request-routing.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { buildBillingSetupTarget } from "../../packages/platform/src/auth-pages.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
@@ -78,6 +81,17 @@ describe("platform proxy routing", () => {
     expect(isSignupBillingHandoff("/?billing=other&handoff=signup")).toBe(false);
     expect(isSignupBillingHandoff("/sign-in?billing=setup&handoff=signup")).toBe(false);
     expect(isSignupBillingHandoff(`/?billing=setup&handoff=signup&padding=${"x".repeat(4_100)}`)).toBe(false);
+  });
+
+  it("allows only the shared auth showcase agent assets through the platform shell namespace", () => {
+    for (const assetPath of [
+      "/agents/claude-code.svg",
+      "/agents/codex.svg",
+      "/agents/cursor.svg",
+    ]) {
+      expect(getPlatformShellAssetUpstreamPath(`/__platform-shell${assetPath}`)).toBe(assetPath);
+    }
+    expect(getPlatformShellAssetUpstreamPath("/__platform-shell/agents/arbitrary.svg")).toBeNull();
   });
 
   it("serves runtime management only for authenticated browser identities", () => {
@@ -3059,6 +3073,9 @@ describe("platform proxy routing", () => {
     const html = await res.text();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(html).toContain('data-matrix-signup-billing-handoff="true"');
+    expect(html).toContain('data-matrix-auth-layout="platform-fallback"');
+    expect(html).toContain('data-matrix-feature-showcase="product"');
+    expect(html).toContain('class="matrix-mark"');
     expect(html).toContain("A computer in the cloud for your AI agents");
     expect(html).toContain("Loading billing status");
     expect(html).toContain("Billing settings are still loading");
@@ -3075,6 +3092,8 @@ describe("platform proxy routing", () => {
     expect(html).not.toContain("Welcome back to Matrix");
     expect(html).not.toContain('data-matrix-platform-fallback-auth="true"');
     expect(html).not.toContain("Matrix OS shell unavailable");
+    expect(html).not.toContain('class="rabbit-tile"');
+    expect(html).not.toContain('class="rabbit-mark"');
   });
 
   it("routes genuinely signed-out marked fallback users to marketing sign-in", async () => {
