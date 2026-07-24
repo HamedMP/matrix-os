@@ -217,20 +217,22 @@ describe("ComputerFileBrowser view options", () => {
     renderBrowser();
     await screen.findByRole("button", { name: "Open README.md" });
 
-    // Default: directories first, then files, each name-ascending.
+    // Default: directories first, then files, each name-ascending. Name
+    // ordering is locale-aware (Finder-style), so "hero.png" sorts before
+    // "README.md".
     expect(openLabels()).toEqual([
       "Open assets",
       "Open workspaces",
-      "Open README.md",
       "Open hero.png",
+      "Open README.md",
     ]);
 
     fireEvent.click(screen.getByRole("button", { name: "Sort by name" }));
     expect(openLabels()).toEqual([
       "Open workspaces",
       "Open assets",
-      "Open hero.png",
       "Open README.md",
+      "Open hero.png",
     ]);
 
     fireEvent.click(screen.getByRole("button", { name: "Sort by size" }));
