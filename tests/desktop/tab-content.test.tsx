@@ -15,9 +15,9 @@ const taskWorkspaceMock = vi.hoisted(() =>
   )),
 );
 
-vi.mock("@desktop/renderer/src/features/board/Board", () => ({
+vi.mock("@desktop/renderer/src/features/project/ProjectTab", () => ({
   default: ({ projectSlug }: { projectSlug: string }) => (
-    <button type="button">Board {projectSlug}</button>
+    <button type="button">Project {projectSlug}</button>
   ),
 }));
 vi.mock("@desktop/renderer/src/features/workspace/TaskWorkspace", () => ({
@@ -45,13 +45,13 @@ describe("TabContent", () => {
   });
 
   it("keeps inactive tab panes inert while they remain mounted", () => {
-    const boardId = useTabs.getState().openTab({ kind: "board", projectSlug: "alpha", title: "Alpha" });
+    const projectId = useTabs.getState().openTab({ kind: "project", projectSlug: "alpha", title: "Alpha" });
     useTabs.getState().openTab({ kind: "terminal", sessionName: "dev", title: "dev" });
-    useTabs.getState().focusTab(boardId);
+    useTabs.getState().focusTab(projectId);
 
     const { getByRole, getByText } = render(<TabContent />);
 
-    const activePane = getByRole("button", { name: "Board alpha" }).parentElement;
+    const activePane = getByRole("button", { name: "Project alpha" }).parentElement;
     const hiddenPane = getByText("Terminal body").parentElement;
 
     expect(activePane?.hasAttribute("inert")).toBe(false);

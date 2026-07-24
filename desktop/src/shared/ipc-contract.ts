@@ -85,7 +85,7 @@ const STATE_KEYS = [
   "panelLayouts",
   "appearance",
   "recents",
-  "codingAgentWorkspace",
+  "projectViews",
 ] as const;
 
 const MAX_STATE_VALUE_BYTES = 64 * 1024;
@@ -346,7 +346,7 @@ export const EVENT_CHANNELS = {
   "menu:action": z
     .object({ action: z.enum(["new-task", "new-thread", "palette", "quick-open"]) })
     .strict(),
-  "menu:navigate": z.object({ kind: z.enum(["settings", "board", "agents", "terminals"]) }).strict(),
+  "menu:navigate": z.object({ kind: z.enum(["settings", "board", "project", "terminals"]) }).strict(),
 } as const;
 
 export type InvokeChannel = keyof typeof INVOKE_CHANNELS;

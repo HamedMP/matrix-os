@@ -25,8 +25,8 @@ describe("tabs store", () => {
   });
 
   it("treats different identities as distinct tabs", () => {
-    useTabs.getState().openTab({ kind: "board", projectSlug: "a", title: "A" });
-    useTabs.getState().openTab({ kind: "board", projectSlug: "b", title: "B" });
+    useTabs.getState().openTab({ kind: "project", projectSlug: "a", title: "A" });
+    useTabs.getState().openTab({ kind: "project", projectSlug: "b", title: "B" });
     expect(useTabs.getState().tabs).toHaveLength(2);
   });
 
@@ -45,9 +45,9 @@ describe("tabs store", () => {
   });
 
   it("closing the active tab focuses the left neighbour", () => {
-    const a = useTabs.getState().openTab({ kind: "board", projectSlug: "a", title: "A" });
-    const b = useTabs.getState().openTab({ kind: "board", projectSlug: "b", title: "B" });
-    const c = useTabs.getState().openTab({ kind: "board", projectSlug: "c", title: "C" });
+    const a = useTabs.getState().openTab({ kind: "project", projectSlug: "a", title: "A" });
+    const b = useTabs.getState().openTab({ kind: "project", projectSlug: "b", title: "B" });
+    const c = useTabs.getState().openTab({ kind: "project", projectSlug: "c", title: "C" });
     expect(useTabs.getState().activeTabId).toBe(c);
     useTabs.getState().closeTab(c);
     expect(useTabs.getState().activeTabId).toBe(b);
@@ -57,8 +57,8 @@ describe("tabs store", () => {
   });
 
   it("closing the first active tab focuses the new first tab", () => {
-    const a = useTabs.getState().openTab({ kind: "board", projectSlug: "a", title: "A" });
-    const b = useTabs.getState().openTab({ kind: "board", projectSlug: "b", title: "B" });
+    const a = useTabs.getState().openTab({ kind: "project", projectSlug: "a", title: "A" });
+    const b = useTabs.getState().openTab({ kind: "project", projectSlug: "b", title: "B" });
     useTabs.getState().openTab({ kind: "terminal", sessionName: "term", title: "Terminal" });
     useTabs.getState().focusTab(a);
 
@@ -89,7 +89,7 @@ describe("tabs store", () => {
   it("evicts the oldest closable tab beyond the cap", () => {
     const pinned = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
     for (let i = 0; i < 30; i++) {
-      useTabs.getState().openTab({ kind: "board", projectSlug: `p${i}`, title: `P${i}` });
+      useTabs.getState().openTab({ kind: "project", projectSlug: `p${i}`, title: `P${i}` });
     }
     const state = useTabs.getState();
     expect(state.tabs.length).toBeLessThanOrEqual(24);
@@ -98,14 +98,14 @@ describe("tabs store", () => {
   });
 
   it("does not evict the previously active tab when opening beyond the cap", () => {
-    const active = useTabs.getState().openTab({ kind: "board", projectSlug: "p0", title: "P0" });
-    const oldestInactive = useTabs.getState().openTab({ kind: "board", projectSlug: "p1", title: "P1" });
+    const active = useTabs.getState().openTab({ kind: "project", projectSlug: "p0", title: "P0" });
+    const oldestInactive = useTabs.getState().openTab({ kind: "project", projectSlug: "p1", title: "P1" });
     for (let i = 2; i < 24; i++) {
-      useTabs.getState().openTab({ kind: "board", projectSlug: `p${i}`, title: `P${i}` });
+      useTabs.getState().openTab({ kind: "project", projectSlug: `p${i}`, title: `P${i}` });
     }
     useTabs.getState().focusTab(active);
 
-    useTabs.getState().openTab({ kind: "board", projectSlug: "p24", title: "P24" });
+    useTabs.getState().openTab({ kind: "project", projectSlug: "p24", title: "P24" });
 
     const state = useTabs.getState();
     expect(state.tabs).toHaveLength(24);

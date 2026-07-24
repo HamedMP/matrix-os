@@ -1,16 +1,18 @@
 import { Command } from "cmdk";
 import { useEffect, useState } from "react";
 import type { AgentThreadSummary, ReviewSummary, TerminalSessionSummary } from "@matrix-os/contracts";
-import { Bot, ClipboardCheck, GitBranch, Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, Sparkles, SquareTerminal } from "lucide-react";
+import { ClipboardCheck, GitBranch, Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, Sparkles, SquareTerminal } from "lucide-react";
 import { appIconUrl, useApps } from "../../stores/apps";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
 import { useShellSessions } from "../../stores/shell-sessions";
-import { AGENTS_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
+import { useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
+import { defaultProjectId, openCodingAgentThread, openProjectChat } from "../../lib/project-chat";
+import { handleNewAgentRunShortcut } from "../mission-control/shortcuts";
 import { openProviderSetupTerminal, providerSetupCommands, type ProviderSetupCommand } from "../coding-agents/provider-setup-terminal";
 
 const EMPTY_REVIEWS: ReviewSummary[] = [];
@@ -80,11 +82,6 @@ function paletteTerminalCommands(
   return commands;
 }
 
-function canRequestAgentComposerFocus(summary: { capabilities: Array<{ id: string; enabled: boolean }> } | null): boolean {
-  if (!summary) return true;
-  return summary.capabilities.some((capability) => capability.id === "codingAgentsThreadCreate" && capability.enabled);
-}
-
 export default function CommandPalette() {
   const [actionError, setActionError] = useState<string | null>(null);
   const open = useUi((s) => s.paletteOpen);
@@ -95,7 +92,6 @@ export default function CommandPalette() {
   const activeTabId = useTabs((s) => s.activeTabId);
   const setCreateTaskOpen = useUi((s) => s.setCreateTaskOpen);
   const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
-  const setComposerOpen = useUi((s) => s.setComposerOpen);
   const activeSlug = useBoard((s) => s.activeProjectSlug);
   const projects = useBoard((s) => s.projects);
   const cardsByProject = useBoard((s) => s.cardsByProject);
@@ -107,8 +103,6 @@ export default function CommandPalette() {
   const summary = useCodingAgentWorkspace((s) => s.summary);
   const reviews = useCodingAgentWorkspace((s) => s.reviews);
   const selectReview = useCodingAgentWorkspace((s) => s.selectReview);
-  const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
-  const requestComposerFocus = useCodingAgentWorkspace((s) => s.requestComposerFocus);
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
 
@@ -217,18 +211,14 @@ export default function CommandPalette() {
               shortcut="⌘J"
               onSelect={() =>
                 run(() => {
-                  if (CODING_AGENTS_DESKTOP_WORKSPACE) {
-                    if (canRequestAgentComposerFocus(summary)) requestComposerFocus();
-                    openTab(AGENTS_WORKSPACE_TAB_SPEC);
-                    return;
-                  }
-                  setComposerOpen(true);
+                  handleNewAgentRunShortcut(
+                    { preventDefault: () => undefined },
+                    useUi.getState(),
+                    useCodingAgentWorkspace.getState(),
+                  );
                 })
               }
             />
-            {CODING_AGENTS_DESKTOP_WORKSPACE ? (
-              <PaletteItem icon={<Bot size={14} />} label="Open Agents" onSelect={() => run(() => openTab(AGENTS_WORKSPACE_TAB_SPEC))} />
-            ) : null}
             {setupCommands.map((setup) => (
               <PaletteItem
                 key={setup.key}
@@ -252,7 +242,7 @@ export default function CommandPalette() {
                   key={p.slug}
                   icon={<Kanban size={14} />}
                   label={p.name || p.slug}
-                  onSelect={() => run(() => openTab({ kind: "board", projectSlug: p.slug, title: p.name || p.slug }))}
+                  onSelect={() => run(() => openTab({ kind: "project", projectSlug: p.slug, title: p.name || p.slug }))}
                 />
               ))}
             </Command.Group>
@@ -280,7 +270,10 @@ export default function CommandPalette() {
                   label={`Open review PR #${review.pullRequestNumber}`}
                   onSelect={() =>
                     run(() => {
-                      openTab(AGENTS_WORKSPACE_TAB_SPEC);
+                      // Reviews surface in the Changes tab of their project's
+                      // Chats view; the review focus request forces the pane.
+                      const projectId = review.projectId ?? defaultProjectId();
+                      if (projectId) openProjectChat(projectId);
                       void selectReview(review.id);
                     })
                   }
@@ -297,10 +290,7 @@ export default function CommandPalette() {
                   icon={<GitBranch size={14} />}
                   label={`Open thread ${thread.title}`}
                   onSelect={() =>
-                    run(() => {
-                      openTab(AGENTS_WORKSPACE_TAB_SPEC);
-                      void loadThreadSnapshot(thread.id);
-                    })
+                    run(() => openCodingAgentThread(thread.id))
                   }
                 />
               ))}

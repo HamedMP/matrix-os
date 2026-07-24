@@ -5,10 +5,6 @@ import { toUserMessage } from "../../lib/errors";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
-import { useUi } from "../../stores/ui";
-import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
-import { useCodingAgentProjectWorkspace } from "../../stores/coding-agent-project-workspace";
-import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project-workspace";
 import ComputerFileBrowser from "../files/ComputerFileBrowser";
 
 type Mode = "scratch" | "folder" | "github";
@@ -20,10 +16,6 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   const createProject = useBoard((s) => s.createProject);
   const selectProject = useBoard((s) => s.selectProject);
   const openTab = useTabs((s) => s.openTab);
-  const destination = useUi((s) => s.createProjectDestination);
-  const refreshAgentWorkspace = useCodingAgentWorkspace((s) => s.refresh);
-  const openCreatedProject = useCodingAgentProjectWorkspace((s) => s.openCreatedProject);
-  const runtimeScope = useConnection(codingAgentRuntimeScope);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const authGeneration = useConnection((s) => s.authGeneration);
   const [name, setName] = useState("");
@@ -99,33 +91,10 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
         );
         return;
       }
-      if (destination === "agents") {
-        await refreshAgentWorkspace();
-        if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
-        // The workspace store catches refresh failures internally: it clears
-        // the summary when nothing was loaded yet, but keeps a previously
-        // loaded summary with status "error". Both are failed refreshes, and
-        // selecting against the stale summary would miss the new project. The
-        // project already exists at this point, so keep the dialog open with a
-        // recoverable message instead of closing silently with nothing
-        // selected.
-        const agentWorkspace = useCodingAgentWorkspace.getState();
-        const agentSummary = agentWorkspace.status === "error" ? null : agentWorkspace.summary;
-        if (!agentSummary) {
-          setError("The project was created, but the workspace didn't refresh. Close this dialog and open it from Agents.");
-          return;
-        }
-        // Land the navigator on the new project; a failed workspace load surfaces
-        // through the project-workspace store's own error state.
-        await openCreatedProject(agentSummary, project.slug, runtimeScope);
-      } else {
-        await selectProject(api, project.slug);
-      }
+      await selectProject(api, project.slug);
       if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
       closeFromUser();
-      if (destination === "board") {
-        openTab({ kind: "board", projectSlug: project.slug, title: project.name || project.slug });
-      }
+      openTab({ kind: "project", projectSlug: project.slug, title: project.name || project.slug });
     } catch (err: unknown) {
       if (!dialogClosedRef.current && dialogGenerationRef.current === submitGeneration) {
         setError(toUserMessage(err));

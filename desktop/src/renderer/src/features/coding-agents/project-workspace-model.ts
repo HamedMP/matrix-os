@@ -1,7 +1,6 @@
 import type {
   AgentThreadSummary,
   ProjectAgentWorkspace,
-  RuntimeSummary,
 } from "@matrix-os/contracts";
 
 export function resolveNewChatRelation(
@@ -20,33 +19,11 @@ export function resolveNewChatRelation(
   if (!taskInPage && !taskCarriedByThread) return null;
   return { projectId: workspace.project.id, taskId };
 }
-import type {
-  CodingAgentWorkspaceResumeState,
-  CodingAgentWorkspaceViewMode,
-} from "../../../../shared/coding-agent-project-workspace";
-
-export type ProjectWorkspaceSelection = Omit<
-  CodingAgentWorkspaceResumeState,
-  "runtimeScope" | "updatedAt"
->;
 
 export interface GroupedProjectWorkspaceThreads {
   projectThreads: AgentThreadSummary[];
   taskThreads: Record<string, AgentThreadSummary[]>;
   unlistedTaskThreads: AgentThreadSummary[];
-}
-
-export function resolveSelectedProjectId(
-  summary: RuntimeSummary,
-  preferredProjectId: string | null,
-): string | null {
-  if (
-    preferredProjectId
-    && summary.projects.items.some((project) => project.id === preferredProjectId)
-  ) {
-    return preferredProjectId;
-  }
-  return summary.projects.items[0]?.id ?? null;
 }
 
 export function groupProjectWorkspaceThreads(
@@ -71,75 +48,27 @@ export function groupProjectWorkspaceThreads(
   };
 }
 
-function selectionForThread(
+/**
+ * Reconciles the persisted per-project chat selection against a freshly loaded
+ * workspace. A selection survives when the workspace page carries the thread
+ * or the runtime summary still lists it (attention/active threads may live
+ * outside the bounded workspace pages). Otherwise the newest listed chat wins
+ * so the Chats view always has a conversation to show; null when the project
+ * has no chats at all.
+ */
+export function reconcileProjectChatSelection(
   workspace: ProjectAgentWorkspace,
-  thread: AgentThreadSummary,
-  viewMode: CodingAgentWorkspaceViewMode,
-): ProjectWorkspaceSelection {
-  return {
-    selectedProjectId: workspace.project.id,
-    selectedTaskId: thread.taskId ?? null,
-    selectedThreadId: thread.id,
-    viewMode,
-  };
-}
-
-export function reconcileProjectWorkspaceSelection(
-  workspace: ProjectAgentWorkspace,
-  preferred: ProjectWorkspaceSelection,
-  preserveMissingPreferredThread = false,
-): ProjectWorkspaceSelection {
-  const allThreads = [
+  selectedThreadId: string | null,
+  externallyKnownThreadIds: ReadonlySet<string>,
+): string | null {
+  const listed = [
     ...workspace.projectThreads.items,
     ...workspace.taskThreads.items,
   ];
-  const selectedThread = preferred.selectedThreadId
-    ? allThreads.find((thread) => thread.id === preferred.selectedThreadId)
-    : undefined;
-  if (selectedThread) {
-    return selectionForThread(workspace, selectedThread, preferred.viewMode);
+  if (selectedThreadId) {
+    const stillValid = listed.some((thread) => thread.id === selectedThreadId)
+      || externallyKnownThreadIds.has(selectedThreadId);
+    if (stillValid) return selectedThreadId;
   }
-
-  const preferredThreadMayBePaged = preferred.selectedTaskId
-    ? workspace.taskThreads.hasMore
-    : workspace.projectThreads.hasMore;
-  if (
-    preferred.selectedThreadId
-    && (preserveMissingPreferredThread || preferredThreadMayBePaged)
-  ) {
-    return {
-      selectedProjectId: workspace.project.id,
-      selectedTaskId: preferred.selectedTaskId,
-      selectedThreadId: preferred.selectedThreadId,
-      viewMode: preferred.viewMode,
-    };
-  }
-
-  const selectedTask = preferred.selectedTaskId
-    ? workspace.tasks.items.find((task) => task.id === preferred.selectedTaskId)
-    : undefined;
-  if (selectedTask) {
-    const replacementThread = preferred.selectedThreadId
-      ? workspace.taskThreads.items.find((thread) => thread.taskId === selectedTask.id)
-      : undefined;
-    return {
-      selectedProjectId: workspace.project.id,
-      selectedTaskId: selectedTask.id,
-      selectedThreadId: replacementThread?.id ?? null,
-      viewMode: preferred.viewMode,
-    };
-  }
-
-  const fallbackThread = workspace.projectThreads.items[0]
-    ?? workspace.taskThreads.items[0];
-  if (fallbackThread) {
-    return selectionForThread(workspace, fallbackThread, preferred.viewMode);
-  }
-
-  return {
-    selectedProjectId: workspace.project.id,
-    selectedTaskId: null,
-    selectedThreadId: null,
-    viewMode: preferred.viewMode,
-  };
+  return listed[0]?.id ?? null;
 }

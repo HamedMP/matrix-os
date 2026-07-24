@@ -6,7 +6,6 @@ describe("createAppMenuTemplate", () => {
     const send = vi.fn();
     const template = createAppMenuTemplate({
       appName: "Matrix OS",
-      codingAgentsWorkspace: true,
       isPackaged: true,
       openExternal: vi.fn(),
       send,
@@ -28,36 +27,33 @@ describe("createAppMenuTemplate", () => {
     expect(send).toHaveBeenCalledWith("menu:navigate", { kind: "terminals" });
   });
 
-  it("adds a gated Agents menu entry that navigates to the coding-agent workspace", () => {
+  it("keeps the New Agent Thread menu entry that opens the project composer", () => {
     const send = vi.fn();
     const template = createAppMenuTemplate({
       appName: "Matrix OS",
-      codingAgentsWorkspace: true,
       isPackaged: true,
       openExternal: vi.fn(),
       send,
     });
 
-    const viewMenu = template.find((item) => item.label === "View");
-    const agentsItem = Array.isArray(viewMenu?.submenu)
-      ? viewMenu.submenu.find((item) => "label" in item && item.label === "Agents")
+    const fileMenu = template.find((item) => item.label === "File");
+    const newThreadItem = Array.isArray(fileMenu?.submenu)
+      ? fileMenu.submenu.find((item) => "label" in item && item.label === "New Agent Thread")
       : null;
 
-    expect(agentsItem).toBeTruthy();
-    expect(agentsItem && "accelerator" in agentsItem ? agentsItem.accelerator : null).toBe("Cmd+Alt+A");
-    if (!agentsItem || !("click" in agentsItem) || typeof agentsItem.click !== "function") {
-      throw new Error("Agents menu item is not clickable");
+    expect(newThreadItem).toBeTruthy();
+    if (!newThreadItem || !("click" in newThreadItem) || typeof newThreadItem.click !== "function") {
+      throw new Error("New Agent Thread menu item is not clickable");
     }
 
-    agentsItem.click({} as never, {} as never, {} as never);
+    newThreadItem.click({} as never, {} as never, {} as never);
 
-    expect(send).toHaveBeenCalledWith("menu:navigate", { kind: "agents" });
+    expect(send).toHaveBeenCalledWith("menu:action", { action: "new-thread" });
   });
 
-  it("omits the Agents menu entry when the desktop workspace flag is disabled", () => {
+  it("does not offer a retired Agents workspace entry", () => {
     const template = createAppMenuTemplate({
       appName: "Matrix OS",
-      codingAgentsWorkspace: false,
       isPackaged: true,
       openExternal: vi.fn(),
       send: vi.fn(),
