@@ -69,17 +69,26 @@ async function evidence(overrides: Record<string, unknown> = {}): Promise<string
 }
 describe('terminal runtime spike evidence', () => {
   it('builds and verifies the pinned Matrix Zellij resurrection patch', async () => {
-    const [builder, zellijPatch, candidateRecordRaw, previewWorkflow, buildScript, syncAgent, remoteRunner, verifier] =
-      await Promise.all([
-      readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/build-zellij.sh'), 'utf8'),
+    const [
+      builder,
+      zellijPatch,
+      candidateRecordRaw,
+      previewWorkflow,
+      buildScript,
+      syncAgent,
+      remoteRunner,
+      verifier,
+      research,
+    ] = await Promise.all([
+      readFile(join(process.cwd(), 'scripts/terminal-runtime/zellij/build.sh'), 'utf8'),
       readFile(
-        join(process.cwd(), 'scripts/spikes/terminal-runtime/zellij-v0.44.3-matrix.1.patch'),
+        join(process.cwd(), 'scripts/terminal-runtime/zellij/v0.44.3-matrix.1.patch'),
         'utf8',
       ),
       readFile(
         join(
           process.cwd(),
-          'scripts/spikes/terminal-runtime/zellij-v0.44.3-matrix.1.build.json',
+          'scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json',
         ),
         'utf8',
       ),
@@ -88,6 +97,7 @@ describe('terminal runtime spike evidence', () => {
       readFile(join(process.cwd(), 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8'),
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/run-remote.sh'), 'utf8'),
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/verify-evidence.mjs'), 'utf8'),
+      readFile(join(process.cwd(), 'specs/109-persist-terminal-sessions/research.md'), 'utf8'),
     ]);
     const candidateRecord = JSON.parse(candidateRecordRaw) as Record<string, unknown>;
     expect(candidateRecord).toEqual({
@@ -103,15 +113,17 @@ describe('terminal runtime spike evidence', () => {
       workRoot: '/tmp/matrix-zellij-build-v0.44.3-matrix.1',
       binarySha256: '534455dc62c8e3753918d012547d10159ee07929f570a5873a754957502a49c4',
     });
-    expect(builder).toContain('zellij-v0.44.3-matrix.1.build.json');
+    expect(builder).toContain('v0.44.3-matrix.1.build.json');
     expect(builder).toContain('cp -- "$candidate_record" "$output_dir/build.json"');
-    expect(remoteRunner).toContain('zellij-v0.44.3-matrix.1.build.json');
+    expect(remoteRunner).toContain(
+      '/opt/matrix/app/scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json',
+    );
     expect(remoteRunner).not.toMatch(/\bjq\b/);
     expect(remoteRunner).toContain('record_preflight binary_manifest_read');
     expect(remoteRunner).toContain(
       'rm -rf -- "$evidence_root" "$runtime_root" "$cache_root" "$config_root" "$config_home_root" "$data_root"',
     );
-    expect(verifier).toContain('zellij-v0.44.3-matrix.1.build.json');
+    expect(verifier).toContain('terminal-runtime/zellij/v0.44.3-matrix.1.build.json');
     expect(builder).toContain('ZELLIJ_SOURCE_VERSION="$(jq -er .sourceVersion "$candidate_record")"');
     expect(builder).toContain('cargo test -p zellij-server');
     expect(builder).toContain('serialized_pane_restores_bounded_viewport_offset');
@@ -139,10 +151,10 @@ describe('terminal runtime spike evidence', () => {
     expect(builder).toContain(
       'command_panes_serialize_initial_contents_for_gated_resurrection',
     );
-    expect(previewWorkflow).toContain('Build patched Zellij for terminal-runtime spike');
+    expect(previewWorkflow).toContain('Build verified production Zellij');
     expect(previewWorkflow).toContain('runs-on: ubuntu-24.04');
-    expect(previewWorkflow).toContain('HOST_BUNDLE_ZELLIJ_BINARY:');
-    expect(buildScript).toContain('HOST_BUNDLE_ZELLIJ_BINARY');
+    expect(previewWorkflow).toContain('HOST_BUNDLE_ZELLIJ_BUILD_DIR:');
+    expect(buildScript).toContain('HOST_BUNDLE_ZELLIJ_BUILD_DIR');
     expect(syncAgent).toContain('zellij_candidate_digest_mismatch');
     expect(syncAgent).toContain('mv -f "$zellij_next" "$BIN_DIR/zellij"');
     expect(syncAgent).toContain('zellij_installed_digest_mismatch');
@@ -182,6 +194,7 @@ describe('terminal runtime spike evidence', () => {
       rollbackBody.indexOf('systemctl start matrix-gateway matrix-shell'),
     );
     expect(verifier).toContain('const EXPECTED_ZELLIJ_BUILD = Object.freeze(');
+    expect(research).toContain('preserve the nine stack layers in `plan.md`');
   });
   it('binds privileged execution to an explicitly approved immutable PR head', async () => {
     const workflow = await readFile(
@@ -197,7 +210,8 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain("github.event.pull_request.head.repo.full_name == github.repository");
     expect(workflow).toContain('.labels | any(.name == "preview-vps")');
     expect(workflow).toContain('PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}');
-    expect(workflow).toContain('deadline=$((SECONDS + 1500))');
+    expect(workflow).toContain('timeout-minutes: 80');
+    expect(workflow).toContain('deadline=$((SECONDS + 2400))');
     expect(workflow).toContain("runtime_version=\"$(jq -r '.runtimeVersion // \"\"' <<<\"$machine\")\"");
     expect(workflow).not.toContain("jq -r '.imageVersion // \"\"'");
     expect(workflow).toContain('--resolve "app.matrix-os.com:443:${PUBLIC_IPV4}"');

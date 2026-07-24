@@ -21,10 +21,11 @@ VPS is deleted by the existing PR-close/72-hour reaper flow.
 4. Do not treat the workflow as passing unless its validator accepts every S1
    and S2 check and uploads the evidence artifact.
 
-The preview workflow builds the patched binary from the SHA-256-pinned 0.44.3
-source archive and reviewed patch, runs its upstream regression tests, and passes
-it to the host bundle through a spike-only override. Normal production bundle
-defaults are unchanged by this PR. The workflow also sets
+The preview and release workflows build the production binary from the
+SHA-256-pinned 0.44.3 source archive and reviewed patch, run its upstream
+regression tests, and pass the complete verified build directory to the host
+bundle. The host-bundle builder rejects missing or mismatched metadata and bytes
+and has no released-Zellij fallback. The preview workflow also sets
 `MATRIX_TERMINAL_RUNTIME_SPIKE=1`, so the host bundle contains this harness only
 for preview builds. The spike workflow derives the
 existing gateway bearer from `PLATFORM_SECRET`, connects to the exact live VPS
@@ -65,7 +66,8 @@ any failed/missing gate.
 
 ```bash
 bash -n scripts/spikes/terminal-runtime/run-remote.sh
-bash -n scripts/spikes/terminal-runtime/build-zellij.sh
+bash -n scripts/terminal-runtime/zellij/build.sh
+bash -n scripts/terminal-runtime/zellij/verify-build.sh
 bash -n scripts/spikes/terminal-runtime/launch-remote.sh
 bash -n scripts/spikes/terminal-runtime/pack-evidence.sh
 node --check scripts/spikes/terminal-runtime/keeper.mjs

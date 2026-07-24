@@ -162,8 +162,8 @@ jobs:
     name: Build host bundle
     needs: [dev-bundle-gate, ci-gate]
     if: needs.dev-bundle-gate.outputs.should_build == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     env:
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
       # In-app auth routes; defaults keep Clerk off the hosted Account Portal.
@@ -198,6 +198,20 @@ jobs:
           cache: pnpm
 
       - uses: oven-sh/setup-bun@v2
+
+      - name: Install verified Zellij build prerequisites
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+          rustup toolchain install 1.92.0 --profile minimal --component rustfmt \
+            --target x86_64-unknown-linux-musl
+          rustup default 1.92.0
+
+      - name: Build verified production Zellij
+        run: |
+          set -euo pipefail
+          ./scripts/terminal-runtime/zellij/build.sh "$RUNNER_TEMP/matrix-zellij"
 
       - uses: erlef/setup-beam@v1
         with:
@@ -253,6 +267,7 @@ jobs:
           MATRIX_BUILD_SHA: ${{ github.sha }}
           MATRIX_BUILD_REF: ${{ github.ref_name }}
           MATRIX_BUILD_DATE: ${{ github.event.head_commit.timestamp }}
+          HOST_BUNDLE_ZELLIJ_BUILD_DIR: ${{ runner.temp }}/matrix-zellij
         run: |
           set -euo pipefail
           ./scripts/build-host-bundle.sh

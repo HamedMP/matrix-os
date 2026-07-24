@@ -8,7 +8,7 @@ fi
 
 output_dir="$1"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-candidate_record="$script_dir/zellij-v0.44.3-matrix.1.build.json"
+candidate_record="$script_dir/v0.44.3-matrix.1.build.json"
 if ! jq -e '
   (keys | sort) == (["binarySha256", "buildId", "builder", "patchSha256", "pathRemap",
     "rustVersion", "sourceDateEpoch", "sourceSha256", "sourceVersion", "target", "workRoot"] | sort) and
@@ -37,7 +37,7 @@ ZELLIJ_SOURCE_DATE_EPOCH="$(jq -er .sourceDateEpoch "$candidate_record")"
 ZELLIJ_PATH_REMAP="$(jq -er .pathRemap "$candidate_record")"
 ZELLIJ_WORK_ROOT="$(jq -er .workRoot "$candidate_record")"
 ZELLIJ_BINARY_SHA256="$(jq -er .binarySha256 "$candidate_record")"
-patch_path="$script_dir/zellij-${ZELLIJ_BUILD_ID}.patch"
+patch_path="$script_dir/${ZELLIJ_BUILD_ID}.patch"
 source_url="https://github.com/zellij-org/zellij/archive/refs/tags/v${ZELLIJ_SOURCE_VERSION}.tar.gz"
 work_dir="$ZELLIJ_WORK_ROOT"
 if ! mkdir -m 0700 -- "$work_dir"; then
