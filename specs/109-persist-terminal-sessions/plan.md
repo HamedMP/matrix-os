@@ -1,6 +1,6 @@
 # Implementation Plan: Persistent Terminal Sessions Across Deployments
 
-**Branch**: `109-terminal-runtime-spikes` | **Date**: 2026-07-20 | **Spec**: [spec.md](./spec.md)
+**Stack base**: PR #1092 | **Updated**: 2026-07-24 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `specs/109-persist-terminal-sessions/spec.md`
 
 ## Summary
@@ -138,18 +138,45 @@ copied outside `/opt/matrix/app` by the host-bundle installer.
 
 ## Stack Boundaries
 
+The production implementation is nine Graphite layers above the completed
+spike stack. Terminal ownership remains legacy until layer 9. Layers 4 and 5
+are intentionally active host-security changes and therefore require their own
+disposable-VPS acceptance before later terminal work proceeds.
+
 | Layer | Branch/PR intent | Exit gate |
 |---|---|---|
-| 1 | `test(terminal): prove persistent runtime invariants` | S1 and S2 evidence pass on exact `v0.44.3-matrix.1` bytes |
-| 2 | `feat(terminal): add supervised runtime foundation` | protocol/storage/security tests and stable services pass |
-| 3 | `feat(terminal): migrate shell and agent runtimes` | create/list/attach/delete and argv scans pass |
-| 4 | `feat(terminal): add explicit recovery experience` | recovery API, Canvas-first UI, React Doctor, screenshots pass |
-| 5 | `feat(terminal): preserve runtimes through updates` | updater/legacy migration and rollback tests pass |
-| 6 | `docs(terminal): verify persistent runtime rollout` | full VPS matrix, spec 107, privacy and public-site docs match evidence |
+| 1 | `build(terminal): ship verified Zellij runtime` | every preview/release bundle rebuilds, verifies, and embeds exact `v0.44.3-matrix.1` bytes; T009 evidence is immutable |
+| 2 | `feat(terminal): define runtime contracts and durable state` | protocol/storage/locking/idempotency tests pass with no installed service |
+| 3 | `feat(terminal): install supervised runtime services` | the complete protocol-v1 supervisor passes preview-only cgroup/readiness tests and starts no instance automatically |
+| 4 | `refactor(host): move updates behind a root service` | two updates, forced failure, repair, and rollback pass through the typed root boundary |
+| 5 | `security(host): remove unrestricted Matrix sudo` | fresh and upgraded VPSes retain required privileged flows without generic sudo/systemctl/shell authority |
+| 6 | `feat(terminal): migrate gateway and agent runtimes` | explicit preview supervision passes create/list/attach/rename/delete and sensitive-argv tests while production remains legacy |
+| 7 | `feat(terminal): add recovery lifecycle APIs` | recovery, races, deletion, retention, resource pressure, and telemetry tests pass in supervised preview mode |
+| 8 | `feat(terminal): add explicit recovery experience` | Canvas/Desktop lifecycle UI, React Doctor, and current screenshots pass |
+| 9 | `feat(terminal): activate persistent runtimes` | durable activation, legacy migration, full VPS matrix, spec 107, and canonical public docs match measured behavior |
 
 Each layer stays below 3,000 additions and 50 files; ideal review size is below
 1,000 additions and 20 files. Lower-layer review fixes are restacked with
 Graphite before validating descendants.
+
+## Activation Source of Truth
+
+Normal application rollback must not revert an activated VPS to gateway-owned
+terminal creation. A root-owned compatibility record outside `/opt/matrix/app`
+is authoritative and transitions monotonically:
+
+```text
+legacy -> preparing -> supervised
+```
+
+The layer-6 gateway understands this record while production remains `legacy`.
+Layer 9 idempotently migrates validated metadata in `preparing` and commits
+`supervised` only after the migration is durable. Once supervised runtime state
+exists, normal update and rollback preserve that mode; the previous compatible
+gateway continues to use protocol v1. Supervised mode fails closed if the
+socket or compatible supervisor is unavailable and never falls back to direct
+spawn. Reverting to legacy is a separately authorized maintenance operation,
+not an application rollback behavior.
 
 ## Complexity Tracking
 

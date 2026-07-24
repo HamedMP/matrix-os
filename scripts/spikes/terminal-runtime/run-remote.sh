@@ -76,7 +76,7 @@ if [ "$zellij_version" != "zellij 0.44.3" ]; then
 fi
 record_preflight binary_version_checked
 zellij_build_metadata="/opt/matrix/bin/zellij.build.json"
-candidate_build_record="$source_dir/zellij-v0.44.3-matrix.1.build.json"
+candidate_build_record="/opt/matrix/app/scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json"
 expected_zellij_binary_sha256="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["binarySha256"])' "$candidate_build_record")"
 record_preflight binary_manifest_read
 zellij_binary_sha256="$(sha256sum /opt/matrix/bin/zellij | awk '{print $1}')"

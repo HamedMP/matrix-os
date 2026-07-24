@@ -149,7 +149,7 @@ the bounded history and viewport position explicit and non-destructive.
 
 ## Decision 7: Multiple PRs are mandatory
 
-**Decision**: preserve the six stack layers in `plan.md` rather than placing the
+**Decision**: preserve the nine stack layers in `plan.md` rather than placing the
 entire feature in one upstack PR.
 
 **Rationale**: the feature crosses native privilege code, filesystem contracts,
