@@ -168,6 +168,14 @@ describe("run CLI command", () => {
     expect(result.stdout).not.toMatch(/\s--t(?:\s|$)/m);
   });
 
+  it("rejects the unsupported --t spelling", async () => {
+    const result = await runMatrixCli(["run", "--t", "--", "echo", "ok"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("`--t` is not supported; use `-t` or `--tty`");
+  });
+
   it("infers agents behind env and inline environment assignments", () => {
     expect(inferRunAgent(["env", "FOO=bar", "claude"])).toBe("claude");
     expect(inferRunAgent(["DEBUG=1", "/opt/matrix/runtime/node/bin/codex"])).toBe("codex");
