@@ -176,9 +176,11 @@ export function ConversationContent({ children }: { children: ReactNode }) {
   // sits just above the composer) while longer ones scroll normally. The log
   // role marks the transcript as a live region whose streamed text mutations
   // are not announced token by token (aria-relevant=additions only).
+  // The 46rem centered column keeps line length readable (Codex-style) while
+  // the scroll viewport itself stays full-width for the edge fade.
   return (
     <div
-      className="mx-auto flex min-h-full w-full max-w-[760px] flex-col justify-end gap-5 px-5 py-6"
+      className="mx-auto flex min-h-full w-full max-w-[46rem] flex-col justify-end gap-5 px-6 py-6"
       role="log"
       aria-relevant="additions"
       data-slot="message-scroller-content"
