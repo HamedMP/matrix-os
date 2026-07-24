@@ -38,7 +38,7 @@ import { openCodingAgentThread } from "../../lib/project-chat";
 import { ProjectChatHero } from "./ProjectChatHero";
 import { ProjectThreadList } from "./ProjectThreadList";
 
-export { mergeAttachments, mergeComposerSeed, clearComposerLaunchContext } from "../coding-agents/AgentComposer";
+export { mergeAttachments, mergeComposerSeed, clearComposerLaunchContext } from "../coding-agents/composer-seed";
 
 const TYPE_TO_START_MAX_PROMPT_BYTES = 24_000;
 const TYPE_TO_START_INTERACTIVE_SELECTOR = [
