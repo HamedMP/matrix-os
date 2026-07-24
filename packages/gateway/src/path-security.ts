@@ -18,6 +18,21 @@ export function resolveWithinHome(
 
 const DENIED_FILE_API_PREFIXES = ["data/browser-profiles"];
 
+// OS-owned subtrees that must never receive user-created folders. Mirrors
+// project-manager.ts's folder-project guard: the home root itself, every
+// top-level dot directory (.trash, .hermes, .claude, .ssh, ...), and the
+// listed prefixes are owner/tool state, never user workspace content.
+const PROTECTED_HOME_PREFIXES = ["system", "agents"];
+
+export function isProtectedHomeSubpath(homePath: string, resolvedPath: string): boolean {
+  const rel = relative(resolve(homePath), resolvedPath);
+  if (rel === "") return true;
+  const firstSegment = rel.split(sep)[0];
+  if (firstSegment === undefined) return false;
+  if (firstSegment.startsWith(".")) return true;
+  return PROTECTED_HOME_PREFIXES.includes(firstSegment);
+}
+
 export function isDeniedFileApiPath(homePath: string, requestedPath: string): boolean {
   const resolved = resolveWithinHome(homePath, requestedPath);
   if (!resolved) return true;

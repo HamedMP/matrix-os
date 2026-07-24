@@ -78,6 +78,23 @@ const GitHubUrlSchema = z.string().trim().min(1).max(512);
 const SlugSchema = z.string().trim().regex(PROJECT_SLUG_REGEX);
 const CreateRequestIdSchema = z.string().min(5).max(132).regex(/^req_[A-Za-z0-9_-]+$/);
 
+const BRANCH_FORBIDDEN_CHARS = /[\x00-\x20 ~^:?*[\]\\]/;
+
+// git-check-ref-format rules, tightened for CLI safety: a branch is passed
+// to `git clone --branch` as a single argv value, so anything ref-illegal or
+// option-looking is rejected before it reaches the shell-free execFile call.
+export function isValidGitBranchName(value: string): boolean {
+  if (value.length < 1 || value.length > 200) return false;
+  if (BRANCH_FORBIDDEN_CHARS.test(value)) return false;
+  if (value.startsWith("-") || value.startsWith(".") || value.startsWith("/")) return false;
+  if (value.endsWith("/") || value.endsWith(".") || value.endsWith(".lock")) return false;
+  if (value.includes("..") || value.includes("@{") || value.includes("//")) return false;
+  if (value === "@") return false;
+  return true;
+}
+
+export const GitBranchSchema = z.string().trim().min(1).max(200).refine(isValidGitBranchName);
+
 const execFileAsync = promisify(execFile);
 
 function createRequestFingerprint(input: {
@@ -85,6 +102,7 @@ function createRequestFingerprint(input: {
   slug: string;
   name?: string;
   repositoryUrl?: string;
+  branch?: string;
   ownerScope: OwnerScope;
 }): string {
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
@@ -242,12 +260,16 @@ export function createProjectManager(options: {
       slug?: string;
       name?: string;
       path?: string;
+      branch?: string;
       mode?: CreateProjectMode;
       ownerScope?: OwnerScope;
       clientRequestId?: string;
     }): Promise<Result<{ project: ProjectConfig }> | Failure> {
       if (input.clientRequestId && !CreateRequestIdSchema.safeParse(input.clientRequestId).success) {
         return genericError(400, "invalid_request", "Project request is invalid");
+      }
+      if (input.branch !== undefined && !GitBranchSchema.safeParse(input.branch).success) {
+        return genericError(400, "invalid_branch", "Branch name is invalid");
       }
       const mode = input.mode ?? (input.url ? "github" : "scratch");
       if (mode === "folder") {
@@ -396,6 +418,7 @@ export function createProjectManager(options: {
         mode,
         slug,
         repositoryUrl: github.htmlUrl,
+        branch: input.branch,
         ownerScope,
       });
       return withProjectLock(slug, async () => {
@@ -428,10 +451,14 @@ export function createProjectManager(options: {
         }
 
         try {
-          await runCommand("git", ["clone", "--", github.cloneUrl, stagingPath], {
-            cwd: stagingRoot,
-            timeout: CLONE_TIMEOUT_MS,
-          });
+          await runCommand(
+            "git",
+            ["clone", ...(input.branch ? ["--branch", input.branch] : []), "--", github.cloneUrl, stagingPath],
+            {
+              cwd: stagingRoot,
+              timeout: CLONE_TIMEOUT_MS,
+            },
+          );
           if (!await pathExists(stagingPath)) {
             await mkdir(stagingPath, { recursive: true });
           }

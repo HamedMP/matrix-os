@@ -163,8 +163,8 @@ export default function Sidebar() {
               </button>
               <button
                 type="button"
-                aria-label="New project"
-                title="New project"
+                aria-label="Add project"
+                title="Add project"
                 className="flex h-5 w-5 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--bg-hover)] group-hover/projects:opacity-100"
                 style={{ color: "var(--text-tertiary)" }}
                 onClick={() => setCreateProjectOpen(true)}

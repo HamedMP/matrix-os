@@ -194,7 +194,12 @@ export default function CommandPalette() {
             style={{ color: "var(--text-tertiary)" }}
           >
             <PaletteItem icon={<Plus size={14} />} label="New task" shortcut="C" onSelect={() => run(() => setCreateTaskOpen(true))} />
-            <PaletteItem icon={<Kanban size={14} />} label="New project" onSelect={() => run(() => setCreateProjectOpen(true))} />
+            <PaletteItem
+              icon={<Kanban size={14} />}
+              label="Add project…"
+              keywords={["new", "project", "create", "clone", "folder", "github"]}
+              onSelect={() => run(() => setCreateProjectOpen(true))}
+            />
             <PaletteItem
               icon={<Sparkles size={14} />}
               label="Open chat"
@@ -365,16 +370,19 @@ function PaletteItem({
   icon,
   label,
   shortcut,
+  keywords,
   onSelect,
 }: {
   icon: React.ReactNode;
   label: string;
   shortcut?: string;
+  keywords?: string[];
   onSelect: () => void;
 }) {
   return (
     <Command.Item
       onSelect={onSelect}
+      keywords={keywords}
       className="flex cursor-default items-center gap-2.5 rounded-md px-2.5 py-2 text-sm data-[selected=true]:bg-[var(--bg-selected)]"
       style={{ color: "var(--text-primary)" }}
     >
