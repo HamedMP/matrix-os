@@ -8,6 +8,7 @@ import { WebSocketServer } from "ws";
 import {
   createOrAttachRunSession,
   exitCodeFromRunResult,
+  hasUnsupportedLongTtySpelling,
   inferRunAgent,
   parseRunCommand,
   quoteCommandArg,
@@ -157,6 +158,8 @@ describe("run CLI command", () => {
     expect(parseRunCommand(["-it", "--cwd=projects/app", "pnpm", "test"])).toEqual(["pnpm", "test"]);
     expect(parseRunCommand(["-it", "--session=setup", "claude"])).toEqual(["claude"]);
     expect(parseRunCommand(["--tty", "--", "claude"])).toEqual(["claude"]);
+    expect(hasUnsupportedLongTtySpelling(["--t", "--", "claude"])).toBe(true);
+    expect(hasUnsupportedLongTtySpelling(["--", "echo", "--t"])).toBe(false);
   });
 
   it("shows the standard -t and --tty flags in help", async () => {

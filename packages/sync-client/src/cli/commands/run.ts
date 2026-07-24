@@ -14,6 +14,15 @@ async function clientFromArgs(args: Record<string, unknown>) {
   return createShellClient({ gatewayUrl: profile.gatewayUrl, token });
 }
 
+export function hasUnsupportedLongTtySpelling(rawArgs: string[] | undefined): boolean {
+  if (!Array.isArray(rawArgs)) {
+    return false;
+  }
+  const separator = rawArgs.indexOf("--");
+  const matrixArgs = separator >= 0 ? rawArgs.slice(0, separator) : rawArgs;
+  return matrixArgs.includes("--t");
+}
+
 export function parseRunCommand(rawArgs: string[] | undefined): string[] {
   if (!Array.isArray(rawArgs)) {
     return [];
@@ -197,6 +206,12 @@ export const runCommand = defineCommand({
   run: async ({ args, rawArgs }) => {
     const json = args.json === true;
     try {
+      if (hasUnsupportedLongTtySpelling(rawArgs)) {
+        throw Object.assign(
+          new Error("`--t` is not supported; use `-t` or `--tty`"),
+          { code: "invalid_request" },
+        );
+      }
       const command = parseRunCommand(rawArgs);
       if (command.length === 0) {
         throw Object.assign(new Error(RUN_USAGE), { code: "invalid_request" });
