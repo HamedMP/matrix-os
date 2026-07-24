@@ -1,10 +1,15 @@
-import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
+import type { AgentAttachment, AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
 import {
   Check,
   Copy,
   Eye,
+  FileDiff,
+  FileText,
   GitPullRequest,
+  Image as ImageIcon,
+  Link2,
   Minus,
+  ScrollText,
   SquarePen,
   SquareTerminal,
   Wrench,
@@ -15,6 +20,7 @@ import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../design/primitives";
+import { cn } from "../../lib/cn";
 import { redactCredentialsForDisplay } from "../../lib/transcript-redaction";
 import {
   codingAgentApprovalActionKey,
@@ -22,7 +28,18 @@ import {
   useCodingAgentWorkspace,
 } from "../../stores/coding-agent-workspace";
 import { safeUrlTransform } from "../editor/MarkdownPreview";
-import { Conversation, ConversationContent } from "../chat/elements/conversation";
+import {
+  Attachment,
+  AttachmentContent,
+  AttachmentDescription,
+  AttachmentGroup,
+  AttachmentMedia,
+  AttachmentTitle,
+} from "../chat/elements/attachment";
+import { Bubble, BubbleContent } from "../chat/elements/bubble";
+import { Conversation, ConversationContent, ConversationItem } from "../chat/elements/conversation";
+import { Marker, MarkerContent, MarkerIcon } from "../chat/elements/marker";
+import { Message, MessageContent, MessageFooter } from "../chat/elements/message";
 import { PromptInput, type PromptSubmitSource } from "../chat/elements/prompt-input";
 import { abortAgentThread, agentThreadAbortSupported } from "./abort-thread";
 import { EMPTY_QUEUED_MESSAGES, useCodingAgentMessageQueue } from "./message-queue-store";
@@ -147,8 +164,10 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
-// Assistant messages render full-width markdown — no bubble — with a
-// hover-revealed meta row, matching the reference chat anatomy.
+// Assistant messages render full-width markdown in a ghost bubble — no framed
+// surface — with a hover-revealed footer, matching the reference chat anatomy.
+// The markdown pipeline (react-markdown + GFM + highlight + redaction) is
+// unchanged; Message/Bubble own layout only.
 function AssistantRow({ events }: { events: AssistantEvent[] }) {
   const { text, completed } = useMemo(() => assistantText(events), [events]);
   if (!text) {
@@ -157,36 +176,86 @@ function AssistantRow({ events }: { events: AssistantEvent[] }) {
     ) : null;
   }
   return (
-    <div className="group/assistant flex min-w-0 flex-col">
-      <div className={TRANSCRIPT_MARKDOWN_CLASS} style={{ color: "var(--text-primary)" }} data-selectable>
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}
-          urlTransform={safeUrlTransform}
-          components={{
-            // Never auto-fetch remote images: a transcript image would fire a
-            // request to an arbitrary host the moment the thread opens
-            // (tracking pixel / exfiltration channel). Degrade to inert text.
-            img: ({ alt, src: imageSrc }) => (
-              <span
-                className="rounded border px-1.5 py-0.5 font-mono text-[11px]"
-                style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)" }}
+    <Message>
+      <MessageContent>
+        <Bubble variant="ghost">
+          <BubbleContent className="overflow-visible">
+            <div className={TRANSCRIPT_MARKDOWN_CLASS} style={{ color: "var(--text-primary)" }} data-selectable>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}
+                urlTransform={safeUrlTransform}
+                components={{
+                  // Never auto-fetch remote images: a transcript image would fire a
+                  // request to an arbitrary host the moment the thread opens
+                  // (tracking pixel / exfiltration channel). Degrade to inert text.
+                  img: ({ alt, src: imageSrc }) => (
+                    <span
+                      className="rounded border px-1.5 py-0.5 font-mono text-[11px]"
+                      style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)" }}
+                    >
+                      image: {alt || "untitled"}{typeof imageSrc === "string" && imageSrc ? ` (${imageSrc})` : ""}
+                    </span>
+                  ),
+                }}
               >
-                image: {alt || "untitled"}{typeof imageSrc === "string" && imageSrc ? ` (${imageSrc})` : ""}
-              </span>
-            ),
-          }}
-        >
-          {text}
-        </ReactMarkdown>
-      </div>
-      <div className="mt-1 flex items-center gap-2 opacity-0 transition-opacity group-hover/assistant:opacity-100">
-        <CopyButton text={text} label="Copy assistant message" />
-        <span className="text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
-          {occurredAtLabel(events[0]?.occurredAt ?? "")}
-        </span>
-      </div>
-    </div>
+                {text}
+              </ReactMarkdown>
+            </div>
+          </BubbleContent>
+        </Bubble>
+        <MessageFooter className="mt-1 gap-2 opacity-0 transition-opacity group-hover/message:opacity-100">
+          <CopyButton text={text} label="Copy assistant message" />
+          <span className="text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+            {occurredAtLabel(events[0]?.occurredAt ?? "")}
+          </span>
+        </MessageFooter>
+      </MessageContent>
+    </Message>
+  );
+}
+
+const ATTACHMENT_KIND_LABEL: Record<AgentAttachment["kind"], string> = {
+  file: "File",
+  diff: "Diff",
+  image: "Image",
+  log_excerpt: "Log excerpt",
+  structured_ref: "Reference",
+};
+
+function attachmentKindIcon(kind: AgentAttachment["kind"]) {
+  if (kind === "image") return ImageIcon;
+  if (kind === "diff") return FileDiff;
+  if (kind === "log_excerpt") return ScrollText;
+  if (kind === "structured_ref") return Link2;
+  return FileText;
+}
+
+function attachmentSizeLabel(sizeBytes: number | undefined): string | null {
+  if (sizeBytes === undefined) return null;
+  if (sizeBytes < 1024) return `${sizeBytes} B`;
+  if (sizeBytes < 1024 * 1024) return `${Math.round(sizeBytes / 1024)} KB`;
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Transcript attachments are metadata-only (label, kind, size) — no URL ever
+// reaches the renderer, so cards always show the icon treatment and never an
+// <img> fetch. Composer-side attachment types are out of scope here.
+function UserAttachmentCard({ attachment }: { attachment: AgentAttachment }) {
+  const KindIcon = attachmentKindIcon(attachment.kind);
+  const size = attachmentSizeLabel(attachment.sizeBytes);
+  return (
+    <Attachment size="sm" state="done">
+      <AttachmentMedia>
+        <KindIcon />
+      </AttachmentMedia>
+      <AttachmentContent>
+        <AttachmentTitle>{attachment.label}</AttachmentTitle>
+        <AttachmentDescription>
+          {ATTACHMENT_KIND_LABEL[attachment.kind]}{size ? ` · ${size}` : ""}
+        </AttachmentDescription>
+      </AttachmentContent>
+    </Attachment>
   );
 }
 
@@ -195,40 +264,48 @@ function UserRow({ event }: { event: Extract<AgentThreadEvent, { type: "user.mes
   const lines = event.text.split("\n").length;
   const collapsible = event.text.length > COLLAPSED_USER_MAX_CHARS || lines > COLLAPSED_USER_MAX_LINES;
   return (
-    <div className="group/user flex flex-col items-end gap-1">
-      <div
-        className="relative max-w-[80%] overflow-hidden rounded-2xl rounded-br-md border px-3.5 py-2 text-sm whitespace-pre-wrap"
-        style={{
-          borderColor: "var(--border-subtle)",
-          background: "var(--bg-sunken)",
-          color: "var(--text-primary)",
-          ...(collapsible && !expanded
-            ? { maxHeight: 176, maskImage: "linear-gradient(to bottom, black 60%, transparent 100%)" }
-            : {}),
-        }}
-        data-selectable
-      >
-        {event.text}
-      </div>
-      <div className="flex max-w-[80%] items-center gap-2">
-        {collapsible ? (
-          <button
-            type="button"
-            className="text-[11px]"
-            style={{ color: "var(--text-tertiary)" }}
-            onClick={() => setExpanded((value) => !value)}
+    <Message align="end">
+      <MessageContent>
+        <Bubble variant="secondary" align="end">
+          <BubbleContent
+            className="rounded-2xl rounded-br-md border-[var(--border-subtle)] px-3.5 whitespace-pre-wrap"
+            style={
+              collapsible && !expanded
+                ? { maxHeight: 176, maskImage: "linear-gradient(to bottom, black 60%, transparent 100%)" }
+                : undefined
+            }
+            data-selectable
           >
-            {expanded ? "Show less" : "Show full message"}
-          </button>
+            {event.text}
+          </BubbleContent>
+        </Bubble>
+        {event.attachments?.length ? (
+          <AttachmentGroup role="group" aria-label="Message attachments" tabIndex={0}>
+            {event.attachments.map((attachment) => (
+              <UserAttachmentCard key={attachment.id} attachment={attachment} />
+            ))}
+          </AttachmentGroup>
         ) : null}
-        <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover/user:opacity-100">
-          <CopyButton text={event.text} label="Copy your message" />
-          <span className="text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
-            {occurredAtLabel(event.occurredAt)}
+        <MessageFooter className="max-w-[80%] gap-2">
+          {collapsible ? (
+            <button
+              type="button"
+              className="text-[11px]"
+              style={{ color: "var(--text-tertiary)" }}
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {expanded ? "Show less" : "Show full message"}
+            </button>
+          ) : null}
+          <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover/message:opacity-100">
+            <CopyButton text={event.text} label="Copy your message" />
+            <span className="text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+              {occurredAtLabel(event.occurredAt)}
+            </span>
           </span>
-        </span>
-      </div>
-    </div>
+        </MessageFooter>
+      </MessageContent>
+    </Message>
   );
 }
 
@@ -239,9 +316,10 @@ function toolKindIcon(displayName: string) {
   return Wrench;
 }
 
-// A tool call renders as a one-line chip: kind icon, heading, muted preview,
-// and a trailing status glyph. Expansion reveals the same bounded detail copy
-// the old cards showed — no raw payloads.
+// A tool call renders as a Marker-style one-line row: kind icon, heading
+// (shimmering while the call runs), muted preview, and a trailing status
+// glyph. Expansion reveals the same bounded detail copy the old cards showed
+// — no raw payloads.
 function ToolChip({ events }: { events: ToolEvent[] }) {
   const [open, setOpen] = useState(false);
   const started = events.find((event): event is Extract<ToolEvent, { type: "tool.started" }> => event.type === "tool.started");
@@ -256,30 +334,33 @@ function ToolChip({ events }: { events: ToolEvent[] }) {
   const StatusIcon = completed ? (failed ? X : Check) : Minus;
   return (
     <div className="flex min-w-0 flex-col">
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left hover:bg-[var(--bg-hover)]"
-        aria-label={`Tool call ${name}`}
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <KindIcon size={14} className="shrink-0" style={{ color: "var(--text-tertiary)" }} />
-        <span
-          className="min-w-0 shrink truncate text-[12px] font-medium"
-          style={{ color: failed ? "var(--danger)" : "var(--text-primary)" }}
+      <Marker asChild>
+        <button
+          type="button"
+          className="rounded-md px-1 py-0.5 hover:bg-[var(--bg-hover)]"
+          aria-label={`Tool call ${name}`}
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
         >
-          {name}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-[12px]" style={{ color: "var(--text-tertiary)" }}>
-          {detail}
-        </span>
-        <StatusIcon
-          size={13}
-          className="shrink-0"
-          style={{ color: failed ? "var(--danger)" : completed ? "var(--success)" : "var(--text-tertiary)" }}
-          aria-label={completed ? (failed ? "Failed" : "Completed") : "Running"}
-        />
-      </button>
+          <MarkerIcon>
+            <KindIcon className="size-3.5" style={{ color: "var(--text-tertiary)" }} />
+          </MarkerIcon>
+          <MarkerContent
+            className={cn("shrink truncate text-[12px] font-medium", completed ? undefined : "shimmer")}
+            style={{ color: failed ? "var(--danger)" : "var(--text-primary)" }}
+          >
+            {name}
+          </MarkerContent>
+          <span className="min-w-0 flex-1 truncate text-[12px]" style={{ color: "var(--text-tertiary)" }}>
+            {detail}
+          </span>
+          <StatusIcon
+            className="size-3.5 shrink-0"
+            style={{ color: failed ? "var(--danger)" : completed ? "var(--success)" : "var(--text-tertiary)" }}
+            aria-label={completed ? (failed ? "Failed" : "Completed") : "Running"}
+          />
+        </button>
+      </Marker>
       {open ? (
         <div className="mt-1 ml-7 border-l pl-3" style={{ borderColor: "var(--border-subtle)" }}>
           <ToolCallDetailMeta events={events} />
@@ -329,14 +410,14 @@ function ToolRun({ runs }: { runs: Array<Extract<ConversationItem, { kind: "tool
 
 function WorkingRow() {
   return (
-    <div className="flex items-center gap-2" role="status" aria-label="Agent is working">
-      <span className="flex items-center gap-1">
+    <Marker role="status" aria-label="Agent is working">
+      <MarkerIcon className="flex items-center gap-1">
         <span className="h-1 w-1 animate-pulse rounded-full" style={{ background: "var(--text-tertiary)" }} />
         <span className="h-1 w-1 animate-pulse rounded-full [animation-delay:200ms]" style={{ background: "var(--text-tertiary)" }} />
         <span className="h-1 w-1 animate-pulse rounded-full [animation-delay:400ms]" style={{ background: "var(--text-tertiary)" }} />
-      </span>
-      <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Working…</span>
-    </div>
+      </MarkerIcon>
+      <MarkerContent className="shimmer text-[11px]">Working…</MarkerContent>
+    </Marker>
   );
 }
 
@@ -624,10 +705,24 @@ export function AgentConversationView({
       <Conversation key={`transcript:${snapshot.thread.id}`}>
         <ConversationContent>
           {items.map((item) =>
-            item.kind === "assistant" ? <AssistantRow key={item.key} events={item.events} />
-              : item.kind === "tool-run" ? <ToolRun key={item.key} runs={item.runs} />
-                : item.event.type === "user.message" ? <UserRow key={item.event.eventId} event={item.event} />
-                  : <SystemEvent key={item.event.eventId} event={item.event} answeredInputs={answeredInputs} resolvedApprovals={resolvedApprovals} />)}
+            item.kind === "assistant" ? (
+              <ConversationItem key={item.key} messageId={item.key}>
+                <AssistantRow events={item.events} />
+              </ConversationItem>
+            ) : item.kind === "tool-run" ? (
+              <ConversationItem key={item.key} messageId={item.key}>
+                <ToolRun runs={item.runs} />
+              </ConversationItem>
+            ) : item.event.type === "user.message" ? (
+              <ConversationItem key={item.event.eventId} messageId={`user:${item.event.messageId}`} scrollAnchor>
+                <UserRow event={item.event} />
+              </ConversationItem>
+            ) : (
+              <ConversationItem key={item.event.eventId} messageId={`event:${item.event.eventId}`}>
+                <SystemEvent event={item.event} answeredInputs={answeredInputs} resolvedApprovals={resolvedApprovals} />
+              </ConversationItem>
+            ),
+          )}
           {showWorking ? <WorkingRow /> : null}
           {items.length === 0 && !showWorking ? (
             <p className="py-12 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>
