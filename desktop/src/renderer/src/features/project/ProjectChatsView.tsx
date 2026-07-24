@@ -24,7 +24,8 @@ import { InspectorFilesPanel } from "../panels/InspectorFilesPanel";
 import { InspectorPreviewPanel } from "../panels/InspectorPreviewPanel";
 import { InspectorTerminalPanel } from "../panels/InspectorTerminalPanel";
 import { toast } from "sonner";
-import { AgentComposer, type ComposerSeed } from "../coding-agents/AgentComposer";
+import { AgentComposer } from "../coding-agents/AgentComposer";
+import type { ComposerSeed } from "../coding-agents/composer-seed";
 import {
   AttentionThreadList,
   InspectorEmptyState,
@@ -35,7 +36,7 @@ import { capabilityEnabled } from "../coding-agents/capabilities";
 import { CreatedThreadHandleList, ThreadList } from "../coding-agents/AgentThreadLists";
 import { ReviewList, reviewHunkFollowUpDraft } from "../coding-agents/AgentReviewPanel";
 import { openCodingAgentThread } from "../../lib/project-chat";
-import { ProjectChatHero } from "./ProjectChatHero";
+import { ProjectChatDraft } from "./ProjectChatDraft";
 import { ProjectThreadList } from "./ProjectThreadList";
 
 export { mergeAttachments, mergeComposerSeed, clearComposerLaunchContext } from "../coding-agents/composer-seed";
@@ -106,8 +107,6 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   const inspectorHydrated = useInspectorLayout((s) => s.hydratedScope === runtimeScope);
   const narrowInspectorLayout = useNarrowInspectorLayout();
   const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
-  const [composerOpen, setComposerOpen] = useState(false);
-  const [composerResetId, setComposerResetId] = useState(0);
   const [inspectorTabOverride, setInspectorTabOverride] = useState<AgentConversationInspectorTab | null>(null);
 
   // Runtime-scope reconciliation + self-sufficiency bootstrap: the first
@@ -204,6 +203,9 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     void workspace.loadThreadSnapshot(selectedThreadId);
   }, [active, selectedThreadId, activeThreadId, threadSnapshot?.thread.id, projectId, setSelectedThread]);
 
+  // Starting a new chat DESELECTS the current thread: the draft conversation
+  // (hero + the same floating composer threads use) replaces it in place,
+  // Codex-style, and sending the draft creates the thread implicitly.
   const openNewChat = useCallback(async (
     taskId?: string,
     initialPrompt?: string | (() => string),
@@ -229,7 +231,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         ...(resolvedInitialPrompt ? { prompt: resolvedInitialPrompt } : {}),
       },
     });
-    setComposerOpen(true);
+    setSelectedThread(projectId, null);
     requestComposerFocus();
     return true;
   }, [projectId, requestComposerFocus, resolveNewChatTarget, summary]);
@@ -246,8 +248,12 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   );
   const typeToStartInFlightRef = useRef(false);
   const typeToStartBufferRef = useRef("");
+  // While a thread is selected, typing anywhere outside an editable element
+  // opens the draft in its place. Buffer the complete phrase while project
+  // resolution is pending; once the draft is showing, ProjectChatDraft owns
+  // subsequent keystrokes.
   useEffect(() => {
-    if (!active || selectedThreadId || !typeToStartEnabled || composerOpen) return;
+    if (!active || !selectedThreadId || !typeToStartEnabled) return;
     typeToStartInFlightRef.current = false;
     typeToStartBufferRef.current = "";
     let cancelled = false;
@@ -278,7 +284,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
       typeToStartInFlightRef.current = false;
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [active, selectedThreadId, typeToStartEnabled, typeToStartPromptByteLimit, composerOpen]);
+  }, [active, selectedThreadId, typeToStartEnabled, typeToStartPromptByteLimit]);
 
   useEffect(() => {
     if (!active || !composerRequest || composerRequest.projectId !== projectId) return;
@@ -354,12 +360,14 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   };
 
   // Threads opened from the runtime-wide inspector lists open in their own
-  // project context when they belong elsewhere.
+  // project context when they belong elsewhere. Selecting a thread also drops
+  // any pending draft seed so a remounted draft never reapplies a stale one.
   const openListedThread = (threadId: string, threadProjectId?: string) => {
     if (threadProjectId && threadProjectId !== projectId) {
       void openCodingAgentThread(threadId);
       return;
     }
+    setComposerSeed(null);
     setSelectedThread(projectId, threadId);
     if (useCodingAgentWorkspace.getState().activeThreadId !== threadId) {
       void loadThreadSnapshot(threadId);
@@ -385,16 +393,14 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
     store.setWidthPct(projectId, pct);
   };
 
-  // A created chat must always surface: select it, close/reset the composer,
-  // and refresh the rail. Shared by the hero composer (no chat selected) and
-  // the inspector composer (chat selected).
+  // A created chat must always surface: select it, drop the draft seed, and
+  // refresh the rail. Shared by the draft pane (project workspace path) and
+  // the legacy inspector composer (no project-workspace capability).
   const handleComposerCreated = () => {
     const createdId = useCodingAgentWorkspace.getState().activeThreadId;
     if (createdId) setSelectedThread(projectId, createdId);
-    if (!projectWorkspaceEnabled) return;
-    setComposerOpen(false);
     setComposerSeed(null);
-    void refreshWorkspace(projectId);
+    if (projectWorkspaceEnabled) void refreshWorkspace(projectId);
   };
 
   const conversationColumn = (
@@ -405,29 +411,19 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
           snapshot={snapshotMatches ? threadSnapshot : null}
           error={activeThreadId === selectedThreadId ? threadSnapshotError : null}
           canSendTurns={canSendTurns}
+          summary={summary}
         />
       ) : projectWorkspaceEnabled ? (
-        <div className="relative flex min-h-0 flex-1 flex-col">
-          <ProjectChatHero
-            key={`project-chat-hero:${composerResetId}`}
-            summary={summary}
-            projectId={projectId}
-            projectLabel={projectLabel}
-            seed={composerSeed}
-            focusRequestId={composerFocusRequestId}
-            canCreate={canCreate}
-            onCreated={handleComposerCreated}
-            onSuggestion={(prompt) => void openNewChat(undefined, prompt)}
-          />
-          {typeToStartEnabled && !composerOpen ? (
-            <p
-              className="pointer-events-none absolute inset-x-0 bottom-5 text-center text-[11px]"
-              style={{ color: "var(--text-tertiary)" }}
-            >
-              Start typing to begin a new chat
-            </p>
-          ) : null}
-        </div>
+        <ProjectChatDraft
+          summary={summary}
+          projectId={projectId}
+          projectLabel={projectLabel}
+          active={active}
+          seed={composerSeed}
+          focusRequestId={composerFocusRequestId}
+          typeToStartEnabled={typeToStartEnabled}
+          onCreated={handleComposerCreated}
+        />
       ) : (
         // Without the project-workspace capability the composer lives in the
         // inspector; the pane keeps the plain picker hint.
@@ -465,27 +461,21 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
             </div>
             {projectWorkspaceEnabled ? (
               <Button
-                variant={composerOpen ? "subtle" : "primary"}
-                aria-label={composerOpen ? "Close new chat composer" : "New chat in selected project"}
+                variant="primary"
+                aria-label="New chat in selected project"
                 onClick={() => {
-                  if (composerOpen) {
-                    setComposerOpen(false);
-                    setComposerSeed(null);
-                    setComposerResetId((current) => current + 1);
-                    return;
-                  }
                   void openNewChat();
                 }}
               >
-                {composerOpen ? "Cancel" : "New chat"}
+                New chat
               </Button>
             ) : null}
           </div>
         )}
         composer={
-          // While no chat is selected the composer lives in the hero pane —
-          // mounting it here too would duplicate the seeded form.
-          !projectWorkspaceEnabled || (composerOpen && selectedThreadId) ? (
+          // Without the project-workspace capability the form composer lives
+          // here permanently; with it, the draft pane owns new-chat creation.
+          !projectWorkspaceEnabled ? (
             <AgentComposer
               summary={summary}
               seed={composerSeed}
@@ -504,7 +494,12 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
                 seedId: Date.now(),
                 draft: reviewHunkFollowUpDraft(summary, snapshot, selected),
               });
-              setComposerOpen(true);
+              if (projectWorkspaceEnabled) {
+                // The seeded follow-up opens in the draft pane, replacing the
+                // selected thread; legacy runtimes keep it in the inspector form.
+                setSelectedThread(projectId, null);
+                requestComposerFocus();
+              }
             }}
           />
         ) : (

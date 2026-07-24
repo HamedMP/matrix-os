@@ -312,17 +312,21 @@ describe("ProjectTab", () => {
     expect(screen.getByRole("button", { name: "New chat for Auth hardening" })).toBeTruthy();
   });
 
-  it("opens the composer for this project when a compose request arrives", async () => {
+  it("opens the draft composer for this project when a compose request arrives", async () => {
     render(<ProjectChatsView projectId="matrix-os" active />);
     await screen.findByRole("button", { name: "Chat Plan the auth work" });
 
     act(() => useProjectChatLauncher.getState().requestComposer("matrix-os"));
 
-    // The composer seed resolves against the project and the request is consumed.
+    // The request is consumed and the draft composer replaces the selected
+    // conversation in place.
     await waitFor(() => {
       expect(useProjectChatLauncher.getState().composerRequest).toBeNull();
     });
-    expect(await screen.findByRole("button", { name: "Close new chat composer" })).toBeTruthy();
+    expect(await screen.findByLabelText("Message new chat")).toBeTruthy();
+    await waitFor(() => {
+      expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBeNull();
+    });
   });
 
   it("keeps a compose request pending until runtime capabilities finish loading", async () => {
@@ -367,7 +371,7 @@ describe("ProjectTab", () => {
 
     act(() => useProjectChatLauncher.getState().requestComposer("website"));
 
-    expect(screen.queryByRole("button", { name: "Close new chat composer" })).toBeNull();
+    expect(screen.queryByLabelText("Message new chat")).toBeNull();
     expect(useProjectChatLauncher.getState().composerRequest?.projectId).toBe("website");
   });
 

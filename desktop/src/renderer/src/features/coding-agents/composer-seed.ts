@@ -49,6 +49,15 @@ export function mergeComposerSeed(current: AgentThreadComposerDraft, seeded: Age
   };
 }
 
+export function hasComposerContent(current: AgentThreadComposerDraft): boolean {
+  return current.prompt.trim().length > 0
+    || Boolean(current.projectId)
+    || Boolean(current.taskId)
+    || Boolean(current.terminalSessionId)
+    || Boolean(current.worktreeId)
+    || Boolean(current.attachments?.length);
+}
+
 export function clearComposerLaunchContext(current: AgentThreadComposerDraft): AgentThreadComposerDraft {
   const attachments = current.attachments?.filter((attachment) => attachment.kind !== "structured_ref");
   return {
