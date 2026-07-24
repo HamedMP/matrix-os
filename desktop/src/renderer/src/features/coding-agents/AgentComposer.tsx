@@ -7,6 +7,7 @@ import {
 } from "@matrix-os/contracts";
 import { Button } from "../../design/primitives";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { useProviderPreferences } from "../settings/provider-preferences";
 import { AgentWorkspaceSection as Section } from "./AgentWorkspaceSection";
 import { capabilityEnabled } from "./capabilities";
 
@@ -77,7 +78,15 @@ function hasComposerContent(current: AgentThreadComposerDraft): boolean {
 }
 
 export function AgentComposer({ summary, seed, focusRequestId, onCreated }: { summary: RuntimeSummary; seed: ComposerSeed | null; focusRequestId: number; onCreated?: () => void }) {
-  const initialDraft = useMemo(() => defaultAgentThreadComposerDraft(summary), [summary]);
+  const preferredProviderId = useProviderPreferences((s) => s.defaultProviderId);
+  const initialDraft = useMemo(() => {
+    const base = defaultAgentThreadComposerDraft(summary);
+    const preferred = preferredProviderId
+      ? summary.providers.find((provider) => provider.id === preferredProviderId)
+      : undefined;
+    if (!preferred) return base;
+    return { ...base, providerId: preferred.id, mode: preferred.defaultMode ?? base.mode };
+  }, [summary, preferredProviderId]);
   const [draft, setDraft] = useState<AgentThreadComposerDraft>(initialDraft);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const createStatus = useCodingAgentWorkspace((s) => s.createStatus);
@@ -93,6 +102,10 @@ export function AgentComposer({ summary, seed, focusRequestId, onCreated }: { su
     if (!seed) return;
     setDraft((current) => mergeComposerSeed(current, seed.draft));
   }, [seed]);
+
+  useEffect(() => {
+    void useProviderPreferences.getState().hydrate();
+  }, []);
 
   useEffect(() => {
     if (focusRequestId <= 0) return;

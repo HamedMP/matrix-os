@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  abortCodingAgentThread,
   createCodingAgentThread,
   createCodingAgentTurn,
   createCodingAgentSourcePullRequest,
@@ -372,6 +373,44 @@ describe("coding agent desktop runtime client", () => {
 
     await expect(fetchCodingAgentThreadSnapshot(auth(), { threadId: "thread_desktop_1" }, fetchFn)).rejects.toThrow("thread state unavailable");
     await expect(fetchCodingAgentThreadSnapshot(auth(), { threadId: "thread_desktop_1" }, fetchFn)).rejects.not.toThrow("secret");
+  });
+
+  it("aborts a running thread with bearer auth and a generated client request id", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify(threadSnapshotBody()), { status: 200 }));
+
+    await expect(abortCodingAgentThread(auth(), { threadId: "thread_desktop_1" }, fetchFn)).resolves.toEqual(
+      expect.objectContaining({ thread: expect.objectContaining({ id: "thread_desktop_1" }) }),
+    );
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://runtime.test/api/coding-agents/threads/thread_desktop_1/abort",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ Authorization: "Bearer desktop-token" }),
+        body: expect.stringMatching(/^\{"clientRequestId":"req_[A-Za-z0-9_-]+"\}$/),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("rejects abort responses that fail snapshot validation with a generic error", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...threadSnapshotBody(),
+      thread: {
+        ...threadSnapshotBody().thread,
+        accessToken: "secret",
+      },
+    }), { status: 200 }));
+
+    await expect(abortCodingAgentThread(auth(), { threadId: "thread_desktop_1" }, fetchFn)).rejects.toThrow("thread abort unavailable");
+    await expect(abortCodingAgentThread(auth(), { threadId: "thread_desktop_1" }, fetchFn)).rejects.not.toThrow("secret");
+  });
+
+  it("rejects abort on invalid thread ids and gateway failures with a generic error", async () => {
+    const okFetch = vi.fn().mockResolvedValue(new Response("boom", { status: 502 }));
+
+    await expect(abortCodingAgentThread(auth(), { threadId: "not-a-thread" }, okFetch)).rejects.toThrow("thread abort unavailable");
+    expect(okFetch).not.toHaveBeenCalled();
+    await expect(abortCodingAgentThread(auth(), { threadId: "thread_desktop_1" }, okFetch)).rejects.toThrow("thread abort unavailable");
   });
 
   it("fetches file browse entries with bearer auth and validates safe output", async () => {

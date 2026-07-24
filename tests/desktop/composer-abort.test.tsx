@@ -53,33 +53,33 @@ describe("AgentConversationView abort control", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
-    delete (window as { matrix?: unknown }).matrix;
   });
 
-  it("reports no abort support when the preload bridge has no abort hook", () => {
+  it("reports no abort support when the preload bridge is missing", () => {
+    Object.defineProperty(window, "operator", { configurable: true, value: undefined });
     expect(agentThreadAbortSupported()).toBe(false);
   });
 
-  it("hides the stop button while the agent runs when abort is unsupported", () => {
+  it("hides the stop button while the agent runs when the bridge is missing", () => {
+    Object.defineProperty(window, "operator", { configurable: true, value: undefined });
     render(<AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />);
 
     expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
     expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
   });
 
-  it("shows the stop button while the agent runs when the bridge supports abort", () => {
-    const abortThread = vi.fn();
-    Object.defineProperty(window, "matrix", { configurable: true, value: { abortThread } });
+  it("shows the stop button while the agent runs and invokes the abort channel", () => {
     render(<AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />);
 
     const stop = screen.getByRole("button", { name: "Stop" });
     fireEvent.click(stop);
 
-    expect(abortThread).toHaveBeenCalledWith("thread_alpha");
+    expect(window.operator.invoke).toHaveBeenCalledWith("runtime:abort-thread", {
+      threadId: "thread_alpha",
+    });
   });
 
   it("keeps the send button on an idle thread even when abort is supported", () => {
-    Object.defineProperty(window, "matrix", { configurable: true, value: { abortThread: vi.fn() } });
     render(
       <AgentConversationView status="ready" snapshot={snapshot([], { status: "completed" })} error={null} canSendTurns />,
     );
@@ -90,9 +90,12 @@ describe("AgentConversationView abort control", () => {
 
   it("swallows a rejected abort call with a warning instead of crashing", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    Object.defineProperty(window, "matrix", {
+    Object.defineProperty(window, "operator", {
       configurable: true,
-      value: { abortThread: vi.fn(() => Promise.reject(new Error("provider exploded"))) },
+      value: {
+        invoke: vi.fn(() => Promise.reject(new Error("provider exploded"))),
+        on: vi.fn(() => () => undefined),
+      },
     });
     render(<AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />);
 
