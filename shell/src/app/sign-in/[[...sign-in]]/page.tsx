@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { SignIn } from "@clerk/nextjs";
-import { shadcn } from "@clerk/ui/themes";
-import { ShellAuthLayout } from "@/components/auth/ShellAuthLayout";
+import { AuthLayout } from "@/components/auth/AuthLayout";
+import { FeatureShowcase } from "@/components/auth/FeatureShowcase";
+import { matrixClerkAppearance } from "@/components/auth/clerkAppearance";
 
 export const metadata: Metadata = {
   title: "Sign in | Matrix OS",
@@ -10,23 +11,20 @@ export const metadata: Metadata = {
 
 export default function SignInPage() {
   return (
-    <ShellAuthLayout
-      eyebrow="Matrix OS"
-      title="Come back to your computer."
-      body="Sign in once and the session carries across matrix-os.com and app.matrix-os.com. If your hosted trial is not active yet, the shell opens in preview mode with billing ready inside."
-    >
-      <SignIn
-        forceRedirectUrl="/"
-        fallbackRedirectUrl="/"
-        appearance={{
-          theme: shadcn,
-          elements: {
-            rootBox: "w-full",
-            cardBox: "w-full !shadow-none !border-0",
-            card: "!bg-transparent",
-          },
-        }}
-      />
-    </ShellAuthLayout>
+    <AuthLayout
+      featureContent={
+        <FeatureShowcase
+          variant="roster"
+          subheading="Welcome back. Your machine and agents are right where you left them."
+        />
+      }
+      formContent={
+        <SignIn
+          forceRedirectUrl="/"
+          fallbackRedirectUrl="/"
+          appearance={matrixClerkAppearance}
+        />
+      }
+    />
   );
 }

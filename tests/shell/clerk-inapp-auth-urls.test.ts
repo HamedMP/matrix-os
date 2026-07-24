@@ -59,4 +59,16 @@ describe("Clerk in-app auth URLs are baked into shell builds", () => {
     expect(signIn).toContain('forceRedirectUrl="/"');
     expect(signUp).toContain('forceRedirectUrl="/"');
   });
+
+  it("reuses the marketing auth layout, feature showcase, and Clerk appearance", () => {
+    const signIn = read("shell/src/app/sign-in/[[...sign-in]]/page.tsx");
+    const signUp = read("shell/src/app/sign-up/[[...sign-up]]/page.tsx");
+
+    for (const source of [signIn, signUp]) {
+      expect(source).toContain('from "@/components/auth/AuthLayout"');
+      expect(source).toContain('from "@/components/auth/FeatureShowcase"');
+      expect(source).toContain("appearance={matrixClerkAppearance}");
+      expect(source).not.toContain("ShellAuthLayout");
+    }
+  });
 });
