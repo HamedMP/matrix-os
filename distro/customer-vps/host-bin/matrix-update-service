@@ -25,6 +25,7 @@ VERSION_RE = re.compile(r"^(?:v[0-9]|main-[A-Za-z0-9])[A-Za-z0-9._-]{0,127}$")
 RUNTIME_DIR = Path("/run/matrix-update-runtime")
 SOCKET_PATH = RUNTIME_DIR / "update.sock"
 REQUEST_PATH = RUNTIME_DIR / "request.json"
+INFLIGHT_PATH = RUNTIME_DIR / "inflight.json"
 STATE_PATH = RUNTIME_DIR / "operation-state"
 WORKER_PATH = "/opt/matrix/bin/matrix-sync-agent"
 SO_PEERCRED = getattr(socket, "SO_PEERCRED", 17)
@@ -172,7 +173,7 @@ def _read_state() -> str:
             or metadata.st_uid != 0
             or metadata.st_nlink != 1
             or stat.S_IMODE(metadata.st_mode) != 0o600
-            or metadata.st_size not in {4, 7}
+            or metadata.st_size not in {4, 6, 7}
         ):
             return "idle"
         descriptor = os.open(STATE_PATH, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
@@ -188,7 +189,7 @@ def _read_state() -> str:
             state = os.read(descriptor, 8).decode("ascii")
         finally:
             os.close(descriptor)
-        return state if state in {"idle", "running"} else "idle"
+        return state if state in {"failed", "idle", "running"} else "idle"
     except (FileNotFoundError, OSError, UnicodeDecodeError):
         return "idle"
 
@@ -219,6 +220,30 @@ def _resume_pending_request(
         raise RuntimeError("update worker unavailable")
     _write_state("running")
     os.kill(worker.pid, signal.SIGUSR1)
+
+
+def _recover_interrupted_operation(expected_owner_uid: int = 0) -> bool:
+    try:
+        metadata = os.lstat(INFLIGHT_PATH)
+    except FileNotFoundError:
+        return False
+    valid = (
+        stat.S_ISREG(metadata.st_mode)
+        and metadata.st_uid == expected_owner_uid
+        and metadata.st_nlink in {1, 2}
+        and stat.S_IMODE(metadata.st_mode) == 0o600
+        and 1 <= metadata.st_size <= MAX_FRAME_BYTES
+    )
+    if not valid:
+        print("matrix-update-service: invalid_inflight", file=sys.stderr)
+    _write_state("failed")
+    for path in (REQUEST_PATH, INFLIGHT_PATH):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+    _fsync_directory(INFLIGHT_PATH.parent)
+    return True
 
 
 def _prepare_runtime_directory(matrix_gid: int) -> None:
@@ -278,7 +303,9 @@ def run_service() -> int:
     matrix_user = pwd.getpwnam("matrix")
     matrix_group = grp.getgrnam("matrix")
     _prepare_runtime_directory(matrix_group.gr_gid)
-    _write_state("idle")
+    interrupted = _recover_interrupted_operation()
+    if not interrupted and _read_state() != "failed":
+        _write_state("idle")
     worker = subprocess.Popen(
         [WORKER_PATH, "--worker"],
         stdin=subprocess.DEVNULL,
@@ -290,7 +317,8 @@ def run_service() -> int:
     os.chmod(SOCKET_PATH, 0o660)
     listener.listen(16)
     listener.settimeout(1)
-    _resume_pending_request(worker)
+    if not interrupted:
+        _resume_pending_request(worker)
 
     stopping = False
 

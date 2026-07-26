@@ -70,6 +70,20 @@ describe("typed root update service client", () => {
       message: "Update service unavailable",
     });
 
+    const failedPayload = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      ok: true,
+      status: "failed",
+    }));
+    const failedFrame = Buffer.alloc(failedPayload.length + 4);
+    failedFrame.writeUInt32BE(failedPayload.length, 0);
+    failedPayload.copy(failedFrame, 4);
+    expect(decodeUpdateServiceResponse(failedFrame)).toEqual({
+      schemaVersion: 1,
+      ok: true,
+      status: "failed",
+    });
+
     const leaked = Buffer.from(JSON.stringify({
       schemaVersion: 1,
       ok: false,

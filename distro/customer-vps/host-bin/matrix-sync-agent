@@ -24,6 +24,7 @@ readonly STAGING_DIR="/opt/matrix/staging"
 readonly BIN_DIR="/opt/matrix/bin"
 readonly UPDATE_RUNTIME_DIR="/run/matrix-update-runtime"
 readonly TYPED_REQUEST="$UPDATE_RUNTIME_DIR/request.json"
+readonly INFLIGHT_REQUEST="$UPDATE_RUNTIME_DIR/inflight.json"
 readonly ROLLBACK_STATE_DIR="$STAGING_DIR/rollback-state"
 readonly TERMINAL_RUNTIME_LIBEXEC="/opt/matrix/libexec/terminal-runtime"
 readonly TERMINAL_RUNTIME_GENERATIONS="/opt/matrix/libexec/terminal-runtime/v1"
@@ -1006,14 +1007,14 @@ do_rollback() {
 # emits only a validated operation tuple. The worker never accepts paths,
 # URLs, units, commands, or environment values from this file.
 claim_typed_request() {
-  python3 - "$TYPED_REQUEST" <<'PY'
+  python3 - "$TYPED_REQUEST" "$INFLIGHT_REQUEST" <<'PY'
 import json
 import os
 import re
 import stat
 import sys
 
-path = sys.argv[1]
+path, inflight_path = sys.argv[1:3]
 try:
     before = os.lstat(path)
     if (
@@ -1062,7 +1063,14 @@ try:
         output = f"{operation}||"
     else:
         raise ValueError("operation")
-    os.unlink(path)
+    os.link(path, inflight_path, follow_symlinks=False)
+    directory = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+        os.unlink(path)
+        os.fsync(directory)
+    finally:
+        os.close(directory)
     print(output)
 except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
     raise SystemExit(1)
@@ -1152,7 +1160,8 @@ process_typed_request() {
   local parsed operation kind value result=0
   if ! parsed="$(claim_typed_request)"; then
     log "WARN: update_request_invalid"
-    rm -f -- "$TYPED_REQUEST"
+    rm -f -- "$TYPED_REQUEST" "$INFLIGHT_REQUEST"
+    set_operation_state failed
     return 1
   fi
   set_operation_state running
@@ -1190,7 +1199,13 @@ process_typed_request() {
       result=1
       ;;
   esac
-  set_operation_state idle
+  if [ "$result" -eq 0 ]; then
+    rm -f -- "$INFLIGHT_REQUEST"
+    set_operation_state idle
+  else
+    set_operation_state failed
+    rm -f -- "$INFLIGHT_REQUEST"
+  fi
   return "$result"
 }
 
@@ -1311,7 +1326,7 @@ clean_repairable_tmp_artifacts() {
 set_operation_state() {
   local state="$1" temporary
   case "$state" in
-    idle|running) ;;
+    failed|idle|running) ;;
     *) return 1 ;;
   esac
   temporary="$(mktemp --tmpdir="$UPDATE_RUNTIME_DIR" .operation-state.XXXXXXXXXX)"

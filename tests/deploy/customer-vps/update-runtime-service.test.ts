@@ -138,6 +138,41 @@ with tempfile.TemporaryDirectory() as directory:
     expect(spawnSync("python3", ["-c", regression, service]).status).toBe(0);
   });
 
+  it("reports a claimed operation as failed instead of replaying it after restart", () => {
+    const service = join(root, "distro/customer-vps/host-bin/matrix-update-service");
+    const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+    const regression = String.raw`
+import json
+import pathlib
+import runpy
+import sys
+import tempfile
+
+module = runpy.run_path(sys.argv[1])
+runtime_globals = module["_recover_interrupted_operation"].__globals__
+with tempfile.TemporaryDirectory() as directory:
+    inflight_path = pathlib.Path(directory) / "inflight.json"
+    inflight_path.write_text(json.dumps({
+        "schemaVersion": 1,
+        "operation": "Rollback",
+    }), encoding="utf-8")
+    inflight_path.chmod(0o600)
+    runtime_globals["INFLIGHT_PATH"] = inflight_path
+    states = []
+    runtime_globals["_write_state"] = states.append
+    interrupted = module["_recover_interrupted_operation"](
+        expected_owner_uid=runtime_globals["os"].getuid()
+    )
+    assert interrupted is True
+    assert states == ["failed"]
+    assert not inflight_path.exists()
+`;
+    expect(spawnSync("python3", ["-c", regression, service]).status).toBe(0);
+    expect(updater).toContain('readonly INFLIGHT_REQUEST="$UPDATE_RUNTIME_DIR/inflight.json"');
+    expect(updater).toContain("os.link(path, inflight_path, follow_symlinks=False)");
+    expect(updater).toContain('set_operation_state failed');
+  });
+
   it("accepts an internal bundle symlink and rejects traversal and special members", () => {
     const directory = mkdtempSync(join(tmpdir(), "matrix-host-archive-"));
     const validator = join(root, "distro/customer-vps/host-bin/matrix-validate-host-bundle");

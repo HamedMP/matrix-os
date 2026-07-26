@@ -42,7 +42,7 @@ const UpdateServiceResponseSchema = z.discriminatedUnion("ok", [
   z.object({
     schemaVersion: z.literal(1),
     ok: z.literal(true),
-    status: z.enum(["accepted", "idle", "running"]),
+    status: z.enum(["accepted", "failed", "idle", "running"]),
   }).strict(),
   z.object({
     schemaVersion: z.literal(1),
