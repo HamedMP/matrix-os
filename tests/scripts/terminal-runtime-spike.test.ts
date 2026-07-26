@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { link, mkdtemp, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,6 +23,13 @@ stopEmptiesCgroup keeperLossDeterministic serverLossDeterministic readinessGated
 const s2Checks = passing(`exactOptionSyntax cacheMappedByRuntime layoutRestored viewportRestored
 scrollbackBounded lossWindowBounded commandsConfirmationGated forceRunAbsent corruptionFallback
 deletionComplete diskAccountingBounded liveSerializationDisableSafe`);
+const productionChecks = passing(`runtimeLive continuousOutput codingAgentPreserved
+twoDevicesOneRuntime detachPreservesRuntime renamePreservesIdentity bundleOnePreservesRuntime
+bundleTwoPreservesRuntime supervisorPreserved failedUpdatePreservesRuntime
+explicitRollbackPreservesRuntime daemonReloadPreservesRuntime forceRunAbsent journalPrivacy
+rebootStartsNoRuntime rebootShowsInterrupted explicitRecoverRestoresRuntime
+concurrentRecoverSingleUnit corruptionFallsBackFresh recoverDeleteCannotResurrect
+deleteWaitsForEmptyCgroup deleteRemovesRecoveryState`);
 async function evidence(overrides: Record<string, unknown> = {}): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'matrix-terminal-evidence-'));
   roots.push(root);
@@ -252,6 +260,9 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow.match(/--insecure/g)).toHaveLength(3);
     expect(workflow).toContain('PLATFORM_SECRET never leaves the runner');
     expect(workflow.match(/gateway_http_status=\$http_code/g)).toHaveLength(2);
+    expect(workflow).toContain(
+      'diagnostic: (if ((.stderr // "") | test("spike_[a-z0-9_]+"))',
+    );
     expect(workflow).not.toContain('VPS_SSH_KEY');
     expect(workflow).toContain('workflow_dispatch:');
   });
@@ -263,6 +274,109 @@ describe('terminal runtime spike evidence', () => {
     expect(previewWorkflow).toContain("MATRIX_TERMINAL_RUNTIME_SPIKE: '1'");
     expect(buildScript).toContain('if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then');
     expect(buildScript).toContain('scripts/spikes/terminal-runtime');
+  });
+  it('requires an exact-head production acceptance matrix beyond S1 and S2', async () => {
+    const [workflow, helper, runner, verifier] = await Promise.all([
+      readFile(
+        join(
+          process.cwd(),
+          '.github/workflows/terminal-runtime-production-acceptance.yml',
+        ),
+        'utf8',
+      ),
+      readFile(
+        join(
+          process.cwd(),
+          'distro/customer-vps/host-bin/matrix-terminal-spike-control',
+        ),
+        'utf8',
+      ),
+      readFile(
+        join(
+          process.cwd(),
+          'scripts/spikes/terminal-runtime/production-acceptance.sh',
+        ),
+        'utf8',
+      ),
+      readFile(
+        join(
+          process.cwd(),
+          'scripts/spikes/terminal-runtime/verify-production-evidence.mjs',
+        ),
+        'utf8',
+      ),
+    ]);
+    expect(workflow).toContain("github.event.label.name == 'terminal-production-acceptance'");
+    expect(workflow).toContain('Build two exact-head acceptance bundles');
+    expect(workflow).toContain('call_helper acceptance-launch');
+    expect(workflow).toContain('call_helper acceptance-reboot');
+    expect(workflow).toContain('call_helper acceptance-resume');
+    expect(workflow).toContain('call_helper acceptance-pack');
+    expect(workflow).toContain('Validate the complete production matrix');
+    expect(helper).toContain(
+      'acceptance-launch | acceptance-status | acceptance-reboot | acceptance-resume | acceptance-pack',
+    );
+    for (const check of [
+      'bundleOnePreservesRuntime',
+      'bundleTwoPreservesRuntime',
+      'failedUpdatePreservesRuntime',
+      'explicitRollbackPreservesRuntime',
+      'rebootStartsNoRuntime',
+      'explicitRecoverRestoresRuntime',
+      'concurrentRecoverSingleUnit',
+      'recoverDeleteCannotResurrect',
+      'corruptionFallsBackFresh',
+      'deleteWaitsForEmptyCgroup',
+    ]) {
+      expect(runner).toContain(check);
+      expect(verifier).toContain(check);
+    }
+    expect(runner).toContain(
+      "pgrep -a zellij | grep -F -- '--force-run-commands'",
+    );
+    expect(runner).not.toMatch(
+      /zellij(?:_cmd)?\s[^|\n]*--force-run-commands/,
+    );
+    expect(workflow).not.toContain('VPS_SSH_KEY');
+  });
+  it('fails closed on incomplete, stale, or extended production evidence', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-terminal-production-evidence-'));
+    roots.push(root);
+    const head = 'a'.repeat(40);
+    const verifier = join(
+      process.cwd(),
+      'scripts/spikes/terminal-runtime/verify-production-evidence.mjs',
+    );
+    const summary = {
+      schemaVersion: 1,
+      prHeadSha: head,
+      status: 'pass',
+      zellijBinarySha256:
+        '534455dc62c8e3753918d012547d10159ee07929f570a5873a754957502a49c4',
+      checks: productionChecks,
+      privacyScan: { status: 'pass', findings: 0 },
+    };
+    await writeFile(join(root, 'summary.json'), `${JSON.stringify(summary)}\n`);
+    expect(spawnSync(process.execPath, [
+      verifier, root, '--expected-head', head,
+    ]).status).toBe(0);
+    const missing = structuredClone(summary);
+    delete missing.checks.bundleTwoPreservesRuntime;
+    await writeFile(join(root, 'summary.json'), `${JSON.stringify(missing)}\n`);
+    expect(spawnSync(process.execPath, [
+      verifier, root, '--expected-head', head,
+    ]).status).not.toBe(0);
+    await writeFile(join(root, 'summary.json'), `${JSON.stringify({
+      ...summary,
+      extra: true,
+    })}\n`);
+    expect(spawnSync(process.execPath, [
+      verifier, root, '--expected-head', head,
+    ]).status).not.toBe(0);
+    await writeFile(join(root, 'summary.json'), `${JSON.stringify(summary)}\n`);
+    expect(spawnSync(process.execPath, [
+      verifier, root, '--expected-head', 'b'.repeat(40),
+    ]).status).not.toBe(0);
   });
   it('keeps every embedded spike asset inside the immutable-manifest path contract', async () => {
     const assetRoot = join(process.cwd(), 'scripts/spikes/terminal-runtime');

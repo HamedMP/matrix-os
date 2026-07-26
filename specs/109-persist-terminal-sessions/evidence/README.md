@@ -34,6 +34,17 @@ accounting, and safe live serialization disablement.
 Raw terminal contents, credentials, host IPs, user paths, and display names are
 not committed or uploaded.
 
+## Production acceptance
+
+The activation PR must add an exact-head `Terminal Runtime Production
+Acceptance` run before T065 is complete. Its bounded artifact records only the
+allowlisted boolean production checks and the verified Zellij binary digest.
+The run must cover two independently versioned bundles, a post-stop forced
+failure, explicit rollback, reboot with no automatic session start, explicit
+serialized recovery, concurrency races, corruption fallback, and cgroup-empty
+deletion. The final immutable run URL and evidence digest are recorded here only
+after that workflow passes; S1/S2 evidence alone does not satisfy this gate.
+
 ## Production rollout documentation
 
 - Public lifecycle, privacy, and one-time migration disclosure:

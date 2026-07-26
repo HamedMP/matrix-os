@@ -44,3 +44,22 @@ bun run test
 React layers additionally require `npx react-doctor@latest shell` and current
 Canvas-first screenshot or recording evidence. The final layer repeats the full
 disposable-VPS acceptance matrix across two bundles, failed update, and rollback.
+
+For the activation layer, deploy the frozen exact head with `preview-vps`, then
+apply `terminal-production-acceptance`. The same-repository labeled workflow:
+
+1. builds two independently versioned bundles from the same immutable head and
+   exact verified Zellij build;
+2. starts a production supervised runtime with continuous output and an actual
+   interactive Codex process, then proves two-device attach and immutable rename;
+3. applies both bundles, injects a fixed preview-only gateway start failure after
+   services have stopped, verifies failed-update rollback, and runs explicit
+   rollback without changing keeper, Zellij, shell, or agent PIDs;
+4. reboots the disposable VPS, proves no session auto-started, explicitly
+   recovers serialized state, and exercises concurrent Recover, Recover/Delete,
+   corruption fallback, and cgroup-empty Delete; and
+5. uploads only a bounded allowlisted check map tied to the exact head and exact
+   production Zellij digest.
+
+The S1/S2 workflow remains a separate binary/architecture gate. Its result must
+not be substituted for this production supervisor/updater/recovery matrix.

@@ -213,6 +213,13 @@ jobs:
             type == "object" and .exitCode == 0 and .timedOut == false and
             .truncated == false and .signal == null
           ' "$run_response" >/dev/null; then
+            jq '{
+              exitCode, timedOut, truncated, signal,
+              diagnostic: (if ((.stderr // "") | test("spike_[a-z0-9_]+"))
+                then ((.stderr // "") | capture("(?<code>spike_[a-z0-9_]+)").code)
+                elif ((.stderr // "") | test("sudo:")) then "sudo_rejected"
+                else "unclassified" end)
+            }' "$run_response" >&2
             echo "Detached spike launch failed." >&2
             exit 1
           fi

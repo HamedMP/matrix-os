@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 2 ]; then
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
   echo "spike_control_invalid_request" >&2
   exit 2
 fi
@@ -9,7 +9,13 @@ fi
 operation="$1"
 pr_head_sha="$2"
 case "$operation" in
-  launch | pack) ;;
+  launch | pack)
+    [ "$#" -eq 2 ] || { echo "spike_control_invalid_request" >&2; exit 2; }
+    ;;
+  acceptance-launch | acceptance-status | acceptance-reboot | acceptance-resume | acceptance-pack)
+    [ "$#" -eq 3 ] && [[ "$3" =~ ^[1-9][0-9]{0,19}-[1-9][0-9]{0,5}$ ]] ||
+      { echo "spike_control_invalid_request" >&2; exit 2; }
+    ;;
   *)
     echo "spike_control_invalid_request" >&2
     exit 2
@@ -31,10 +37,17 @@ case "$operation" in
   pack)
     target="/opt/matrix/libexec/terminal-runtime/current/spikes/pack-evidence.sh"
     ;;
+  acceptance-launch | acceptance-status | acceptance-reboot | acceptance-resume | acceptance-pack)
+    target="/opt/matrix/libexec/terminal-runtime/current/spikes/production-acceptance.sh"
+    set -- "${operation#acceptance-}" "$pr_head_sha" "$3"
+    ;;
 esac
 if [ ! -f "$target" ] || [ -L "$target" ] || [ ! -x "$target" ]; then
   echo "spike_control_unavailable" >&2
   exit 3
 fi
 
+if [[ "$operation" == acceptance-* ]]; then
+  exec "$target" "$@"
+fi
 exec "$target" "$pr_head_sha"
