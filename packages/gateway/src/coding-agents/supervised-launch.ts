@@ -29,6 +29,7 @@ export function buildSupervisedAgentLaunch(input: {
   prompt?: string;
   mode?: "default" | "plan" | "review" | "full_access";
   approvalPolicy?: "untrusted" | "on-request" | "on-failure" | "never";
+  codexExecutable?: string;
   providerEventPath?: string;
   sandbox: {
     enabled: boolean;
@@ -70,7 +71,12 @@ export function buildSupervisedAgentLaunch(input: {
         }
       : {}),
     ...(input.agent === "codex"
-      ? { codexExpectedVersion: CODEX_VERIFIED_VERSION }
+      ? {
+          codexExpectedVersion: CODEX_VERIFIED_VERSION,
+          ...(input.codexExecutable
+            ? { codexExecutable: input.codexExecutable }
+            : {}),
+        }
       : {}),
   });
   return {

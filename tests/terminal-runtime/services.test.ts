@@ -186,6 +186,50 @@ describe('terminal runtime service boundary', () => {
     },
   );
 
+  it('rejects Claude on-failure approval in supervised mode', () => {
+    expect(() => buildProviderLaunch({
+      schemaVersion: 1,
+      agent: 'claude',
+      cwd: { kind: 'home-relative', path: 'projects/private' },
+      prompt: 'repair the private project',
+      mode: 'default',
+      approvalPolicy: 'on-failure',
+      sandbox: {
+        enabled: true,
+        mode: 'workspace-write',
+        writableRoots: [],
+        denyWriteRoots: [],
+      },
+    }, '/home/matrix/home')).toThrow('claude_approval_policy_unsupported');
+  });
+
+  it('hands the selected Codex executable to the runner through fd 3 only', () => {
+    const codexExecutable = '/opt/matrix/runtime/node/bin/codex';
+    const launch = buildProviderLaunch({
+      schemaVersion: 1,
+      agent: 'codex',
+      cwd: { kind: 'home-relative', path: 'projects/private' },
+      prompt: 'repair the private project',
+      mode: 'default',
+      approvalPolicy: 'never',
+      sandbox: {
+        enabled: true,
+        mode: 'workspace-write',
+        writableRoots: [],
+        denyWriteRoots: [],
+      },
+      providerEventPath: 'system/session-output/example.jsonl',
+      codexExpectedVersion: '0.144.6',
+      codexExecutable,
+    }, '/home/matrix/home');
+
+    expect(JSON.parse(launch.fdPayload ?? '{}')).toMatchObject({
+      command: codexExecutable,
+    });
+    expect(JSON.stringify([launch.file, ...launch.args]))
+      .not.toContain(codexExecutable);
+  });
+
   it('notifies readiness only after exact session and complete cgroup evidence pass', async () => {
     const notifyReady = vi.fn(async () => undefined);
     const sequence = [

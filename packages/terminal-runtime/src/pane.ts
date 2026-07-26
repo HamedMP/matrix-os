@@ -62,6 +62,9 @@ function claudePermissionMode(
   if (configuration.mode === 'plan' || configuration.mode === 'review') {
     return 'plan';
   }
+  if (configuration.approvalPolicy === 'on-failure') {
+    throw new Error('claude_approval_policy_unsupported');
+  }
   if (
     configuration.approvalPolicy === 'never' &&
     (
@@ -151,6 +154,9 @@ export function buildProviderLaunch(
         env: environment,
         stdin: null,
         fdPayload: JSON.stringify({
+          ...(configuration.codexExecutable
+            ? { command: configuration.codexExecutable }
+            : {}),
           eventPath: ownerPath(home, configuration.providerEventPath),
           expectedVersion: configuration.codexExpectedVersion,
           config: {

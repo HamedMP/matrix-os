@@ -253,6 +253,26 @@ describe("agent-launcher", () => {
     ]);
   });
 
+  it("preserves the configured Codex executable in supervised launch configuration", () => {
+    const codexExecutable = "/opt/matrix/runtime/node/bin/codex";
+    const launcher = createAgentLauncher({
+      codexExecutable,
+      terminalRuntimeMode: "supervised",
+      runtimeHome: "/home/matrix/home",
+    });
+
+    const launch = launcher.buildLaunch({
+      agent: "codex",
+      cwd: "/home/matrix/home/projects/repo",
+      prompt: "fix tests",
+      sandbox: { enabled: true, mode: "workspace-write" },
+      providerEventPath: "/home/matrix/home/system/coding-agents/provider-events/sess_bound.jsonl",
+    });
+
+    expect(launch.supervised?.configuration).toMatchObject({ codexExecutable });
+    expect(JSON.stringify([launch.command, ...launch.args])).not.toContain(codexExecutable);
+  });
+
   it("keeps an unverified configured Codex version installed but workspace-incompatible", async () => {
     const codexExecutable = "/opt/matrix/runtime/node/bin/codex";
     const runCommand = vi.fn(async (command: string, args: string[]) => {

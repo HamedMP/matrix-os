@@ -33,6 +33,11 @@ export const LaunchDataSchema = z.discriminatedUnion('kind', [
   }).strict(),
 ]);
 export const AgentProviderSchema = z.enum(['claude', 'codex', 'opencode', 'pi']);
+export const AgentExecutablePathSchema = z.string()
+  .trim()
+  .min(1)
+  .max(4096)
+  .regex(/^\/[^\u0000\r\n]+$/);
 const AgentConfigurationSandboxSchema = z.object({
   enabled: z.boolean(),
   mode: z.enum(['read-only', 'workspace-write', 'danger-full-access']).optional(),
@@ -50,6 +55,7 @@ export const AgentConfigurationSchema = z.object({
   sandbox: AgentConfigurationSandboxSchema,
   providerEventPath: HomeRelativePathSchema.optional(),
   codexExpectedVersion: z.string().regex(/^\d+\.\d+\.\d+$/).optional(),
+  codexExecutable: AgentExecutablePathSchema.optional(),
 }).strict();
 export const ReceiptSchema = z.object({
   schemaVersion: z.literal(1),

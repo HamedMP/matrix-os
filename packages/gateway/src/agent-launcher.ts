@@ -524,6 +524,9 @@ export function createAgentLauncher(options: {
         if (!input.sandbox) {
           throw new Error("Agent sandbox preflight is required");
         }
+        const supervisedCodexExecutable = input.agent === "codex"
+          ? input.codexExecutable ?? options.codexExecutable
+          : undefined;
         const supervised = buildSupervisedAgentLaunch({
           operationId: createOperationId(),
           agent: input.agent,
@@ -535,6 +538,9 @@ export function createAgentLauncher(options: {
             : {}),
           sandbox: input.sandbox,
           homePath: input.runtimeHome ?? options.runtimeHome,
+          ...(supervisedCodexExecutable
+            ? { codexExecutable: supervisedCodexExecutable }
+            : {}),
           ...(input.providerEventPath
             ? { providerEventPath: input.providerEventPath }
             : {}),

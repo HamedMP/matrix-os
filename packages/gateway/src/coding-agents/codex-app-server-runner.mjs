@@ -66,6 +66,7 @@ const RunnerConfigSchema = z.object({
   writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
 }).strict();
 const FdRunnerEnvelopeSchema = z.object({
+  command: z.string().trim().min(1).max(4096).refine(isAbsolute).optional(),
   eventPath: z.string().min(1).max(4096).refine(isAbsolute),
   expectedVersion: z.string().regex(/^\d+\.\d+\.\d+$/),
   config: RunnerConfigSchema,
@@ -180,7 +181,7 @@ if (process.argv[2] === "--fd-config") {
     const envelope = await readBoundedConfigurationFd();
     eventPath = envelope.eventPath;
     expectedVersion = envelope.expectedVersion;
-    command = "codex";
+    command = envelope.command ?? "codex";
     commandArgs = [];
     config = envelope.config;
   } catch (_error) {

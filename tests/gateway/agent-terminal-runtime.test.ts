@@ -69,6 +69,21 @@ describe("supervised coding-agent launch", () => {
     expect(SupervisedAgentConfigurationSchema.safeParse(input).success).toBe(false);
   });
 
+  it("hands the selected Codex executable through configuration, never Matrix argv", () => {
+    const codexExecutable = "/opt/matrix/runtime/node/bin/codex";
+    const launch = buildSupervisedAgentLaunch({
+      operationId: OPERATION_ID,
+      agent: "codex",
+      codexExecutable,
+      cwd: "/home/matrix/home/projects/private",
+      prompt: "repair the private project",
+      sandbox: { enabled: true, mode: "workspace-write" },
+    });
+
+    expect(launch.configuration).toMatchObject({ codexExecutable });
+    expect(JSON.stringify(launch.matrixArgv)).not.toContain(codexExecutable);
+  });
+
   it("publishes one configuration before CreateStart and removes it on rejection", async () => {
     const configuration = buildSupervisedAgentLaunch({
       operationId: OPERATION_ID,
