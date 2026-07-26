@@ -106,6 +106,38 @@ except module["ProtocolError"]:
     expect(updater).not.toContain('.operation-state.$$.tmp');
   });
 
+  it("resumes a root-published request after a service restart", () => {
+    const service = join(root, "distro/customer-vps/host-bin/matrix-update-service");
+    const regression = String.raw`
+import json
+import pathlib
+import runpy
+import signal
+import sys
+import tempfile
+
+module = runpy.run_path(sys.argv[1])
+runtime_globals = module["_resume_pending_request"].__globals__
+with tempfile.TemporaryDirectory() as directory:
+    request_path = pathlib.Path(directory) / "request.json"
+    request_path.write_text(json.dumps({
+        "schemaVersion": 1,
+        "operation": "Repair",
+    }), encoding="utf-8")
+    request_path.chmod(0o600)
+    runtime_globals["REQUEST_PATH"] = request_path
+    states = []
+    signals = []
+    runtime_globals["_write_state"] = states.append
+    runtime_globals["os"].kill = lambda pid, signum: signals.append((pid, signum))
+    worker = type("Worker", (), {"pid": 4242, "poll": lambda self: None})()
+    module["_resume_pending_request"](worker, expected_owner_uid=runtime_globals["os"].getuid())
+    assert states == ["running"]
+    assert signals == [(4242, signal.SIGUSR1)]
+`;
+    expect(spawnSync("python3", ["-c", regression, service]).status).toBe(0);
+  });
+
   it("accepts an internal bundle symlink and rejects traversal and special members", () => {
     const directory = mkdtempSync(join(tmpdir(), "matrix-host-archive-"));
     const validator = join(root, "distro/customer-vps/host-bin/matrix-validate-host-bundle");

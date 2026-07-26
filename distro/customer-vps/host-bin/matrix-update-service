@@ -193,6 +193,34 @@ def _read_state() -> str:
         return "idle"
 
 
+def _resume_pending_request(
+    worker: subprocess.Popen[bytes],
+    expected_owner_uid: int = 0,
+) -> None:
+    try:
+        metadata = os.lstat(REQUEST_PATH)
+    except FileNotFoundError:
+        return
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != expected_owner_uid
+        or metadata.st_nlink != 1
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_size < 1
+        or metadata.st_size > MAX_FRAME_BYTES
+    ):
+        try:
+            REQUEST_PATH.unlink()
+        except FileNotFoundError:
+            pass
+        _write_state("idle")
+        return
+    if worker.poll() is not None:
+        raise RuntimeError("update worker unavailable")
+    _write_state("running")
+    os.kill(worker.pid, signal.SIGUSR1)
+
+
 def _prepare_runtime_directory(matrix_gid: int) -> None:
     RUNTIME_DIR.mkdir(mode=0o750, parents=True, exist_ok=True)
     if RUNTIME_DIR.is_symlink() or not RUNTIME_DIR.is_dir():
@@ -262,6 +290,7 @@ def run_service() -> int:
     os.chmod(SOCKET_PATH, 0o660)
     listener.listen(16)
     listener.settimeout(1)
+    _resume_pending_request(worker)
 
     stopping = False
 
