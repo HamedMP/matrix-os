@@ -100,9 +100,7 @@ jobs:
               MATRIX_BUILD_SHA="$HEAD_SHA" MATRIX_BUILD_REF="$HEAD_REF" \
               HOST_BUNDLE_ZELLIJ_BUILD_DIR="$RUNNER_TEMP/matrix-zellij" \
               ./scripts/build-host-bundle.sh
-            mkdir -p "dist/acceptance-${suffix}"
-            mv dist/host-bundle/. "dist/acceptance-${suffix}/"
-            rmdir dist/host-bundle
+            mv dist/host-bundle "dist/acceptance-${suffix}"
           done
       - uses: actions/upload-artifact@v7
         with:
