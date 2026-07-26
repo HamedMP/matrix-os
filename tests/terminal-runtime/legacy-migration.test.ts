@@ -190,6 +190,71 @@ describe("legacy terminal migration", () => {
     await state.close();
   });
 
+  it("keeps colliding shell and workspace records on distinct immutable runtimes", async () => {
+    const { homePath, state } = await fixture();
+    await writeFile(join(homePath, "system", "shell-sessions.json"), JSON.stringify({
+      sessions: {
+        main: {
+          name: "main",
+          status: "active",
+          cwd: homePath,
+        },
+      },
+    }));
+    await writeFile(join(homePath, "system", "sessions", "main.json"), JSON.stringify({
+      id: "main",
+      kind: "agent",
+      runtime: {
+        type: "zellij",
+        status: "running",
+        zellijSession: "legacy-agent-main",
+      },
+    }));
+
+    let nextId = 0;
+    const migrate = async () => await migrateLegacyTerminalState({
+      homePath,
+      state,
+      resolveCwd: cwdResolver(homePath),
+      now: () => new Date("2026-07-26T10:00:00.000Z"),
+      bootId: "migration-boot",
+      createId: () => IDS[nextId++]!,
+    });
+
+    await expect(migrate()).resolves.toMatchObject({
+      migrated: 2,
+      existing: 0,
+      workspaceRecordsUpdated: 1,
+    });
+    const workspace = JSON.parse(await readFile(
+      join(homePath, "system", "sessions", "main.json"),
+      "utf8",
+    )) as { runtime: { runtimeId: string } };
+    expect(workspace.runtime.runtimeId).toBe(IDS[1]);
+    expect(workspace.runtime.runtimeId).not.toBe(IDS[0]);
+    const receipts = (await state.receipts.list()).flatMap(({ state: receiptState }) =>
+      receiptState?.kind === "supported" ? [receiptState.receipt] : []);
+    expect(receipts).toHaveLength(2);
+    expect(receipts.map((receipt) => receipt.runtimeId).sort())
+      .toEqual([IDS[0], IDS[1]]);
+    const workspaceReceipt = receipts.find((receipt) => receipt.runtimeId === IDS[1]);
+    expect(workspaceReceipt?.displayName).toBe(`main-agent-${IDS[1]}`);
+    expect(await state.names.resolve("main", Date.now())).toMatchObject({
+      runtimeId: IDS[0],
+    });
+    expect(await state.names.resolve(`main-agent-${IDS[1]}`, Date.now()))
+      .toMatchObject({ runtimeId: IDS[1] });
+
+    await expect(migrate()).resolves.toMatchObject({
+      migrated: 0,
+      existing: 1,
+      skipped: 1,
+      workspaceRecordsUpdated: 0,
+    });
+    expect(nextId).toBe(2);
+    await state.close();
+  });
+
   it("rejects symlinked legacy sources without creating recovery state", async () => {
     const { root, homePath, state } = await fixture();
     const outside = join(root, "outside.json");

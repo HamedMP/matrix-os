@@ -39,6 +39,7 @@ const LegacyWorkspaceSessionSchema = z.object({
 }).passthrough();
 
 type LegacyCandidate = {
+  source: 'shell' | 'workspace';
   displayName: string;
   createdAt?: string;
   cwd?: string;
@@ -90,6 +91,7 @@ async function readShellCandidates(
       continue;
     }
     candidates.push({
+      source: 'shell',
       displayName: displayName.data,
       createdAt: session.createdAt,
       cwd: session.cwd,
@@ -138,6 +140,7 @@ async function readWorkspaceCandidates(
       continue;
     }
     candidates.push({
+      source: 'workspace',
       displayName: fileId,
       priorState: 'live',
       workspace: { fileName, raw: parsed.data },
@@ -170,6 +173,7 @@ async function resolveMigrationCwd(options: {
 function migratedReceipt(input: {
   runtimeId: string;
   candidate: LegacyCandidate;
+  displayName: string;
   cwd: HomeRelativeCwd;
   now: string;
   bootId: string;
@@ -178,7 +182,7 @@ function migratedReceipt(input: {
   return {
     schemaVersion: 1,
     runtimeId,
-    displayName: DisplayNameSchema.parse(input.candidate.displayName),
+    displayName: DisplayNameSchema.parse(input.displayName),
     cwd: input.cwd,
     createdAt: supportedTimestamp(input.candidate.createdAt, input.now),
     metadataRevision: 1,
@@ -189,6 +193,14 @@ function migratedReceipt(input: {
     },
     zellij: { sessionName: `matrix-t-${runtimeId}` },
   };
+}
+
+function collisionDisplayName(displayName: string, runtimeId: string): string {
+  const id = RuntimeIdSchema.parse(runtimeId);
+  const suffix = `-agent-${id}`;
+  return DisplayNameSchema.parse(
+    `${displayName.slice(0, 64 - suffix.length)}${suffix}`,
+  );
 }
 
 async function updateWorkspaceRecord(options: {
@@ -248,6 +260,9 @@ export async function migrateLegacyTerminalState(options: {
       readWorkspaceCandidates(sessionsDirectory),
     ]);
     const candidates = [...shell.candidates, ...workspace.candidates];
+    const shellDisplayNames = shell.candidates.map(
+      (candidate) => candidate.displayName,
+    );
     if (candidates.length > MAX_LEGACY_RECORDS) {
       throw new Error('legacy_state_capacity');
     }
@@ -260,12 +275,16 @@ export async function migrateLegacyTerminalState(options: {
     };
     for (const candidate of candidates) {
       await options.state.locks.withNameIndex(async () => {
-        const resolved = await options.state.names.resolve(
-          candidate.displayName,
-          now().getTime(),
-        );
+        const collidesWithShell = candidate.source === 'workspace' &&
+          shellDisplayNames.includes(candidate.displayName);
+        const resolved = collidesWithShell
+          ? null
+          : await options.state.names.resolve(
+            candidate.displayName,
+            now().getTime(),
+          );
         let runtimeId = resolved?.runtimeId;
-        if (!runtimeId) {
+        if (!runtimeId && !collidesWithShell) {
           const orphan = await options.state.receipts.findByDisplayName(
             candidate.displayName,
           );
@@ -312,6 +331,9 @@ export async function migrateLegacyTerminalState(options: {
           resolveCwd: options.resolveCwd,
         });
         const nextRuntimeId = RuntimeIdSchema.parse(createId());
+        const nextDisplayName = collidesWithShell
+          ? collisionDisplayName(candidate.displayName, nextRuntimeId)
+          : candidate.displayName;
         await options.state.locks.withRuntime(
           nextRuntimeId,
           false,
@@ -320,12 +342,13 @@ export async function migrateLegacyTerminalState(options: {
             await options.state.receipts.create(migratedReceipt({
               runtimeId: nextRuntimeId,
               candidate,
+              displayName: nextDisplayName,
               cwd: resolvedCwd.cwd,
               now: timestamp,
               bootId: options.bootId,
             }));
             await options.state.names.register(
-              candidate.displayName,
+              nextDisplayName,
               nextRuntimeId,
               1,
               now().getTime(),
