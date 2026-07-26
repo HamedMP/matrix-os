@@ -142,7 +142,6 @@ describe('customer VPS terminal runtime services', () => {
       'systemctl enable --now matrix-terminal-runtime.service',
     );
     expect(updater).not.toContain('restart matrix-terminal-runtime.service');
-    expect(updater).not.toContain('stop matrix-terminal-runtime.service');
     expect(updater).not.toContain('matrix-terminal-session@*');
     expect(cloudInit).toContain('chown -R root:root /opt/matrix/libexec');
     expect(cloudInit).toContain('/opt/matrix/systemd/*.slice');
@@ -158,6 +157,51 @@ describe('customer VPS terminal runtime services', () => {
     expect(installer).not.toContain(
       'systemctl enable matrix-terminal-session@',
     );
+  });
+
+  it('terminates only a newly introduced supervisor before failed-start rollback', () => {
+    const updater = read('distro/customer-vps/host-bin/matrix-sync-agent');
+    const cleanup = extractShellFunction(
+      updater,
+      'terminate_new_terminal_runtime_supervisor_after_failed_start',
+    );
+    const startFailure = updater.slice(
+      updater.indexOf(
+        'if ! sudo systemctl start matrix-terminal-runtime.service; then',
+      ),
+      updater.indexOf('log "Terminal runtime supervisor enabled"'),
+    );
+
+    expect(updater).toContain(
+      'systemctl is-active --quiet matrix-terminal-runtime.service',
+    );
+    expect(updater).toContain('supervisor-was-active');
+    expect(cleanup).toContain(
+      '[ ! -f "$snapshot/supervisor-was-active" ] || return 1',
+    );
+    expect(cleanup).toContain(
+      'sudo systemctl stop matrix-terminal-runtime.service',
+    );
+    expect(cleanup).toContain(
+      'sudo systemctl reset-failed matrix-terminal-runtime.service',
+    );
+    expect(cleanup).toContain(
+      'if sudo systemctl is-active --quiet matrix-terminal-runtime.service; then',
+    );
+    expect(startFailure.indexOf(
+      'terminate_new_terminal_runtime_supervisor_after_failed_start',
+    )).toBeGreaterThan(startFailure.indexOf(
+      'terminal_runtime_supervisor_start_failed',
+    ));
+    expect(startFailure.indexOf('do_rollback failed-update')).toBeGreaterThan(
+      startFailure.indexOf(
+        'terminate_new_terminal_runtime_supervisor_after_failed_start',
+      ),
+    );
+    expect(
+      updater.match(/systemctl stop matrix-terminal-runtime\.service/g),
+    ).toHaveLength(1);
+    expect(updater).not.toContain('systemctl stop matrix-terminal-session@');
   });
 
   it('rejects a hard-linked immutable generation before privileged install', () => {
@@ -267,9 +311,6 @@ describe('customer VPS terminal runtime services', () => {
     );
     expect(updater).toContain(
       'sudo rm -rf -- "$APP_DIR/.terminal-runtime.failed-update"',
-    );
-    expect(updater).not.toContain(
-      'systemctl stop matrix-terminal-runtime.service',
     );
     expect(updater).not.toContain(
       'systemctl stop matrix-terminal-session@',

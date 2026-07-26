@@ -242,7 +242,24 @@ backup_terminal_runtime_for_failed_update() {
     sudo chown root:matrix "$snapshot_next/supervisor-was-enabled"
     sudo chmod 0640 "$snapshot_next/supervisor-was-enabled"
   fi
+  if sudo systemctl is-active --quiet matrix-terminal-runtime.service; then
+    sudo touch "$snapshot_next/supervisor-was-active"
+    sudo chown root:matrix "$snapshot_next/supervisor-was-active"
+    sudo chmod 0640 "$snapshot_next/supervisor-was-active"
+  fi
   sudo mv -- "$snapshot_next" "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
+}
+
+terminate_new_terminal_runtime_supervisor_after_failed_start() {
+  local snapshot="$APP_DIR.rollback/.terminal-runtime.failed-update"
+  [ -d "$snapshot" ] && [ ! -L "$snapshot" ] || return 1
+  [ ! -f "$snapshot/supervisor-was-active" ] || return 1
+  sudo systemctl stop matrix-terminal-runtime.service || return 1
+  sudo systemctl reset-failed matrix-terminal-runtime.service ||
+    log "WARN: terminal_runtime_supervisor_reset_failed"
+  if sudo systemctl is-active --quiet matrix-terminal-runtime.service; then
+    return 1
+  fi
 }
 
 restore_terminal_runtime_after_failed_update() {
@@ -751,6 +768,11 @@ apply_update() {
       fi
       if ! sudo systemctl start matrix-terminal-runtime.service; then
         log "ERROR: terminal_runtime_supervisor_start_failed"
+        if ! terminate_new_terminal_runtime_supervisor_after_failed_start; then
+          log "ERROR: terminal_runtime_supervisor_cleanup_failed"
+          rm -rf "$extract_dir" "$bundle_file"
+          return 1
+        fi
         do_rollback failed-update ||
           log "ERROR: rollback after terminal supervisor start failure failed"
         rm -rf "$extract_dir" "$bundle_file"
