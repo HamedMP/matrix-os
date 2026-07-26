@@ -172,17 +172,21 @@ write_files:
     permissions: "0644"
     content: |
       [Unit]
-      Description=Matrix OS customer sync agent
+      Description=Matrix OS root update service
       After=network-online.target
       Wants=network-online.target
-      ConditionPathExists=/opt/matrix/bin/matrix-sync-agent
+      ConditionPathExists=/opt/matrix/bin/matrix-update-service
 
       [Service]
-      User=matrix
-      Group=matrix
+      Type=simple
+      User=root
+      Group=root
       EnvironmentFile=/opt/matrix/env/host.env
       WorkingDirectory=/opt/matrix
-      ExecStart=/opt/matrix/bin/matrix-sync-agent
+      ExecStart=/opt/matrix/bin/matrix-update-service
+      KillMode=control-group
+      TimeoutStopSec=30
+      UMask=0077
       Restart=on-failure
       RestartSec=10
 
@@ -590,7 +594,7 @@ runcmd:
       chown root:matrix /opt/matrix/release.json
       chmod 0644 /opt/matrix/release.json
     fi
-    for required_bin in matrixctl matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-symphony matrix-symphony-control matrix-install-hermes; do
+    for required_bin in matrixctl matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-update-service matrix-validate-host-bundle matrix-update matrix-symphony matrix-symphony-control matrix-install-hermes; do
       chmod 0750 "/opt/matrix/bin/${required_bin}"
     done
     for optional_bin in matrix-hermes-dashboard matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do

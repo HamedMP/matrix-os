@@ -163,9 +163,9 @@ describe('terminal runtime spike evidence', () => {
     expect(syncAgent).toContain("! -name 'matrix-terminal-*'");
     expect(syncAgent).toContain('backup_zellij_for_rollback');
     expect(syncAgent).toContain('restore_zellij_after_rollback');
-    expect(syncAgent).toContain('readonly ZELLIJ_ROLLBACK_DIR="$APP_DIR/.zellij.rollback"');
+    expect(syncAgent).toContain('readonly ZELLIJ_ROLLBACK_DIR="$ROLLBACK_STATE_DIR/zellij.rollback"');
     expect(syncAgent).toContain('local rollback_next="${ZELLIJ_ROLLBACK_DIR}.next"');
-    expect(syncAgent).toContain('sudo mv -- "$rollback_next" "$ZELLIJ_ROLLBACK_DIR"');
+    expect(syncAgent).toContain('mv -- "$rollback_next" "$ZELLIJ_ROLLBACK_DIR"');
     const rollbackBackup = syncAgent.slice(
       syncAgent.indexOf('backup_zellij_for_rollback()'),
       syncAgent.indexOf('restore_zellij_after_rollback()'),
@@ -174,7 +174,7 @@ describe('terminal runtime spike evidence', () => {
       rollbackBackup.indexOf('clear_zellij_rollback'),
     );
     expect(rollbackBackup.indexOf('clear_zellij_rollback')).toBeLessThan(
-      rollbackBackup.indexOf('sudo mv -- "$rollback_next" "$ZELLIJ_ROLLBACK_DIR"'),
+      rollbackBackup.indexOf('mv -- "$rollback_next" "$ZELLIJ_ROLLBACK_DIR"'),
     );
     expect(syncAgent).toContain(
       'if [ -f "$extract_dir/bin/zellij" ]; then\n    backup_zellij_for_rollback',
@@ -183,14 +183,14 @@ describe('terminal runtime spike evidence', () => {
       syncAgent.lastIndexOf('backup_zellij_for_rollback'),
     );
     expect(syncAgent).toContain(
-      'if [ -f "$extract_dir/bin/zellij" ]; then\n        sudo rm -f -- "$ZELLIJ_BUILD_METADATA"',
+      'if [ -f "$extract_dir/bin/zellij" ]; then\n        rm -f -- "$ZELLIJ_BUILD_METADATA"',
     );
     expect(syncAgent.indexOf('backup_zellij_for_rollback')).toBeLessThan(
       syncAgent.indexOf('mv -f "$zellij_next" "$BIN_DIR/zellij"'),
     );
     const rollbackBody = syncAgent.slice(syncAgent.indexOf('do_rollback()'));
     expect(rollbackBody.indexOf('restore_zellij_after_rollback')).toBeLessThan(
-      rollbackBody.indexOf('sudo chown -R matrix:matrix "$APP_DIR"'),
+      rollbackBody.indexOf('chown -R matrix:matrix "$APP_DIR"'),
     );
     expect(rollbackBody.indexOf('restore_zellij_after_rollback')).toBeLessThan(
       rollbackBody.indexOf('systemctl start matrix-gateway matrix-shell'),

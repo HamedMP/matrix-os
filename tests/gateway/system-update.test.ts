@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -78,6 +78,10 @@ describe("system update checks", () => {
       ok: false,
       error: "Invalid update channel",
     });
+    expect(parseInternalUpgradeTarget({ path: "/opt/matrix/app" })).toEqual({
+      ok: false,
+      error: "Invalid upgrade request",
+    });
   });
 
   it("resolves internal update starts without losing explicit versions", () => {
@@ -105,46 +109,48 @@ describe("system update checks", () => {
     });
   });
 
-  it("writes requested versions before triggering an internal upgrade", async () => {
-    const appDir = mkdtempSync(join(tmpdir(), "matrix-upgrade-"));
-    try {
-      writeFileSync(join(appDir, ".update-channel"), "stable");
-      const result = await writeInternalUpgradeTrigger({
-        appDir,
-        body: { version: "v2026.05.12-42" },
-      });
+  it("requests explicit versions through the typed root service", async () => {
+    const requestImpl = vi.fn().mockResolvedValue({
+      schemaVersion: 1,
+      ok: true,
+      status: "accepted",
+    });
+    const result = await writeInternalUpgradeTrigger({
+      body: { version: "v2026.05.12-42" },
+      requestImpl,
+    });
 
-      expect(result).toEqual({
-        ok: true,
-        target: { type: "version", value: "v2026.05.12-42" },
-      });
-      expect(readFileSync(join(appDir, ".update-version"), "utf8")).toBe("v2026.05.12-42");
-      expect(existsSync(join(appDir, ".update-channel"))).toBe(false);
-      expect(readFileSync(join(appDir, ".update-now"), "utf8")).toBe("");
-    } finally {
-      rmSync(appDir, { recursive: true, force: true });
-    }
+    expect(result).toEqual({
+      ok: true,
+      target: { type: "version", value: "v2026.05.12-42" },
+    });
+    expect(requestImpl).toHaveBeenCalledWith({
+      schemaVersion: 1,
+      operation: "Apply",
+      target: { kind: "version", value: "v2026.05.12-42" },
+    });
   });
 
-  it("writes requested channels before triggering an internal upgrade", async () => {
-    const appDir = mkdtempSync(join(tmpdir(), "matrix-upgrade-"));
-    try {
-      writeFileSync(join(appDir, ".update-version"), "v2026.05.12-41");
-      const result = await writeInternalUpgradeTrigger({
-        appDir,
-        body: { channel: "canary" },
-      });
+  it("requests explicit channels through the typed root service", async () => {
+    const requestImpl = vi.fn().mockResolvedValue({
+      schemaVersion: 1,
+      ok: true,
+      status: "accepted",
+    });
+    const result = await writeInternalUpgradeTrigger({
+      body: { channel: "canary" },
+      requestImpl,
+    });
 
-      expect(result).toEqual({
-        ok: true,
-        target: { type: "channel", value: "canary" },
-      });
-      expect(readFileSync(join(appDir, ".update-channel"), "utf8")).toBe("canary");
-      expect(existsSync(join(appDir, ".update-version"))).toBe(false);
-      expect(readFileSync(join(appDir, ".update-now"), "utf8")).toBe("");
-    } finally {
-      rmSync(appDir, { recursive: true, force: true });
-    }
+    expect(result).toEqual({
+      ok: true,
+      target: { type: "channel", value: "canary" },
+    });
+    expect(requestImpl).toHaveBeenCalledWith({
+      schemaVersion: 1,
+      operation: "Apply",
+      target: { kind: "channel", value: "canary" },
+    });
   });
 
   it("reads sanitized update failure details for low disk failures", async () => {
@@ -307,74 +313,56 @@ describe("two-lane update severity", () => {
 });
 
 describe("system update start", () => {
-  it("starts the local VPS updater through sudo with a validated channel", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "matrix-update-"));
-    const updateCommand = join(dir, "matrix-update");
-    writeFileSync(updateCommand, "#!/bin/sh\n", { mode: 0o755 });
-    const spawnImpl = vi.fn().mockReturnValue({ unref: vi.fn() });
+  it("starts the local VPS updater through the typed root service", async () => {
+    const requestImpl = vi.fn().mockResolvedValue({
+      schemaVersion: 1,
+      ok: true,
+      status: "accepted",
+    });
+    const result = await startSystemUpdate({
+      channel: "stable",
+      requestImpl,
+    });
 
-    try {
-      const result = await startSystemUpdate({
-        channel: "stable",
-        updateCommand,
-        spawnImpl,
-      });
-
-      expect(result).toEqual({ ok: true, status: "started" });
-      expect(spawnImpl).toHaveBeenCalledWith(
-        "sudo",
-        ["-n", updateCommand, "stable"],
-        expect.objectContaining({ detached: true, stdio: "ignore" }),
-      );
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    expect(result).toEqual({ ok: true, status: "started" });
+    expect(requestImpl).toHaveBeenCalledWith({
+      schemaVersion: 1,
+      operation: "Apply",
+      target: { kind: "channel", value: "stable" },
+    });
   });
 
   it("starts the local VPS updater with an explicit version for downgrades", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "matrix-update-"));
-    const updateCommand = join(dir, "matrix-update");
-    writeFileSync(updateCommand, "#!/bin/sh\n", { mode: 0o755 });
-    const spawnImpl = vi.fn().mockReturnValue({ unref: vi.fn() });
+    const requestImpl = vi.fn().mockResolvedValue({
+      schemaVersion: 1,
+      ok: true,
+      status: "accepted",
+    });
+    const result = await startSystemUpdate({
+      target: { type: "version", value: "v2026.05.12-1" },
+      requestImpl,
+    });
 
-    try {
-      const result = await startSystemUpdate({
-        target: { type: "version", value: "v2026.05.12-1" },
-        updateCommand,
-        spawnImpl,
-      });
-
-      expect(result).toEqual({ ok: true, status: "started" });
-      expect(spawnImpl).toHaveBeenCalledWith(
-        "sudo",
-        ["-n", updateCommand, "v2026.05.12-1"],
-        expect.objectContaining({ detached: true, stdio: "ignore" }),
-      );
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    expect(result).toEqual({ ok: true, status: "started" });
+    expect(requestImpl).toHaveBeenCalledWith({
+      schemaVersion: 1,
+      operation: "Apply",
+      target: { kind: "version", value: "v2026.05.12-1" },
+    });
   });
 
-  it("starts safe update repair through sudo without launching a shell", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "matrix-update-"));
-    const updateCommand = join(dir, "matrix-update");
-    writeFileSync(updateCommand, "#!/bin/sh\n", { mode: 0o755 });
-    const spawnImpl = vi.fn().mockReturnValue({ unref: vi.fn() });
+  it("starts safe update repair without launching a shell", async () => {
+    const requestImpl = vi.fn().mockResolvedValue({
+      schemaVersion: 1,
+      ok: true,
+      status: "accepted",
+    });
+    const result = await startSystemUpdateRepair({ requestImpl });
 
-    try {
-      const result = await startSystemUpdateRepair({
-        updateCommand,
-        spawnImpl,
-      });
-
-      expect(result).toEqual({ ok: true, status: "started" });
-      expect(spawnImpl).toHaveBeenCalledWith(
-        "sudo",
-        ["-n", updateCommand, "--no-tail", "repair"],
-        expect.objectContaining({ detached: true, stdio: "ignore" }),
-      );
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    expect(result).toEqual({ ok: true, status: "started" });
+    expect(requestImpl).toHaveBeenCalledWith({
+      schemaVersion: 1,
+      operation: "Repair",
+    });
   });
 });

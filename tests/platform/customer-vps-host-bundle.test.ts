@@ -1117,22 +1117,18 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(result.output).toContain('reason=host bundle build required');
   });
 
-  it('update launcher triggers the sync agent update and rollback paths', () => {
+  it('update launcher uses only the typed root update socket', () => {
     const root = process.cwd();
     const updater = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-update'), 'utf8');
 
-    expect(updater).toContain('/opt/matrix/app/.update-available.json');
-    expect(updater).toContain('/opt/matrix/app/.update-channel');
-    expect(updater).toContain('/opt/matrix/app/.update-version');
-    expect(updater).toContain('touch /opt/matrix/app/.update-now');
-    expect(updater).toContain('touch /opt/matrix/app/.rollback-now');
-    expect(updater).toContain('touch /opt/matrix/app/.update-repair-now');
-    expect(updater).toContain('repair)');
-    expect(updater).toContain('matrix-update --no-tail repair');
-    expect(updater).toContain('if [ "$tail_logs" -eq 0 ]; then');
-    expect(updater).toContain('stable|canary|beta|dev|v[0-9]*|main-[A-Za-z0-9]*');
-    expect(updater).toContain('journalctl -u matrix-sync-agent -f --no-pager -n 20');
-    expect(updater).toContain('Usage: matrix-update [--no-tail] [apply|rollback|repair|stable|canary|beta|dev|v<version>|main-<build>]');
+    expect(updater).toContain('/run/matrix-update-runtime/update.sock');
+    expect(updater).toContain('"operation": "Apply"');
+    expect(updater).toContain('"rollback": "Rollback"');
+    expect(updater).toContain('"repair": "Repair"');
+    expect(updater).toContain('"status": "Status"');
+    expect(updater).not.toContain('/opt/matrix/app/.update-now');
+    expect(updater).not.toContain('systemctl');
+    expect(updater).not.toContain('subprocess');
   });
 
   it('sync agent installs bundled messaging systemd units during updates', () => {
@@ -1141,7 +1137,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
 
     expect(syncAgent).toContain('write_symphony_env()');
     expect(syncAgent).toContain('/opt/matrix/env/symphony.env');
-    expect(syncAgent).toContain('sudo install -o root -g matrix -m 0640 "$temp_file" "$SYMPHONY_ENV_FILE" || status=$?');
+    expect(syncAgent).toContain('install -o root -g matrix -m 0640 "$temp_file" "$SYMPHONY_ENV_FILE" || status=$?');
     expect(syncAgent).toContain('rm -f "$temp_file"');
     expect(syncAgent).toContain(
       'install_systemd_units_atomic "$extract_dir/systemd"',
@@ -1149,20 +1145,20 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain(
       '\\( -name \'matrix-*.service\' -o -name \'matrix-*.slice\' \\)',
     );
-    expect(syncAgent).toContain('sudo mv -f -- "$unit_next"');
-    expect(syncAgent).toContain('sudo systemctl daemon-reload');
-    expect(syncAgent).toContain('sudo systemctl enable matrix-code-server.service');
-    expect(syncAgent).toContain('sudo systemctl start --no-block matrix-code-server.service || true');
-    expect(syncAgent).toContain('sudo systemctl enable matrix-developer-tools.service');
-    expect(syncAgent).toContain('sudo systemctl start --no-block matrix-developer-tools.service || true');
+    expect(syncAgent).toContain('mv -f -- "$unit_next"');
+    expect(syncAgent).toContain('systemctl daemon-reload');
+    expect(syncAgent).toContain('systemctl enable matrix-code-server.service');
+    expect(syncAgent).toContain('systemctl start --no-block matrix-code-server.service || true');
+    expect(syncAgent).toContain('systemctl enable matrix-developer-tools.service');
+    expect(syncAgent).toContain('systemctl start --no-block matrix-developer-tools.service || true');
     expect(syncAgent).toContain('Code-server runtime service enabled');
-    expect(syncAgent).toContain('sudo systemctl enable matrix-code.service');
-    expect(syncAgent).toContain('sudo systemctl start --no-block matrix-code.service || true');
+    expect(syncAgent).toContain('systemctl enable matrix-code.service');
+    expect(syncAgent).toContain('systemctl start --no-block matrix-code.service || true');
     expect(syncAgent).toContain('Code editor service enabled');
     expect(syncAgent).toContain('Messaging runtimes missing; units installed but not enabled');
-    expect(syncAgent).toContain('sudo systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service');
-    const daemonReload = syncAgent.indexOf('sudo systemctl daemon-reload');
-    const gatewayStart = syncAgent.indexOf('sudo systemctl start matrix-gateway matrix-shell', daemonReload);
+    expect(syncAgent).toContain('systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service');
+    const daemonReload = syncAgent.indexOf('systemctl daemon-reload');
+    const gatewayStart = syncAgent.indexOf('systemctl start matrix-gateway matrix-shell', daemonReload);
     expect(daemonReload).toBeGreaterThan(-1);
     expect(gatewayStart).toBeGreaterThan(daemonReload);
   });
@@ -1183,8 +1179,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
 
-    expect(syncAgent).toContain('readonly UPDATE_ERROR_MARKER="$APP_DIR/.update-error.json"');
-    expect(syncAgent).toContain('readonly UPDATE_REPAIR_TRIGGER="$APP_DIR/.update-repair-now"');
+    expect(syncAgent).toContain('readonly UPDATE_ERROR_MARKER="$UPDATE_RUNTIME_DIR/update-error.json"');
+    expect(syncAgent).toContain('readonly LEGACY_UPDATE_REPAIR_TRIGGER="$APP_DIR/.update-repair-now"');
     expect(syncAgent).toContain('readonly UPDATE_FREE_BUFFER_KB="${MATRIX_UPDATE_FREE_BUFFER_KB:-1048576}"');
     expect(syncAgent).toContain('readonly UPDATE_EXPANSION_FACTOR="${MATRIX_UPDATE_EXPANSION_FACTOR:-8}"');
     expect(syncAgent).toContain('write_update_error()');
@@ -1194,7 +1190,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('df -Pk /tmp');
     expect(syncAgent).toContain('WARN: /tmp and update staging are on different filesystems');
     expect(syncAgent).toContain("find /tmp -xdev -user matrix -type f -mtime +1 \\( -name '*.so' -o -path '/tmp/node-compile-cache/*' \\)");
-    expect(syncAgent).toContain('sudo rm -f "$UPDATE_REPAIR_TRIGGER"');
+    expect(syncAgent).toContain('rm -f -- "$LEGACY_UPDATE_REPAIR_TRIGGER"');
     expect(syncAgent).toContain('Repair complete; retrying pending update');
   });
 
@@ -1202,15 +1198,15 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
 
-    expect(syncAgent).toContain('sudo rm -rf "$APP_DIR.rollback"');
-    expect(syncAgent).toContain('sudo mv "$APP_DIR" "$APP_DIR.rollback"');
-    expect(syncAgent).toContain('sudo mv "$extract_dir/app" "$APP_DIR"');
-    expect(syncAgent).toContain('sudo chown -R matrix:matrix "$APP_DIR"');
-    expect(syncAgent).toContain('echo "$version" | sudo tee "$VERSION_FILE" >/dev/null');
-    expect(syncAgent).toContain('sudo rm -f "$UPDATE_TRIGGER"');
+    expect(syncAgent).toContain('rm -rf "$APP_DIR.rollback"');
+    expect(syncAgent).toContain('mv "$APP_DIR" "$APP_DIR.rollback"');
+    expect(syncAgent).toContain('mv "$extract_dir/app" "$APP_DIR"');
+    expect(syncAgent).toContain('chown -R matrix:matrix "$APP_DIR"');
+    expect(syncAgent).toContain('printf \'%s\\n\' "$version" >"$extract_dir/app/BUNDLE_VERSION"');
+    expect(syncAgent).toContain('rm -f -- "$LEGACY_UPDATE_TRIGGER"');
     expect(syncAgent).toContain('prepare_triggered_update');
-    expect(syncAgent).toContain('restart_sync_agent_after_update');
-    expect(syncAgent).toContain('sudo systemctl restart --no-block matrix-sync-agent.service');
+    expect(syncAgent).toContain('process_typed_request');
+    expect(syncAgent).not.toContain('systemctl restart --no-block matrix-sync-agent.service');
     expect(syncAgent).toContain('release_url_for_version');
     expect(syncAgent).toContain('release_url_for_channel');
     expect(syncAgent).toContain('default_update_channel');
@@ -1219,18 +1215,17 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('prepared release metadata missing');
     expect(syncAgent).toContain('url="$(manifest_url)"');
     expect(syncAgent).toContain('No update available on ${target} — nothing to apply');
-    expect(syncAgent).toContain('Requested release metadata fetch failed — skipping apply');
+    expect(syncAgent).toContain('WARN: release_metadata_fetch_failed');
     expect(syncAgent).toContain('readonly RELEASE_FILE="/opt/matrix/release.json"');
-    expect(syncAgent).toContain('sudo install -o root -g matrix -m 0644 "$extract_dir/release.json" "$RELEASE_FILE"');
+    expect(syncAgent).toContain('install -o root -g matrix -m 0644 "$extract_dir/release.json" "$RELEASE_FILE"');
     expect(syncAgent).toContain('rm -f "$UPDATE_MARKER"');
-    expect(syncAgent).toContain('Update failed — will retry on next trigger');
-    expect(syncAgent).toContain('Update (via SIGUSR1) failed — will retry on next trigger');
+    expect(syncAgent).toContain('ERROR: typed_update_failed');
     expect(syncAgent).toContain('PLATFORM_INTERNAL_URL:-https://app.matrix-os.com');
-    expect(syncAgent).toContain('sudo rm -f "$ROLLBACK_TRIGGER"');
+    expect(syncAgent).toContain('rm -f -- "$LEGACY_ROLLBACK_TRIGGER"');
     expect(syncAgent).toContain('return 0');
     expect(syncAgent).toContain('for _ in $(seq 1 18); do');
-    expect(syncAgent).toContain('sudo mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"');
-    expect(syncAgent).toContain('sudo mv "$APP_DIR.rollback" "$APP_DIR"');
+    expect(syncAgent).toContain('mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"');
+    expect(syncAgent).toContain('mv "$APP_DIR.rollback" "$APP_DIR"');
   });
 
   it('gateway launcher performs the customer VPS registration callback', () => {

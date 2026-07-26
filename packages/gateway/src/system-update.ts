@@ -1,7 +1,11 @@
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { constants } from "node:fs";
-import { spawn, type ChildProcess } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  requestUpdateService,
+  UpdateServiceUnavailableError,
+  type UpdateServiceRequest,
+  type UpdateServiceResponse,
+} from "./update-service-client.js";
 
 const UPDATE_CHECK_TIMEOUT_MS = 10_000;
 const UPDATE_CHANNELS = new Set(["stable", "canary", "beta", "dev"]);
@@ -109,6 +113,14 @@ export type InternalUpgradeTarget =
   | { type: "version"; value: string }
   | { type: "channel"; value: UpdateChannel };
 
+function toUpdateServiceTarget(target: InternalUpgradeTarget):
+  | { kind: "channel"; value: UpdateChannel }
+  | { kind: "version"; value: string } {
+  return target.type === "channel"
+    ? { kind: "channel", value: target.value }
+    : { kind: "version", value: target.value };
+}
+
 export function parseInternalUpgradeTarget(body: unknown):
   | { ok: true; target: InternalUpgradeTarget | null }
   | { ok: false; error: string } {
@@ -118,6 +130,9 @@ export function parseInternalUpgradeTarget(body: unknown):
   }
 
   const record = body as Record<string, unknown>;
+  if (Object.keys(record).some((key) => key !== "version" && key !== "channel")) {
+    return { ok: false, error: "Invalid upgrade request" };
+  }
   const hasVersion = record.version !== undefined && record.version !== null && record.version !== "";
   const hasChannel = record.channel !== undefined && record.channel !== null && record.channel !== "";
   if (hasVersion && hasChannel) {
@@ -160,33 +175,37 @@ export function resolveInternalUpgradeStartTarget(
 
 export async function writeInternalUpgradeTrigger(options: {
   body: unknown;
-  appDir?: string;
-  writeFileImpl?: typeof writeFile;
-  rmImpl?: typeof rm;
-  mkdirImpl?: typeof mkdir;
+  requestImpl?: (request: UpdateServiceRequest) => Promise<UpdateServiceResponse>;
 }): Promise<
   | { ok: true; target: InternalUpgradeTarget | null }
   | { ok: false; error: string }
 > {
   const parsed = parseInternalUpgradeTarget(options.body);
   if (!parsed.ok) return parsed;
-
-  const appDir = options.appDir ?? process.env.MATRIX_APP_DIR ?? "/opt/matrix/app";
-  const writeFileImpl = options.writeFileImpl ?? writeFile;
-  const rmImpl = options.rmImpl ?? rm;
-  const mkdirImpl = options.mkdirImpl ?? mkdir;
-
-  await mkdirImpl(appDir, { recursive: true });
-  if (parsed.target?.type === "version") {
-    await writeFileImpl(join(appDir, ".update-version"), parsed.target.value);
-    await rmImpl(join(appDir, ".update-channel"), { force: true });
-  } else if (parsed.target?.type === "channel") {
-    await writeFileImpl(join(appDir, ".update-channel"), parsed.target.value);
-    await rmImpl(join(appDir, ".update-version"), { force: true });
+  const target = parsed.target ?? {
+    type: "channel" as const,
+    value: resolveSystemUpdateChannel(undefined, {
+      envChannel: process.env.MATRIX_UPDATE_CHANNEL,
+    }) ?? "stable",
+  };
+  const requestImpl = options.requestImpl ?? requestUpdateService;
+  try {
+    const response = await requestImpl({
+      schemaVersion: 1,
+      operation: "Apply",
+      target: toUpdateServiceTarget(target),
+    });
+    if (!response.ok) return { ok: false, error: "Update request rejected" };
+    return parsed;
+  } catch (err: unknown) {
+    if (!(err instanceof UpdateServiceUnavailableError)) {
+      console.warn(
+        "[system-update] Root update service request failed:",
+        err instanceof Error ? err.name : typeof err,
+      );
+    }
+    return { ok: false, error: "Update service unavailable" };
   }
-  await writeFileImpl(join(appDir, ".update-now"), "");
-
-  return parsed;
 }
 
 function parseReleaseNumber(version: string | undefined): number[] | null {
@@ -390,58 +409,47 @@ export async function listSystemReleases(options: {
 export async function startSystemUpdate(options: {
   channel?: UpdateChannel;
   target?: InternalUpgradeTarget;
-  updateCommand?: string;
-  spawnImpl?: typeof spawn;
+  requestImpl?: (request: UpdateServiceRequest) => Promise<UpdateServiceResponse>;
 }): Promise<{ ok: true; status: "started" } | { ok: false; status: "not_configured" }> {
   const target = options.target ?? (options.channel ? { type: "channel" as const, value: options.channel } : null);
   if (!target) return { ok: false, status: "not_configured" };
-
-  const updateCommand = options.updateCommand ?? process.env.MATRIX_UPDATE_COMMAND ?? "/opt/matrix/bin/matrix-update";
+  const requestImpl = options.requestImpl ?? requestUpdateService;
   try {
-    await access(updateCommand, constants.X_OK);
+    const response = await requestImpl({
+      schemaVersion: 1,
+      operation: "Apply",
+      target: toUpdateServiceTarget(target),
+    });
+    return response.ok
+      ? { ok: true, status: "started" }
+      : { ok: false, status: "not_configured" };
   } catch (err: unknown) {
-    if (!isExpectedAccessFailure(err)) {
+    if (!(err instanceof UpdateServiceUnavailableError)) {
       console.warn(
-        "[system-update] Failed to check updater command:",
-        err instanceof Error ? err.message : String(err),
+        "[system-update] Root update service request failed:",
+        err instanceof Error ? err.name : typeof err,
       );
     }
     return { ok: false, status: "not_configured" };
   }
-
-  const spawnImpl = options.spawnImpl ?? spawn;
-  const child = spawnImpl("sudo", ["-n", updateCommand, target.value], {
-    detached: true,
-    stdio: "ignore",
-    env: process.env,
-  }) as ChildProcess;
-  child.unref();
-  return { ok: true, status: "started" };
 }
 
 export async function startSystemUpdateRepair(options: {
-  updateCommand?: string;
-  spawnImpl?: typeof spawn;
+  requestImpl?: (request: UpdateServiceRequest) => Promise<UpdateServiceResponse>;
 } = {}): Promise<{ ok: true; status: "started" } | { ok: false; status: "not_configured" }> {
-  const updateCommand = options.updateCommand ?? process.env.MATRIX_UPDATE_COMMAND ?? "/opt/matrix/bin/matrix-update";
+  const requestImpl = options.requestImpl ?? requestUpdateService;
   try {
-    await access(updateCommand, constants.X_OK);
+    const response = await requestImpl({ schemaVersion: 1, operation: "Repair" });
+    return response.ok
+      ? { ok: true, status: "started" }
+      : { ok: false, status: "not_configured" };
   } catch (err: unknown) {
-    if (!isExpectedAccessFailure(err)) {
+    if (!(err instanceof UpdateServiceUnavailableError)) {
       console.warn(
-        "[system-update] Failed to check updater repair command:",
-        err instanceof Error ? err.message : String(err),
+        "[system-update] Root update service repair failed:",
+        err instanceof Error ? err.name : typeof err,
       );
     }
     return { ok: false, status: "not_configured" };
   }
-
-  const spawnImpl = options.spawnImpl ?? spawn;
-  const child = spawnImpl("sudo", ["-n", updateCommand, "--no-tail", "repair"], {
-    detached: true,
-    stdio: "ignore",
-    env: process.env,
-  }) as ChildProcess;
-  child.unref();
-  return { ok: true, status: "started" };
 }

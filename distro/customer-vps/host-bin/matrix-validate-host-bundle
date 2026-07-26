@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""Validate a Matrix host-bundle archive before privileged extraction."""
+
+from __future__ import annotations
+
+import os
+import sys
+import tarfile
+from pathlib import PurePosixPath
+
+MAX_ARCHIVE_MEMBERS = 200_000
+MAX_ARCHIVE_BYTES = 16 * 1024 * 1024 * 1024
+ALLOWED_ROOTS = {
+    "app",
+    "bin",
+    "incremental-manifest.json",
+    "libexec",
+    "release.json",
+    "runtime",
+    "systemd",
+}
+
+
+class UnsafeArchive(Exception):
+    """The archive violates the fixed Matrix host-bundle shape."""
+
+
+def _safe_path(value: str) -> PurePosixPath:
+    if not value or "\x00" in value or value.startswith("/"):
+        raise UnsafeArchive("invalid archive path")
+    path = PurePosixPath(value)
+    if any(part in {"", ".", ".."} for part in path.parts):
+        raise UnsafeArchive("non-canonical archive path")
+    if path.parts[0] not in ALLOWED_ROOTS:
+        raise UnsafeArchive("unexpected archive root")
+    return path
+
+
+def _resolved_link(member_path: PurePosixPath, linkname: str, hardlink: bool) -> PurePosixPath:
+    if not linkname or "\x00" in linkname or linkname.startswith("/"):
+        raise UnsafeArchive("invalid link target")
+    link = PurePosixPath(linkname)
+    base = PurePosixPath() if hardlink else member_path.parent
+    parts: list[str] = []
+    for part in (base / link).parts:
+        if part in {"", "."}:
+            continue
+        if part == "..":
+            if not parts:
+                raise UnsafeArchive("link target escapes archive")
+            parts.pop()
+        else:
+            parts.append(part)
+    if not parts or parts[0] not in ALLOWED_ROOTS:
+        raise UnsafeArchive("link target escapes archive")
+    return PurePosixPath(*parts)
+
+
+def validate_archive(path: str) -> None:
+    archive_path = os.path.realpath(path)
+    if not os.path.isfile(archive_path) or os.path.islink(path):
+        raise UnsafeArchive("archive is not a regular file")
+    seen: set[PurePosixPath] = set()
+    symlinks: set[PurePosixPath] = set()
+    total_bytes = 0
+    member_count = 0
+    with tarfile.open(archive_path, mode="r|gz") as archive:
+        for member in archive:
+            member_count += 1
+            if member_count > MAX_ARCHIVE_MEMBERS:
+                raise UnsafeArchive("invalid archive member count")
+            member_path = _safe_path(member.name.rstrip("/"))
+            if member_path in seen:
+                raise UnsafeArchive("duplicate archive path")
+            seen.add(member_path)
+            if member.isdev() or member.isfifo():
+                raise UnsafeArchive("special archive member")
+            if member.mode & 0o6000:
+                raise UnsafeArchive("privileged archive mode")
+            if not (member.isfile() or member.isdir() or member.issym() or member.islnk()):
+                raise UnsafeArchive("unsupported archive member")
+            if member.isfile():
+                if member.size < 0:
+                    raise UnsafeArchive("negative member size")
+                total_bytes += member.size
+                if total_bytes > MAX_ARCHIVE_BYTES:
+                    raise UnsafeArchive("archive expansion exceeds bound")
+            if member.issym() or member.islnk():
+                _resolved_link(member_path, member.linkname, member.islnk())
+            if member.issym():
+                symlinks.add(member_path)
+            # Stream mode does not need historical TarInfo records. Keeping the
+            # list empty makes the member cap an actual memory bound.
+            archive.members.clear()
+        if member_count == 0:
+            raise UnsafeArchive("invalid archive member count")
+        for member_path in seen:
+            for parent in member_path.parents:
+                if parent in symlinks:
+                    raise UnsafeArchive("archive writes through symlink")
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print("matrix-validate-host-bundle: invalid_request", file=sys.stderr)
+        return 2
+    try:
+        validate_archive(sys.argv[1])
+    except (OSError, tarfile.TarError, UnsafeArchive):
+        print("matrix-validate-host-bundle: invalid_archive", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

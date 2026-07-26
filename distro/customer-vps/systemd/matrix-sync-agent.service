@@ -1,15 +1,19 @@
 [Unit]
-Description=Matrix OS customer sync agent
+Description=Matrix OS root update service
 After=network-online.target
 Wants=network-online.target
-ConditionPathExists=/opt/matrix/bin/matrix-sync-agent
+ConditionPathExists=/opt/matrix/bin/matrix-update-service
 
 [Service]
-User=matrix
-Group=matrix
+Type=simple
+User=root
+Group=root
 EnvironmentFile=/opt/matrix/env/host.env
 WorkingDirectory=/opt/matrix
-ExecStart=/opt/matrix/bin/matrix-sync-agent
+ExecStart=/opt/matrix/bin/matrix-update-service
+KillMode=control-group
+TimeoutStopSec=30
+UMask=0077
 Restart=on-failure
 RestartSec=10
 

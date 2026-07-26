@@ -4,34 +4,48 @@ set -euo pipefail
 # Matrix OS Sync Agent — polls for bundle updates, applies on trigger, rollback support.
 #
 # Env (from host.env):  MATRIX_MACHINE_ID, MATRIX_HOST_BUNDLE_URL, PLATFORM_INTERNAL_URL
-# Trigger files:        /opt/matrix/app/.update-now   — apply pending update
-#                       /opt/matrix/app/.rollback-now  — rollback to previous version
-#                       /opt/matrix/app/.update-repair-now — clean safe temp artifacts and retry
-# Signals:              SIGUSR1 — alternative apply-update trigger
+# Root protocol request: /run/matrix-update-runtime/request.json
+# Legacy owner markers are accepted only after strict no-follow validation so
+# the current and previous gateway bundle remain update-compatible.
+
+[ "${1:-}" = "--worker" ] || {
+  echo "matrix-sync-agent: worker_mode_required" >&2
+  exit 2
+}
+[ "$(id -u)" -eq 0 ] || {
+  echo "matrix-sync-agent: root_required" >&2
+  exit 1
+}
 
 source /opt/matrix/env/host.env
 
 readonly APP_DIR="/opt/matrix/app"
 readonly STAGING_DIR="/opt/matrix/staging"
 readonly BIN_DIR="/opt/matrix/bin"
+readonly UPDATE_RUNTIME_DIR="/run/matrix-update-runtime"
+readonly TYPED_REQUEST="$UPDATE_RUNTIME_DIR/request.json"
+readonly ROLLBACK_STATE_DIR="$STAGING_DIR/rollback-state"
 readonly TERMINAL_RUNTIME_LIBEXEC="/opt/matrix/libexec/terminal-runtime"
 readonly TERMINAL_RUNTIME_GENERATIONS="/opt/matrix/libexec/terminal-runtime/v1"
 readonly TERMINAL_RUNTIME_CURRENT="/opt/matrix/libexec/terminal-runtime/current"
-readonly TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT="$APP_DIR/.terminal-runtime.failed-update"
+readonly TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT="$ROLLBACK_STATE_DIR/terminal-runtime.failed-update"
 readonly ZELLIJ_BINARY="$BIN_DIR/zellij"
 readonly ZELLIJ_BUILD_METADATA="$BIN_DIR/zellij.build.json"
-readonly ZELLIJ_ROLLBACK_DIR="$APP_DIR/.zellij.rollback"
+readonly ZELLIJ_ROLLBACK_DIR="$ROLLBACK_STATE_DIR/zellij.rollback"
 readonly VERSION_FILE="$APP_DIR/BUNDLE_VERSION"
 readonly RELEASE_FILE="/opt/matrix/release.json"
-readonly UPDATE_MARKER="$APP_DIR/.update-available.json"
-readonly UPDATE_TRIGGER="$APP_DIR/.update-now"
-readonly UPDATE_CHANNEL_FILE="$APP_DIR/.update-channel"
-readonly UPDATE_VERSION_FILE="$APP_DIR/.update-version"
-readonly UPDATE_ERROR_MARKER="$APP_DIR/.update-error.json"
-readonly UPDATE_REPAIR_TRIGGER="$APP_DIR/.update-repair-now"
-readonly ROLLBACK_TRIGGER="$APP_DIR/.rollback-now"
+readonly UPDATE_MARKER="$UPDATE_RUNTIME_DIR/update-available.json"
+readonly UPDATE_CHANNEL_FILE="$UPDATE_RUNTIME_DIR/update-channel"
+readonly UPDATE_VERSION_FILE="$UPDATE_RUNTIME_DIR/update-version"
+readonly UPDATE_ERROR_MARKER="$UPDATE_RUNTIME_DIR/update-error.json"
+readonly AUTO_APPLY_FAILED_MARKER="$UPDATE_RUNTIME_DIR/auto-apply-failed"
+readonly OPERATION_STATE="$UPDATE_RUNTIME_DIR/operation-state"
+readonly LEGACY_UPDATE_TRIGGER="$APP_DIR/.update-now"
+readonly LEGACY_UPDATE_CHANNEL_FILE="$APP_DIR/.update-channel"
+readonly LEGACY_UPDATE_VERSION_FILE="$APP_DIR/.update-version"
+readonly LEGACY_UPDATE_REPAIR_TRIGGER="$APP_DIR/.update-repair-now"
+readonly LEGACY_ROLLBACK_TRIGGER="$APP_DIR/.rollback-now"
 readonly HEALTH_URL="http://127.0.0.1:4000/health"
-readonly AUTO_APPLY_FAILED_MARKER="$APP_DIR/.auto-apply-failed"
 readonly STAGING_ARTIFACT_TTL_SECONDS="${MATRIX_STAGING_ARTIFACT_TTL_SECONDS:-86400}"
 readonly STAGING_CLEANUP_INTERVAL_SECONDS="${MATRIX_STAGING_CLEANUP_INTERVAL_SECONDS:-3600}"
 readonly UPDATE_FREE_BUFFER_KB="${MATRIX_UPDATE_FREE_BUFFER_KB:-1048576}"
@@ -48,8 +62,50 @@ terminal_runtime_candidate=""
 terminal_runtime_generation_id=""
 
 log() { echo "matrix-sync-agent: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
-current_version() { cat "$VERSION_FILE" 2>/dev/null || echo "unknown"; }
+current_version() {
+  python3 - "$VERSION_FILE" <<'PY' 2>/dev/null || printf 'unknown\n'
+import os
+import re
+import stat
+import sys
+
+path = sys.argv[1]
+metadata = os.lstat(path)
+if (
+    not stat.S_ISREG(metadata.st_mode)
+    or metadata.st_nlink != 1
+    or metadata.st_size < 1
+    or metadata.st_size > 128
+):
+    raise SystemExit(1)
+descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+try:
+    value = os.read(descriptor, 129).decode("utf-8").strip()
+finally:
+    os.close(descriptor)
+if not re.fullmatch(r"(?:v[0-9]|main-[A-Za-z0-9])[A-Za-z0-9._-]{0,127}", value):
+    raise SystemExit(1)
+print(value)
+PY
+}
 platform_url() { echo "${MATRIX_UPDATE_MANIFEST_BASE_URL:-${PLATFORM_INTERNAL_URL:-https://app.matrix-os.com}}"; }
+
+secure_staging_directory() {
+  if [ -L "$STAGING_DIR" ]; then
+    log "ERROR: staging_directory_symlink"
+    return 1
+  fi
+  install -d -o root -g root -m 0700 "$STAGING_DIR"
+  chown root:root "$STAGING_DIR"
+  chmod 0700 "$STAGING_DIR"
+  if [ -L "$ROLLBACK_STATE_DIR" ]; then
+    log "ERROR: rollback_state_directory_symlink"
+    return 1
+  fi
+  install -d -o root -g root -m 0700 "$ROLLBACK_STATE_DIR"
+  chown root:root "$ROLLBACK_STATE_DIR"
+  chmod 0700 "$ROLLBACK_STATE_DIR"
+}
 
 verify_terminal_runtime_generation() {
   local generation_dir="$1" expected_id="$2"
@@ -140,27 +196,27 @@ install_terminal_runtime_generation() {
   local generation_dir="$generation_root/$terminal_runtime_generation_id"
   local generation_next="$generation_root/.${terminal_runtime_generation_id}.next"
   local current_next="$TERMINAL_RUNTIME_LIBEXEC/.current.next"
-  sudo install -d -o root -g root -m 0755 "$generation_root"
+  install -d -o root -g root -m 0755 "$generation_root"
   if [ ! -d "$generation_dir" ]; then
-    sudo rm -rf -- "$generation_next"
-    sudo install -d -o root -g root -m 0755 "$generation_next"
-    sudo cp -a -- "$terminal_runtime_candidate/." "$generation_next/"
-    sudo chown -R root:root "$generation_next"
+    rm -rf -- "$generation_next"
+    install -d -o root -g root -m 0755 "$generation_next"
+    cp -a -- "$terminal_runtime_candidate/." "$generation_next/"
+    chown -R root:root "$generation_next"
     if ! verify_terminal_runtime_generation \
       "$generation_next" \
       "$terminal_runtime_generation_id"; then
-      sudo rm -rf -- "$generation_next"
+      rm -rf -- "$generation_next"
       return 1
     fi
-    sudo mv -- "$generation_next" "$generation_dir"
+    mv -- "$generation_next" "$generation_dir"
   elif ! verify_terminal_runtime_generation \
     "$generation_dir" \
     "$terminal_runtime_generation_id"; then
     return 1
   fi
-  sudo rm -f -- "$current_next"
-  sudo ln -s "v1/$terminal_runtime_generation_id" "$current_next"
-  sudo mv -T -- "$current_next" "$TERMINAL_RUNTIME_CURRENT"
+  rm -f -- "$current_next"
+  ln -s "v1/$terminal_runtime_generation_id" "$current_next"
+  mv -T -- "$current_next" "$TERMINAL_RUNTIME_CURRENT"
 }
 
 install_terminal_runtime_wrappers() {
@@ -175,23 +231,37 @@ install_terminal_runtime_wrappers() {
     [ ! -L "$wrapper" ] || return 1
     wrapper_name="$(basename "$wrapper")"
     wrapper_next="$BIN_DIR/.${wrapper_name}.next"
-    sudo install -o root -g root -m 0755 "$wrapper" "$wrapper_next"
-    sudo mv -f -- "$wrapper_next" "$BIN_DIR/$wrapper_name"
+    install -o root -g root -m 0755 "$wrapper" "$wrapper_next"
+    mv -f -- "$wrapper_next" "$BIN_DIR/$wrapper_name"
+  done
+}
+
+install_update_runtime_bins() {
+  local source_dir="$1" name next
+  for name in \
+    matrix-update-service \
+    matrix-sync-agent \
+    matrix-update \
+    matrix-validate-host-bundle; do
+    [ -f "$source_dir/$name" ] && [ ! -L "$source_dir/$name" ] || return 1
+    next="$BIN_DIR/.${name}.next"
+    install -o root -g root -m 0755 "$source_dir/$name" "$next"
+    mv -f -- "$next" "$BIN_DIR/$name"
   done
 }
 
 install_systemd_units_atomic() {
   local source_dir="$1"
   local unit_source unit_name unit_next
-  sudo install -d -o root -g root -m 0755 /etc/systemd/system
+  install -d -o root -g root -m 0755 /etc/systemd/system
   while IFS= read -r -d '' unit_source; do
     unit_name="$(basename "$unit_source")"
     if [[ ! "$unit_name" =~ ^matrix-[A-Za-z0-9@_.-]+\.(service|slice)$ ]]; then
       return 1
     fi
     unit_next="/etc/systemd/system/.${unit_name}.next"
-    sudo install -o root -g root -m 0644 "$unit_source" "$unit_next"
-    sudo mv -f -- "$unit_next" "/etc/systemd/system/$unit_name"
+    install -o root -g root -m 0644 "$unit_source" "$unit_next"
+    mv -f -- "$unit_next" "/etc/systemd/system/$unit_name"
   done < <(
     find "$source_dir" -maxdepth 1 -type f \
       \( -name 'matrix-*.service' -o -name 'matrix-*.slice' \) -print0
@@ -201,8 +271,8 @@ install_systemd_units_atomic() {
 backup_terminal_runtime_for_failed_update() {
   local snapshot_next="${TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT}.next"
   local artifact name
-  sudo rm -rf -- "$snapshot_next" "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
-  sudo install -d -o root -g matrix -m 0750 \
+  rm -rf -- "$snapshot_next" "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
+  install -d -o root -g root -m 0700 \
     "$snapshot_next/bin" \
     "$snapshot_next/systemd"
   if [ -L "$TERMINAL_RUNTIME_CURRENT" ]; then
@@ -210,9 +280,9 @@ backup_terminal_runtime_for_failed_update() {
     current_target="$(readlink "$TERMINAL_RUNTIME_CURRENT")"
     [[ "$current_target" =~ ^v1/[0-9a-f]{64}$ ]] || return 1
     printf '%s\n' "$current_target" |
-      sudo tee "$snapshot_next/current-target" >/dev/null
-    sudo chown root:matrix "$snapshot_next/current-target"
-    sudo chmod 0640 "$snapshot_next/current-target"
+      tee "$snapshot_next/current-target" >/dev/null
+    chown root:root "$snapshot_next/current-target"
+    chmod 0600 "$snapshot_next/current-target"
   fi
   for artifact in \
     "$BIN_DIR/matrix-terminal-supervisor" \
@@ -222,7 +292,7 @@ backup_terminal_runtime_for_failed_update() {
     name="$(basename "$artifact")"
     if [ -e "$artifact" ] || [ -L "$artifact" ]; then
       [ -f "$artifact" ] && [ ! -L "$artifact" ] || return 1
-      sudo install -o root -g matrix -m 0750 \
+      install -o root -g root -m 0700 \
         "$artifact" "$snapshot_next/bin/$name"
     fi
   done
@@ -233,31 +303,31 @@ backup_terminal_runtime_for_failed_update() {
     name="$(basename "$artifact")"
     if [ -e "$artifact" ] || [ -L "$artifact" ]; then
       [ -f "$artifact" ] && [ ! -L "$artifact" ] || return 1
-      sudo install -o root -g matrix -m 0640 \
+      install -o root -g root -m 0600 \
         "$artifact" "$snapshot_next/systemd/$name"
     fi
   done
-  if sudo systemctl is-enabled --quiet matrix-terminal-runtime.service; then
-    sudo touch "$snapshot_next/supervisor-was-enabled"
-    sudo chown root:matrix "$snapshot_next/supervisor-was-enabled"
-    sudo chmod 0640 "$snapshot_next/supervisor-was-enabled"
+  if systemctl is-enabled --quiet matrix-terminal-runtime.service; then
+    touch "$snapshot_next/supervisor-was-enabled"
+    chown root:root "$snapshot_next/supervisor-was-enabled"
+    chmod 0600 "$snapshot_next/supervisor-was-enabled"
   fi
-  if sudo systemctl is-active --quiet matrix-terminal-runtime.service; then
-    sudo touch "$snapshot_next/supervisor-was-active"
-    sudo chown root:matrix "$snapshot_next/supervisor-was-active"
-    sudo chmod 0640 "$snapshot_next/supervisor-was-active"
+  if systemctl is-active --quiet matrix-terminal-runtime.service; then
+    touch "$snapshot_next/supervisor-was-active"
+    chown root:root "$snapshot_next/supervisor-was-active"
+    chmod 0600 "$snapshot_next/supervisor-was-active"
   fi
-  sudo mv -- "$snapshot_next" "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
+  mv -- "$snapshot_next" "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
 }
 
 terminate_new_terminal_runtime_supervisor_after_failed_start() {
-  local snapshot="$APP_DIR.rollback/.terminal-runtime.failed-update"
+  local snapshot="$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
   [ -d "$snapshot" ] && [ ! -L "$snapshot" ] || return 1
   [ ! -f "$snapshot/supervisor-was-active" ] || return 1
-  sudo systemctl stop matrix-terminal-runtime.service || return 1
-  sudo systemctl reset-failed matrix-terminal-runtime.service ||
+  systemctl stop matrix-terminal-runtime.service || return 1
+  systemctl reset-failed matrix-terminal-runtime.service ||
     log "WARN: terminal_runtime_supervisor_reset_failed"
-  if sudo systemctl is-active --quiet matrix-terminal-runtime.service; then
+  if systemctl is-active --quiet matrix-terminal-runtime.service; then
     return 1
   fi
 }
@@ -272,11 +342,11 @@ restore_terminal_runtime_after_failed_update() {
     [[ "$current_target" =~ ^v1/[0-9a-f]{64}$ ]] || return 1
     [ -d "$TERMINAL_RUNTIME_LIBEXEC/$current_target" ] || return 1
     current_next="$TERMINAL_RUNTIME_LIBEXEC/.current.rollback-next"
-    sudo rm -f -- "$current_next"
-    sudo ln -s "$current_target" "$current_next"
-    sudo mv -T -- "$current_next" "$TERMINAL_RUNTIME_CURRENT"
+    rm -f -- "$current_next"
+    ln -s "$current_target" "$current_next"
+    mv -T -- "$current_next" "$TERMINAL_RUNTIME_CURRENT"
   else
-    sudo rm -f -- "$TERMINAL_RUNTIME_CURRENT"
+    rm -f -- "$TERMINAL_RUNTIME_CURRENT"
   fi
   for name in \
     matrix-terminal-supervisor \
@@ -286,10 +356,10 @@ restore_terminal_runtime_after_failed_update() {
     artifact="$snapshot/bin/$name"
     if [ -f "$artifact" ] && [ ! -L "$artifact" ]; then
       restore_next="$BIN_DIR/.${name}.rollback-next"
-      sudo install -o root -g root -m 0755 "$artifact" "$restore_next"
-      sudo mv -f -- "$restore_next" "$BIN_DIR/$name"
+      install -o root -g root -m 0755 "$artifact" "$restore_next"
+      mv -f -- "$restore_next" "$BIN_DIR/$name"
     else
-      sudo rm -f -- "$BIN_DIR/$name"
+      rm -f -- "$BIN_DIR/$name"
     fi
   done
   for name in \
@@ -299,24 +369,24 @@ restore_terminal_runtime_after_failed_update() {
     artifact="$snapshot/systemd/$name"
     if [ -f "$artifact" ] && [ ! -L "$artifact" ]; then
       restore_next="/etc/systemd/system/.${name}.rollback-next"
-      sudo install -o root -g root -m 0644 "$artifact" "$restore_next"
-      sudo mv -f -- "$restore_next" "/etc/systemd/system/$name"
+      install -o root -g root -m 0644 "$artifact" "$restore_next"
+      mv -f -- "$restore_next" "/etc/systemd/system/$name"
     else
-      sudo rm -f -- "/etc/systemd/system/$name"
+      rm -f -- "/etc/systemd/system/$name"
     fi
   done
   if [ ! -f "$snapshot/supervisor-was-enabled" ]; then
-    sudo systemctl disable matrix-terminal-runtime.service >/dev/null 2>&1 || true
+    systemctl disable matrix-terminal-runtime.service >/dev/null 2>&1 || true
   fi
-  sudo systemctl daemon-reload
-  sudo rm -rf -- "$snapshot"
+  systemctl daemon-reload
+  rm -rf -- "$snapshot"
 }
 
 # Echo the lines of an existing symphony.env that this agent does not manage so
 # operator-set configuration survives a host bundle update. Blank and comment
 # lines are kept; managed KEY= lines are dropped (re-emitted with fresh values
 # by write_symphony_env). Group-readable file (root:matrix 0640), so the matrix
-# user that runs this agent can read it directly.
+# owner gateway can read its non-secret configuration directly.
 preserve_unmanaged_symphony_env() {
   local existing_file="$1"
   [ -f "$existing_file" ] || return 0
@@ -350,31 +420,31 @@ write_symphony_env() {
     printf 'UPGRADE_TOKEN=%s\n' "${UPGRADE_TOKEN:?UPGRADE_TOKEN is required}"
     preserve_unmanaged_symphony_env "$SYMPHONY_ENV_FILE"
   } >"$temp_file"
-  sudo install -o root -g matrix -m 0640 "$temp_file" "$SYMPHONY_ENV_FILE" || status=$?
+  install -o root -g matrix -m 0640 "$temp_file" "$SYMPHONY_ENV_FILE" || status=$?
   rm -f "$temp_file"
   return "$status"
 }
 
 clear_zellij_rollback() {
-  sudo rm -rf -- "$ZELLIJ_ROLLBACK_DIR"
+  rm -rf -- "$ZELLIJ_ROLLBACK_DIR"
 }
 
 backup_zellij_for_rollback() {
   local rollback_next="${ZELLIJ_ROLLBACK_DIR}.next"
-  sudo rm -rf -- "$rollback_next"
-  sudo install -d -o root -g matrix -m 0750 "$rollback_next"
+  rm -rf -- "$rollback_next"
+  install -d -o root -g root -m 0700 "$rollback_next"
   if [ -f "$ZELLIJ_BINARY" ]; then
-    sudo install -o root -g matrix -m 0750 "$ZELLIJ_BINARY" "$rollback_next/zellij"
-    sudo touch "$rollback_next/had-binary"
+    install -o root -g root -m 0700 "$ZELLIJ_BINARY" "$rollback_next/zellij"
+    touch "$rollback_next/had-binary"
   fi
   if [ -f "$ZELLIJ_BUILD_METADATA" ]; then
-    sudo install -o root -g matrix -m 0640 "$ZELLIJ_BUILD_METADATA" "$rollback_next/zellij.build.json"
-    sudo touch "$rollback_next/had-build-metadata"
+    install -o root -g root -m 0600 "$ZELLIJ_BUILD_METADATA" "$rollback_next/zellij.build.json"
+    touch "$rollback_next/had-build-metadata"
   fi
-  sudo chown root:matrix "$rollback_next"/had-* 2>/dev/null || true
-  sudo chmod 0640 "$rollback_next"/had-* 2>/dev/null || true
+  chown root:root "$rollback_next"/had-* 2>/dev/null || true
+  chmod 0600 "$rollback_next"/had-* 2>/dev/null || true
   clear_zellij_rollback
-  sudo mv -- "$rollback_next" "$ZELLIJ_ROLLBACK_DIR"
+  mv -- "$rollback_next" "$ZELLIJ_ROLLBACK_DIR"
 }
 
 restore_zellij_after_rollback() {
@@ -383,16 +453,16 @@ restore_zellij_after_rollback() {
   local metadata_restore_next="$BIN_DIR/.zellij.build.json.rollback-next"
 
   if [ -f "$ZELLIJ_ROLLBACK_DIR/had-binary" ] && [ -f "$ZELLIJ_ROLLBACK_DIR/zellij" ]; then
-    sudo install -o root -g root -m 0755 "$ZELLIJ_ROLLBACK_DIR/zellij" "$zellij_restore_next"
-    sudo mv -f -- "$zellij_restore_next" "$ZELLIJ_BINARY"
+    install -o root -g root -m 0755 "$ZELLIJ_ROLLBACK_DIR/zellij" "$zellij_restore_next"
+    mv -f -- "$zellij_restore_next" "$ZELLIJ_BINARY"
   else
-    sudo rm -f -- "$ZELLIJ_BINARY"
+    rm -f -- "$ZELLIJ_BINARY"
   fi
   if [ -f "$ZELLIJ_ROLLBACK_DIR/had-build-metadata" ] && [ -f "$ZELLIJ_ROLLBACK_DIR/zellij.build.json" ]; then
-    sudo install -o root -g root -m 0644 "$ZELLIJ_ROLLBACK_DIR/zellij.build.json" "$metadata_restore_next"
-    sudo mv -f -- "$metadata_restore_next" "$ZELLIJ_BUILD_METADATA"
+    install -o root -g root -m 0644 "$ZELLIJ_ROLLBACK_DIR/zellij.build.json" "$metadata_restore_next"
+    mv -f -- "$metadata_restore_next" "$ZELLIJ_BUILD_METADATA"
   else
-    sudo rm -f -- "$ZELLIJ_BUILD_METADATA"
+    rm -f -- "$ZELLIJ_BUILD_METADATA"
   fi
   clear_zellij_rollback
 }
@@ -418,6 +488,10 @@ release_url_for_version() { echo "$(platform_url)/system-bundles/releases/$1.jso
 release_url_for_channel() { echo "$(platform_url)/system-bundles/channels/$1.json"; }
 
 json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.argv[1],''))" "$2" <<< "$1"; }
+valid_update_channel() { [[ "${1:-}" =~ ^(stable|canary|beta|dev)$ ]]; }
+valid_update_version() {
+  [[ "${1:-}" =~ ^(v[0-9]|main-[A-Za-z0-9])[A-Za-z0-9._-]{0,127}$ ]]
+}
 
 write_update_error() {
   local code="$1" message="$2" version="${3:-}" available_kb="${4:-}" required_kb="${5:-}"
@@ -446,27 +520,93 @@ with open(path, "w", encoding="utf-8") as handle:
 PY
 }
 
+sanitize_manifest() {
+  python3 -c '
+import json
+import re
+import sys
+
+try:
+    raw = json.load(sys.stdin)
+    version = raw.get("version")
+    sha256 = raw.get("sha256") or raw.get("bundleSha256")
+    if not sha256 and isinstance(raw.get("files"), dict):
+        bundle = raw["files"].get("bundle")
+        if isinstance(bundle, dict):
+            sha256 = bundle.get("sha256")
+    size = raw.get("size")
+    if size is None and isinstance(raw.get("files"), dict):
+        bundle = raw["files"].get("bundle")
+        if isinstance(bundle, dict):
+            size = bundle.get("size")
+    if not isinstance(version, str) or not re.fullmatch(
+        r"(?:v[0-9]|main-[A-Za-z0-9])[A-Za-z0-9._-]{0,127}", version
+    ):
+        raise ValueError("version")
+    if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", sha256):
+        raise ValueError("sha256")
+    if (
+        not isinstance(size, int)
+        or isinstance(size, bool)
+        or size <= 0
+        or size > 8 * 1024 * 1024 * 1024
+    ):
+        raise ValueError("size")
+    channel = raw.get("channel")
+    if channel not in {"stable", "canary", "beta", "dev", None}:
+        raise ValueError("channel")
+    severity = raw.get("severity")
+    if severity not in {"security", "critical", "normal", None}:
+        raise ValueError("severity")
+    update_type = raw.get("updateType")
+    if update_type not in {"auto", "manual", None}:
+        raise ValueError("updateType")
+    json.dump(
+        {
+            "version": version,
+            "sha256": sha256,
+            "size": size,
+            "channel": channel,
+            "severity": severity,
+            "updateType": update_type,
+        },
+        sys.stdout,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+except (AttributeError, json.JSONDecodeError, TypeError, ValueError):
+    raise SystemExit(1)
+'
+}
+
 fetch_manifest() {
   local url="$1" manifest
   if ! manifest="$(curl --fail --silent --show-error --max-time 15 "$url" 2>&1)"; then
-    log "WARN: failed to fetch release metadata from $url"; return 1
+    log "WARN: release_metadata_fetch_failed"; return 1
   fi
-  printf '%s' "$manifest"
+  if ! printf '%s' "$manifest" | sanitize_manifest; then
+    log "WARN: release_metadata_invalid"
+    return 1
+  fi
 }
 
 prepare_triggered_update() {
   local url="" target=""
   if [ -f "$UPDATE_VERSION_FILE" ]; then
     target="$(cat "$UPDATE_VERSION_FILE" 2>/dev/null || true)"
-    [ -n "$target" ] || { log "WARN: update version file is empty"; return 1; }
+    valid_update_version "$target" || { log "WARN: update_version_invalid"; return 1; }
     url="$(release_url_for_version "$target")"
   elif [ -f "$UPDATE_CHANNEL_FILE" ]; then
     target="$(cat "$UPDATE_CHANNEL_FILE" 2>/dev/null || true)"
-    [ -n "$target" ] || { log "WARN: update channel file is empty"; return 1; }
+    valid_update_channel "$target" || { log "WARN: update_channel_invalid"; return 1; }
     url="$(release_url_for_channel "$target")"
   elif [ -f "$UPDATE_MARKER" ]; then
     local manifest remote_version marker_channel
-    manifest="$(cat "$UPDATE_MARKER")"
+    if ! manifest="$(sanitize_manifest <"$UPDATE_MARKER")"; then
+      log "WARN: prepared_release_metadata_invalid"
+      rm -f "$UPDATE_MARKER"
+      return 1
+    fi
     remote_version="$(json_field "$manifest" version)"
     if [ -z "$remote_version" ]; then
       log "WARN: prepared release metadata missing 'version' field"; return 1
@@ -498,9 +638,7 @@ prepare_triggered_update() {
 check_for_update() {
   local url manifest remote_version cur
   url="$(manifest_url)"
-  if ! manifest="$(curl --fail --silent --show-error --max-time 15 "$url" 2>&1)"; then
-    log "WARN: failed to fetch manifest from $url"; return 1
-  fi
+  manifest="$(fetch_manifest "$url")" || return 1
   remote_version="$(json_field "$manifest" version)"
   if [ -z "$remote_version" ]; then
     log "WARN: manifest missing 'version' field"; return 1
@@ -536,18 +674,23 @@ apply_update() {
     log "No update available — nothing to apply"; return 1
   fi
   local manifest version sha256 bundle_url cur bundle_file extract_dir
+  local expected_bundle_size actual_bundle_size
   local zellij_candidate=false zellij_expected_sha256="" zellij_actual_sha256="" zellij_next=""
   local terminal_runtime_enable_after_health=false
-  manifest="$(cat "$UPDATE_MARKER")"
+  if ! manifest="$(sanitize_manifest <"$UPDATE_MARKER")"; then
+    log "ERROR: prepared_release_metadata_invalid"
+    rm -f "$UPDATE_MARKER"
+    return 1
+  fi
   version="$(json_field "$manifest" version)"
   sha256="$(json_field "$manifest" sha256)"
-  bundle_url="$(json_field "$manifest" url)"
-  bundle_url="${bundle_url:-$MATRIX_HOST_BUNDLE_URL}"
+  expected_bundle_size="$(json_field "$manifest" size)"
+  valid_update_version "$version" || return 1
+  bundle_url="$(platform_url)/system-bundles/${version}/matrix-host-bundle.tar.gz"
   cur="$(current_version)"
   log "Starting update from $cur to $version"
 
-  sudo mkdir -p "$STAGING_DIR"
-  sudo chown matrix:matrix "$STAGING_DIR"
+  secure_staging_directory || return 1
   ensure_update_headroom "$(json_field "$manifest" size)" "$version" || return 1
   rm -f "$UPDATE_ERROR_MARKER"
   bundle_file="$STAGING_DIR/bundle-${version}.tar.gz"
@@ -556,33 +699,41 @@ apply_update() {
   log "Downloading bundle..."
   if ! curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
        --connect-timeout 10 --max-time 1800 --http1.1 \
+       --max-filesize "$expected_bundle_size" \
        "$bundle_url" -o "$bundle_file"; then
     log "ERROR: download failed"; rm -f "$bundle_file"; return 1
   fi
-
-  # Verify checksum
-  if [ -n "$sha256" ]; then
-    local actual_sha256
-    actual_sha256="$(sha256sum "$bundle_file" | awk '{print $1}')"
-    if [ "$actual_sha256" != "$sha256" ]; then
-      log "ERROR: checksum mismatch (expected $sha256, got $actual_sha256)"
-      rm -f "$bundle_file"; return 1
-    fi
-    log "Checksum verified"
-  else
-    log "WARN: no sha256 in manifest, skipping verification"
+  actual_bundle_size="$(stat -c %s "$bundle_file")"
+  if [ "$actual_bundle_size" != "$expected_bundle_size" ]; then
+    log "ERROR: bundle_size_mismatch"
+    rm -f "$bundle_file"; return 1
   fi
 
+  # Verify the required release checksum before inspecting or extracting bytes.
+  local actual_sha256
+  actual_sha256="$(sha256sum "$bundle_file" | awk '{print $1}')"
+  if [ "$actual_sha256" != "$sha256" ]; then
+    log "ERROR: bundle_checksum_mismatch"
+    rm -f "$bundle_file"; return 1
+  fi
+  log "Checksum verified"
+
   # Extract and validate
+  if ! "$BIN_DIR/matrix-validate-host-bundle" "$bundle_file"; then
+    log "ERROR: bundle_archive_invalid"
+    rm -f "$bundle_file"; return 1
+  fi
   log "Extracting bundle..."
-  mkdir -p "$extract_dir"
-  if ! tar -xzf "$bundle_file" -C "$extract_dir"; then
+  install -d -o root -g root -m 0700 "$extract_dir"
+  if ! tar --no-same-owner --no-same-permissions -xzf "$bundle_file" -C "$extract_dir"; then
     log "ERROR: extraction failed"; rm -rf "$extract_dir" "$bundle_file"; return 1
   fi
   if [ ! -d "$extract_dir/app" ]; then
     log "ERROR: extracted bundle missing 'app' directory"
     rm -rf "$extract_dir" "$bundle_file"; return 1
   fi
+  rm -rf -- "$extract_dir/app/BUNDLE_VERSION"
+  printf '%s\n' "$version" >"$extract_dir/app/BUNDLE_VERSION"
   if [ -f "$extract_dir/bin/zellij.build.json" ] || [ -f "$extract_dir/bin/zellij" ]; then
     if [ -f "$extract_dir/bin/zellij.build.json" ]; then
       if [ ! -f "$extract_dir/bin/zellij" ]; then
@@ -613,33 +764,32 @@ apply_update() {
   # Stop services before placing the root-owned snapshot inside the current app;
   # moving that app to app.rollback then commits both as one filesystem rename.
   log "Stopping services..."
-  sudo systemctl stop matrix-symphony matrix-gateway matrix-shell || true
+  systemctl stop matrix-symphony matrix-gateway matrix-shell || true
   if [ -f "$extract_dir/bin/zellij" ]; then
     backup_zellij_for_rollback
   fi
   if [ -n "$terminal_runtime_candidate" ]; then
     if ! backup_terminal_runtime_for_failed_update; then
       log "ERROR: terminal_runtime_rollback_snapshot_failed"
-      sudo rm -rf -- \
+      rm -rf -- \
         "${TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT}.next" \
         "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
-      sudo systemctl start matrix-gateway matrix-shell
-      sudo systemctl start --no-block matrix-symphony || true
+      systemctl start matrix-gateway matrix-shell
+      systemctl start --no-block matrix-symphony || true
       rm -rf "$extract_dir" "$bundle_file"
       return 1
     fi
   fi
-  sudo rm -rf "$APP_DIR.rollback"
+  rm -rf "$APP_DIR.rollback"
   if [ -d "$APP_DIR" ]; then
-    sudo mv "$APP_DIR" "$APP_DIR.rollback"
+    mv "$APP_DIR" "$APP_DIR.rollback"
     log "Backed up current app to $APP_DIR.rollback"
   fi
-  sudo mv "$extract_dir/app" "$APP_DIR"
-  sudo chown -R matrix:matrix "$APP_DIR"
-  echo "$version" | sudo tee "$VERSION_FILE" >/dev/null
+  mv "$extract_dir/app" "$APP_DIR"
+  chown -R matrix:matrix "$APP_DIR"
   log "Installed app $version"
   if [ -f "$extract_dir/release.json" ]; then
-    sudo install -o root -g matrix -m 0644 "$extract_dir/release.json" "$RELEASE_FILE"
+    install -o root -g matrix -m 0644 "$extract_dir/release.json" "$RELEASE_FILE"
     log "Updated release metadata"
   fi
   if ! install_terminal_runtime_generation; then
@@ -649,6 +799,12 @@ apply_update() {
     return 1
   fi
   if [ -d "$extract_dir/bin" ]; then
+    if ! install_update_runtime_bins "$extract_dir/bin"; then
+      log "ERROR: update_runtime_install_failed"
+      do_rollback failed-update || log "ERROR: rollback after update runtime install failure failed"
+      rm -rf "$extract_dir" "$bundle_file"
+      return 1
+    fi
     if [ -n "$terminal_runtime_candidate" ] &&
       ! install_terminal_runtime_wrappers "$extract_dir/bin"; then
       log "ERROR: terminal_runtime_wrapper_install_failed"
@@ -658,21 +814,21 @@ apply_update() {
     fi
     if [ "$zellij_candidate" = true ]; then
       zellij_next="$BIN_DIR/.zellij.next"
-      sudo rm -f -- "$zellij_next"
-      if ! sudo install -o root -g root -m 0755 "$extract_dir/bin/zellij" "$zellij_next"; then
+      rm -f -- "$zellij_next"
+      if ! install -o root -g root -m 0755 "$extract_dir/bin/zellij" "$zellij_next"; then
         log "ERROR: zellij candidate staging failed"
         do_rollback failed-update || log "ERROR: rollback after zellij staging failure failed"
         rm -rf "$extract_dir" "$bundle_file"
         return 1
       fi
-      if ! sudo mv -f "$zellij_next" "$BIN_DIR/zellij"; then
-        sudo rm -f -- "$zellij_next"
+      if ! mv -f "$zellij_next" "$BIN_DIR/zellij"; then
+        rm -f -- "$zellij_next"
         log "ERROR: zellij candidate commit failed"
         do_rollback failed-update || log "ERROR: rollback after zellij commit failure failed"
         rm -rf "$extract_dir" "$bundle_file"
         return 1
       fi
-      if ! sudo install -o root -g root -m 0644 "$extract_dir/bin/zellij.build.json" "$BIN_DIR/zellij.build.json"; then
+      if ! install -o root -g root -m 0644 "$extract_dir/bin/zellij.build.json" "$BIN_DIR/zellij.build.json"; then
         log "ERROR: zellij candidate metadata commit failed"
         do_rollback failed-update || log "ERROR: rollback after zellij metadata failure failed"
         rm -rf "$extract_dir" "$bundle_file"
@@ -685,20 +841,28 @@ apply_update() {
         rm -rf "$extract_dir" "$bundle_file"
         return 1
       fi
-      sudo find "$extract_dir/bin" -maxdepth 1 -type f \
+      find "$extract_dir/bin" -maxdepth 1 -type f \
         ! -name 'zellij' \
         ! -name 'zellij.build.json' \
         ! -name 'matrix-terminal-*' \
+        ! -name 'matrix-update-service' \
+        ! -name 'matrix-sync-agent' \
+        ! -name 'matrix-update' \
+        ! -name 'matrix-validate-host-bundle' \
         -exec cp -a {} "$BIN_DIR/" \;
     else
-      sudo find "$extract_dir/bin" -maxdepth 1 -type f \
+      find "$extract_dir/bin" -maxdepth 1 -type f \
         ! -name 'matrix-terminal-*' \
+        ! -name 'matrix-update-service' \
+        ! -name 'matrix-sync-agent' \
+        ! -name 'matrix-update' \
+        ! -name 'matrix-validate-host-bundle' \
         -exec cp -a {} "$BIN_DIR/" \;
       if [ -f "$extract_dir/bin/zellij" ]; then
-        sudo rm -f -- "$ZELLIJ_BUILD_METADATA"
+        rm -f -- "$ZELLIJ_BUILD_METADATA"
       fi
     fi
-    sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +
+    find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +
     log "Updated bin scripts"
   fi
   write_symphony_env
@@ -711,35 +875,35 @@ apply_update() {
       rm -rf "$extract_dir" "$bundle_file"
       return 1
     fi
-    sudo systemctl daemon-reload
+    systemctl daemon-reload
     log "Installed systemd units"
     if [ -f "$extract_dir/systemd/matrix-terminal-runtime.service" ] &&
-      ! sudo systemctl is-enabled --quiet matrix-terminal-runtime.service; then
+      ! systemctl is-enabled --quiet matrix-terminal-runtime.service; then
       terminal_runtime_enable_after_health=true
     fi
     if [ -f "$extract_dir/systemd/matrix-code-server.service" ]; then
-      sudo systemctl enable matrix-code-server.service
-      sudo systemctl start --no-block matrix-code-server.service || true
+      systemctl enable matrix-code-server.service
+      systemctl start --no-block matrix-code-server.service || true
       log "Code-server runtime service enabled"
     fi
     if [ -f "$extract_dir/systemd/matrix-developer-tools.service" ]; then
-      sudo systemctl enable matrix-developer-tools.service
-      sudo systemctl start --no-block matrix-developer-tools.service || true
+      systemctl enable matrix-developer-tools.service
+      systemctl start --no-block matrix-developer-tools.service || true
       log "Developer tools runtime service enabled"
     fi
     if [ -f "$extract_dir/systemd/matrix-code.service" ]; then
-      sudo systemctl enable matrix-code.service
-      sudo systemctl start --no-block matrix-code.service || true
+      systemctl enable matrix-code.service
+      systemctl start --no-block matrix-code.service || true
       log "Code editor service enabled"
     fi
     if [ -f "$extract_dir/systemd/matrix-symphony.service" ]; then
-      sudo systemctl enable matrix-symphony.service
-      sudo systemctl start --no-block matrix-symphony.service || true
+      systemctl enable matrix-symphony.service
+      systemctl start --no-block matrix-symphony.service || true
       log "Symphony service enabled"
     fi
     if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then
-      sudo systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service
-      sudo systemctl start --no-block matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service || true
+      systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service
+      systemctl start --no-block matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service || true
       log "Messaging services enabled"
     else
       log "Messaging runtimes missing; units installed but not enabled"
@@ -748,7 +912,7 @@ apply_update() {
 
   # Start services and health-check
   log "Starting services..."
-  sudo systemctl start matrix-gateway matrix-shell
+  systemctl start matrix-gateway matrix-shell
   log "Running health check..."
   local healthy=false
   for _ in $(seq 1 18); do
@@ -759,14 +923,14 @@ apply_update() {
   done
   if [ "$healthy" = true ]; then
     if [ "$terminal_runtime_enable_after_health" = true ]; then
-      if ! sudo systemctl enable matrix-terminal-runtime.service; then
+      if ! systemctl enable matrix-terminal-runtime.service; then
         log "ERROR: terminal_runtime_supervisor_enable_failed"
         do_rollback failed-update ||
           log "ERROR: rollback after terminal supervisor enable failure failed"
         rm -rf "$extract_dir" "$bundle_file"
         return 1
       fi
-      if ! sudo systemctl start matrix-terminal-runtime.service; then
+      if ! systemctl start matrix-terminal-runtime.service; then
         log "ERROR: terminal_runtime_supervisor_start_failed"
         if ! terminate_new_terminal_runtime_supervisor_after_failed_start; then
           log "ERROR: terminal_runtime_supervisor_cleanup_failed"
@@ -785,6 +949,7 @@ apply_update() {
     fi
     log "Health check passed — update to $version complete"
     rm -f "$UPDATE_MARKER" "$UPDATE_ERROR_MARKER"
+    rm -rf -- "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
   else
     log "ERROR: health check failed — rolling back"
     do_rollback failed-update
@@ -793,7 +958,7 @@ apply_update() {
   fi
   rm -rf "$extract_dir" "$bundle_file"
   clean_staging || true
-  restart_sync_agent_after_update
+  return 0
 }
 
 # ── Rollback ─────────────────────────────────────────────────────────
@@ -807,22 +972,21 @@ do_rollback() {
     log "ERROR: no rollback available at $APP_DIR.rollback"; return 1
   fi
   log "Rolling back..."
-  sudo systemctl stop matrix-symphony matrix-gateway matrix-shell || true
+  systemctl stop matrix-symphony matrix-gateway matrix-shell || true
   if [ -d "$APP_DIR" ]; then
-    sudo mkdir -p "$STAGING_DIR"
-    sudo chown matrix:matrix "$STAGING_DIR"
-    sudo mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"
+    secure_staging_directory || return 1
+    mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"
   fi
-  sudo mv "$APP_DIR.rollback" "$APP_DIR"
+  mv "$APP_DIR.rollback" "$APP_DIR"
   restore_zellij_after_rollback
   if [ "$rollback_kind" = "failed-update" ]; then
     restore_terminal_runtime_after_failed_update
   else
-    sudo rm -rf -- "$APP_DIR/.terminal-runtime.failed-update"
+    rm -rf -- "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
   fi
-  sudo chown -R matrix:matrix "$APP_DIR"
-  sudo systemctl start matrix-gateway matrix-shell
-  sudo systemctl start --no-block matrix-symphony || true
+  chown -R matrix:matrix "$APP_DIR"
+  systemctl start matrix-gateway matrix-shell
+  systemctl start --no-block matrix-symphony || true
   local healthy=false
   for _ in $(seq 1 18); do
     if curl --fail --silent --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
@@ -836,6 +1000,198 @@ do_rollback() {
     log "ERROR: rollback health check failed — services may be down"
     return 1
   fi
+}
+
+# Claims one root-published protocol request, unlinks it before execution, and
+# emits only a validated operation tuple. The worker never accepts paths,
+# URLs, units, commands, or environment values from this file.
+claim_typed_request() {
+  python3 - "$TYPED_REQUEST" <<'PY'
+import json
+import os
+import re
+import stat
+import sys
+
+path = sys.argv[1]
+try:
+    before = os.lstat(path)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != 0
+        or stat.S_IMODE(before.st_mode) != 0o600
+        or before.st_nlink != 1
+        or before.st_size < 1
+        or before.st_size > 128 * 1024
+    ):
+        raise ValueError("metadata")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        after = os.fstat(descriptor)
+        if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+            raise ValueError("replacement")
+        payload = os.read(descriptor, 128 * 1024 + 1)
+    finally:
+        os.close(descriptor)
+    request = json.loads(payload)
+    if not isinstance(request, dict) or request.get("schemaVersion") != 1:
+        raise ValueError("schema")
+    operation = request.get("operation")
+    if operation == "Apply":
+        if set(request) != {"schemaVersion", "operation", "target"}:
+            raise ValueError("fields")
+        target = request.get("target")
+        if not isinstance(target, dict) or set(target) != {"kind", "value"}:
+            raise ValueError("target")
+        kind = target.get("kind")
+        value = target.get("value")
+        if kind == "channel":
+            if value not in {"stable", "canary", "beta", "dev"}:
+                raise ValueError("channel")
+        elif kind == "version":
+            if not isinstance(value, str) or not re.fullmatch(
+                r"(?:v[0-9]|main-[A-Za-z0-9])[A-Za-z0-9._-]{0,127}", value
+            ):
+                raise ValueError("version")
+        else:
+            raise ValueError("kind")
+        output = f"Apply|{kind}|{value}"
+    elif operation in {"Repair", "Rollback"}:
+        if set(request) != {"schemaVersion", "operation"}:
+            raise ValueError("fields")
+        output = f"{operation}||"
+    else:
+        raise ValueError("operation")
+    os.unlink(path)
+    print(output)
+except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+    raise SystemExit(1)
+PY
+}
+
+claim_legacy_update_target() {
+  python3 - "$LEGACY_UPDATE_VERSION_FILE" "$LEGACY_UPDATE_CHANNEL_FILE" <<'PY'
+import os
+import pwd
+import re
+import stat
+import sys
+
+matrix_uid = pwd.getpwnam("matrix").pw_uid
+version_path, channel_path = sys.argv[1:3]
+
+def read_owner_file(path):
+    before = os.lstat(path)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != matrix_uid
+        or before.st_nlink != 1
+        or before.st_size < 1
+        or before.st_size > 128
+    ):
+        raise ValueError("metadata")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        after = os.fstat(descriptor)
+        if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+            raise ValueError("replacement")
+        return os.read(descriptor, 129).decode("utf-8")
+    finally:
+        os.close(descriptor)
+
+try:
+    if os.path.lexists(version_path):
+        value = read_owner_file(version_path)
+        if not re.fullmatch(r"(?:v[0-9]|main-[A-Za-z0-9])[A-Za-z0-9._-]{0,127}", value):
+            raise ValueError("version")
+        print(f"version|{value}")
+    elif os.path.lexists(channel_path):
+        value = read_owner_file(channel_path)
+        if value not in {"stable", "canary", "beta", "dev"}:
+            raise ValueError("channel")
+        print(f"channel|{value}")
+    else:
+        print("|")
+except (OSError, UnicodeDecodeError, ValueError):
+    raise SystemExit(1)
+finally:
+    for path in (version_path, channel_path):
+        try:
+            os.unlink(path)
+        except (FileNotFoundError, IsADirectoryError):
+            pass
+PY
+}
+
+process_legacy_update_request() {
+  local parsed kind value result=0
+  if ! parsed="$(claim_legacy_update_target)"; then
+    log "WARN: legacy_update_request_invalid"
+    return 1
+  fi
+  set_operation_state running
+  IFS='|' read -r kind value <<<"$parsed"
+  rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
+  if [ "$kind" = "channel" ]; then
+    printf '%s' "$value" >"$UPDATE_CHANNEL_FILE"
+  elif [ "$kind" = "version" ]; then
+    printf '%s' "$value" >"$UPDATE_VERSION_FILE"
+  fi
+  rm -f "$AUTO_APPLY_FAILED_MARKER"
+  if prepare_triggered_update && apply_update; then
+    rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
+  else
+    log "ERROR: legacy_update_failed"
+    result=1
+  fi
+  set_operation_state idle
+  return "$result"
+}
+
+process_typed_request() {
+  local parsed operation kind value result=0
+  if ! parsed="$(claim_typed_request)"; then
+    log "WARN: update_request_invalid"
+    rm -f -- "$TYPED_REQUEST"
+    return 1
+  fi
+  set_operation_state running
+  IFS='|' read -r operation kind value <<<"$parsed"
+  case "$operation" in
+    Apply)
+      rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
+      if [ "$kind" = "channel" ]; then
+        printf '%s' "$value" >"$UPDATE_CHANNEL_FILE"
+      else
+        printf '%s' "$value" >"$UPDATE_VERSION_FILE"
+      fi
+      rm -f "$AUTO_APPLY_FAILED_MARKER"
+      if prepare_triggered_update && apply_update; then
+        rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
+      else
+        log "ERROR: typed_update_failed"
+        result=1
+      fi
+      ;;
+    Repair)
+      perform_update_repair
+      if prepare_triggered_update && apply_update; then
+        rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
+      else
+        log "ERROR: typed_repair_failed"
+        result=1
+      fi
+      ;;
+    Rollback)
+      do_rollback explicit || result=1
+      ;;
+    *)
+      log "WARN: update_request_invalid"
+      result=1
+      ;;
+  esac
+  set_operation_state idle
+  return "$result"
 }
 
 # ── Signal handling ──────────────────────────────────────────────────
@@ -855,7 +1211,7 @@ clean_staging() {
     if [ "$(stat -c %Y "$path" 2>/dev/null || echo "$now")" -gt "$cutoff" ]; then
       continue
     fi
-    sudo rm -rf -- "$path"
+    rm -rf -- "$path"
     count=$((count + 1))
   done < <(find "$STAGING_DIR" -mindepth 1 -maxdepth 1 \( -name 'failed-*' -o -name 'bundle-*' \) -print0)
   if [ "$count" -gt 0 ]; then
@@ -870,7 +1226,7 @@ clean_staging_now() {
   while IFS= read -r -d '' path; do
     [ -e "$path" ] || continue
     [ ! -L "$path" ] || continue
-    sudo rm -rf -- "$path"
+    rm -rf -- "$path"
     count=$((count + 1))
   done < <(find "$STAGING_DIR" -mindepth 1 -maxdepth 1 \( -name 'failed-*' -o -name 'bundle-*' \) -print0)
   if [ "$count" -gt 0 ]; then
@@ -890,7 +1246,7 @@ clean_legacy_upgrade_artifacts() {
     if [ "$(stat -c %Y "$path" 2>/dev/null || echo "$now")" -gt "$cutoff" ]; then
       continue
     fi
-    sudo rm -f -- "$path"
+    rm -f -- "$path"
     count=$((count + 1))
   done < <(find "$LEGACY_UPGRADE_DIR" -maxdepth 1 -type f \( -name 'matrix-host-bundle.tar.gz' -o -name 'matrix-host-bundle.tar.gz.sha256' \) -print0)
   if [ "$count" -gt 0 ]; then
@@ -943,7 +1299,7 @@ clean_repairable_tmp_artifacts() {
   while IFS= read -r -d '' path; do
     [ -e "$path" ] || continue
     [ ! -L "$path" ] || continue
-    sudo rm -f -- "$path"
+    rm -f -- "$path"
     count=$((count + 1))
   done < <(find /tmp -xdev -user matrix -type f -mtime +1 \( -name '*.so' -o -path '/tmp/node-compile-cache/*' \) -print0)
   if [ "$count" -gt 0 ]; then
@@ -952,9 +1308,15 @@ clean_repairable_tmp_artifacts() {
   return 0
 }
 
-restart_sync_agent_after_update() {
-  log "Restarting sync agent to load updated agent code"
-  sudo systemctl restart --no-block matrix-sync-agent.service || log "WARN: failed to restart matrix-sync-agent.service"
+set_operation_state() {
+  local state="$1" temporary
+  case "$state" in
+    idle|running) ;;
+    *) return 1 ;;
+  esac
+  temporary="$(mktemp --tmpdir="$UPDATE_RUNTIME_DIR" .operation-state.XXXXXXXXXX)"
+  (umask 077; printf '%s' "$state" >"$temporary")
+  mv -f -- "$temporary" "$OPERATION_STATE"
 }
 
 perform_update_repair() {
@@ -981,35 +1343,29 @@ maybe_clean_staging() {
 # ── Main loop ────────────────────────────────────────────────────────
 log "Started for ${MATRIX_MACHINE_ID} (version: $(current_version))"
 if [ -x "$BIN_DIR/matrix-ensure-swap" ]; then
-  sudo "$BIN_DIR/matrix-ensure-swap" || log "WARN: swap ensure failed (non-fatal)"
+  "$BIN_DIR/matrix-ensure-swap" || log "WARN: swap ensure failed (non-fatal)"
 fi
-mkdir -p "$STAGING_DIR"
+secure_staging_directory || exit 1
 clean_staging
 clean_legacy_upgrade_artifacts || true
 last_staging_cleanup="$(date +%s)"
 
 while true; do
   # React to trigger files and signals
-  if [ -f "$UPDATE_TRIGGER" ]; then
-    sudo rm -f "$UPDATE_TRIGGER"
-    rm -f "$AUTO_APPLY_FAILED_MARKER"
-    if prepare_triggered_update; then
-      if apply_update; then
-        rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
-      else
-        log "Update failed — will retry on next trigger"
-      fi
-    else
-      log "Requested release metadata fetch failed — skipping apply"
-      rm -f "$UPDATE_MARKER"
-    fi
+  if [ -f "$TYPED_REQUEST" ]; then
+    update_requested=false
+    process_typed_request || true
   fi
-  if [ -f "$ROLLBACK_TRIGGER" ]; then
-    sudo rm -f "$ROLLBACK_TRIGGER"
+  if [ -e "$LEGACY_UPDATE_TRIGGER" ] || [ -L "$LEGACY_UPDATE_TRIGGER" ]; then
+    rm -f -- "$LEGACY_UPDATE_TRIGGER"
+    process_legacy_update_request || true
+  fi
+  if [ -e "$LEGACY_ROLLBACK_TRIGGER" ] || [ -L "$LEGACY_ROLLBACK_TRIGGER" ]; then
+    rm -f -- "$LEGACY_ROLLBACK_TRIGGER"
     do_rollback explicit || log "Rollback failed"
   fi
-  if [ -f "$UPDATE_REPAIR_TRIGGER" ]; then
-    sudo rm -f "$UPDATE_REPAIR_TRIGGER"
+  if [ -e "$LEGACY_UPDATE_REPAIR_TRIGGER" ] || [ -L "$LEGACY_UPDATE_REPAIR_TRIGGER" ]; then
+    rm -f -- "$LEGACY_UPDATE_REPAIR_TRIGGER"
     perform_update_repair
     if prepare_triggered_update; then
       if apply_update; then
@@ -1024,16 +1380,7 @@ while true; do
   fi
   if [ "$update_requested" = true ]; then
     update_requested=false
-    if prepare_triggered_update; then
-      if apply_update; then
-        rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
-      else
-        log "Update (via SIGUSR1) failed — will retry on next trigger"
-      fi
-    else
-      log "Requested release metadata fetch failed — skipping apply"
-      rm -f "$UPDATE_MARKER"
-    fi
+    process_typed_request || true
   fi
 
   # Poll for new version
@@ -1043,7 +1390,10 @@ while true; do
   # Sleep in 6s increments (50x = 5 min) so we react quickly to triggers
   for _ in $(seq 1 50); do
     sleep 6
-    if [ -f "$UPDATE_TRIGGER" ] || [ -f "$ROLLBACK_TRIGGER" ] || [ -f "$UPDATE_REPAIR_TRIGGER" ] || [ "$update_requested" = true ]; then
+    if [ -e "$LEGACY_UPDATE_TRIGGER" ] || [ -L "$LEGACY_UPDATE_TRIGGER" ] ||
+      [ -e "$LEGACY_ROLLBACK_TRIGGER" ] || [ -L "$LEGACY_ROLLBACK_TRIGGER" ] ||
+      [ -e "$LEGACY_UPDATE_REPAIR_TRIGGER" ] || [ -L "$LEGACY_UPDATE_REPAIR_TRIGGER" ] ||
+      [ -f "$TYPED_REQUEST" ] || [ "$update_requested" = true ]; then
       break
     fi
   done

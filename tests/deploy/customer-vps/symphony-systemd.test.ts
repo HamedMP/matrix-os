@@ -143,12 +143,12 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(syncAgent).toContain("SYMPHONY_MANAGED_KEYS=\"MATRIX_HANDLE PLATFORM_INTERNAL_URL UPGRADE_TOKEN\"");
     expect(syncAgent).toContain("preserve_unmanaged_symphony_env()");
     expect(syncAgent).toContain("preserve_unmanaged_symphony_env \"$SYMPHONY_ENV_FILE\"");
-    expect(syncAgent).toContain("sudo install -o root -g matrix -m 0640 \"$temp_file\" \"$SYMPHONY_ENV_FILE\" || status=$?");
+    expect(syncAgent).toContain("install -o root -g matrix -m 0640 \"$temp_file\" \"$SYMPHONY_ENV_FILE\" || status=$?");
     expect(syncAgent).toContain("rm -f \"$temp_file\"");
     expect(syncAgent).toContain("return \"$status\"");
-    expect(syncAgent).toContain("sudo systemctl enable matrix-symphony.service");
-    expect(syncAgent).toContain("sudo systemctl start --no-block matrix-symphony.service");
-    expect(syncAgent).toContain("sudo systemctl stop matrix-symphony matrix-gateway matrix-shell || true");
+    expect(syncAgent).toContain("systemctl enable matrix-symphony.service");
+    expect(syncAgent).toContain("systemctl start --no-block matrix-symphony.service");
+    expect(syncAgent).toContain("systemctl stop matrix-symphony matrix-gateway matrix-shell || true");
   });
 
   it("keeps observability failures distinct from missing issues", async () => {

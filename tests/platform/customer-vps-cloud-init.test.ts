@@ -610,7 +610,7 @@ exit 99
     expect(shell).toContain('After=matrix-gateway.service');
     expect(shell).toContain('ConditionPathExists=/opt/matrix/bin/matrix-shell');
     expect(readFileSync(join(root, 'distro/customer-vps/systemd/matrix-sync-agent.service'), 'utf8')).toContain(
-      'ConditionPathExists=/opt/matrix/bin/matrix-sync-agent',
+      'ConditionPathExists=/opt/matrix/bin/matrix-update-service',
     );
     expect(restore).toContain('Type=oneshot');
   });
