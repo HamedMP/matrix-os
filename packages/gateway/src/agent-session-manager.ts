@@ -37,6 +37,7 @@ export interface WorkspaceSession {
     status: RuntimeStatus;
     zellijSession?: string;
     zellijLayoutPath?: string;
+    runtimeId?: string;
     tmuxSession?: string;
     fallbackReason?: string;
   };
@@ -206,6 +207,19 @@ function isActive(session: WorkspaceSession): boolean {
 
 function decorateSession(session: WorkspaceSession, runtime: ZellijRuntime): WorkspaceSessionView {
   if (session.runtime.type !== "zellij") return session;
+  if (session.runtime.zellijSession?.startsWith("matrix-t-")) {
+    return {
+      ...session,
+      nativeAttachCommand: ["zellij", "attach", session.runtime.zellijSession],
+      observeCommand: [
+        "zellij",
+        "attach",
+        session.runtime.zellijSession,
+        "--index",
+        "0",
+      ],
+    };
+  }
   return {
     ...session,
     nativeAttachCommand: runtime.attachCommand(session.id),
@@ -380,6 +394,9 @@ export function createAgentSessionManager(options: {
           status: runtimeStart.status,
           zellijSession: runtimeStart.sessionName,
           zellijLayoutPath: runtimeStart.layoutPath,
+          ...(runtimeStart.runtimeId
+            ? { runtimeId: runtimeStart.runtimeId }
+            : {}),
         },
         terminalSessionId: `term_${sessionId}`,
         transcriptPath: join(homePath, "system", "session-output", `${sessionId}.jsonl`),

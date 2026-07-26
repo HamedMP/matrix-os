@@ -54,7 +54,12 @@ export interface ShellWsSocket {
 }
 
 interface ShellWsRegistry {
-  list(): Promise<Array<{ name: string; status?: "active" | "exited"; canonicalSize?: TerminalSize | null }>>;
+  list(): Promise<Array<{
+    name: string;
+    status?: "active" | "exited";
+    canonicalSize?: TerminalSize | null;
+    runtimeId?: string;
+  }>>;
 }
 
 interface ShellWsAdapter {
@@ -381,7 +386,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     attachPromise = (async () => {
       const abortController = new AbortController();
       let child: ShellAttachProcess | null = null;
-      const outputCompat = await createSeededOutputCompat(safeName, replayBuffer);
+      const outputCompat = await createSeededOutputCompat(runtime.name, replayBuffer);
       if (!canUseAttachPromise(runtime, attachPromise)) {
         return false;
       }
@@ -577,7 +582,10 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       return { onMessage: () => undefined, onClose: () => undefined };
     }
 
-    const runtime = runtimeFor(safeName);
+    const runtimeIdentity = info.runtimeId
+      ? `matrix-t-${info.runtimeId}`
+      : safeName;
+    const runtime = runtimeFor(runtimeIdentity);
     if (!runtime) {
       sendJson(ws, { type: "error", code: "session_capacity", message: "Too many active sessions" });
       ws.close?.();

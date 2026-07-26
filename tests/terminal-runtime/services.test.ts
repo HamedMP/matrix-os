@@ -83,6 +83,18 @@ describe('terminal runtime service boundary', () => {
       zellijServer: false,
       shell: true,
     });
+    expect(classifyRuntimeProcesses([
+      { comm: 'node', args: ['/generation/keeper.js'] },
+      { comm: 'zellij', args: ['zellij', '--session', `matrix-t-${runtimeId}`] },
+      { comm: 'zellij', args: ['zellij', '--server', `matrix-t-${runtimeId}`] },
+      { comm: 'node', args: ['/generation/pane.js', 'agent'] },
+      { comm: 'codex', args: ['codex', 'app-server'] },
+    ])).toEqual({
+      keeper: true,
+      zellijClient: true,
+      zellijServer: true,
+      shell: true,
+    });
   });
 
   it('keeps all user-derived launch data out of keeper argv and preserves command gating', () => {

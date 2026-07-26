@@ -128,6 +128,7 @@ export interface SessionRegistryOptions {
    * same persist file and double-spawning bash children.
    */
   autoRestore?: boolean;
+  externalEnv?: Readonly<Record<string, string>>;
 }
 
 type SubscriberFn = (msg: PtyServerMessage) => void;
@@ -313,6 +314,7 @@ export class SessionRegistry {
   private readonly spawnFn: SpawnFn;
   private readonly allowedShells: Set<string>;
   private readonly sessionTtlMs: number;
+  private readonly externalEnv: Readonly<Record<string, string>>;
   private persistTimer?: ReturnType<typeof setTimeout>;
   private persistQueue: Promise<void> = Promise.resolve();
 
@@ -326,6 +328,7 @@ export class SessionRegistry {
     this.bufferSize = options?.bufferSize ?? 1024 * 1024;
     this.persistPath = options?.persistPath ?? join(homePath, "system", "terminal-sessions.json");
     this.sessionTtlMs = normalizeSessionTtl(options?.sessionTtlMs);
+    this.externalEnv = options?.externalEnv ?? {};
     this.allowedShells = options?.allowedShells
       ? new Set(options.allowedShells)
       : DEFAULT_ALLOWED_SHELLS;
@@ -623,6 +626,7 @@ export class SessionRegistry {
         ...(process.env.MATRIX_RUNTIME_DIR ? { MATRIX_RUNTIME_DIR: process.env.MATRIX_RUNTIME_DIR } : {}),
         ...(process.env.MATRIX_RUNTIME_HOME ? { MATRIX_RUNTIME_HOME: process.env.MATRIX_RUNTIME_HOME } : {}),
         ...(process.env.MATRIX_RUNTIME_USER ? { MATRIX_RUNTIME_USER: process.env.MATRIX_RUNTIME_USER } : {}),
+        ...this.externalEnv,
       }),
     };
   }

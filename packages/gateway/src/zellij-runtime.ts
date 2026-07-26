@@ -47,7 +47,8 @@ export interface ZellijLayoutResult {
 
 export interface ZellijStartResult extends ZellijLayoutResult {
   ok: true;
-  status: "running";
+  status: "starting" | "running";
+  runtimeId?: string;
 }
 
 export interface ZellijHealth {

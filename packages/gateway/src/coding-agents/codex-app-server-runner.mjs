@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
+import { createReadStream } from "node:fs";
 import { chmod, lstat, mkdir, open, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { dirname, isAbsolute } from "node:path";
@@ -63,6 +64,11 @@ const RunnerConfigSchema = z.object({
   approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
   writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
+}).strict();
+const FdRunnerEnvelopeSchema = z.object({
+  eventPath: z.string().min(1).max(4096).refine(isAbsolute),
+  expectedVersion: z.string().regex(/^\d+\.\d+\.\d+$/),
+  config: RunnerConfigSchema,
 }).strict();
 const ApprovalRequestSchema = z.object({
   id: NativeRequestIdSchema,
@@ -146,11 +152,54 @@ function fail(message) {
   process.exit(1);
 }
 
-const eventPath = process.argv[2];
-const expectedVersion = process.argv[3];
-const command = process.argv[4];
-const encodedConfig = process.argv.at(-1);
-const commandArgs = process.argv.slice(5, -1);
+async function readBoundedConfigurationFd() {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of createReadStream(null, {
+    fd: 3,
+    autoClose: false,
+  })) {
+    total += chunk.byteLength;
+    if (total > 128 * 1024) {
+      throw new Error("configuration_too_large");
+    }
+    chunks.push(Buffer.from(chunk));
+  }
+  return FdRunnerEnvelopeSchema.parse(JSON.parse(
+    Buffer.concat(chunks, total).toString("utf8"),
+  ));
+}
+
+let eventPath;
+let expectedVersion;
+let command;
+let commandArgs;
+let config;
+if (process.argv[2] === "--fd-config") {
+  try {
+    const envelope = await readBoundedConfigurationFd();
+    eventPath = envelope.eventPath;
+    expectedVersion = envelope.expectedVersion;
+    command = "codex";
+    commandArgs = [];
+    config = envelope.config;
+  } catch (_error) {
+    fail("Codex app-server runner configuration is invalid.");
+  }
+} else {
+  eventPath = process.argv[2];
+  expectedVersion = process.argv[3];
+  command = process.argv[4];
+  const encodedConfig = process.argv.at(-1);
+  commandArgs = process.argv.slice(5, -1);
+  try {
+    const bytes = Buffer.from(encodedConfig ?? "", "base64");
+    if (bytes.toString("base64") !== encodedConfig) throw new Error("invalid_base64");
+    config = RunnerConfigSchema.parse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
+  } catch (_error) {
+    fail("Codex app-server runner configuration is invalid.");
+  }
+}
 if (
   !eventPath ||
   !isAbsolute(eventPath) ||
@@ -158,14 +207,6 @@ if (
   !/^\d+\.\d+\.\d+$/.test(expectedVersion ?? "") ||
   !command
 ) {
-  fail("Codex app-server runner configuration is invalid.");
-}
-let config;
-try {
-  const bytes = Buffer.from(encodedConfig ?? "", "base64");
-  if (bytes.toString("base64") !== encodedConfig) throw new Error("invalid_base64");
-  config = RunnerConfigSchema.parse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
-} catch (_error) {
   fail("Codex app-server runner configuration is invalid.");
 }
 

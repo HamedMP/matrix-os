@@ -1,4 +1,13 @@
-import { lstat, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
+import {
+  link,
+  lstat,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -57,5 +66,52 @@ describe('terminal agent configuration store', () => {
       'agent_configuration_invalid',
     );
     await expect(lstat(target)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('rejects a hard link and removes only the untrusted directory entry', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'matrix-agent-config-'));
+    const target = join(directory, 'target');
+    roots.push(directory);
+    await writeFile(target, JSON.stringify(configuration), { mode: 0o600 });
+    await link(target, join(directory, operationId));
+    const store = createAgentConfigurationStore({ directory });
+
+    await expect(store.claim(operationId)).rejects.toThrow(
+      'agent_configuration_invalid',
+    );
+    await expect(readFile(target, 'utf8')).resolves.toContain('private prompt');
+    await expect(lstat(join(directory, operationId))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+  });
+
+  it('sweeps stale and malformed entries without touching a fresh valid entry', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'matrix-agent-config-'));
+    roots.push(directory);
+    const store = createAgentConfigurationStore({
+      directory,
+      now: () => 20 * 60 * 1_000,
+    });
+    await store.publish(operationId, configuration);
+    const staleId = '11111111111111111111111111111111';
+    await writeFile(
+      join(directory, staleId),
+      JSON.stringify(configuration),
+      { mode: 0o600 },
+    );
+    await utimes(join(directory, staleId), 0, 0);
+    await writeFile(join(directory, 'malformed-entry'), 'untrusted', {
+      mode: 0o600,
+    });
+
+    await store.sweep();
+
+    await expect(lstat(join(directory, operationId))).resolves.toBeTruthy();
+    await expect(lstat(join(directory, staleId))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+    await expect(
+      lstat(join(directory, 'malformed-entry')),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });
