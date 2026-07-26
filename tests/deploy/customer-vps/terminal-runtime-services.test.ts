@@ -136,7 +136,11 @@ describe('customer VPS terminal runtime services', () => {
     expect(updater).toContain('ln -s');
     expect(updater).toContain('mv -T');
     expect(updater).toContain('systemctl daemon-reload');
-    expect(updater).toContain('enable --now matrix-terminal-runtime.service');
+    expect(updater).toContain('systemctl enable matrix-terminal-runtime.service');
+    expect(updater).toContain('systemctl start matrix-terminal-runtime.service');
+    expect(updater).not.toContain(
+      'systemctl enable --now matrix-terminal-runtime.service',
+    );
     expect(updater).not.toContain('restart matrix-terminal-runtime.service');
     expect(updater).not.toContain('stop matrix-terminal-runtime.service');
     expect(updater).not.toContain('matrix-terminal-session@*');
@@ -270,5 +274,6 @@ describe('customer VPS terminal runtime services', () => {
     expect(updater).not.toContain(
       'systemctl stop matrix-terminal-session@',
     );
+    expect(updater).toContain('terminal_runtime_supervisor_start_failed');
   });
 });

@@ -742,10 +742,17 @@ apply_update() {
   done
   if [ "$healthy" = true ]; then
     if [ "$terminal_runtime_enable_after_health" = true ]; then
-      if ! sudo systemctl enable --now matrix-terminal-runtime.service; then
+      if ! sudo systemctl enable matrix-terminal-runtime.service; then
         log "ERROR: terminal_runtime_supervisor_enable_failed"
         do_rollback failed-update ||
           log "ERROR: rollback after terminal supervisor enable failure failed"
+        rm -rf "$extract_dir" "$bundle_file"
+        return 1
+      fi
+      if ! sudo systemctl start matrix-terminal-runtime.service; then
+        log "ERROR: terminal_runtime_supervisor_start_failed"
+        do_rollback failed-update ||
+          log "ERROR: rollback after terminal supervisor start failure failed"
         rm -rf "$extract_dir" "$bundle_file"
         return 1
       fi
