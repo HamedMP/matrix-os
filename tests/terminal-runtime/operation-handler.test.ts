@@ -41,6 +41,13 @@ describe('terminal runtime operation handler', () => {
   });
   async function setup(
     resolveCwd = async (cwd: { kind: 'home-relative'; path: string }) => cwd,
+    artifacts?: {
+      inspect(runtimeId: string): Promise<{
+        state: 'valid' | 'missing' | 'corrupt' | 'incompatible';
+      }>;
+      remove(runtimeId: string): Promise<void>;
+      prune(input: { protectedRuntimeIds: Set<string> }): Promise<unknown>;
+    },
   ) {
     root = await mkdtemp(join(tmpdir(), 'matrix-terminal-handler-'));
     state = await createRuntimeState({
@@ -55,6 +62,7 @@ describe('terminal runtime operation handler', () => {
       bootId: async () => 'boot-id-1',
       createId: () => RUNTIME_ID,
       resolveCwd,
+      ...(artifacts ? { artifacts } : {}),
     });
     return { handle, systemd };
   }
@@ -124,6 +132,52 @@ describe('terminal runtime operation handler', () => {
     expect(retry).toEqual(first);
     expect(systemd.start).toHaveBeenCalledTimes(1);
   });
+  it.each([
+    ['valid', 'serialized', null],
+    ['missing', 'fresh-shell', 'history_unavailable'],
+    ['corrupt', 'fresh-shell', 'history_unavailable'],
+    ['incompatible', 'fresh-shell', 'history_unavailable'],
+  ] as const)(
+    'projects %s resurrection state into explicit recovery mode %s',
+    async (artifactState, recoveryMode, recoveryReason) => {
+      const artifacts = {
+        inspect: vi.fn(async () => ({ state: artifactState })),
+        remove: vi.fn(async () => undefined),
+        prune: vi.fn(async () => ({ removedRuntimeIds: [] })),
+      };
+      const { handle } = await setup(undefined, artifacts);
+      await handle(createRequest());
+      await state!.receipts.replace({
+        schemaVersion: 1,
+        runtimeId: RUNTIME_ID,
+        displayName: 'primary',
+        cwd: { kind: 'home-relative', path: 'projects/matrix' },
+        createdAt: NOW.toISOString(),
+        metadataRevision: 1,
+        lastKnown: {
+          state: 'interrupted',
+          at: NOW.toISOString(),
+          bootId: 'old-boot',
+        },
+        zellij: { sessionName: `matrix-t-${RUNTIME_ID}` },
+      });
+
+      await expect(handle({
+        version: 1,
+        operation: 'Inspect',
+        operationId: '21000000000000000000000000000000',
+        input: { runtimeId: RUNTIME_ID },
+      })).resolves.toMatchObject({
+        ok: true,
+        result: {
+          lifecycleState: 'interrupted',
+          recoverable: true,
+          recoveryMode,
+          recoveryReason,
+        },
+      });
+    },
+  );
   it('lists receipt-only runtimes and assigns unique ordered operation generations', async () => {
     const { handle, systemd } = await setup();
     await handle(createRequest());
@@ -233,7 +287,12 @@ describe('terminal runtime operation handler', () => {
     expect(systemd.start).toHaveBeenCalledWith(RUNTIME_ID);
   });
   it('reconcile completes deletion only after the cgroup is empty', async () => {
-    const { handle, systemd } = await setup();
+    const artifacts = {
+      inspect: vi.fn(async () => ({ state: 'missing' as const })),
+      remove: vi.fn(async () => undefined),
+      prune: vi.fn(async () => ({ removedRuntimeIds: [] })),
+    };
+    const { handle, systemd } = await setup(undefined, artifacts);
     await handle(createRequest());
     vi.mocked(systemd.inspect).mockResolvedValueOnce({
       runtimeId: RUNTIME_ID, unit: 'inactive', cgroupPopulated: true,
@@ -247,12 +306,53 @@ describe('terminal runtime operation handler', () => {
     })).resolves.toMatchObject({
       ok: true, result: { lifecycleState: 'deleting' },
     });
+    expect(artifacts.remove).not.toHaveBeenCalled();
     await handle({
       version: 1, operation: 'Reconcile',
       operationId: '70000000000000000000000000000000', input: {},
     });
     expect(await state!.receipts.read(RUNTIME_ID)).toBeNull();
     expect(await state!.names.resolve('primary', NOW.getTime())).toBeNull();
+    expect(artifacts.remove).toHaveBeenCalledWith(RUNTIME_ID);
+  });
+  it('serializes Delete before Recover and never recreates removed state', async () => {
+    let releaseStop = () => undefined;
+    const stopGate = new Promise<void>((resolveStop) => {
+      releaseStop = resolveStop;
+    });
+    const artifacts = {
+      inspect: vi.fn(async () => ({ state: 'missing' as const })),
+      remove: vi.fn(async () => undefined),
+      prune: vi.fn(async () => ({ removedRuntimeIds: [] })),
+    };
+    const { handle, systemd } = await setup(undefined, artifacts);
+    await handle(createRequest());
+    vi.mocked(systemd.start).mockClear();
+    vi.mocked(systemd.stop).mockImplementationOnce(async () => await stopGate);
+    const deleting = handle({
+      version: 1,
+      operation: 'Delete',
+      operationId: '61000000000000000000000000000000',
+      input: { runtimeId: RUNTIME_ID },
+    });
+    await vi.waitFor(() => expect(systemd.stop).toHaveBeenCalledTimes(1));
+    const recovering = handle({
+      version: 1,
+      operation: 'Recover',
+      operationId: '62000000000000000000000000000000',
+      input: { runtimeId: RUNTIME_ID },
+    });
+    releaseStop();
+
+    await expect(deleting).resolves.toMatchObject({
+      ok: true,
+      result: { deleted: true },
+    });
+    await expect(recovering).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'not_found' },
+    });
+    expect(systemd.start).not.toHaveBeenCalled();
   });
   it('fails before launch when cwd cannot be resolved inside the owner home', async () => {
     const { handle, systemd } = await setup(async () => {

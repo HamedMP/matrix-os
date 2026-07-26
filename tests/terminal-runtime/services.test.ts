@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildKeeperLaunch,
@@ -23,6 +24,18 @@ const runtimeId = '0123456789abcdef0123456789abcdef';
 const operationId = 'fedcba9876543210fedcba9876543210';
 
 describe('terminal runtime service boundary', () => {
+  it('uses the exact verified v0.44.3 serialization options without forced commands', async () => {
+    const config = await readFile(
+      'packages/terminal-runtime/assets/config.kdl',
+      'utf8',
+    );
+    expect(config).toContain('session_serialization true');
+    expect(config).toContain('serialize_pane_viewport true');
+    expect(config).toContain('scrollback_lines_to_serialize 10000');
+    expect(config).toContain('serialization_interval 5');
+    expect(config).not.toContain('--force-run-commands');
+  });
+
   it('runs a keeper launched through the atomically switched generation symlink', () => {
     expect(isKeeperEntrypoint(
       'file:///opt/matrix/libexec/terminal-runtime/v1/abc/keeper.js',
