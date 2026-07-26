@@ -59,8 +59,14 @@ describe("customer VPS privilege boundary", () => {
     expect(helper).not.toContain("eval ");
     expect(helper).not.toContain("systemctl $");
     expect(helper).toContain('/usr/bin/systemctl start "$UNIT"');
+    expect(helper).toContain('/usr/bin/systemctl stop "$UNIT"');
+    expect(helper).toContain("start|cancel");
 
     expect(() => execFileSync(helperPath, ["../../bin/sh"], {
+      encoding: "utf8",
+      stdio: "pipe",
+    })).toThrow();
+    expect(() => execFileSync(helperPath, ["coding-agents", "restart"], {
       encoding: "utf8",
       stdio: "pipe",
     })).toThrow();

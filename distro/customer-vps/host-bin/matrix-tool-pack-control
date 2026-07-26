@@ -3,10 +3,15 @@ set -euo pipefail
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
 usage() {
-  echo "Usage: matrix-tool-pack-control [coding-agents|code-server|hermes|linux-tools]" >&2
+  echo "Usage: matrix-tool-pack-control [coding-agents|code-server|hermes|linux-tools] [start|cancel]" >&2
 }
 
 PACK="${1:-}"
+ACTION="${2:-start}"
+if [ "$#" -gt 2 ]; then
+  usage
+  exit 64
+fi
 case "$PACK" in
   coding-agents) UNIT="matrix-developer-tools.service" ;;
   code-server) UNIT="matrix-code-server.service" ;;
@@ -17,9 +22,16 @@ case "$PACK" in
     exit 64
     ;;
 esac
+case "$ACTION" in
+  start|cancel) ;;
+  *)
+    usage
+    exit 64
+    ;;
+esac
 
 if [ "$(/usr/bin/id -u)" -ne 0 ]; then
-  exec /usr/bin/sudo -n /opt/matrix/bin/matrix-tool-pack-control "$PACK"
+  exec /usr/bin/sudo -n /opt/matrix/bin/matrix-tool-pack-control "$PACK" "$ACTION"
 fi
 
 if ! /usr/bin/systemctl cat "$UNIT" >/dev/null 2>&1; then
@@ -27,4 +39,7 @@ if ! /usr/bin/systemctl cat "$UNIT" >/dev/null 2>&1; then
   exit 1
 fi
 
-/usr/bin/systemctl start "$UNIT"
+case "$ACTION" in
+  start) /usr/bin/systemctl start "$UNIT" ;;
+  cancel) /usr/bin/systemctl stop "$UNIT" ;;
+esac

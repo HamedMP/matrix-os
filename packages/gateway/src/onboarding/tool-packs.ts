@@ -57,6 +57,7 @@ const MAX_TOOL_PACK_RECORDS = 512;
 const MAX_INSTALL_JOBS_PER_OWNER = 64;
 const DEFAULT_INSTALL_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_LINUX_TOOLS_INSTALL_TIMEOUT_MS = 30 * 60 * 1000;
+const HOST_INSTALL_CANCEL_TIMEOUT_MS = 30_000;
 
 export interface ToolPackRecord {
   ownerId: string;
@@ -308,30 +309,95 @@ async function runHostInstaller(
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(scriptPath, [packId], {
-      env: {
-        LANG: process.env.LANG ?? "C.UTF-8",
-        PATH: process.env.PATH ?? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      },
+      env: hostInstallerEnvironment(),
       stdio: ["ignore", "pipe", "pipe"],
     });
+    type DeferredResult =
+      | { kind: "close"; code: number | null }
+      | { kind: "error"; error: Error };
+    let cancellationPending = false;
+    let deferredResult: DeferredResult | null = null;
     const discardOutput = (_chunk: Buffer) => undefined;
-    const timeout = setTimeout(() => {
-      child.kill("SIGTERM");
-      reject(new Error(`tool pack install timed out for ${packId}`));
-    }, timeoutMs);
-    child.stdout.on("data", discardOutput);
-    child.stderr.on("data", discardOutput);
-    child.on("error", (err) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timeout);
+    const settleClose = (code: number | null) => {
       if (code === 0) {
         resolve();
         return;
       }
       reject(new Error(`tool pack install failed for ${packId} with exit code ${code}`));
+    };
+    const timeout = setTimeout(() => {
+      cancellationPending = true;
+      void cancelHostInstall(scriptPath, packId).then((cancelled) => {
+        if (cancelled) {
+          if (deferredResult?.kind === "close" && deferredResult.code === 0) {
+            resolve();
+            return;
+          }
+          child.kill("SIGTERM");
+          reject(new Error(`tool pack install timed out for ${packId}`));
+          return;
+        }
+        cancellationPending = false;
+        if (deferredResult?.kind === "error") {
+          reject(deferredResult.error);
+        } else if (deferredResult?.kind === "close") {
+          settleClose(deferredResult.code);
+        }
+      });
+    }, timeoutMs);
+    child.stdout.on("data", discardOutput);
+    child.stderr.on("data", discardOutput);
+    child.on("error", (err) => {
+      clearTimeout(timeout);
+      if (cancellationPending) {
+        deferredResult = { kind: "error", error: err };
+        return;
+      }
+      reject(err);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      if (cancellationPending) {
+        deferredResult = { kind: "close", code };
+        return;
+      }
+      settleClose(code);
+    });
+  });
+}
+
+function hostInstallerEnvironment(): NodeJS.ProcessEnv {
+  return {
+    LANG: "C.UTF-8",
+    PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+  };
+}
+
+async function cancelHostInstall(
+  scriptPath: string,
+  packId: ToolPackId,
+): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const child = spawn(scriptPath, [packId, "cancel"], {
+      env: hostInstallerEnvironment(),
+      stdio: "ignore",
+    });
+    let settled = false;
+    const settle = (cancelled: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(cancelled);
+    };
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      settle(false);
+    }, HOST_INSTALL_CANCEL_TIMEOUT_MS);
+    child.on("error", () => {
+      settle(false);
+    });
+    child.on("close", (code) => {
+      settle(code === 0);
     });
   });
 }

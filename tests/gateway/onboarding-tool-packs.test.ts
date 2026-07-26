@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -264,10 +264,15 @@ describe("onboarding tool packs", () => {
   it("uses the existing Linux tools service timeout budget for host installs", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "matrix-tool-pack-installer-"));
     const scriptPath = join(tempDir, "installer");
+    const callsPath = join(tempDir, "calls");
     await writeFile(scriptPath, [
       "#!/usr/bin/env bash",
+      `printf '%s\\n' "$*" >>"${callsPath}"`,
       "if [ -n \"${MATRIX_TOOL_PACK_OWNER_ID:-}\" ]; then",
       "  exit 9",
+      "fi",
+      "if [ \"${2:-}\" = \"cancel\" ]; then",
+      "  exit 0",
       "fi",
       "if [ \"$1\" = \"linux-tools\" ]; then",
       "  sleep 0.1",
@@ -289,6 +294,38 @@ describe("onboarding tool packs", () => {
       await expect(installer.install(testPrincipal.userId, "code-server")).rejects.toThrow(
         "tool pack install timed out for code-server",
       );
+      expect((await readFile(callsPath, "utf8")).trim().split("\n")).toEqual([
+        "linux-tools",
+        "code-server",
+        "code-server cancel",
+      ]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps tracking the systemd start when typed cancellation fails", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "matrix-tool-pack-cancel-fail-"));
+    const scriptPath = join(tempDir, "installer");
+    await writeFile(scriptPath, [
+      "#!/usr/bin/env bash",
+      "if [ \"${2:-}\" = \"cancel\" ]; then",
+      "  exit 1",
+      "fi",
+      "sleep 0.1",
+      "",
+    ].join("\n"));
+    await chmod(scriptPath, 0o755);
+
+    try {
+      const installer = createHostToolPackInstaller({
+        scriptPath,
+        timeoutMs: 20,
+      });
+
+      await expect(
+        installer.install(testPrincipal.userId, "code-server"),
+      ).resolves.toBeUndefined();
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
