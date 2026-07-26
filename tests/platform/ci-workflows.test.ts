@@ -67,6 +67,15 @@ describe('CI workflows', () => {
     const workflowsDirectory = join(root, '.github/workflows');
     const workflowReadme = readFileSync(join(workflowsDirectory, 'README.md'), 'utf8');
     const releaseDocs = readFileSync(join(root, 'docs/dev/releases.md'), 'utf8');
+    const contributorGuide = readFileSync(join(root, 'CONTRIBUTING.md'), 'utf8');
+    const orchestrator = readFileSync(join(root, 'packages/platform/src/orchestrator.ts'), 'utf8');
+    const platformCompose = readFileSync(join(root, 'distro/docker-compose.platform.yml'), 'utf8');
+    const deployStatusCommand = readFileSync(
+      join(root, '.claude/commands/deploy-status.md'),
+      'utf8',
+    );
+    const releaseCommand = readFileSync(join(root, '.claude/commands/release.md'), 'utf8');
+    const shipCommand = readFileSync(join(root, '.claude/commands/ship.md'), 'utf8');
     const workflowSources = readdirSync(workflowsDirectory)
       .filter((fileName) => fileName.endsWith('.yml') || fileName.endsWith('.yaml'))
       .map((fileName) => readFileSync(join(workflowsDirectory, fileName), 'utf8'));
@@ -83,6 +92,29 @@ describe('CI workflows', () => {
     expect(releaseDocs).toContain('Mobile OTA update');
     expect(releaseDocs).toContain('Desktop installers and OTA metadata');
     expect(releaseDocs).toContain('`@finnaai/matrix` CLI');
+    expect(orchestrator).toContain("image = 'matrixos-user:local'");
+    expect(platformCompose).toContain(
+      'PLATFORM_IMAGE=${PLATFORM_IMAGE:-matrixos-user:local}',
+    );
+    expect(contributorGuide).toContain('| Host bundle | `host-bundle-release.yml`');
+    expect(contributorGuide).toContain('| Platform | `platform-cloud-run.yml`');
+    expect(contributorGuide).toContain('Customer releases are VPS-native host bundles');
+    expect(deployStatusCommand).toContain('host-bundle-release.yml');
+    expect(deployStatusCommand).toContain('platform-cloud-run.yml');
+    expect(releaseCommand).toContain('host-bundle-release.yml');
+    expect(shipCommand).toContain('host-bundle-release.yml');
+
+    for (const activeSource of [
+      contributorGuide,
+      orchestrator,
+      platformCompose,
+      deployStatusCommand,
+      releaseCommand,
+      shipCommand,
+    ]) {
+      expect(activeSource).not.toContain('ghcr.io/hamedmp/matrix-os');
+      expect(activeSource).not.toContain('docker.yml');
+    }
 
     for (const workflow of workflowSources) {
       expect(workflow).not.toContain('ghcr.io/hamedmp/matrix-os');

@@ -15,7 +15,8 @@ Test, push to GitHub, and optionally tag a release.
    - Bump accordingly
    - Create annotated tag: `git tag -a v<version> -m "<summary of changes>"`
    - Push tag: `git push origin v<version>`
-   - Report: this triggers the Docker workflow which builds, pushes to GHCR, and deploys to VPS
+   - Report: this triggers `host-bundle-release.yml`, which publishes an
+     immutable VPS host bundle and promotes `canary` by default
 8. Check CI status: `gh run list --branch <branch> --limit 1`
 9. Report final summary: commit SHA, tag (if any), CI status, workflow URL.
 
