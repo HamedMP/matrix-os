@@ -337,12 +337,17 @@ async function runHostInstaller(
           reject(new Error(`tool pack install timed out for ${packId}`));
           return;
         }
-        cancellationPending = false;
         if (deferredResult?.kind === "error") {
           reject(deferredResult.error);
-        } else if (deferredResult?.kind === "close") {
-          settleClose(deferredResult.code);
+          return;
         }
+        if (deferredResult?.kind === "close") {
+          settleClose(deferredResult.code);
+          return;
+        }
+        // The original child's listeners remain attached. A later error or
+        // close therefore settles this same promise after cancellation fails.
+        cancellationPending = false;
       });
     }, timeoutMs);
     child.stdout.on("data", discardOutput);
