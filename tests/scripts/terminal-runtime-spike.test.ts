@@ -308,6 +308,9 @@ describe('terminal runtime spike evidence', () => {
     ]);
     expect(workflow).toContain("github.event.label.name == 'terminal-production-acceptance'");
     expect(workflow).toContain('Build two exact-head acceptance bundles');
+    expect(workflow).toContain('Wait for exact-head S1/S2 proof');
+    expect(workflow).toContain('gh run list --workflow terminal-runtime-spikes.yml');
+    expect(workflow).toContain('timeout-minutes: 140');
     expect(workflow).toContain('call_helper acceptance-launch');
     expect(workflow).toContain('call_helper acceptance-reboot');
     expect(workflow).toContain('call_helper acceptance-resume');

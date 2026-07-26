@@ -150,7 +150,7 @@ jobs:
   prove:
     needs: [gate, publish]
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 140
     env:
       GH_TOKEN: ${{ github.token }}
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
@@ -163,6 +163,43 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.gate.outputs.head }}
+      - name: Wait for exact-head S1/S2 proof
+        env:
+          HEAD_REF: ${{ needs.gate.outputs.ref }}
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 3600))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            runs="$(gh run list --workflow terminal-runtime-spikes.yml \
+              --branch "$HEAD_REF" --limit 20 \
+              --json headSha,status,conclusion)"
+            if jq -e --arg head "$HEAD_SHA" '
+              any(.[];
+                .headSha == $head and
+                .status == "completed" and
+                .conclusion == "success"
+              )
+            ' <<<"$runs" >/dev/null; then
+              exit 0
+            fi
+            if jq -e --arg head "$HEAD_SHA" '
+              ([.[] | select(
+                .headSha == $head and
+                (.status == "queued" or .status == "in_progress")
+              )] | length) == 0 and
+              any(.[];
+                .headSha == $head and
+                .status == "completed" and
+                (.conclusion == "failure" or .conclusion == "cancelled")
+              )
+            ' <<<"$runs" >/dev/null; then
+              echo "Exact-head S1/S2 proof failed." >&2
+              exit 1
+            fi
+            sleep 15
+          done
+          echo "Timed out waiting for exact-head S1/S2 proof." >&2
+          exit 1
       - name: Resolve exact-head disposable preview
         id: preview
         run: |
