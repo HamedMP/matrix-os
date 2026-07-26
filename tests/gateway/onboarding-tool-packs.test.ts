@@ -284,6 +284,7 @@ describe("onboarding tool packs", () => {
     await chmod(scriptPath, 0o755);
 
     try {
+      vi.stubEnv("MATRIX_TOOL_PACK_OWNER_ID", "must-not-cross-host-boundary");
       const installer = createHostToolPackInstaller({
         scriptPath,
         timeoutMs: 50,
@@ -300,6 +301,7 @@ describe("onboarding tool packs", () => {
         "code-server cancel",
       ]);
     } finally {
+      vi.unstubAllEnvs();
       await rm(tempDir, { recursive: true, force: true });
     }
   });
