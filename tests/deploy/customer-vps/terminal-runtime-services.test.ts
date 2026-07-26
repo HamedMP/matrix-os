@@ -245,4 +245,30 @@ describe('customer VPS terminal runtime services', () => {
       rmSync(bundle, { recursive: true, force: true });
     }
   });
+
+  it('restores stable host artifacts only for failed update rollback', () => {
+    const updater = read('distro/customer-vps/host-bin/matrix-sync-agent');
+
+    expect(updater).toContain('backup_terminal_runtime_for_failed_update()');
+    expect(updater).toContain('restore_terminal_runtime_after_failed_update()');
+    expect(updater).toContain('backup_terminal_runtime_for_failed_update');
+    expect(updater).toContain('do_rollback failed-update');
+    expect(updater).toContain('do_rollback explicit');
+    expect(updater).toContain('local rollback_kind="${1:-explicit}"');
+    expect(updater).toContain(
+      'if [ "$rollback_kind" = "failed-update" ]; then',
+    );
+    expect(updater).toContain(
+      'restore_terminal_runtime_after_failed_update',
+    );
+    expect(updater).toContain(
+      'sudo rm -rf -- "$APP_DIR/.terminal-runtime.failed-update"',
+    );
+    expect(updater).not.toContain(
+      'systemctl stop matrix-terminal-runtime.service',
+    );
+    expect(updater).not.toContain(
+      'systemctl stop matrix-terminal-session@',
+    );
+  });
 });

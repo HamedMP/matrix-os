@@ -17,6 +17,7 @@ readonly BIN_DIR="/opt/matrix/bin"
 readonly TERMINAL_RUNTIME_LIBEXEC="/opt/matrix/libexec/terminal-runtime"
 readonly TERMINAL_RUNTIME_GENERATIONS="/opt/matrix/libexec/terminal-runtime/v1"
 readonly TERMINAL_RUNTIME_CURRENT="/opt/matrix/libexec/terminal-runtime/current"
+readonly TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT="$APP_DIR/.terminal-runtime.failed-update"
 readonly ZELLIJ_BINARY="$BIN_DIR/zellij"
 readonly ZELLIJ_BUILD_METADATA="$BIN_DIR/zellij.build.json"
 readonly ZELLIJ_ROLLBACK_DIR="$APP_DIR/.zellij.rollback"
@@ -197,6 +198,103 @@ install_systemd_units_atomic() {
   )
 }
 
+backup_terminal_runtime_for_failed_update() {
+  local snapshot_next="${TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT}.next"
+  local artifact name
+  sudo rm -rf -- "$snapshot_next" "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
+  sudo install -d -o root -g matrix -m 0750 \
+    "$snapshot_next/bin" \
+    "$snapshot_next/systemd"
+  if [ -L "$TERMINAL_RUNTIME_CURRENT" ]; then
+    local current_target
+    current_target="$(readlink "$TERMINAL_RUNTIME_CURRENT")"
+    [[ "$current_target" =~ ^v1/[0-9a-f]{64}$ ]] || return 1
+    printf '%s\n' "$current_target" |
+      sudo tee "$snapshot_next/current-target" >/dev/null
+    sudo chown root:matrix "$snapshot_next/current-target"
+    sudo chmod 0640 "$snapshot_next/current-target"
+  fi
+  for artifact in \
+    "$BIN_DIR/matrix-terminal-supervisor" \
+    "$BIN_DIR/matrix-terminal-keeper" \
+    "$BIN_DIR/matrix-terminal-pane" \
+    "$BIN_DIR/matrix-terminal-runtime-op"; do
+    name="$(basename "$artifact")"
+    if [ -e "$artifact" ] || [ -L "$artifact" ]; then
+      [ -f "$artifact" ] && [ ! -L "$artifact" ] || return 1
+      sudo install -o root -g matrix -m 0750 \
+        "$artifact" "$snapshot_next/bin/$name"
+    fi
+  done
+  for artifact in \
+    /etc/systemd/system/matrix-terminal-runtime.service \
+    /etc/systemd/system/matrix-terminal-session@.service \
+    /etc/systemd/system/matrix-terminal.slice; do
+    name="$(basename "$artifact")"
+    if [ -e "$artifact" ] || [ -L "$artifact" ]; then
+      [ -f "$artifact" ] && [ ! -L "$artifact" ] || return 1
+      sudo install -o root -g matrix -m 0640 \
+        "$artifact" "$snapshot_next/systemd/$name"
+    fi
+  done
+  if sudo systemctl is-enabled --quiet matrix-terminal-runtime.service; then
+    sudo touch "$snapshot_next/supervisor-was-enabled"
+    sudo chown root:matrix "$snapshot_next/supervisor-was-enabled"
+    sudo chmod 0640 "$snapshot_next/supervisor-was-enabled"
+  fi
+  sudo mv -- "$snapshot_next" "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
+}
+
+restore_terminal_runtime_after_failed_update() {
+  local snapshot="$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
+  local artifact name restore_next
+  [ -d "$snapshot" ] && [ ! -L "$snapshot" ] || return 0
+  if [ -f "$snapshot/current-target" ] && [ ! -L "$snapshot/current-target" ]; then
+    local current_target current_next
+    current_target="$(cat "$snapshot/current-target")"
+    [[ "$current_target" =~ ^v1/[0-9a-f]{64}$ ]] || return 1
+    [ -d "$TERMINAL_RUNTIME_LIBEXEC/$current_target" ] || return 1
+    current_next="$TERMINAL_RUNTIME_LIBEXEC/.current.rollback-next"
+    sudo rm -f -- "$current_next"
+    sudo ln -s "$current_target" "$current_next"
+    sudo mv -T -- "$current_next" "$TERMINAL_RUNTIME_CURRENT"
+  else
+    sudo rm -f -- "$TERMINAL_RUNTIME_CURRENT"
+  fi
+  for name in \
+    matrix-terminal-supervisor \
+    matrix-terminal-keeper \
+    matrix-terminal-pane \
+    matrix-terminal-runtime-op; do
+    artifact="$snapshot/bin/$name"
+    if [ -f "$artifact" ] && [ ! -L "$artifact" ]; then
+      restore_next="$BIN_DIR/.${name}.rollback-next"
+      sudo install -o root -g root -m 0755 "$artifact" "$restore_next"
+      sudo mv -f -- "$restore_next" "$BIN_DIR/$name"
+    else
+      sudo rm -f -- "$BIN_DIR/$name"
+    fi
+  done
+  for name in \
+    matrix-terminal-runtime.service \
+    matrix-terminal-session@.service \
+    matrix-terminal.slice; do
+    artifact="$snapshot/systemd/$name"
+    if [ -f "$artifact" ] && [ ! -L "$artifact" ]; then
+      restore_next="/etc/systemd/system/.${name}.rollback-next"
+      sudo install -o root -g root -m 0644 "$artifact" "$restore_next"
+      sudo mv -f -- "$restore_next" "/etc/systemd/system/$name"
+    else
+      sudo rm -f -- "/etc/systemd/system/$name"
+    fi
+  done
+  if [ ! -f "$snapshot/supervisor-was-enabled" ]; then
+    sudo systemctl disable matrix-terminal-runtime.service >/dev/null 2>&1 || true
+  fi
+  sudo systemctl daemon-reload
+  sudo rm -rf -- "$snapshot"
+}
+
 # Echo the lines of an existing symphony.env that this agent does not manage so
 # operator-set configuration survives a host bundle update. Blank and comment
 # lines are kept; managed KEY= lines are dropped (re-emitted with fresh values
@@ -247,16 +345,17 @@ clear_zellij_rollback() {
 backup_zellij_for_rollback() {
   local rollback_next="${ZELLIJ_ROLLBACK_DIR}.next"
   sudo rm -rf -- "$rollback_next"
-  sudo install -d -o root -g root -m 0700 "$rollback_next"
+  sudo install -d -o root -g matrix -m 0750 "$rollback_next"
   if [ -f "$ZELLIJ_BINARY" ]; then
-    sudo install -o root -g root -m 0755 "$ZELLIJ_BINARY" "$rollback_next/zellij"
+    sudo install -o root -g matrix -m 0750 "$ZELLIJ_BINARY" "$rollback_next/zellij"
     sudo touch "$rollback_next/had-binary"
   fi
   if [ -f "$ZELLIJ_BUILD_METADATA" ]; then
-    sudo install -o root -g root -m 0644 "$ZELLIJ_BUILD_METADATA" "$rollback_next/zellij.build.json"
+    sudo install -o root -g matrix -m 0640 "$ZELLIJ_BUILD_METADATA" "$rollback_next/zellij.build.json"
     sudo touch "$rollback_next/had-build-metadata"
   fi
-  sudo chmod 0600 "$rollback_next"/had-* 2>/dev/null || true
+  sudo chown root:matrix "$rollback_next"/had-* 2>/dev/null || true
+  sudo chmod 0640 "$rollback_next"/had-* 2>/dev/null || true
   clear_zellij_rollback
   sudo mv -- "$rollback_next" "$ZELLIJ_ROLLBACK_DIR"
 }
@@ -421,6 +520,7 @@ apply_update() {
   fi
   local manifest version sha256 bundle_url cur bundle_file extract_dir
   local zellij_candidate=false zellij_expected_sha256="" zellij_actual_sha256="" zellij_next=""
+  local terminal_runtime_enable_after_health=false
   manifest="$(cat "$UPDATE_MARKER")"
   version="$(json_field "$manifest" version)"
   sha256="$(json_field "$manifest" sha256)"
@@ -500,6 +600,18 @@ apply_update() {
   if [ -f "$extract_dir/bin/zellij" ]; then
     backup_zellij_for_rollback
   fi
+  if [ -n "$terminal_runtime_candidate" ]; then
+    if ! backup_terminal_runtime_for_failed_update; then
+      log "ERROR: terminal_runtime_rollback_snapshot_failed"
+      sudo rm -rf -- \
+        "${TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT}.next" \
+        "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
+      sudo systemctl start matrix-gateway matrix-shell
+      sudo systemctl start --no-block matrix-symphony || true
+      rm -rf "$extract_dir" "$bundle_file"
+      return 1
+    fi
+  fi
   sudo rm -rf "$APP_DIR.rollback"
   if [ -d "$APP_DIR" ]; then
     sudo mv "$APP_DIR" "$APP_DIR.rollback"
@@ -515,7 +627,7 @@ apply_update() {
   fi
   if ! install_terminal_runtime_generation; then
     log "ERROR: terminal_runtime_generation_install_failed"
-    do_rollback || log "ERROR: rollback after terminal runtime install failure failed"
+    do_rollback failed-update || log "ERROR: rollback after terminal runtime install failure failed"
     rm -rf "$extract_dir" "$bundle_file"
     return 1
   fi
@@ -523,7 +635,7 @@ apply_update() {
     if [ -n "$terminal_runtime_candidate" ] &&
       ! install_terminal_runtime_wrappers "$extract_dir/bin"; then
       log "ERROR: terminal_runtime_wrapper_install_failed"
-      do_rollback || log "ERROR: rollback after terminal wrapper failure failed"
+      do_rollback failed-update || log "ERROR: rollback after terminal wrapper failure failed"
       rm -rf "$extract_dir" "$bundle_file"
       return 1
     fi
@@ -532,27 +644,27 @@ apply_update() {
       sudo rm -f -- "$zellij_next"
       if ! sudo install -o root -g root -m 0755 "$extract_dir/bin/zellij" "$zellij_next"; then
         log "ERROR: zellij candidate staging failed"
-        do_rollback || log "ERROR: rollback after zellij staging failure failed"
+        do_rollback failed-update || log "ERROR: rollback after zellij staging failure failed"
         rm -rf "$extract_dir" "$bundle_file"
         return 1
       fi
       if ! sudo mv -f "$zellij_next" "$BIN_DIR/zellij"; then
         sudo rm -f -- "$zellij_next"
         log "ERROR: zellij candidate commit failed"
-        do_rollback || log "ERROR: rollback after zellij commit failure failed"
+        do_rollback failed-update || log "ERROR: rollback after zellij commit failure failed"
         rm -rf "$extract_dir" "$bundle_file"
         return 1
       fi
       if ! sudo install -o root -g root -m 0644 "$extract_dir/bin/zellij.build.json" "$BIN_DIR/zellij.build.json"; then
         log "ERROR: zellij candidate metadata commit failed"
-        do_rollback || log "ERROR: rollback after zellij metadata failure failed"
+        do_rollback failed-update || log "ERROR: rollback after zellij metadata failure failed"
         rm -rf "$extract_dir" "$bundle_file"
         return 1
       fi
       zellij_actual_sha256="$(sha256sum "$BIN_DIR/zellij" | awk '{print $1}')"
       if [ "$zellij_actual_sha256" != "$zellij_expected_sha256" ]; then
         log "ERROR: zellij_installed_digest_mismatch"
-        do_rollback || log "ERROR: rollback after zellij digest failure failed"
+        do_rollback failed-update || log "ERROR: rollback after zellij digest failure failed"
         rm -rf "$extract_dir" "$bundle_file"
         return 1
       fi
@@ -578,7 +690,7 @@ apply_update() {
   if [ -d "$extract_dir/systemd" ]; then
     if ! install_systemd_units_atomic "$extract_dir/systemd"; then
       log "ERROR: systemd_unit_install_failed"
-      do_rollback || log "ERROR: rollback after systemd unit failure failed"
+      do_rollback failed-update || log "ERROR: rollback after systemd unit failure failed"
       rm -rf "$extract_dir" "$bundle_file"
       return 1
     fi
@@ -586,8 +698,7 @@ apply_update() {
     log "Installed systemd units"
     if [ -f "$extract_dir/systemd/matrix-terminal-runtime.service" ] &&
       ! sudo systemctl is-enabled --quiet matrix-terminal-runtime.service; then
-      sudo systemctl enable --now matrix-terminal-runtime.service
-      log "Terminal runtime supervisor enabled"
+      terminal_runtime_enable_after_health=true
     fi
     if [ -f "$extract_dir/systemd/matrix-code-server.service" ]; then
       sudo systemctl enable matrix-code-server.service
@@ -630,11 +741,21 @@ apply_update() {
     sleep 5
   done
   if [ "$healthy" = true ]; then
+    if [ "$terminal_runtime_enable_after_health" = true ]; then
+      if ! sudo systemctl enable --now matrix-terminal-runtime.service; then
+        log "ERROR: terminal_runtime_supervisor_enable_failed"
+        do_rollback failed-update ||
+          log "ERROR: rollback after terminal supervisor enable failure failed"
+        rm -rf "$extract_dir" "$bundle_file"
+        return 1
+      fi
+      log "Terminal runtime supervisor enabled"
+    fi
     log "Health check passed — update to $version complete"
     rm -f "$UPDATE_MARKER" "$UPDATE_ERROR_MARKER"
   else
     log "ERROR: health check failed — rolling back"
-    do_rollback
+    do_rollback failed-update
     rm -rf "$extract_dir" "$bundle_file"
     return 1
   fi
@@ -645,6 +766,11 @@ apply_update() {
 
 # ── Rollback ─────────────────────────────────────────────────────────
 do_rollback() {
+  local rollback_kind="${1:-explicit}"
+  case "$rollback_kind" in
+    explicit|failed-update) ;;
+    *) log "ERROR: invalid rollback kind"; return 1 ;;
+  esac
   if [ ! -d "$APP_DIR.rollback" ]; then
     log "ERROR: no rollback available at $APP_DIR.rollback"; return 1
   fi
@@ -657,6 +783,11 @@ do_rollback() {
   fi
   sudo mv "$APP_DIR.rollback" "$APP_DIR"
   restore_zellij_after_rollback
+  if [ "$rollback_kind" = "failed-update" ]; then
+    restore_terminal_runtime_after_failed_update
+  else
+    sudo rm -rf -- "$APP_DIR/.terminal-runtime.failed-update"
+  fi
   sudo chown -R matrix:matrix "$APP_DIR"
   sudo systemctl start matrix-gateway matrix-shell
   sudo systemctl start --no-block matrix-symphony || true
@@ -843,7 +974,7 @@ while true; do
   fi
   if [ -f "$ROLLBACK_TRIGGER" ]; then
     sudo rm -f "$ROLLBACK_TRIGGER"
-    do_rollback || log "Rollback failed"
+    do_rollback explicit || log "Rollback failed"
   fi
   if [ -f "$UPDATE_REPAIR_TRIGGER" ]; then
     sudo rm -f "$UPDATE_REPAIR_TRIGGER"
