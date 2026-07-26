@@ -172,6 +172,9 @@ export type RecoveryReason = z.infer<typeof RecoveryReasonSchema>;
 export function createRuntimeId(): RuntimeId {
   return RuntimeIdSchema.parse(randomBytes(16).toString('hex'));
 }
+export function createOperationId(): OperationId {
+  return OperationIdSchema.parse(randomBytes(16).toString('hex'));
+}
 export function unitNameForRuntimeId(runtimeId: string): string {
   const trustedId = RuntimeIdSchema.parse(runtimeId);
   return `matrix-terminal-session@${trustedId}.service`;

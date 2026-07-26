@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -ne 1 ] || [[ ! "$1" =~ ^[0-9a-f]{32}$ ]]; then
+  exit 64
+fi
+
+exec /opt/matrix/runtime/node/bin/node \
+  /opt/matrix/libexec/terminal-runtime/current/keeper.js "$1"

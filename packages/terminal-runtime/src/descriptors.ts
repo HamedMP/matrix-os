@@ -102,6 +102,29 @@ export class DescriptorStore {
       });
     }
   }
+  async claimRuntime(input: {
+    runtimeId: string;
+    pid: number;
+  }): Promise<Descriptor> {
+    const runtimeId = RuntimeIdSchema.parse(input.runtimeId);
+    if (!Number.isSafeInteger(input.pid) || input.pid <= 0) {
+      throw new Error('claim_unauthorized');
+    }
+    const prefix = `${runtimeId}.`;
+    const operationIds = (await this.directory.list())
+      .filter((name) =>
+        name.startsWith(prefix) && name.endsWith('.pending.json'))
+      .map((name) =>
+        name.slice(prefix.length, -'.pending.json'.length))
+      .map((value) => OperationIdSchema.parse(value));
+    if (operationIds.length === 0) throw new Error('descriptor_not_found');
+    if (operationIds.length !== 1) throw new Error('descriptor_conflict');
+    return await this.claim({
+      runtimeId,
+      operationId: operationIds[0],
+      pid: input.pid,
+    });
+  }
   async remove(runtimeId: string, operationId: string): Promise<void> {
     for (const name of [
       pendingName(runtimeId, operationId),

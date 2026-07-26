@@ -67,7 +67,9 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES="${HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES:-node_modules/}"');
     expect(script).toContain('scripts/host-bundle-incremental-manifest.mjs" "$STAGE_DIR/app" "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/objects"');
     expect(script).toContain('scripts/host-bundle-release.mjs" write-manifest');
-    expect(script).toContain('bin app runtime systemd release.json incremental-manifest.json');
+    expect(script).toContain(
+      'bin app runtime systemd libexec release.json incremental-manifest.json',
+    );
     expect(script).toContain('manifest.json');
     expect(script).toContain('release.json');
     expect(script).toContain('incremental-manifest.json');
@@ -85,7 +87,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"');
     expect(script).toContain('matrix-messaging-health');
     expect(script).toContain('"$STAGE_DIR/runtime/node/bin/gh"');
-    expect(script).toContain('bin app runtime systemd release.json');
+    expect(script).toContain('bin app runtime systemd libexec release.json');
   });
 
   it('ships only the reproducible production Zellij candidate', () => {
@@ -1141,7 +1143,13 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('/opt/matrix/env/symphony.env');
     expect(syncAgent).toContain('sudo install -o root -g matrix -m 0640 "$temp_file" "$SYMPHONY_ENV_FILE" || status=$?');
     expect(syncAgent).toContain('rm -f "$temp_file"');
-    expect(syncAgent).toContain("sudo find \"$extract_dir/systemd\" -maxdepth 1 -name 'matrix-*.service'");
+    expect(syncAgent).toContain(
+      'install_systemd_units_atomic "$extract_dir/systemd"',
+    );
+    expect(syncAgent).toContain(
+      '\\( -name \'matrix-*.service\' -o -name \'matrix-*.slice\' \\)',
+    );
+    expect(syncAgent).toContain('sudo mv -f -- "$unit_next"');
     expect(syncAgent).toContain('sudo systemctl daemon-reload');
     expect(syncAgent).toContain('sudo systemctl enable matrix-code-server.service');
     expect(syncAgent).toContain('sudo systemctl start --no-block matrix-code-server.service || true');

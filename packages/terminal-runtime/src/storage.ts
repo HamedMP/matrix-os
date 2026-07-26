@@ -7,6 +7,7 @@ import {
 import {
   type FileHandle,
   chmod,
+  chown,
   link,
   lstat,
   mkdir,
@@ -67,10 +68,14 @@ export class SecureDirectory {
     readonly path: string,
     private readonly handle: FileHandle,
     private readonly maxEntries: number,
+    private readonly owner?: { uid: number; gid: number },
   ) {}
   static async open(
     path: string,
-    options: { maxEntries?: number } = {},
+    options: {
+      maxEntries?: number;
+      owner?: { uid: number; gid: number };
+    } = {},
   ): Promise<SecureDirectory> {
     await ensureDirectoryPath(path);
     const absolute = resolve(path);
@@ -80,6 +85,12 @@ export class SecureDirectory {
     }
     if ((parentStat.mode & 0o777) !== 0o700) {
       await chmod(absolute, 0o700);
+    }
+    if (
+      options.owner &&
+      (parentStat.uid !== options.owner.uid || parentStat.gid !== options.owner.gid)
+    ) {
+      await chown(absolute, options.owner.uid, options.owner.gid);
     }
     const handle = await open(
       absolute,
@@ -94,7 +105,12 @@ export class SecureDirectory {
       await handle.close();
       throw stateError('unsafe_parent');
     }
-    return new SecureDirectory(absolute, handle, options.maxEntries ?? DEFAULT_MAX_ENTRIES);
+    return new SecureDirectory(
+      absolute,
+      handle,
+      options.maxEntries ?? DEFAULT_MAX_ENTRIES,
+      options.owner,
+    );
   }
   private procPath(name?: string): string {
     if (this.closed) throw stateError('state_closed');
@@ -113,6 +129,12 @@ export class SecureDirectory {
       const stat = await handle.stat();
       if (!stat.isFile() || stat.nlink !== 1) throw stateError('unsafe_file');
       if ((stat.mode & 0o777) !== 0o600) await handle.chmod(0o600);
+      if (
+        this.owner &&
+        (stat.uid !== this.owner.uid || stat.gid !== this.owner.gid)
+      ) {
+        await handle.chown(this.owner.uid, this.owner.gid);
+      }
       return handle;
     } catch (error: unknown) {
       await handle.close();
@@ -206,6 +228,7 @@ export class SecureDirectory {
           constants.O_NOFOLLOW,
         0o600,
       );
+      if (this.owner) await temp.chown(this.owner.uid, this.owner.gid);
       await temp.writeFile(bytes);
       await temp.sync();
       await temp.close();
@@ -245,6 +268,7 @@ export class SecureDirectory {
           constants.O_NOFOLLOW,
         0o600,
       );
+      if (this.owner) await temp.chown(this.owner.uid, this.owner.gid);
       await temp.writeFile(bytes);
       await temp.sync();
       await temp.close();

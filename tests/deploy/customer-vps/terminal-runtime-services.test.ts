@@ -1,11 +1,30 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const root = process.cwd();
 const read = (path: string) => readFileSync(join(root, path), 'utf8');
+function extractShellFunction(script: string, name: string): string {
+  const lines = script.split('\n');
+  const start = lines.findIndex((line) => line === `${name}() {`);
+  const end = lines.findIndex((line, index) => index > start && line === '}');
+  if (start < 0 || end < 0) throw new Error('shell_function_missing');
+  return lines.slice(start, end + 1).join('\n');
+}
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
 
 describe('customer VPS terminal runtime services', () => {
   it('defines the dormant stable supervisor, aggregate slice, and fixed template', () => {
@@ -92,6 +111,8 @@ describe('customer VPS terminal runtime services', () => {
       expect(source).toContain('/run/matrix-terminal-runtime/supervisor.sock');
       expect(source).toContain('/run/matrix-terminal-runtime/keeper.sock');
       expect(source).toContain('/opt/matrix/bin/matrix-terminal-runtime-op');
+      expect(source).toContain('#define MAX_WORKERS 128');
+      expect(source).toContain('workers >= MAX_WORKERS');
       expect(source).not.toContain('system(');
       expect(source).not.toContain('/bin/sh');
     } finally {
@@ -102,11 +123,14 @@ describe('customer VPS terminal runtime services', () => {
   it('packages one immutable v1 generation and atomically switches current', () => {
     const build = read('scripts/build-host-bundle.sh');
     const updater = read('distro/customer-vps/host-bin/matrix-sync-agent');
+    const cloudInit = read('distro/customer-vps/cloud-init.yaml');
+    const installer = read('scripts/install-server.sh');
 
     expect(build).toContain("pnpm --filter '@matrix-os/terminal-runtime' build");
     expect(build).toContain('packages/terminal-runtime/native/supervisor-acceptor.c');
     expect(build).toContain('$STAGE_DIR/libexec/terminal-runtime/v1');
     expect(build).toContain('libexec release.json');
+    expect(build).toContain('runtime-manifest.sha256');
     expect(updater).toContain('/opt/matrix/libexec/terminal-runtime/v1');
     expect(updater).toContain('/opt/matrix/libexec/terminal-runtime/current');
     expect(updater).toContain('ln -s');
@@ -116,5 +140,109 @@ describe('customer VPS terminal runtime services', () => {
     expect(updater).not.toContain('restart matrix-terminal-runtime.service');
     expect(updater).not.toContain('stop matrix-terminal-runtime.service');
     expect(updater).not.toContain('matrix-terminal-session@*');
+    expect(cloudInit).toContain('chown -R root:root /opt/matrix/libexec');
+    expect(cloudInit).toContain('/opt/matrix/systemd/*.slice');
+    expect(cloudInit).toContain(
+      'systemctl enable --now matrix-terminal-runtime.service',
+    );
+    expect(cloudInit).not.toContain(
+      'systemctl enable matrix-terminal-session@',
+    );
+    expect(installer).toContain('matrix-terminal-runtime.service');
+    expect(installer).toContain('matrix-terminal-session@.service');
+    expect(installer).toContain('matrix-terminal.slice');
+    expect(installer).not.toContain(
+      'systemctl enable matrix-terminal-session@',
+    );
+  });
+
+  it('rejects a hard-linked immutable generation before privileged install', () => {
+    const updater = read('distro/customer-vps/host-bin/matrix-sync-agent');
+    const generation = mkdtempSync(join(tmpdir(), 'matrix-generation-hardlink-'));
+    try {
+      writeFileSync(join(generation, 'keeper.js'), 'keeper');
+      linkSync(join(generation, 'keeper.js'), join(generation, 'alias.js'));
+      const fileHash = sha256('keeper');
+      const manifest = `${fileHash}  alias.js\n${fileHash}  keeper.js\n`;
+      writeFileSync(join(generation, 'runtime-manifest.sha256'), manifest);
+      const generationId = sha256(manifest);
+      const result = spawnSync('bash', ['-c', [
+        'set -euo pipefail',
+        extractShellFunction(updater, 'verify_terminal_runtime_generation'),
+        'verify_terminal_runtime_generation "$1" "$2"',
+      ].join('\n'), 'verify-generation', generation, generationId], {
+        encoding: 'utf8',
+      });
+      expect(result.status).not.toBe(0);
+    } finally {
+      rmSync(generation, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects incomplete runtime bundles before privileged install', () => {
+    const updater = read('distro/customer-vps/host-bin/matrix-sync-agent');
+    const bundle = mkdtempSync(join(tmpdir(), 'matrix-runtime-preflight-'));
+    const generationRoot = join(bundle, 'libexec', 'terminal-runtime');
+    const generation = join(generationRoot, 'v1', 'placeholder');
+    const bin = join(bundle, 'bin');
+    const systemd = join(bundle, 'systemd');
+    try {
+      mkdirSync(generation, { recursive: true });
+      mkdirSync(bin);
+      mkdirSync(systemd);
+      writeFileSync(join(generation, 'keeper.js'), 'keeper');
+      const manifest = `${sha256('keeper')}  keeper.js\n`;
+      writeFileSync(join(generation, 'runtime-manifest.sha256'), manifest);
+      const generationId = sha256(manifest);
+      const finalGeneration = join(generationRoot, 'v1', generationId);
+      mkdirSync(finalGeneration);
+      for (const name of ['keeper.js', 'runtime-manifest.sha256']) {
+        writeFileSync(
+          join(finalGeneration, name),
+          readFileSync(join(generation, name)),
+        );
+      }
+      rmSync(generation, { recursive: true });
+      symlinkSync(`v1/${generationId}`, join(generationRoot, 'current'));
+
+      const shell = [
+        'set -euo pipefail',
+        'terminal_runtime_candidate=""',
+        'terminal_runtime_generation_id=""',
+        extractShellFunction(updater, 'verify_terminal_runtime_generation'),
+        extractShellFunction(updater, 'prepare_terminal_runtime_candidate'),
+        'prepare_terminal_runtime_candidate "$1"',
+      ].join('\n');
+      const incomplete = spawnSync(
+        'bash',
+        ['-c', shell, 'runtime-preflight', bundle],
+        { encoding: 'utf8' },
+      );
+      expect(incomplete.status).not.toBe(0);
+
+      for (const name of [
+        'matrix-terminal-supervisor',
+        'matrix-terminal-keeper',
+        'matrix-terminal-pane',
+        'matrix-terminal-runtime-op',
+      ]) {
+        writeFileSync(join(bin, name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      }
+      for (const name of [
+        'matrix-terminal-runtime.service',
+        'matrix-terminal-session@.service',
+        'matrix-terminal.slice',
+      ]) {
+        writeFileSync(join(systemd, name), '[Unit]\n');
+      }
+      const complete = spawnSync(
+        'bash',
+        ['-c', shell, 'runtime-preflight', bundle],
+        { encoding: 'utf8' },
+      );
+      expect(complete.status, complete.stderr).toBe(0);
+    } finally {
+      rmSync(bundle, { recursive: true, force: true });
+    }
   });
 });

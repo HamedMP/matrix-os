@@ -476,6 +476,9 @@ install_bundle() {
   ok "Host bundle checksum verified"
   section "Extracting Matrix OS"
   tar -xzf "$tmp_bundle" -C /opt/matrix
+  if [ -d /opt/matrix/libexec ]; then
+    chown -R root:root /opt/matrix/libexec
+  fi
   chmod 0755 /opt/matrix/bin/matrix-* /opt/matrix/bin/zellij 2>/dev/null || true
   cleanup_install_tmp
   INSTALL_TMP_BUNDLE=""
@@ -524,12 +527,15 @@ install_systemd_units() {
   install -m 0644 /opt/matrix/systemd/matrix-shell.service /etc/systemd/system/matrix-shell.service
   install -m 0644 /opt/matrix/systemd/matrix-code.service /etc/systemd/system/matrix-code.service
   install -m 0644 /opt/matrix/systemd/matrix-code-server.service /etc/systemd/system/matrix-code-server.service
+  install -m 0644 /opt/matrix/systemd/matrix-terminal-runtime.service /etc/systemd/system/matrix-terminal-runtime.service
+  install -m 0644 '/opt/matrix/systemd/matrix-terminal-session@.service' '/etc/systemd/system/matrix-terminal-session@.service'
+  install -m 0644 /opt/matrix/systemd/matrix-terminal.slice /etc/systemd/system/matrix-terminal.slice
   if [ -f /opt/matrix/systemd/matrix-developer-tools.service ]; then
     install -m 0644 /opt/matrix/systemd/matrix-developer-tools.service /etc/systemd/system/matrix-developer-tools.service
   fi
   write_self_host_restore_service
   run_required "reloading systemd" systemctl daemon-reload
-  run_required "enabling Matrix OS services" systemctl enable docker matrix-restore matrix-gateway matrix-shell matrix-code matrix-code-server
+  run_required "enabling Matrix OS services" systemctl enable docker matrix-restore matrix-gateway matrix-shell matrix-code matrix-code-server matrix-terminal-runtime
   if [ -f /etc/systemd/system/matrix-developer-tools.service ] && [ -n "$MATRIX_DEVELOPER_TOOLS" ]; then
     run_required "enabling optional developer tools service" systemctl enable matrix-developer-tools
   fi
@@ -664,6 +670,7 @@ EOF
 start_services() {
   section "Starting Matrix OS services"
   run_required "starting docker" systemctl enable --now docker
+  run_required "starting terminal runtime supervisor" systemctl start matrix-terminal-runtime
   restart_required_service matrix-restore
   restart_required_service matrix-gateway
   restart_required_service matrix-shell

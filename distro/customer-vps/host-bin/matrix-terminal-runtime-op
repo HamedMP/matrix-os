@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -ne 1 ]; then
+  exit 64
+fi
+
+case "$1" in
+  serve-peer|serve-keeper|maintenance)
+    exec /opt/matrix/runtime/node/bin/node \
+      /opt/matrix/libexec/terminal-runtime/current/runtime-op.js "$1"
+    ;;
+  *)
+    exit 64
+    ;;
+esac

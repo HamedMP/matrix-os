@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DescriptorStore } from '../../packages/terminal-runtime/src/descriptors.js';
 import { FlockManager } from '../../packages/terminal-runtime/src/locks.js';
+import { validateKeeperCwd } from '../../packages/terminal-runtime/src/keeper.js';
 import { SecureDirectory } from '../../packages/terminal-runtime/src/storage.js';
 const RUNTIME_ID = '0123456789abcdef0123456789abcdef';
 const OPERATION_ID = 'fedcba9876543210fedcba9876543210';
@@ -45,6 +46,23 @@ describe('terminal runtime filesystem security', () => {
       } finally {
         await directory.close();
       }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  it('revalidates keeper cwd against symlink escape immediately before launch', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-terminal-cwd-'));
+    const home = join(root, 'home');
+    const project = join(home, 'project');
+    const outside = join(root, 'outside');
+    try {
+      await mkdir(project, { recursive: true });
+      await mkdir(outside);
+      await symlink(outside, join(home, 'escape'));
+      await expect(validateKeeperCwd(home, 'project')).resolves.toBe(project);
+      await expect(validateKeeperCwd(home, 'escape')).rejects.toThrow(
+        'keeper_cwd_invalid',
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -92,6 +110,39 @@ describe('terminal runtime filesystem security', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+  it('holds the kernel flock for the full runtime critical section', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-terminal-lock-held-'));
+    const firstEntered = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    const secondEntered = Promise.withResolvers<void>();
+    let locks: FlockManager | undefined;
+    try {
+      locks = await FlockManager.open(root);
+      const first = locks.withRuntime(RUNTIME_ID, false, async () => {
+        firstEntered.resolve();
+        await releaseFirst.promise;
+      });
+      await firstEntered.promise;
+      expect(await locks.isRuntimeLocked(RUNTIME_ID)).toBe(true);
+      const second = locks.withRuntime(RUNTIME_ID, false, async () => {
+        secondEntered.resolve();
+      });
+      const raced = await Promise.race([
+        secondEntered.promise.then(() => 'entered'),
+        new Promise<'waiting'>((resolve) =>
+          setTimeout(() => resolve('waiting'), 50),
+        ),
+      ]);
+      expect(raced).toBe('waiting');
+      releaseFirst.resolve();
+      await Promise.all([first, second]);
+      expect(await locks.isRuntimeLocked(RUNTIME_ID)).toBe(false);
+    } finally {
+      releaseFirst.resolve();
+      await locks?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it('publishes exclusively, fsyncs, and never overwrites an existing target', async () => {
     const root = await mkdtemp(join(tmpdir(), 'matrix-terminal-exclusive-'));
     try {
@@ -129,10 +180,10 @@ describe('terminal runtime filesystem security', () => {
           store.claim({ runtimeId: RUNTIME_ID, operationId: OPERATION_ID, pid: 1 }),
         ).rejects.toThrow('claim_unauthorized');
         await expect(
-          store.claim({ runtimeId: RUNTIME_ID, operationId: OPERATION_ID, pid: 4242 }),
+          store.claimRuntime({ runtimeId: RUNTIME_ID, pid: 4242 }),
         ).resolves.toEqual(descriptor());
         await expect(
-          store.claim({ runtimeId: RUNTIME_ID, operationId: OPERATION_ID, pid: 4242 }),
+          store.claimRuntime({ runtimeId: RUNTIME_ID, pid: 4242 }),
         ).rejects.toThrow('descriptor_not_found');
         const replacedId = '11111111111111111111111111111111';
         const external = join(root, 'external.json');

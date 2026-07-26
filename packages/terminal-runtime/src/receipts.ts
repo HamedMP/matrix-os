@@ -257,4 +257,15 @@ export class OperationRecordStore {
     await this.directory.replaceJson(operationFile(parsed.operationId), parsed);
     return parsed;
   }
+  async removeCompleted(operationId: string): Promise<void> {
+    const id = OperationIdSchema.parse(operationId);
+    const current = await this.read(id);
+    if (!current) return;
+    if (current.status !== 'ready' && current.status !== 'failed') {
+      throw new Error('operation_state_conflict');
+    }
+    await this.directory.remove(operationFile(id)).catch((error: unknown) => {
+      if (!isStateNotFound(error)) throw error;
+    });
+  }
 }

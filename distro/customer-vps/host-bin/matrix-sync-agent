@@ -14,6 +14,9 @@ source /opt/matrix/env/host.env
 readonly APP_DIR="/opt/matrix/app"
 readonly STAGING_DIR="/opt/matrix/staging"
 readonly BIN_DIR="/opt/matrix/bin"
+readonly TERMINAL_RUNTIME_LIBEXEC="/opt/matrix/libexec/terminal-runtime"
+readonly TERMINAL_RUNTIME_GENERATIONS="/opt/matrix/libexec/terminal-runtime/v1"
+readonly TERMINAL_RUNTIME_CURRENT="/opt/matrix/libexec/terminal-runtime/current"
 readonly ZELLIJ_BINARY="$BIN_DIR/zellij"
 readonly ZELLIJ_BUILD_METADATA="$BIN_DIR/zellij.build.json"
 readonly ZELLIJ_ROLLBACK_DIR="$APP_DIR/.zellij.rollback"
@@ -40,9 +43,159 @@ readonly SYMPHONY_ENV_FILE="/opt/matrix/env/symphony.env"
 # is preserved across updates instead of being wiped.
 readonly SYMPHONY_MANAGED_KEYS="MATRIX_HANDLE PLATFORM_INTERNAL_URL UPGRADE_TOKEN"
 
+terminal_runtime_candidate=""
+terminal_runtime_generation_id=""
+
 log() { echo "matrix-sync-agent: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 current_version() { cat "$VERSION_FILE" 2>/dev/null || echo "unknown"; }
 platform_url() { echo "${MATRIX_UPDATE_MANIFEST_BASE_URL:-${PLATFORM_INTERNAL_URL:-https://app.matrix-os.com}}"; }
+
+verify_terminal_runtime_generation() {
+  local generation_dir="$1" expected_id="$2"
+  local manifest="$generation_dir/runtime-manifest.sha256"
+  local listed_count actual_count computed_id
+  [ -d "$generation_dir" ] || return 1
+  [ ! -L "$generation_dir" ] || return 1
+  [ -f "$manifest" ] && [ ! -L "$manifest" ] || return 1
+  if find "$generation_dir" -mindepth 1 ! -type d ! -type f -print -quit |
+    grep -q .; then
+    return 1
+  fi
+  if find "$generation_dir" -type f -links +1 -print -quit | grep -q .; then
+    return 1
+  fi
+  if ! awk '
+    length($1) != 64 || $1 !~ /^[0-9a-f]+$/ { exit 1 }
+    $2 !~ /^[A-Za-z0-9._\/-]+$/ || $2 ~ /^\// || $2 ~ /(^|\/)\.\.(\/|$)/ {
+      exit 1
+    }
+    { count += 1; paths[$2] += 1 }
+    END {
+      if (count < 1 || count > 4096) exit 1
+      for (path in paths) if (paths[path] != 1) exit 1
+    }
+  ' "$manifest"; then
+    return 1
+  fi
+  listed_count="$(awk 'END { print NR + 0 }' "$manifest")"
+  actual_count="$(
+    find "$generation_dir" -type f ! -path "$manifest" |
+      wc -l
+  )"
+  [ "$listed_count" = "$actual_count" ] || return 1
+  if ! (cd "$generation_dir" && sha256sum --strict -c runtime-manifest.sha256 >/dev/null); then
+    return 1
+  fi
+  computed_id="$(sha256sum "$manifest" | awk '{print $1}')"
+  [ "$computed_id" = "$expected_id" ]
+}
+
+prepare_terminal_runtime_candidate() {
+  local bundle_root="$1"
+  local runtime_root="$bundle_root/libexec/terminal-runtime"
+  local current_target companion
+  local -a generations=()
+  local entry_count root_entry_count
+  terminal_runtime_candidate=""
+  terminal_runtime_generation_id=""
+  [ -e "$runtime_root" ] || return 0
+  for companion in \
+    "$bundle_root/bin/matrix-terminal-supervisor" \
+    "$bundle_root/bin/matrix-terminal-keeper" \
+    "$bundle_root/bin/matrix-terminal-pane" \
+    "$bundle_root/bin/matrix-terminal-runtime-op" \
+    "$bundle_root/systemd/matrix-terminal-runtime.service" \
+    "$bundle_root/systemd/matrix-terminal-session@.service" \
+    "$bundle_root/systemd/matrix-terminal.slice"; do
+    [ -f "$companion" ] && [ ! -L "$companion" ] || return 1
+  done
+  [ -d "$runtime_root/v1" ] && [ ! -L "$runtime_root/v1" ] || return 1
+  [ -L "$runtime_root/current" ] || return 1
+  root_entry_count="$(
+    find "$runtime_root" -mindepth 1 -maxdepth 1 -print | wc -l
+  )"
+  [ "$root_entry_count" -eq 2 ] || return 1
+  entry_count="$(
+    find "$runtime_root/v1" -mindepth 1 -maxdepth 1 -print | wc -l
+  )"
+  [ "$entry_count" -eq 1 ] || return 1
+  mapfile -d '' generations < <(
+    find "$runtime_root/v1" -mindepth 1 -maxdepth 1 -type d -print0
+  )
+  [ "${#generations[@]}" -eq 1 ] || return 1
+  terminal_runtime_generation_id="$(basename "${generations[0]}")"
+  [[ "$terminal_runtime_generation_id" =~ ^[0-9a-f]{64}$ ]] || return 1
+  current_target="$(readlink "$runtime_root/current")"
+  [ "$current_target" = "v1/$terminal_runtime_generation_id" ] || return 1
+  verify_terminal_runtime_generation \
+    "${generations[0]}" \
+    "$terminal_runtime_generation_id" || return 1
+  terminal_runtime_candidate="${generations[0]}"
+}
+
+install_terminal_runtime_generation() {
+  [ -n "$terminal_runtime_candidate" ] || return 0
+  local generation_root="$TERMINAL_RUNTIME_GENERATIONS"
+  local generation_dir="$generation_root/$terminal_runtime_generation_id"
+  local generation_next="$generation_root/.${terminal_runtime_generation_id}.next"
+  local current_next="$TERMINAL_RUNTIME_LIBEXEC/.current.next"
+  sudo install -d -o root -g root -m 0755 "$generation_root"
+  if [ ! -d "$generation_dir" ]; then
+    sudo rm -rf -- "$generation_next"
+    sudo install -d -o root -g root -m 0755 "$generation_next"
+    sudo cp -a -- "$terminal_runtime_candidate/." "$generation_next/"
+    sudo chown -R root:root "$generation_next"
+    if ! verify_terminal_runtime_generation \
+      "$generation_next" \
+      "$terminal_runtime_generation_id"; then
+      sudo rm -rf -- "$generation_next"
+      return 1
+    fi
+    sudo mv -- "$generation_next" "$generation_dir"
+  elif ! verify_terminal_runtime_generation \
+    "$generation_dir" \
+    "$terminal_runtime_generation_id"; then
+    return 1
+  fi
+  sudo rm -f -- "$current_next"
+  sudo ln -s "v1/$terminal_runtime_generation_id" "$current_next"
+  sudo mv -T -- "$current_next" "$TERMINAL_RUNTIME_CURRENT"
+}
+
+install_terminal_runtime_wrappers() {
+  local source_dir="$1"
+  local wrapper wrapper_name wrapper_next
+  for wrapper in \
+    "$source_dir/matrix-terminal-supervisor" \
+    "$source_dir/matrix-terminal-keeper" \
+    "$source_dir/matrix-terminal-pane" \
+    "$source_dir/matrix-terminal-runtime-op"; do
+    [ -f "$wrapper" ] || return 1
+    [ ! -L "$wrapper" ] || return 1
+    wrapper_name="$(basename "$wrapper")"
+    wrapper_next="$BIN_DIR/.${wrapper_name}.next"
+    sudo install -o root -g root -m 0755 "$wrapper" "$wrapper_next"
+    sudo mv -f -- "$wrapper_next" "$BIN_DIR/$wrapper_name"
+  done
+}
+
+install_systemd_units_atomic() {
+  local source_dir="$1"
+  local unit_source unit_name unit_next
+  sudo install -d -o root -g root -m 0755 /etc/systemd/system
+  while IFS= read -r -d '' unit_source; do
+    unit_name="$(basename "$unit_source")"
+    if [[ ! "$unit_name" =~ ^matrix-[A-Za-z0-9@_.-]+\.(service|slice)$ ]]; then
+      return 1
+    fi
+    unit_next="/etc/systemd/system/.${unit_name}.next"
+    sudo install -o root -g root -m 0644 "$unit_source" "$unit_next"
+    sudo mv -f -- "$unit_next" "/etc/systemd/system/$unit_name"
+  done < <(
+    find "$source_dir" -maxdepth 1 -type f \
+      \( -name 'matrix-*.service' -o -name 'matrix-*.slice' \) -print0
+  )
+}
 
 # Echo the lines of an existing symphony.env that this agent does not manage so
 # operator-set configuration survives a host bundle update. Blank and comment
@@ -331,6 +484,11 @@ apply_update() {
       zellij_candidate=true
     fi
   fi
+  if ! prepare_terminal_runtime_candidate "$extract_dir"; then
+    log "ERROR: terminal_runtime_candidate_invalid"
+    rm -rf "$extract_dir" "$bundle_file"
+    return 1
+  fi
 
   # Any bundle that replaces Zellij extends the existing one-level app rollback
   # to the exact binary and identity record. Candidate status controls only the
@@ -355,7 +513,20 @@ apply_update() {
     sudo install -o root -g matrix -m 0644 "$extract_dir/release.json" "$RELEASE_FILE"
     log "Updated release metadata"
   fi
+  if ! install_terminal_runtime_generation; then
+    log "ERROR: terminal_runtime_generation_install_failed"
+    do_rollback || log "ERROR: rollback after terminal runtime install failure failed"
+    rm -rf "$extract_dir" "$bundle_file"
+    return 1
+  fi
   if [ -d "$extract_dir/bin" ]; then
+    if [ -n "$terminal_runtime_candidate" ] &&
+      ! install_terminal_runtime_wrappers "$extract_dir/bin"; then
+      log "ERROR: terminal_runtime_wrapper_install_failed"
+      do_rollback || log "ERROR: rollback after terminal wrapper failure failed"
+      rm -rf "$extract_dir" "$bundle_file"
+      return 1
+    fi
     if [ "$zellij_candidate" = true ]; then
       zellij_next="$BIN_DIR/.zellij.next"
       sudo rm -f -- "$zellij_next"
@@ -385,9 +556,15 @@ apply_update() {
         rm -rf "$extract_dir" "$bundle_file"
         return 1
       fi
-      sudo find "$extract_dir/bin" -maxdepth 1 -type f ! -name 'zellij' ! -name 'zellij.build.json' -exec cp -a {} "$BIN_DIR/" \;
+      sudo find "$extract_dir/bin" -maxdepth 1 -type f \
+        ! -name 'zellij' \
+        ! -name 'zellij.build.json' \
+        ! -name 'matrix-terminal-*' \
+        -exec cp -a {} "$BIN_DIR/" \;
     else
-      sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec cp -a {} "$BIN_DIR/" \;
+      sudo find "$extract_dir/bin" -maxdepth 1 -type f \
+        ! -name 'matrix-terminal-*' \
+        -exec cp -a {} "$BIN_DIR/" \;
       if [ -f "$extract_dir/bin/zellij" ]; then
         sudo rm -f -- "$ZELLIJ_BUILD_METADATA"
       fi
@@ -399,10 +576,19 @@ apply_update() {
   log "Updated Symphony env"
 
   if [ -d "$extract_dir/systemd" ]; then
-    sudo install -d -o root -g root -m 0755 /etc/systemd/system
-    sudo find "$extract_dir/systemd" -maxdepth 1 -name 'matrix-*.service' -exec install -o root -g root -m 0644 {} /etc/systemd/system/ \;
+    if ! install_systemd_units_atomic "$extract_dir/systemd"; then
+      log "ERROR: systemd_unit_install_failed"
+      do_rollback || log "ERROR: rollback after systemd unit failure failed"
+      rm -rf "$extract_dir" "$bundle_file"
+      return 1
+    fi
     sudo systemctl daemon-reload
     log "Installed systemd units"
+    if [ -f "$extract_dir/systemd/matrix-terminal-runtime.service" ] &&
+      ! sudo systemctl is-enabled --quiet matrix-terminal-runtime.service; then
+      sudo systemctl enable --now matrix-terminal-runtime.service
+      log "Terminal runtime supervisor enabled"
+    fi
     if [ -f "$extract_dir/systemd/matrix-code-server.service" ]; then
       sudo systemctl enable matrix-code-server.service
       sudo systemctl start --no-block matrix-code-server.service || true

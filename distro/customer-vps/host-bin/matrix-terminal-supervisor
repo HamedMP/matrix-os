@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec /opt/matrix/libexec/terminal-runtime/current/supervisor-acceptor

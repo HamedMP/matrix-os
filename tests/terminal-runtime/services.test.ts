@@ -1,13 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildKeeperLaunch,
+  isKeeperEntrypoint,
   monitorKeeperOnce,
   waitForKeeperReadiness,
 } from '../../packages/terminal-runtime/src/keeper.js';
 import {
+  classifyRuntimeProcesses,
   createSystemdExecutor,
-  unitNameForRuntimeId,
 } from '../../packages/terminal-runtime/src/systemd.js';
+import {
+  unitNameForRuntimeId,
+} from '../../packages/terminal-runtime/src/contracts.js';
 import {
   decodePeerCredentials,
   handleSupervisorFrame,
@@ -18,6 +22,13 @@ const runtimeId = '0123456789abcdef0123456789abcdef';
 const operationId = 'fedcba9876543210fedcba9876543210';
 
 describe('terminal runtime service boundary', () => {
+  it('runs a keeper launched through the atomically switched generation symlink', () => {
+    expect(isKeeperEntrypoint(
+      'file:///opt/matrix/libexec/terminal-runtime/v1/abc/keeper.js',
+      '/opt/matrix/libexec/terminal-runtime/current/keeper.js',
+    )).toBe(true);
+  });
+
   it('derives only the fixed template instance after validating the runtime ID', () => {
     expect(unitNameForRuntimeId(runtimeId))
       .toBe(`matrix-terminal-session@${runtimeId}.service`);
@@ -59,6 +70,20 @@ describe('terminal runtime service boundary', () => {
     ], expect.objectContaining({ timeout: 30_000 }));
   });
 
+  it('does not count transient Zellij inspection clients as runtime roles', () => {
+    expect(classifyRuntimeProcesses([
+      { comm: 'node', args: ['/generation/keeper.js'] },
+      { comm: 'zellij', args: ['zellij', '--session', `matrix-t-${runtimeId}`] },
+      { comm: 'zellij', args: ['zellij', 'list-sessions', '--no-formatting'] },
+      { comm: 'bash', args: ['bash', '--login'] },
+    ])).toEqual({
+      keeper: true,
+      zellijClient: false,
+      zellijServer: false,
+      shell: true,
+    });
+  });
+
   it('keeps all user-derived launch data out of keeper argv and preserves command gating', () => {
     const create = buildKeeperLaunch({
       schemaVersion: 1,
@@ -84,12 +109,15 @@ describe('terminal runtime service boundary', () => {
       '--session',
       `matrix-t-${runtimeId}`,
       '--new-session-with-layout',
-      '/opt/matrix/libexec/terminal-runtime/v1/layout.kdl',
+      '/opt/matrix/libexec/terminal-runtime/current/layout.kdl',
     ]);
     expect(create.cwd).toBe('/home/matrix/home/projects/example');
     expect(JSON.stringify(create.args)).not.toContain('configurationRef');
     expect(recover.args).toEqual(['attach', `matrix-t-${runtimeId}`]);
     expect(recover.args).not.toContain('--force-run-commands');
+    expect(create.env.ZELLIJ_CONFIG_FILE).toBe(
+      '/opt/matrix/libexec/terminal-runtime/current/config.kdl',
+    );
     expect(Object.keys(create.env).sort()).toEqual([
       'HOME',
       'LANG',
@@ -130,6 +158,48 @@ describe('terminal runtime service boundary', () => {
     });
 
     expect(evidence.roles.shell).toBe(13);
+    expect(notifyReady).toHaveBeenCalledTimes(1);
+  });
+
+  it('withholds recovery readiness until native command confirmation is visible', async () => {
+    const notifyReady = vi.fn(async () => undefined);
+    const sequence = [
+      {
+        clientAlive: true,
+        sessionResponsive: true,
+        confirmationGated: false,
+        roles: {
+          keeper: 10,
+          zellijClient: 11,
+          zellijServer: 12,
+          shell: 0,
+        },
+      },
+      {
+        clientAlive: true,
+        sessionResponsive: true,
+        confirmationGated: true,
+        roles: {
+          keeper: 10,
+          zellijClient: 11,
+          zellijServer: 12,
+          shell: 0,
+        },
+      },
+    ];
+    const readEvidence = vi.fn(
+      async () => sequence.shift() ?? sequence[0],
+    );
+    await waitForKeeperReadiness({
+      runtimeId,
+      requiresConfirmation: true,
+      timeoutMs: 1_000,
+      pollMs: 1,
+      readEvidence,
+      delay: vi.fn(async () => undefined),
+      notifyReady,
+    });
+    expect(readEvidence).toHaveBeenCalledTimes(2);
     expect(notifyReady).toHaveBeenCalledTimes(1);
   });
 

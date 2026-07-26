@@ -1,0 +1,18 @@
+[Unit]
+Description=Matrix terminal runtime session
+
+[Service]
+Type=notify
+NotifyAccess=all
+User=matrix
+Group=matrix
+Slice=matrix-terminal.slice
+ExecStart=/opt/matrix/bin/matrix-terminal-keeper %i
+KillMode=control-group
+TimeoutStartSec=30
+TimeoutStopSec=30
+Restart=no
+MemoryHigh=50%
+TasksMax=512
+StandardOutput=null
+StandardError=journal
