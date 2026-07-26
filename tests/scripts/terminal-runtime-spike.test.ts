@@ -303,6 +303,12 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).toContain('recovery-resolution.txt');
     expect(runner).toContain('action dump-screen --pane-id "$restored_pane_id"');
     expect(runner).toContain('chown -R root:root "$recovery_cache_dir"');
+    expect(runner).toContain(
+      'printf \'layout {\\n  pane {\\n\' >"$corrupt_target"',
+    );
+    expect(runner).not.toContain(
+      'printf \'MATRIX_CORRUPT_STATE\\n\' >"$corrupt_target"',
+    );
   });
   it('keeps the fixed notify unit shape and accepts readiness from the keeper helper', async () => {
     const [unit, keeper] = await Promise.all([
