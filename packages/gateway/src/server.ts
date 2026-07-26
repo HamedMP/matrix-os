@@ -1754,6 +1754,9 @@ export async function createGateway(config: GatewayConfig) {
   const shellRouteDeps = {
     homePath,
     registry: zellijShellRegistry,
+    ...(terminalRuntimeMode === "supervised"
+      ? { runtimeLifecycle: "supervised" as const }
+      : {}),
     preferences: shellPreferencesStore,
     workspace: zellijAdapter,
     layouts: shellLayoutStore,

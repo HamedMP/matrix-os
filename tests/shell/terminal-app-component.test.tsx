@@ -3208,6 +3208,461 @@ describe("TerminalApp", () => {
     expect(props.paneTree.sessionId).toBe("bench");
   });
 
+  it("never silently recreates a saved name when runtime lifecycle data is present", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method !== "PUT") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            tabs: [{
+              id: "bench-tab",
+              label: "bench",
+              paneTree: {
+                type: "pane",
+                id: "bench-pane",
+                cwd: "projects",
+                sessionId: "bench",
+              },
+            }],
+            activeTabId: "bench-tab",
+          }),
+        });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [{
+              name: "other",
+              runtimeId: "0123456789abcdef0123456789abcdef",
+              lifecycleState: "interrupted",
+              recoverable: true,
+              recoveryReason: "history_unavailable",
+              metadataRevision: 1,
+            }],
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+    }));
+
+    const view = render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(terminalSessionPostPayloads()).toEqual([]);
+    view.unmount();
+  });
+
+  it("does not recreate main for an empty lifecycle-aware session list", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method !== "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [],
+            runtimeLifecycle: "supervised",
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+    }));
+
+    const view = render(<TerminalApp />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(terminalSessionPostPayloads()).toEqual([]);
+    view.unmount();
+  });
+
+  it("persists runtime ids when migrating a saved name or alias", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            tabs: [{
+              id: "bench-tab",
+              label: "old-bench",
+              paneTree: {
+                type: "pane",
+                id: "bench-pane",
+                cwd: "projects",
+                sessionId: "old-bench",
+              },
+            }],
+            activeTabId: "bench-tab",
+          }),
+        });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [{
+              name: "bench",
+              runtimeId: "0123456789abcdef0123456789abcdef",
+              lifecycleState: "live",
+              aliases: [{ name: "old-bench" }],
+            }],
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+    }));
+
+    const view = render(<TerminalApp />);
+
+    await vi.waitFor(() => {
+      const put = vi.mocked(fetch).mock.calls.find(([input, init]) => (
+        String(input).includes("/api/terminal/layout") && init?.method === "PUT"
+      ));
+      expect(put).toBeTruthy();
+      expect(JSON.parse(String(put?.[1]?.body))).toMatchObject({
+        tabs: [{
+          paneTree: {
+            sessionId: "bench",
+            runtimeId: "0123456789abcdef0123456789abcdef",
+            displayName: "bench",
+          },
+        }],
+      });
+    });
+    view.unmount();
+  });
+
+  it("finishes the migration write before exposing the migrated layout", async () => {
+    let finishMigration: (() => void) | undefined;
+    const migration = new Promise<void>((resolve) => {
+      finishMigration = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return migration.then(() => ({
+          ok: true,
+          json: async () => ({ ok: true }),
+        }));
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            tabs: [{
+              id: "bench-tab",
+              label: "old-bench",
+              paneTree: {
+                type: "pane",
+                id: "bench-pane",
+                cwd: "projects",
+                sessionId: "old-bench",
+              },
+            }],
+            activeTabId: "bench-tab",
+          }),
+        });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [{
+              name: "bench",
+              runtimeId: "0123456789abcdef0123456789abcdef",
+              lifecycleState: "live",
+              aliases: [{ name: "old-bench" }],
+            }],
+            runtimeLifecycle: "supervised",
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+    }));
+
+    const view = render(<TerminalApp />);
+    await vi.waitFor(() => {
+      expect(vi.mocked(fetch).mock.calls.some(([input, init]) =>
+        String(input).includes("/api/terminal/layout") &&
+        init?.method === "PUT")).toBe(true);
+    });
+    expect(paneGridSpy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      finishMigration?.();
+      await migration;
+    });
+    await vi.waitFor(() => expect(paneGridSpy).toHaveBeenCalled());
+    view.unmount();
+  });
+
+  it("serializes migration with newer saves from another mounted terminal surface", async () => {
+    let finishMigration: (() => void) | undefined;
+    const migration = new Promise<void>((resolve) => {
+      finishMigration = resolve;
+    });
+    let layoutGetCount = 0;
+    const layoutWrites: Array<{
+      activeTabId?: string;
+      sidebarOpen?: boolean;
+    }> = [];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        layoutWrites.push(JSON.parse(String(init.body)) as {
+          activeTabId?: string;
+          sidebarOpen?: boolean;
+        });
+        if (layoutWrites.length === 1) {
+          return migration.then(() => ({
+            ok: true,
+            json: async () => ({ ok: true }),
+          }));
+        }
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ ok: true }),
+        });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        layoutGetCount += 1;
+        const migrated = layoutGetCount === 1;
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            tabs: [{
+              id: migrated ? "old-tab" : "new-tab",
+              label: migrated ? "old-bench" : "bench",
+              paneTree: {
+                type: "pane",
+                id: migrated ? "old-pane" : "new-pane",
+                cwd: "projects",
+                sessionId: migrated ? "old-bench" : "bench",
+                ...(migrated ? {} : {
+                  runtimeId: "0123456789abcdef0123456789abcdef",
+                  displayName: "bench",
+                }),
+              },
+            }],
+            activeTabId: migrated ? "old-tab" : "new-tab",
+            sidebarOpen: true,
+          }),
+        });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [{
+              name: "bench",
+              runtimeId: "0123456789abcdef0123456789abcdef",
+              lifecycleState: "live",
+              aliases: [{ name: "old-bench" }],
+            }],
+            runtimeLifecycle: "supervised",
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+    }));
+
+    const migratingView = render(<TerminalApp />);
+    await vi.waitFor(() => expect(layoutWrites).toHaveLength(1));
+
+    const newerView = render(<TerminalApp />);
+    await vi.waitFor(() => {
+      expect(within(newerView.container).getByTestId(
+        "terminal-pane-grid",
+      )).toBeTruthy();
+      expect(within(newerView.container).getByRole(
+        "button",
+        { name: "Hide sessions drawer" },
+      )).toBeTruthy();
+    });
+    await act(async () => {
+      fireEvent.click(within(newerView.container).getByRole(
+        "button",
+        { name: "Hide sessions drawer" },
+      ));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+    });
+
+    expect(layoutWrites).toHaveLength(1);
+
+    await act(async () => {
+      finishMigration?.();
+      await migration;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(layoutWrites).toHaveLength(2));
+    expect(layoutWrites[1]).toMatchObject({
+      activeTabId: "new-tab",
+      sidebarOpen: false,
+    });
+
+    newerView.unmount();
+    migratingView.unmount();
+  });
+
+  it("renders explicit interrupted recovery and keeps server errors bounded", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method !== "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [{
+              name: "bench",
+              runtimeId: "0123456789abcdef0123456789abcdef",
+              lifecycleState: "interrupted",
+              recoverable: true,
+              recoveryReason: "history_unavailable",
+              metadataRevision: 1,
+              placement: "active",
+            }],
+          }),
+        });
+      }
+      if (url.endsWith("/api/terminal/sessions/bench/recover")) {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          clone() {
+            return this;
+          },
+          json: async () => ({
+            error: {
+              code: "provider_failed",
+              message: "token sk-private at /home/matrix/private",
+            },
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const view = render(<TerminalApp />);
+
+    await vi.waitFor(() => {
+      expect(screen.getByText("Interrupted")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Recover bench" })).toBeTruthy();
+    });
+    const recoverButton = screen.getByRole("button", { name: "Recover bench" });
+    act(() => {
+      recoverButton.click();
+      recoverButton.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const recoverRequests = fetchMock.mock.calls.filter(([input, init]) =>
+      String(input).includes("/api/terminal/sessions/bench/recover") &&
+      init?.method === "POST");
+    expect(recoverRequests).toHaveLength(1);
+    expect(recoverRequests[0]).toEqual([
+      expect.stringContaining("/api/terminal/sessions/bench/recover"),
+      expect.objectContaining({ method: "POST", body: "{}" }),
+    ]);
+    await vi.waitFor(() => {
+      expect(screen.getByText("Recovery failed")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Recover bench" }).hasAttribute("disabled")).toBe(false);
+    });
+    expect(screen.queryByText(/sk-private|\/home\/matrix/)).toBeNull();
+    expect(screen.getByTestId("terminal-history-privacy").textContent)
+      .toContain("terminal history");
+    view.unmount();
+  });
+
+  it("deduplicates recovery across simultaneously mounted terminal surfaces", async () => {
+    let finishRecovery: (() => void) | null = null;
+    const recovery = new Promise<{
+      ok: boolean;
+      json: () => Promise<{ session?: unknown }>;
+    }>((resolveRecovery) => {
+      finishRecovery = () => resolveRecovery({
+        ok: true,
+        json: async () => ({}),
+      });
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method !== "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [{
+              name: "bench",
+              runtimeId: "0123456789abcdef0123456789abcdef",
+              lifecycleState: "interrupted",
+              recoverable: true,
+              recoveryReason: "history_unavailable",
+              metadataRevision: 1,
+              placement: "active",
+            }],
+          }),
+        });
+      }
+      if (url.endsWith("/api/terminal/sessions/bench/recover")) {
+        return recovery;
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const view = render(<><TerminalApp /><TerminalApp /></>);
+    await vi.waitFor(() => {
+      expect(screen.getAllByRole("button", { name: "Recover bench" }))
+        .toHaveLength(2);
+    });
+    const recoverButtons = screen.getAllByRole("button", {
+      name: "Recover bench",
+    });
+    act(() => {
+      recoverButtons[0]!.click();
+      recoverButtons[1]!.click();
+    });
+
+    expect(fetchMock.mock.calls.filter(([input, init]) =>
+      String(input).includes("/api/terminal/sessions/bench/recover") &&
+      init?.method === "POST")).toHaveLength(1);
+
+    await act(async () => {
+      finishRecovery?.();
+      await recovery;
+    });
+    view.unmount();
+  });
+
   it("does not replace a legacy layout after unmount while ensuring the canonical session", async () => {
     let resolveSessions: ((value: { ok: boolean; json: () => Promise<{ sessions: Array<{ name: string }> }> }) => void) | null = null;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -3244,11 +3699,18 @@ describe("TerminalApp", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    await vi.waitFor(() => {
+      expect(resolveSessions).not.toBeNull();
+    });
     const callsBeforeUnmount = paneGridSpy.mock.calls.length;
 
     unmount();
     await act(async () => {
       resolveSessions?.({ ok: true, json: async () => ({ sessions: [{ name: "main" }] }) });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -3264,8 +3726,9 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(paneGridSpy).toHaveBeenCalled();
-
+    await vi.waitFor(() => {
+      expect(paneGridSpy).toHaveBeenCalled();
+    });
     const props = paneGridSpy.mock.lastCall?.[0] as {
       paneTree: { type: "pane"; id: string };
       onSessionAttached: (paneId: string, sessionId: string) => void;
@@ -3311,6 +3774,9 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
+    await vi.waitFor(() => {
+      expect(paneGridSpy).toHaveBeenCalled();
+    });
     const props = paneGridSpy.mock.lastCall?.[0] as {
       paneTree: { type: "pane"; id: string };
       onSessionAttached: (paneId: string, sessionId: string) => void;
@@ -3625,8 +4091,10 @@ describe("TerminalApp", () => {
     expect(vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
       String(input).includes("/api/terminal/sessions/bench?force=1") && init?.method === "DELETE"
     ))).toHaveLength(1);
-    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
-      paneTree: expect.not.objectContaining({ sessionId: "bench" }),
+    await vi.waitFor(() => {
+      expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+        paneTree: expect.not.objectContaining({ sessionId: "bench" }),
+      });
     });
   });
 

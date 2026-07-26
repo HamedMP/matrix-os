@@ -89,6 +89,7 @@ interface TerminalInputRoutes {
 export interface ShellRouteDeps {
   homePath?: string;
   registry: SessionRegistryRoutes;
+  runtimeLifecycle?: "supervised";
   preferences?: ShellPreferencesStore;
   workspace?: ShellWorkspaceRoutes;
   layouts?: ShellLayoutRoutes;
@@ -222,7 +223,12 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
 
   app.get("/sessions", async (c) => {
     try {
-      return c.json({ sessions: await deps.registry.list() });
+      return c.json({
+        sessions: await deps.registry.list(),
+        ...(deps.runtimeLifecycle
+          ? { runtimeLifecycle: deps.runtimeLifecycle }
+          : {}),
+      });
     } catch (err) {
       return safeError(c, err);
     }

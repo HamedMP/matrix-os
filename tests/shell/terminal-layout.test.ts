@@ -11,6 +11,7 @@ import {
   getPaneSessionId,
   getSessionIds,
   layoutUsesOnlyCanonicalShellSessions,
+  migrateLayoutRuntimeReferences,
   removeSessionFromPaneTree,
   renameSessionInTree,
   setPaneSessionId,
@@ -88,6 +89,7 @@ describe("terminal layout helpers", () => {
       id: "right",
       cwd: DEFAULT_CWD,
       sessionId: "codex-run",
+      displayName: "codex-run",
       compatMode: "codex-tui",
     });
   });
@@ -112,6 +114,45 @@ describe("terminal layout helpers", () => {
         { type: "pane", id: "left", cwd: "projects/app", sessionId: "shell-main", compatMode: undefined },
         { type: "pane", id: "right", cwd: DEFAULT_CWD, sessionId: "codex-build", compatMode: "codex-tui" },
       ],
+    });
+  });
+
+  it("migrates name-only and renamed pane references onto immutable runtime ids", () => {
+    const runtimeId = "0123456789abcdef0123456789abcdef";
+    const layout: TerminalLayout = {
+      tabs: [{
+        id: "saved",
+        label: "Old name",
+        paneTree: {
+          type: "pane",
+          id: "saved-pane",
+          cwd: DEFAULT_CWD,
+          sessionId: "old-name",
+        },
+      }],
+    };
+
+    const migrated = migrateLayoutRuntimeReferences(layout, [{
+      name: "renamed",
+      runtimeId,
+      aliases: [{ name: "old-name" }],
+    }]);
+    const pane = migrated.tabs?.[0]?.paneTree;
+
+    expect(pane).toMatchObject({
+      type: "pane",
+      sessionId: "renamed",
+      runtimeId,
+      displayName: "renamed",
+    });
+    expect(migrateLayoutRuntimeReferences(migrated, [{
+      name: "renamed-again",
+      runtimeId,
+      aliases: [],
+    }]).tabs?.[0]?.paneTree).toMatchObject({
+      sessionId: "renamed-again",
+      runtimeId,
+      displayName: "renamed-again",
     });
   });
 });

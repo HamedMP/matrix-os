@@ -9,6 +9,8 @@ export type PaneNode =
       id: string;
       cwd: string;
       sessionId?: string;
+      runtimeId?: string;
+      displayName?: string;
       claudeMode?: boolean;
       startupCommand?: string;
       compatMode?: TerminalCompatMode;

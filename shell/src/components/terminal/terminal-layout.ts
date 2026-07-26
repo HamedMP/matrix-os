@@ -17,6 +17,14 @@ export interface TerminalLayout {
   sidebarOpen?: boolean;
 }
 
+export interface RuntimeLayoutSession {
+  name: string;
+  runtimeId?: string;
+  aliases?: Array<{ name?: string }>;
+}
+
+const MAX_RUNTIME_LAYOUT_SESSIONS = 2_048;
+
 export function genId() {
   return Math.random().toString(36).slice(2, 9);
 }
@@ -76,7 +84,12 @@ export function setPaneSessionId(node: PaneNode, paneId: string, sessionId: stri
 export function renameSessionInTree(node: PaneNode, fromSessionId: string, toSessionId: string): PaneNode {
   if (node.type === "pane") {
     return node.sessionId === fromSessionId
-      ? { ...node, sessionId: toSessionId, compatMode: compatModeForShellSession(toSessionId) }
+      ? {
+          ...node,
+          sessionId: toSessionId,
+          displayName: toSessionId,
+          compatMode: compatModeForShellSession(toSessionId),
+        }
       : node;
   }
   const left = renameSessionInTree(node.children[0], fromSessionId, toSessionId);
@@ -85,6 +98,81 @@ export function renameSessionInTree(node: PaneNode, fromSessionId: string, toSes
     return node;
   }
   return { ...node, children: [left, right] };
+}
+
+function migratePaneRuntimeReference(
+  node: PaneNode,
+  byRuntimeId: Map<string, RuntimeLayoutSession>,
+  byName: Map<string, RuntimeLayoutSession>,
+): PaneNode {
+  if (node.type === "split") {
+    const left = migratePaneRuntimeReference(
+      node.children[0],
+      byRuntimeId,
+      byName,
+    );
+    const right = migratePaneRuntimeReference(
+      node.children[1],
+      byRuntimeId,
+      byName,
+    );
+    return left === node.children[0] && right === node.children[1]
+      ? node
+      : { ...node, children: [left, right] };
+  }
+  const session = node.runtimeId
+    ? byRuntimeId.get(node.runtimeId)
+    : node.sessionId
+      ? byName.get(node.sessionId)
+      : undefined;
+  if (!session?.runtimeId) return node;
+  if (
+    node.sessionId === session.name &&
+    node.runtimeId === session.runtimeId &&
+    node.displayName === session.name
+  ) {
+    return node;
+  }
+  return {
+    ...node,
+    sessionId: session.name,
+    runtimeId: session.runtimeId,
+    displayName: session.name,
+    compatMode: compatModeForShellSession(session.name),
+  };
+}
+
+export function migrateLayoutRuntimeReferences(
+  layout: TerminalLayout,
+  sessions: RuntimeLayoutSession[],
+): TerminalLayout {
+  if (
+    !Array.isArray(layout.tabs) ||
+    sessions.length === 0 ||
+    sessions.length > MAX_RUNTIME_LAYOUT_SESSIONS
+  ) {
+    return layout;
+  }
+  const byRuntimeId = new Map<string, RuntimeLayoutSession>();
+  const byName = new Map<string, RuntimeLayoutSession>();
+  for (const session of sessions) {
+    byName.set(session.name, session);
+    if (session.runtimeId) byRuntimeId.set(session.runtimeId, session);
+    for (const alias of session.aliases ?? []) {
+      if (typeof alias.name === "string") byName.set(alias.name, session);
+    }
+  }
+  const tabs = layout.tabs.map((tab) => {
+    const paneTree = migratePaneRuntimeReference(
+      tab.paneTree,
+      byRuntimeId,
+      byName,
+    );
+    return paneTree === tab.paneTree ? tab : { ...tab, paneTree };
+  });
+  return tabs.every((tab, index) => tab === layout.tabs?.[index])
+    ? layout
+    : { ...layout, tabs };
 }
 
 export function hasPaneId(node: PaneNode, paneId: string): boolean {

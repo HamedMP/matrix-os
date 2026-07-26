@@ -35,6 +35,7 @@ import {
   genId,
   hasPaneId,
   layoutUsesOnlyCanonicalShellSessions,
+  migrateLayoutRuntimeReferences,
   removeSessionFromPaneTree,
   renameSessionInTree,
   setPaneSessionId,
@@ -80,42 +81,153 @@ async function isShellSessionExistsResponse(res: Response): Promise<boolean> {
 interface ShellSessionSummary {
   name?: unknown;
   status?: unknown;
+  runtimeId?: unknown;
+  lifecycleState?: unknown;
+  aliases?: unknown;
 }
+
+const MAX_SHELL_SESSION_SUMMARIES = 2_048;
+const MAX_SHELL_SESSION_ALIASES = 256;
+type ShellSessionSnapshot = {
+  sessions: ShellSessionSummary[];
+  runtimeAware: boolean;
+};
 
 // In-flight dedupe for the sessions list: the mount bootstrap needs the same
 // /api/terminal/sessions payload as the ensure step that follows it, so both
 // join one fetch instead of paying two serial roundtrips. Keyed by gateway
 // URL so navigating between machines (/vm/A -> /vm/B) never joins a fetch
 // started for the previous machine.
-let shellSessionsListInflight: { key: string; promise: Promise<ShellSessionSummary[] | null> } | null = null;
+let shellSessionsListInflight: {
+  key: string;
+  promise: Promise<ShellSessionSnapshot | null>;
+} | null = null;
 
-function listShellSessions(): Promise<ShellSessionSummary[] | null> {
+// Terminal layouts are one shared document even when Canvas and Desktop mount
+// more than one TerminalApp. Serialize every write at module scope so a newer
+// save cannot complete before an older migration and then be overwritten by
+// that migration finishing last.
+let terminalLayoutWriteTail: Promise<void> = Promise.resolve();
+
+function enqueueTerminalLayoutWrite(
+  layout: TerminalLayout,
+  options: {
+    keepalive: boolean;
+    failureMessage: string;
+  },
+): Promise<void> {
+  const gatewayUrl = getGatewayUrl();
+  const body = JSON.stringify(layout);
+  const write = terminalLayoutWriteTail
+    .catch((err: unknown) => {
+      console.warn(
+        "Failed to complete a prior terminal layout write:",
+        err instanceof Error ? err.name : "unknown",
+      );
+    })
+    .then(async () => {
+      try {
+        const response = await fetch(`${gatewayUrl}/api/terminal/layout`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body,
+          keepalive: options.keepalive,
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!response.ok) {
+          console.warn(options.failureMessage);
+        }
+      } catch (err: unknown) {
+        console.warn(
+          `${options.failureMessage}:`,
+          err instanceof Error ? err.name : "unknown",
+        );
+      }
+    });
+  terminalLayoutWriteTail = write;
+  return write;
+}
+
+function listShellSessions(): Promise<ShellSessionSnapshot | null> {
   const key = getGatewayUrl();
   if (shellSessionsListInflight?.key === key) {
     return shellSessionsListInflight.promise;
   }
-  const promise = (async () => {
+  const request = (async () => {
     try {
       const res = await fetch(`${key}/api/terminal/sessions`, {
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) return null;
-      const data = await res.json() as { sessions?: ShellSessionSummary[] };
-      return Array.isArray(data.sessions) ? data.sessions : [];
+      const data = await res.json() as {
+        sessions?: ShellSessionSummary[];
+        runtimeLifecycle?: unknown;
+      };
+      if (!Array.isArray(data.sessions)) {
+        return { sessions: [], runtimeAware: false };
+      }
+      if (data.sessions.length > MAX_SHELL_SESSION_SUMMARIES) return null;
+      return {
+        sessions: data.sessions,
+        runtimeAware:
+          data.runtimeLifecycle === "supervised" ||
+          data.sessions.some((session) =>
+            typeof session.runtimeId === "string" ||
+            typeof session.lifecycleState === "string"),
+      };
     } catch (err: unknown) {
       console.warn("Failed to list shell sessions:", err instanceof Error ? err.message : String(err));
       return null;
     }
   })();
-  shellSessionsListInflight = { key, promise };
-  return promise.finally(() => {
+  const promise = request.finally(() => {
     if (shellSessionsListInflight?.promise === promise) {
       shellSessionsListInflight = null;
     }
   });
+  shellSessionsListInflight = { key, promise };
+  return promise;
 }
 
-async function ensureShellSessions(sessionNames: string[]): Promise<boolean> {
+function hasRuntimeLifecycleData(
+  snapshot: ShellSessionSnapshot | null,
+): boolean {
+  return snapshot?.runtimeAware ?? false;
+}
+
+function runtimeLayoutSessions(snapshot: ShellSessionSnapshot | null) {
+  return (snapshot?.sessions ?? []).flatMap((session) => {
+    if (typeof session.name !== "string") return [];
+    const aliases = Array.isArray(session.aliases)
+      ? session.aliases.slice(0, MAX_SHELL_SESSION_ALIASES).flatMap((alias) =>
+          typeof alias === "object" &&
+          alias !== null &&
+          "name" in alias &&
+          typeof alias.name === "string"
+            ? [{ name: alias.name }]
+            : [])
+      : [];
+    return [{
+      name: session.name,
+      ...(typeof session.runtimeId === "string"
+        ? { runtimeId: session.runtimeId }
+        : {}),
+      aliases,
+    }];
+  });
+}
+
+async function persistMigratedTerminalLayout(layout: TerminalLayout): Promise<void> {
+  await enqueueTerminalLayoutWrite(layout, {
+    keepalive: false,
+    failureMessage: "Failed to persist migrated terminal layout",
+  });
+}
+
+async function ensureShellSessions(
+  sessionNames: string[],
+  knownSnapshot?: ShellSessionSnapshot | null,
+): Promise<boolean> {
   const requestedNames = Array.from(new Set(
     sessionNames.filter((name) => isCanonicalShellSessionId(name)),
   ));
@@ -124,20 +236,34 @@ async function ensureShellSessions(sessionNames: string[]): Promise<boolean> {
   }
 
   try {
-    const sessions = await listShellSessions();
-    const existingNames = new Set<string>();
-    if (sessions) {
-      for (const session of sessions) {
-        if (typeof session.name === "string") {
-          existingNames.add(session.name);
-        }
+    const snapshot = knownSnapshot === undefined
+      ? await listShellSessions()
+      : knownSnapshot;
+    if (snapshot === null) {
+      return false;
+    }
+    const sessions = snapshot.sessions;
+    const existingByName = new Map<string, ShellSessionSummary>();
+    for (const session of sessions) {
+      if (typeof session.name === "string") {
+        existingByName.set(session.name, session);
       }
     }
+    const runtimeAware = hasRuntimeLifecycleData(snapshot);
 
     for (const name of requestedNames) {
-      if (existingNames.has(name)) {
+      const existing = existingByName.get(name);
+      if (existing) {
+        if (
+          runtimeAware &&
+          typeof existing.lifecycleState === "string" &&
+          existing.lifecycleState !== "live"
+        ) {
+          return false;
+        }
         continue;
       }
+      if (runtimeAware) return false;
       // react-doctor-disable-next-line react-doctor/async-await-in-loop -- ordered repair: each missing saved zellij session is recreated once before layout restore; these are user-visible session names, not a fan-out workload.
       const createRes = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
         method: "POST",
@@ -157,30 +283,49 @@ async function ensureShellSessions(sessionNames: string[]): Promise<boolean> {
   }
 }
 
-async function ensureDefaultShellSession(): Promise<boolean> {
-  return ensureShellSessions([DEFAULT_SHELL_SESSION_NAME]);
-}
-
-async function getFirstOrderedShellSessionName(): Promise<string | null> {
-  const sessions = await listShellSessions();
-  if (!sessions) {
-    return null;
-  }
+function getFirstOrderedShellSessionName(
+  sessions: ShellSessionSummary[] | null,
+): string | null {
+  if (!sessions) return null;
   for (const session of sessions) {
-    if (typeof session.name === "string" && isCanonicalShellSessionId(session.name) && session.status !== "exited") {
+    if (
+      typeof session.name === "string" &&
+      isCanonicalShellSessionId(session.name) &&
+      session.status !== "exited" &&
+      (
+        typeof session.lifecycleState !== "string" ||
+        session.lifecycleState === "live"
+      )
+    ) {
       return session.name;
     }
   }
   return null;
 }
 
-async function ensureInitialShellSession(): Promise<string | null> {
-  const firstOrdered = await getFirstOrderedShellSessionName();
+async function ensureInitialShellSession(
+  knownSnapshot?: ShellSessionSnapshot | null,
+): Promise<{
+  name: string | null;
+  runtimeAware: boolean;
+}> {
+  const snapshot = knownSnapshot === undefined
+    ? await listShellSessions()
+    : knownSnapshot;
+  const runtimeAware = hasRuntimeLifecycleData(snapshot);
+  const firstOrdered = getFirstOrderedShellSessionName(snapshot?.sessions ?? null);
   if (firstOrdered) {
-    return firstOrdered;
+    return { name: firstOrdered, runtimeAware };
   }
-  const sessionReady = await ensureDefaultShellSession();
-  return sessionReady ? DEFAULT_SHELL_SESSION_NAME : null;
+  if (runtimeAware) return { name: null, runtimeAware: true };
+  const sessionReady = await ensureShellSessions(
+    [DEFAULT_SHELL_SESSION_NAME],
+    snapshot,
+  );
+  return {
+    name: sessionReady ? DEFAULT_SHELL_SESSION_NAME : null,
+    runtimeAware,
+  };
 }
 
 let globalShellThemePreferenceLoadStarted = false;
@@ -342,14 +487,9 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       ...(initialMobileRef.current ? {} : { sidebarOpen: sidebarOpenRef.current }),
     };
 
-    return fetch(`${getGatewayUrl()}/api/terminal/layout`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(layout),
+    return enqueueTerminalLayoutWrite(layout, {
       keepalive: true,
-      signal: AbortSignal.timeout(10_000),
-    }).catch((err: unknown) => {
-      console.warn("Failed to save terminal layout:", err instanceof Error ? err.message : err);
+      failureMessage: "Failed to save terminal layout",
     });
   };
 
@@ -382,6 +522,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     };
   }, []);
 
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- one-time owner preference load; the helper deduplicates globally, uses a bounded fetch timeout, and maps failures to the existing local default.
   useEffect(() => {
     loadGlobalShellThemePreference(setThemeId);
   }, [setThemeId]);
@@ -413,7 +554,12 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     label: string,
     sessionId: string,
     cwd = DEFAULT_CWD,
-    options: { compatMode?: TerminalCompatMode; legacyCompat?: boolean } = {},
+    options: {
+      runtimeId?: string;
+      displayName?: string;
+      compatMode?: TerminalCompatMode;
+      legacyCompat?: boolean;
+    } = {},
   ) => {
     const id = genId();
     const paneId = genId();
@@ -425,6 +571,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         id: paneId,
         cwd,
         sessionId,
+        ...(options.runtimeId ? { runtimeId: options.runtimeId } : {}),
+        ...(options.displayName ? { displayName: options.displayName } : {}),
         compatMode: options.compatMode ?? (options.legacyCompat === false ? undefined : compatModeForShellSession(sessionId)),
       },
     };
@@ -508,27 +656,30 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   };
 
   const removeDeletedShellSessionFromLayout = (sessionId: string) => {
-    const paneIds = tabsRef.current.flatMap((tab) => getPaneIdsForSession(tab.paneTree, sessionId));
+    const currentTabs = tabsRef.current;
+    const paneIds = currentTabs.flatMap((tab) =>
+      getPaneIdsForSession(tab.paneTree, sessionId));
     if (paneIds.length === 0) {
       return;
     }
     markPanesClosing(paneIds);
-    setTabs((prev) => {
-      const next = prev
-        .map((tab) => {
-          const paneTree = removeSessionFromPaneTree(tab.paneTree, sessionId);
-          return paneTree ? { ...tab, paneTree } : null;
-        })
-        .filter((tab): tab is Tab => tab !== null);
-      tabsRef.current = next;
-      setActiveTabId((current) => next.some((tab) => tab.id === current) ? current : next[0]?.id ?? "");
-      setFocusedPaneId((current) => {
-        if (current && next.some((tab) => hasPaneId(tab.paneTree, current))) {
-          return current;
-        }
-        return next[0] ? getFirstPaneId(next[0].paneTree) : null;
-      });
-      return next;
+    const next = currentTabs
+      .map((tab) => {
+        const paneTree = removeSessionFromPaneTree(tab.paneTree, sessionId);
+        return paneTree ? { ...tab, paneTree } : null;
+      })
+      .filter((tab): tab is Tab => tab !== null);
+    tabsRef.current = next;
+    setTabs(next);
+    setActiveTabId((current) =>
+      next.some((tab) => tab.id === current)
+        ? current
+        : next[0]?.id ?? "");
+    setFocusedPaneId((current) => {
+      if (current && next.some((tab) => hasPaneId(tab.paneTree, current))) {
+        return current;
+      }
+      return next[0] ? getFirstPaneId(next[0].paneTree) : null;
     });
   };
 
@@ -560,23 +711,59 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         if (res.ok) {
           const data = await res.json() as TerminalLayout;
           if (!cancelled && Array.isArray(data.tabs) && data.tabs.length > 0) {
-            if (layoutUsesOnlyCanonicalShellSessions(data)) {
-              const sessionReady = await ensureShellSessions(getCanonicalShellSessionIds(data));
+            const sessions = await listShellSessions();
+            if (cancelled) return;
+            const migratedLayout = migrateLayoutRuntimeReferences(
+              data,
+              runtimeLayoutSessions(sessions),
+            );
+            if (migratedLayout !== data) {
+              await persistMigratedTerminalLayout(migratedLayout);
+              if (cancelled) return;
+            }
+            if (layoutUsesOnlyCanonicalShellSessions(migratedLayout)) {
+              const sessionReady = await ensureShellSessions(
+                getCanonicalShellSessionIds(migratedLayout),
+                sessions,
+              );
               if (!cancelled && sessionReady) {
-                const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
-                const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
-                setTabs(applyCompatModeToTabs(data.tabs));
+                const nextTabs = migratedLayout.tabs ?? [];
+                const nextActiveTabId =
+                  migratedLayout.activeTabId ?? nextTabs[0]!.id;
+                const nextActiveTab =
+                  nextTabs.find((tab) => tab.id === nextActiveTabId) ??
+                  nextTabs[0];
+                setTabs(applyCompatModeToTabs(nextTabs));
                 setActiveTabId(nextActiveTabId);
-                setSidebarOpen(initialMobileRef.current ? false : data.sidebarOpen ?? true);
+                setSidebarOpen(
+                  initialMobileRef.current
+                    ? false
+                    : migratedLayout.sidebarOpen ?? true,
+                );
                 setFocusedPaneId(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
+                setInitialized(true);
+                return;
+              }
+              if (!cancelled && hasRuntimeLifecycleData(sessions)) {
+                setTabs([]);
+                setActiveTabId("");
+                setFocusedPaneId(null);
+                setSidebarOpen(!initialMobileRef.current);
                 setInitialized(true);
                 return;
               }
             }
 
-            const sessionName = await ensureInitialShellSession();
-            if (!cancelled && sessionName) {
-              addSessionTab(formatShellDisplayName(sessionName), sessionName);
+            const initial = await ensureInitialShellSession(sessions);
+            if (!cancelled && initial.name) {
+              addSessionTab(
+                formatShellDisplayName(initial.name),
+                initial.name,
+              );
+              setInitialized(true);
+              return;
+            }
+            if (!cancelled && initial.runtimeAware) {
               setInitialized(true);
               return;
             }
@@ -587,10 +774,14 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       }
 
       if (!cancelled) {
-        const sessionName = await ensureInitialShellSession();
+        const initial = await ensureInitialShellSession();
         if (!cancelled) {
-          if (sessionName) {
-            addSessionTab(formatShellDisplayName(sessionName), sessionName);
+          if (initial.name) {
+            addSessionTab(formatShellDisplayName(initial.name), initial.name);
+          } else if (initial.runtimeAware) {
+            setTabs([]);
+            setActiveTabId("");
+            setFocusedPaneId(null);
           } else {
             addTab(DEFAULT_CWD);
           }
@@ -764,20 +955,23 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   };
 
   const renameShellSession = (fromSessionId: string, toSessionId: string) => {
-    setTabs(prev => {
-      const nextTabs = prev.map((tab) => {
-        const nextTree = renameSessionInTree(tab.paneTree, fromSessionId, toSessionId);
-        const nextLabel =
-          tab.label === fromSessionId || tab.label === formatShellDisplayName(fromSessionId)
-            ? formatShellDisplayName(toSessionId)
-            : tab.label;
-        return nextTree === tab.paneTree && nextLabel === tab.label
-          ? tab
-          : { ...tab, label: nextLabel, paneTree: nextTree };
-      });
-      tabsRef.current = nextTabs;
-      return nextTabs;
+    const nextTabs = tabsRef.current.map((tab) => {
+      const nextTree = renameSessionInTree(
+        tab.paneTree,
+        fromSessionId,
+        toSessionId,
+      );
+      const nextLabel =
+        tab.label === fromSessionId ||
+        tab.label === formatShellDisplayName(fromSessionId)
+          ? formatShellDisplayName(toSessionId)
+          : tab.label;
+      return nextTree === tab.paneTree && nextLabel === tab.label
+        ? tab
+        : { ...tab, label: nextLabel, paneTree: nextTree };
     });
+    tabsRef.current = nextTabs;
+    setTabs(nextTabs);
   };
 
   const reorderTabs = (from: number, to: number) => {
