@@ -307,6 +307,7 @@ describe('terminal runtime spike evidence', () => {
       ),
     ]);
     expect(workflow).toContain("github.event.label.name == 'terminal-production-acceptance'");
+    expect(workflow).toContain('actions: read');
     expect(workflow).toContain('Build two exact-head acceptance bundles');
     expect(workflow).toContain('Wait for exact-head S1/S2 proof');
     expect(workflow).toContain('gh run list --workflow terminal-runtime-spikes.yml');
