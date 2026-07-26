@@ -243,6 +243,7 @@ describe('customer VPS host bundle', () => {
     const root = process.cwd();
     const script = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
     const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-tool-pack'), 'utf8');
+    const packControl = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-tool-pack-control'), 'utf8');
     const hermesInstaller = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-hermes'), 'utf8');
     const ownerEnv = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-owner-env'), 'utf8');
     const gateway = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-gateway'), 'utf8');
@@ -295,8 +296,10 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('pi) with_pack_lock "$pack" install_pi ;;');
     expect(installer).toContain('return 75');
     expect(installer).not.toContain('exit 0');
-    expect(installer).toContain('systemctl start matrix-linux-tools.service');
-    expect(installer).toContain('sudo systemctl start matrix-linux-tools.service');
+    expect(installer).toContain('/opt/matrix/bin/matrix-install-linux-tools');
+    expect(installer).not.toContain('sudo systemctl');
+    expect(packControl).toContain('linux-tools) UNIT="matrix-linux-tools.service"');
+    expect(packControl).toContain('/usr/bin/systemctl start "$UNIT"');
     expect(installer).toContain('failed=0');
     expect(installer).toContain('if ! wait "$pid"; then');
     expect(installer).toContain('exit "$failed"');
@@ -373,9 +376,8 @@ describe('customer VPS host bundle', () => {
     expect(codeServerUnit).toContain('ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server');
     expect(codeServerUnit).not.toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
     expect(codeUnit).toContain('Description=Matrix OS customer code editor');
-    expect(codeUnit).toContain('After=matrix-restore.service');
-    expect(codeUnit).not.toContain('After=matrix-restore.service matrix-code-server.service');
-    expect(codeUnit).not.toContain('Wants=matrix-code-server.service');
+    expect(codeUnit).toContain('After=matrix-restore.service matrix-code-server.service');
+    expect(codeUnit).toContain('Wants=matrix-code-server.service');
     expect(codeUnit).toContain('ExecStart=/opt/matrix/bin/matrix-code');
     expect(codeUnit).toContain('TimeoutStartSec=1800');
     expect(codeUnit).toContain('ConditionPathExists=/opt/matrix/bin/matrix-code');

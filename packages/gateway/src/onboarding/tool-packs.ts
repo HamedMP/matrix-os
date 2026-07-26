@@ -57,7 +57,6 @@ const MAX_TOOL_PACK_RECORDS = 512;
 const MAX_INSTALL_JOBS_PER_OWNER = 64;
 const DEFAULT_INSTALL_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_LINUX_TOOLS_INSTALL_TIMEOUT_MS = 30 * 60 * 1000;
-const MAX_INSTALL_OUTPUT_BYTES = 16_384;
 
 export interface ToolPackRecord {
   ownerId: string;
@@ -120,13 +119,13 @@ export function createHostToolPackInstaller(options: {
   timeoutMs?: number;
   linuxToolsTimeoutMs?: number;
 } = {}): ToolPackInstaller {
-  const scriptPath = options.scriptPath ?? "/opt/matrix/bin/matrix-install-tool-pack";
+  const scriptPath = options.scriptPath ?? "/opt/matrix/bin/matrix-tool-pack-control";
   const timeoutMs = options.timeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS;
   const linuxToolsTimeoutMs = options.linuxToolsTimeoutMs ?? DEFAULT_LINUX_TOOLS_INSTALL_TIMEOUT_MS;
 
   return {
-    install: async (ownerId, packId) => {
-      await runHostInstaller(scriptPath, ownerId, packId, packId === "linux-tools" ? linuxToolsTimeoutMs : timeoutMs);
+    install: async (_ownerId, packId) => {
+      await runHostInstaller(scriptPath, packId, packId === "linux-tools" ? linuxToolsTimeoutMs : timeoutMs);
     },
   };
 }
@@ -304,28 +303,24 @@ export function createToolPackService(options: {
 
 async function runHostInstaller(
   scriptPath: string,
-  ownerId: string,
   packId: ToolPackId,
   timeoutMs: number,
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(scriptPath, [packId], {
       env: {
-        ...process.env,
-        MATRIX_TOOL_PACK_OWNER_ID: ownerId,
+        LANG: process.env.LANG ?? "C.UTF-8",
+        PATH: process.env.PATH ?? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    let outputTail = "";
-    const appendOutput = (chunk: Buffer) => {
-      outputTail = `${outputTail}${chunk.toString("utf8")}`.slice(-MAX_INSTALL_OUTPUT_BYTES);
-    };
+    const discardOutput = (_chunk: Buffer) => undefined;
     const timeout = setTimeout(() => {
       child.kill("SIGTERM");
       reject(new Error(`tool pack install timed out for ${packId}`));
     }, timeoutMs);
-    child.stdout.on("data", appendOutput);
-    child.stderr.on("data", appendOutput);
+    child.stdout.on("data", discardOutput);
+    child.stderr.on("data", discardOutput);
     child.on("error", (err) => {
       clearTimeout(timeout);
       reject(err);
@@ -336,7 +331,7 @@ async function runHostInstaller(
         resolve();
         return;
       }
-      reject(new Error(`tool pack install failed for ${packId} with exit code ${code}; ${outputTail}`));
+      reject(new Error(`tool pack install failed for ${packId} with exit code ${code}`));
     });
   });
 }

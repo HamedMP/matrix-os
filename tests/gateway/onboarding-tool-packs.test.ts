@@ -266,6 +266,9 @@ describe("onboarding tool packs", () => {
     const scriptPath = join(tempDir, "installer");
     await writeFile(scriptPath, [
       "#!/usr/bin/env bash",
+      "if [ -n \"${MATRIX_TOOL_PACK_OWNER_ID:-}\" ]; then",
+      "  exit 9",
+      "fi",
       "if [ \"$1\" = \"linux-tools\" ]; then",
       "  sleep 0.1",
       "else",

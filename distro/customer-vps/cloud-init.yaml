@@ -126,7 +126,8 @@ write_files:
     content: |
       [Unit]
       Description=Matrix OS customer code editor
-      After=matrix-restore.service
+      After=matrix-restore.service matrix-code-server.service
+      Wants=matrix-code-server.service
       Requires=matrix-restore.service
       ConditionPathExists=/opt/matrix/restore-complete
       ConditionPathExists=/opt/matrix/bin/matrix-code
@@ -264,13 +265,9 @@ write_files:
 
       [Service]
       Type=oneshot
-      User=matrix
-      Group=matrix
+      User=root
+      Group=root
       Environment=MATRIX_HOME=/home/matrix/home
-      Environment=HOME=/home/matrix/home
-      Environment=XDG_CONFIG_HOME=/home/matrix/home/.config
-      Environment=XDG_DATA_HOME=/home/matrix/home/.local/share
-      Environment=XDG_CACHE_HOME=/home/matrix/home/.cache
       ExecStart=/opt/matrix/bin/matrix-install-linux-tools
       Restart=on-failure
       RestartSec=10m
@@ -459,9 +456,8 @@ runcmd:
   - |
     set -eu
     # Hetzner marks the root password expired when a server is created without
-    # SSH keys; expired accounts fail sudo/PAM account checks, which breaks
-    # every sudo-based installer (Hermes, tool pack). Clear expiry for the
-    # system accounts we transition between.
+    # SSH keys; expired accounts fail PAM account checks for system accounts.
+    # Keep the dedicated runtime owner usable for non-root process transitions.
     chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 root || true
     chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 matrix || true
   - |
@@ -531,7 +527,11 @@ runcmd:
     install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/home /home/matrix/home/.local /home/matrix/home/.local/bin /home/matrix/home/.local/share /home/matrix/home/.cache /home/matrix/home/.config
     install -d -o matrix -g matrix -m 0755 /home/matrix/home/.config/systemd /home/matrix/home/.config/systemd/user
     install -d -o root -g root -m 0750 /etc/sudoers.d
-    printf 'matrix ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/matrix
+    cat >/etc/sudoers.d/matrix <<'EOF'
+    matrix ALL=(root) NOPASSWD: /opt/matrix/bin/matrix-update *
+    matrix ALL=(root) NOPASSWD: /opt/matrix/bin/matrix-tool-pack-control *
+    matrix ALL=(root) NOPASSWD: /opt/matrix/bin/matrix-symphony-control *
+    EOF
     chmod 0440 /etc/sudoers.d/matrix
     visudo -cf /etc/sudoers.d/matrix
     usermod -d /home/matrix/home matrix
@@ -611,7 +611,7 @@ runcmd:
       chown root:matrix /opt/matrix/release.json
       chmod 0644 /opt/matrix/release.json
     fi
-    for required_bin in matrixctl matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-update-service matrix-validate-host-bundle matrix-update matrix-symphony matrix-symphony-control matrix-install-hermes; do
+    for required_bin in matrixctl matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-update-service matrix-validate-host-bundle matrix-update matrix-symphony matrix-symphony-control matrix-tool-pack-control matrix-install-hermes; do
       chmod 0750 "/opt/matrix/bin/${required_bin}"
     done
     for optional_bin in matrix-hermes-dashboard matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do

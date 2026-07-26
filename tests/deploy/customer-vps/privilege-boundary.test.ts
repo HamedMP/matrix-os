@@ -35,8 +35,11 @@ describe("customer VPS privilege boundary", () => {
     expect(syncAgent).toContain("/etc/sudoers.d/.matrix.next");
     expect(syncAgent).toContain("visudo -cf");
     expect(syncAgent).toContain('mv -f -- "$sudoers_next" /etc/sudoers.d/matrix');
-    expect(syncAgent.indexOf("install_update_runtime_bins")).toBeLessThan(
-      syncAgent.indexOf("install_matrix_sudoers"),
+    expect(syncAgent).toContain("matrix-tool-pack-control");
+    expect(
+      syncAgent.indexOf('install_update_runtime_bins "$extract_dir/bin"'),
+    ).toBeLessThan(
+      syncAgent.indexOf("if ! install_matrix_sudoers; then"),
     );
   });
 
@@ -47,12 +50,15 @@ describe("customer VPS privilege boundary", () => {
     );
     const helper = read("distro/customer-vps/host-bin/matrix-tool-pack-control");
 
-    expect(helper).toContain("coding-agents:matrix-developer-tools.service");
-    expect(helper).toContain("code-server:matrix-code-server.service");
-    expect(helper).toContain("hermes:matrix-hermes.service");
-    expect(helper).toContain("linux-tools:matrix-linux-tools.service");
+    expect(helper).toContain(
+      'coding-agents) UNIT="matrix-developer-tools.service"',
+    );
+    expect(helper).toContain('code-server) UNIT="matrix-code-server.service"');
+    expect(helper).toContain('hermes) UNIT="matrix-hermes.service"');
+    expect(helper).toContain('linux-tools) UNIT="matrix-linux-tools.service"');
     expect(helper).not.toContain("eval ");
     expect(helper).not.toContain("systemctl $");
+    expect(helper).toContain('/usr/bin/systemctl start "$UNIT"');
 
     expect(() => execFileSync(helperPath, ["../../bin/sh"], {
       encoding: "utf8",
@@ -88,10 +94,37 @@ describe("customer VPS privilege boundary", () => {
     expect(code).not.toContain("attempting install");
     expect(codeUnit).toContain("After=matrix-restore.service matrix-code-server.service");
     expect(codeUnit).toContain("Wants=matrix-code-server.service");
-    expect(installer).toContain("matrix-install-tool-pack: root_required");
+    expect(installer).toContain('log "root_required"');
+    expect(installer).toContain(
+      'exec /opt/matrix/bin/matrix-tool-pack-control "$1"',
+    );
     expect(linuxInstaller).toContain("matrix-install-linux-tools: root_required");
     expect(installer).not.toContain("sudo systemctl");
     expect(linuxInstaller).not.toMatch(/\bsudo\s/);
+    expect(installer).toContain(
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    );
+    expect(linuxInstaller).toContain(
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    );
+    expect(installer).not.toContain("matrix_export_owner_env");
+    expect(linuxInstaller).not.toContain("matrix_export_owner_env");
+  });
+
+  it("runs the Hermes installer only as a hardened root oneshot", () => {
+    const installer = read(
+      "distro/customer-vps/host-bin/matrix-install-hermes",
+    );
+
+    expect(installer).toContain("matrix-install-hermes: root_required");
+    expect(installer).toContain(
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    );
+    expect(installer).not.toContain("matrix_export_owner_env");
+    expect(installer).not.toMatch(/\bsudo\s/);
+    expect(installer).toContain(
+      '/usr/bin/setpriv --reuid "$MATRIX_RUNTIME_USER"',
+    );
   });
 
   it("keeps Symphony control exact and rejects arbitrary service operations", () => {
@@ -105,9 +138,13 @@ describe("customer VPS privilege boundary", () => {
 
     expect(helper).toContain('UNIT="matrix-symphony.service"');
     expect(helper).toContain(
-      "sudo -n /opt/matrix/bin/matrix-symphony-control",
+      "/usr/bin/sudo -n /opt/matrix/bin/matrix-symphony-control",
     );
     expect(helper).not.toContain("sudo systemctl");
+    expect(helper).not.toContain("matrix_export_owner_env");
+    expect(helper).toContain(
+      'SYMPHONY_ENV_FILE="/opt/matrix/env/symphony.env"',
+    );
     expect(() => execFileSync(helperPath, ["restart"], {
       encoding: "utf8",
       stdio: "pipe",

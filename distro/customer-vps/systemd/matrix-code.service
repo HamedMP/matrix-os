@@ -1,6 +1,7 @@
 [Unit]
 Description=Matrix OS customer code editor
-After=matrix-restore.service
+After=matrix-restore.service matrix-code-server.service
+Wants=matrix-code-server.service
 Requires=matrix-restore.service
 ConditionPathExists=/opt/matrix/restore-complete
 ConditionPathExists=/opt/matrix/bin/matrix-code

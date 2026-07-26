@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+if [ "$(/usr/bin/id -u)" -ne 0 ]; then
+  echo "matrix-install-linux-tools: root_required" >&2
+  exit 77
+fi
+
 BREW_BIN="${HOMEBREW_BIN:-/home/linuxbrew/.linuxbrew/bin/brew}"
 BREW_PREFIX="${HOMEBREW_PREFIX:-/home/linuxbrew/.linuxbrew}"
 INSTALLER_URL="${HOMEBREW_INSTALLER_URL:-https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh}"
 if [ -r /opt/matrix/env/host.env ]; then
   source /opt/matrix/env/host.env
 fi
-if [ -r /opt/matrix/bin/matrix-owner-env ]; then
-  source /opt/matrix/bin/matrix-owner-env
-  matrix_export_owner_env
-fi
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 retry() {
   local max_attempts="$1"
@@ -25,6 +29,20 @@ retry() {
     sleep "$delay_seconds"
     attempt=$((attempt + 1))
   done
+}
+
+run_as_matrix() {
+  command -v setpriv >/dev/null 2>&1 || {
+    echo "matrix-install-linux-tools: setpriv_required" >&2
+    return 1
+  }
+  /usr/bin/setpriv --reuid matrix --regid matrix --init-groups /usr/bin/env \
+    HOME=/home/matrix/home \
+    XDG_CONFIG_HOME=/home/matrix/home/.config \
+    XDG_DATA_HOME=/home/matrix/home/.local/share \
+    XDG_CACHE_HOME=/home/matrix/home/.cache \
+    PATH="$BREW_PREFIX/bin:$BREW_PREFIX/sbin:/usr/local/bin:/usr/bin:/bin" \
+    "$@"
 }
 
 homebrew_shell_config() {
@@ -63,43 +81,41 @@ install_user_shell_config() {
     printf '\n# >>> matrix homebrew >>>\n'
     homebrew_shell_config
     printf '# <<< matrix homebrew <<<\n'
-  } | sudo tee "$path" >/dev/null
+  } > "$path"
   rm -f "$tmp"
   trap - RETURN
-  sudo chown matrix:matrix "$path"
-  sudo chmod 0644 "$path"
+  chown matrix:matrix "$path"
+  chmod 0644 "$path"
 }
 
 write_homebrew_shell_config() {
-  sudo install -d -o root -g root -m 0755 /etc/profile.d
-  homebrew_shell_config | sudo tee /etc/profile.d/homebrew.sh >/dev/null
-  sudo chmod 0644 /etc/profile.d/homebrew.sh
+  install -d -o root -g root -m 0755 /etc/profile.d
+  homebrew_shell_config > /etc/profile.d/homebrew.sh
+  chmod 0644 /etc/profile.d/homebrew.sh
 
-  sudo install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/home
+  install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/home
   for shell_config in /home/matrix/.profile /home/matrix/.bashrc /home/matrix/home/.profile /home/matrix/home/.bashrc; do
     if [ ! -e "$shell_config" ]; then
-      sudo install -o matrix -g matrix -m 0644 /dev/null "$shell_config"
+      install -o matrix -g matrix -m 0644 /dev/null "$shell_config"
     fi
     install_user_shell_config "$shell_config"
   done
 }
 
-if [ "$(id -u)" = "0" ]; then
-  echo "matrix-install-linux-tools: run as the matrix user, not root" >&2
-  exit 1
-fi
-
 if command -v apt-get >/dev/null 2>&1; then
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential procps curl file git
+  DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential procps curl file git
 fi
 
-cd "${HOME:-/home/matrix/home}"
+install -d -o matrix -g matrix -m 0755 /home/matrix/home
+install -d -o matrix -g matrix -m 0755 /home/linuxbrew
+cd /home/matrix/home
 
 if [ ! -x "$BREW_BIN" ]; then
   tmp_installer="$(mktemp)"
   trap 'rm -f "${tmp_installer:-}"' EXIT
   retry 3 15 curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 "$INSTALLER_URL" -o "$tmp_installer"
-  retry 2 30 env NONINTERACTIVE=1 timeout 600 /bin/bash "$tmp_installer"
+  chown matrix:matrix "$tmp_installer"
+  retry 2 30 run_as_matrix env NONINTERACTIVE=1 timeout 600 /bin/bash "$tmp_installer"
   rm -f "$tmp_installer"
   trap - EXIT
 fi
@@ -111,18 +127,18 @@ export PATH="$BREW_PREFIX/bin:$BREW_PREFIX/sbin:$PATH"
 export MANPATH="$BREW_PREFIX/share/man:${MANPATH:-}:"
 export INFOPATH="$BREW_PREFIX/share/info:${INFOPATH:-}"
 
-if ! "$BREW_BIN" list --versions gh >/dev/null 2>&1; then
-  retry 3 30 timeout 600 "$BREW_BIN" install gh
+if ! run_as_matrix "$BREW_BIN" list --versions gh >/dev/null 2>&1; then
+  retry 3 30 run_as_matrix timeout 600 "$BREW_BIN" install gh
 fi
 
 write_homebrew_shell_config
 
-sudo ln -sf "$BREW_BIN" /usr/local/bin/brew
+ln -sf "$BREW_BIN" /usr/local/bin/brew
 if [ -x "$BREW_PREFIX/bin/gh" ]; then
-  sudo ln -sf "$BREW_PREFIX/bin/gh" /usr/local/bin/gh
+  ln -sf "$BREW_PREFIX/bin/gh" /usr/local/bin/gh
 fi
 
-"$BREW_BIN" --version
+run_as_matrix "$BREW_BIN" --version
 if [ -x "$BREW_PREFIX/bin/gh" ]; then
-  "$BREW_PREFIX/bin/gh" --version
+  run_as_matrix "$BREW_PREFIX/bin/gh" --version
 fi

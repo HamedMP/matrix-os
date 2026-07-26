@@ -450,7 +450,9 @@ exit 99
     expect(toolPackInstaller).toContain('CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"');
     expect(toolPackInstaller).toContain('CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${CODE_SERVER_ARCHIVE}"');
     expect(toolPackInstaller).toContain('runtime/code-server');
-    expect(toolPackInstaller).toContain('/opt/matrix/runtime/code-server/bin/code-server "$@"');
+    expect(toolPackInstaller).toContain(
+      'ln -sfn /opt/matrix/runtime/code-server/bin/code-server /usr/local/bin/code-server',
+    );
     expect(cloudInit).toContain("MATRIX_DEVELOPER_TOOLS='{{developerTools}}'");
     expect(cloudInit).toContain('matrix-developer-tools.service');
     expect(cloudInit).toContain('systemctl start --no-block matrix-developer-tools.service');
@@ -505,7 +507,7 @@ exit 99
     expect(cloudInit).toContain('chmod -R g+rwX /opt/matrix/app');
   });
 
-  it('grants the customer matrix user passwordless sudo for host installers', () => {
+  it('grants the customer matrix user only exact typed root helpers', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
 
@@ -514,7 +516,10 @@ exit 99
     expect(cloudInit).toContain('add-apt-repository -y universe');
     expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip zsh');
     expect(cloudInit).toContain('install -d -o root -g root -m 0750 /etc/sudoers.d');
-    expect(cloudInit).toContain("printf 'matrix ALL=(ALL) NOPASSWD:ALL\\n' >/etc/sudoers.d/matrix");
+    expect(cloudInit).not.toContain('NOPASSWD:ALL');
+    expect(cloudInit).toContain('matrix ALL=(root) NOPASSWD: /opt/matrix/bin/matrix-update *');
+    expect(cloudInit).toContain('matrix ALL=(root) NOPASSWD: /opt/matrix/bin/matrix-tool-pack-control *');
+    expect(cloudInit).toContain('matrix ALL=(root) NOPASSWD: /opt/matrix/bin/matrix-symphony-control *');
     expect(cloudInit).toContain('chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 root');
     expect(cloudInit).toContain('chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 matrix');
     expect(cloudInit).toContain('chmod 0440 /etc/sudoers.d/matrix');
@@ -530,9 +535,13 @@ exit 99
     const bundleScript = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
 
     expect(installer).toContain('https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh');
-    expect(installer).toContain('retry 2 30 env NONINTERACTIVE=1 timeout 600 /bin/bash "$tmp_installer"');
-    expect(installer).toContain('cd "${HOME:-/home/matrix/home}"');
-    expect(installer).toContain('retry 3 30 timeout 600 "$BREW_BIN" install gh');
+    expect(installer).toContain('matrix-install-linux-tools: root_required');
+    expect(installer).toContain(
+      '/usr/bin/setpriv --reuid matrix --regid matrix --init-groups /usr/bin/env',
+    );
+    expect(installer).toContain('retry 2 30 run_as_matrix env NONINTERACTIVE=1 timeout 600 /bin/bash "$tmp_installer"');
+    expect(installer).toContain('cd /home/matrix/home');
+    expect(installer).toContain('retry 3 30 run_as_matrix timeout 600 "$BREW_BIN" install gh');
     expect(installer).not.toContain('withgraphite/tap/graphite');
     expect(installer).not.toContain('cosineai/tap');
     expect(installer).not.toContain('brew install cos');
@@ -543,9 +552,9 @@ exit 99
     expect(installer).toContain('export MANPATH="$BREW_PREFIX/share/man:${MANPATH:-}:"');
     expect(installer).toContain('export MANPATH="$BREW_PREFIX/share/man:\\${MANPATH:-}:"');
     expect(installer).not.toContain('brew shellenv');
-    expect(installer).toContain('sudo ln -sf "$BREW_BIN" /usr/local/bin/brew');
-    expect(installer).toContain('sudo ln -sf "$BREW_PREFIX/bin/gh" /usr/local/bin/gh');
-    expect(installer).not.toContain('sudo ln -sf "$BREW_PREFIX/bin/gt" /usr/local/bin/gt');
+    expect(installer).toContain('ln -sf "$BREW_BIN" /usr/local/bin/brew');
+    expect(installer).toContain('ln -sf "$BREW_PREFIX/bin/gh" /usr/local/bin/gh');
+    expect(installer).not.toMatch(/\bsudo\s/);
     expect(bundleScript).toContain('matrix-install-linux-tools');
   });
 
@@ -563,9 +572,8 @@ exit 99
     );
 
     expect(codeUnitBlock).toContain('Description=Matrix OS customer code editor');
-    expect(codeUnitBlock).toContain('After=matrix-restore.service');
-    expect(codeUnitBlock).not.toContain('After=matrix-restore.service matrix-code-server.service');
-    expect(codeUnitBlock).not.toContain('Wants=matrix-code-server.service');
+    expect(codeUnitBlock).toContain('After=matrix-restore.service matrix-code-server.service');
+    expect(codeUnitBlock).toContain('Wants=matrix-code-server.service');
     expect(codeUnitBlock).toContain('ExecStart=/opt/matrix/bin/matrix-code');
     expect(codeUnitBlock).toContain('TimeoutStartSec=1800');
     expect(codeUnitBlock).toContain('ConditionPathExists=/opt/matrix/bin/matrix-code');
@@ -575,10 +583,9 @@ exit 99
     expect(codeServerBlock).toContain('ConditionPathExists=!/opt/matrix/runtime/code-server/bin/code-server');
     expect(codeServerBlock).not.toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
     expect(code).toContain('MATRIX_CODE_PROXY_TOKEN');
-    expect(code).toContain('matrix-code: code-server is missing; attempting install');
-    expect(code).toContain('sudo -n /opt/matrix/bin/matrix-install-tool-pack code-server');
-    expect(code).toContain('matrix-code: code-server install already running; waiting');
-    expect(code).toContain('for _ in $(seq 1 180); do');
+    expect(code).toContain('matrix-code: code-server is not installed');
+    expect(code).not.toContain('sudo');
+    expect(code).not.toContain('attempting install');
     expect(code).toContain('code-server');
     expect(code).toContain('crypto.timingSafeEqual');
   });
