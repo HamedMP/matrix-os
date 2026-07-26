@@ -770,6 +770,9 @@ apply_update() {
         log "ERROR: terminal_runtime_supervisor_start_failed"
         if ! terminate_new_terminal_runtime_supervisor_after_failed_start; then
           log "ERROR: terminal_runtime_supervisor_cleanup_failed"
+          log "WARN: terminal_runtime_supervisor_cleanup_preserved_host_layer"
+          do_rollback explicit ||
+            log "ERROR: application rollback after supervisor cleanup failure failed"
           rm -rf "$extract_dir" "$bundle_file"
           return 1
         fi

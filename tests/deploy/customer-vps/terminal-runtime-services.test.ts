@@ -198,6 +198,16 @@ describe('customer VPS terminal runtime services', () => {
         'terminate_new_terminal_runtime_supervisor_after_failed_start',
       ),
     );
+    const cleanupFailure = startFailure.slice(
+      startFailure.indexOf(
+        'if ! terminate_new_terminal_runtime_supervisor_after_failed_start; then',
+      ),
+      startFailure.indexOf('do_rollback failed-update'),
+    );
+    expect(cleanupFailure).toContain('do_rollback explicit');
+    expect(cleanupFailure).toContain(
+      'terminal_runtime_supervisor_cleanup_preserved_host_layer',
+    );
     expect(
       updater.match(/systemctl stop matrix-terminal-runtime\.service/g),
     ).toHaveLength(1);
