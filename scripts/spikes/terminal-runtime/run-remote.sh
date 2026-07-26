@@ -66,7 +66,7 @@ if [ -d "$support_root" ]; then mv "$support_root" "$support_root.previous"; fi
 mv "$support_root.next" "$support_root"
 record_preflight support_installed
 install -o root -g root -m 0644 "$source_dir/matrix-terminal-spike.slice" /etc/systemd/system/matrix-terminal-spike.slice
-install -o root -g root -m 0644 "$source_dir/matrix-terminal-spike@.service" /etc/systemd/system/matrix-terminal-spike@.service
+install -o root -g root -m 0644 "$source_dir/matrix-terminal-spike-template.service" /etc/systemd/system/matrix-terminal-spike@.service
 systemctl daemon-reload
 systemctl set-property --runtime matrix-terminal-spike.slice MemoryHigh=75% >/dev/null
 record_preflight units_installed

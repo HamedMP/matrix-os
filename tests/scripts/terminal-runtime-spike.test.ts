@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { link, mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdtemp, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -264,6 +264,12 @@ describe('terminal runtime spike evidence', () => {
     expect(buildScript).toContain('if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then');
     expect(buildScript).toContain('scripts/spikes/terminal-runtime');
   });
+  it('keeps every embedded spike asset inside the immutable-manifest path contract', async () => {
+    const assetRoot = join(process.cwd(), 'scripts/spikes/terminal-runtime');
+    const paths = await readdir(assetRoot, { recursive: true });
+    expect(paths).not.toHaveLength(0);
+    expect(paths.filter((path) => !/^[A-Za-z0-9._/-]+$/.test(path))).toEqual([]);
+  });
   it('detaches the spike from the gateway cgroup and waits for completed evidence', async () => {
     const [workflow, launcher, packer, runner, attachProbe] = await Promise.all([
       readFile(join(process.cwd(), '.github/workflows/terminal-runtime-spikes.yml'), 'utf8'),
@@ -341,7 +347,7 @@ describe('terminal runtime spike evidence', () => {
   });
   it('keeps the fixed notify unit shape and accepts readiness from the keeper helper', async () => {
     const [unit, keeper] = await Promise.all([
-      readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/matrix-terminal-spike@.service'), 'utf8'),
+      readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/matrix-terminal-spike-template.service'), 'utf8'),
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/keeper.mjs'), 'utf8'),
     ]);
     expect(unit).toContain('Type=notify\nNotifyAccess=all\n');
