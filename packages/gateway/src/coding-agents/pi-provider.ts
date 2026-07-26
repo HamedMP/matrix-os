@@ -401,6 +401,22 @@ function promptArg(prompt: string): string {
   return prompt;
 }
 
+// Pi's built-in tools are `read`, `bash`, `edit`, and `write`. Only `read` is
+// non-mutating, and `bash` can write anywhere regardless of cwd, so read_only
+// is the sole sandbox mode this adapter can actually guarantee through the CLI.
+const PI_READ_ONLY_TOOLS = ["read"] as const;
+
+// The sandbox mode this adapter is able to enforce. Anything broader is refused
+// rather than silently run unconfined; see enforceablePiSandboxMode.
+const PI_ENFORCEABLE_SANDBOX_MODE = "read_only";
+
+// Returns true when the requested sandbox mode can be genuinely enforced.
+// Requests default to workspace_write, which needs OS-level confinement Pi does
+// not provide, so those are rejected instead of being run with full access.
+function isEnforceablePiSandboxMode(mode: string | undefined): boolean {
+  return (mode ?? "workspace_write") === PI_ENFORCEABLE_SANDBOX_MODE;
+}
+
 interface PiRunInput {
   threadId: string;
   scope: string;
@@ -502,6 +518,14 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     const args = [
       "--mode", "json",
       "--print",
+      // Pi exposes no `--sandbox` flag, so confinement is enforced by scoping
+      // the tool allowlist to the non-mutating `read` tool. Threads are refused
+      // at start unless they asked for read_only, so every run that reaches
+      // here is read-only by construction.
+      "--tools", PI_READ_ONLY_TOOLS.join(","),
+      // Pi's file-trust switch: ignore project-local extensions, skills, and
+      // context files from cloned repositories. This is NOT a tool-approval
+      // bypass -- dropping it would make Pi trust untrusted repo config.
       "--no-approve",
       "--session-id", input.sessionId,
       promptArg(input.prompt),
@@ -650,6 +674,31 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     });
   }
 
+  // Refusing a sandbox mode is not a transient run failure, so it gets its own
+  // non-retryable event instead of the generic "try again" message.
+  function sandboxRefusedEvents(
+    threadId: string,
+    now: () => Date,
+    nextEventId: () => string,
+  ): AgentThreadEvent[] {
+    return [
+      AgentThreadEventSchema.parse({
+        type: "thread.error",
+        eventId: nextEventId(),
+        threadId,
+        occurredAt: now().toISOString(),
+        error: {
+          code: "sandbox_unavailable",
+          safeMessage:
+            "This agent can only run in read-only mode on this computer. Start the chat in read-only mode.",
+          retryable: false,
+          recoveryActions: [],
+        },
+      }),
+      completedEvent({ threadId, outcome: "failed", now, nextEventId }),
+    ];
+  }
+
   function terminalEvents(
     threadId: string,
     outcome: "completed" | "failed" | "aborted",
@@ -746,6 +795,18 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     },
 
     async startThread({ thread, request, now, nextEventId }) {
+      // Fail closed before resolving a workspace or spawning: Pi cannot enforce
+      // workspace_write or full_access, so honouring them would mean running
+      // with the gateway account's unrestricted filesystem access while the UI
+      // advertises a scoped sandbox.
+      if (!isEnforceablePiSandboxMode(request.sandboxMode)) {
+        logCodingAgentWarning(
+          "pi provider refused unsupported sandbox mode",
+          new Error(`unsupported sandbox mode: ${request.sandboxMode ?? "workspace_write"}`),
+        );
+        return { events: sandboxRefusedEvents(thread.id, now, nextEventId) };
+      }
+
       let cwd: string | null = null;
       try {
         if (request.worktreeId && request.projectId) {

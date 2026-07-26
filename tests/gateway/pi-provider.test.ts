@@ -42,6 +42,9 @@ function createRequest(prompt: string, overrides: Record<string, unknown> = {}):
     prompt,
     projectId: "repo-main",
     clientRequestId: "req_pi_1",
+    // read_only is the only mode Pi can enforce; broader modes are refused, so
+    // the run-behaviour suites below opt into the mode that actually executes.
+    sandboxMode: "read_only",
     ...overrides,
   } as CreateAgentThreadRequest;
 }
@@ -255,10 +258,65 @@ describe("pi provider adapter — spawn contract", () => {
     expect(call.args).toEqual([
       "--mode", "json",
       "--print",
+      "--tools", "read",
       "--no-approve",
       "--session-id", expect.stringMatching(/^[0-9a-f-]{36}$/),
       "Say hi",
     ]);
+  });
+
+  it("refuses a sandbox mode it cannot enforce instead of running unconfined", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const provider = providerFor(fake.spawnFn);
+
+    // workspace_write is the composer default. Pi has no sandbox flag and its
+    // bash tool can write anywhere, so the run must not start at all.
+    const result = await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi", { sandboxMode: "workspace_write" }),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(fake.calls).toHaveLength(0);
+    const error = result.events.find((event) => event.type === "thread.error");
+    expect(error).toMatchObject({ error: { code: "sandbox_unavailable", retryable: false } });
+  });
+
+  it("refuses full_access as well", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const provider = providerFor(fake.spawnFn);
+
+    await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi", { sandboxMode: "full_access" }),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("scopes read_only runs to the non-mutating read tool", async () => {
+    const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
+    const provider = providerFor(fake.spawnFn);
+
+    await provider.startThread({
+      principal: ownerPrincipal,
+      thread: threadSummary(),
+      request: createRequest("Say hi", { sandboxMode: "read_only" }),
+      now: () => baseNow,
+      nextEventId: nextEventIdFactory(),
+    });
+
+    const args = fake.calls[0]!.args;
+    const allowlist = args[args.indexOf("--tools") + 1];
+    expect(allowlist).toBe("read");
+    for (const mutating of ["bash", "edit", "write"]) {
+      expect(allowlist).not.toContain(mutating);
+    }
   });
 
   it.each([
