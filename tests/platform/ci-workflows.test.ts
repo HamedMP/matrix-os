@@ -96,6 +96,9 @@ describe('CI workflows', () => {
     expect(platformCompose).toContain(
       'PLATFORM_IMAGE=${PLATFORM_IMAGE:-matrixos-user:local}',
     );
+    expect(platformCompose).toContain(
+      'image: ${PLATFORM_IMAGE:-matrixos-user:local}',
+    );
     expect(contributorGuide).toContain('| Host bundle | `host-bundle-release.yml`');
     expect(contributorGuide).toContain('| Platform | `platform-cloud-run.yml`');
     expect(contributorGuide).toContain('Customer releases are VPS-native host bundles');

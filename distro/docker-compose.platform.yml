@@ -104,6 +104,9 @@ services:
       - matrixos-net
 
   platform:
+    # Tag the built application image with the same default the legacy local
+    # orchestrator uses when it creates per-user containers via Docker.
+    image: ${PLATFORM_IMAGE:-matrixos-user:local}
     build:
       context: ..
       dockerfile: Dockerfile
