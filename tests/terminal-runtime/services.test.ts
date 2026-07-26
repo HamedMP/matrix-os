@@ -172,7 +172,7 @@ describe('terminal runtime service boundary', () => {
         ...(agent === 'codex'
           ? {
               providerEventPath: 'system/session-output/example.jsonl',
-              codexExpectedVersion: '0.144.6',
+              codexExpectedVersion: '0.145.0',
             }
           : {}),
       }, '/home/matrix/home');
@@ -203,6 +203,26 @@ describe('terminal runtime service boundary', () => {
     }, '/home/matrix/home')).toThrow('claude_approval_policy_unsupported');
   });
 
+  it.each(['plan', 'review'] as const)(
+    'rejects Claude on-failure approval in supervised %s mode',
+    (mode) => {
+      expect(() => buildProviderLaunch({
+        schemaVersion: 1,
+        agent: 'claude',
+        cwd: { kind: 'home-relative', path: 'projects/private' },
+        prompt: 'repair the private project',
+        mode,
+        approvalPolicy: 'on-failure',
+        sandbox: {
+          enabled: true,
+          mode: 'workspace-write',
+          writableRoots: [],
+          denyWriteRoots: [],
+        },
+      }, '/home/matrix/home')).toThrow('claude_approval_policy_unsupported');
+    },
+  );
+
   it('hands the selected Codex executable to the runner through fd 3 only', () => {
     const codexExecutable = '/opt/matrix/runtime/node/bin/codex';
     const launch = buildProviderLaunch({
@@ -219,7 +239,7 @@ describe('terminal runtime service boundary', () => {
         denyWriteRoots: [],
       },
       providerEventPath: 'system/session-output/example.jsonl',
-      codexExpectedVersion: '0.144.6',
+      codexExpectedVersion: '0.145.0',
       codexExecutable,
     }, '/home/matrix/home');
 

@@ -59,11 +59,11 @@ function absoluteRoots(
 function claudePermissionMode(
   configuration: AgentConfiguration,
 ): 'default' | 'dontAsk' | 'plan' | 'bypassPermissions' {
-  if (configuration.mode === 'plan' || configuration.mode === 'review') {
-    return 'plan';
-  }
   if (configuration.approvalPolicy === 'on-failure') {
     throw new Error('claude_approval_policy_unsupported');
+  }
+  if (configuration.mode === 'plan' || configuration.mode === 'review') {
+    return 'plan';
   }
   if (
     configuration.approvalPolicy === 'never' &&
