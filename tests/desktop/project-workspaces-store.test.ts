@@ -270,4 +270,40 @@ describe("project workspaces store", () => {
 
     expect(useProjectWorkspaces.getState().entries).toEqual({});
   });
+
+  it("drops a previous runtime's in-flight load that settles after a runtime switch", async () => {
+    // Resolution order is controlled so the superseded runtime answers last.
+    const pending: Array<(value: ProjectAgentWorkspace) => void> = [];
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel !== "runtime:get-project-workspace") throw new Error(`unexpected channel ${channel}`);
+      return await new Promise<ProjectAgentWorkspace>((resolve) => {
+        pending.push(resolve);
+      });
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+
+    // The previous runtime starts loading and stays in flight.
+    const previousRuntimeLoad = useProjectWorkspaces.getState().refresh("matrix-os");
+
+    // Switching computers clears the cache and its per-project generation counters.
+    clearProjectWorkspaces();
+
+    // The newly selected runtime loads the same project id and settles first.
+    const nextRuntimeLoad = useProjectWorkspaces.getState().refresh("matrix-os");
+    pending[1]?.(workspace("matrix-os", "task_next", "thread_next"));
+    await nextRuntimeLoad;
+
+    // The superseded runtime's response arrives last; without a monotonic epoch
+    // both loads share generation 1, so it would overwrite the new runtime's
+    // cache and surface another account's project data.
+    pending[0]?.(workspace("matrix-os", "task_previous", "thread_previous"));
+    await previousRuntimeLoad;
+
+    expect(useProjectWorkspaces.getState().entries["matrix-os"]?.workspace).toMatchObject({
+      tasks: { items: [{ id: "task_next" }] },
+    });
+  });
 });

@@ -39,6 +39,14 @@ interface ProjectWorkspacesState {
 // same project started is stale and must be dropped.
 const loadGenerations: Record<string, number> = {};
 
+// Monotonic runtime epoch, bumped every time the desktop claims a different
+// runtime. Generations alone cannot survive a runtime switch: clearing their
+// counters lets the superseded runtime's in-flight load and the new runtime's
+// load both hold generation 1, so the old response passes the staleness check
+// and overwrites the new runtime's cache with another account's project data.
+// The epoch only ever increases, so a superseded load can never match again.
+let runtimeEpoch = 0;
+
 function nextGeneration(projectId: string): number {
   const generation = (loadGenerations[projectId] ?? 0) + 1;
   loadGenerations[projectId] = generation;
@@ -46,6 +54,7 @@ function nextGeneration(projectId: string): number {
 }
 
 export function clearProjectWorkspaces(): void {
+  runtimeEpoch += 1;
   for (const key of Object.keys(loadGenerations)) delete loadGenerations[key];
   useProjectWorkspaces.setState({ entries: {} });
 }
@@ -76,7 +85,14 @@ function summaryThreadIdsFor(projectId: string): ReadonlySet<string> {
   return ids;
 }
 
+// A load is stale if a newer load for the same project started, or if the
+// desktop switched runtimes while this one was in flight.
+function isStaleLoad(projectId: string, epoch: number, generation: number): boolean {
+  return runtimeEpoch !== epoch || loadGenerations[projectId] !== generation;
+}
+
 async function loadWorkspace(projectId: string): Promise<void> {
+  const epoch = runtimeEpoch;
   const generation = nextGeneration(projectId);
   useProjectWorkspaces.setState((state) => ({
     entries: {
@@ -92,7 +108,7 @@ async function loadWorkspace(projectId: string): Promise<void> {
   }));
   try {
     const workspace = await invoke("runtime:get-project-workspace", { projectId });
-    if (loadGenerations[projectId] !== generation) return;
+    if (isStaleLoad(projectId, epoch, generation)) return;
     useProjectWorkspaces.setState((state) => ({
       entries: capEntries({
         ...state.entries,
@@ -110,7 +126,7 @@ async function loadWorkspace(projectId: string): Promise<void> {
       projectView.setSelectedThread(projectId, selected);
     }
   } catch {
-    if (loadGenerations[projectId] !== generation) return;
+    if (isStaleLoad(projectId, epoch, generation)) return;
     console.warn("[project-workspaces] workspace load failed");
     useProjectWorkspaces.setState((state) => ({
       entries: {
