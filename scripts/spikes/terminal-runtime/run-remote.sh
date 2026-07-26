@@ -533,7 +533,10 @@ if wait_state "$recovery_unit" active; then
     fi
   fi
   if [ -n "$corrupt_target" ] && [[ "$corrupt_target" == "$cache_root"/* ]]; then
-    printf 'MATRIX_CORRUPT_STATE\n' >"$corrupt_target"
+    # An arbitrary identifier is valid KDL and therefore does not prove the
+    # corruption path. Leave both nested nodes unclosed so the exact production
+    # parser must reject this state before the fresh-shell fallback is exercised.
+    printf 'layout {\n  pane {\n' >"$corrupt_target"
     start_runtime "$recovery_id" recover
     if wait_not_active "$recovery_unit"; then
       rm -rf -- "$recovery_cache_dir"
