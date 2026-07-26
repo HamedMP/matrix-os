@@ -89,6 +89,14 @@ describe('customer VPS terminal runtime services', () => {
     }
   });
 
+  it('restricts the one-shot legacy migration operation to the root updater', () => {
+    const runtimeOp = read('packages/terminal-runtime/src/runtime-op.ts');
+
+    expect(runtimeOp).toContain("mode === 'migrate-legacy'");
+    expect(runtimeOp).toContain('process.getuid?.() !== 0');
+    expect(runtimeOp).toContain("throw new Error('migration_unauthorized')");
+  });
+
   it('compiles a warning-free SO_PEERCRED acceptor with fixed socket and worker paths', () => {
     const sourcePath = join(
       root,
@@ -164,6 +172,71 @@ describe('customer VPS terminal runtime services', () => {
     expect(installer).not.toContain(
       'systemctl enable matrix-terminal-session@',
     );
+  });
+
+  it('runs disposable-VPS spikes only through a preview-only typed root helper', () => {
+    const build = read('scripts/build-host-bundle.sh');
+    const updater = read('distro/customer-vps/host-bin/matrix-sync-agent');
+    const workflow = read('.github/workflows/terminal-runtime-spikes.yml');
+    const helper = read(
+      'distro/customer-vps/host-bin/matrix-terminal-spike-control',
+    );
+    const launch = read('scripts/spikes/terminal-runtime/launch-remote.sh');
+    const pack = read('scripts/spikes/terminal-runtime/pack-evidence.sh');
+    const runner = read('scripts/spikes/terminal-runtime/run-remote.sh');
+
+    expect(build).toContain('MATRIX_TERMINAL_RUNTIME_SPIKE');
+    expect(build).toContain('$terminal_generation_build/spikes');
+    expect(build).toContain(
+      '$STAGE_DIR/bin/matrix-terminal-spike-control',
+    );
+    expect(build).not.toContain(
+      '$STAGE_DIR/app/scripts/spikes/terminal-runtime',
+    );
+    expect(updater).toContain('matrix-terminal-spike-control');
+    expect(updater).toContain(
+      'rm -f -- "$BIN_DIR/matrix-terminal-spike-control"',
+    );
+    expect(updater).toContain(
+      '/opt/matrix/bin/matrix-terminal-spike-control *',
+    );
+    expect(workflow).toContain(
+      '"/opt/matrix/bin/matrix-terminal-spike-control",',
+    );
+    expect(workflow).toContain('"launch",');
+    expect(workflow).toContain('"pack",');
+    expect(workflow).not.toContain(
+      '/opt/matrix/app/scripts/spikes/terminal-runtime',
+    );
+    expect(helper).toContain(
+      '/opt/matrix/libexec/terminal-runtime/current/spikes/',
+    );
+    expect(helper).not.toContain('eval ');
+    expect(helper).not.toContain('/opt/matrix/app');
+    expect(launch).not.toContain('/opt/matrix/app');
+    expect(pack).not.toContain('/opt/matrix/app');
+    expect(runner).not.toContain('/opt/matrix/app');
+  });
+
+  it('rejects untyped spike helper operations and malformed exact-head SHAs', () => {
+    const helper = join(
+      root,
+      'distro/customer-vps/host-bin/matrix-terminal-spike-control',
+    );
+    for (const args of [
+      [],
+      ['launch'],
+      ['pack', 'main'],
+      ['delete', 'a'.repeat(40)],
+      ['launch', 'a'.repeat(40), 'extra'],
+      ['launch', '../' + 'a'.repeat(37)],
+    ]) {
+      const result = spawnSync('bash', [helper, ...args], {
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('spike_control_invalid_request');
+    }
   });
 
   it('terminates only a newly introduced supervisor before failed-start rollback', () => {
@@ -357,6 +430,7 @@ describe('customer VPS terminal runtime services', () => {
     );
     const gatewayStart = updater.indexOf(
       'systemctl start matrix-gateway matrix-shell',
+      migration,
     );
 
     expect(migration).toBeGreaterThan(-1);

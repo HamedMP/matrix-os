@@ -138,6 +138,15 @@ install -m 0644 \
 cp -aL --no-preserve=links \
   "$(readlink -f "$ROOT_DIR/node_modules/zod")/v4" \
   "$terminal_generation_build/node_modules/zod/v4"
+if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then
+  install -d -m 0755 "$terminal_generation_build/spikes"
+  cp -a --no-preserve=links \
+    "$ROOT_DIR/scripts/spikes/terminal-runtime/." \
+    "$terminal_generation_build/spikes/"
+  install -m 0644 \
+    "$ROOT_DIR/scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json" \
+    "$terminal_generation_build/spikes/v0.44.3-matrix.1.build.json"
+fi
 if find "$terminal_generation_build" -type l -print -quit | grep -q .; then
   echo "terminal_runtime_generation_contains_symlink" >&2
   exit 1
@@ -172,6 +181,11 @@ ln -s \
 
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
+if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then
+  chmod 0755 "$STAGE_DIR/bin/matrix-terminal-spike-control"
+else
+  rm -f -- "$STAGE_DIR/bin/matrix-terminal-spike-control"
+fi
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.
 chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-agent-bridge" "$STAGE_DIR/bin/matrix-sync-bundled-home-assets" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-update-service" "$STAGE_DIR/bin/matrix-validate-host-bundle" "$STAGE_DIR/bin/matrix-symphony" "$STAGE_DIR/bin/matrix-symphony-control" "$STAGE_DIR/bin/matrix-tool-pack-control" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-ensure-swap" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-hermes-dashboard" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-install-tool-pack" "$STAGE_DIR/bin/matrix-install-developer-tools" "$STAGE_DIR/bin/matrix-prepare-gateway-runtime" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/matrix-terminal-supervisor" "$STAGE_DIR/bin/matrix-terminal-keeper" "$STAGE_DIR/bin/matrix-terminal-pane" "$STAGE_DIR/bin/matrix-terminal-runtime-op" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"
@@ -188,14 +202,6 @@ cp -a "$ROOT_DIR/scripts/build-default-apps.mjs" "$STAGE_DIR/app/scripts/build-d
 cp -a "$ROOT_DIR/scripts/reset-shipped-icons.mjs" "$STAGE_DIR/app/scripts/reset-shipped-icons.mjs"
 cp -a "$ROOT_DIR/scripts/install-hermes-matrix-skills.sh" "$STAGE_DIR/app/scripts/install-hermes-matrix-skills.sh"
 cp -a "$ROOT_DIR/scripts/sync-matrix-agent-skills.sh" "$STAGE_DIR/app/scripts/sync-matrix-agent-skills.sh"
-if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then
-  install -d "$STAGE_DIR/app/scripts/spikes"
-  cp -a "$ROOT_DIR/scripts/spikes/terminal-runtime" "$STAGE_DIR/app/scripts/spikes/terminal-runtime"
-  install -d "$STAGE_DIR/app/scripts/terminal-runtime/zellij"
-  install -m 0644 \
-    "$ROOT_DIR/scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json" \
-    "$STAGE_DIR/app/scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json"
-fi
 cp -a "$ROOT_DIR/skills" "$STAGE_DIR/app/skills"
 cp -a "$ROOT_DIR/package.json" "$ROOT_DIR/pnpm-workspace.yaml" "$ROOT_DIR/pnpm-lock.yaml" "$STAGE_DIR/app/"
 if [ -f "$ROOT_DIR/.npmrc" ]; then

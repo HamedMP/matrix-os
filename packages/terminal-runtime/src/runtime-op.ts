@@ -2,6 +2,7 @@ import { execFile as execFileCallback } from 'node:child_process';
 import { read } from 'node:fs';
 import {
   readFile,
+  lstat,
   realpath,
   stat,
 } from 'node:fs/promises';
@@ -30,6 +31,8 @@ import {
   createSystemdExecutor,
 } from './systemd.js';
 import { createRuntimeArtifactManager } from './recovery-state.js';
+import { migrateLegacyTerminalState } from './legacy-migration.js';
+import { SecureDirectory } from './storage.js';
 
 const execFile = promisify(execFileCallback);
 const HOME = '/home/matrix/home';
@@ -134,6 +137,62 @@ async function resolveCwd(cwd: HomeRelativeCwd): Promise<HomeRelativeCwd> {
     kind: 'home-relative',
     path: ownerRelative === '' ? '' : ownerRelative,
   });
+}
+
+async function resolveLegacyCwd(candidate?: string): Promise<HomeRelativeCwd> {
+  const home = await realpath(HOME);
+  const target = await realpath(resolve(home, candidate ?? '.'));
+  if (target !== home && !target.startsWith(`${home}${sep}`)) {
+    throw new Error('cwd_unavailable');
+  }
+  const ownerRelative = relative(home, target);
+  return HomeRelativeCwdSchema.parse({
+    kind: 'home-relative',
+    path: ownerRelative === '' ? '' : ownerRelative,
+  });
+}
+
+async function resolveLegacyWorkspaceCwd(input: {
+  projectSlug?: string;
+  worktreeId?: string;
+}): Promise<string | undefined> {
+  if (!input.projectSlug) return undefined;
+  if (input.worktreeId) {
+    return resolve(
+      HOME,
+      'projects',
+      input.projectSlug,
+      'worktrees',
+      input.worktreeId,
+    );
+  }
+  const projectPath = resolve(HOME, 'projects', input.projectSlug);
+  const projectStat = await lstat(projectPath);
+  if (projectStat.isSymbolicLink() || !projectStat.isDirectory()) {
+    throw new Error('cwd_unavailable');
+  }
+  const projectDirectory = await SecureDirectory.open(
+    projectPath,
+  );
+  try {
+    const config = z.object({
+      localPath: z.string().min(1).max(4096),
+    }).passthrough().parse(await projectDirectory.readJson('config.json'));
+    return config.localPath;
+  } finally {
+    await projectDirectory.close();
+  }
+}
+
+async function readBootId(): Promise<string> {
+  const bootId = (await readFile(
+    '/proc/sys/kernel/random/boot_id',
+    'utf8',
+  )).trim();
+  if (!/^[A-Za-z0-9._-]{1,128}$/.test(bootId)) {
+    throw new Error('boot_id_invalid');
+  }
+  return bootId;
 }
 
 async function belongsToRuntimeCgroup(
@@ -344,10 +403,30 @@ async function maintenance(): Promise<void> {
   }
 }
 
+async function migrateLegacy(): Promise<void> {
+  if (process.getuid?.() !== 0) {
+    throw new Error('migration_unauthorized');
+  }
+  const host = await createHostState(await readOwner());
+  try {
+    await migrateLegacyTerminalState({
+      homePath: HOME,
+      state: host.state,
+      resolveCwd: resolveLegacyCwd,
+      resolveWorkspaceCwd: resolveLegacyWorkspaceCwd,
+      bootId: await readBootId(),
+    });
+    process.stdout.write('terminal_runtime_legacy_migration_complete\n');
+  } finally {
+    await host.state.close();
+  }
+}
+
 export async function runRuntimeOp(mode: string | undefined): Promise<void> {
   if (mode === 'serve-peer') return await servePeer();
   if (mode === 'serve-keeper') return await serveKeeper();
   if (mode === 'maintenance') return await maintenance();
+  if (mode === 'migrate-legacy') return await migrateLegacy();
   throw new Error('runtime_op_invalid');
 }
 

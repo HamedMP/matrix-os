@@ -20,5 +20,5 @@ if [ ! -f "$evidence_root/summary.json" ] || [ -L "$evidence_root/summary.json" 
   exit 3
 fi
 /opt/matrix/runtime/node/bin/node \
-  /opt/matrix/app/scripts/spikes/terminal-runtime/verify-evidence.mjs \
+  /opt/matrix/libexec/terminal-runtime/current/spikes/verify-evidence.mjs \
   "$evidence_root" --pack "$pr_head_sha" | base64 --wrap=0

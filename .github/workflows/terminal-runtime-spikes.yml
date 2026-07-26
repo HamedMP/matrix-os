@@ -185,7 +185,8 @@ jobs:
           run_body="$(jq -cn --arg sha "$HEAD_SHA" '{
             command: [
               "/usr/bin/sudo",
-              "/opt/matrix/app/scripts/spikes/terminal-runtime/launch-remote.sh",
+              "/opt/matrix/bin/matrix-terminal-spike-control",
+              "launch",
               $sha
             ],
             timeoutMs: 30000
@@ -233,7 +234,8 @@ jobs:
           pack_body="$(jq -cn --arg sha "$HEAD_SHA" '{
             command: [
               "/usr/bin/sudo",
-              "/opt/matrix/app/scripts/spikes/terminal-runtime/pack-evidence.sh",
+              "/opt/matrix/bin/matrix-terminal-spike-control",
+              "pack",
               $sha
             ],
             timeoutMs: 30000

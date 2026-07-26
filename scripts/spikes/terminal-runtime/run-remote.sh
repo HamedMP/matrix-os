@@ -10,6 +10,7 @@ if ! printf '%s' "$pr_head_sha" | grep -Eq '^[0-9a-f]{40}$'; then
   exit 2
 fi
 source_dir="$(CDPATH='' cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+generation_dir="$(CDPATH='' cd "$source_dir/.." && pwd)"
 run_key="$pr_head_sha"
 evidence_root="/tmp/matrix-terminal-spike-evidence-${run_key}"
 runtime_root="/run/matrix-terminal-runtime-spike"
@@ -58,7 +59,7 @@ install -d -o root -g root -m 0755 "$support_root.next" "$support_root.next/node
 for file in attach-probe.mjs keeper.mjs record-outcome.mjs record-runtime-roles.mjs pane-probe.sh memory-hog.mjs layout.kdl; do
   install -o root -g root -m 0755 "$source_dir/$file" "$support_root.next/$file"
 done
-cp -aL /opt/matrix/app/node_modules/node-pty "$support_root.next/node_modules/node-pty"
+cp -aL "$generation_dir/node_modules/node-pty" "$support_root.next/node_modules/node-pty"
 chown -R root:root "$support_root.next"
 rm -rf -- "$support_root.previous"
 if [ -d "$support_root" ]; then mv "$support_root" "$support_root.previous"; fi
@@ -76,7 +77,7 @@ if [ "$zellij_version" != "zellij 0.44.3" ]; then
 fi
 record_preflight binary_version_checked
 zellij_build_metadata="/opt/matrix/bin/zellij.build.json"
-candidate_build_record="/opt/matrix/app/scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json"
+candidate_build_record="$source_dir/v0.44.3-matrix.1.build.json"
 expected_zellij_binary_sha256="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["binarySha256"])' "$candidate_build_record")"
 record_preflight binary_manifest_read
 zellij_binary_sha256="$(sha256sum /opt/matrix/bin/zellij | awk '{print $1}')"

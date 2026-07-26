@@ -12,6 +12,7 @@ This spec owns terminal runtime semantics: zellij session/tab topology, the gate
 - `specs/104-terminal-refactor-foundation/` owns behavior-preserving shell component refactors and explicitly does not change runtime semantics. Implementation work for this spec that touches `TerminalApp.tsx` should land after or rebase onto the 104 extractions where they overlap.
 - `specs/056-terminal-upgrade/` defined the current replay/scrollback protocol. This spec changes the persistence write path but keeps the client-facing `output`/`seq`/replay frame contract compatible.
 - `specs/075-mobile-shell/` defined the mobile terminal client. This spec changes how mobile participates in session sizing.
+- `specs/109-persist-terminal-sessions/` supersedes this spec's process-ownership, gateway-shutdown, reboot, recovery, deletion, and recovery-retention assumptions. Production terminals use immutable runtime IDs, one static-template systemd cgroup per runtime, and explicit recovery with the verified `v0.44.3-matrix.1` Zellij binary.
 
 Out of scope: true per-client reflow of a shared PTY (impossible at the PTY layer; upstream zellij tracks independent per-client rendering as an open, unimplemented request), VPS capacity/ops changes, and Docker-based dev terminal paths.
 
@@ -185,18 +186,19 @@ As an operator of a small VPS, I want terminal infrastructure to have caps and c
 
 ## Integration Wiring
 
-- **Startup**: gateway boots as today; the reaper sweep and coalescing flush timers are created in gateway startup and disposed in the shutdown drain path alongside existing WS shutdown handling.
-- **Registry migration**: `~/system/shell-sessions.json` — the zellij `ShellRegistry` persist file (`packages/gateway/src/shell/registry.ts`) — gains optional fields (`kind: "workspace" | "legacy"`, `canonicalSize`, `tabs`, `cwd`). Old files load unchanged (fields optional, defaults applied); no schema-version break. Writes remain atomic via the existing atomic-write helper. This file is distinct from `~/system/terminal-sessions.json`, which belongs to the deprecated raw-PTY `SessionRegistry` (`packages/gateway/src/session-registry.ts`); that registry and file are untouched by this spec, and workspace metadata, canonical sizes, and reaper state live exclusively in `shell-sessions.json`.
+- **Startup**: the stable root supervisor starts at boot, but no terminal template instance is enabled or automatically started. In production, the gateway fails closed unless it can complete the frozen protocol-v1 compatibility probe. Gateway-owned attach PTYs and timers are drained on shutdown without stopping supervised runtime cgroups.
+- **Registry migration**: `~/system/shell-sessions.json` remains compatibility/display metadata, not liveness evidence. On the first supervised release, a fixed root update operation validates legacy shell/workspace names and cwd metadata, assigns immutable runtime IDs, and creates interrupted receipts without PID adoption or command execution. Subsequent list and name-based routes resolve through the supervisor-owned receipt/name index.
 - **Cross-surface sync**: web shell (`TerminalApp`/`PaneGrid`/`TerminalPane`), CLI (`shell.ts`, `shell-client.ts`), native mobile (`terminal-client.ts`), and gateway must ship the attach-metadata change compatibly: the gateway treats missing client-class metadata with the FR-007 defaults so old clients keep working.
-- **Zellij config**: shipped config stays chrome-free; tab-navigation keybinds used by FR-015 fallback are pinned in the generated `config.kdl` so injection sequences are deterministic.
+- **Zellij config**: shipped config stays chrome-free and uses the exact `v0.44.3-matrix.1` binary/config proven by spec 109. Session, viewport, and bounded scrollback serialization use the dedicated owner-controlled cache. Resurrected commands retain native confirmation gating; `--force-run-commands` is forbidden.
 
 ## Failure Modes
 
 - **Persistence store failure**: live output unaffected (FR-001/003); persistence retries with backoff; replay reports evicted ranges.
 - **Recorder PTY dies**: re-election on next output or attach event; bounded seq gap surfaced as replay-evicted.
-- **zellij server crash**: existing exited-session handling applies; registry reconciliation via `list()` marks it exited; clients get the existing `exit` frame.
+- **zellij server crash**: the keeper exits nonzero, systemd empties the runtime cgroup, and authoritative reconciliation reports one interrupted/failed runtime. Missing metadata alone never authorizes killing a populated cgroup.
 - **Slow/dead client**: flow control pauses only that client's PTY; existing stale-attach eviction (FR-019) removes it; other clients unaffected (per-subscriber isolation).
-- **Gateway shutdown**: drain notifies clients, flushes the coalescing buffer, disposes timers, and kills gateway-owned attach/create PTYs. In the current architecture, the retained foreground client that owns a Zellij server is also gateway-owned, so stopping the gateway can terminate the session; sessions do **not** reliably survive gateway restarts “as today.” `specs/109-persist-terminal-sessions/` owns the gated external-supervision architecture that will provide this guarantee after its mandatory Zellij 0.44.1 spikes pass.
+- **Gateway shutdown**: drain notifies clients, flushes the coalescing buffer, disposes timers, and kills only gateway-owned attach PTYs. The keeper, Zellij server, shell, and agent remain in the independent `matrix-terminal-session@<runtimeId>.service` cgroup and survive gateway restart, crash, normal update, and app rollback.
+- **Host reboot**: the supervisor returns, but no session unit, command, shell, or agent starts automatically. Prior-live receipts reconcile to Interrupted; only an explicit owner Recover request starts a template instance.
 - **Concurrent size changes**: canonical size recomputation is debounced and serialized per session; last committed value wins; PTY resizes are idempotent.
 - **Crash between seq assignment and persistence**: the loss bound is the entire pending persistence queue at crash time — up to the 4 MiB per-session cap when a slow store has let multiple flush intervals accumulate — not merely the last flush interval. The durable seq reservation (FR-001) guarantees restarted numbering never reuses a delivered seq, and the whole unpersisted seq range is reported to reconnects as replay-evicted.
 
@@ -205,7 +207,7 @@ As an operator of a small VPS, I want terminal infrastructure to have caps and c
 - Per-session pending persistence queue: 4 MiB cap, drop-oldest (FR-003).
 - Per-socket buffered output: 1 MiB high-water flow control (FR-017).
 - Attach cap 8/session with stale eviction; session creation rate-limited (no count cap); replay buffer cache caps unchanged (FR-019/020).
-- Exited-session TTL sweep 7 days, symlink-safe, periodic, timer cleared on shutdown (FR-018).
+- Exited-session TTL sweep 7 days, symlink-safe, periodic, timer cleared on shutdown (FR-018). Under supervised ownership, it may prune only authoritative inactive recovery state under the supervisor locks; it never stops live, activating, recovering, or populated deleting cgroups.
 - Scrollback files: existing compaction retained; deleted with their session by the sweep.
 
 ## Rollout Phasing
@@ -213,6 +215,7 @@ As an operator of a small VPS, I want terminal infrastructure to have caps and c
 1. **Phase 1 — output pipeline (gateway only)**: send-first delivery, recorder election, coalesced persistence, WS flow control, exited-session reaper (metadata-tagged sessions only; pre-existing legacy sessions are exempt per FR-018 until Phase 3 migration has run). No client changes; largest latency and write-amplification win; independently shippable.
 2. **Phase 2 — canonical sizing**: attach metadata + canonical size arbiter in gateway; web scaled rendering; mobile stops resizing; CLI declares hard size. Shippable behind compatible defaults.
 3. **Phase 3 — workspaces/tabs with migration**: gateway tab routes hardening plus the FR-022 migration operation, web workspace/tab UI with automatic legacy conversion (FR-023), CLI workspace resolution, labeling, `migrate`, and `run -it` tab targeting (FR-024). Depends on Spike S1. Mobile and desktop surfaces adopt the same gateway contract in follow-up work coordinated against their in-flight PRs.
+4. **Phase 4 — supervised persistence (spec 109)**: ship the verified Zellij binary and stable supervisor boundary dormantly, migrate gateway/agent launch data off argv, add explicit recovery UX, then activate the production app-generation default. The first activation honestly interrupts legacy gateway-owned processes; later normal deployments preserve terminal runtime PIDs and cgroups.
 
 ## Spikes (throwaway code before Phase 2/3 implementation)
 

@@ -6,7 +6,7 @@ if [ "$#" -ne 1 ]; then
 fi
 
 case "$1" in
-  serve-peer|serve-keeper|maintenance)
+  serve-peer|serve-keeper|maintenance|migrate-legacy)
     exec /opt/matrix/runtime/node/bin/node \
       /opt/matrix/libexec/terminal-runtime/current/runtime-op.js "$1"
     ;;

@@ -1115,6 +1115,45 @@ ssh matrix@<customer-vps-ip> 'curl -fsS http://127.0.0.1:4000/health'
 ssh matrix@<customer-vps-ip> 'curl -fsSI http://127.0.0.1:3000'
 ```
 
+## Persistent terminal runtime rollout
+
+Production gateway app generations default to the supervised terminal runtime.
+Local development remains on the direct gateway-owned launcher unless
+`MATRIX_TERMINAL_RUNTIME_MODE=supervised` is selected explicitly. An app
+rollback therefore restores the previous generation's mode without changing
+stable systemd units.
+
+During the first activating update, the root updater stops the legacy gateway,
+atomically installs the verified runtime generation, and runs the fixed
+`matrix-terminal-runtime-op migrate-legacy` operation before starting the new
+gateway. The operation reads only bounded, validated name and working-directory
+metadata from legacy shell and workspace records. It assigns immutable runtime
+IDs and creates interrupted receipts; it never adopts PIDs, starts a template
+unit, executes a command, or resumes an agent. A partial migration is
+idempotently completed on the next update.
+
+Normal update and rollback stop lists contain the gateway, shell, and Symphony
+only. They must never stop or restart `matrix-terminal-session@*`,
+`matrix-terminal.slice`, or `matrix-terminal-runtime.service`. Installing a new
+helper generation and running `daemon-reload` affects future sessions only;
+live keeper process images and terminal cgroups remain untouched. Maintenance
+that cannot preserve protocol-v1 compatibility requires a separately announced
+reboot or maintenance window.
+
+Operational checks:
+
+```bash
+systemctl is-active matrix-terminal-runtime.service
+systemctl list-units 'matrix-terminal-session@*.service'
+systemctl show matrix-terminal-session@<runtime-id>.service \
+  -p MainPID -p ControlGroup -p ActiveState
+```
+
+Receipts and serialized history are owner data under
+`/home/matrix/home/system/terminal-runtime/`. A receipt never proves liveness;
+unit state, cgroup occupancy, keeper readiness, and responsive Zellij evidence
+take precedence.
+
 ## Backup
 
 ### Quick Backup

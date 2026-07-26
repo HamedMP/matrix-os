@@ -33,3 +33,8 @@ accounting, and safe live serialization disablement.
 
 Raw terminal contents, credentials, host IPs, user paths, and display names are
 not committed or uploaded.
+
+## Production rollout documentation
+
+- Public lifecycle, privacy, and one-time migration disclosure:
+  [`FinnaAI/matrix-os-site` #7](https://github.com/FinnaAI/matrix-os-site/pull/7)

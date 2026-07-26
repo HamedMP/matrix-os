@@ -5,3 +5,4 @@ export * from './keeper-client.js'; export * from './pane.js';
 export * from './agent-configurations.js';
 export * from './recovery-state.js';
 export * from './telemetry.js';
+export * from './legacy-migration.js';

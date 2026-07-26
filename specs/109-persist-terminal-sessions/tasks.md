@@ -28,22 +28,22 @@
 
 **Prerequisite**: T009 records S1 and S2 passing. If not, stop and amend the spec.
 
-- [ ] T010 Add failing runtime ID, protocol framing, unknown-key, injection, and executor-not-called tests in `tests/terminal-runtime/contracts.test.ts`
-- [ ] T011 Add failing receipt/name-index/descriptor schema and state-transition tests in `tests/terminal-runtime/storage-contracts.test.ts`
-- [ ] T012 Add failing symlink, hard-link, no-follow, atomic publish, stale descriptor, and cleanup tests in `tests/terminal-runtime/filesystem-security.test.ts`
-- [ ] T013 Create the strict shared protocol/lifecycle schemas in `packages/terminal-runtime/src/contracts.ts`
-- [ ] T014 Implement bounded framing and the unprivileged protocol client in `packages/terminal-runtime/src/client.ts`
-- [ ] T015 Implement pinned-parent, exclusive, fsynced receipt/name-index storage in `packages/terminal-runtime/src/storage.ts` and `packages/terminal-runtime/src/receipts.ts`
-- [ ] T016 Implement one-shot descriptor publication, claim, cleanup, and caps in `packages/terminal-runtime/src/descriptors.ts`
-- [ ] T017 Implement the minimal peer-credential acceptor in `packages/terminal-runtime/native/supervisor-acceptor.c`
-- [ ] T018 Implement the seven-operation fixed TypeScript handler and systemd executor seam in `packages/terminal-runtime/src/operation-handler.ts`
-- [ ] T019 Implement reconciliation evidence precedence and deterministic failure recording in `packages/terminal-runtime/src/reconciliation.ts`
-- [ ] T020 Implement keeper PTY launch, cgroup verification, readiness, monitoring, and sd_notify in `packages/terminal-runtime/src/keeper.ts`
-- [ ] T021 Add package build/typecheck entry points and native build in `packages/terminal-runtime/package.json` and `packages/terminal-runtime/tsconfig.json`
-- [ ] T022 Add fixed wrappers and versioned support installation in `distro/customer-vps/host-bin/matrix-terminal-supervisor`, `distro/customer-vps/host-bin/matrix-terminal-keeper`, `distro/customer-vps/host-bin/matrix-terminal-pane`, and `distro/customer-vps/host-bin/matrix-terminal-runtime-op`
-- [ ] T023 Add the stable supervisor, slice, and non-enabled template in `distro/customer-vps/systemd/matrix-terminal-runtime.service`, `distro/customer-vps/systemd/matrix-terminal.slice`, and `distro/customer-vps/systemd/matrix-terminal-session@.service`
-- [ ] T024 Add atomic stable-libexec/unit installation and supervisor compatibility checks in `scripts/build-host-bundle.sh` and `distro/customer-vps/host-bin/matrix-sync-agent`
-- [ ] T025 Replace unrestricted sudo with separately typed fixed helpers and tests in `distro/customer-vps/cloud-init.yaml`, `distro/customer-vps/host-bin/`, and `tests/gateway/customer-vps-host.test.ts`
+- [X] T010 Add failing runtime ID, protocol framing, unknown-key, injection, and executor-not-called tests in `tests/terminal-runtime/contracts.test.ts`
+- [X] T011 Add failing receipt/name-index/descriptor schema and state-transition tests in `tests/terminal-runtime/storage-contracts.test.ts`
+- [X] T012 Add failing symlink, hard-link, no-follow, atomic publish, stale descriptor, and cleanup tests in `tests/terminal-runtime/filesystem-security.test.ts`
+- [X] T013 Create the strict shared protocol/lifecycle schemas in `packages/terminal-runtime/src/contracts.ts`
+- [X] T014 Implement bounded framing and the unprivileged protocol client in `packages/terminal-runtime/src/client.ts`
+- [X] T015 Implement pinned-parent, exclusive, fsynced receipt/name-index storage in `packages/terminal-runtime/src/storage.ts` and `packages/terminal-runtime/src/receipts.ts`
+- [X] T016 Implement one-shot descriptor publication, claim, cleanup, and caps in `packages/terminal-runtime/src/descriptors.ts`
+- [X] T017 Implement the minimal peer-credential acceptor in `packages/terminal-runtime/native/supervisor-acceptor.c`
+- [X] T018 Implement the seven-operation fixed TypeScript handler and systemd executor seam in `packages/terminal-runtime/src/operation-handler.ts`
+- [X] T019 Implement reconciliation evidence precedence and deterministic failure recording in `packages/terminal-runtime/src/reconciliation.ts`
+- [X] T020 Implement keeper PTY launch, cgroup verification, readiness, monitoring, and sd_notify in `packages/terminal-runtime/src/keeper.ts`
+- [X] T021 Add package build/typecheck entry points and native build in `packages/terminal-runtime/package.json` and `packages/terminal-runtime/tsconfig.json`
+- [X] T022 Add fixed wrappers and versioned support installation in `distro/customer-vps/host-bin/matrix-terminal-supervisor`, `distro/customer-vps/host-bin/matrix-terminal-keeper`, `distro/customer-vps/host-bin/matrix-terminal-pane`, and `distro/customer-vps/host-bin/matrix-terminal-runtime-op`
+- [X] T023 Add the stable supervisor, slice, and non-enabled template in `distro/customer-vps/systemd/matrix-terminal-runtime.service`, `distro/customer-vps/systemd/matrix-terminal.slice`, and `distro/customer-vps/systemd/matrix-terminal-session@.service`
+- [X] T024 Add atomic stable-libexec/unit installation and supervisor compatibility checks in `scripts/build-host-bundle.sh` and `distro/customer-vps/host-bin/matrix-sync-agent`
+- [X] T025 Replace unrestricted sudo with separately typed fixed helpers and tests in `distro/customer-vps/cloud-init.yaml`, `distro/customer-vps/host-bin/`, and `tests/gateway/customer-vps-host.test.ts`
 
 **Independent test**: invalid requests never reach the injected systemd executor; a valid fixed-template start owns one cgroup and survives gateway shutdown; production client startup fails closed without protocol v1.
 
@@ -66,12 +66,12 @@
 
 ## Phase 4: User Story 2 — Explicit Safe Recovery (P1)
 
-- [ ] T034 [P] [US2] Add failing empty-body/auth/rate-limit/idempotency/generic-error recovery route tests in `tests/gateway/terminal-recovery-route.test.ts`
-- [ ] T035 [P] [US2] Add failing valid/corrupt/missing/incompatible Zellij cache recovery tests in `tests/terminal-runtime/recovery.test.ts`
+- [X] T034 [P] [US2] Add failing empty-body/auth/rate-limit/idempotency/generic-error recovery route tests in `tests/gateway/terminal-recovery-route.test.ts`
+- [X] T035 [P] [US2] Add failing valid/corrupt/missing/incompatible Zellij cache recovery tests in `tests/terminal-runtime/recovery.test.ts`
 - [X] T036 [P] [US2] Add failing interrupted-state and no-silent-recreation client/store tests in `shell/src/components/terminal/__tests__/TerminalApp.test.tsx`
-- [ ] T037 [US2] Add `POST /api/terminal/sessions/:name/recover` with shared limiter and strict empty body in `packages/gateway/src/shell/routes.ts` and `packages/gateway/src/server.ts`
-- [ ] T038 [US2] Implement explicit serialized/fresh-shell recovery and bounded reasons in `packages/terminal-runtime/src/reconciliation.ts` and `packages/terminal-runtime/src/keeper.ts`
-- [ ] T039 [US2] Configure the production Zellij serialization/cache options without force-run in `packages/gateway/src/shell/zellij-config.ts` and `packages/terminal-runtime/src/zellij.ts`
+- [X] T037 [US2] Add `POST /api/terminal/sessions/:name/recover` with shared limiter and strict empty body in `packages/gateway/src/shell/routes.ts` and `packages/gateway/src/server.ts`
+- [X] T038 [US2] Implement explicit serialized/fresh-shell recovery and bounded reasons in `packages/terminal-runtime/src/reconciliation.ts` and `packages/terminal-runtime/src/keeper.ts`
+- [X] T039 [US2] Configure the production Zellij serialization/cache options without force-run in `packages/gateway/src/shell/zellij-config.ts` and `packages/terminal-runtime/src/zellij.ts`
 - [X] T040 [US2] Render Interrupted/Recoverable state and explicit Recover action Canvas-first in `shell/src/components/terminal/TerminalApp.tsx` and shared terminal stores
 - [X] T041 [US2] Add terminal-history privacy disclosure and safe bounded client error allowlisting in `shell/src/components/terminal/` and `docs/platform/user/terminal.md`
 - [X] T042 [US2] Run `npx react-doctor@latest shell` and capture Canvas/Desktop recovery screenshot evidence in the PR body
@@ -82,12 +82,12 @@
 
 ## Phase 5: User Story 3 — Immutable Rename and Multi-Device Identity (P1)
 
-- [ ] T043 [P] [US3] Add failing Rename/Rename, Rename/Recover, Recover/Recover, and alias-expiry tests in `tests/terminal-runtime/concurrency.test.ts`
+- [X] T043 [P] [US3] Add failing Rename/Rename, Rename/Recover, Recover/Recover, and alias-expiry tests in `tests/terminal-runtime/concurrency.test.ts`
 - [X] T044 [P] [US3] Add failing runtime-ID layout migration tests in `shell/src/stores/__tests__/terminal-layout.test.ts`
-- [ ] T045 [US3] Change rename to metadata/name-index only under ordered locks in `packages/terminal-runtime/src/operation-handler.ts` and `packages/gateway/src/shell/registry.ts`
-- [ ] T046 [US3] Add additive runtime/lifecycle projection fields to list contracts in `packages/gateway/src/shell/routes.ts` and shared shell types
+- [X] T045 [US3] Change rename to metadata/name-index only under ordered locks in `packages/terminal-runtime/src/operation-handler.ts` and `packages/gateway/src/shell/registry.ts`
+- [X] T046 [US3] Add additive runtime/lifecycle projection fields to list contracts in `packages/gateway/src/shell/routes.ts` and shared shell types
 - [X] T047 [US3] Store runtime ID plus display metadata and resolve bounded aliases in shared Canvas/Desktop terminal layout state
-- [ ] T048 [US3] Ensure multi-device attach resolves existing runtime only and never calls Create/Recover in `packages/gateway/src/shell/terminal-websocket.ts`
+- [X] T048 [US3] Ensure multi-device attach resolves existing runtime only and never calls Create/Recover in `packages/gateway/src/shell/terminal-websocket.ts`
 
 **Independent test**: two devices and all rename/recover races preserve one runtime ID, unit, Zellij session, and process tree.
 
@@ -95,10 +95,10 @@
 
 ## Phase 6: User Story 4 — Complete Irreversible Delete (P2)
 
-- [ ] T049 [P] [US4] Add failing populated-cgroup, partial-stop, idempotent, and Recover/Delete race tests in `tests/terminal-runtime/delete.test.ts`
-- [ ] T050 [US4] Commit deleting intent, notify clients, stop the fixed unit, and poll bounded `cgroup.events` in `packages/terminal-runtime/src/operation-handler.ts`
-- [ ] T051 [US4] Remove receipt/index/agent/scrollback/Zellij state only after `populated 0` in `packages/terminal-runtime/src/storage.ts` and gateway cleanup integration
-- [ ] T052 [US4] Make reaper/accounting skip live, activating, recovering, and deleting-populated runtimes in `packages/terminal-runtime/src/reconciliation.ts`
+- [X] T049 [P] [US4] Add failing populated-cgroup, partial-stop, idempotent, and Recover/Delete race tests in `tests/terminal-runtime/delete.test.ts`
+- [X] T050 [US4] Commit deleting intent, notify clients, stop the fixed unit, and poll bounded `cgroup.events` in `packages/terminal-runtime/src/operation-handler.ts`
+- [X] T051 [US4] Remove receipt/index/agent/scrollback/Zellij state only after `populated 0` in `packages/terminal-runtime/src/storage.ts` and gateway cleanup integration
+- [X] T052 [US4] Make reaper/accounting skip live, activating, recovering, and deleting-populated runtimes in `packages/terminal-runtime/src/reconciliation.ts`
 
 **Independent test**: Delete empties the complete cgroup before removing every runtime-owned state set and later Recover cannot recreate it.
 
@@ -106,11 +106,11 @@
 
 ## Phase 7: User Story 5 — Narrow Observable Operator Boundary (P2)
 
-- [ ] T053 [P] [US5] Add fuzzed framing/injection and journal/argv/environment privacy tests in `tests/terminal-runtime/security.test.ts`
-- [ ] T054 [P] [US5] Add disk/count/TTL/symlink-safe recurring cleanup tests in `tests/terminal-runtime/resource-management.test.ts`
-- [ ] T055 [US5] Add bounded lifecycle metrics and truncated runtime hashes in `packages/terminal-runtime/src/telemetry.ts`
-- [ ] T056 [US5] Implement inactive retention, disk attribution, pressure pruning, and timer shutdown in `packages/terminal-runtime/src/reconciliation.ts`
-- [ ] T057 [US5] Add supervisor/descriptor/receipt/cgroup aggregate health without sensitive detail in gateway/operator health projections
+- [X] T053 [P] [US5] Add fuzzed framing/injection and journal/argv/environment privacy tests in `tests/terminal-runtime/security.test.ts`
+- [X] T054 [P] [US5] Add disk/count/TTL/symlink-safe recurring cleanup tests in `tests/terminal-runtime/resource-management.test.ts`
+- [X] T055 [US5] Add bounded lifecycle metrics and truncated runtime hashes in `packages/terminal-runtime/src/telemetry.ts`
+- [X] T056 [US5] Implement inactive retention, disk attribution, pressure pruning, and timer shutdown in `packages/terminal-runtime/src/reconciliation.ts`
+- [X] T057 [US5] Add supervisor/descriptor/receipt/cgroup aggregate health without sensitive detail in gateway/operator health projections
 
 **Independent test**: every out-of-scope input is rejected before systemd; telemetry and journals contain only allowed coarse fields; caps remain enforced under pressure.
 
@@ -118,12 +118,12 @@
 
 ## Phase 8: User Story 6 — Legacy and Deployment Migration (P3)
 
-- [ ] T058 [P] [US6] Add failing updater stop-allowlist, rollback, atomic stable-install, and no-instance-enable tests in `tests/gateway/customer-vps-host.test.ts`
-- [ ] T059 [P] [US6] Add failing legacy name/cwd migration and no-PID-adoption tests in `tests/terminal-runtime/legacy-migration.test.ts`
-- [ ] T060 [US6] Enforce updater stop allowlists and atomic stable helper installs in `distro/customer-vps/host-bin/matrix-sync-agent`
-- [ ] T061 [US6] Install/enable only the stable supervisor and never template instances in `distro/customer-vps/cloud-init.yaml` and `scripts/install-server.sh`
-- [ ] T062 [US6] Migrate validated legacy metadata to interrupted/recoverable immutable receipts in `packages/terminal-runtime/src/legacy-migration.ts`
-- [ ] T063 [US6] Add the one-time migration interruption and no-adoption disclosure to repository operator/user docs
+- [X] T058 [P] [US6] Add failing updater stop-allowlist, rollback, atomic stable-install, and no-instance-enable tests in `tests/gateway/customer-vps-host.test.ts`
+- [X] T059 [P] [US6] Add failing legacy name/cwd migration and no-PID-adoption tests in `tests/terminal-runtime/legacy-migration.test.ts`
+- [X] T060 [US6] Enforce updater stop allowlists and atomic stable helper installs in `distro/customer-vps/host-bin/matrix-sync-agent`
+- [X] T061 [US6] Install/enable only the stable supervisor and never template instances in `distro/customer-vps/cloud-init.yaml` and `scripts/install-server.sh`
+- [X] T062 [US6] Migrate validated legacy metadata to interrupted/recoverable immutable receipts in `packages/terminal-runtime/src/legacy-migration.ts`
+- [X] T063 [US6] Add the one-time migration interruption and no-adoption disclosure to repository operator/user docs
 
 **Independent test**: the first release reports one honest interruption; every later bundle/rollback leaves active runtime PIDs/cgroups unchanged.
 
@@ -133,8 +133,8 @@
 
 - [ ] T064 Run focused tests, `bun run typecheck`, `bun run check:patterns`, `bun run test`, and applicable React audit in every stack worktree
 - [ ] T065 Execute the complete disposable-VPS matrix across two bundles, forced failure, rollback, reboot, concurrency, corruption, and delete; link bounded evidence in `specs/109-persist-terminal-sessions/evidence/README.md`
-- [ ] T066 Amend lifecycle/persistence/reaper/gateway-shutdown text in `specs/107-terminal-multi-device/spec.md` to match measured behavior
-- [ ] T067 Publish verified lifecycle/privacy/migration documentation in the separate `FinnaAI/matrix-os-site` PR and link it from the final rollout PR
+- [X] T066 Amend lifecycle/persistence/reaper/gateway-shutdown text in `specs/107-terminal-multi-device/spec.md` to match measured behavior
+- [X] T067 Publish verified lifecycle/privacy/migration documentation in the separate `FinnaAI/matrix-os-site` PR and link it from the final rollout PR
 
 ## Dependencies
 

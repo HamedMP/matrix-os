@@ -216,4 +216,27 @@ describe("legacy terminal migration", () => {
     expect(await state.receipts.list()).toHaveLength(0);
     await state.close();
   });
+
+  it("rejects symlinked workspace records instead of hiding a trust-boundary failure", async () => {
+    const { root, homePath, state } = await fixture();
+    const outside = join(root, "workspace.json");
+    await writeFile(outside, JSON.stringify({
+      id: "sess_alpha",
+      runtime: { type: "zellij", status: "running" },
+    }));
+    await symlink(
+      outside,
+      join(homePath, "system", "sessions", "sess_alpha.json"),
+    );
+
+    await expect(migrateLegacyTerminalState({
+      homePath,
+      state,
+      resolveCwd: cwdResolver(homePath),
+      bootId: "migration-boot",
+      createId: () => IDS[0],
+    })).rejects.toThrow("unsafe_file");
+    expect(await state.receipts.list()).toHaveLength(0);
+    await state.close();
+  });
 });

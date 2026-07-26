@@ -116,8 +116,9 @@ describe('terminal runtime spike evidence', () => {
     expect(builder).toContain('v0.44.3-matrix.1.build.json');
     expect(builder).toContain('cp -- "$candidate_record" "$output_dir/build.json"');
     expect(remoteRunner).toContain(
-      '/opt/matrix/app/scripts/terminal-runtime/zellij/v0.44.3-matrix.1.build.json',
+      'candidate_build_record="$source_dir/v0.44.3-matrix.1.build.json"',
     );
+    expect(remoteRunner).not.toContain('/opt/matrix/app');
     expect(remoteRunner).not.toMatch(/\bjq\b/);
     expect(remoteRunner).toContain('record_preflight binary_manifest_read');
     expect(remoteRunner).toContain(
@@ -271,7 +272,10 @@ describe('terminal runtime spike evidence', () => {
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/run-remote.sh'), 'utf8'),
       readFile(join(process.cwd(), 'scripts/spikes/terminal-runtime/attach-probe.mjs'), 'utf8'),
     ]);
-    expect(workflow).toContain('/opt/matrix/app/scripts/spikes/terminal-runtime/launch-remote.sh');
+    expect(workflow).toContain('/opt/matrix/bin/matrix-terminal-spike-control');
+    expect(workflow).toContain('"launch",');
+    expect(workflow).toContain('"pack",');
+    expect(workflow).not.toContain('/opt/matrix/app/scripts/spikes');
     expect(workflow).toContain('evidence_deadline=$((SECONDS + 2100))');
     expect(workflow).toContain('"$EVIDENCE" --report-gates');
     expect(workflow).toContain('--unpack "$envelope" "$evidence_parent" "$HEAD_SHA"');

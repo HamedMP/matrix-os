@@ -39,3 +39,22 @@ provably empty.
 
 Avoid printing secrets when possible. Delete the session when its retained
 history is no longer needed.
+
+## First supervised-runtime update
+
+The first production update that activates supervised terminal ownership causes
+one final interruption for terminals created by the older gateway-owned
+architecture. The updater stops that legacy gateway before external ownership
+exists, so Matrix OS does not claim that the old shell, Zellij, or coding-agent
+processes survived.
+
+Matrix OS validates the old session name and working folder, assigns a new
+immutable runtime ID, and presents the session as **Interrupted**. It never
+adopts an old PID, reruns a command, or resumes an agent. Choose **Recover** to
+open a fresh shell in the last valid folder. Old terminal history is shown only
+when it is compatible with the verified Zellij recovery format; otherwise the
+session reports `history_unavailable`.
+
+After this one-time transition, normal gateway updates, failed updates, and app
+rollbacks leave supervised terminal cgroups running. A reboot still requires
+explicit recovery.

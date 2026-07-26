@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -ne 2 ]; then
+  echo "spike_control_invalid_request" >&2
+  exit 2
+fi
+
+operation="$1"
+pr_head_sha="$2"
+case "$operation" in
+  launch | pack) ;;
+  *)
+    echo "spike_control_invalid_request" >&2
+    exit 2
+    ;;
+esac
+if [[ ! "$pr_head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "spike_control_invalid_request" >&2
+  exit 2
+fi
+if [ "$(id -u)" -ne 0 ]; then
+  echo "spike_control_requires_root" >&2
+  exit 3
+fi
+
+case "$operation" in
+  launch)
+    target="/opt/matrix/libexec/terminal-runtime/current/spikes/launch-remote.sh"
+    ;;
+  pack)
+    target="/opt/matrix/libexec/terminal-runtime/current/spikes/pack-evidence.sh"
+    ;;
+esac
+if [ ! -f "$target" ] || [ -L "$target" ] || [ ! -x "$target" ]; then
+  echo "spike_control_unavailable" >&2
+  exit 3
+fi
+
+exec "$target" "$pr_head_sha"
