@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProtocolRequest, ProtocolResponse, SupervisorClient } from "@matrix-os/terminal-runtime";
 import {
   initializeGatewayTerminalRuntime,
+  resolveGatewayTerminalRuntimeMode,
   type GatewayTerminalRuntimeClient,
 } from "../../packages/gateway/src/shell/runtime-client.js";
 
@@ -22,6 +23,17 @@ afterEach(async () => {
 });
 
 describe("gateway terminal runtime client", () => {
+  it("activates supervised ownership only for the production app generation", () => {
+    expect(resolveGatewayTerminalRuntimeMode(undefined, "production")).toBe("supervised");
+    expect(resolveGatewayTerminalRuntimeMode("", "production")).toBe("supervised");
+    expect(resolveGatewayTerminalRuntimeMode(undefined, "development")).toBe("legacy");
+    expect(resolveGatewayTerminalRuntimeMode(undefined, "test")).toBe("legacy");
+    expect(resolveGatewayTerminalRuntimeMode("legacy", "production")).toBe("legacy");
+    expect(resolveGatewayTerminalRuntimeMode("supervised", "development")).toBe("supervised");
+    expect(() => resolveGatewayTerminalRuntimeMode("fallback", "production"))
+      .toThrow("terminal_runtime_mode_invalid");
+  });
+
   it("retains direct spawn when the dormant production mode is legacy", async () => {
     await expect(initializeGatewayTerminalRuntime({
       mode: "legacy",

@@ -349,4 +349,20 @@ describe('customer VPS terminal runtime services', () => {
     );
     expect(updater).toContain('terminal_runtime_supervisor_start_failed');
   });
+
+  it('migrates legacy metadata before starting the activated gateway without touching live terminal units', () => {
+    const updater = read('distro/customer-vps/host-bin/matrix-sync-agent');
+    const migration = updater.indexOf(
+      '/opt/matrix/bin/matrix-terminal-runtime-op migrate-legacy',
+    );
+    const gatewayStart = updater.indexOf(
+      'systemctl start matrix-gateway matrix-shell',
+    );
+
+    expect(migration).toBeGreaterThan(-1);
+    expect(gatewayStart).toBeGreaterThan(migration);
+    expect(updater).not.toContain('systemctl stop matrix-terminal-session@');
+    expect(updater).not.toContain('systemctl restart matrix-terminal-runtime.service');
+    expect(updater).not.toContain('systemctl restart matrix-terminal.slice');
+  });
 });
