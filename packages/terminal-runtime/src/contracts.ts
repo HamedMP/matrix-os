@@ -110,6 +110,7 @@ export const DescriptorSchema = z.object({
   runtimeId: RuntimeIdSchema,
   operationId: OperationIdSchema,
   intent: z.enum(['create', 'recover']),
+  recoveryMode: z.enum(['serialized', 'fresh-shell']).optional(),
   cwd: HomeRelativeCwdSchema,
   launch: LaunchDataSchema,
   createdAt: IsoTimestampSchema,

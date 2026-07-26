@@ -104,7 +104,11 @@ describe("supervised coding-agent launch", () => {
         throw new Error("supervisor rejected");
       }),
       rename: vi.fn(),
-      delete: vi.fn(),
+      recover: vi.fn(),
+      delete: vi.fn(async () => ({
+        runtimeId: "0123456789abcdef0123456789abcdef",
+        deleted: true as const,
+      })),
     };
     const zellij = { sendInput: vi.fn() };
     const supervised = createSupervisedZellijRuntime({

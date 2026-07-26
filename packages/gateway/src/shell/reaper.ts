@@ -3,11 +3,12 @@ interface ReapableSession {
   status?: "active" | "exited";
   updatedAt?: string;
   kind?: string;
+  lifecycleState?: string;
 }
 
 interface ReaperRegistry {
   list(): Promise<ReapableSession[]>;
-  delete(name: string, options?: { force?: boolean }): Promise<void>;
+  delete(name: string, options?: { force?: boolean }): Promise<unknown>;
 }
 
 export interface ShellSessionReaperOptions {
@@ -41,7 +42,14 @@ export function createShellSessionReaper(options: ShellSessionReaperOptions) {
     }
     const cutoff = Date.now() - ttlMs;
     for (const session of sessions) {
-      if (!session.kind || session.status !== "exited") {
+      if (
+        !session.kind ||
+        session.status !== "exited" ||
+        session.lifecycleState !== undefined &&
+          ["starting", "live", "recovering", "deleting"].includes(
+            session.lifecycleState,
+          )
+      ) {
         continue;
       }
       const updatedAt = session.updatedAt ? Date.parse(session.updatedAt) : Number.NaN;
@@ -50,12 +58,12 @@ export function createShellSessionReaper(options: ShellSessionReaperOptions) {
       }
       try {
         await options.registry.delete(session.name, { force: true });
-        console.log("[shell] reaped exited session:", session.name);
+        console.log("[shell] reaped one exited terminal runtime");
       } catch (err: unknown) {
-        console.warn("[shell] failed to reap session:", {
-          session: session.name,
-          error: err instanceof Error ? err.message : String(err),
-        });
+        console.warn(
+          "[shell] failed to reap one exited terminal runtime",
+          { errorType: err instanceof Error ? err.name : "unknown" },
+        );
       }
     }
   }

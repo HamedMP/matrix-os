@@ -33,7 +33,14 @@ export interface ShellRegistryAdapter {
   listSessions(): Promise<string[]>;
   focusedPaneCwd?(name: string): Promise<string | null>;
   createSession(options: { name: string; cwd?: string; layout?: string; cmd?: string }): Promise<void>;
-  deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
+  deleteSession(
+    name: string,
+    options?: { force?: boolean },
+  ): Promise<
+    void |
+    { deleted: true } |
+    { deleted: false; lifecycleState: "deleting" }
+  >;
   renameSession?(name: string, nextName: string): Promise<void>;
   runtimeProjection?(name: string): {
     runtimeId: string;
@@ -42,6 +49,22 @@ export interface ShellRegistryAdapter {
     recoveryReason: string | null;
     metadataRevision?: number;
   } | null;
+  listRuntimeProjections?(): Promise<Array<{
+    runtimeId: string;
+    displayName?: string;
+    lifecycleState: string;
+    recoverable: boolean;
+    recoveryReason: string | null;
+    metadataRevision?: number;
+  }>>;
+  recoverSession?(name: string): Promise<{
+    runtimeId: string;
+    displayName?: string;
+    lifecycleState: string;
+    recoverable: boolean;
+    recoveryReason: string | null;
+    metadataRevision?: number;
+  }>;
 }
 
 const ShellSessionSchema = z.object({
@@ -170,7 +193,17 @@ export class ShellRegistry {
   async list(): Promise<ShellSession[]> {
     return this.withMutationLock(async () => {
       const file = await this.read();
-      const live = await this.options.adapter.listSessions();
+      const projections =
+        await this.options.adapter.listRuntimeProjections?.();
+      const live = projections
+        ? projections.flatMap((projection) =>
+            projection.displayName &&
+            ["starting", "live", "recovering"].includes(
+              projection.lifecycleState,
+            )
+              ? [projection.displayName]
+              : [])
+        : await this.options.adapter.listSessions();
       let changed = false;
       const now = new Date().toISOString();
       const activeSessions: PersistedShellSession[] = [];
@@ -184,20 +217,64 @@ export class ShellRegistry {
           ...this.runtimeFields(name),
         };
         activeSessions.push(session);
-        if (!existing || existing.status !== "active") {
+        if (
+          !existing ||
+          JSON.stringify(existing) !== JSON.stringify(session)
+        ) {
           file.sessions[name] = session;
           changed = true;
         }
       }
 
-      changed = await this.markMissingMetadataExited(file, new Set(live)) || changed;
+      const inactiveProjectedSessions: PersistedShellSession[] = [];
+      if (projections) {
+        const liveSet = new Set(live);
+        for (const projection of projections) {
+          if (!projection.displayName || liveSet.has(projection.displayName)) {
+            continue;
+          }
+          const existing = file.sessions[projection.displayName];
+          const session: PersistedShellSession = {
+            ...(existing ?? this.adoptSession(projection.displayName, now)),
+            name: projection.displayName,
+            status: "exited",
+            updatedAt: existing?.updatedAt ?? now,
+            ...this.runtimeFieldsFromProjection(projection),
+          };
+          inactiveProjectedSessions.push(session);
+          if (
+            !existing ||
+            JSON.stringify(existing) !== JSON.stringify(session)
+          ) {
+            file.sessions[projection.displayName] = session;
+            changed = true;
+          }
+        }
+      }
+
+      const knownNames = new Set(
+        projections
+          ? projections.flatMap((projection) =>
+              projection.displayName ? [projection.displayName] : [])
+          : live,
+      );
+      changed = await this.markMissingMetadataExited(file, knownNames) || changed;
       changed = this.normalizeCustomOrder(file, activeSessions) || changed;
 
       if (changed) {
         await this.write(file);
       }
 
-      return this.decorateSessions(this.withRecoverableReferences(file, live, this.orderActiveSessions(file, activeSessions)), file);
+      const visible = [
+        ...this.orderActiveSessions(file, activeSessions),
+        ...inactiveProjectedSessions.sort((left, right) =>
+          left.createdAt.localeCompare(right.createdAt) ||
+          left.name.localeCompare(right.name)),
+      ];
+      return this.decorateSessions(
+        this.withRecoverableReferences(file, [...knownNames], visible),
+        file,
+      );
     });
   }
 
@@ -209,6 +286,10 @@ export class ShellRegistry {
       const live = await this.options.adapter.listSessions();
       if (!live.includes(targetName)) {
         throw shellError("session_not_found", "Session not found", 404);
+      }
+      const projection = this.options.adapter.runtimeProjection?.(targetName);
+      if (projection && projection.lifecycleState !== "live") {
+        throw shellError("session_not_live", "Session is not ready", 409);
       }
       const now = new Date().toISOString();
       const existing = file.sessions[targetName];
@@ -467,7 +548,46 @@ export class ShellRegistry {
     });
   }
 
-  async delete(name: string, options: { force?: boolean } = {}): Promise<void> {
+  async recover(name: string): Promise<ShellSession> {
+    return this.withMutationLock(async () => {
+      const safeName = validateSessionName(name);
+      if (!this.options.adapter.recoverSession) {
+        throw shellError(
+          "session_recovery_unavailable",
+          "Request failed",
+          503,
+        );
+      }
+      const file = await this.read();
+      const targetName = this.resolveSessionName(file, safeName);
+      const projection = await this.options.adapter.recoverSession(targetName);
+      const now = new Date().toISOString();
+      const existing =
+        file.sessions[targetName] ?? this.adoptSession(targetName, now);
+      const next: PersistedShellSession = {
+        ...existing,
+        status: ["starting", "live", "recovering"].includes(
+          projection.lifecycleState,
+        )
+          ? "active"
+          : "exited",
+        updatedAt: now,
+        ...this.runtimeFieldsFromProjection(projection),
+      };
+      file.sessions[targetName] = next;
+      await this.write(file);
+      return await this.decorateSession(next, file);
+    });
+  }
+
+  async delete(
+    name: string,
+    options: { force?: boolean } = {},
+  ): Promise<
+    void |
+    { deleted: true } |
+    { deleted: false; lifecycleState: "deleting" }
+  > {
     return this.withMutationLock(async () => {
       const safeName = validateSessionName(name);
       const file = await this.read();
@@ -482,7 +602,25 @@ export class ShellRegistry {
           throw shellError("session_not_found", "Session not found", 404);
         }
       }
-      await this.options.adapter.deleteSession(targetName, options);
+      const deletion = await this.options.adapter.deleteSession(
+        targetName,
+        options,
+      );
+      if (deletion && !deletion.deleted) {
+        file.sessions[targetName] = {
+          ...(persistedSession ?? this.adoptSession(
+            targetName,
+            new Date().toISOString(),
+          )),
+          status: "exited",
+          lifecycleState: "deleting",
+          recoverable: false,
+          recoveryReason: null,
+          updatedAt: new Date().toISOString(),
+        };
+        await this.write(file);
+        return deletion;
+      }
       delete file.sessions[targetName];
       if (file.order) {
         file.order = file.order.filter((entry) => entry !== targetName);
@@ -495,6 +633,7 @@ export class ShellRegistry {
       await this.cleanupScrollback(storageIdentity);
       await this.cleanupAgentState(storageIdentity);
       await this.write(file);
+      return deletion;
     });
   }
 
@@ -555,6 +694,16 @@ export class ShellRegistry {
   private runtimeFields(name: string): Partial<PersistedShellSession> {
     const projection = this.options.adapter.runtimeProjection?.(name);
     if (!projection) return {};
+    return this.runtimeFieldsFromProjection(projection);
+  }
+
+  private runtimeFieldsFromProjection(projection: {
+    runtimeId: string;
+    lifecycleState: string;
+    recoverable: boolean;
+    recoveryReason: string | null;
+    metadataRevision?: number;
+  }): Partial<PersistedShellSession> {
     return {
       runtimeId: projection.runtimeId,
       lifecycleState: projection.lifecycleState as PersistedShellSession["lifecycleState"],
@@ -581,7 +730,10 @@ export class ShellRegistry {
     const lastSeenSeq = session.lastSeenSeq ?? session.lastSeq ?? latestSeq;
     const unread = latestSeq !== null && lastSeenSeq !== null && latestSeq > lastSeenSeq;
     const references = file ? this.referencesForTarget(file, session.name) : [];
-    const recoverable = session.status === "exited" && references.length > 0;
+    const authoritativeLifecycle = session.lifecycleState !== undefined;
+    const recoverable = authoritativeLifecycle
+      ? session.recoverable ?? false
+      : session.status === "exited" && references.length > 0;
     const gitContext = await this.readGitContext({ sessionName: session.name, cwd: focusedPaneCwd ?? session.cwd });
     const visualStatus = deriveAgentVisualStatus(agentSnapshot, unread)
       ?? this.deriveVisualStatus(session, unread, activity);
@@ -608,7 +760,11 @@ export class ShellRegistry {
       aliases: file ? this.aliasesForTarget(file, session.name) : [],
       references,
       recoverable,
-      ...(recoverable ? { recoveryReason: "missing_runtime_session" as const } : {}),
+      ...(authoritativeLifecycle
+        ? { recoveryReason: session.recoveryReason ?? null }
+        : recoverable
+          ? { recoveryReason: "missing_runtime_session" as const }
+          : {}),
     };
   }
 

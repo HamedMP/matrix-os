@@ -8,7 +8,12 @@ import {
 import { reconcileLifecycle, type RuntimeEvidence } from './reconciliation.js';
 import type { ReceiptReadResult } from './receipts.js';
 import type { RuntimeState } from './runtime-state.js';
+import type { RuntimeArtifactManager } from './recovery-state.js';
 const MAX_LIST_RUNTIMES = 2_048;
+const INACTIVE_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
+const MAX_INACTIVE_RECOVERY_SETS = 128;
+const RECOVERY_AGGREGATE_TARGET_BYTES = 1024 * 1024 * 1024;
+const RECOVERY_RUNTIME_TARGET_BYTES = 64 * 1024 * 1024;
 export type UnitInspection = {
   runtimeId: string; cgroupPopulated: boolean; keeperReady: boolean;
   keeperAlive: boolean; zellijResponsive: boolean;
@@ -24,6 +29,7 @@ type OperationHandlerOptions = {
   state: RuntimeState; executor: SystemdExecutor; now?: () => Date;
   bootId?: () => Promise<string>; createId?: () => string;
   resolveCwd: (cwd: HomeRelativeCwd) => Promise<HomeRelativeCwd>;
+  artifacts?: RuntimeArtifactManager;
 };
 type ProtocolErrorCode = 'invalid_request' | 'not_found' | 'conflict'
   | 'unavailable' | 'failed';
@@ -77,7 +83,8 @@ async function defaultBootId(): Promise<string> {
   return value;
 }
 function evidenceFor(receipt: ReceiptReadResult, inspection: UnitInspection | null,
-  descriptor: RuntimeEvidence['descriptor'], bootIdMatches: boolean): RuntimeEvidence {
+  descriptor: RuntimeEvidence['descriptor'], bootIdMatches: boolean,
+  resurrection?: UnitInspection['resurrection']): RuntimeEvidence {
   return {
     deleteIntent: receipt?.kind === 'supported' &&
       receipt.receipt.lastKnown.state === 'deleting',
@@ -89,7 +96,7 @@ function evidenceFor(receipt: ReceiptReadResult, inspection: UnitInspection | nu
     descriptor,
     receipt: receipt === null ? 'missing'
       : receipt.kind === 'unsupported' ? 'unsupported' : 'valid',
-    resurrection: inspection?.resurrection ?? 'missing',
+    resurrection: resurrection ?? inspection?.resurrection ?? 'missing',
     priorState: receipt?.kind === 'supported' ? receipt.receipt.lastKnown.state : null,
     bootIdMatches,
   };
@@ -100,9 +107,10 @@ export function createOperationHandler(options: OperationHandlerOptions) {
   const createId = options.createId ?? createRuntimeId;
   async function inspectRuntime(runtimeId: string) {
     const id = RuntimeIdSchema.parse(runtimeId);
-    const [receipt, inspection, descriptor, currentBootId] = await Promise.all([
+    const [receipt, inspection, descriptor, currentBootId, artifact] = await Promise.all([
       options.state.receipts.read(id), options.executor.inspect(id),
       options.state.descriptors.pendingKind(id), bootId(),
+      options.artifacts?.inspect(id),
     ]);
     return {
       runtimeId: id,
@@ -114,7 +122,8 @@ export function createOperationHandler(options: OperationHandlerOptions) {
         : {}),
       ...reconcileLifecycle(evidenceFor(receipt, inspection, descriptor,
         receipt?.kind !== 'supported' ||
-          receipt.receipt.lastKnown.bootId === currentBootId)),
+          receipt.receipt.lastKnown.bootId === currentBootId,
+        artifact?.state)),
     };
   }
   async function listRuntimes() {
@@ -294,19 +303,33 @@ export function createOperationHandler(options: OperationHandlerOptions) {
           return await succeedOperation(record, result);
         }
         let cwd: HomeRelativeCwd;
+        let cwdFallback = false;
         try {
           cwd = await options.resolveCwd(current.receipt.cwd);
         } catch (error: unknown) {
           try {
             cwd = await options.resolveCwd({ kind: 'home-relative', path: '' });
+            cwdFallback = true;
           } catch (fallbackError: unknown) {
             return await failOperation(record,
               new AggregateError([error, fallbackError], 'cwd_unavailable'));
           }
         }
+        const resurrection = await options.artifacts?.inspect(
+          current.receipt.runtimeId,
+        );
+        const recoveryMode = resurrection?.state === 'valid'
+          ? 'serialized'
+          : 'fresh-shell';
+        if (options.artifacts && recoveryMode === 'fresh-shell') {
+          await options.artifacts.prepareFreshRecovery(
+            current.receipt.runtimeId,
+          );
+        }
         const descriptor: Descriptor = {
           schemaVersion: 1, runtimeId: current.receipt.runtimeId,
           operationId: request.operationId, intent: 'recover', cwd,
+          recoveryMode,
           launch: { kind: 'shell' }, createdAt: now().toISOString(),
         };
         try {
@@ -324,7 +347,14 @@ export function createOperationHandler(options: OperationHandlerOptions) {
             request.operationId, error);
         }
         return await succeedOperation(record, {
-          runtimeId: current.receipt.runtimeId, lifecycleState: 'recovering',
+          runtimeId: current.receipt.runtimeId,
+          lifecycleState: 'recovering',
+          recoveryMode,
+          recoveryReason: cwdFallback
+            ? 'cwd_unavailable'
+            : recoveryMode === 'fresh-shell'
+              ? 'history_unavailable'
+              : null,
         });
       },
     );
@@ -374,6 +404,7 @@ export function createOperationHandler(options: OperationHandlerOptions) {
   }
   async function finishDeletion(runtimeId: string,
     record: OperationRecord | null): Promise<{ runtimeId: string; deleted: true }> {
+    await options.artifacts?.remove(runtimeId);
     await options.state.names.deleteRuntime(runtimeId);
     await options.state.descriptors.removeRuntime(runtimeId);
     const result = { runtimeId, deleted: true as const };
@@ -442,6 +473,32 @@ export function createOperationHandler(options: OperationHandlerOptions) {
         });
       }
       const result = await listRuntimes();
+      if (options.artifacts) {
+        for (const runtime of result) {
+          if (
+            ['interrupted', 'exited', 'failed'].includes(
+              runtime.lifecycleState,
+            )
+          ) {
+            await options.artifacts.clearAgentState(runtime.runtimeId);
+          }
+        }
+        const protectedRuntimeIds = new Set(
+          result.flatMap((runtime) =>
+            ['starting', 'live', 'recovering', 'deleting']
+              .includes(runtime.lifecycleState)
+              ? [runtime.runtimeId]
+              : []),
+        );
+        await options.artifacts.prune({
+          protectedRuntimeIds,
+          nowMs: now().getTime(),
+          retentionMs: INACTIVE_RETENTION_MS,
+          maxInactiveSets: MAX_INACTIVE_RECOVERY_SETS,
+          aggregateTargetBytes: RECOVERY_AGGREGATE_TARGET_BYTES,
+          perRuntimeTargetBytes: RECOVERY_RUNTIME_TARGET_BYTES,
+        });
+      }
       // The supervisor invokes Reconcile at startup and on its recurring sweep.
       return await succeedOperation(record, result);
     });

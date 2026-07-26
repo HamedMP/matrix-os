@@ -147,6 +147,7 @@ describe('terminal runtime operation handler', () => {
       };
       const { handle } = await setup(undefined, artifacts);
       await handle(createRequest());
+      await state!.descriptors.removeRuntime(RUNTIME_ID);
       await state!.receipts.replace({
         schemaVersion: 1,
         runtimeId: RUNTIME_ID,
@@ -155,7 +156,7 @@ describe('terminal runtime operation handler', () => {
         createdAt: NOW.toISOString(),
         metadataRevision: 1,
         lastKnown: {
-          state: 'interrupted',
+          state: 'live',
           at: NOW.toISOString(),
           bootId: 'old-boot',
         },

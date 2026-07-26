@@ -29,6 +29,7 @@ import {
   classifyRuntimeProcesses,
   createSystemdExecutor,
 } from './systemd.js';
+import { createRuntimeArtifactManager } from './recovery-state.js';
 
 const execFile = promisify(execFileCallback);
 const HOME = '/home/matrix/home';
@@ -235,7 +236,12 @@ async function createHostState(owner: { uid: number; gid: number }) {
     authorizeDescriptorClaim: async ({ runtimeId, pid }) =>
       await belongsToRuntimeCgroup(pid, runtimeId),
   });
-  return { state, executor, owner };
+  const artifacts = createRuntimeArtifactManager({
+    cacheRoot: `${DURABLE_ROOT}/zellij-cache`,
+    scrollbackDirectory: `${HOME}/system/scrollback`,
+    agentStateDirectory: `${HOME}/system/agent-sessions`,
+  });
+  return { state, executor, owner, artifacts };
 }
 
 async function servePeer(): Promise<void> {
@@ -249,6 +255,7 @@ async function servePeer(): Promise<void> {
       state: host.state,
       executor: host.executor,
       resolveCwd,
+      artifacts: host.artifacts,
     });
     await writeResponse(await handleSupervisorFrame({
       peer,
@@ -302,6 +309,7 @@ async function maintenance(): Promise<void> {
         state: host.state,
         executor: host.executor,
         resolveCwd,
+        artifacts: host.artifacts,
       });
       await handler({
         version: 1,

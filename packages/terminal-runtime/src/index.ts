@@ -3,3 +3,5 @@ export * from './operation-handler.js'; export * from './receipts.js'; export * 
 export * from './keeper.js'; export * from './supervisor.js'; export * from './systemd.js';
 export * from './keeper-client.js'; export * from './pane.js';
 export * from './agent-configurations.js';
+export * from './recovery-state.js';
+export * from './telemetry.js';

@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { createRateLimiter, type RateLimiter } from "../security/rate-limiter.js";
-import { toShellError } from "./errors.js";
+import { shellError, toShellError } from "./errors.js";
 import { SESSION_NAME_PATTERN } from "./names.js";
 import {
   saveTerminalPasteAsset,
@@ -26,7 +26,12 @@ interface SessionRegistryRoutes {
     cmd?: string;
     agent?: AgentKind;
   }): Promise<unknown>;
-  delete(name: string, options?: { force?: boolean }): Promise<void>;
+  delete(name: string, options?: { force?: boolean }): Promise<
+    void |
+    { deleted: true } |
+    { deleted: false; lifecycleState: "deleting" }
+  >;
+  recover?(name: string): Promise<unknown>;
   rename?(name: string, nextName: string): Promise<unknown>;
   reorder?(order: string[]): Promise<unknown[]>;
   updateUiState?(name: string, input: {
@@ -148,6 +153,7 @@ const SessionRenameBodySchema = z.object({
 const SessionOrderBodySchema = z.object({
   order: z.array(SafeSessionNameSchema).max(100),
 }).strict();
+const EmptyRecoveryBodySchema = z.object({}).strict();
 
 function safeCwdSchema() {
   return z.string().min(1).max(1024)
@@ -161,6 +167,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     deps.sessionCreateRateLimiter ?? createRateLimiter(SHELL_SESSION_CREATE_RATE_LIMIT);
   const sessionBodyLimit = bodyLimit({ maxSize: 4096 });
   const sessionRenameBodyLimit = bodyLimit({ maxSize: 1024 });
+  const sessionRecoveryBodyLimit = bodyLimit({ maxSize: 512 });
   const sessionOrderBodyLimit = bodyLimit({ maxSize: 8192 });
   const uiStateBodyLimit = bodyLimit({ maxSize: 1024 });
   const preferencesBodyLimit = bodyLimit({ maxSize: 4096 });
@@ -224,7 +231,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   app.post("/sessions", sessionBodyLimit, async (c) => {
     try {
       const body = CreateSessionBodySchema.parse(await c.req.json());
-      if (!sessionCreateRateLimiter.check("shell-session-create")) {
+      if (!sessionCreateRateLimiter.check("shell-session-start")) {
         return c.json(
           { error: { code: "rate_limited", message: "Request failed" } },
           429,
@@ -254,14 +261,57 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
 
   app.delete("/sessions/:name", deleteBodyLimit, async (c) => {
     try {
-      await deps.registry.delete(SafeSessionNameSchema.parse(c.req.param("name")), {
+      const deletion = await deps.registry.delete(SafeSessionNameSchema.parse(c.req.param("name")), {
         force: new URL(c.req.url).searchParams.get("force") === "1",
       });
-      return c.json({ ok: true });
+      return c.json(
+        { ok: true },
+        deletion && !deletion.deleted ? 202 : 200,
+      );
     } catch (err) {
       return safeError(c, err);
     }
   });
+
+  app.post(
+    "/sessions/:name/recover",
+    sessionRecoveryBodyLimit,
+    async (c) => {
+      try {
+        if (!deps.registry.recover) {
+          return unavailable(c, "session_recovery_unavailable");
+        }
+        const name = SafeSessionNameSchema.parse(c.req.param("name"));
+        await parseEmptyRecoveryBody(c);
+        if (!sessionCreateRateLimiter.check("shell-session-start")) {
+          return c.json(
+            { error: { code: "rate_limited", message: "Request failed" } },
+            429,
+            {
+              "Retry-After": String(
+                Math.ceil(
+                  SHELL_SESSION_CREATE_RATE_LIMIT.lockoutMs / 1000,
+                ),
+              ),
+            },
+          );
+        }
+        const session = await deps.registry.recover(name);
+        const lifecycleState =
+          typeof session === "object" &&
+          session !== null &&
+          "lifecycleState" in session
+            ? (session as { lifecycleState?: unknown }).lifecycleState
+            : undefined;
+        return c.json(
+          { session },
+          lifecycleState === "live" ? 200 : 202,
+        );
+      } catch (err: unknown) {
+        return safeError(c, err);
+      }
+    },
+  );
 
   const renameSessionHandler = async (c: Context) => {
     try {
@@ -548,6 +598,22 @@ function unavailable(c: Context, code: string) {
 
 function bodyTooLarge(c: Context) {
   return c.json({ error: { code: "payload_too_large", message: "Request too large" } }, 413);
+}
+
+async function parseEmptyRecoveryBody(c: Context): Promise<void> {
+  const text = await c.req.text();
+  if (text.trim() === "") return;
+  let value: unknown;
+  try {
+    value = JSON.parse(text) as unknown;
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw shellError("invalid_request", "Invalid request", 400);
+  }
+  const parsed = EmptyRecoveryBodySchema.safeParse(value);
+  if (!parsed.success) {
+    throw shellError("invalid_request", "Invalid request", 400);
+  }
 }
 
 async function assertSessionExists(registry: SessionRegistryRoutes, name: string): Promise<void> {

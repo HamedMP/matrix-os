@@ -109,7 +109,9 @@ export function buildKeeperLaunch(
   }
   return {
     file: ZELLIJ,
-    args: descriptor.intent === 'recover'
+    args:
+      descriptor.intent === 'recover' &&
+      descriptor.recoveryMode !== 'fresh-shell'
       ? ['attach', sessionName]
       : [
           '--session',
@@ -267,7 +269,13 @@ export async function runKeeper(runtimeIdInput: string | undefined): Promise<num
   let stopping = false;
   let exitCode = 0;
   let renderWindow = '';
-  let confirmationGated = descriptor.intent === 'create';
+  const requiresConfirmation =
+    descriptor.intent === 'recover' &&
+    descriptor.recoveryMode !== 'fresh-shell';
+  const startsFresh =
+    descriptor.intent === 'create' ||
+    descriptor.recoveryMode === 'fresh-shell';
+  let confirmationGated = !requiresConfirmation;
   const pty = spawnPty(launch.file, launch.args, {
     name: 'xterm-256color',
     cols: 120,
@@ -293,7 +301,7 @@ export async function runKeeper(runtimeIdInput: string | undefined): Promise<num
   try {
     await waitForKeeperReadiness({
       runtimeId,
-      requiresConfirmation: descriptor.intent === 'recover',
+      requiresConfirmation,
       readEvidence: async () => ({
         clientAlive,
         confirmationGated,
@@ -301,7 +309,7 @@ export async function runKeeper(runtimeIdInput: string | undefined): Promise<num
           sessionName,
           launch.env,
         ),
-        roles: await cgroupRoles(cgroup, descriptor.intent === 'create'),
+        roles: await cgroupRoles(cgroup, startsFresh),
       }),
       delay: async (milliseconds) =>
         await new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds)),

@@ -20,6 +20,7 @@ import { dirname, isAbsolute, resolve, sep } from 'node:path';
 const DEFAULT_MAX_FILE_BYTES = 128 * 1024;
 const DEFAULT_MAX_ENTRIES = 512;
 const SAFE_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$/;
+const SAFE_LEAF_NAME = /^[^/\0]{1,255}$/;
 function stateError(code: string, cause?: unknown): Error {
   return new Error(code, cause === undefined ? undefined : { cause });
 }
@@ -28,6 +29,14 @@ function isErrorCode(error: unknown, code: string): boolean {
 }
 function validateFileName(name: string): string {
   if (!SAFE_FILE_NAME.test(name)) throw stateError('unsafe_file_name');
+  return name;
+}
+function validateLeafName(name: string): string {
+  if (
+    !SAFE_LEAF_NAME.test(name) ||
+    name === '.' ||
+    name === '..'
+  ) throw stateError('unsafe_file_name');
   return name;
 }
 async function ensureDirectoryPath(path: string): Promise<void> {
@@ -209,6 +218,32 @@ export class SecureDirectory {
       throw error;
     }
   }
+  async statFile(
+    name: string,
+    maxBytes = DEFAULT_MAX_FILE_BYTES,
+  ): Promise<{ size: number; mtimeMs: number }> {
+    const path = this.procPath(name);
+    const before = await lstat(path).catch((error: unknown) => {
+      if (isErrorCode(error, 'ENOENT')) throw stateError('state_not_found', error);
+      throw error;
+    });
+    assertSafeFileStat(before, maxBytes);
+    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+      .catch((error: unknown) => {
+        if (isErrorCode(error, 'ELOOP')) throw stateError('unsafe_file', error);
+        throw error;
+      });
+    try {
+      const after = await file.stat();
+      assertSafeFileStat(after, maxBytes);
+      if (before.dev !== after.dev || before.ino !== after.ino) {
+        throw stateError('unsafe_file');
+      }
+      return { size: after.size, mtimeMs: after.mtimeMs };
+    } finally {
+      await file.close();
+    }
+  }
   async createJsonExclusive(
     name: string,
     value: unknown,
@@ -326,6 +361,35 @@ export class SecureDirectory {
     try {
       const after = await file.stat();
       assertSafeFileStat(after, DEFAULT_MAX_FILE_BYTES);
+      if (before.dev !== after.dev || before.ino !== after.ino) {
+        throw stateError('unsafe_file');
+      }
+    } finally {
+      await file.close();
+    }
+    await unlink(path);
+    await this.handle.sync();
+  }
+  async removeLeaf(name: string): Promise<void> {
+    const path = `${this.procPath()}/${validateLeafName(name)}`;
+    const before = await lstat(path).catch((error: unknown) => {
+      if (isErrorCode(error, 'ENOENT')) throw stateError('state_not_found', error);
+      throw error;
+    });
+    if (before.isSymbolicLink()) {
+      await unlink(path);
+      await this.handle.sync();
+      return;
+    }
+    assertSafeFileStat(before, Number.MAX_SAFE_INTEGER);
+    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+      .catch((error: unknown) => {
+        if (isErrorCode(error, 'ELOOP')) throw stateError('unsafe_file', error);
+        throw error;
+      });
+    try {
+      const after = await file.stat();
+      assertSafeFileStat(after, Number.MAX_SAFE_INTEGER);
       if (before.dev !== after.dev || before.ino !== after.ino) {
         throw stateError('unsafe_file');
       }
