@@ -3,9 +3,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_INSPECTOR_WIDTH_PCT,
-  INSPECTOR_LAYOUT_PREFIX,
   MAX_INSPECTOR_WIDTH_PCT,
   MIN_INSPECTOR_WIDTH_PCT,
+  taskKeyFor,
   useInspectorLayout,
 } from "../../desktop/src/renderer/src/features/panels/inspector-layout-store";
 
@@ -65,7 +65,7 @@ describe("inspector-layout-store", () => {
 
     expect(useInspectorLayout.getState().layoutFor("matrix-os").widthPct).toBe(42);
     await vi.waitFor(() => expect(saved.length).toBe(1));
-    expect(saved[0]!.taskKey).toBe(`${INSPECTOR_LAYOUT_PREFIX}scope-a:matrix-os`);
+    expect(saved[0]!.taskKey).toBe(taskKeyFor("scope-a", "matrix-os"));
     expect(saved[0]!.layout.sizes).toEqual({ conversation: 58, inspector: 42 });
     expect(saved[0]!.layout.visible).toEqual({ conversation: true, inspector: true });
   });
@@ -97,10 +97,10 @@ describe("inspector-layout-store", () => {
 
   it("hydrates persisted entries and ignores foreign or invalid layouts", async () => {
     mockOperator({
-      [`${INSPECTOR_LAYOUT_PREFIX}scope-a:matrix-os`]: persistedLayout(45, false),
-      [`${INSPECTOR_LAYOUT_PREFIX}scope-a:website`]: persistedLayout(25, true),
+      [taskKeyFor("scope-a", "matrix-os")]: persistedLayout(45, false),
+      [taskKeyFor("scope-a", "website")]: persistedLayout(25, true),
       "some-task": persistedLayout(50, false),
-      [`${INSPECTOR_LAYOUT_PREFIX}scope-a:broken`]: { order: [], visible: {}, sizes: { inspector: Number.NaN }, touchedAt: 1 },
+      [taskKeyFor("scope-a", "broken")]: { order: [], visible: {}, sizes: { inspector: Number.NaN }, touchedAt: 1 },
     });
 
     await useInspectorLayout.getState().hydrate("scope-a");
@@ -118,7 +118,7 @@ describe("inspector-layout-store", () => {
   });
 
   it("re-reads when the runtime scope changes and drops the previous runtime's entries", async () => {
-    const first = mockOperator({ [`${INSPECTOR_LAYOUT_PREFIX}scope-a:matrix-os`]: persistedLayout(45, false) });
+    const first = mockOperator({ [taskKeyFor("scope-a", "matrix-os")]: persistedLayout(45, false) });
     await useInspectorLayout.getState().hydrate("scope-a");
     expect(useInspectorLayout.getState().layoutFor("matrix-os").widthPct).toBe(45);
 
@@ -139,9 +139,34 @@ describe("inspector-layout-store", () => {
     });
   });
 
+  it("separates runtimes whose scopes differ only past a fixed prefix", async () => {
+    // Scopes are `handle|platformHost|runtimeSlot`. A long handle or host pushes
+    // the slot -- the only part that distinguishes two computers -- past any
+    // fixed truncation point, so truncating would give both the same key.
+    const longPrefix = `${"h".repeat(60)}|https://platform.test`;
+    const primary = `${longPrefix}|primary`;
+    const secondary = `${longPrefix}|secondary`;
+
+    expect(taskKeyFor(primary, "matrix-os")).not.toBe(taskKeyFor(secondary, "matrix-os"));
+
+    // And the separation holds end to end: secondary must not inherit primary's.
+    mockOperator({ [taskKeyFor(primary, "matrix-os")]: persistedLayout(21, true) });
+    await useInspectorLayout.getState().hydrate(secondary);
+
+    expect(useInspectorLayout.getState().layoutFor("matrix-os")).toEqual({
+      widthPct: DEFAULT_INSPECTOR_WIDTH_PCT,
+      collapsed: false,
+    });
+  });
+
+  it("keeps every persisted key within the 256-character taskKey budget", () => {
+    const key = taskKeyFor("h".repeat(200), "p".repeat(400));
+    expect(key.length).toBeLessThanOrEqual(256);
+  });
+
   it("never adopts another runtime's persisted layout for the same project id", async () => {
     // scope-a collapsed its inspector; scope-b holds a project with the same id.
-    mockOperator({ [`${INSPECTOR_LAYOUT_PREFIX}scope-a:matrix-os`]: persistedLayout(22, true) });
+    mockOperator({ [taskKeyFor("scope-a", "matrix-os")]: persistedLayout(22, true) });
 
     await useInspectorLayout.getState().hydrate("scope-b");
 
@@ -157,6 +182,6 @@ describe("inspector-layout-store", () => {
     useInspectorLayout.getState().setCollapsed("matrix-os", true);
 
     await vi.waitFor(() => expect(saved.length).toBe(1));
-    expect(saved[0]!.taskKey).toBe(`${INSPECTOR_LAYOUT_PREFIX}scope-b:matrix-os`);
+    expect(saved[0]!.taskKey).toBe(taskKeyFor("scope-b", "matrix-os"));
   });
 });

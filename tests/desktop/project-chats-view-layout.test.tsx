@@ -8,7 +8,7 @@ import ProjectChatsView from "../../desktop/src/renderer/src/features/project/Pr
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import {
-  INSPECTOR_LAYOUT_PREFIX,
+  taskKeyFor,
   useInspectorLayout,
 } from "../../desktop/src/renderer/src/features/panels/inspector-layout-store";
 import { codingAgentRuntimeScope } from "../../desktop/src/shared/coding-agent-project-workspace";
@@ -20,7 +20,7 @@ const RUNTIME_SCOPE = codingAgentRuntimeScope({
   platformHost: "https://platform.test",
   runtimeSlot: "primary",
 });
-const INSPECTOR_TASK_KEY = `${INSPECTOR_LAYOUT_PREFIX}${RUNTIME_SCOPE}:matrix-os`;
+const INSPECTOR_TASK_KEY = taskKeyFor(RUNTIME_SCOPE, "matrix-os");
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";

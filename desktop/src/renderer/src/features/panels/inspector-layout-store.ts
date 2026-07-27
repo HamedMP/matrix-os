@@ -15,10 +15,26 @@ export const MIN_INSPECTOR_WIDTH_PCT = 20;
 export const MAX_INSPECTOR_WIDTH_PCT = 60;
 
 // taskKey budget is 256. Layouts are keyed per runtime as
-// `project-inspector:<runtimeScope>:<projectId>` so two runtimes that contain
-// the same project id cannot read or overwrite each other's inspector state.
-const MAX_RUNTIME_SCOPE_CHARS = 64;
-const MAX_PROJECT_ID_CHARS = 256 - INSPECTOR_LAYOUT_PREFIX_LENGTH - MAX_RUNTIME_SCOPE_CHARS - 1;
+// `project-inspector:<scopeToken>:<projectId>` so two runtimes that contain the
+// same project id cannot read or overwrite each other's inspector state.
+//
+// The scope is hashed rather than truncated: it is `handle|platformHost|slot`,
+// so a long handle or host would push the slot -- the part that actually
+// distinguishes two computers -- past any fixed prefix, and both would collide
+// on one key.
+const RUNTIME_SCOPE_TOKEN_CHARS = 8;
+const MAX_PROJECT_ID_CHARS = 256 - INSPECTOR_LAYOUT_PREFIX_LENGTH - RUNTIME_SCOPE_TOKEN_CHARS - 1;
+
+// FNV-1a, 32-bit. Deterministic and synchronous; only needs to separate the
+// handful of runtimes one user can hold, not to resist collisions adversarially.
+function scopeToken(runtimeScope: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < runtimeScope.length; index += 1) {
+    hash ^= runtimeScope.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(RUNTIME_SCOPE_TOKEN_CHARS, "0");
+}
 
 const PanelLayoutSchema = z
   .object({
@@ -57,16 +73,15 @@ function clampWidthPct(widthPct: number): number {
   return Math.min(MAX_INSPECTOR_WIDTH_PCT, Math.max(MIN_INSPECTOR_WIDTH_PCT, Math.round(widthPct)));
 }
 
-function taskKeyFor(runtimeScope: string, projectId: string): string {
-  const scope = runtimeScope.slice(0, MAX_RUNTIME_SCOPE_CHARS);
-  return `${INSPECTOR_LAYOUT_PREFIX}${scope}:${projectId.slice(0, MAX_PROJECT_ID_CHARS)}`;
+export function taskKeyFor(runtimeScope: string, projectId: string): string {
+  return `${INSPECTOR_LAYOUT_PREFIX}${scopeToken(runtimeScope)}:${projectId.slice(0, MAX_PROJECT_ID_CHARS)}`;
 }
 
 // Only keys belonging to the runtime being hydrated resolve to a project id.
 // Entries written by any other runtime are skipped, so a previous owner's
 // collapsed state and width can never be adopted by the selected runtime.
 function projectIdFromTaskKey(taskKey: string, runtimeScope: string): string | null {
-  const scopedPrefix = `${INSPECTOR_LAYOUT_PREFIX}${runtimeScope.slice(0, MAX_RUNTIME_SCOPE_CHARS)}:`;
+  const scopedPrefix = `${INSPECTOR_LAYOUT_PREFIX}${scopeToken(runtimeScope)}:`;
   if (!taskKey.startsWith(scopedPrefix)) return null;
   const projectId = taskKey.slice(scopedPrefix.length);
   return projectId.length > 0 ? projectId : null;
