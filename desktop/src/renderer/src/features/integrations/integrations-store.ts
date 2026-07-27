@@ -109,9 +109,14 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
 
   syncNow: async (apiOverride) => {
     const api = resolveApi(apiOverride);
+    // Shares the refresh generation: any newer refresh or sync supersedes this
+    // one. The connect poll calls syncNow, so without this an old account's
+    // poll can settle last and overwrite the current account's connections.
+    const generation = ++refreshGeneration;
     if (!api) return false;
     try {
       const raw = await api.post<unknown>(SYNC_PATH, {});
+      if (refreshGeneration !== generation) return false;
       set({ connections: parseConnectedIntegrations(raw) });
       return true;
     } catch (err: unknown) {

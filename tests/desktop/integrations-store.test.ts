@@ -201,6 +201,37 @@ describe("useIntegrations store", () => {
     expect(useIntegrations.getState().connections.map((conn) => conn.id)).not.toContain("conn_previous_owner");
   });
 
+  it("syncNow() drops a superseded account's response when it settles last", async () => {
+    // The connect poll calls syncNow. If the account changes while one is in
+    // flight, the old account's connection labels and emails must not land.
+    let releasePrevious!: () => void;
+    const previousApi = makeApi({
+      post: async () => {
+        await new Promise<void>((resolve) => {
+          releasePrevious = resolve;
+        });
+        return [{
+          id: "conn_previous_owner",
+          service: "gmail",
+          account_label: "previous.owner@example.com",
+          status: "active",
+          connected_at: "2026-06-01T00:00:00.000Z",
+          last_used_at: null,
+        }];
+      },
+    });
+    const nextApi = makeApi();
+
+    const previousSync = useIntegrations.getState().syncNow(previousApi);
+    await useIntegrations.getState().refresh(nextApi);
+    expect(useIntegrations.getState().connections).toHaveLength(1);
+
+    releasePrevious();
+    await previousSync;
+
+    expect(useIntegrations.getState().connections.map((conn) => conn.id)).not.toContain("conn_previous_owner");
+  });
+
   it("refresh() falls back to the connection store's ApiClient when none is passed", async () => {
     const api = makeApi();
     useConnection.setState({ api });

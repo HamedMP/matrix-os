@@ -1057,7 +1057,7 @@ function runtimeCapabilityEnabled(summary: RuntimeSummary, id: z.infer<typeof Ru
   return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
 }
 
-function providerReady(provider: AgentProviderSummary): boolean {
+export function providerReady(provider: AgentProviderSummary): boolean {
   return provider.availability === "available" &&
     provider.installStatus === "installed" &&
     provider.authStatus === "authenticated";

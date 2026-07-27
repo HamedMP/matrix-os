@@ -2,6 +2,7 @@ import { Play } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   defaultAgentThreadComposerDraft,
+  providerReady,
   type AgentThreadComposerDraft,
   type RuntimeSummary,
 } from "@matrix-os/contracts";
@@ -81,8 +82,11 @@ export function AgentComposer({ summary, seed, focusRequestId, onCreated }: { su
   const preferredProviderId = useProviderPreferences((s) => s.defaultProviderId);
   const initialDraft = useMemo(() => {
     const base = defaultAgentThreadComposerDraft(summary);
+    // Honor the saved preference only when that provider can actually start a
+    // run. A provider that still needs setup or auth would otherwise replace
+    // the ready default and the run would be rejected on submit.
     const preferred = preferredProviderId
-      ? summary.providers.find((provider) => provider.id === preferredProviderId)
+      ? summary.providers.find((provider) => provider.id === preferredProviderId && providerReady(provider))
       : undefined;
     if (!preferred) return base;
     return { ...base, providerId: preferred.id, mode: preferred.defaultMode ?? base.mode };
