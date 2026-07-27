@@ -8,7 +8,7 @@ import type { CleanupCandidateRegistry } from "./cleanup.js";
 
 const execFileAsync = promisify(execFile);
 const PROCESS_TIMEOUT_MS = 2_000;
-const SERVICES = ["matrix-gateway", "matrix-shell", "matrix-code", "matrix-sync-agent"] as const;
+const SERVICES = ["matrix-gateway", "matrix-shell", "matrix-code", "matrix-update-runtime"] as const;
 
 export async function collectSystemActivity(options: {
   homePath: string;

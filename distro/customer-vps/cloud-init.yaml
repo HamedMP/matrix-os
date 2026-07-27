@@ -78,7 +78,8 @@ write_files:
     content: |
       [Unit]
       Description=Matrix OS customer gateway
-      After=matrix-restore.service docker.service
+      After=matrix-update-runtime.service matrix-restore.service docker.service
+      Wants=matrix-update-runtime.service
       Requires=matrix-restore.service docker.service
       ConditionPathExists=/opt/matrix/restore-complete
       ConditionPathExists=/opt/matrix/bin/matrix-gateway
@@ -167,12 +168,12 @@ write_files:
 
       [Install]
       WantedBy=multi-user.target
-  - path: /etc/systemd/system/matrix-sync-agent.service
+  - path: /etc/systemd/system/matrix-update-runtime.service
     owner: root:root
     permissions: "0644"
     content: |
       [Unit]
-      Description=Matrix OS root update service
+      Description=Matrix OS root update runtime
       After=network-online.target
       Wants=network-online.target
       ConditionPathExists=/opt/matrix/bin/matrix-update-service
@@ -189,6 +190,22 @@ write_files:
       UMask=0077
       Restart=on-failure
       RestartSec=10
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/matrix-sync-agent.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Matrix OS legacy update-service bridge
+      After=matrix-update-runtime.service
+      Wants=matrix-update-runtime.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/bin/true
+      RemainAfterExit=yes
 
       [Install]
       WantedBy=multi-user.target
@@ -636,8 +653,10 @@ runcmd:
     systemctl enable --now matrix-terminal-runtime.service
     loginctl enable-linger matrix
     systemctl start "user@$(id -u matrix).service"
-    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
-    systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service
+    systemctl enable matrix-update-runtime.service
+    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
+    systemctl start matrix-update-runtime.service
+    systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-symphony.service
     systemctl start --no-block matrix-code-server.service || echo "matrix-host: code-server runtime install will retry via systemd" >&2
     systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2
     systemctl start --no-block matrix-hermes.service || echo "matrix-host: optional Hermes install will retry via systemd" >&2

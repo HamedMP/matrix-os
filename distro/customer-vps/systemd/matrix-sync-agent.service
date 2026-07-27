@@ -1,21 +1,12 @@
 [Unit]
-Description=Matrix OS root update service
-After=network-online.target
-Wants=network-online.target
-ConditionPathExists=/opt/matrix/bin/matrix-update-service
+Description=Matrix OS legacy update-service bridge
+After=matrix-update-runtime.service
+Wants=matrix-update-runtime.service
 
 [Service]
-Type=simple
-User=root
-Group=root
-EnvironmentFile=/opt/matrix/env/host.env
-WorkingDirectory=/opt/matrix
-ExecStart=/opt/matrix/bin/matrix-update-service
-KillMode=control-group
-TimeoutStopSec=30
-UMask=0077
-Restart=on-failure
-RestartSec=10
+Type=oneshot
+ExecStart=/usr/bin/true
+RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target

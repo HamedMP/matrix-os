@@ -9,12 +9,22 @@ const read = (path: string) => readFileSync(join(root, path), "utf8");
 
 describe("root-owned typed update service", () => {
   it("installs a root service with an owner-only peer-authenticated socket", () => {
-    const unit = read("distro/customer-vps/systemd/matrix-sync-agent.service");
+    const unit = read("distro/customer-vps/systemd/matrix-update-runtime.service");
+    const legacyBridge = read("distro/customer-vps/systemd/matrix-sync-agent.service");
+    const gateway = read("distro/customer-vps/systemd/matrix-gateway.service");
     const service = read("distro/customer-vps/host-bin/matrix-update-service");
 
     expect(unit).toContain("User=root");
     expect(unit).toContain("Group=root");
     expect(unit).toContain("ExecStart=/opt/matrix/bin/matrix-update-service");
+    expect(legacyBridge).toContain("Wants=matrix-update-runtime.service");
+    expect(legacyBridge).toContain("After=matrix-update-runtime.service");
+    expect(legacyBridge).toContain("Type=oneshot");
+    expect(legacyBridge).toContain("ExecStart=/usr/bin/true");
+    expect(legacyBridge).toContain("RemainAfterExit=yes");
+    expect(legacyBridge).not.toContain("matrix-update-service");
+    expect(gateway).toContain("Wants=matrix-update-runtime.service");
+    expect(gateway).toContain("After=matrix-update-runtime.service");
     expect(service).toContain("SO_PEERCRED");
     expect(service).toContain("MAX_FRAME_BYTES = 128 * 1024");
     expect(service).toContain('ALLOWED_OPERATIONS = {"Apply", "Repair", "Rollback", "Status"}');
@@ -78,6 +88,29 @@ except module["ProtocolError"]:
     expect(updater).not.toMatch(/systemctl (?:stop|restart)[^\n]*matrix-sync-agent/);
   });
 
+  it("retires the enabled legacy bridge only after a healthy root-service update", () => {
+    const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+    const healthy = updater.indexOf('if [ "$healthy" = true ]; then');
+    const enableRuntime = updater.indexOf(
+      "systemctl enable matrix-update-runtime.service",
+      healthy,
+    );
+    const disableLegacy = updater.indexOf(
+      "systemctl disable matrix-sync-agent.service",
+      healthy,
+    );
+
+    expect(healthy).toBeGreaterThan(-1);
+    expect(enableRuntime).toBeGreaterThan(healthy);
+    expect(disableLegacy).toBeGreaterThan(enableRuntime);
+    expect(updater).not.toContain(
+      "systemctl restart matrix-update-runtime.service",
+    );
+    expect(updater).not.toContain(
+      "systemctl stop matrix-update-runtime.service",
+    );
+  });
+
   it("validates checksums and archive paths before extraction", () => {
     const validator = read("distro/customer-vps/host-bin/matrix-validate-host-bundle");
     const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
@@ -106,7 +139,7 @@ except module["ProtocolError"]:
     expect(updater).not.toContain('.operation-state.$$.tmp');
   });
 
-  it("resumes a root-published request after a service restart", () => {
+  it("resumes a root-published request without signaling the worker before its handler is ready", () => {
     const service = join(root, "distro/customer-vps/host-bin/matrix-update-service");
     const regression = String.raw`
 import json
@@ -133,7 +166,148 @@ with tempfile.TemporaryDirectory() as directory:
     worker = type("Worker", (), {"pid": 4242, "poll": lambda self: None})()
     module["_resume_pending_request"](worker, expected_owner_uid=runtime_globals["os"].getuid())
     assert states == ["running"]
-    assert signals == [(4242, signal.SIGUSR1)]
+    assert signals == []
+`;
+    expect(spawnSync("python3", ["-c", regression, service]).status).toBe(0);
+  });
+
+  it("commits the busy state before publishing without signaling the worker", () => {
+    const service = join(root, "distro/customer-vps/host-bin/matrix-update-service");
+    const regression = String.raw`
+import runpy
+import signal
+import sys
+
+module = runpy.run_path(sys.argv[1])
+runtime_globals = module["_serve_connection"].__globals__
+events = []
+responses = []
+
+runtime_globals["_peer_uid"] = lambda connection: 1000
+runtime_globals["read_frame"] = lambda connection: (
+    b'{"schemaVersion":1,"operation":"Repair"}'
+)
+runtime_globals["_read_state"] = lambda: "idle"
+runtime_globals["publish_request"] = lambda request: events.append("publish") or True
+runtime_globals["_write_state"] = lambda state: events.append(f"state:{state}")
+runtime_globals["os"].kill = (
+    lambda pid, signum: events.append(f"signal:{pid}:{signum}")
+)
+
+class Connection:
+    def settimeout(self, timeout):
+        assert timeout == 10
+
+    def sendall(self, payload):
+        responses.append(payload)
+
+class Worker:
+    pid = 4242
+
+    def poll(self):
+        return None
+
+module["_serve_connection"](Connection(), 1000, Worker())
+assert events == [
+    "state:running",
+    "publish",
+]
+assert len(responses) == 1
+assert b'"status":"accepted"' in responses[0]
+`;
+    expect(spawnSync("python3", ["-c", regression, service]).status).toBe(0);
+    const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+    expect(updater).toContain('if [ -f "$TYPED_REQUEST" ]; then');
+    expect(updater).toContain("sleep 6");
+  });
+
+  it("clears an orphaned running state when request publication loses no queued work", () => {
+    const service = join(root, "distro/customer-vps/host-bin/matrix-update-service");
+    const regression = String.raw`
+import pathlib
+import runpy
+import sys
+import tempfile
+
+module = runpy.run_path(sys.argv[1])
+runtime_globals = module["_serve_connection"].__globals__
+states = []
+responses = []
+
+runtime_globals["_peer_uid"] = lambda connection: 1000
+runtime_globals["read_frame"] = lambda connection: (
+    b'{"schemaVersion":1,"operation":"Repair"}'
+)
+runtime_globals["_read_state"] = lambda: "idle"
+runtime_globals["publish_request"] = lambda request: False
+runtime_globals["_write_state"] = states.append
+
+class Connection:
+    def settimeout(self, timeout):
+        assert timeout == 10
+
+    def sendall(self, payload):
+        responses.append(payload)
+
+class Worker:
+    pid = 4242
+
+    def poll(self):
+        return None
+
+with tempfile.TemporaryDirectory() as directory:
+    runtime_globals["REQUEST_PATH"] = pathlib.Path(directory) / "request.json"
+    module["_serve_connection"](Connection(), 1000, Worker())
+
+assert states == ["running", "idle"]
+assert len(responses) == 1
+assert b'"code":"busy"' in responses[0]
+`;
+    expect(spawnSync("python3", ["-c", regression, service]).status).toBe(0);
+  });
+
+  it("preserves running state when a concurrently published request wins", () => {
+    const service = join(root, "distro/customer-vps/host-bin/matrix-update-service");
+    const regression = String.raw`
+import pathlib
+import runpy
+import sys
+import tempfile
+
+module = runpy.run_path(sys.argv[1])
+runtime_globals = module["_serve_connection"].__globals__
+states = []
+
+runtime_globals["_peer_uid"] = lambda connection: 1000
+runtime_globals["read_frame"] = lambda connection: (
+    b'{"schemaVersion":1,"operation":"Repair"}'
+)
+runtime_globals["_read_state"] = lambda: "idle"
+runtime_globals["_write_state"] = states.append
+
+class Connection:
+    def settimeout(self, timeout):
+        assert timeout == 10
+
+    def sendall(self, payload):
+        pass
+
+class Worker:
+    pid = 4242
+
+    def poll(self):
+        return None
+
+with tempfile.TemporaryDirectory() as directory:
+    request_path = pathlib.Path(directory) / "request.json"
+    runtime_globals["REQUEST_PATH"] = request_path
+    def collide(request):
+        request_path.write_text("{}", encoding="utf-8")
+        return False
+    runtime_globals["publish_request"] = collide
+    module["_serve_connection"](Connection(), 1000, Worker())
+
+assert states == ["running"]
 `;
     expect(spawnSync("python3", ["-c", regression, service]).status).toBe(0);
   });
@@ -226,12 +400,33 @@ with tarfile.open(output, "w:gz") as archive:
     const build = read("scripts/build-host-bundle.sh");
     const cloudInit = read("distro/customer-vps/cloud-init.yaml");
     const cli = read("distro/customer-vps/host-bin/matrix-update");
+    const logship = read("distro/customer-vps/host-bin/matrix-install-logship");
+    const activity = read("packages/gateway/src/system-activity/collector.ts");
 
     expect(build).toContain("matrix-update-service");
     expect(build).toContain("matrix-validate-host-bundle");
+    expect(cloudInit).toContain(
+      "path: /etc/systemd/system/matrix-update-runtime.service",
+    );
     expect(cloudInit).toContain("matrix-update-service");
+    expect(cloudInit).toContain(
+      "systemctl enable matrix-update-runtime.service",
+    );
+    expect(cloudInit).toContain(
+      "systemctl start matrix-update-runtime.service",
+    );
+    expect(cloudInit).not.toContain(
+      "systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service",
+    );
     expect(cli).toContain("/run/matrix-update-runtime/update.sock");
     expect(cli).not.toContain("/opt/matrix/app/.update-now");
     expect(cli).not.toContain("/opt/matrix/app/.rollback-now");
+    expect(logship).toContain(
+      'matches       = "_SYSTEMD_UNIT=matrix-update-runtime.service"',
+    );
+    expect(activity).toContain('"matrix-update-runtime"');
+    expect(activity).not.toContain(
+      '["matrix-gateway", "matrix-shell", "matrix-code", "matrix-sync-agent"]',
+    );
   });
 });

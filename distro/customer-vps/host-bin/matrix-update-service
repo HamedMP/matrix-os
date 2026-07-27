@@ -219,7 +219,8 @@ def _resume_pending_request(
     if worker.poll() is not None:
         raise RuntimeError("update worker unavailable")
     _write_state("running")
-    os.kill(worker.pid, signal.SIGUSR1)
+    # The worker consumes an already-published typed request on its first loop.
+    # Do not signal a newly spawned process before its USR1 trap is installed.
 
 
 def _recover_interrupted_operation(expected_owner_uid: int = 0) -> bool:
@@ -288,11 +289,18 @@ def _serve_connection(
     if REQUEST_PATH.exists() or _read_state() == "running":
         connection.sendall(_error("busy", "Update operation failed"))
         return
+    _write_state("running")
     if not publish_request(request):
+        # A root-published request may have won the no-replace link race. Keep
+        # that queued operation authoritative; otherwise undo our admission
+        # state so a failed publication cannot wedge the service until restart.
+        if not REQUEST_PATH.exists():
+            _write_state("idle")
         connection.sendall(_error("busy", "Update operation failed"))
         return
-    _write_state("running")
-    os.kill(worker.pid, signal.SIGUSR1)
+    # The worker checks the typed request before every bounded six-second
+    # sleep. Avoid asynchronous wakeup signals entirely: the service socket can
+    # accept immediately after spawn, before a shell trap could be proven ready.
     connection.sendall(_response({"schemaVersion": 1, "ok": True, "status": "accepted"}))
 
 

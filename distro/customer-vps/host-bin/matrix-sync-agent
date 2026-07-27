@@ -948,6 +948,20 @@ apply_update() {
       fi
       log "Terminal runtime supervisor enabled"
     fi
+    if ! systemctl enable matrix-update-runtime.service; then
+      log "ERROR: update_runtime_enable_failed"
+      do_rollback failed-update ||
+        log "ERROR: rollback after update runtime enable failure failed"
+      rm -rf "$extract_dir" "$bundle_file"
+      return 1
+    fi
+    if ! systemctl disable matrix-sync-agent.service; then
+      log "ERROR: legacy_update_bridge_disable_failed"
+      do_rollback failed-update ||
+        log "ERROR: rollback after legacy update bridge disable failure failed"
+      rm -rf "$extract_dir" "$bundle_file"
+      return 1
+    fi
     log "Health check passed — update to $version complete"
     rm -f "$UPDATE_MARKER" "$UPDATE_ERROR_MARKER"
     rm -rf -- "$TERMINAL_RUNTIME_FAILED_UPDATE_SNAPSHOT"
