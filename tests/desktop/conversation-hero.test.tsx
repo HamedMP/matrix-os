@@ -227,9 +227,9 @@ describe("ProjectChatsView hero empty state", () => {
     // Typing straight into the hero never calls openNewChat, so nothing seeds
     // the composer. The run must still land in the project the hero names,
     // rather than falling back to a draft with no projectId.
-    const prompt = (await screen.findByLabelText("Agent run prompt")) as HTMLTextAreaElement;
+    const prompt = (await screen.findByLabelText("Message new chat")) as HTMLTextAreaElement;
     fireEvent.change(prompt, { target: { value: "Explain the auth flow" } });
-    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+    fireEvent.keyDown(prompt, { key: "Enter" });
 
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith(
