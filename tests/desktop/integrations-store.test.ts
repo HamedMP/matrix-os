@@ -166,6 +166,41 @@ describe("useIntegrations store", () => {
     expect(api.get).toHaveBeenCalledWith("/api/integrations");
   });
 
+  it("refresh() drops a superseded account's response when it settles last", async () => {
+    // The previous account's refresh is still in flight when the user signs in
+    // as someone else and a new ApiClient starts its own refresh.
+    // refresh() issues two gets in parallel, so every resolver must be held.
+    const releasePrevious: Array<() => void> = [];
+    const previousApi = makeApi({
+      get: async (path: string) => {
+        await new Promise<void>((resolve) => {
+          releasePrevious.push(resolve);
+        });
+        if (path === "/api/integrations/available") return AVAILABLE;
+        return [{
+          id: "conn_previous_owner",
+          service: "gmail",
+          account_label: "previous.owner@example.com",
+          status: "active",
+          connected_at: "2026-06-01T00:00:00.000Z",
+          last_used_at: null,
+        }];
+      },
+    });
+    const nextApi = makeApi();
+
+    const previousRefresh = useIntegrations.getState().refresh(previousApi);
+    await useIntegrations.getState().refresh(nextApi);
+    expect(useIntegrations.getState().connections).toHaveLength(1);
+
+    // The superseded response arrives last and must not repopulate the store
+    // with the previous account's connection labels.
+    for (const release of releasePrevious) release();
+    await previousRefresh;
+
+    expect(useIntegrations.getState().connections.map((conn) => conn.id)).not.toContain("conn_previous_owner");
+  });
+
   it("refresh() falls back to the connection store's ApiClient when none is passed", async () => {
     const api = makeApi();
     useConnection.setState({ api });

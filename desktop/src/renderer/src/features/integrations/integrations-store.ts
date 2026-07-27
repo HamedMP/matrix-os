@@ -55,6 +55,13 @@ function logWarn(scope: string, err: unknown): void {
   console.warn(`[integrations] ${scope}:`, err instanceof Error ? err.message : String(err));
 }
 
+// Monotonic refresh generation. Signing out and back in as another account
+// replaces the ApiClient and starts a new refresh while the previous one is
+// still in flight. Without this guard the superseded response can settle last
+// and repopulate the store with the previous account's connection labels and
+// account emails.
+let refreshGeneration = 0;
+
 export const useIntegrations = create<IntegrationsState>()((set) => ({
   available: [],
   connections: [],
@@ -63,6 +70,8 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
 
   refresh: async (apiOverride) => {
     const api = resolveApi(apiOverride);
+    const generation = ++refreshGeneration;
+    const superseded = (): boolean => refreshGeneration !== generation;
     if (!api) {
       set({
         status: "error",
@@ -80,13 +89,16 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
     if (availableRes.status === "rejected" || connectionsRes.status === "rejected") {
       const err = availableRes.status === "rejected" ? availableRes.reason : (connectionsRes as PromiseRejectedResult).reason;
       if (err instanceof AppError && err.category === "notFound") {
+        if (superseded()) return;
         set({ status: "unavailable", available: [], connections: [], errorMessage: null });
         return;
       }
       logWarn("refresh failed", err);
+      if (superseded()) return;
       set({ status: "error", errorMessage: toUserMessage(err) });
       return;
     }
+    if (superseded()) return;
     set({
       status: "ready",
       available: parseAvailableIntegrations(availableRes.value),
