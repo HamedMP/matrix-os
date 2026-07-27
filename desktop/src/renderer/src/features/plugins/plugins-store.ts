@@ -30,6 +30,17 @@ function resolveApi(apiOverride: ApiClient | null | undefined): ApiClient | null
   return useConnection.getState().api;
 }
 
+// Monotonic refresh generation. Switching computers replaces the ApiClient and
+// starts a new refresh while the previous one may still be in flight; without
+// this guard the superseded response can settle last and replace the selected
+// computer's state with the previous one's skill names and file paths.
+let skillsRefreshGeneration = 0;
+
+export function clearPluginsRuntime(): void {
+  skillsRefreshGeneration += 1;
+  usePlugins.setState({ skills: [], skillsStatus: "idle", skillsError: null });
+}
+
 export const usePlugins = create<PluginsState>()((set) => ({
   skills: [],
   skillsStatus: "idle",
@@ -37,6 +48,8 @@ export const usePlugins = create<PluginsState>()((set) => ({
 
   refreshSkills: async (apiOverride) => {
     const api = resolveApi(apiOverride);
+    const generation = ++skillsRefreshGeneration;
+    const superseded = (): boolean => skillsRefreshGeneration !== generation;
     if (!api) {
       set({
         skillsStatus: "error",
@@ -48,9 +61,11 @@ export const usePlugins = create<PluginsState>()((set) => ({
     set({ skillsStatus: "loading", skillsError: null });
     try {
       const raw = await api.get<unknown>(SKILLS_PATH);
+      if (superseded()) return;
       set({ skillsStatus: "ready", skills: parseSkills(raw), skillsError: null });
     } catch (err: unknown) {
       if (err instanceof AppError && err.category === "notFound") {
+        if (superseded()) return;
         set({ skillsStatus: "unavailable", skills: [], skillsError: null });
         return;
       }
@@ -58,6 +73,7 @@ export const usePlugins = create<PluginsState>()((set) => ({
         "[plugins] skills refresh failed:",
         err instanceof Error ? err.message : String(err),
       );
+      if (superseded()) return;
       set({ skillsStatus: "error", skillsError: toUserMessage(err) });
     }
   },
