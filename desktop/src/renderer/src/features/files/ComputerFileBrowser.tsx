@@ -66,6 +66,16 @@ export default function ComputerFileBrowser({
   const [sortDirection, setSortDirection] = useState<BrowserSortDirection>("asc");
   const requestGeneration = useRef(0);
   const entryRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  // Navigating into a directory or switching between the grid and list
+  // branches unmounts the focused row. Without restoring focus it falls to
+  // <body>, arrow keys stop working, and a keyboard user is stranded outside
+  // the listing with no way back in except the mouse.
+  const restoreFocusRef = useRef(false);
+
+  const markFocusForRestore = useCallback(() => {
+    const active = document.activeElement;
+    restoreFocusRef.current = entryRefs.current.some((el) => el !== null && el === active);
+  }, []);
   const gridRef = useRef<HTMLDivElement | null>(null);
   // Listings belong to one computer/session. Derive the rendered view
   // synchronously from the scope they were loaded under, so a runtime switch
@@ -124,11 +134,12 @@ export default function ComputerFileBrowser({
   }, [browserScope, load]);
 
   const navigate = useCallback((path: string) => {
+    markFocusForRestore();
     setCurrentPath(path);
     setCandidatePath(path);
     setSelectedPath(null);
     void load(path);
-  }, [load]);
+  }, [load, markFocusForRestore]);
 
   const goUp = useCallback(() => {
     if (viewCurrentPath) navigate(parentPath(viewCurrentPath));
@@ -147,6 +158,14 @@ export default function ComputerFileBrowser({
     if (entry.type === "directory") navigate(path);
     else onOpenFile?.(path);
   }, [navigate, onOpenFile]);
+
+  // Grid and list render distinct entry branches, so a view switch remounts
+  // every row; this restores focus once the new rows exist.
+  useEffect(() => {
+    if (viewStatus !== "ready" || !restoreFocusRef.current) return;
+    restoreFocusRef.current = false;
+    entryRefs.current[0]?.focus();
+  }, [viewStatus, sortedEntries, view]);
 
   const focusEntry = useCallback((index: number) => {
     const clamped = Math.max(0, Math.min(index, sortedEntries.length - 1));
@@ -305,7 +324,10 @@ export default function ComputerFileBrowser({
         currentPath={viewCurrentPath}
         crumbs={crumbs}
         view={view}
-        onViewChange={setView}
+        onViewChange={(next) => {
+          markFocusForRestore();
+          setView(next);
+        }}
         onUp={goUp}
         onNavigate={navigate}
         onRefresh={() => void load(viewCurrentPath)}

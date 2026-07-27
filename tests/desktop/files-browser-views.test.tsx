@@ -174,6 +174,35 @@ describe("ComputerFileBrowser view options", () => {
     vi.restoreAllMocks();
   });
 
+  it("keeps keyboard focus inside the listing after navigating into a directory", async () => {
+    renderBrowser();
+    const folder = await screen.findByRole("button", { name: "Open workspaces" });
+    folder.focus();
+    expect(document.activeElement).toBe(folder);
+
+    // Entering the directory unmounts every row. Focus must land back on the
+    // listing, or arrow keys stop working and the user is stranded on <body>.
+    fireEvent.keyDown(folder, { key: "Enter" });
+
+    await screen.findByRole("button", { name: "Open app.ts" });
+    await waitFor(() => {
+      expect(document.activeElement?.getAttribute("aria-label")).toMatch(/^Open /);
+    });
+  });
+
+  it("keeps keyboard focus inside the listing after switching view", async () => {
+    renderBrowser();
+    const entry = await screen.findByRole("button", { name: "Open README.md" });
+    entry.focus();
+
+    // Grid and list are distinct branches, so every row remounts.
+    fireEvent.click(screen.getByRole("button", { name: "Grid view" }));
+
+    await waitFor(() => {
+      expect(document.activeElement?.getAttribute("aria-label")).toMatch(/^Open /);
+    });
+  });
+
   it("switches between list and grid from the segmented control", async () => {
     renderBrowser();
     expect(await screen.findByRole("button", { name: "Open README.md" })).toBeTruthy();
