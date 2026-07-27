@@ -965,6 +965,20 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain("VERSION: ${{ needs.gate.outputs.action == 'deploy_existing' && needs.gate.outputs.requested_version || needs.build.outputs.version }}");
   });
 
+  it('preview deployment waits for one accepted target instead of trusting aggregate HTTP 200', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+
+    expect(workflow).toContain('deploy_deadline=$((SECONDS + 1200))');
+    expect(workflow).toContain(
+      '.triggered == 1 and .failed == 0 and (.results | length) == 1',
+    );
+    expect(workflow).toContain('.results[0].handle == $handle');
+    expect(workflow).toContain('.results[0].status == "triggered"');
+    expect(workflow).toContain('Waiting for the preview update boundary.');
+    expect(workflow).toContain('Preview deploy was not accepted before the deadline.');
+  });
+
   it('host bundle release workflow can skip dev bundles only through explicit manual input', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');

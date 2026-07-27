@@ -234,7 +234,7 @@ jobs:
     needs: [gate, build]
     if: always() && ((needs.gate.outputs.action == 'deploy' && needs.build.result == 'success') || needs.gate.outputs.action == 'deploy_existing')
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     env:
       R2_ACCOUNT_ID: ${{ secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_BUNDLES_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
@@ -392,18 +392,35 @@ jobs:
               -H "content-type: application/json" \
               -d "{\"version\":\"${VERSION}\",\"handle\":\"${HANDLE}\"}"
           }
-          code="$(attempt)"
-          if [ "$code" != "200" ]; then
-            echo "Deploy returned HTTP ${code}; retrying once in 30s..."
-            sleep 30
+          deploy_deadline=$((SECONDS + 1200))
+          deploy_accepted=false
+          while [ "$SECONDS" -lt "$deploy_deadline" ]; do
+            set +e
             code="$(attempt)"
-          fi
-          if [ "$code" != "200" ]; then
-            echo "Deploy failed with HTTP ${code} (body in workflow log)" >&2
-            cat /tmp/deploy.json >&2
+            curl_status=$?
+            set -e
+            if [ "$curl_status" -eq 0 ] && [ "$code" = "200" ] &&
+              jq -e --arg handle "$HANDLE" '
+                .triggered == 1 and .failed == 0 and (.results | length) == 1
+                and .results[0].handle == $handle
+                and .results[0].status == "triggered"
+              ' /tmp/deploy.json >/dev/null; then
+              deploy_accepted=true
+              break
+            fi
+            if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+              echo "Preview deploy authorization failed." >&2
+              exit 1
+            fi
+            echo "Waiting for the preview update boundary."
+            sleep 30
+          done
+          if [ "$deploy_accepted" != true ]; then
+            echo "Preview deploy was not accepted before the deadline." >&2
             exit 1
           fi
-          jq . /tmp/deploy.json
+          jq '{triggered, failed, results: [.results[] | {handle, status}]}' \
+            /tmp/deploy.json
 
       - name: Comment preview URL on PR
         if: github.event_name == 'pull_request'
