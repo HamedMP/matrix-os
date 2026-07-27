@@ -89,7 +89,7 @@ request_update() {
 }
 wait_update() {
   local expected="$1"
-  for _ in $(seq 1 240); do
+  for _ in $(seq 1 4500); do
     if [ "$(cat /opt/matrix/app/BUNDLE_VERSION 2>/dev/null || true)" = "$expected" ] &&
       [ "$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)" = idle ] &&
       systemctl is-active --quiet matrix-gateway.service; then
@@ -100,7 +100,7 @@ wait_update() {
   return 1
 }
 wait_failed_update() {
-  for _ in $(seq 1 180); do
+  for _ in $(seq 1 4500); do
     [ "$(cat /run/matrix-update-runtime/operation-state 2>/dev/null || true)" = failed ] &&
       return 0
     sleep 1

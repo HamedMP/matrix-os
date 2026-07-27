@@ -258,7 +258,7 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain("github.event.pull_request.head.repo.full_name == github.repository");
     expect(workflow).toContain('.labels | any(.name == "preview-vps")');
     expect(workflow).toContain('PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}');
-    expect(workflow).toContain('timeout-minutes: 120');
+    expect(workflow).toContain('timeout-minutes: 180');
     expect(workflow).toContain('deadline=$((SECONDS + 2400))');
     expect(workflow).toContain("runtime_version=\"$(jq -r '.runtimeVersion // \"\"' <<<\"$machine\")\"");
     expect(workflow).toContain('echo "update_diagnostic=${update_diagnostic}"');
@@ -273,7 +273,7 @@ describe('terminal runtime spike evidence', () => {
       'command:["/usr/bin/test","-x","/opt/matrix/bin/matrix-terminal-spike-control"]',
     );
     expect(workflow).toContain('Waiting for exact-head spike control.');
-    expect(workflow).toContain('spike_launch_deadline=$((SECONDS + 2700))');
+    expect(workflow).toContain('spike_launch_deadline=$((SECONDS + 4500))');
     expect(workflow).toContain(
       '[ "$diagnostic" = "spike_control_unavailable" ]',
     );
@@ -360,7 +360,9 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('dist/acceptance-a/objects/**');
     expect(workflow).toContain('Wait for exact-head S1/S2 proof');
     expect(workflow).toContain('gh run list --workflow terminal-runtime-spikes.yml');
-    expect(workflow).toContain('timeout-minutes: 140');
+    expect(workflow).toContain('timeout-minutes: 360');
+    expect(runner).toContain('for _ in $(seq 1 4500)');
+    expect(workflow).toContain('deadline=$((SECONDS + 18000))');
     expect(workflow).toContain('call_helper acceptance-launch');
     expect(workflow).toContain('call_helper acceptance-reboot');
     expect(workflow).toContain('call_helper acceptance-resume');

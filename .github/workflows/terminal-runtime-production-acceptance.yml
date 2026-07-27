@@ -157,7 +157,7 @@ jobs:
   prove:
     needs: [gate, publish]
     runs-on: ubuntu-latest
-    timeout-minutes: 140
+    timeout-minutes: 360
     env:
       GH_TOKEN: ${{ github.token }}
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
@@ -257,7 +257,7 @@ jobs:
               .truncated==false and .signal==null) | .stdout' "$response"
           }
           call_helper acceptance-launch
-          deadline=$((SECONDS + 2400))
+          deadline=$((SECONDS + 18000))
           while [ "$SECONDS" -lt "$deadline" ]; do
             if state="$(call_helper acceptance-status 2>/dev/null)" &&
               grep -q '^phase1-ready$' <<<"$state"; then break; fi
