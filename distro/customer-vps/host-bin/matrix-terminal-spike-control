@@ -43,6 +43,15 @@ case "$operation" in
     ;;
 esac
 if [ ! -f "$target" ] || [ -L "$target" ] || [ ! -x "$target" ]; then
+  failure_code=""
+  failure_code_path="/run/matrix-update-runtime/last-failure-code"
+  if [ -f "$failure_code_path" ] && [ ! -L "$failure_code_path" ]; then
+    IFS= read -r failure_code <"$failure_code_path" || true
+  fi
+  if [[ "$failure_code" =~ ^[a-z0-9_]{1,64}$ ]]; then
+    echo "spike_control_unavailable_${failure_code}" >&2
+    exit 3
+  fi
   echo "spike_control_unavailable" >&2
   exit 3
 fi

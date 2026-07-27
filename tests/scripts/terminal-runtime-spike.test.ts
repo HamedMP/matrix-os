@@ -370,6 +370,9 @@ describe('terminal runtime spike evidence', () => {
     expect(helper).toContain(
       'acceptance-launch | acceptance-status | acceptance-reboot | acceptance-resume | acceptance-pack',
     );
+    expect(helper).toContain('/run/matrix-update-runtime/last-failure-code');
+    expect(helper).toContain('spike_control_unavailable_${failure_code}');
+    expect(helper).toContain('^[a-z0-9_]{1,64}$');
     for (const check of [
       'bundleOnePreservesRuntime',
       'bundleTwoPreservesRuntime',

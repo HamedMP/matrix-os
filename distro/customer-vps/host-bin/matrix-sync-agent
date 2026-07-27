@@ -908,6 +908,21 @@ apply_update() {
     rm -f -- "$bundle_file"
     return 1
   fi
+<<<<<<< HEAD
+=======
+
+  # Any bundle that replaces Zellij extends the existing one-level app rollback
+  # to the exact binary and identity record. Candidate status controls only the
+  # additional digest checks and atomic candidate install path.
+  # Stop services before placing the root-owned snapshot inside the current app;
+  # moving that app to app.rollback then commits both as one filesystem rename.
+  set_operation_phase committing
+  log "Stopping services..."
+  systemctl stop matrix-symphony matrix-gateway matrix-shell || true
+  if [ -f "$extract_dir/bin/zellij" ]; then
+    backup_zellij_for_rollback
+  fi
+>>>>>>> ce6bf8f87 (fix(host): bound update rollback recovery)
   if [ -n "$terminal_runtime_candidate" ]; then
     if ! backup_terminal_runtime_for_failed_update; then
       log "ERROR: terminal_runtime_rollback_snapshot_failed"
