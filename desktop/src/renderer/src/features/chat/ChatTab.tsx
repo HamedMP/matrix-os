@@ -159,7 +159,7 @@ export default function ChatTab() {
       setActiveThread(item.id);
       return;
     }
-    openCodingAgentThread(item.id);
+    void openCodingAgentThread(item.id);
   };
 
   // activeThreadId is the single source of truth: null → Hermes, otherwise the

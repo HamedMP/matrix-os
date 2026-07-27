@@ -290,7 +290,7 @@ export default function CommandPalette() {
                   icon={<GitBranch size={14} />}
                   label={`Open thread ${thread.title}`}
                   onSelect={() =>
-                    run(() => openCodingAgentThread(thread.id))
+                    run(() => void openCodingAgentThread(thread.id))
                   }
                 />
               ))}

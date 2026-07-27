@@ -153,7 +153,7 @@ export function wireKernel(): () => void {
       useTabs.getState().openTab({ kind: "chat", title: "Hermes", closable: false });
       return;
     }
-    openCodingAgentThread(route.select);
+    void openCodingAgentThread(route.select);
   });
 
   activeSocket.connect();

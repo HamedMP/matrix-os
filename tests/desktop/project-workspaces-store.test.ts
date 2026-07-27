@@ -262,6 +262,25 @@ describe("project workspaces store", () => {
     expect(entries.length).toBeLessThanOrEqual(MAX_PROJECT_WORKSPACE_ENTRIES);
   });
 
+  it("caps failed entries too so an unavailable runtime cannot grow the cache", async () => {
+    // Every load fails, so each project only ever produces an error entry.
+    const invoke = vi.fn(async () => {
+      throw new Error("runtime unavailable");
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+
+    for (let index = 0; index < MAX_PROJECT_WORKSPACE_ENTRIES + 5; index += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await useProjectWorkspaces.getState().refresh(`project-${index}`);
+    }
+
+    expect(Object.keys(useProjectWorkspaces.getState().entries).length)
+      .toBeLessThanOrEqual(MAX_PROJECT_WORKSPACE_ENTRIES);
+  });
+
   it("clears every cached workspace on runtime change", async () => {
     mockOperator({ "matrix-os": workspace("matrix-os", "task_auth", "thread_plan") });
     await useProjectWorkspaces.getState().ensure("matrix-os");

@@ -128,8 +128,11 @@ async function loadWorkspace(projectId: string): Promise<void> {
   } catch {
     if (isStaleLoad(projectId, epoch, generation)) return;
     console.warn("[project-workspaces] workspace load failed");
+    // Error entries are capped too. Opening distinct projects while the runtime
+    // is unavailable would otherwise grow the cache past its stated bound,
+    // since only the success path used to enforce it.
     useProjectWorkspaces.setState((state) => ({
-      entries: {
+      entries: capEntries({
         ...state.entries,
         [projectId]: {
           status: "error",
@@ -137,7 +140,7 @@ async function loadWorkspace(projectId: string): Promise<void> {
           error: "Project workspace unavailable",
           fetchedAt: state.entries[projectId]?.fetchedAt ?? 0,
         },
-      },
+      }, projectId),
     }));
   }
 }

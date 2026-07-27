@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatTab from "../../desktop/src/renderer/src/features/chat/ChatTab";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
@@ -136,7 +136,7 @@ describe("ChatTab", () => {
     expect(screen.getByRole("button", { name: "Server-backed run" })).toBeTruthy();
   });
 
-  it("routes a coding-agent rail selection into the project's chats view", () => {
+  it("routes a coding-agent rail selection into the project's chats view", async () => {
     const loadThreadSnapshot = vi.fn().mockResolvedValue(undefined);
     useCodingAgentWorkspace.setState({
       summary: codingAgentSummaryFixture(),
@@ -146,7 +146,7 @@ describe("ChatTab", () => {
     render(<ChatTab />);
     fireEvent.click(screen.getByRole("button", { name: "Server-backed run" }));
 
-    expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_server");
+    await waitFor(() => expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_server"));
     const tabs = useTabs.getState();
     const active = tabs.tabs.find((tab) => tab.id === tabs.activeTabId);
     expect(active).toMatchObject({ kind: "project", projectSlug: "matrix-os" });

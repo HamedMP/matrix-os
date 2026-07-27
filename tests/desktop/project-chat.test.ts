@@ -181,12 +181,56 @@ describe("openCodingAgentThread", () => {
     expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "project", projectSlug: "matrix-os" });
   });
 
-  it("uses the default project when the thread's project is unknown", () => {
+  it("resolves an unknown thread's project from the runtime instead of guessing", async () => {
+    // The thread is outside the bounded summary and no project workspace is
+    // loaded, so nothing local knows its project. Guessing here would open the
+    // conversation under an unrelated project with nothing to reroute it.
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel !== "runtime:get-thread-snapshot") throw new Error(`unexpected channel ${channel}`);
+      return {
+        thread: {
+          id: "thread_elsewhere",
+          providerId: "codex",
+          title: "Elsewhere",
+          status: "running",
+          attention: "none",
+          projectId: "website",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        events: { items: [], hasMore: false, limit: 200 },
+      };
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+    const loadThreadSnapshot = vi.fn(async () => undefined);
+    useCodingAgentWorkspace.setState({ summary: null, status: "idle", loadThreadSnapshot });
+    useBoard.setState({
+      projects: [{ slug: "matrix-os", name: "Matrix OS" }, { slug: "website", name: "Website" }],
+      activeProjectSlug: "matrix-os",
+    });
+
+    await openCodingAgentThread("thread_elsewhere");
+
+    // "website" comes from the runtime, not from whichever project was active.
+    expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "project", projectSlug: "website" });
+  });
+
+  it("uses the default project when the runtime cannot resolve the thread either", async () => {
+    const invoke = vi.fn(async () => {
+      throw new Error("offline");
+    });
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
     const loadThreadSnapshot = vi.fn(async () => undefined);
     useCodingAgentWorkspace.setState({ summary: null, status: "idle", loadThreadSnapshot });
     useBoard.setState({ projects: [{ slug: "matrix-os", name: "Matrix OS" }] });
 
-    openCodingAgentThread("thread_unknown");
+    await openCodingAgentThread("thread_unknown");
 
     expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "project", projectSlug: "matrix-os" });
     expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_unknown");

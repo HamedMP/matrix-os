@@ -127,7 +127,7 @@ describe("kernel wiring", () => {
     vi.restoreAllMocks();
   });
 
-  it("opens the notified coding-agent thread inside its project tab", () => {
+  it("opens the notified coding-agent thread inside its project tab", async () => {
     const loadThreadSnapshot = vi.fn().mockResolvedValue(undefined);
     useCodingAgentWorkspace.setState({ loadThreadSnapshot });
     useBoard.setState({ projects: [{ slug: "matrix-os", name: "Matrix OS" }] });
@@ -136,7 +136,9 @@ describe("kernel wiring", () => {
     expect(notificationClick).not.toBeNull();
     notificationClick?.({ threadId: "thread_alpha" });
 
-    expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_alpha");
+    // Routing now resolves the thread's project through the runtime when
+    // nothing local knows it, so the tab lands on a later microtask.
+    await vi.waitFor(() => expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_alpha"));
     const tabs = useTabs.getState();
     const active = tabs.tabs.find((tab) => tab.id === tabs.activeTabId);
     expect(active).toMatchObject({ kind: "project", projectSlug: "matrix-os" });

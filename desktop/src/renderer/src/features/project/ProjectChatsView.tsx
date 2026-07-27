@@ -205,7 +205,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
   // project context when they belong elsewhere.
   const openListedThread = (threadId: string, threadProjectId?: string) => {
     if (threadProjectId && threadProjectId !== projectId) {
-      openCodingAgentThread(threadId);
+      void openCodingAgentThread(threadId);
       return;
     }
     setSelectedThread(projectId, threadId);

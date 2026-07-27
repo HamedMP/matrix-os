@@ -4,6 +4,7 @@
 // funnel through openProjectChat so there is exactly one way to land on a
 // conversation.
 import { create } from "zustand";
+import { invoke } from "./operator";
 import { useBoard } from "../stores/board";
 import { useCodingAgentWorkspace } from "../stores/coding-agent-workspace";
 import { useProjectView } from "../stores/project-view";
@@ -100,7 +101,22 @@ export function openProjectChat(projectId: string, options: OpenProjectChatOptio
  * already-loaded snapshot; when neither knows it, the default project is a
  * best-effort fallback so the conversation still opens somewhere sensible.
  */
-export function openCodingAgentThread(threadId: string): void {
+// Asks the runtime which project owns a thread. Used only when nothing loaded
+// locally knows, so the cost is paid once per genuinely unknown thread.
+async function resolveThreadProjectId(threadId: string): Promise<string | undefined> {
+  try {
+    const snapshot = await invoke("runtime:get-thread-snapshot", { threadId });
+    return snapshot?.thread?.projectId ?? undefined;
+  } catch (err: unknown) {
+    console.warn(
+      "[project-chat] thread project lookup failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return undefined;
+  }
+}
+
+export async function openCodingAgentThread(threadId: string): Promise<void> {
   const workspace = useCodingAgentWorkspace.getState();
   const listed = [
     // Attention entries win the dedupe: they carry the actionable state.
@@ -122,7 +138,12 @@ export function openCodingAgentThread(threadId: string): void {
     }
     return undefined;
   })();
-  const projectId = listed?.projectId ?? snapshotProjectId ?? workspaceProjectId ?? defaultProjectId();
+  // Resolve authoritatively before choosing a tab. Falling straight through to
+  // defaultProjectId() opens the conversation under whichever project happens
+  // to be active; the snapshot later reveals the real projectId but nothing
+  // reroutes, so the chat stays selected and persisted under the wrong project.
+  const known = listed?.projectId ?? snapshotProjectId ?? workspaceProjectId;
+  const projectId = known ?? (await resolveThreadProjectId(threadId)) ?? defaultProjectId();
   if (!projectId) {
     console.warn("[project-chat] cannot open a thread before any project exists");
     return;
