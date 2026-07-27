@@ -110,6 +110,12 @@ manual git worktree flow for isolated PR publication.
      sweep, trust-boundary sweep, atomicity/failure-mode review) plus the
      AGENTS.md Hard Rules. Fix what it finds and re-run the gates before
      requesting Greptile.
+   - **Give the review a defect class, not "review this."** Name the shape to hunt
+     (state written after an `await` with no generation guard; failures swallowed
+     and returned to a fire-and-forget caller; renderer-built ids that fail their
+     Zod contract schema) and ask for an exhaustive sweep of every file touched.
+     Then fix the *class*, not just the named instance -- otherwise the next paid
+     round rediscovers the same defect one file over.
    - Post exactly one request per review round:
      `gh pr comment <number> --body "@greptileai review"`
    - A push that changes the head SHA makes the previous review stale. Post

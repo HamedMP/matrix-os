@@ -329,11 +329,31 @@ review pass first, performed by whichever coding agent is doing the work -- Clau
 Code, Codex, or another. Run it on the actual diff (`git diff origin/main...HEAD`)
 after the local gates pass and before mentioning `@greptileai`.
 
-- **Claude Code**: `/code-review` (or the `pr-review-toolkit` `review-pr` command).
+- **Claude Code**: `/code-review`, or `/pr-review-toolkit:review-pr`, which launches
+  the specialist agents (`silent-failure-hunter`, `code-reviewer`,
+  `pr-test-analyzer`, `comment-analyzer`, `type-design-analyzer`). Note
+  `/code-review` is user-invocable only and cannot be launched programmatically;
+  `review-pr` can.
 - **Codex**: its equivalent review command, or the same three passes run explicitly
   against the diff.
 - **Any agent**: apply the three passes above -- mechanical `check:patterns` sweep,
   trust-boundary sweep, atomicity/failure-mode review -- plus the Hard Rules list.
+
+**Running the gates is not a review.** `typecheck`, `test`, `check:patterns`, and
+`react-doctor` prove the code runs; they do not find defects. Both steps are
+required, and the review step is the one that must happen before `@greptileai`.
+
+**Give the review a defect class, not "review this."** Name the specific shape you
+want hunted -- "state written after an `await` with no generation guard", "failures
+swallowed and returned to a fire-and-forget caller", "renderer-built ids that fail
+their Zod contract schema" -- and ask for an exhaustive sweep of every file touched.
+
+**Fix the class, not the finding.** When a reviewer names one instance, search for
+every sibling instance and fix them together. Patching only what was named means
+the next paid round rediscovers the same defect one file over: on the 2026-07-27
+desktop stack, `integrations-store` needed `refresh`, then `syncNow`, then
+`startConnect` -- three separate 12-PR review rounds for one defect class, with
+scores crawling 2/5 to 3/5. A review round should validate the work, not discover it.
 
 Fix everything the local pass finds and re-run the gates before requesting Greptile.
 The point is that Greptile should be confirming a diff you already believe is
