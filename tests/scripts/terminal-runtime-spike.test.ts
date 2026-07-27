@@ -243,6 +243,11 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('head_sha:\n        description: Exact 40-character PR head SHA to approve');
     expect(workflow).toContain('diagnose_only:');
     expect(workflow).toContain('command:["/opt/matrix/bin/matrix-update","diagnose"]');
+    expect(workflow).toContain("github.event.label.name == 'terminal-updater-bootstrap'");
+    expect(workflow).toContain(
+      'command:["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-sync-agent.service"]',
+    );
+    expect(workflow).toContain('Legacy disposable updater bootstrap completed.');
     expect(workflow).toContain('Deployment diagnostic never satisfies S1/S2.');
     expect(workflow).toContain('APPROVED_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.head_sha }}');
     expect(workflow).toContain('if [ "$head_sha" != "$APPROVED_HEAD_SHA" ]');
