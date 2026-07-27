@@ -9,7 +9,6 @@ import {
   toolCallDurationLabel,
   toolKindLabel,
 } from "../../desktop/src/renderer/src/features/coding-agents/tool-call-detail";
-import { useCodingAgentMessageQueue } from "../../desktop/src/renderer/src/features/coding-agents/message-queue-store";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 
 function snapshot(events: AgentThreadEvent[], threadOverrides: Record<string, unknown> = {}): AgentThreadSnapshot {
@@ -152,7 +151,6 @@ describe("tool-call detail helpers", () => {
 describe("AgentConversationView tool-call detail", () => {
   beforeEach(() => {
     globalThis.ResizeObserver = MockResizeObserver as typeof ResizeObserver;
-    useCodingAgentMessageQueue.setState({ queues: {} });
     useCodingAgentWorkspace.setState({ turnStatus: "idle", turnError: null, turnThreadId: null });
   });
 

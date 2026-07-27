@@ -5,7 +5,6 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
 import ProjectChatsView from "../../desktop/src/renderer/src/features/project/ProjectChatsView";
-import { useCodingAgentMessageQueue } from "../../desktop/src/renderer/src/features/coding-agents/message-queue-store";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useInspectorLayout } from "../../desktop/src/renderer/src/features/panels/inspector-layout-store";
@@ -125,7 +124,6 @@ function resetStores() {
   useProjectWorkspaces.setState({ entries: {} });
   useProjectChatLauncher.setState({ composerRequest: null });
   useInspectorLayout.setState({ entries: {}, runtimeScope: null });
-  useCodingAgentMessageQueue.setState({ queues: {} });
   useCodingAgentWorkspace.setState({
     status: "idle",
     summary: null,

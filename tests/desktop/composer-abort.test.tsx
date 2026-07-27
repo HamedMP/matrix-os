@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
 import { AgentConversationView } from "../../desktop/src/renderer/src/features/coding-agents/AgentConversationView";
 import { agentThreadAbortSupported } from "../../desktop/src/renderer/src/features/coding-agents/abort-thread";
-import { useCodingAgentMessageQueue } from "../../desktop/src/renderer/src/features/coding-agents/message-queue-store";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 
 function snapshot(events: AgentThreadEvent[], threadOverrides: Record<string, unknown> = {}): AgentThreadSnapshot {
@@ -34,7 +33,6 @@ class MockResizeObserver {
 describe("AgentConversationView abort control", () => {
   beforeEach(() => {
     globalThis.ResizeObserver = MockResizeObserver as typeof ResizeObserver;
-    useCodingAgentMessageQueue.setState({ queues: {} });
     useCodingAgentWorkspace.setState({
       activeThreadId: "thread_alpha",
       threadSnapshot: snapshot([]),
