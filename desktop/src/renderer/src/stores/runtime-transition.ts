@@ -3,6 +3,7 @@ import { useEditorTabs } from "../features/editor/editor-tabs-store";
 import { resetKernel } from "../lib/kernel-wiring";
 import { useBoard } from "./board";
 import { useHermesChat } from "./hermes-chat";
+import { clearInspectorLayoutRuntime } from "../features/panels/inspector-layout-store";
 import { clearProjectViewRuntime } from "./project-view";
 import { clearProjectWorkspaces } from "./project-workspaces";
 import { clearCodingAgentRuntimeSelection } from "./coding-agent-workspace";
@@ -82,6 +83,7 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
   clearCodingAgentRuntimeSelection();
   clearProjectWorkspaces();
   clearProjectViewRuntime();
+  clearInspectorLayoutRuntime();
   useUi.setState({
     createProjectOpen: false,
     createTaskOpen: false,

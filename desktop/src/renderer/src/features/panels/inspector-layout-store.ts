@@ -9,11 +9,16 @@ import { z } from "zod/v4";
 import { invoke } from "../../lib/operator";
 
 export const INSPECTOR_LAYOUT_PREFIX = "project-inspector:";
+const INSPECTOR_LAYOUT_PREFIX_LENGTH = INSPECTOR_LAYOUT_PREFIX.length;
 export const DEFAULT_INSPECTOR_WIDTH_PCT = 34;
 export const MIN_INSPECTOR_WIDTH_PCT = 20;
 export const MAX_INSPECTOR_WIDTH_PCT = 60;
 
-const MAX_PROJECT_ID_CHARS = 238; // taskKey budget (256) minus the prefix.
+// taskKey budget is 256. Layouts are keyed per runtime as
+// `project-inspector:<runtimeScope>:<projectId>` so two runtimes that contain
+// the same project id cannot read or overwrite each other's inspector state.
+const MAX_RUNTIME_SCOPE_CHARS = 64;
+const MAX_PROJECT_ID_CHARS = 256 - INSPECTOR_LAYOUT_PREFIX_LENGTH - MAX_RUNTIME_SCOPE_CHARS - 1;
 
 const PanelLayoutSchema = z
   .object({
@@ -52,14 +57,19 @@ function clampWidthPct(widthPct: number): number {
   return Math.min(MAX_INSPECTOR_WIDTH_PCT, Math.max(MIN_INSPECTOR_WIDTH_PCT, Math.round(widthPct)));
 }
 
-function taskKeyFor(projectId: string): string {
-  return `${INSPECTOR_LAYOUT_PREFIX}${projectId.slice(0, MAX_PROJECT_ID_CHARS)}`;
+function taskKeyFor(runtimeScope: string, projectId: string): string {
+  const scope = runtimeScope.slice(0, MAX_RUNTIME_SCOPE_CHARS);
+  return `${INSPECTOR_LAYOUT_PREFIX}${scope}:${projectId.slice(0, MAX_PROJECT_ID_CHARS)}`;
 }
 
-function projectIdFromTaskKey(taskKey: string): string | null {
-  return taskKey.startsWith(INSPECTOR_LAYOUT_PREFIX)
-    ? taskKey.slice(INSPECTOR_LAYOUT_PREFIX.length)
-    : null;
+// Only keys belonging to the runtime being hydrated resolve to a project id.
+// Entries written by any other runtime are skipped, so a previous owner's
+// collapsed state and width can never be adopted by the selected runtime.
+function projectIdFromTaskKey(taskKey: string, runtimeScope: string): string | null {
+  const scopedPrefix = `${INSPECTOR_LAYOUT_PREFIX}${runtimeScope.slice(0, MAX_RUNTIME_SCOPE_CHARS)}:`;
+  if (!taskKey.startsWith(scopedPrefix)) return null;
+  const projectId = taskKey.slice(scopedPrefix.length);
+  return projectId.length > 0 ? projectId : null;
 }
 
 function envelopeFor(entry: InspectorLayout, now: number): PanelLayout {
@@ -84,8 +94,13 @@ function entryFromEnvelope(layout: PanelLayout): InspectorLayout | null {
 }
 
 function persistEntry(projectId: string, entry: InspectorLayout): void {
+  // Layouts are runtime-scoped, so an un-hydrated store has no runtime to
+  // attribute this write to. Keep it in memory rather than persisting it under
+  // a guessed key that another runtime could later read.
+  const runtimeScope = useInspectorLayout.getState().runtimeScope;
+  if (runtimeScope === null) return;
   void invoke("state:set-panel-layout", {
-    taskKey: taskKeyFor(projectId),
+    taskKey: taskKeyFor(runtimeScope, projectId),
     layout: envelopeFor(entry, Date.now()),
   }).catch(() => {
     console.warn("[inspector-layout] layout could not be saved");
@@ -102,8 +117,11 @@ export const useInspectorLayout = create<InspectorLayoutState>()((set, get) => (
 
   hydrate: async (runtimeScope) => {
     if (get().runtimeScope === runtimeScope) return;
-    // Set the scope up front so writes landing during the read still persist.
-    set({ runtimeScope });
+    // Claiming a different runtime drops the previous owner's entries. Keeping
+    // them would let the old runtime's collapsed state and width win the merge
+    // below and then be persisted back under this runtime's key.
+    // The scope is set up front so writes landing during the read still persist.
+    set({ runtimeScope, entries: {} });
     let persisted: Record<string, InspectorLayout> = {};
     try {
       const stored = await invoke("state:get", { key: "panelLayouts" });
@@ -112,7 +130,7 @@ export const useInspectorLayout = create<InspectorLayoutState>()((set, get) => (
         // Validate per entry so one hand-edited or stale layout cannot drop
         // every project's inspector state.
         for (const [taskKey, rawLayout] of Object.entries(parsed.data)) {
-          const projectId = projectIdFromTaskKey(taskKey);
+          const projectId = projectIdFromTaskKey(taskKey, runtimeScope);
           if (projectId === null) continue;
           const layout = PanelLayoutSchema.safeParse(rawLayout);
           if (!layout.success) continue;

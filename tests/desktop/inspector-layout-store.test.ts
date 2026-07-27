@@ -60,11 +60,12 @@ describe("inspector-layout-store", () => {
 
   it("persists the width through the existing panel-layout channel", async () => {
     const { saved } = mockOperator();
+    await useInspectorLayout.getState().hydrate("scope-a");
     useInspectorLayout.getState().setWidthPct("matrix-os", 42);
 
     expect(useInspectorLayout.getState().layoutFor("matrix-os").widthPct).toBe(42);
     await vi.waitFor(() => expect(saved.length).toBe(1));
-    expect(saved[0]!.taskKey).toBe(`${INSPECTOR_LAYOUT_PREFIX}matrix-os`);
+    expect(saved[0]!.taskKey).toBe(`${INSPECTOR_LAYOUT_PREFIX}scope-a:matrix-os`);
     expect(saved[0]!.layout.sizes).toEqual({ conversation: 58, inspector: 42 });
     expect(saved[0]!.layout.visible).toEqual({ conversation: true, inspector: true });
   });
@@ -79,6 +80,7 @@ describe("inspector-layout-store", () => {
 
   it("keeps the last width when collapsing so re-expand restores it", async () => {
     const { saved } = mockOperator();
+    await useInspectorLayout.getState().hydrate("scope-a");
     useInspectorLayout.getState().setWidthPct("matrix-os", 40);
     useInspectorLayout.getState().setCollapsed("matrix-os", true);
 
@@ -95,10 +97,10 @@ describe("inspector-layout-store", () => {
 
   it("hydrates persisted entries and ignores foreign or invalid layouts", async () => {
     mockOperator({
-      [`${INSPECTOR_LAYOUT_PREFIX}matrix-os`]: persistedLayout(45, false),
-      [`${INSPECTOR_LAYOUT_PREFIX}website`]: persistedLayout(25, true),
+      [`${INSPECTOR_LAYOUT_PREFIX}scope-a:matrix-os`]: persistedLayout(45, false),
+      [`${INSPECTOR_LAYOUT_PREFIX}scope-a:website`]: persistedLayout(25, true),
       "some-task": persistedLayout(50, false),
-      [`${INSPECTOR_LAYOUT_PREFIX}broken`]: { order: [], visible: {}, sizes: { inspector: Number.NaN }, touchedAt: 1 },
+      [`${INSPECTOR_LAYOUT_PREFIX}scope-a:broken`]: { order: [], visible: {}, sizes: { inspector: Number.NaN }, touchedAt: 1 },
     });
 
     await useInspectorLayout.getState().hydrate("scope-a");
@@ -115,12 +117,14 @@ describe("inspector-layout-store", () => {
     });
   });
 
-  it("re-reads when the runtime scope changes and keeps in-memory writes", async () => {
-    const first = mockOperator({ [`${INSPECTOR_LAYOUT_PREFIX}matrix-os`]: persistedLayout(45, false) });
+  it("re-reads when the runtime scope changes and drops the previous runtime's entries", async () => {
+    const first = mockOperator({ [`${INSPECTOR_LAYOUT_PREFIX}scope-a:matrix-os`]: persistedLayout(45, false) });
     await useInspectorLayout.getState().hydrate("scope-a");
     expect(useInspectorLayout.getState().layoutFor("matrix-os").widthPct).toBe(45);
 
-    // A write after hydration is newer than anything a later read returns.
+    // An in-memory write belongs to scope-a. Switching computers must not carry
+    // it into scope-b, which may be a different account holding the same
+    // project id, nor persist it back under scope-b's key.
     useInspectorLayout.getState().setWidthPct("matrix-os", 30);
     Object.defineProperty(window, "operator", {
       configurable: true,
@@ -129,6 +133,30 @@ describe("inspector-layout-store", () => {
     await useInspectorLayout.getState().hydrate("scope-b");
 
     expect(first.invoke.mock.calls.filter(([channel]) => channel === "state:get").length).toBe(2);
-    expect(useInspectorLayout.getState().layoutFor("matrix-os").widthPct).toBe(30);
+    expect(useInspectorLayout.getState().layoutFor("matrix-os")).toEqual({
+      widthPct: DEFAULT_INSPECTOR_WIDTH_PCT,
+      collapsed: false,
+    });
+  });
+
+  it("never adopts another runtime's persisted layout for the same project id", async () => {
+    // scope-a collapsed its inspector; scope-b holds a project with the same id.
+    mockOperator({ [`${INSPECTOR_LAYOUT_PREFIX}scope-a:matrix-os`]: persistedLayout(22, true) });
+
+    await useInspectorLayout.getState().hydrate("scope-b");
+
+    expect(useInspectorLayout.getState().layoutFor("matrix-os")).toEqual({
+      widthPct: DEFAULT_INSPECTOR_WIDTH_PCT,
+      collapsed: false,
+    });
+  });
+
+  it("persists under a runtime-scoped key so runtimes cannot overwrite each other", async () => {
+    const { saved } = mockOperator();
+    await useInspectorLayout.getState().hydrate("scope-b");
+    useInspectorLayout.getState().setCollapsed("matrix-os", true);
+
+    await vi.waitFor(() => expect(saved.length).toBe(1));
+    expect(saved[0]!.taskKey).toBe(`${INSPECTOR_LAYOUT_PREFIX}scope-b:matrix-os`);
   });
 });

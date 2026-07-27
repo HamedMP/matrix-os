@@ -7,7 +7,20 @@ import type { ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts
 import ProjectChatsView from "../../desktop/src/renderer/src/features/project/ProjectChatsView";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
-import { useInspectorLayout } from "../../desktop/src/renderer/src/features/panels/inspector-layout-store";
+import {
+  INSPECTOR_LAYOUT_PREFIX,
+  useInspectorLayout,
+} from "../../desktop/src/renderer/src/features/panels/inspector-layout-store";
+import { codingAgentRuntimeScope } from "../../desktop/src/shared/coding-agent-project-workspace";
+
+// Inspector layouts are keyed per runtime so two computers holding the same
+// project id cannot read or overwrite each other's state.
+const RUNTIME_SCOPE = codingAgentRuntimeScope({
+  handle: "operator",
+  platformHost: "https://platform.test",
+  runtimeSlot: "primary",
+});
+const INSPECTOR_TASK_KEY = `${INSPECTOR_LAYOUT_PREFIX}${RUNTIME_SCOPE}:matrix-os`;
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
@@ -227,7 +240,7 @@ describe("ProjectChatsView hero layout", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     await waitFor(() => {
       expect(saved.some((entry) =>
-        entry.taskKey === "project-inspector:matrix-os" && entry.layout.visible.inspector === false,
+        entry.taskKey === INSPECTOR_TASK_KEY && entry.layout.visible.inspector === false,
       )).toBe(true);
     });
 
@@ -239,7 +252,7 @@ describe("ProjectChatsView hero layout", () => {
 
   it("restores a persisted collapsed inspector for the project", async () => {
     mockOperator({
-      "project-inspector:matrix-os": {
+      [INSPECTOR_TASK_KEY]: {
         order: ["conversation", "inspector"],
         visible: { conversation: true, inspector: false },
         sizes: { conversation: 60, inspector: 40 },
