@@ -46,8 +46,16 @@ final human review.
   restack descendants.
 - Treat unresolved human review threads, Codex review comments, and Greptile
   findings as blockers until fixed, acknowledged, or explicitly deferred.
-- Do not repeatedly ping Greptile. Wait for new reviews triggered by pushed
-  commits and poll status/comments instead.
+- Greptile does not review automatically and each run costs money. It runs only
+  when a comment mentions `@greptileai`. A PR with no Greptile comment is
+  unreviewed because nobody asked -- do not mistake that for a review in
+  progress and do not wait on one that was never requested.
+- Before requesting Greptile, run a local review pass with the coding agent you
+  are already using (see "Local review before Greptile" in AGENTS.md) and make
+  every local gate pass. Greptile is the paid final gate, not the first reviewer.
+- Request a review with a single `gh pr comment <number> --body "@greptileai review"`,
+  once per head SHA. While a review for the current head is running, poll
+  status/comments instead of mentioning it again.
 - Do not stage unrelated files. Run `git status --short --branch` before every
   staging operation.
 

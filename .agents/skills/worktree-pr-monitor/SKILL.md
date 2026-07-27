@@ -31,6 +31,12 @@ manual git worktree flow for isolated PR publication.
 - Use a semantic branch and PR title. Do not prefix titles with agent/tool tags.
 - Stage only files in scope.
 - Do not merge unless explicitly asked.
+- Greptile only reviews when a comment mentions `@greptileai`, and each run
+  costs money. Request it once per head SHA, and only after every local gate
+  passes. An absent Greptile review means nobody asked, not that a review is
+  pending.
+- Review the diff locally with your own coding agent before requesting Greptile.
+  Greptile is the paid final gate, not the first reviewer.
 - If Greptile has reviewed the PR, the loop is complete only when the latest
   trusted Greptile result is `5/5`.
 - Add the `ready-for-ci` label only after the latest trusted Greptile result is
@@ -86,14 +92,36 @@ manual git worktree flow for isolated PR publication.
      - `Review/Monitoring`
      - `Invariants` when backend code changed
 
-7. Monitor review feedback until Greptile is complete.
+7. Request the Greptile review, then monitor until it is complete.
+   - **Greptile does not review automatically.** It runs only when a comment
+     mentions `@greptileai`, and every run costs money. A PR with no such
+     comment will sit indefinitely with no review, which is not the same as
+     a review being in progress.
+   - **Request it only when the branch is final and every local gate has
+     already passed**: `bun run typecheck`, `bun run check:patterns`,
+     `bun run test`, plus `npx react-doctor@latest <project-dir>` for each
+     changed React project. Never request a review to find out whether the
+     change works -- run the gates locally first and fix what they catch.
+   - **Run a local review pass first, with the coding agent you are already
+     using.** Greptile is the paid final gate, not the first reviewer. Review
+     the real diff (`git diff origin/main...HEAD`) using `/code-review` in
+     Claude Code, the equivalent review command in Codex, or the three review
+     passes from `docs/dev/review-pipeline.md` (mechanical `check:patterns`
+     sweep, trust-boundary sweep, atomicity/failure-mode review) plus the
+     AGENTS.md Hard Rules. Fix what it finds and re-run the gates before
+     requesting Greptile.
+   - Post exactly one request per review round:
+     `gh pr comment <number> --body "@greptileai review"`
+   - A push that changes the head SHA makes the previous review stale. Post
+     one new `@greptileai` request for the new head. Do not post repeat
+     mentions while a review for the current head is still running.
    - Use `gh pr checks --watch` or equivalent GitHub API status reads for
      already-running checks.
    - Use thread-aware review inspection for unresolved GitHub review threads.
    - Inspect issue comments for Codex reviews.
    - Inspect Greptile feedback and rating. If the latest trusted Greptile
      result is below `5/5`, implement fixes, rerun relevant checks, commit,
-     push, and continue monitoring.
+     push, request one new review for the new head, and continue monitoring.
 
 8. Trigger and monitor label-gated CI.
    - Before labeling, verify that the repository label exists:
