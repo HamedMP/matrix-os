@@ -407,6 +407,14 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     expect(build).toContain(
       'await import("@matrix-os/terminal-runtime")',
     );
+    const stagedPostinstall =
+      'cp -a "$ROOT_DIR/scripts/fix-node-pty-perms.mjs" "$STAGE_DIR/app/scripts/fix-node-pty-perms.mjs"';
+    expect(build).toContain(stagedPostinstall);
+    expect(build.indexOf(stagedPostinstall)).toBeLessThan(
+      build.indexOf(
+        "pnpm --dir \"$STAGE_DIR/app\" --config.enable-global-virtual-store=false --filter '@matrix-os/gateway...' --filter 'shell...' install --prod --frozen-lockfile",
+      ),
+    );
   });
 
   it("publishes operation state through collision-resistant root-owned temp files", () => {
