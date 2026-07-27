@@ -417,7 +417,7 @@ jobs:
             command:["/usr/bin/test","-x","/opt/matrix/bin/matrix-terminal-spike-control"],
             timeoutMs:10000
           }')"
-          spike_control_deadline=$((SECONDS + 600))
+          spike_control_deadline=$((SECONDS + 4500))
           spike_control_ready=false
           while [ "$SECONDS" -lt "$spike_control_deadline" ]; do
             set +e

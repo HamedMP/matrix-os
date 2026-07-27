@@ -268,7 +268,7 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).not.toContain("jq -r '.imageVersion // \"\"'");
     expect(workflow).toContain('--resolve "app.matrix-os.com:443:${PUBLIC_IPV4}"');
     expect(workflow).toContain("'https://app.matrix-os.com/api/terminal/run'");
-    expect(workflow).toContain('spike_control_deadline=$((SECONDS + 600))');
+    expect(workflow).toContain('spike_control_deadline=$((SECONDS + 4500))');
     expect(workflow).toContain(
       'command:["/usr/bin/test","-x","/opt/matrix/bin/matrix-terminal-spike-control"]',
     );
