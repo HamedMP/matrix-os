@@ -283,7 +283,7 @@ jobs:
             echo "Required preview operator secrets are unavailable." >&2
             exit 1
           fi
-          deadline=$((SECONDS + 2400))
+          deadline=$((SECONDS + 4500))
           public_ipv4=""
           gateway_token="$(node --input-type=module -e '
             import { createHmac } from "node:crypto";

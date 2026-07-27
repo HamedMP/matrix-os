@@ -259,7 +259,7 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('.labels | any(.name == "preview-vps")');
     expect(workflow).toContain('PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}');
     expect(workflow).toContain('timeout-minutes: 180');
-    expect(workflow).toContain('deadline=$((SECONDS + 2400))');
+    expect(workflow.split('\n')).toContain('          deadline=$((SECONDS + 4500))');
     expect(workflow).toContain("runtime_version=\"$(jq -r '.runtimeVersion // \"\"' <<<\"$machine\")\"");
     expect(workflow).toContain('echo "update_diagnostic=${update_diagnostic}"');
     expect(workflow).toContain(
