@@ -268,6 +268,15 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).not.toContain("jq -r '.imageVersion // \"\"'");
     expect(workflow).toContain('--resolve "app.matrix-os.com:443:${PUBLIC_IPV4}"');
     expect(workflow).toContain("'https://app.matrix-os.com/api/terminal/run'");
+    expect(workflow).toContain('spike_control_deadline=$((SECONDS + 600))');
+    expect(workflow).toContain(
+      'command:["/usr/bin/test","-x","/opt/matrix/bin/matrix-terminal-spike-control"]',
+    );
+    expect(workflow).toContain('Waiting for exact-head spike control.');
+    expect(workflow).toContain('spike_launch_deadline=$((SECONDS + 600))');
+    expect(workflow).toContain(
+      '[ "$diagnostic" = "spike_control_unavailable" ]',
+    );
     expect(workflow.match(/--insecure/g)).toHaveLength(4);
     expect(workflow).toContain('PLATFORM_SECRET never leaves the runner');
     expect(workflow.match(/gateway_http_status=\$http_code/g)).toHaveLength(2);
@@ -277,7 +286,7 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).not.toContain('VPS_SSH_KEY');
     expect(workflow).toContain('workflow_dispatch:');
   });
-  it('bounds one-shot disposal of a wedged same-repository preview', async () => {
+  it('can remove only its immutable disposable preview before a clean proof', async () => {
     const workflow = await readFile(
       join(process.cwd(), '.github/workflows/terminal-runtime-spikes.yml'),
       'utf8',
@@ -292,12 +301,10 @@ describe('terminal runtime spike evidence', () => {
       'if length == 1 then .[0].machineId else error("preview_unavailable") end',
     );
     expect(workflow).toContain(
-      'test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")',
-    );
-    expect(workflow).toContain(
       '-X DELETE "${PLATFORM_PUBLIC_URL%/}/vps/${machine_id}"',
     );
-    expect(workflow).toContain('Disposable preview removed.');
+    expect(workflow).toContain('deadline=$((SECONDS + 300))');
+    expect(workflow).not.toContain('VPS_SSH_KEY');
   });
   it('packages the harness only for explicitly marked preview bundles', async () => {
     const [buildScript, previewWorkflow] = await Promise.all([
@@ -355,6 +362,7 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('call_helper acceptance-resume');
     expect(workflow).toContain('call_helper acceptance-pack');
     expect(workflow).toContain('Validate the complete production matrix');
+    expect(workflow).not.toMatch(/^\s+env:\n\s+env:/m);
     expect(helper).toContain(
       'acceptance-launch | acceptance-status | acceptance-reboot | acceptance-resume | acceptance-pack',
     );

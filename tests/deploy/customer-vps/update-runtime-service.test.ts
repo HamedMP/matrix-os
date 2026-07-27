@@ -528,6 +528,41 @@ assert response_for({
     );
   });
 
+  it("publishes only an allowlisted coarse update failure code for owner diagnostics", () => {
+    const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+
+    expect(updater).toContain(
+      'readonly UPDATE_FAILURE_CODE="$UPDATE_RUNTIME_DIR/last-failure-code"',
+    );
+    expect(updater).toContain("write_update_failure_code()");
+    expect(updater).toContain(
+      'mktemp --tmpdir="$UPDATE_RUNTIME_DIR" .last-failure-code.XXXXXXXXXX',
+    );
+    expect(updater).toContain(
+      'install -o root -g matrix -m 0640 "$temporary" "$committed"',
+    );
+    expect(updater).toContain(
+      'mv -f -- "$committed" "$UPDATE_FAILURE_CODE"',
+    );
+    for (const code of [
+      "prepared_release_metadata_invalid",
+      "staging_invalid",
+      "insufficient_disk_space",
+      "bundle_download_failed",
+      "bundle_size_mismatch",
+      "bundle_checksum_mismatch",
+      "bundle_archive_invalid",
+      "bundle_extraction_failed",
+      "bundle_shape_invalid",
+      "terminal_runtime_generation_install_failed",
+      "terminal_runtime_legacy_migration_failed",
+      "terminal_runtime_supervisor_start_failed",
+      "health_check_failed",
+    ]) {
+      expect(updater).toContain(`write_update_failure_code "${code}"`);
+    }
+  });
+
   it("resumes a root-published request without signaling the worker before its handler is ready", () => {
     const service = join(root, "distro/customer-vps/host-bin/matrix-update-service");
     const regression = String.raw`

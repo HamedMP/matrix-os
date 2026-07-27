@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod/v4';
 import {
   DisplayNameSchema,
@@ -195,11 +196,20 @@ function migratedReceipt(input: {
   };
 }
 
-function collisionDisplayName(displayName: string, runtimeId: string): string {
-  const id = RuntimeIdSchema.parse(runtimeId);
-  const suffix = `-agent-${id}`;
+function collisionDisplayName(candidate: LegacyCandidate): string {
+  if (!candidate.workspace) throw new Error('legacy_workspace_invalid');
+  const sourceKey = [
+    'workspace',
+    candidate.workspace.fileName,
+    candidate.workspace.raw.id,
+  ].join('\0');
+  const sourceHash = createHash('sha256')
+    .update(sourceKey)
+    .digest('hex')
+    .slice(0, 12);
+  const suffix = `-agent-${sourceHash}`;
   return DisplayNameSchema.parse(
-    `${displayName.slice(0, 64 - suffix.length)}${suffix}`,
+    `${candidate.displayName.slice(0, 64 - suffix.length)}${suffix}`,
   );
 }
 
@@ -277,21 +287,22 @@ export async function migrateLegacyTerminalState(options: {
       await options.state.locks.withNameIndex(async () => {
         const collidesWithShell = candidate.source === 'workspace' &&
           shellDisplayNames.includes(candidate.displayName);
-        const resolved = collidesWithShell
-          ? null
-          : await options.state.names.resolve(
-            candidate.displayName,
-            now().getTime(),
-          );
+        const migrationDisplayName = collidesWithShell
+          ? collisionDisplayName(candidate)
+          : candidate.displayName;
+        const resolved = await options.state.names.resolve(
+          migrationDisplayName,
+          now().getTime(),
+        );
         let runtimeId = resolved?.runtimeId;
-        if (!runtimeId && !collidesWithShell) {
+        if (!runtimeId) {
           const orphan = await options.state.receipts.findByDisplayName(
-            candidate.displayName,
+            migrationDisplayName,
           );
           if (orphan) {
             runtimeId = orphan.runtimeId;
             await options.state.names.register(
-              candidate.displayName,
+              migrationDisplayName,
               runtimeId,
               orphan.metadataRevision,
               now().getTime(),
@@ -331,9 +342,6 @@ export async function migrateLegacyTerminalState(options: {
           resolveCwd: options.resolveCwd,
         });
         const nextRuntimeId = RuntimeIdSchema.parse(createId());
-        const nextDisplayName = collidesWithShell
-          ? collisionDisplayName(candidate.displayName, nextRuntimeId)
-          : candidate.displayName;
         await options.state.locks.withRuntime(
           nextRuntimeId,
           false,
@@ -342,13 +350,13 @@ export async function migrateLegacyTerminalState(options: {
             await options.state.receipts.create(migratedReceipt({
               runtimeId: nextRuntimeId,
               candidate,
-              displayName: nextDisplayName,
+              displayName: migrationDisplayName,
               cwd: resolvedCwd.cwd,
               now: timestamp,
               bootId: options.bootId,
             }));
             await options.state.names.register(
-              nextDisplayName,
+              migrationDisplayName,
               nextRuntimeId,
               1,
               now().getTime(),

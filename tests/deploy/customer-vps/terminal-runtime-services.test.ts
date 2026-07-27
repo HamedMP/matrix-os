@@ -33,6 +33,8 @@ describe('customer VPS terminal runtime services', () => {
     const session = read('distro/customer-vps/systemd/matrix-terminal-session@.service');
 
     expect(supervisor).toContain('ExecStart=/opt/matrix/bin/matrix-terminal-supervisor');
+    expect(supervisor).toContain('Type=notify');
+    expect(supervisor).toContain('NotifyAccess=main');
     expect(supervisor).toContain('RuntimeDirectory=matrix-terminal-runtime');
     expect(supervisor).toContain('RuntimeDirectoryMode=0750');
     expect(supervisor).toContain('Type=notify');
@@ -128,6 +130,11 @@ describe('customer VPS terminal runtime services', () => {
       expect(source).toContain('READY=1');
       expect(source).toContain('#define MAX_WORKERS 128');
       expect(source).toContain('workers >= MAX_WORKERS');
+      expect(source).toContain('NOTIFY_SOCKET');
+      expect(source).toContain('READY=1');
+      expect(source.indexOf('READY=1')).toBeLessThan(
+        source.indexOf('while (!stopping)'),
+      );
       expect(source).not.toContain('system(');
       expect(source).not.toContain('/bin/sh');
     } finally {
@@ -436,9 +443,20 @@ describe('customer VPS terminal runtime services', () => {
       'systemctl start matrix-gateway matrix-shell',
       migration,
     );
+    const supervisorEnable = updater.indexOf(
+      'systemctl enable matrix-terminal-runtime.service',
+      migration,
+    );
+    const supervisorStart = updater.indexOf(
+      'systemctl start matrix-terminal-runtime.service',
+      migration,
+    );
 
     expect(migration).toBeGreaterThan(-1);
     expect(gatewayStart).toBeGreaterThan(migration);
+    expect(supervisorEnable).toBeGreaterThan(migration);
+    expect(supervisorStart).toBeGreaterThan(supervisorEnable);
+    expect(supervisorStart).toBeLessThan(gatewayStart);
     expect(updater).not.toContain('systemctl stop matrix-terminal-session@');
     expect(updater).not.toContain('systemctl restart matrix-terminal-runtime.service');
     expect(updater).not.toContain('systemctl restart matrix-terminal.slice');

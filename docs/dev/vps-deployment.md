@@ -1126,19 +1126,24 @@ stable systemd units.
 During the first activating update, the root updater stops the legacy gateway,
 atomically installs the verified runtime generation, and runs the fixed
 `matrix-terminal-runtime-op migrate-legacy` operation before starting the new
-gateway. The operation reads only bounded, validated name and working-directory
-metadata from legacy shell and workspace records. It assigns immutable runtime
-IDs and creates interrupted receipts; it never adopts PIDs, starts a template
-unit, executes a command, or resumes an agent. A partial migration is
-idempotently completed on the next update.
+gateway. It then enables the stable supervisor and waits for its `Type=notify`
+readiness, which is emitted only after both protocol sockets and the maintenance
+worker are available. The operation reads only bounded, validated name and
+working-directory metadata from legacy shell and workspace records. It assigns
+immutable runtime IDs and creates interrupted receipts; it never adopts PIDs,
+starts a template unit, executes a command, or resumes an agent. A partial
+migration is idempotently completed on the next update.
 
 Normal update and rollback stop lists contain the gateway, shell, and Symphony
 only. They must never stop or restart `matrix-terminal-session@*`,
 `matrix-terminal.slice`, or `matrix-terminal-runtime.service`. Installing a new
 helper generation and running `daemon-reload` affects future sessions only;
-live keeper process images and terminal cgroups remain untouched. Maintenance
-that cannot preserve protocol-v1 compatibility requires a separately announced
-reboot or maintenance window.
+live keeper process images and terminal cgroups remain untouched. The only
+normal-update supervisor start is the first activation when the pre-update
+snapshot proves it was inactive; a failed activation stops that newly
+introduced supervisor before restoring stable bytes. Maintenance that cannot
+preserve protocol-v1 compatibility requires a separately announced reboot or
+maintenance window.
 
 Operational checks:
 

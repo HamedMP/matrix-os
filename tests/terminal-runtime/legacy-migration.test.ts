@@ -238,11 +238,11 @@ describe("legacy terminal migration", () => {
     expect(receipts.map((receipt) => receipt.runtimeId).sort())
       .toEqual([IDS[0], IDS[1]]);
     const workspaceReceipt = receipts.find((receipt) => receipt.runtimeId === IDS[1]);
-    expect(workspaceReceipt?.displayName).toBe(`main-agent-${IDS[1]}`);
+    expect(workspaceReceipt?.displayName).toMatch(/^main-agent-[0-9a-f]{12}$/);
     expect(await state.names.resolve("main", Date.now())).toMatchObject({
       runtimeId: IDS[0],
     });
-    expect(await state.names.resolve(`main-agent-${IDS[1]}`, Date.now()))
+    expect(await state.names.resolve(workspaceReceipt!.displayName, Date.now()))
       .toMatchObject({ runtimeId: IDS[1] });
 
     await expect(migrate()).resolves.toMatchObject({
@@ -252,6 +252,57 @@ describe("legacy terminal migration", () => {
       workspaceRecordsUpdated: 0,
     });
     expect(nextId).toBe(2);
+    await state.close();
+  });
+
+  it("reuses a colliding workspace runtime after interruption before its legacy marker update", async () => {
+    const { homePath, state } = await fixture();
+    await writeFile(join(homePath, "system", "shell-sessions.json"), JSON.stringify({
+      sessions: {
+        main: {
+          name: "main",
+          status: "active",
+          cwd: homePath,
+        },
+      },
+    }));
+    const legacyWorkspace = {
+      id: "main",
+      kind: "agent",
+      runtime: {
+        type: "zellij",
+        status: "running",
+        zellijSession: "legacy-agent-main",
+      },
+    };
+    const workspacePath = join(homePath, "system", "sessions", "main.json");
+    await writeFile(workspacePath, JSON.stringify(legacyWorkspace));
+
+    let nextId = 0;
+    const migrate = async () => await migrateLegacyTerminalState({
+      homePath,
+      state,
+      resolveCwd: cwdResolver(homePath),
+      now: () => new Date("2026-07-26T10:00:00.000Z"),
+      bootId: "migration-boot",
+      createId: () => IDS[nextId++]!,
+    });
+
+    await expect(migrate()).resolves.toMatchObject({
+      migrated: 2,
+      existing: 0,
+    });
+    // Recreate the durable state left by a crash after the receipt and name
+    // index commit but before the legacy workspace marker is replaced.
+    await writeFile(workspacePath, JSON.stringify(legacyWorkspace));
+
+    await expect(migrate()).resolves.toMatchObject({
+      migrated: 0,
+      existing: 2,
+      workspaceRecordsUpdated: 1,
+    });
+    expect(nextId).toBe(2);
+    expect(await state.receipts.list()).toHaveLength(2);
     await state.close();
   });
 

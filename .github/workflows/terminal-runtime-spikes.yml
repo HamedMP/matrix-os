@@ -25,7 +25,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   reprovision:
-    name: Remove wedged disposable preview
+    name: Remove stale disposable preview
     if: >-
       github.event.label.name == 'terminal-preview-reprovision' &&
       github.event.pull_request.head.repo.full_name == github.repository
@@ -64,7 +64,8 @@ jobs:
             "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"
           machine_id="$(jq -er --arg handle "$handle" '
             [.machines[] | select(
-              .handle == $handle and .runtimeSlot == $handle and .status != "deleted"
+              .handle == $handle and .runtimeSlot == $handle and
+              .status != "deleted"
             )]
             | if length == 1 then .[0].machineId else error("preview_unavailable") end
           ' <<<"$fleet")"
@@ -193,34 +194,34 @@ jobs:
           socket_body="$(jq -cn '{
             command:["/usr/bin/test","-S","/run/matrix-update-runtime/update.sock"],
             timeoutMs:10000
-           }')"
-           deadline=$((SECONDS + 120))
-           socket_ready=false
-           while [ "$SECONDS" -lt "$deadline" ]; do
-             if call_gateway "$socket_body" &&
-               jq -e 'type == "object" and .exitCode == 0 and .timedOut == false and
-                 .truncated == false and .signal == null and .stdout == "" and .stderr == ""' \
-                 "$response" >/dev/null; then
-               socket_ready=true
-               break
-             fi
-             sleep 5
-           done
-           if [ "$socket_ready" != true ]; then
-             echo "Legacy disposable updater bootstrap did not create the typed socket." >&2
-             exit 1
-           fi
-           repair_body="$(jq -cn '{
-             command:["/opt/matrix/bin/matrix-update","repair"],
-             timeoutMs:10000
-           }')"
-           call_gateway "$repair_body"
-           jq -e 'type == "object" and .exitCode == 0 and .timedOut == false and
-             .truncated == false and .signal == null and
-             .stdout == "Update service: accepted\n" and .stderr == ""' \
-             "$response" >/dev/null
-           echo "Typed updater repair accepted."
-           echo "Legacy disposable updater bootstrap completed."
+          }')"
+          deadline=$((SECONDS + 120))
+          socket_ready=false
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if call_gateway "$socket_body" &&
+              jq -e 'type == "object" and .exitCode == 0 and .timedOut == false and
+                .truncated == false and .signal == null and .stdout == "" and .stderr == ""' \
+                "$response" >/dev/null; then
+              socket_ready=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$socket_ready" != true ]; then
+            echo "Legacy disposable updater bootstrap did not create the typed socket." >&2
+            exit 1
+          fi
+          repair_body="$(jq -cn '{
+            command:["/opt/matrix/bin/matrix-update","repair"],
+            timeoutMs:10000
+          }')"
+          call_gateway "$repair_body"
+          jq -e 'type == "object" and .exitCode == 0 and .timedOut == false and
+            .truncated == false and .signal == null and
+            .stdout == "Update service: accepted\n" and .stderr == ""' \
+            "$response" >/dev/null
+          echo "Typed updater repair accepted."
+          echo "Legacy disposable updater bootstrap completed."
 
   prove:
     name: Prove S1 and S2
@@ -400,6 +401,48 @@ jobs:
             process.stdout.write(createHmac("sha256", process.argv[2]).update(process.argv[1]).digest("hex"));
           ' "$HANDLE" "$PLATFORM_SECRET")"
           echo "::add-mask::$gateway_token"
+          run_response="$RUNNER_TEMP/terminal-runtime-spike-run.json"
+          call_gateway() {
+            local body="$1"
+            curl --silent --show-error --max-time 45 --connect-timeout 15 \
+              --insecure \
+              --resolve "app.matrix-os.com:443:${PUBLIC_IPV4}" \
+              -o "$run_response" -w '%{http_code}' \
+              -X POST 'https://app.matrix-os.com/api/terminal/run' \
+              -H "authorization: Bearer ${gateway_token}" \
+              -H 'content-type: application/json' \
+              --data-binary "$body"
+          }
+          spike_control_body="$(jq -cn '{
+            command:["/usr/bin/test","-x","/opt/matrix/bin/matrix-terminal-spike-control"],
+            timeoutMs:10000
+          }')"
+          spike_control_deadline=$((SECONDS + 600))
+          spike_control_ready=false
+          while [ "$SECONDS" -lt "$spike_control_deadline" ]; do
+            set +e
+            http_code="$(call_gateway "$spike_control_body")"
+            curl_status=$?
+            set -e
+            if [ "$curl_status" -eq 0 ] && [ "$http_code" = 200 ] &&
+              jq -e 'type == "object" and .exitCode == 0 and
+                .timedOut == false and .truncated == false and
+                .signal == null and .stdout == "" and .stderr == ""' \
+                "$run_response" >/dev/null; then
+              spike_control_ready=true
+              break
+            fi
+            if [ "$http_code" = 401 ] || [ "$http_code" = 403 ]; then
+              echo "Authenticated spike execution failed." >&2
+              exit 1
+            fi
+            echo "Waiting for exact-head spike control."
+            sleep 15
+          done
+          if [ "$spike_control_ready" != true ]; then
+            echo "Exact-head spike control did not become ready." >&2
+            exit 1
+          fi
           run_body="$(jq -cn --arg sha "$HEAD_SHA" '{
             command: [
               "/usr/bin/sudo",
@@ -409,28 +452,47 @@ jobs:
             ],
             timeoutMs: 30000
           }')"
-          run_response="$RUNNER_TEMP/terminal-runtime-spike-run.json"
           # Customer VPS nginx uses the same per-host self-signed certificate
           # accepted by the platform's CUSTOMER_VPS_TLS_VERIFY=false transport.
           # Only this disposable preview's derived gateway token crosses it;
           # PLATFORM_SECRET never leaves the runner.
-          http_code="$(curl --silent --show-error --max-time 45 --connect-timeout 15 \
-            --insecure \
-            --resolve "app.matrix-os.com:443:${PUBLIC_IPV4}" \
-            -o "$run_response" -w '%{http_code}' \
-            -X POST 'https://app.matrix-os.com/api/terminal/run' \
-            -H "authorization: Bearer ${gateway_token}" \
-            -H 'content-type: application/json' \
-            --data-binary "$run_body")"
+          spike_launch_deadline=$((SECONDS + 600))
+          spike_launch_ready=false
+          while [ "$SECONDS" -lt "$spike_launch_deadline" ]; do
+            set +e
+            http_code="$(call_gateway "$run_body")"
+            curl_status=$?
+            set -e
+            if [ "$curl_status" -eq 0 ] && [ "$http_code" = 200 ] &&
+              jq -e 'type == "object" and .exitCode == 0 and
+                .timedOut == false and .truncated == false and
+                .signal == null' "$run_response" >/dev/null; then
+              spike_launch_ready=true
+              break
+            fi
+            if [ "$http_code" = 401 ] || [ "$http_code" = 403 ]; then
+              echo "Authenticated spike execution failed." >&2
+              exit 1
+            fi
+            diagnostic=unavailable
+            if [ "$curl_status" -eq 0 ] && [ "$http_code" = 200 ]; then
+              diagnostic="$(jq -r '
+                if ((.stderr // "") | test("spike_[a-z0-9_]+"))
+                then ((.stderr // "") | capture("(?<code>spike_[a-z0-9_]+)").code)
+                elif ((.stderr // "") | test("sudo:")) then "sudo_rejected"
+                else "unclassified" end
+              ' "$run_response" 2>/dev/null || printf 'unclassified')"
+              if [ "$diagnostic" = "spike_control_unavailable" ]; then
+                :
+              else
+                break
+              fi
+            fi
+            echo "Waiting for exact-head spike control."
+            sleep 15
+          done
           echo "gateway_http_status=$http_code"
-          if [ "$http_code" != 200 ]; then
-            echo "Authenticated spike execution failed." >&2
-            exit 1
-          fi
-          if ! jq -e '
-            type == "object" and .exitCode == 0 and .timedOut == false and
-            .truncated == false and .signal == null
-          ' "$run_response" >/dev/null; then
+          if [ "$spike_launch_ready" != true ]; then
             jq '{
               exitCode, timedOut, truncated, signal,
               diagnostic: (if ((.stderr // "") | test("spike_[a-z0-9_]+"))
