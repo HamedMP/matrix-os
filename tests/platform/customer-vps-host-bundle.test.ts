@@ -969,7 +969,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
-    expect(workflow).toContain('deploy_deadline=$((SECONDS + 1200))');
+    expect(workflow).toContain('deploy_deadline=$((SECONDS + 4500))');
+    expect(workflow.slice(workflow.indexOf('  deploy:'), workflow.indexOf('  teardown:'))).toContain('timeout-minutes: 120');
     expect(workflow).toContain(
       '.triggered == 1 and .failed == 0 and (.results | length) == 1',
     );
