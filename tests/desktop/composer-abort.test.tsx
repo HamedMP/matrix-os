@@ -105,6 +105,21 @@ describe("AgentConversationView abort control", () => {
     );
   });
 
+  it("clears a stale abort error when a retry succeeds", async () => {
+    // A previous attempt failed and left its message on screen; the successful
+    // retry must not leave the user reading "could not stop".
+    mockOperator();
+    useCodingAgentWorkspace.setState({
+      turnThreadId: "thread_alpha",
+      turnError: "Could not stop this conversation. It may still be running — try again.",
+    });
+    render(<AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+
+    await vi.waitFor(() => expect(useCodingAgentWorkspace.getState().turnError).toBeNull());
+  });
+
   it("keeps the send button on an idle thread even when abort is supported", () => {
     mockOperator();
     render(

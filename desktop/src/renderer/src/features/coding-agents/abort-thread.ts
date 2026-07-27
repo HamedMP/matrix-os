@@ -35,11 +35,15 @@ export async function abortAgentThread(threadId: string): Promise<boolean> {
     // Selection: only settle the conversation still on screen. Deselecting and
     // reselecting the same thread mid-abort would otherwise let this stale
     // snapshot replace the freshly loaded one.
-    if (snapshot && useCodingAgentWorkspace.getState().activeThreadId === threadId) {
+    const state = useCodingAgentWorkspace.getState();
+    if (snapshot && state.activeThreadId === threadId) {
       useCodingAgentWorkspace.setState({
         threadSnapshot: snapshot,
         threadSnapshotStatus: "ready",
         threadSnapshotError: null,
+        // Clear a message left by an earlier failed attempt on this thread;
+        // otherwise a successful retry still shows "could not stop".
+        ...(state.turnThreadId === threadId ? { turnError: null } : {}),
       });
     }
     return true;
