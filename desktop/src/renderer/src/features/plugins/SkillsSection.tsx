@@ -53,7 +53,9 @@ export function SkillsSection() {
       title: "Skills",
     });
     setTerminalBusy(false);
-    if (!opened) setTerminalError(categoryMessage("server"));
+    // "runtime-changed" is not a failure: the session was created on the
+    // computer the user just left, so there is nothing to apologise for.
+    if (opened === "failed") setTerminalError(categoryMessage("server"));
   };
 
   let body: ReactNode;

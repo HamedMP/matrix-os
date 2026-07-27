@@ -32,7 +32,9 @@ export function McpServersSection() {
       title: "MCP servers",
     });
     setBusy(false);
-    if (!opened) setErrorMessage(categoryMessage("server"));
+    // "runtime-changed" is not a failure: the session was created on the
+    // computer the user just left, so there is nothing to apologise for.
+    if (opened === "failed") setErrorMessage(categoryMessage("server"));
   };
 
   return (

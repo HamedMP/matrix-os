@@ -64,7 +64,7 @@ describe("plugins hub across runtime switches", () => {
     useConnection.setState({ runtimeSlot: "secondary", authGeneration: 2 });
     releaseSession({ name: "plugins-mcp" });
 
-    await expect(opening).resolves.toBe(false);
+    await expect(opening).resolves.toBe("runtime-changed");
     expect(openTab).not.toHaveBeenCalled();
   });
 
@@ -74,7 +74,7 @@ describe("plugins hub across runtime switches", () => {
 
     await expect(
       openPluginsTerminal(api, openTab, { sessionName: "plugins-mcp", title: "MCP servers" }),
-    ).resolves.toBe(true);
+    ).resolves.toBe("opened");
     expect(openTab).toHaveBeenCalledWith({ kind: "terminal", sessionName: "plugins-mcp", title: "MCP servers" });
   });
 });

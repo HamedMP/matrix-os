@@ -9,6 +9,7 @@ import { AppError, categoryMessage } from "../../../../shared/app-error";
 import type { ApiClient } from "../../lib/api";
 import { toUserMessage } from "../../lib/errors";
 import { useConnection } from "../../stores/connection";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { parseSkills, type SkillInfo } from "./types";
 
 const SKILLS_PATH = "/api/settings/skills";
@@ -30,14 +31,13 @@ function resolveApi(apiOverride: ApiClient | null | undefined): ApiClient | null
   return useConnection.getState().api;
 }
 
-// Monotonic refresh generation. Switching computers replaces the ApiClient and
-// starts a new refresh while the previous one may still be in flight; without
-// this guard the superseded response can settle last and replace the selected
-// computer's state with the previous one's skill names and file paths.
-let skillsRefreshGeneration = 0;
+// Ordering guard for concurrent skill loads. Identity -- "is this still the
+// same computer/account?" -- is the SHARED runtime generation, because a
+// request that starts after an account change is the newest one and would win
+// a per-store counter while still carrying the previous account's ApiClient.
+let skillsSequence = 0;
 
 export function clearPluginsRuntime(): void {
-  skillsRefreshGeneration += 1;
   usePlugins.setState({ skills: [], skillsStatus: "idle", skillsError: null });
 }
 
@@ -48,8 +48,10 @@ export const usePlugins = create<PluginsState>()((set) => ({
 
   refreshSkills: async (apiOverride) => {
     const api = resolveApi(apiOverride);
-    const generation = ++skillsRefreshGeneration;
-    const superseded = (): boolean => skillsRefreshGeneration !== generation;
+    const runtimeGeneration = captureRuntimeGeneration();
+    const sequence = ++skillsSequence;
+    const superseded = (): boolean =>
+      !isCurrentRuntimeGeneration(runtimeGeneration) || skillsSequence !== sequence;
     if (!api) {
       set({
         skillsStatus: "error",

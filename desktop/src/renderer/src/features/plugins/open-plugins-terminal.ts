@@ -16,7 +16,7 @@ export async function openPluginsTerminal(
   api: ApiClient,
   openTab: ReturnType<typeof useTabs.getState>["openTab"],
   options: { sessionName: string; title: string },
-): Promise<boolean> {
+): Promise<"opened" | "failed" | "runtime-changed"> {
   // The request URL is resolved against the runtime selected right now.
   const { runtimeSlot, authGeneration } = useConnection.getState();
   try {
@@ -28,18 +28,27 @@ export async function openPluginsTerminal(
     // terminal transport. The session created above lives on the previous
     // computer, so opening a tab for it would attach to the wrong runtime.
     const current = useConnection.getState();
-    if (current.runtimeSlot !== runtimeSlot || current.authGeneration !== authGeneration) return false;
+    if (current.runtimeSlot !== runtimeSlot || current.authGeneration !== authGeneration) {
+      // The POST succeeded, so a real session now exists on the previous
+      // computer. Reporting this as a failure would show "something went wrong
+      // on the server" for an operation that worked.
+      console.warn(
+        "[plugins] abandoned a terminal session created on the previous computer:",
+        options.sessionName,
+      );
+      return "runtime-changed";
+    }
     const sessionName =
       typeof response.name === "string" && SESSION_NAME_PATTERN.test(response.name)
         ? response.name
         : options.sessionName;
     openTab({ kind: "terminal", sessionName, title: options.title });
-    return true;
+    return "opened";
   } catch (err: unknown) {
     console.error(
       "[plugins] Failed to open terminal session:",
-      err instanceof Error ? err.name : typeof err,
+      err instanceof Error ? err.message : String(err),
     );
-    return false;
+    return "failed";
   }
 }
