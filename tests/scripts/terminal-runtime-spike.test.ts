@@ -247,6 +247,10 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain(
       'command:["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-sync-agent.service"]',
     );
+    expect(workflow).toContain(
+      'command:["/opt/matrix/bin/matrix-update","repair"]',
+    );
+    expect(workflow).toContain('Typed updater repair accepted.');
     expect(workflow).toContain('Legacy disposable updater bootstrap completed.');
     expect(workflow).toContain('Deployment diagnostic never satisfies S1/S2.');
     expect(workflow).toContain('APPROVED_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.head_sha }}');
@@ -264,7 +268,7 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).not.toContain("jq -r '.imageVersion // \"\"'");
     expect(workflow).toContain('--resolve "app.matrix-os.com:443:${PUBLIC_IPV4}"');
     expect(workflow).toContain("'https://app.matrix-os.com/api/terminal/run'");
-    expect(workflow.match(/--insecure/g)).toHaveLength(3);
+    expect(workflow.match(/--insecure/g)).toHaveLength(4);
     expect(workflow).toContain('PLATFORM_SECRET never leaves the runner');
     expect(workflow.match(/gateway_http_status=\$http_code/g)).toHaveLength(2);
     expect(workflow).toContain(

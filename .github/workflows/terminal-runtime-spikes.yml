@@ -24,6 +24,123 @@ concurrency:
   group: terminal-runtime-spikes-${{ github.event.pull_request.number || inputs.pr }}
   cancel-in-progress: true
 jobs:
+  bootstrap:
+    name: Bootstrap legacy disposable updater
+    if: >-
+      github.event.label.name == 'terminal-updater-bootstrap' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Resolve immutable disposable preview
+        id: preview
+        run: |
+          set -euo pipefail
+          pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          head_repo="$(jq -r '.head.repo.full_name' <<<"$pr_json")"
+          head_sha="$(jq -r '.head.sha' <<<"$pr_json")"
+          if [ "$head_repo" != "$GITHUB_REPOSITORY" ] ||
+            [ "$head_sha" != "$EVENT_HEAD" ] ||
+            ! printf '%s' "$head_sha" | grep -Eq '^[0-9a-f]{40}$' ||
+            ! jq -e '.labels | any(.name == "preview-vps") and
+              any(.name == "terminal-updater-bootstrap")' <<<"$pr_json" >/dev/null; then
+            echo "Legacy updater bootstrap requires an immutable same-repository preview head." >&2
+            exit 1
+          fi
+          handle="pr-${PR_NUMBER}"
+          fleet="$(curl --fail --silent --show-error --max-time 30 \
+            -H "authorization: Bearer ${PLATFORM_SECRET}" \
+            "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"
+          address="$(jq -er --arg handle "$handle" '
+            [.machines[] | select(
+              .handle == $handle and .runtimeSlot == $handle and .status == "running"
+            )] | if length == 1 then .[0].publicIPv4 else error("preview_unavailable") end
+          ' <<<"$fleet")"
+          if ! node -e '
+            const parts = process.argv[1].split(".").map(Number);
+            const valid = parts.length === 4 && parts.every((part) =>
+              Number.isInteger(part) && part >= 0 && part <= 255);
+            const blocked = !valid || parts[0] === 0 || parts[0] === 10 ||
+              parts[0] === 127 || parts[0] >= 224 ||
+              (parts[0] === 169 && parts[1] === 254) ||
+              (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+              (parts[0] === 192 && parts[1] === 168);
+            process.exit(blocked ? 1 : 0);
+          ' "$address"; then
+            echo "Legacy updater bootstrap preview address is invalid." >&2
+            exit 1
+          fi
+          echo "::add-mask::$address"
+          echo "address=$address" >>"$GITHUB_OUTPUT"
+          echo "handle=$handle" >>"$GITHUB_OUTPUT"
+      - name: Restart only the legacy updater unit and prove its typed socket
+        env:
+          ADDRESS: ${{ steps.preview.outputs.address }}
+          HANDLE: ${{ steps.preview.outputs.handle }}
+        run: |
+          set -euo pipefail
+          gateway_token="$(node --input-type=module -e '
+            import { createHmac } from "node:crypto";
+            process.stdout.write(createHmac("sha256", process.argv[2]).update(process.argv[1]).digest("hex"));
+          ' "$HANDLE" "$PLATFORM_SECRET")"
+          echo "::add-mask::$gateway_token"
+          response="$RUNNER_TEMP/terminal-updater-bootstrap.json"
+          call_gateway() {
+            local body="$1"
+            curl --fail --silent --show-error --max-time 45 --connect-timeout 15 \
+              --insecure \
+              --resolve "app.matrix-os.com:443:${ADDRESS}" \
+              -o "$response" -X POST 'https://app.matrix-os.com/api/terminal/run' \
+              -H "authorization: Bearer ${gateway_token}" \
+              -H 'content-type: application/json' \
+              --data-binary "$body"
+          }
+          restart_body="$(jq -cn '{
+            command:["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-sync-agent.service"],
+            timeoutMs:30000
+          }')"
+          call_gateway "$restart_body"
+          jq -e 'type == "object" and .exitCode == 0 and .timedOut == false and
+            .truncated == false and .signal == null and .stdout == "" and .stderr == ""' \
+            "$response" >/dev/null
+          socket_body="$(jq -cn '{
+            command:["/usr/bin/test","-S","/run/matrix-update-runtime/update.sock"],
+            timeoutMs:10000
+           }')"
+           deadline=$((SECONDS + 120))
+           socket_ready=false
+           while [ "$SECONDS" -lt "$deadline" ]; do
+             if call_gateway "$socket_body" &&
+               jq -e 'type == "object" and .exitCode == 0 and .timedOut == false and
+                 .truncated == false and .signal == null and .stdout == "" and .stderr == ""' \
+                 "$response" >/dev/null; then
+               socket_ready=true
+               break
+             fi
+             sleep 5
+           done
+           if [ "$socket_ready" != true ]; then
+             echo "Legacy disposable updater bootstrap did not create the typed socket." >&2
+             exit 1
+           fi
+           repair_body="$(jq -cn '{
+             command:["/opt/matrix/bin/matrix-update","repair"],
+             timeoutMs:10000
+           }')"
+           call_gateway "$repair_body"
+           jq -e 'type == "object" and .exitCode == 0 and .timedOut == false and
+             .truncated == false and .signal == null and
+             .stdout == "Update service: accepted\n" and .stderr == ""' \
+             "$response" >/dev/null
+           echo "Typed updater repair accepted."
+           echo "Legacy disposable updater bootstrap completed."
+
   prove:
     name: Prove S1 and S2
     if: >-
