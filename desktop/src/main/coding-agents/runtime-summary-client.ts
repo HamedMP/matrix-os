@@ -348,7 +348,7 @@ export async function createCodingAgentTurn(
 // client surfaces.
 export async function abortCodingAgentThread(
   auth: AuthService,
-  request: { threadId: string; clientRequestId: string },
+  request: { threadId: string },
   fetchFn: FetchFn = fetch,
 ): Promise<AgentThreadSnapshot> {
   const token = auth.getToken();
@@ -368,7 +368,7 @@ export async function abortCodingAgentThread(
       Accept: "application/json",
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ clientRequestId: request.clientRequestId }),
+    body: JSON.stringify({ clientRequestId: `req_${crypto.randomUUID()}` }),
     signal: AbortSignal.timeout(THREAD_TURN_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error("thread abort unavailable");

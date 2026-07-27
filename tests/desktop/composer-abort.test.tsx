@@ -115,14 +115,21 @@ describe("AgentConversationView abort control", () => {
     expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
   });
 
-  it("swallows a rejected abort call with a warning instead of crashing", async () => {
+  it("surfaces generic copy when abort fails, and keeps provider text out of the UI", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     mockOperator(vi.fn(() => Promise.reject(new Error("provider exploded"))));
     render(<AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />);
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
 
-    await vi.waitFor(() => expect(warn).toHaveBeenCalled());
-    expect(warn.mock.calls.flat().join(" ")).not.toMatch(/provider exploded/);
+    // The user must be told the stop did not take effect -- previously the
+    // failure was swallowed and the busy UI looked identical to success.
+    await vi.waitFor(() =>
+      expect(useCodingAgentWorkspace.getState().turnError).toMatch(/could not stop/i),
+    );
+    // Generic copy only: the raw provider message never reaches the UI.
+    expect(useCodingAgentWorkspace.getState().turnError).not.toMatch(/provider exploded/);
+    // The console keeps the real message for support triage.
+    expect(warn).toHaveBeenCalled();
   });
 });

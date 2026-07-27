@@ -232,11 +232,10 @@ export const INVOKE_CHANNELS = {
   },
   // Aborts one running thread. The gateway returns the authoritative aborted
   // snapshot, so the renderer can settle the conversation even when the event
-  // stream is disconnected.
+  // stream is disconnected. The clientRequestId is minted in the main process
+  // so it always satisfies RequestIdSchema's req_ prefix.
   "runtime:abort-thread": {
-    request: z
-      .object({ threadId: ThreadIdSchema, clientRequestId: RequestIdSchema })
-      .strict(),
+    request: z.object({ threadId: ThreadIdSchema }).strict(),
     response: AgentThreadSnapshotSchema,
   },
   "state:get": {
