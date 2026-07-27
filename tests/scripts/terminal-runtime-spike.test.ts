@@ -273,7 +273,7 @@ describe('terminal runtime spike evidence', () => {
       'command:["/usr/bin/test","-x","/opt/matrix/bin/matrix-terminal-spike-control"]',
     );
     expect(workflow).toContain('Waiting for exact-head spike control.');
-    expect(workflow).toContain('spike_launch_deadline=$((SECONDS + 600))');
+    expect(workflow).toContain('spike_launch_deadline=$((SECONDS + 1800))');
     expect(workflow).toContain(
       '[ "$diagnostic" = "spike_control_unavailable" ]',
     );
@@ -282,6 +282,10 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow.match(/gateway_http_status=\$http_code/g)).toHaveLength(2);
     expect(workflow).toContain(
       'diagnostic: (if ((.stderr // "") | test("spike_[a-z0-9_]+"))',
+    );
+    expect(workflow).toContain('{"diagnostic":"gateway_unavailable"}');
+    expect(workflow).toContain(
+      `jq -e 'type == "object"' "$run_response" >/dev/null 2>&1`,
     );
     expect(workflow).not.toContain('VPS_SSH_KEY');
     expect(workflow).toContain('workflow_dispatch:');

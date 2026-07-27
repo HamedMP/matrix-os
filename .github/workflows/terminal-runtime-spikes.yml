@@ -456,7 +456,10 @@ jobs:
           # accepted by the platform's CUSTOMER_VPS_TLS_VERIFY=false transport.
           # Only this disposable preview's derived gateway token crosses it;
           # PLATFORM_SECRET never leaves the runner.
-          spike_launch_deadline=$((SECONDS + 600))
+          # A clean preview can spend more than ten minutes downloading and
+          # validating the 672 MiB host bundle before the atomic service stop.
+          # Keep this bounded, but leave observed runtime with deployment margin.
+          spike_launch_deadline=$((SECONDS + 1800))
           spike_launch_ready=false
           while [ "$SECONDS" -lt "$spike_launch_deadline" ]; do
             set +e
@@ -493,13 +496,17 @@ jobs:
           done
           echo "gateway_http_status=$http_code"
           if [ "$spike_launch_ready" != true ]; then
-            jq '{
-              exitCode, timedOut, truncated, signal,
-              diagnostic: (if ((.stderr // "") | test("spike_[a-z0-9_]+"))
-                then ((.stderr // "") | capture("(?<code>spike_[a-z0-9_]+)").code)
-                elif ((.stderr // "") | test("sudo:")) then "sudo_rejected"
-                else "unclassified" end)
-            }' "$run_response" >&2
+            if jq -e 'type == "object"' "$run_response" >/dev/null 2>&1; then
+              jq '{
+                exitCode, timedOut, truncated, signal,
+                diagnostic: (if ((.stderr // "") | test("spike_[a-z0-9_]+"))
+                  then ((.stderr // "") | capture("(?<code>spike_[a-z0-9_]+)").code)
+                  elif ((.stderr // "") | test("sudo:")) then "sudo_rejected"
+                  else "unclassified" end)
+              }' "$run_response" >&2
+            else
+              printf '%s\n' '{"diagnostic":"gateway_unavailable"}' >&2
+            fi
             echo "Detached spike launch failed." >&2
             exit 1
           fi
