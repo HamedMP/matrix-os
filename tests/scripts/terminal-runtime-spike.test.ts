@@ -277,6 +277,28 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).not.toContain('VPS_SSH_KEY');
     expect(workflow).toContain('workflow_dispatch:');
   });
+  it('bounds one-shot disposal of a wedged same-repository preview', async () => {
+    const workflow = await readFile(
+      join(process.cwd(), '.github/workflows/terminal-runtime-spikes.yml'),
+      'utf8',
+    );
+    expect(workflow).toContain(
+      "github.event.label.name == 'terminal-preview-reprovision'",
+    );
+    expect(workflow).toContain(
+      'any(.name == "terminal-preview-reprovision")',
+    );
+    expect(workflow).toContain(
+      'if length == 1 then .[0].machineId else error("preview_unavailable") end',
+    );
+    expect(workflow).toContain(
+      'test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")',
+    );
+    expect(workflow).toContain(
+      '-X DELETE "${PLATFORM_PUBLIC_URL%/}/vps/${machine_id}"',
+    );
+    expect(workflow).toContain('Disposable preview removed.');
+  });
   it('packages the harness only for explicitly marked preview bundles', async () => {
     const [buildScript, previewWorkflow] = await Promise.all([
       readFile(join(process.cwd(), 'scripts/build-host-bundle.sh'), 'utf8'),

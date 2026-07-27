@@ -24,6 +24,87 @@ concurrency:
   group: terminal-runtime-spikes-${{ github.event.pull_request.number || inputs.pr }}
   cancel-in-progress: true
 jobs:
+  reprovision:
+    name: Remove wedged disposable preview
+    if: >-
+      github.event.label.name == 'terminal-preview-reprovision' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Delete only the current PR preview
+        run: |
+          set -euo pipefail
+          if [ -z "${PLATFORM_SECRET:-}" ] ||
+            ! printf '%s' "$PR_NUMBER" | grep -Eq '^[0-9]+$'; then
+            echo "Disposable preview disposal is unavailable." >&2
+            exit 1
+          fi
+          pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          head_repo="$(jq -r '.head.repo.full_name' <<<"$pr_json")"
+          head_sha="$(jq -r '.head.sha' <<<"$pr_json")"
+          if [ "$head_repo" != "$GITHUB_REPOSITORY" ] ||
+            [ "$head_sha" != "$EVENT_HEAD" ] ||
+            ! printf '%s' "$head_sha" | grep -Eq '^[0-9a-f]{40}$' ||
+            ! jq -e '.labels | any(.name == "terminal-preview-reprovision")' \
+              <<<"$pr_json" >/dev/null; then
+            echo "Disposable preview disposal requires an immutable same-repository PR head." >&2
+            exit 1
+          fi
+          handle="pr-${PR_NUMBER}"
+          fleet="$(curl --fail --silent --show-error --max-time 30 \
+            --connect-timeout 10 \
+            -H "authorization: Bearer ${PLATFORM_SECRET}" \
+            "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"
+          machine_id="$(jq -er --arg handle "$handle" '
+            [.machines[] | select(
+              .handle == $handle and .runtimeSlot == $handle and .status != "deleted"
+            )]
+            | if length == 1 then .[0].machineId else error("preview_unavailable") end
+          ' <<<"$fleet")"
+          if ! jq -en --arg id "$machine_id" \
+            '$id | test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")' \
+            >/dev/null; then
+            echo "Disposable preview identity is invalid." >&2
+            exit 1
+          fi
+          delete_response="$RUNNER_TEMP/terminal-preview-delete.json"
+          delete_code="$(curl --silent --show-error --max-time 60 \
+            --connect-timeout 10 \
+            -o "$delete_response" -w '%{http_code}' \
+            -X DELETE "${PLATFORM_PUBLIC_URL%/}/vps/${machine_id}" \
+            -H "authorization: Bearer ${PLATFORM_SECRET}")"
+          if [ "$delete_code" != 200 ]; then
+            echo "Disposable preview disposal failed." >&2
+            exit 1
+          fi
+          deadline=$((SECONDS + 300))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            fleet="$(curl --fail --silent --show-error --max-time 30 \
+              --connect-timeout 10 \
+              -H "authorization: Bearer ${PLATFORM_SECRET}" \
+              "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"
+            remaining="$(jq -r --arg handle "$handle" --arg id "$machine_id" '
+              [.machines[] | select(
+                .handle == $handle and .runtimeSlot == $handle and
+                .machineId == $id and .status != "deleted"
+              )] | length
+            ' <<<"$fleet")"
+            if [ "$remaining" = 0 ]; then
+              echo "Disposable preview removed."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Disposable preview disposal did not converge." >&2
+          exit 1
+
   bootstrap:
     name: Bootstrap legacy disposable updater
     if: >-
