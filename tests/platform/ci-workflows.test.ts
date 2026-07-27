@@ -67,6 +67,10 @@ describe('CI workflows', () => {
     const workflowsDirectory = join(root, '.github/workflows');
     const workflowReadme = readFileSync(join(workflowsDirectory, 'README.md'), 'utf8');
     const releaseDocs = readFileSync(join(root, 'docs/dev/releases.md'), 'utf8');
+    const datedUpgradeGuide = readFileSync(
+      join(root, 'docs/dev/upgrade-2026-04-02.md'),
+      'utf8',
+    );
     const contributorGuide = readFileSync(join(root, 'CONTRIBUTING.md'), 'utf8');
     const orchestrator = readFileSync(join(root, 'packages/platform/src/orchestrator.ts'), 'utf8');
     const platformCompose = readFileSync(join(root, 'distro/docker-compose.platform.yml'), 'utf8');
@@ -92,11 +96,14 @@ describe('CI workflows', () => {
     expect(releaseDocs).toContain('Mobile OTA update');
     expect(releaseDocs).toContain('Desktop installers and OTA metadata');
     expect(releaseDocs).toContain('`@finnaai/matrix` CLI');
+    expect(datedUpgradeGuide).toContain('procedure is retired');
+    expect(datedUpgradeGuide).toContain('[Release Process](releases.md)');
     expect(orchestrator).toContain("image = 'matrixos-user:local'");
     expect(platformCompose).toContain(
       'PLATFORM_IMAGE=${PLATFORM_IMAGE:-matrixos-user:local}',
     );
-    expect(platformCompose).toContain(
+    expect(platformCompose).toContain('image: matrixos-user:local');
+    expect(platformCompose).not.toContain(
       'image: ${PLATFORM_IMAGE:-matrixos-user:local}',
     );
     expect(contributorGuide).toContain('| Host bundle | `host-bundle-release.yml`');
@@ -109,6 +116,7 @@ describe('CI workflows', () => {
 
     for (const activeSource of [
       contributorGuide,
+      datedUpgradeGuide,
       orchestrator,
       platformCompose,
       deployStatusCommand,
