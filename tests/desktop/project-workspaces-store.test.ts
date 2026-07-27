@@ -9,6 +9,7 @@ import {
 } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
+import { advanceRuntimeGeneration } from "../../desktop/src/renderer/src/stores/runtime-generation";
 
 const NOW = "2026-07-10T12:00:00.000Z";
 
@@ -281,6 +282,48 @@ describe("project workspaces store", () => {
       .toBeLessThanOrEqual(MAX_PROJECT_WORKSPACE_ENTRIES);
   });
 
+  it("drops a cached projection when the scope changes, without needing a race", async () => {
+    // Project ids are board slugs, so two accounts can both hold "website".
+    // Signing out and back in goes through auth:changed, not selectRuntime, so
+    // nothing clears this cache — the previous owner's projection would render
+    // under the new account with no in-flight request involved at all.
+    mockOperator({ website: workspace("website", "task_a", "thread_a") });
+    useProjectWorkspaces.getState().ensureRuntimeScope("account-a|https://platform.test|primary");
+    await useProjectWorkspaces.getState().ensure("website");
+    expect(useProjectWorkspaces.getState().entries.website?.status).toBe("ready");
+
+    useProjectWorkspaces.getState().ensureRuntimeScope("account-b|https://platform.test|primary");
+
+    expect(useProjectWorkspaces.getState().entries.website).toBeUndefined();
+  });
+
+  it("drops an account-switch in-flight load, not just a runtime switch", async () => {
+    // The shared runtime generation advances on ANY identity change, including
+    // the auth path that never calls reconcileDesktopRuntimeChange.
+    const pending: Array<(value: ProjectAgentWorkspace) => void> = [];
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: {
+        invoke: vi.fn(async (channel: string) => {
+          if (channel !== "runtime:get-project-workspace") return { ok: true };
+          return await new Promise<ProjectAgentWorkspace>((resolve) => {
+            pending.push(resolve);
+          });
+        }),
+        on: vi.fn(() => () => undefined),
+      },
+    });
+
+    const previousAccountLoad = useProjectWorkspaces.getState().refresh("website");
+    // Sign out / sign in as someone else: identity moved, no runtime switch.
+    advanceRuntimeGeneration();
+
+    pending[0]?.(workspace("website", "task_previous", "thread_previous"));
+    await previousAccountLoad;
+
+    expect(useProjectWorkspaces.getState().entries.website?.workspace).toBeFalsy();
+  });
+
   it("clears every cached workspace on runtime change", async () => {
     mockOperator({ "matrix-os": workspace("matrix-os", "task_auth", "thread_plan") });
     await useProjectWorkspaces.getState().ensure("matrix-os");
@@ -307,7 +350,9 @@ describe("project workspaces store", () => {
     // The previous runtime starts loading and stays in flight.
     const previousRuntimeLoad = useProjectWorkspaces.getState().refresh("matrix-os");
 
-    // Switching computers clears the cache and its per-project generation counters.
+    // Switching computers advances the shared runtime generation (what
+    // reconcileDesktopRuntimeChange does) and clears the cache.
+    advanceRuntimeGeneration();
     clearProjectWorkspaces();
 
     // The newly selected runtime loads the same project id and settles first.

@@ -86,8 +86,12 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
 
   useEffect(() => {
     if (!projectWorkspaceEnabled) return;
+    // Claim the scope before loading: on an account or computer change this
+    // drops the previous owner's cached projections, which would otherwise
+    // survive and render under a colliding project slug.
+    useProjectWorkspaces.getState().ensureRuntimeScope(runtimeScope);
     void ensureWorkspace(projectId);
-  }, [ensureWorkspace, projectId, projectWorkspaceEnabled]);
+  }, [ensureWorkspace, projectId, projectWorkspaceEnabled, runtimeScope]);
 
   // The shared snapshot store follows the ACTIVE project tab's selection.
   // Background tabs keep their per-project selection in the view store but

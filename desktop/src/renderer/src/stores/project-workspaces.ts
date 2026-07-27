@@ -11,6 +11,7 @@ import {
   resolveNewChatRelation,
 } from "../features/coding-agents/project-workspace-model";
 import { invoke } from "../lib/operator";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
 import { useCodingAgentWorkspace } from "./coding-agent-workspace";
 import { useProjectView } from "./project-view";
 
@@ -27,6 +28,12 @@ export const MAX_PROJECT_WORKSPACE_ENTRIES = 12;
 
 interface ProjectWorkspacesState {
   entries: Record<string, ProjectWorkspaceEntry>;
+  // Identity this cache belongs to. Project ids are board slugs, so two
+  // accounts can hold the same id ("website", "api"); without a scope the
+  // cached projection survives an account change and renders the previous
+  // owner's chats under the new one with no race required.
+  runtimeScope: string | null;
+  ensureRuntimeScope: (scope: string) => void;
   ensure: (projectId: string) => Promise<void>;
   refresh: (projectId: string) => Promise<void>;
   resolveNewChatTarget: (
@@ -39,13 +46,6 @@ interface ProjectWorkspacesState {
 // same project started is stale and must be dropped.
 const loadGenerations: Record<string, number> = {};
 
-// Monotonic runtime epoch, bumped every time the desktop claims a different
-// runtime. Generations alone cannot survive a runtime switch: clearing their
-// counters lets the superseded runtime's in-flight load and the new runtime's
-// load both hold generation 1, so the old response passes the staleness check
-// and overwrites the new runtime's cache with another account's project data.
-// The epoch only ever increases, so a superseded load can never match again.
-let runtimeEpoch = 0;
 
 function nextGeneration(projectId: string): number {
   const generation = (loadGenerations[projectId] ?? 0) + 1;
@@ -54,9 +54,8 @@ function nextGeneration(projectId: string): number {
 }
 
 export function clearProjectWorkspaces(): void {
-  runtimeEpoch += 1;
   for (const key of Object.keys(loadGenerations)) delete loadGenerations[key];
-  useProjectWorkspaces.setState({ entries: {} });
+  useProjectWorkspaces.setState({ entries: {}, runtimeScope: null });
 }
 
 function capEntries(
@@ -85,14 +84,19 @@ function summaryThreadIdsFor(projectId: string): ReadonlySet<string> {
   return ids;
 }
 
-// A load is stale if a newer load for the same project started, or if the
-// desktop switched runtimes while this one was in flight.
-function isStaleLoad(projectId: string, epoch: number, generation: number): boolean {
-  return runtimeEpoch !== epoch || loadGenerations[projectId] !== generation;
+// Two orthogonal guards, matching stores/sessions.ts and stores/git.ts:
+//   - identity: the shared runtime generation, which advances whenever the
+//     selected computer or signed-in account changes;
+//   - ordering: the per-project load sequence, so a newer load for the same
+//     project wins.
+// Both must still hold, or the settled response belongs to a computer/account
+// the user has left and must never reach the cache.
+function isStaleLoad(projectId: string, runtimeGeneration: number, generation: number): boolean {
+  return !isCurrentRuntimeGeneration(runtimeGeneration) || loadGenerations[projectId] !== generation;
 }
 
 async function loadWorkspace(projectId: string): Promise<void> {
-  const epoch = runtimeEpoch;
+  const runtimeGeneration = captureRuntimeGeneration();
   const generation = nextGeneration(projectId);
   useProjectWorkspaces.setState((state) => ({
     entries: {
@@ -108,7 +112,7 @@ async function loadWorkspace(projectId: string): Promise<void> {
   }));
   try {
     const workspace = await invoke("runtime:get-project-workspace", { projectId });
-    if (isStaleLoad(projectId, epoch, generation)) return;
+    if (isStaleLoad(projectId, runtimeGeneration, generation)) return;
     useProjectWorkspaces.setState((state) => ({
       entries: capEntries({
         ...state.entries,
@@ -126,7 +130,7 @@ async function loadWorkspace(projectId: string): Promise<void> {
       projectView.setSelectedThread(projectId, selected);
     }
   } catch {
-    if (isStaleLoad(projectId, epoch, generation)) return;
+    if (isStaleLoad(projectId, runtimeGeneration, generation)) return;
     console.warn("[project-workspaces] workspace load failed");
     // Error entries are capped too. Opening distinct projects while the runtime
     // is unavailable would otherwise grow the cache past its stated bound,
@@ -147,6 +151,15 @@ async function loadWorkspace(projectId: string): Promise<void> {
 
 export const useProjectWorkspaces = create<ProjectWorkspacesState>()((set, get) => ({
   entries: {},
+  runtimeScope: null,
+
+  ensureRuntimeScope: (scope) => {
+    if (get().runtimeScope === scope) return;
+    // Drop the previous owner's projections before anything new loads, and
+    // reset the per-project sequences so the new scope starts clean.
+    for (const key of Object.keys(loadGenerations)) delete loadGenerations[key];
+    set({ runtimeScope: scope, entries: {} });
+  },
 
   ensure: async (projectId) => {
     const entry = get().entries[projectId];
@@ -165,7 +178,12 @@ export const useProjectWorkspaces = create<ProjectWorkspacesState>()((set, get) 
     if (immediate) return immediate;
     // The snapshot may not be loaded yet or its task page may be stale; refresh
     // once and retry, but never loop.
+    const runtimeGeneration = captureRuntimeGeneration();
     await loadWorkspace(projectId);
+    // The load may have been dropped as stale. Reading the cache anyway would
+    // return a relation from the previous account's workspace, which callers
+    // then persist as a chat selection or bind a new thread to.
+    if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
     return attempt();
   },
 }));

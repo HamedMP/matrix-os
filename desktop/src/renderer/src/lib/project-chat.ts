@@ -5,6 +5,7 @@
 // conversation.
 import { create } from "zustand";
 import { invoke } from "./operator";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../stores/runtime-generation";
 import { useBoard } from "../stores/board";
 import { useCodingAgentWorkspace } from "../stores/coding-agent-workspace";
 import { useProjectView } from "../stores/project-view";
@@ -143,7 +144,18 @@ export async function openCodingAgentThread(threadId: string): Promise<void> {
   // to be active; the snapshot later reveals the real projectId but nothing
   // reroutes, so the chat stays selected and persisted under the wrong project.
   const known = listed?.projectId ?? snapshotProjectId ?? workspaceProjectId;
-  const projectId = known ?? (await resolveThreadProjectId(threadId)) ?? defaultProjectId();
+  let projectId = known;
+  if (!projectId) {
+    const runtimeGeneration = captureRuntimeGeneration();
+    const resolved = await resolveThreadProjectId(threadId);
+    // openProjectChat persists a thread selection, so committing after an
+    // account or computer change would pin a thread that does not exist on the
+    // machine now in view.
+    if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
+    // Only guess when the runtime genuinely could not resolve it. The guess
+    // opens the chat under whichever project is active and nothing reroutes.
+    projectId = resolved ?? defaultProjectId() ?? undefined;
+  }
   if (!projectId) {
     console.warn("[project-chat] cannot open a thread before any project exists");
     return;

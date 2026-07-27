@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { invoke, onEvent } from "../lib/operator";
 import { createApiClient, type ApiClient } from "../lib/api";
+import { advanceRuntimeGeneration } from "./runtime-generation";
 import { reconcileDesktopRuntimeChange } from "./runtime-transition";
 
 export type ConnectionStatus = "loading" | "signed-out" | "signed-in";
@@ -36,6 +37,22 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
   refresh: async () => {
     try {
       const status = await invoke("auth:status", {});
+      const previous = get();
+      // selectRuntime is not the only way the runtime identity changes: signing
+      // out and back in as another account also replaces the ApiClient, and
+      // every per-runtime cache is scoped by this identity. Advance the shared
+      // generation whenever it actually moves, so in-flight requests belonging
+      // to the computer/account the user just left are dropped instead of
+      // writing into the newly selected one.
+      const identityChanged =
+        previous.status !== (status.signedIn ? "signed-in" : "signed-out")
+        || previous.handle !== (status.handle ?? null)
+        || previous.platformHost !== status.platformHost
+        || previous.runtimeSlot !== status.runtimeSlot
+        || previous.authGeneration !== status.authGeneration;
+      // Advance BEFORE publishing the new identity so a response settling in
+      // between is already considered stale.
+      if (identityChanged) advanceRuntimeGeneration();
       const api = status.signedIn
         ? createApiClient({
             baseUrl: status.platformHost,
@@ -59,6 +76,8 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
       });
     } catch (err: unknown) {
       console.warn("[connection] failed to refresh auth status:", err instanceof Error ? err.message : String(err));
+      // Dropping to signed-out is an identity change too.
+      if (get().status !== "signed-out") advanceRuntimeGeneration();
       set({ status: "signed-out", handle: null, displayName: null, imageUrl: null, api: null });
     }
   },
