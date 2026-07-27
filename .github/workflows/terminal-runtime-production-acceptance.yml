@@ -106,8 +106,16 @@ jobs:
         with:
           name: terminal-production-bundles-${{ needs.gate.outputs.head }}
           path: |
-            dist/acceptance-a/**
-            dist/acceptance-b/**
+            dist/acceptance-a/matrix-host-bundle.tar.gz
+            dist/acceptance-a/matrix-host-bundle.tar.gz.sha256
+            dist/acceptance-a/manifest.json
+            dist/acceptance-a/incremental-manifest.json
+            dist/acceptance-a/objects/**
+            dist/acceptance-b/matrix-host-bundle.tar.gz
+            dist/acceptance-b/matrix-host-bundle.tar.gz.sha256
+            dist/acceptance-b/manifest.json
+            dist/acceptance-b/incremental-manifest.json
+            dist/acceptance-b/objects/**
           if-no-files-found: error
           retention-days: 3
 
