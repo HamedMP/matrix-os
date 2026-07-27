@@ -241,6 +241,9 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain("github.event.label.name == 'preview-vps'");
     expect(workflow).not.toContain('types: [labeled, synchronize');
     expect(workflow).toContain('head_sha:\n        description: Exact 40-character PR head SHA to approve');
+    expect(workflow).toContain('diagnose_only:');
+    expect(workflow).toContain('command:["/opt/matrix/bin/matrix-update","diagnose"]');
+    expect(workflow).toContain('Deployment diagnostic never satisfies S1/S2.');
     expect(workflow).toContain('APPROVED_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.head_sha }}');
     expect(workflow).toContain('if [ "$head_sha" != "$APPROVED_HEAD_SHA" ]');
     expect(workflow).toContain("github.event.pull_request.head.repo.full_name == github.repository");
@@ -249,7 +252,6 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('timeout-minutes: 80');
     expect(workflow).toContain('deadline=$((SECONDS + 2400))');
     expect(workflow).toContain("runtime_version=\"$(jq -r '.runtimeVersion // \"\"' <<<\"$machine\")\"");
-    expect(workflow).toContain('command:["/opt/matrix/bin/matrix-update","diagnose"]');
     expect(workflow).toContain('echo "update_diagnostic=${update_diagnostic}"');
     expect(workflow).toContain(
       'test("^Update service: (idle|running|failed) phase=(idle|admitted|resolving|downloading|validating|extracting|preparing|committing|health_check|rollback|failed) failure=(none|[a-z0-9_]{1,64})\\\\n$")',

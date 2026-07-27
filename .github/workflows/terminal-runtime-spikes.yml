@@ -12,6 +12,11 @@ on:
         description: Exact 40-character PR head SHA to approve
         required: true
         type: string
+      diagnose_only:
+        description: Report bounded deployment/update state and fail without running S1/S2
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: read
   pull-requests: write
@@ -72,6 +77,7 @@ jobs:
         env:
           HANDLE: ${{ steps.resolve.outputs.handle }}
           SHORT_SHA: ${{ steps.resolve.outputs.short_sha }}
+          DIAGNOSE_ONLY: ${{ inputs.diagnose_only || false }}
         run: |
           set -euo pipefail
           if [ -z "${PLATFORM_SECRET:-}" ]; then
@@ -114,12 +120,18 @@ jobs:
             ' <<<"$fleet")"
             runtime_version="$(jq -r '.runtimeVersion // ""' <<<"$machine")"
             candidate_ipv4="$(jq -r '.publicIPv4 // ""' <<<"$machine")"
-            if [[ "$runtime_version" == *"-${SHORT_SHA}" ]] &&
+            if [ "$DIAGNOSE_ONLY" != true ] &&
+              [[ "$runtime_version" == *"-${SHORT_SHA}" ]] &&
               is_public_ipv4 "$candidate_ipv4"; then
               public_ipv4="$candidate_ipv4"
               break
             fi
-            if is_public_ipv4 "$candidate_ipv4" &&
+            if ! is_public_ipv4 "$candidate_ipv4"; then
+              if [ "$DIAGNOSE_ONLY" = true ]; then
+                echo "Deployment diagnostic unavailable." >&2
+                exit 1
+              fi
+            elif [ "$DIAGNOSE_ONLY" = true ] ||
               [ $((SECONDS - last_diagnostic)) -ge 60 ]; then
               last_diagnostic="$SECONDS"
               echo "::add-mask::$candidate_ipv4"
@@ -148,6 +160,14 @@ jobs:
                 )"
               fi
               echo "update_diagnostic=${update_diagnostic}"
+            fi
+            if [ "$DIAGNOSE_ONLY" = true ]; then
+              if ! printf '%s' "$runtime_version" | grep -Eq '^[A-Za-z0-9._-]{1,128}$'; then
+                runtime_version=unknown
+              fi
+              echo "Deployment diagnostic: runtime=${runtime_version}; ${update_diagnostic}."
+              echo "Deployment diagnostic never satisfies S1/S2." >&2
+              exit 1
             fi
             echo "Waiting for exact-head preview deployment."
             sleep 15
