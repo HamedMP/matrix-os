@@ -8,7 +8,6 @@ import {
   abortCodingAgentThread,
   createCodingAgentSourcePullRequest,
   createCodingAgentThread,
-  abortCodingAgentThread,
   createCodingAgentTurn,
   fetchCodingAgentFileBrowse,
   fetchCodingAgentFileContent,
