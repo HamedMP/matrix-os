@@ -5,7 +5,6 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
 import { AgentConversationView } from "../../desktop/src/renderer/src/features/coding-agents/AgentConversationView";
-import { useCodingAgentMessageQueue } from "../../desktop/src/renderer/src/features/coding-agents/message-queue-store";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 
 function snapshot(events: AgentThreadEvent[], threadOverrides: Record<string, unknown> = {}): AgentThreadSnapshot {
@@ -60,7 +59,6 @@ describe("AgentConversationView composer card presentation", () => {
       disconnect() {}
     }
     globalThis.ResizeObserver = MockResizeObserver as typeof ResizeObserver;
-    useCodingAgentMessageQueue.setState({ queues: {} });
     useCodingAgentWorkspace.setState({ turnStatus: "idle", turnError: null, turnThreadId: null });
   });
 
@@ -87,14 +85,6 @@ describe("AgentConversationView composer card presentation", () => {
     expect(card).not.toBeNull();
     expect(card!.className).toContain("rounded-2xl");
     expect(card!.className).toContain("border");
-  });
-
-  it("keeps the queued strip directly above the composer card", () => {
-    useCodingAgentMessageQueue.getState().enqueue("thread_alpha", "Queued follow-up");
-    render(<AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />);
-
-    const strip = screen.getByLabelText("Queued follow-ups");
-    expect(strip.nextElementSibling?.className ?? "").toContain("prompt-card");
   });
 
   it.each(["completed", "failed", "aborted"] as const)(

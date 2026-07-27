@@ -78,7 +78,7 @@ function hasComposerContent(current: AgentThreadComposerDraft): boolean {
     || Boolean(current.attachments?.length);
 }
 
-export function AgentComposer({ summary, seed, focusRequestId, onCreated, variant = "panel" }: {
+export function AgentComposer({ summary, seed, focusRequestId, onCreated, variant = "panel", defaultProjectId }: {
   summary: RuntimeSummary;
   seed: ComposerSeed | null;
   focusRequestId: number;
@@ -86,10 +86,16 @@ export function AgentComposer({ summary, seed, focusRequestId, onCreated, varian
   // "panel" keeps the inspector's titled Section card; "hero" renders the bare
   // form as a floating prompt-card for the project Chats hero empty state.
   variant?: "panel" | "hero";
+  // Project this composer belongs to, applied when nothing seeds the draft.
+  // Typing straight into the hero never calls openNewChat, so without this the
+  // draft falls back to defaultAgentThreadComposerDraft, which carries no
+  // projectId, and the run is created outside the advertised project.
+  defaultProjectId?: string;
 }) {
   const preferredProviderId = useProviderPreferences((s) => s.defaultProviderId);
   const initialDraft = useMemo(() => {
-    const base = defaultAgentThreadComposerDraft(summary);
+    const scoped = defaultAgentThreadComposerDraft(summary);
+    const base = defaultProjectId ? { ...scoped, projectId: defaultProjectId } : scoped;
     // Honor the saved preference only when that provider can actually start a
     // run. A provider that still needs setup or auth would otherwise replace
     // the ready default and the run would be rejected on submit.
@@ -98,7 +104,7 @@ export function AgentComposer({ summary, seed, focusRequestId, onCreated, varian
       : undefined;
     if (!preferred) return base;
     return { ...base, providerId: preferred.id, mode: preferred.defaultMode ?? base.mode };
-  }, [summary, preferredProviderId]);
+  }, [summary, preferredProviderId, defaultProjectId]);
   const [draft, setDraft] = useState<AgentThreadComposerDraft>(initialDraft);
   const previousInitialDraftRef = useRef(initialDraft);
   const providerSelectionDirtyRef = useRef(false);

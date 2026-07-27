@@ -409,6 +409,7 @@ export default function ProjectChatsView({ projectId, active }: { projectId: str
         <div className="relative flex min-h-0 flex-1 flex-col">
           <ProjectChatHero
             summary={summary}
+            projectId={projectId}
             projectLabel={projectLabel}
             seed={composerSeed}
             focusRequestId={composerFocusRequestId}

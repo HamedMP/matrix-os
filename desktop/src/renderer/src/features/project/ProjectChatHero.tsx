@@ -17,6 +17,7 @@ const SUGGESTIONS = [
  */
 export function ProjectChatHero({
   summary,
+  projectId,
   projectLabel,
   seed,
   focusRequestId,
@@ -25,6 +26,7 @@ export function ProjectChatHero({
   onSuggestion,
 }: {
   summary: RuntimeSummary;
+  projectId: string;
   projectLabel: string;
   seed: ComposerSeed | null;
   focusRequestId: number;
@@ -52,6 +54,7 @@ export function ProjectChatHero({
           focusRequestId={focusRequestId}
           onCreated={onCreated}
           variant="hero"
+          defaultProjectId={projectId}
         />
       </div>
       {canCreate ? (

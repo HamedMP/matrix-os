@@ -5,7 +5,6 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectAgentWorkspace, RuntimeSummary } from "@matrix-os/contracts";
 import ProjectChatsView from "../../desktop/src/renderer/src/features/project/ProjectChatsView";
-import { useCodingAgentMessageQueue } from "../../desktop/src/renderer/src/features/coding-agents/message-queue-store";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useInspectorLayout } from "../../desktop/src/renderer/src/features/panels/inspector-layout-store";
@@ -125,7 +124,6 @@ function resetStores() {
   useProjectWorkspaces.setState({ entries: {} });
   useProjectChatLauncher.setState({ composerRequest: null });
   useInspectorLayout.setState({ entries: {}, runtimeScope: null });
-  useCodingAgentMessageQueue.setState({ queues: {} });
   useCodingAgentWorkspace.setState({
     status: "idle",
     summary: null,
@@ -195,6 +193,26 @@ describe("ProjectChatsView hero empty state", () => {
 
     expect(await screen.findByText("What should we work on?")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Chat Plan the auth work" })).toBe(row);
+  });
+
+  it("binds a hero-composed run to the project it advertises", async () => {
+    const { invoke } = mockOperator({ withThreads: false });
+    render(<ProjectChatsView projectId="matrix-os" active />);
+    await screen.findByText("What should we work on?");
+
+    // Typing straight into the hero never calls openNewChat, so nothing seeds
+    // the composer. The run must still land in the project the hero names,
+    // rather than falling back to a draft with no projectId.
+    const prompt = (await screen.findByLabelText("Agent run prompt")) as HTMLTextAreaElement;
+    fireEvent.change(prompt, { target: { value: "Explain the auth flow" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        "runtime:create-thread",
+        expect.objectContaining({ projectId: "matrix-os" }),
+      ),
+    );
   });
 
   it("seeds the hero composer prompt when a suggestion chip is clicked", async () => {
