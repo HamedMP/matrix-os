@@ -164,6 +164,7 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     const validator = read("distro/customer-vps/host-bin/matrix-validate-host-bundle");
     const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
     const build = read("scripts/build-host-bundle.sh");
+    const cloudInit = read("distro/customer-vps/cloud-init.yaml");
 
     expect(validator).toContain("MAX_ARCHIVE_MEMBERS = 200_000");
     expect(validator).toContain("MAX_ARCHIVE_BYTES");
@@ -191,6 +192,10 @@ assert events == ["stop", "state:idle", "spawn", "resume"]
     );
     expect(build).not.toContain(
       'find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +',
+    );
+    expect(cloudInit).toContain('chmod -R g+rwX /opt/matrix/runtime/node');
+    expect(cloudInit).toContain(
+      'find /opt/matrix/runtime/node -type d -exec chmod g+s {} +',
     );
   });
 
