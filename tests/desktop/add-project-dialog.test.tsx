@@ -142,6 +142,39 @@ describe("CreateProjectDialog add-project flows", () => {
       });
     });
 
+    it("abandons a clone that lands after the user switches computers", async () => {
+      let resolveClone!: (response: Response) => void;
+      const fetchMock = vi.fn(() => new Promise<Response>((resolve) => { resolveClone = resolve; }));
+      vi.stubGlobal("fetch", fetchMock);
+      const selectProject = vi.fn(async () => undefined);
+      const openTab = vi.fn();
+      useBoard.setState({ selectProject, loadProjects: vi.fn(async () => true) });
+      useTabs.setState({ openTab });
+
+      render(<CreateProjectDialog open onClose={vi.fn()} />);
+      fireEvent.click(screen.getByRole("button", { name: /Clone from GitHub/ }));
+      fireEvent.change(screen.getByPlaceholderText("https://github.com/owner/repo"), {
+        target: { value: "https://github.com/owner/big-repo" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Clone" }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+      // The clone was sent to the previous computer. Switching runtimes must
+      // invalidate it: loadProjects/selectProject run against the NEW runtime's
+      // ApiClient, so completing here would open a project that does not exist
+      // on the computer the user is now looking at.
+      act(() => {
+        useConnection.setState({ runtimeSlot: "secondary", authGeneration: 2 });
+      });
+
+      await act(async () => {
+        resolveClone(jsonResponse(201, { project: { slug: "big-repo", name: "big-repo" } }));
+      });
+
+      expect(selectProject).not.toHaveBeenCalled();
+      expect(openTab).not.toHaveBeenCalled();
+    });
+
     it("maps a slug conflict to a friendly message without raw git output", async () => {
       const fetchMock = vi.fn(async () => jsonResponse(409, { error: { code: "slug_conflict", message: "Project slug already exists" } }));
       vi.stubGlobal("fetch", fetchMock);

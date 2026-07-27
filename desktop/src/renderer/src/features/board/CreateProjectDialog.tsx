@@ -85,6 +85,13 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const dialogClosedRef = useRef(false);
   const dialogGenerationRef = useRef(0);
+  // Latest runtime identity. A submission captures the identity it was sent to
+  // and compares against this when it settles: loadProjects/selectProject use
+  // the API client's CURRENT runtime, so completing a request issued to a
+  // previous computer would open a project that does not exist on the one the
+  // user is now looking at.
+  const runtimeIdentityRef = useRef({ runtimeSlot, authGeneration });
+  runtimeIdentityRef.current = { runtimeSlot, authGeneration };
 
   const folderPath = scopedPath(folderSelection, runtimeSlot, authGeneration);
   const parentPath = scopedPath(parentSelection, runtimeSlot, authGeneration);
@@ -168,9 +175,15 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
       return;
     }
     const submitGeneration = dialogGenerationRef.current;
+    const submitRuntimeSlot = runtimeSlot;
+    const submitAuthGeneration = authGeneration;
     setSubmitting(true);
     setError(null);
-    const isCurrent = () => !dialogClosedRef.current && dialogGenerationRef.current === submitGeneration;
+    const isCurrent = () =>
+      !dialogClosedRef.current
+      && dialogGenerationRef.current === submitGeneration
+      && runtimeIdentityRef.current.runtimeSlot === submitRuntimeSlot
+      && runtimeIdentityRef.current.authGeneration === submitAuthGeneration;
     const ctx = {
       api,
       runtimeSlot,
