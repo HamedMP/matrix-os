@@ -72,8 +72,11 @@ describe("workspace provider set wiring with pi", () => {
     });
 
     expect(set.registryProviders.map((provider) => provider.providerId)).toEqual(["claude", "codex", "pi"]);
-    // claude stays registry-only, codex and pi are executable.
-    expect(set.executionProviders.map((provider) => provider.providerId).sort()).toEqual(["codex", "pi"]);
+    // Adding pi does not change how the set is split: every registered provider
+    // is also an execution provider, exactly as on main. Whether an individual
+    // agent can actually start a run is decided by the adapter (the `runnable`
+    // flag for terminal-backed agents, the sandbox gate for pi), not here.
+    expect(set.executionProviders.map((provider) => provider.providerId).sort()).toEqual(["claude", "codex", "pi"]);
 
     const pi = set.registryProviders.find((provider) => provider.providerId === "pi")!;
     const summary = AgentProviderSummarySchema.parse(await pi.getSummary!({
