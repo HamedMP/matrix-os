@@ -1,29 +1,41 @@
-// Optional abort bridge for agent threads. The desktop preload does NOT yet
-// expose an agent-thread abort channel (see desktop/src/shared/ipc-contract.ts:
-// the runtime:* invoke surface has runtime:create-turn, approvals, and input
-// answers, but no cancel). When a later wave adds
-// `window.matrix.abortThread(threadId)` on the preload side, the composer Stop
-// button lights up with no further renderer changes; until then it stays
-// hidden (agentThreadAbortSupported() === false).
+// Abort bridge for agent threads, wired through the typed operator IPC surface
+// (`runtime:abort-thread` in desktop/src/shared/ipc-contract.ts) to the
+// gateway's POST /threads/:threadId/abort route.
+//
+// The gateway returns the authoritative aborted snapshot. Applying it matters
+// when `runtime:subscribe-thread-events` has failed or disconnected: without
+// it the conversation keeps deriving `threadBusy` from the stale running
+// snapshot, leaving the composer blocked and Stop visible until some later
+// refresh.
+import { invoke } from "../../lib/operator";
+import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 
-declare global {
-  interface Window {
-    matrix?: {
-      abortThread?: (threadId: string) => void | Promise<void>;
-    };
-  }
+function abortRequestId(threadId: string): string {
+  // Idempotency key for the abort mutation; the route requires one.
+  return `abort_${threadId}_${Date.now().toString(36)}`;
 }
 
 export function agentThreadAbortSupported(): boolean {
-  return typeof window !== "undefined" && typeof window.matrix?.abortThread === "function";
+  return typeof window !== "undefined" && typeof window.operator?.invoke === "function";
 }
 
 /** Best-effort abort; resolves false when unsupported or the bridge rejects. */
 export async function abortAgentThread(threadId: string): Promise<boolean> {
-  const abort = typeof window !== "undefined" ? window.matrix?.abortThread : undefined;
-  if (typeof abort !== "function") return false;
+  if (!agentThreadAbortSupported()) return false;
   try {
-    await abort(threadId);
+    const snapshot = await invoke("runtime:abort-thread", {
+      threadId,
+      clientRequestId: abortRequestId(threadId),
+    });
+    // Only apply to the conversation still on screen; a snapshot for a thread
+    // the user has since navigated away from must not replace the active one.
+    if (snapshot && useCodingAgentWorkspace.getState().activeThreadId === threadId) {
+      useCodingAgentWorkspace.setState({
+        threadSnapshot: snapshot,
+        threadSnapshotStatus: "ready",
+        threadSnapshotError: null,
+      });
+    }
     return true;
   } catch {
     // Generic on purpose: provider error text must not reach client surfaces.

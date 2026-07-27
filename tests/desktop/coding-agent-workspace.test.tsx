@@ -1272,7 +1272,7 @@ describe("ProjectChatsView", () => {
     expect(screen.getByText("I found the failing assertion and prepared a focused fix.")).toBeTruthy();
     const composer = screen.getByLabelText("Message conversation");
     fireEvent.change(composer, { target: { value: "Continue with the focused validation." } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.keyDown(composer, { key: "Enter" });
 
     await waitFor(() => {
       expect(window.operator.invoke).toHaveBeenCalledWith("runtime:create-turn", {
@@ -1337,7 +1337,7 @@ describe("ProjectChatsView", () => {
     render(<ProjectChatsView projectId="matrix-os" active />);
     const composer = await screen.findByLabelText("Message conversation");
     fireEvent.change(composer, { target: { value: "Keep this draft for retry." } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.keyDown(composer, { key: "Enter" });
 
     expect(await screen.findByText("This conversation is already running. Wait for it to finish and try again.")).toBeTruthy();
     expect((composer as HTMLTextAreaElement).value).toBe("Keep this draft for retry.");

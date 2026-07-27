@@ -64,6 +64,9 @@ export interface HandlerContext {
   createAgentTurn: (
     request: InvokeRequest<"runtime:create-turn">,
   ) => Promise<InvokeResponse<"runtime:create-turn">>;
+  abortAgentThread: (
+    request: InvokeRequest<"runtime:abort-thread">,
+  ) => Promise<InvokeResponse<"runtime:abort-thread">>;
   subscribeThreadEvents: (
     request: InvokeRequest<"runtime:subscribe-thread-events">,
   ) => Promise<void>;
@@ -151,6 +154,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("runtime:submit-input-answer", (request) => ctx.submitInputAnswer(request));
   handle("runtime:create-thread", (request) => ctx.createAgentThread(request));
   handle("runtime:create-turn", (request) => ctx.createAgentTurn(request));
+  handle("runtime:abort-thread", (request) => ctx.abortAgentThread(request));
 
   handle("state:get", async ({ key }) => ({
     value: await ctx.store.get(key as LocalStoreKey),

@@ -7,6 +7,7 @@ import { EmbedService } from "./embeds/embed-service";
 import {
   createCodingAgentSourcePullRequest,
   createCodingAgentThread,
+  abortCodingAgentThread,
   createCodingAgentTurn,
   fetchCodingAgentFileBrowse,
   fetchCodingAgentFileContent,
@@ -285,6 +286,7 @@ if (!gotLock) {
           }),
         createAgentThread: (request) => createCodingAgentThread(auth, request),
         createAgentTurn: (request) => createCodingAgentTurn(auth, request),
+        abortAgentThread: (request) => abortCodingAgentThread(auth, request),
       });
 
       let boundsSaveTimer: ReturnType<typeof setTimeout> | null = null;

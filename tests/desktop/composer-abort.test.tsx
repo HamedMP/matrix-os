@@ -42,42 +42,71 @@ describe("AgentConversationView abort control", () => {
       turnRetry: null,
       turnThreadId: null,
     });
-    Object.defineProperty(window, "operator", {
-      configurable: true,
-      value: { invoke: vi.fn(async () => ({ ok: true })), on: vi.fn(() => () => undefined) },
-    });
   });
 
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
-    delete (window as { matrix?: unknown }).matrix;
+    delete (window as { operator?: unknown }).operator;
   });
 
-  it("reports no abort support when the preload bridge has no abort hook", () => {
+  // Abort rides the same typed operator bridge as every other runtime call, so
+  // support tracks the preload being present at all.
+  function mockOperator(invoke = vi.fn(async () => snapshot([], { status: "aborted" }))) {
+    Object.defineProperty(window, "operator", {
+      configurable: true,
+      value: { invoke, on: vi.fn(() => () => undefined) },
+    });
+    return invoke;
+  }
+
+  it("reports no abort support when the preload bridge is absent", () => {
+    delete (window as { operator?: unknown }).operator;
     expect(agentThreadAbortSupported()).toBe(false);
   });
 
+  it("reports abort support when the typed operator bridge is present", () => {
+    mockOperator();
+    expect(agentThreadAbortSupported()).toBe(true);
+  });
+
   it("hides the stop button while the agent runs when abort is unsupported", () => {
+    delete (window as { operator?: unknown }).operator;
     render(<AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />);
 
     expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
     expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
   });
 
-  it("shows the stop button while the agent runs when the bridge supports abort", () => {
-    const abortThread = vi.fn();
-    Object.defineProperty(window, "matrix", { configurable: true, value: { abortThread } });
+  it("aborts through the typed runtime channel when Stop is clicked", async () => {
+    const invoke = mockOperator();
     render(<AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />);
 
-    const stop = screen.getByRole("button", { name: "Stop" });
-    fireEvent.click(stop);
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
 
-    expect(abortThread).toHaveBeenCalledWith("thread_alpha");
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        "runtime:abort-thread",
+        expect.objectContaining({ threadId: "thread_alpha" }),
+      ),
+    );
+  });
+
+  it("applies the authoritative aborted snapshot so the composer unblocks", async () => {
+    // Mirrors a dropped event stream: nothing else will tell the conversation
+    // the run ended, so the abort response has to settle it.
+    mockOperator();
+    render(<AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+
+    await vi.waitFor(() =>
+      expect(useCodingAgentWorkspace.getState().threadSnapshot?.thread.status).toBe("aborted"),
+    );
   });
 
   it("keeps the send button on an idle thread even when abort is supported", () => {
-    Object.defineProperty(window, "matrix", { configurable: true, value: { abortThread: vi.fn() } });
+    mockOperator();
     render(
       <AgentConversationView status="ready" snapshot={snapshot([], { status: "completed" })} error={null} canSendTurns />,
     );
@@ -88,10 +117,7 @@ describe("AgentConversationView abort control", () => {
 
   it("swallows a rejected abort call with a warning instead of crashing", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    Object.defineProperty(window, "matrix", {
-      configurable: true,
-      value: { abortThread: vi.fn(() => Promise.reject(new Error("provider exploded"))) },
-    });
+    mockOperator(vi.fn(() => Promise.reject(new Error("provider exploded"))));
     render(<AgentConversationView status="ready" snapshot={snapshot([])} error={null} canSendTurns />);
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
