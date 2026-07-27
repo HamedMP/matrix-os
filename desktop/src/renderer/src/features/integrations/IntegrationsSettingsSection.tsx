@@ -91,7 +91,10 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     cancelPollRef.current = startConnectPoll({
       intervals: pollIntervals ?? DEFAULT_CONNECT_POLL_INTERVALS_MS,
       tick: async () => {
-        await useIntegrations.getState().syncNow(api);
+        const result = await useIntegrations.getState().syncNow(api);
+        // A superseded tick means the user changed account/computer; stop
+        // polling rather than keep asking on behalf of the previous one.
+        if (result === "superseded") cancelConnectPoll();
       },
       isDone: isLanded,
       onSettled: () => {
@@ -105,7 +108,7 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     if (!api || !connectingService || manualBusy) return;
     setManualBusy(true);
     setManualNote(null);
-    const ok = await useIntegrations.getState().syncNow(api);
+    const result = await useIntegrations.getState().syncNow(api);
     setManualBusy(false);
     const landed = useIntegrations
       .getState()
@@ -115,10 +118,13 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
       setConnectingService(null);
       return;
     }
-    if (!ok) {
+    // "superseded" is not a failure: the account/computer changed underneath
+    // this click, so showing a red banner would be a lie.
+    if (result === "failed") {
       useIntegrations.getState().showError(GENERIC_ERROR);
       return;
     }
+    if (result === "superseded") return;
     setManualNote("Not connected yet — finish the sign-in in your browser, then try again.");
   };
 

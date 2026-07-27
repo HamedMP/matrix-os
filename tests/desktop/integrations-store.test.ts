@@ -13,6 +13,7 @@ import {
 } from "../../desktop/src/renderer/src/features/integrations";
 import { AppError } from "../../desktop/src/shared/app-error";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { advanceRuntimeGeneration } from "../../desktop/src/renderer/src/stores/runtime-generation";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 
 const AVAILABLE = [
@@ -226,10 +227,37 @@ describe("useIntegrations store", () => {
     await useIntegrations.getState().refresh(nextApi);
     expect(useIntegrations.getState().connections).toHaveLength(1);
 
+    // Identity moved (sign out / sign in as another account).
+    advanceRuntimeGeneration();
     releasePrevious();
     await previousSync;
 
     expect(useIntegrations.getState().connections.map((conn) => conn.id)).not.toContain("conn_previous_owner");
+  });
+
+  it("never strands the panel on loading when a sync supersedes a refresh", async () => {
+    // refresh() sets status "loading" then bails without a terminal status once
+    // superseded. If syncNow only writes connections, status stays "loading"
+    // forever: an infinite skeleton whose Refresh button only renders on
+    // "ready", so there is no retry affordance and no error.
+    const release: Array<() => void> = [];
+    const slowApi = makeApi({
+      get: async () => {
+        await new Promise<void>((resolve) => {
+          release.push(resolve);
+        });
+        return AVAILABLE;
+      },
+    });
+
+    const slowRefresh = useIntegrations.getState().refresh(slowApi);
+    expect(useIntegrations.getState().status).toBe("loading");
+
+    await useIntegrations.getState().syncNow(makeApi());
+    for (const resolve of release) resolve();
+    await slowRefresh;
+
+    expect(useIntegrations.getState().status).not.toBe("loading");
   });
 
   it("refresh() falls back to the connection store's ApiClient when none is passed", async () => {
@@ -287,19 +315,19 @@ describe("useIntegrations store", () => {
     await useIntegrations.getState().refresh(api);
 
     const ok = await useIntegrations.getState().syncNow(api);
-    expect(ok).toBe(true);
+    expect(ok).toBe("ok");
     expect(api.post).toHaveBeenCalledWith("/api/integrations/sync", {});
     expect(useIntegrations.getState().connections.map((c) => c.id)).toEqual(["8e4a7a2f-3c4d-5b6e-9f0a-1b2c3d4e5f60"]);
   });
 
-  it("syncNow() returns false without throwing when the proxy fails", async () => {
+  it("syncNow() reports failed without throwing when the proxy fails", async () => {
     const api = makeApi({
       post: async () => {
         throw new AppError("server");
       },
     });
     const ok = await useIntegrations.getState().syncNow(api);
-    expect(ok).toBe(false);
+    expect(ok).toBe("failed");
   });
 
   it("startConnect() posts the service id and returns the https connect URL", async () => {
