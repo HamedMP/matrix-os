@@ -722,6 +722,8 @@ export function ShellSessionGroup({
 }) {
   const collapsible = label === "Background";
   const contentId = `terminal-session-group-${label.toLowerCase()}-content`;
+  const deletingShellNameSet = new Set(deletingShellNames);
+  const recoveringShellNameSet = new Set(recoveringShellNames);
   return (
     <section data-testid={`terminal-session-group-${label.toLowerCase()}`} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div className="flex items-center justify-between" style={{ color: "var(--terminal-drawer-muted)", minHeight: 22 }}>
@@ -778,14 +780,14 @@ export function ShellSessionGroup({
                 key={`${label}-${shell.name}`}
                 shell={shell}
                 foreground={foreground}
-                deleting={deletingShellNames.indexOf(shell.name) >= 0}
+                deleting={deletingShellNameSet.has(shell.name)}
                 selected={shell.name === selectedShellName}
                 onOpen={() => onOpen(shell)}
                 onToggle={() => onToggle(shell)}
                 onRename={(nextName) => onRename(shell, nextName)}
                 onDelete={(anchorElement, returnFocusElement) => onDelete(shell, anchorElement, returnFocusElement)}
                 onRecover={() => onRecover?.(shell)}
-                recovering={recoveringShellNames.indexOf(shell.name) >= 0}
+                recovering={recoveringShellNameSet.has(shell.name)}
                 recoveryError={recoveryErrors[shell.name]}
                 dragging={shell.name === draggingShellName}
                 dropTarget={shell.name === dragOverShellName}
