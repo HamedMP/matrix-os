@@ -253,8 +253,18 @@ jobs:
         with:
           name: preview-bundle-${{ needs.gate.outputs.pr }}
           path: |
-            dist/activation/**
-            dist/bootstrap/**
+            dist/activation/matrix-host-bundle.tar.gz
+            dist/activation/matrix-host-bundle.tar.gz.sha256
+            dist/activation/incremental-manifest.json
+            dist/activation/objects/**
+            dist/activation/manifest.json
+            dist/activation/release.json
+            dist/bootstrap/matrix-host-bundle.tar.gz
+            dist/bootstrap/matrix-host-bundle.tar.gz.sha256
+            dist/bootstrap/incremental-manifest.json
+            dist/bootstrap/objects/**
+            dist/bootstrap/manifest.json
+            dist/bootstrap/release.json
           if-no-files-found: error
           retention-days: 3
 

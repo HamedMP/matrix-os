@@ -856,7 +856,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
 
     expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}}"');
     expect(workflow).toContain('git checkout --detach "${{ needs.gate.outputs.base_sha }}"');
-    expect(workflow).toContain('mv dist/host-bundle dist/bootstrap');
+    expect(workflow).not.toContain('dist/activation/**');
     expect(workflow).toContain('for phase in ${BOOTSTRAP_VERSION:+bootstrap} activation');
     expect(workflow).toContain('for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"');
   });

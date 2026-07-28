@@ -80,13 +80,7 @@ describe("legacy terminal migration", () => {
       bootId: "migration-boot",
       createId: () => IDS[nextId++]!,
     });
-    expect(result).toEqual({
-      migrated: 2,
-      existing: 0,
-      skipped: 1,
-      cwdFallbacks: 0,
-      workspaceRecordsUpdated: 1,
-    });
+    expect(result).toEqual({ migrated: 2, existing: 0, skipped: 1, cwdFallbacks: 0, workspaceRecordsUpdated: 1 });
     const receipts = await state.receipts.list();
     expect(receipts).toHaveLength(2);
     for (const entry of receipts) {
@@ -151,14 +145,8 @@ describe("legacy terminal migration", () => {
         return IDS[0];
       },
     });
-    await expect(migrate()).resolves.toMatchObject({
-      migrated: 1,
-      cwdFallbacks: 1,
-    });
-    await expect(migrate()).resolves.toMatchObject({
-      migrated: 0,
-      existing: 1,
-    });
+    await expect(migrate()).resolves.toMatchObject({ migrated: 1, cwdFallbacks: 1 });
+    await expect(migrate()).resolves.toMatchObject({ migrated: 0, existing: 1 });
     expect(calls).toBe(1);
     const receipt = await state.receipts.read(IDS[0]);
     expect(receipt?.kind === "supported" ? receipt.receipt.cwd : null)
