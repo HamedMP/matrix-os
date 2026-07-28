@@ -446,6 +446,7 @@ describe("RuntimeManager", () => {
     expect(screen.queryByRole("button", { name: /Max.*CPX52/i })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Continue setup" }));
 
+    expect(await screen.findByRole("heading", { name: "Default installs" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
 
     await waitFor(() => {
