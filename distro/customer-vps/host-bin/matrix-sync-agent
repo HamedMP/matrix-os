@@ -300,6 +300,12 @@ matrix ALL=(root) NOPASSWD: /opt/matrix/bin/matrix-update *
 matrix ALL=(root) NOPASSWD: /opt/matrix/bin/matrix-tool-pack-control *
 matrix ALL=(root) NOPASSWD: /opt/matrix/bin/matrix-symphony-control *
 EOF
+  if [ -x "$BIN_DIR/matrix-terminal-spike-control" ] &&
+    [ ! -L "$BIN_DIR/matrix-terminal-spike-control" ]; then
+    printf '%s\n' \
+      'matrix ALL=(root) NOPASSWD: /opt/matrix/bin/matrix-terminal-spike-control *' \
+      >>"$sudoers_next"
+  fi
   if ! visudo -cf "$sudoers_next" >/dev/null; then
     rm -f -- "$sudoers_next"
     return 1

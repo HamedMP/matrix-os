@@ -41,6 +41,12 @@ describe("customer VPS privilege boundary", () => {
     ).toBeLessThan(
       syncAgent.indexOf("if ! install_matrix_sudoers; then"),
     );
+    expect(syncAgent).toContain(
+      'if [ -x "$BIN_DIR/matrix-terminal-spike-control" ] &&',
+    );
+    expect(syncAgent).toContain(
+      "'matrix ALL=(root) NOPASSWD: /opt/matrix/bin/matrix-terminal-spike-control *'",
+    );
   });
 
   it("maps tool-pack requests only to fixed root oneshot units", () => {
