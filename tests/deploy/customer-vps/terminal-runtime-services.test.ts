@@ -436,6 +436,7 @@ describe('customer VPS terminal runtime services', () => {
 
   it('migrates legacy metadata before starting the activated gateway without touching live terminal units', () => {
     const updater = read('distro/customer-vps/host-bin/matrix-sync-agent');
+    const activation = read('distro/customer-vps/terminal-runtime-activation');
     const migration = updater.indexOf(
       '/opt/matrix/bin/matrix-terminal-runtime-op migrate-legacy',
     );
@@ -452,6 +453,7 @@ describe('customer VPS terminal runtime services', () => {
       migration,
     );
 
+    expect(activation).toBe('supervised-v1\n');
     expect(migration).toBeGreaterThan(-1);
     expect(gatewayStart).toBeGreaterThan(migration);
     expect(supervisorEnable).toBeGreaterThan(migration);
