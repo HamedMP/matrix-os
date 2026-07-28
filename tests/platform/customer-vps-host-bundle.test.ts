@@ -345,7 +345,8 @@ describe('customer VPS host bundle', () => {
     expect(gatewayUnit).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1');
     expect(unit).toContain('After=network-online.target matrix-restore.service');
     expect(unit).toContain('EnvironmentFile=/opt/matrix/env/host.env');
-    expect(unit).toContain('ExecStart=/opt/matrix/bin/matrix-install-developer-tools --tools-only');
+    expect(unit).toContain('ExecStart=/opt/matrix/bin/matrix-install-developer-tools');
+    expect(unit).not.toContain('--tools-only');
     expect(unit).toContain('Restart=on-failure');
     expect(installer).toContain('is_tool_installed()');
     expect(installer).toContain('grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]');
