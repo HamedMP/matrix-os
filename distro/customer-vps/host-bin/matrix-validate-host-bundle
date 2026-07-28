@@ -18,6 +18,7 @@ ALLOWED_ROOTS = {
     "release.json",
     "runtime",
     "systemd",
+    "terminal-runtime-activation",
 }
 
 

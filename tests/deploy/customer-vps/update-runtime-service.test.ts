@@ -132,6 +132,54 @@ except module["ProtocolError"]:
     expect(updater).not.toContain("WARNING: no SHA-256 available");
   });
 
+  it("keeps supervised activation dormant unless the bundle carries the fixed marker", () => {
+    const build = read("scripts/build-host-bundle.sh");
+    const validator = read("distro/customer-vps/host-bin/matrix-validate-host-bundle");
+    const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+
+    expect(validator).toContain('"terminal-runtime-activation"');
+    expect(build).toContain(
+      'activation_source="$ROOT_DIR/distro/customer-vps/terminal-runtime-activation"',
+    );
+    expect(build).toContain(
+      'install -m 0644 "$activation_source" "$STAGE_DIR/terminal-runtime-activation"',
+    );
+    expect(build).toContain('bundle_members+=(terminal-runtime-activation)');
+    expect(updater).toContain("validate_terminal_runtime_activation()");
+    expect(updater).toContain(
+      'activation_file="$extract_dir/terminal-runtime-activation"',
+    );
+    expect(updater).toContain(
+      '[ "$(cat "$activation_file")" = "supervised-v1" ]',
+    );
+    expect(updater).toContain('terminal_runtime_activation="supervised-v1"');
+  });
+
+  it("migrates and readies supervised runtime state before starting its gateway", () => {
+    const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+    const activationCheck = updater.indexOf(
+      'if [ "$terminal_runtime_activation" = "supervised-v1" ]; then',
+    );
+    const migration = updater.indexOf(
+      "/opt/matrix/bin/matrix-terminal-runtime-op migrate-legacy",
+      activationCheck,
+    );
+    const supervisorReady = updater.indexOf(
+      'log "Terminal runtime supervisor ready"',
+      migration,
+    );
+    const gatewayStart = updater.indexOf(
+      "systemctl start matrix-gateway matrix-shell",
+      supervisorReady,
+    );
+
+    expect(activationCheck).toBeGreaterThan(-1);
+    expect(migration).toBeGreaterThan(activationCheck);
+    expect(supervisorReady).toBeGreaterThan(migration);
+    expect(gatewayStart).toBeGreaterThan(supervisorReady);
+    expect(updater).not.toContain("--force-run-commands");
+  });
+
   it("publishes operation state through collision-resistant root-owned temp files", () => {
     const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
 

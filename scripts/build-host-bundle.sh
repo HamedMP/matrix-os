@@ -208,7 +208,22 @@ node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-release
 HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES="${HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES:-node_modules/}" \
   node "$ROOT_DIR/scripts/host-bundle-incremental-manifest.mjs" "$STAGE_DIR/app" "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/objects"
 cp -a "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/incremental-manifest.json"
-tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime systemd libexec release.json incremental-manifest.json
+bundle_members=(bin app runtime systemd libexec release.json incremental-manifest.json)
+activation_source="$ROOT_DIR/distro/customer-vps/terminal-runtime-activation"
+if [ -e "$activation_source" ] || [ -L "$activation_source" ]; then
+  [ -f "$activation_source" ] && [ ! -L "$activation_source" ] || {
+    echo "terminal_runtime_activation_invalid" >&2
+    exit 1
+  }
+  [ "$(stat -c %s "$activation_source")" -eq 14 ] &&
+    [ "$(cat "$activation_source")" = "supervised-v1" ] || {
+    echo "terminal_runtime_activation_invalid" >&2
+    exit 1
+  }
+  install -m 0644 "$activation_source" "$STAGE_DIR/terminal-runtime-activation"
+  bundle_members+=(terminal-runtime-activation)
+fi
+tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" "${bundle_members[@]}"
 node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-manifest
 
 printf '%s\n' "$DIST_DIR/$BUNDLE_NAME"

@@ -61,6 +61,7 @@ readonly SYMPHONY_MANAGED_KEYS="MATRIX_HANDLE PLATFORM_INTERNAL_URL UPGRADE_TOKE
 
 terminal_runtime_candidate=""
 terminal_runtime_generation_id=""
+terminal_runtime_activation=""
 
 log() { echo "matrix-sync-agent: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 current_version() {
@@ -189,6 +190,19 @@ prepare_terminal_runtime_candidate() {
     "${generations[0]}" \
     "$terminal_runtime_generation_id" || return 1
   terminal_runtime_candidate="${generations[0]}"
+}
+
+validate_terminal_runtime_activation() {
+  local extract_dir="$1"
+  local activation_file="$extract_dir/terminal-runtime-activation"
+  terminal_runtime_activation=""
+  if [ ! -e "$activation_file" ] && [ ! -L "$activation_file" ]; then
+    return 0
+  fi
+  [ -f "$activation_file" ] && [ ! -L "$activation_file" ] || return 1
+  [ "$(stat -c %s "$activation_file")" -eq 14 ] || return 1
+  [ "$(cat "$activation_file")" = "supervised-v1" ] || return 1
+  terminal_runtime_activation="supervised-v1"
 }
 
 install_terminal_runtime_generation() {
@@ -758,6 +772,17 @@ apply_update() {
     rm -rf "$extract_dir" "$bundle_file"
     return 1
   fi
+  if ! validate_terminal_runtime_activation "$extract_dir"; then
+    log "ERROR: terminal_runtime_activation_invalid"
+    rm -rf "$extract_dir" "$bundle_file"
+    return 1
+  fi
+  if [ "$terminal_runtime_activation" = "supervised-v1" ] &&
+    [ -z "$terminal_runtime_candidate" ]; then
+    log "ERROR: terminal_runtime_activation_missing_generation"
+    rm -rf "$extract_dir" "$bundle_file"
+    return 1
+  fi
 
   # Any bundle that replaces Zellij extends the existing one-level app rollback
   # to the exact binary and identity record. Candidate status controls only the
@@ -866,6 +891,16 @@ apply_update() {
     find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +
     log "Updated bin scripts"
   fi
+  if [ "$terminal_runtime_activation" = "supervised-v1" ]; then
+    if ! /opt/matrix/bin/matrix-terminal-runtime-op migrate-legacy; then
+      log "ERROR: terminal_runtime_legacy_migration_failed"
+      do_rollback failed-update ||
+        log "ERROR: rollback after terminal migration failure failed"
+      rm -rf "$extract_dir" "$bundle_file"
+      return 1
+    fi
+    log "Terminal runtime legacy metadata reconciled"
+  fi
   write_symphony_env
   log "Updated Symphony env"
 
@@ -878,9 +913,36 @@ apply_update() {
     fi
     systemctl daemon-reload
     log "Installed systemd units"
-    if [ -f "$extract_dir/systemd/matrix-terminal-runtime.service" ] &&
-      ! systemctl is-enabled --quiet matrix-terminal-runtime.service; then
-      terminal_runtime_enable_after_health=true
+    if [ -f "$extract_dir/systemd/matrix-terminal-runtime.service" ]; then
+      if [ "$terminal_runtime_activation" = "supervised-v1" ]; then
+        if ! systemctl is-enabled --quiet matrix-terminal-runtime.service &&
+          ! systemctl enable matrix-terminal-runtime.service; then
+          log "ERROR: terminal_runtime_supervisor_enable_failed"
+          do_rollback failed-update ||
+            log "ERROR: rollback after terminal supervisor enable failure failed"
+          rm -rf "$extract_dir" "$bundle_file"
+          return 1
+        fi
+        if ! systemctl is-active --quiet matrix-terminal-runtime.service &&
+          ! systemctl start matrix-terminal-runtime.service; then
+          log "ERROR: terminal_runtime_supervisor_start_failed"
+          if ! terminate_new_terminal_runtime_supervisor_after_failed_start; then
+            log "ERROR: terminal_runtime_supervisor_cleanup_failed"
+            log "WARN: terminal_runtime_supervisor_cleanup_preserved_host_layer"
+            do_rollback explicit ||
+              log "ERROR: application rollback after supervisor cleanup failure failed"
+            rm -rf "$extract_dir" "$bundle_file"
+            return 1
+          fi
+          do_rollback failed-update ||
+            log "ERROR: rollback after terminal supervisor start failure failed"
+          rm -rf "$extract_dir" "$bundle_file"
+          return 1
+        fi
+        log "Terminal runtime supervisor ready"
+      elif ! systemctl is-enabled --quiet matrix-terminal-runtime.service; then
+        terminal_runtime_enable_after_health=true
+      fi
     fi
     if [ -f "$extract_dir/systemd/matrix-code-server.service" ]; then
       systemctl enable matrix-code-server.service
