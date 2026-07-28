@@ -304,6 +304,18 @@ describe('CI workflows', () => {
     expect(workflow).toContain('CLOUD_RUN_SERVICE_ACCOUNT');
   });
 
+  it('preflights the Stripe webhook lifecycle contract before production deployment', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(workflow).toContain('Verify Stripe webhook lifecycle events');
+    expect(workflow).toContain('checkout.session.completed');
+    expect(workflow).toContain('checkout.session.expired');
+    expect(workflow).toContain('/billing/webhooks/stripe');
+    expect(workflow).toContain('https://api.stripe.com/v1/webhook_endpoints');
+    expect(workflow).toContain('stripe-secret-key');
+  });
+
   it('keeps production platform Cloud Run warm while allowing staging to scale to zero', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');

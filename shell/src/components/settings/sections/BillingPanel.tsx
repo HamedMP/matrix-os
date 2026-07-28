@@ -144,6 +144,7 @@ function CheckoutPanel({
   const annualSavings = annualSavingsPercent(selectedProfile);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [existingCheckoutUrl, setExistingCheckoutUrl] = useState<string | null>(null);
   const telemetryPropertiesRef = useRef(telemetryProperties);
 
   useEffect(() => {
@@ -154,8 +155,11 @@ function CheckoutPanel({
     captureBillingTelemetry("checkout_stripe_available", telemetryPropertiesRef.current);
   }, []);
 
-  function reportCheckoutError(errorKind: string) {
-    setCheckoutError("Checkout is unavailable. Try again in a moment.");
+  function reportCheckoutError(
+    errorKind: string,
+    message = "Checkout is unavailable. Try again in a moment.",
+  ) {
+    setCheckoutError(message);
     captureBillingTelemetry("checkout_error", {
       ...telemetryPropertiesRef.current,
       error_kind: errorKind,
@@ -175,6 +179,7 @@ function CheckoutPanel({
     }
     setCheckoutLoading(true);
     setCheckoutError(null);
+    setExistingCheckoutUrl(null);
     captureBillingTelemetry("checkout_intent", telemetryPropertiesRef.current);
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), BILLING_CHECKOUT_TIMEOUT_MS);
@@ -196,18 +201,38 @@ function CheckoutPanel({
           ...(checkoutReturnPath ? { returnPath: checkoutReturnPath } : {}),
         }),
       });
-      if (!response.ok) {
-        reportCheckoutError("http_error");
-        return;
-      }
       const body = (await response.json().catch((err: unknown) => {
         captureBillingTelemetry("checkout_response_parse_error", {
           ...telemetryPropertiesRef.current,
           error_kind: err instanceof Error ? err.name : typeof err,
         });
         return null;
-      })) as { url?: string } | null;
-      if (!body?.url) {
+      })) as { code?: unknown; url?: unknown } | null;
+      if (!response.ok) {
+        if (
+          response.status === 409
+          && body?.code === "checkout_pending"
+          && typeof body.url === "string"
+          && body.url.length > 0
+        ) {
+          setExistingCheckoutUrl(body.url);
+          reportCheckoutError(
+            "checkout_pending",
+            "A checkout is already open for this computer.",
+          );
+          return;
+        }
+        if (response.status === 409 && body?.code === "runtime_already_subscribed") {
+          reportCheckoutError(
+            "runtime_already_subscribed",
+            "Billing is already active for this computer. Refresh to continue.",
+          );
+          return;
+        }
+        reportCheckoutError(`http_${response.status}`);
+        return;
+      }
+      if (typeof body?.url !== "string" || body.url.length === 0) {
         reportCheckoutError("invalid_response");
         return;
       }
@@ -332,7 +357,22 @@ function CheckoutPanel({
         No trial. Plan changes and coupons are handled in the billing portal.
       </p>}
       {checkoutError && (
-        <p className="mt-2 text-center text-xs text-red-300">{checkoutError}</p>
+        <div className="mt-2 text-center text-xs text-red-300">
+          <p>{checkoutError}</p>
+          {existingCheckoutUrl && (
+            <button
+              type="button"
+              onClick={() =>
+                (onCheckoutNavigate ?? ((target: string) => window.location.assign(target)))(
+                  existingCheckoutUrl,
+                )
+              }
+              className="mt-2 font-semibold text-cream underline decoration-cream/40 underline-offset-4 hover:decoration-cream"
+            >
+              Continue existing checkout
+            </button>
+          )}
+        </div>
       )}
     </aside>
   );

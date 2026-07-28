@@ -387,7 +387,7 @@ describe("BillingGate", () => {
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
-  it("opens device login billing in Settings without starting Stripe checkout", async () => {
+  it("sends the allowlisted device approval path when device login starts checkout", async () => {
     vi.unstubAllEnvs();
     window.history.replaceState({}, "", "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK");
     clerkState.isLoaded = true;
@@ -412,6 +412,22 @@ describe("BillingGate", () => {
     expect(
       fetchMock.mock.calls.some(([url]) => String(url).includes("/billing/checkout")),
     ).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/billing/checkout",
+        expect.objectContaining({
+          body: JSON.stringify({
+            planSlug: "matrix_builder",
+            interval: "monthly",
+            regionSlug: "region_fsn1",
+            returnPath: "/auth/device?user_code=BCDF-GHJK",
+          }),
+        }),
+      ),
+    );
   });
 
   it("shows confirmation feedback after a completed checkout redirect", async () => {

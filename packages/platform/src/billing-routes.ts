@@ -266,7 +266,13 @@ export function createBillingRoutes(options: {
         if (attempt.selectionMatches && attempt.attempt.status === 'open' && attempt.attempt.checkoutUrl) {
           return c.json({ url: attempt.attempt.checkoutUrl }, 200);
         }
-        return c.json({ error: 'Checkout is already starting', code: 'checkout_pending' }, 409);
+        return c.json({
+          error: 'Checkout is already starting',
+          code: 'checkout_pending',
+          ...(attempt.attempt.status === 'open' && attempt.attempt.checkoutUrl
+            ? { url: attempt.attempt.checkoutUrl }
+            : {}),
+        }, 409);
       }
       const customer = await getBillingCustomerByClerkUserId(options.db, clerkUserId);
       const session = await options.stripe.createCheckoutSession({

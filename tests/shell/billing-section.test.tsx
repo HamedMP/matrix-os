@@ -290,6 +290,44 @@ describe("BillingSection", () => {
     );
   });
 
+  it("lets the user resume an existing checkout instead of reporting an outage", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+    const checkoutUrl = "https://checkout.stripe.test/existing";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (input === "/billing/checkout") {
+        return new Response(JSON.stringify({
+          error: "Checkout is already starting",
+          code: "checkout_pending",
+          url: checkoutUrl,
+        }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const navigate = vi.fn();
+
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" onCheckoutNavigate={navigate} />);
+    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
+
+    expect(await screen.findByText("A checkout is already open for this computer.")).toBeTruthy();
+    expect(screen.queryByText("Checkout is unavailable. Try again in a moment.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Continue existing checkout" }));
+    expect(navigate).toHaveBeenCalledWith(checkoutUrl);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/billing/checkout",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
   it("uses provisioning copy when billing is shown before the hosted computer exists", async () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;

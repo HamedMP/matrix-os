@@ -411,6 +411,7 @@ describe('platform billing routes', () => {
     await expect(replacement.json()).resolves.toEqual({
       error: 'Checkout is already starting',
       code: 'checkout_pending',
+      url: 'https://checkout.stripe.test/session',
     });
     expect(stripe.createCheckoutSession).toHaveBeenCalledOnce();
   });

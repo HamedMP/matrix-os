@@ -80,12 +80,7 @@ function normalizeDeviceReturnPath(value: string | null): string | null {
 }
 
 function getBillingCheckoutReturnPath(deviceReturnPath: string | null): string | undefined {
-  if (!deviceReturnPath || typeof window === "undefined") return undefined;
-  const url = new URL(window.location.href);
-  url.searchParams.delete("billing");
-  url.searchParams.delete("checkout");
-  url.searchParams.set("device_return", deviceReturnPath);
-  return `${url.pathname}${url.search}`;
+  return deviceReturnPath ?? undefined;
 }
 
 function BillingRequired({ checkoutReturnPath }: { checkoutReturnPath?: string }) {

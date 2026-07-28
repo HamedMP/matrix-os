@@ -160,6 +160,61 @@ jobs:
             fi
           done
 
+      - name: Verify Stripe webhook lifecycle events
+        run: |
+          set -euo pipefail
+          if [ "$DEPLOY_ENVIRONMENT" != "production" ]; then
+            echo "Skipping the production Stripe webhook contract outside production."
+            exit 0
+          fi
+
+          stripe_secret_tmpfile="$(mktemp)"
+          stripe_curl_config_tmpfile="$(mktemp)"
+          stripe_webhooks_tmpfile="$(mktemp)"
+          trap 'rm -f "$stripe_secret_tmpfile" "$stripe_curl_config_tmpfile" "$stripe_webhooks_tmpfile"' EXIT
+          chmod 600 "$stripe_secret_tmpfile" "$stripe_curl_config_tmpfile" "$stripe_webhooks_tmpfile"
+
+          gcloud secrets versions access latest \
+            --secret stripe-secret-key \
+            --project "$GCP_PROJECT_ID" >"$stripe_secret_tmpfile"
+          printf 'header = "Authorization: Bearer %s"\n' "$(<"$stripe_secret_tmpfile")" \
+            >"$stripe_curl_config_tmpfile"
+          curl --fail --silent --show-error --max-time 10 \
+            --config "$stripe_curl_config_tmpfile" \
+            --get "https://api.stripe.com/v1/webhook_endpoints" \
+            --data-urlencode "limit=100" \
+            >"$stripe_webhooks_tmpfile"
+
+          stripe_webhook_url="${MATRIX_APP_URL%/}/billing/webhooks/stripe"
+          enabled_endpoint_count="$(
+            jq --arg url "$stripe_webhook_url" \
+              '[.data[] | select(.url == $url and .status == "enabled")] | length' \
+              "$stripe_webhooks_tmpfile"
+          )"
+          if [ "$enabled_endpoint_count" != "1" ]; then
+            echo "Stripe must have exactly one enabled webhook endpoint for the platform billing URL." >&2
+            exit 1
+          fi
+
+          required_stripe_events=(
+            customer.subscription.created
+            customer.subscription.updated
+            customer.subscription.deleted
+            checkout.session.completed
+            checkout.session.expired
+          )
+          for event_type in "${required_stripe_events[@]}"; do
+            if ! jq -e --arg url "$stripe_webhook_url" --arg event "$event_type" \
+              'any(.data[];
+                .url == $url
+                and .status == "enabled"
+                and ((.enabled_events | index("*")) != null or (.enabled_events | index($event)) != null)
+              )' "$stripe_webhooks_tmpfile" >/dev/null; then
+              echo "Stripe webhook is missing required event: $event_type" >&2
+              exit 1
+            fi
+          done
+
       - name: Verify Pipedream integration secrets
         run: |
           set -euo pipefail
