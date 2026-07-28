@@ -33,7 +33,6 @@ import {
 import { createRuntimeArtifactManager } from './recovery-state.js';
 import { migrateLegacyTerminalState } from './legacy-migration.js';
 import { SecureDirectory } from './storage.js';
-
 const execFile = promisify(execFileCallback);
 const HOME = '/home/matrix/home';
 const DURABLE_ROOT = `${HOME}/system/terminal-runtime`;
@@ -42,7 +41,6 @@ const KeeperRequestSchema = z.object({
   version: z.literal(1),
   runtimeId: RuntimeIdSchema,
 }).strict();
-
 async function readPeer(): Promise<ReturnType<typeof decodePeerCredentials>> {
   const bytes = Buffer.alloc(12);
   let offset = 0;
@@ -65,7 +63,6 @@ async function readPeer(): Promise<ReturnType<typeof decodePeerCredentials>> {
   }
   return decodePeerCredentials(bytes);
 }
-
 async function readRequest(): Promise<Buffer> {
   return await new Promise<Buffer>((resolveRequest, rejectRequest) => {
     const chunks: Buffer[] = [];
@@ -109,7 +106,6 @@ async function readRequest(): Promise<Buffer> {
     process.stdin.resume();
   });
 }
-
 async function writeResponse(response: Buffer): Promise<void> {
   await new Promise<void>((resolveWrite, rejectWrite) => {
     const timer = setTimeout(() => {
@@ -124,7 +120,6 @@ async function writeResponse(response: Buffer): Promise<void> {
     });
   });
 }
-
 async function resolveCwd(cwd: HomeRelativeCwd): Promise<HomeRelativeCwd> {
   const parsed = HomeRelativeCwdSchema.parse(cwd);
   const home = await realpath(HOME);
@@ -138,7 +133,6 @@ async function resolveCwd(cwd: HomeRelativeCwd): Promise<HomeRelativeCwd> {
     path: ownerRelative === '' ? '' : ownerRelative,
   });
 }
-
 async function resolveLegacyCwd(candidate?: string): Promise<HomeRelativeCwd> {
   const home = await realpath(HOME);
   const target = await realpath(resolve(home, candidate ?? '.'));
@@ -151,7 +145,6 @@ async function resolveLegacyCwd(candidate?: string): Promise<HomeRelativeCwd> {
     path: ownerRelative === '' ? '' : ownerRelative,
   });
 }
-
 async function resolveLegacyWorkspaceCwd(input: {
   projectSlug?: string;
   worktreeId?: string;
@@ -183,7 +176,6 @@ async function resolveLegacyWorkspaceCwd(input: {
     await projectDirectory.close();
   }
 }
-
 async function readBootId(): Promise<string> {
   const bootId = (await readFile(
     '/proc/sys/kernel/random/boot_id',
@@ -194,7 +186,6 @@ async function readBootId(): Promise<string> {
   }
   return bootId;
 }
-
 async function belongsToRuntimeCgroup(
   pid: number,
   runtimeId: string,
@@ -208,7 +199,6 @@ async function belongsToRuntimeCgroup(
     return cgroup.endsWith(expected) && !cgroup.includes('..');
   });
 }
-
 async function inspectProcesses(path: string): Promise<{
   keeper: boolean;
   zellijClient: boolean;
@@ -240,7 +230,6 @@ async function inspectProcesses(path: string): Promise<{
     processes.filter((value) => value !== null),
   );
 }
-
 async function sessionResponds(runtimeId: string): Promise<boolean> {
   const environment = {
     HOME,
@@ -275,13 +264,11 @@ async function sessionResponds(runtimeId: string): Promise<boolean> {
     throw error;
   }
 }
-
 async function readOwner() {
   const owner = await stat(HOME);
   if (owner.uid === 0) throw new Error('owner_invalid');
   return { uid: owner.uid, gid: owner.gid };
 }
-
 async function createHostState(owner: { uid: number; gid: number }) {
   const executor = createSystemdExecutor({
     inspectProcesses: async (path) => await inspectProcesses(path),
@@ -302,7 +289,6 @@ async function createHostState(owner: { uid: number; gid: number }) {
   });
   return { state, executor, owner, artifacts };
 }
-
 async function servePeer(): Promise<void> {
   const peer = await readPeer();
   const owner = await readOwner();
@@ -326,7 +312,6 @@ async function servePeer(): Promise<void> {
     await host.state.close();
   }
 }
-
 async function serveKeeper(): Promise<void> {
   const peer = await readPeer();
   const owner = await readOwner();
@@ -347,7 +332,6 @@ async function serveKeeper(): Promise<void> {
     await host.state.close();
   }
 }
-
 async function maintenance(): Promise<void> {
   let stopping = false;
   let resolveStopped: () => void = () => undefined;
@@ -402,7 +386,6 @@ async function maintenance(): Promise<void> {
     if (timer) clearTimeout(timer);
   }
 }
-
 async function migrateLegacy(): Promise<void> {
   if (process.getuid?.() !== 0) {
     throw new Error('migration_unauthorized');
@@ -421,7 +404,6 @@ async function migrateLegacy(): Promise<void> {
     await host.state.close();
   }
 }
-
 export async function runRuntimeOp(mode: string | undefined): Promise<void> {
   if (mode === 'serve-peer') return await servePeer();
   if (mode === 'serve-keeper') return await serveKeeper();
@@ -429,7 +411,6 @@ export async function runRuntimeOp(mode: string | undefined): Promise<void> {
   if (mode === 'migrate-legacy') return await migrateLegacy();
   throw new Error('runtime_op_invalid');
 }
-
 if (process.argv[1]?.endsWith('/runtime-op.js')) {
   try {
     await runRuntimeOp(process.argv[2]);

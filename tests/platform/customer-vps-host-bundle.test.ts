@@ -855,10 +855,10 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
     expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}}"');
-    expect(workflow).toContain('dist/host-bundle/incremental-manifest.json');
-    expect(workflow).toContain('dist/host-bundle/objects/**');
-    expect(workflow).toContain('./scripts/publish-release.sh "$VERSION" --channel none');
-    expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL}/vps/deploy"');
+    expect(workflow).toContain('git checkout --detach "${{ needs.gate.outputs.base_sha }}"');
+    expect(workflow).toContain('mv dist/host-bundle dist/bootstrap');
+    expect(workflow).toContain('for phase in ${BOOTSTRAP_VERSION:+bootstrap} activation');
+    expect(workflow).toContain('for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"');
   });
 
   it('preview VPS workflow uses the durable preview provision contract', () => {
@@ -971,7 +971,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
     expect(workflow).toContain('deploy_deadline=$((SECONDS + 4500))');
-    expect(workflow.slice(workflow.indexOf('  deploy:'), workflow.indexOf('  teardown:'))).toContain('timeout-minutes: 120');
+    expect(workflow.slice(workflow.indexOf('  deploy:'), workflow.indexOf('  teardown:'))).toContain('timeout-minutes: 180');
     expect(workflow).toContain(
       '.triggered == 1 and .failed == 0 and (.results | length) == 1',
     );

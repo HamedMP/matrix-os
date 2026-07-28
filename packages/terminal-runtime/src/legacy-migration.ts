@@ -10,7 +10,6 @@ import {
 } from './contracts.js';
 import type { RuntimeState } from './runtime-state.js';
 import { isStateNotFound, SecureDirectory } from './storage.js';
-
 const MAX_LEGACY_SOURCE_BYTES = 128 * 1024;
 const MAX_LEGACY_RECORDS = 128;
 const ActiveWorkspaceStatusSchema = z.enum([
@@ -38,7 +37,6 @@ const LegacyWorkspaceSessionSchema = z.object({
   }).passthrough(),
   writeMode: z.string().max(32).optional(),
 }).passthrough();
-
 type LegacyCandidate = {
   source: 'shell' | 'workspace';
   displayName: string;
@@ -50,7 +48,6 @@ type LegacyCandidate = {
     raw: z.infer<typeof LegacyWorkspaceSessionSchema>;
   };
 };
-
 export type LegacyTerminalMigrationResult = {
   migrated: number;
   existing: number;
@@ -58,12 +55,10 @@ export type LegacyTerminalMigrationResult = {
   cwdFallbacks: number;
   workspaceRecordsUpdated: number;
 };
-
 function supportedTimestamp(value: string | undefined, fallback: string): string {
   const parsed = IsoTimestampSchema.safeParse(value);
   return parsed.success ? parsed.data : fallback;
 }
-
 async function readShellCandidates(
   systemDirectory: SecureDirectory,
 ): Promise<{ candidates: LegacyCandidate[]; skipped: number }> {
@@ -101,7 +96,6 @@ async function readShellCandidates(
   }
   return { candidates, skipped };
 }
-
 async function readWorkspaceCandidates(
   sessionsDirectory: SecureDirectory,
 ): Promise<{ candidates: LegacyCandidate[]; skipped: number }> {
@@ -149,7 +143,6 @@ async function readWorkspaceCandidates(
   }
   return { candidates, skipped };
 }
-
 async function resolveMigrationCwd(options: {
   candidate?: string;
   resolveCwd(candidate?: string): Promise<HomeRelativeCwd>;
@@ -170,7 +163,6 @@ async function resolveMigrationCwd(options: {
     }
   }
 }
-
 function migratedReceipt(input: {
   runtimeId: string;
   candidate: LegacyCandidate;
@@ -195,7 +187,6 @@ function migratedReceipt(input: {
     zellij: { sessionName: `matrix-t-${runtimeId}` },
   };
 }
-
 function collisionDisplayName(candidate: LegacyCandidate): string {
   if (!candidate.workspace) throw new Error('legacy_workspace_invalid');
   const sourceKey = [
@@ -212,7 +203,6 @@ function collisionDisplayName(candidate: LegacyCandidate): string {
     `${candidate.displayName.slice(0, 64 - suffix.length)}${suffix}`,
   );
 }
-
 async function updateWorkspaceRecord(options: {
   directory: SecureDirectory;
   candidate: LegacyCandidate;
@@ -239,7 +229,6 @@ async function updateWorkspaceRecord(options: {
   }, MAX_LEGACY_SOURCE_BYTES);
   return true;
 }
-
 export async function migrateLegacyTerminalState(options: {
   homePath: string;
   state: RuntimeState;

@@ -315,6 +315,7 @@ describe('terminal runtime spike evidence', () => {
       readFile(join(process.cwd(), '.github/workflows/preview-vps.yml'), 'utf8'),
     ]);
     expect(previewWorkflow).toContain("MATRIX_TERMINAL_RUNTIME_SPIKE: '1'");
+    expect(previewWorkflow).toContain('Build dormant parent bootstrap bundle');
     expect(buildScript).toContain('if [ "${MATRIX_TERMINAL_RUNTIME_SPIKE:-0}" = "1" ]; then');
     expect(buildScript).toContain('scripts/spikes/terminal-runtime');
   });

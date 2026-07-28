@@ -45,8 +45,8 @@ React layers additionally require `npx react-doctor@latest shell` and current
 Canvas-first screenshot or recording evidence. The final layer repeats the full
 disposable-VPS acceptance matrix across two bundles, failed update, and rollback.
 
-For the activation layer, deploy the frozen exact head with `preview-vps`, then
-apply `terminal-production-acceptance`. The same-repository labeled workflow:
+For the activation layer, `preview-vps` first deploys the dormant parent layer,
+then the frozen exact head; next apply `terminal-production-acceptance`. The workflow:
 
 1. builds two independently versioned bundles from the same immutable head and
    exact verified Zellij build;

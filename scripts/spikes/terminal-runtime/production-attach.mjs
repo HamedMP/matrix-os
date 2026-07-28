@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { open, readFile } from 'node:fs/promises';
 import { spawn } from 'node-pty';
-
 const [runtimeId = '', receiptPath = ''] = process.argv.slice(2);
 if (!/^[0-9a-f]{32}$/.test(runtimeId) ||
     !/^\/run\/matrix-terminal-accept-[a-f0-9]{40}-[12]\.json$/.test(receiptPath)) {

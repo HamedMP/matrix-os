@@ -1123,12 +1123,13 @@ Local development remains on the direct gateway-owned launcher unless
 rollback therefore restores the previous generation's mode without changing
 stable systemd units.
 
-During the first activating update, the root updater stops the legacy gateway,
-atomically installs the verified runtime generation, and runs the fixed
-`matrix-terminal-runtime-op migrate-legacy` operation before starting the new
-gateway. It then enables the stable supervisor and waits for its `Type=notify`
-readiness, which is emitted only after both protocol sockets and the maintenance
-worker are available. The operation reads only bounded, validated name and
+Deploy the dormant parent layer before the first activating update so its typed
+root updater can atomically install the verified runtime generation. The
+activating update stops the legacy gateway, runs the fixed
+`matrix-terminal-runtime-op migrate-legacy` operation, then enables the stable
+supervisor and waits for readiness before starting the gateway. Readiness is
+emitted only after both protocol sockets and the maintenance worker are available.
+The operation reads only bounded, validated name and
 working-directory metadata from legacy shell and workspace records. It assigns
 immutable runtime IDs and creates interrupted receipts; it never adopts PIDs,
 starts a template unit, executes a command, or resumes an agent. A partial

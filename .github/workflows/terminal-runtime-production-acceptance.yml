@@ -47,7 +47,6 @@ jobs:
             echo "ref=$ref"
             echo "handle=pr-$PR"
           } >>"$GITHUB_OUTPUT"
-
   build:
     needs: gate
     runs-on: ubuntu-24.04
@@ -118,7 +117,6 @@ jobs:
             dist/acceptance-b/objects/**
           if-no-files-found: error
           retention-days: 3
-
   publish:
     needs: [gate, build]
     runs-on: ubuntu-latest
@@ -153,7 +151,6 @@ jobs:
             ./scripts/publish-release.sh "$version" --channel none \
               --changelog "Terminal production acceptance for PR #${PR}"
           done
-
   prove:
     needs: [gate, publish]
     runs-on: ubuntu-latest

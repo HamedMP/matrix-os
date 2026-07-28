@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises';
 import { createOperationId, createSupervisorClient } from '../index.js';
-
 const [operation = '', value = '', extra = ''] = process.argv.slice(2);
 const runtimeId = /^[0-9a-f]{32}$/.test(value) ? value : null;
 const client = createSupervisorClient();
@@ -13,7 +12,6 @@ const request = async (name, input, operationId = createOperationId()) => {
   return response.result;
 };
 const output = (result) => process.stdout.write(`${JSON.stringify(result)}\n`);
-
 if (operation === 'create' || operation === 'create-race') {
   if (!/^[0-9a-f]{40}$/.test(value)) throw new Error('probe_head_invalid');
   output(await request('CreateStart', {

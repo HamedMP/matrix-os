@@ -5,7 +5,6 @@ import {
   lstat, mkdir, open, readFile, readdir, rename,
 } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
-
 const CHECKS = Object.freeze([
   'runtimeLive',
   'continuousOutput',
@@ -35,7 +34,6 @@ const EXPECTED_BINARY =
 const MAX_BYTES = 128 * 1024;
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const validHead = (value) => /^[0-9a-f]{40}$/.test(value);
-
 async function safeFile(path, maxBytes = MAX_BYTES) {
   const before = await lstat(path);
   if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 ||
@@ -167,7 +165,6 @@ async function unpack(envelopePath, parent, head) {
   }
   process.stdout.write(target);
 }
-
 const args = process.argv.slice(2);
 if (args[0] === '--write-summary' && args.length === 3) {
   await writeSummary(args[1], args[2]);

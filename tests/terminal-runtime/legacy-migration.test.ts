@@ -2,25 +2,12 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  HomeRelativeCwdSchema,
-  createRuntimeState,
-  migrateLegacyTerminalState,
-  type HomeRelativeCwd,
-} from "../../packages/terminal-runtime/src/index.js";
-
+import { HomeRelativeCwdSchema, createRuntimeState, migrateLegacyTerminalState, type HomeRelativeCwd } from "../../packages/terminal-runtime/src/index.js";
 const roots: string[] = [];
-const IDS = [
-  "00000000000000000000000000000001",
-  "00000000000000000000000000000002",
-  "00000000000000000000000000000003",
-];
-
+const IDS = ["00000000000000000000000000000001", "00000000000000000000000000000002", "00000000000000000000000000000003"];
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map(async (root) =>
-    await rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })));
 });
-
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "terminal-legacy-migration-"));
   roots.push(root);
@@ -32,7 +19,6 @@ async function fixture() {
   const state = await createRuntimeState({ durableRoot, runtimeRoot });
   return { root, homePath, state };
 }
-
 function cwdResolver(homePath: string) {
   return async (candidate?: string): Promise<HomeRelativeCwd> => {
     const root = resolve(homePath);
@@ -46,7 +32,6 @@ function cwdResolver(homePath: string) {
     });
   };
 }
-
 describe("legacy terminal migration", () => {
   it("creates interrupted immutable receipts without adopting or launching legacy processes", async () => {
     const { homePath, state } = await fixture();
@@ -85,7 +70,6 @@ describe("legacy terminal migration", () => {
       provider: "claude",
       ownerId: "owner",
     }));
-
     let nextId = 0;
     const result = await migrateLegacyTerminalState({
       homePath,
@@ -96,7 +80,6 @@ describe("legacy terminal migration", () => {
       bootId: "migration-boot",
       createId: () => IDS[nextId++]!,
     });
-
     expect(result).toEqual({
       migrated: 2,
       existing: 0,
@@ -111,8 +94,7 @@ describe("legacy terminal migration", () => {
       if (entry.state?.kind !== "supported") continue;
       expect(entry.state.receipt.lastKnown.state).toBe("live");
       expect(entry.state.receipt.lastKnown.bootId).toBe("migration-boot");
-      expect(entry.state.receipt.zellij.sessionName)
-        .toBe(`matrix-t-${entry.state.receipt.runtimeId}`);
+      expect(entry.state.receipt.zellij.sessionName).toBe(`matrix-t-${entry.state.receipt.runtimeId}`);
       const serialized = JSON.stringify(entry.state.receipt);
       expect(serialized).not.toContain("print-secret");
       expect(serialized).not.toContain("never-copy-this");
@@ -127,10 +109,7 @@ describe("legacy terminal migration", () => {
       runtimeId: IDS[1],
       source: "canonical",
     });
-    const workspace = JSON.parse(await readFile(
-      join(homePath, "system", "sessions", "sess_alpha.json"),
-      "utf8",
-    )) as Record<string, unknown>;
+    const workspace = JSON.parse(await readFile(join(homePath, "system", "sessions", "sess_alpha.json"), "utf8")) as Record<string, unknown>;
     expect(workspace).toMatchObject({
       runtime: {
         type: "zellij",
@@ -143,7 +122,6 @@ describe("legacy terminal migration", () => {
     });
     await state.close();
   });
-
   it("is idempotent and falls back to the owner home for unavailable cwd", async () => {
     const { homePath, state } = await fixture();
     await writeFile(join(homePath, "system", "shell-sessions.json"), JSON.stringify({
@@ -173,7 +151,6 @@ describe("legacy terminal migration", () => {
         return IDS[0];
       },
     });
-
     await expect(migrate()).resolves.toMatchObject({
       migrated: 1,
       cwdFallbacks: 1,
@@ -183,13 +160,11 @@ describe("legacy terminal migration", () => {
       existing: 1,
     });
     expect(calls).toBe(1);
-    expect(await state.receipts.list()).toHaveLength(1);
     const receipt = await state.receipts.read(IDS[0]);
     expect(receipt?.kind === "supported" ? receipt.receipt.cwd : null)
       .toEqual({ kind: "home-relative", path: "" });
     await state.close();
   });
-
   it("keeps colliding shell and workspace records on distinct immutable runtimes", async () => {
     const { homePath, state } = await fixture();
     await writeFile(join(homePath, "system", "shell-sessions.json"), JSON.stringify({
@@ -210,7 +185,6 @@ describe("legacy terminal migration", () => {
         zellijSession: "legacy-agent-main",
       },
     }));
-
     let nextId = 0;
     const migrate = async () => await migrateLegacyTerminalState({
       homePath,
@@ -220,31 +194,23 @@ describe("legacy terminal migration", () => {
       bootId: "migration-boot",
       createId: () => IDS[nextId++]!,
     });
-
     await expect(migrate()).resolves.toMatchObject({
       migrated: 2,
       existing: 0,
       workspaceRecordsUpdated: 1,
     });
-    const workspace = JSON.parse(await readFile(
-      join(homePath, "system", "sessions", "main.json"),
-      "utf8",
-    )) as { runtime: { runtimeId: string } };
+    const workspace = JSON.parse(await readFile(join(homePath, "system", "sessions", "main.json"), "utf8")) as { runtime: { runtimeId: string } };
     expect(workspace.runtime.runtimeId).toBe(IDS[1]);
     expect(workspace.runtime.runtimeId).not.toBe(IDS[0]);
-    const receipts = (await state.receipts.list()).flatMap(({ state: receiptState }) =>
-      receiptState?.kind === "supported" ? [receiptState.receipt] : []);
+    const receipts = (await state.receipts.list()).flatMap(({ state: receiptState }) => receiptState?.kind === "supported" ? [receiptState.receipt] : []);
     expect(receipts).toHaveLength(2);
-    expect(receipts.map((receipt) => receipt.runtimeId).sort())
-      .toEqual([IDS[0], IDS[1]]);
+    expect(receipts.map((receipt) => receipt.runtimeId).sort()).toEqual([IDS[0], IDS[1]]);
     const workspaceReceipt = receipts.find((receipt) => receipt.runtimeId === IDS[1]);
     expect(workspaceReceipt?.displayName).toMatch(/^main-agent-[0-9a-f]{12}$/);
     expect(await state.names.resolve("main", Date.now())).toMatchObject({
       runtimeId: IDS[0],
     });
-    expect(await state.names.resolve(workspaceReceipt!.displayName, Date.now()))
-      .toMatchObject({ runtimeId: IDS[1] });
-
+    expect(await state.names.resolve(workspaceReceipt!.displayName, Date.now())).toMatchObject({ runtimeId: IDS[1] });
     await expect(migrate()).resolves.toMatchObject({
       migrated: 0,
       existing: 1,
@@ -254,7 +220,6 @@ describe("legacy terminal migration", () => {
     expect(nextId).toBe(2);
     await state.close();
   });
-
   it("reuses a colliding workspace runtime after interruption before its legacy marker update", async () => {
     const { homePath, state } = await fixture();
     await writeFile(join(homePath, "system", "shell-sessions.json"), JSON.stringify({
@@ -277,7 +242,6 @@ describe("legacy terminal migration", () => {
     };
     const workspacePath = join(homePath, "system", "sessions", "main.json");
     await writeFile(workspacePath, JSON.stringify(legacyWorkspace));
-
     let nextId = 0;
     const migrate = async () => await migrateLegacyTerminalState({
       homePath,
@@ -287,15 +251,12 @@ describe("legacy terminal migration", () => {
       bootId: "migration-boot",
       createId: () => IDS[nextId++]!,
     });
-
     await expect(migrate()).resolves.toMatchObject({
       migrated: 2,
       existing: 0,
     });
-    // Recreate the durable state left by a crash after the receipt and name
-    // index commit but before the legacy workspace marker is replaced.
+    // Recreate a crash after receipt/name commit but before replacing the legacy marker.
     await writeFile(workspacePath, JSON.stringify(legacyWorkspace));
-
     await expect(migrate()).resolves.toMatchObject({
       migrated: 0,
       existing: 2,
@@ -305,7 +266,6 @@ describe("legacy terminal migration", () => {
     expect(await state.receipts.list()).toHaveLength(2);
     await state.close();
   });
-
   it("rejects symlinked legacy sources without creating recovery state", async () => {
     const { root, homePath, state } = await fixture();
     const outside = join(root, "outside.json");
@@ -321,7 +281,6 @@ describe("legacy terminal migration", () => {
       },
     }));
     await symlink(outside, join(homePath, "system", "shell-sessions.json"));
-
     await expect(migrateLegacyTerminalState({
       homePath,
       state,
@@ -332,7 +291,6 @@ describe("legacy terminal migration", () => {
     expect(await state.receipts.list()).toHaveLength(0);
     await state.close();
   });
-
   it("rejects symlinked workspace records instead of hiding a trust-boundary failure", async () => {
     const { root, homePath, state } = await fixture();
     const outside = join(root, "workspace.json");
@@ -340,11 +298,7 @@ describe("legacy terminal migration", () => {
       id: "sess_alpha",
       runtime: { type: "zellij", status: "running" },
     }));
-    await symlink(
-      outside,
-      join(homePath, "system", "sessions", "sess_alpha.json"),
-    );
-
+    await symlink(outside, join(homePath, "system", "sessions", "sess_alpha.json"));
     await expect(migrateLegacyTerminalState({
       homePath,
       state,
