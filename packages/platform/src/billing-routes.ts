@@ -266,12 +266,26 @@ export function createBillingRoutes(options: {
         if (attempt.selectionMatches && attempt.attempt.status === 'open' && attempt.attempt.checkoutUrl) {
           return c.json({ url: attempt.attempt.checkoutUrl }, 200);
         }
+        if (
+          !attempt.selectionMatches
+          && attempt.attempt.status === 'open'
+          && attempt.attempt.planSlug
+          && attempt.attempt.billingInterval
+          && attempt.attempt.regionSlug
+        ) {
+          return c.json({
+            error: 'Checkout selection conflicts with an open session',
+            code: 'checkout_selection_conflict',
+            selection: {
+              planSlug: attempt.attempt.planSlug,
+              interval: attempt.attempt.billingInterval,
+              regionSlug: attempt.attempt.regionSlug,
+            },
+          }, 409);
+        }
         return c.json({
           error: 'Checkout is already starting',
           code: 'checkout_pending',
-          ...(attempt.attempt.status === 'open' && attempt.attempt.checkoutUrl
-            ? { url: attempt.attempt.checkoutUrl }
-            : {}),
         }, 409);
       }
       const customer = await getBillingCustomerByClerkUserId(options.db, clerkUserId);

@@ -9,6 +9,7 @@ const BILLING_STATUS_CACHE_TTL_MS = 30_000;
 const BILLING_STATUS_RETRY_MS = 3_000;
 const PLATFORM_SESSION_BILLING_CACHE_KEY = "platform-session";
 const APP_SESSION_STALE_AUTH_FAILURE = "app-session-stale";
+const e2eBillingBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 
 type BillingStatusSnapshot = {
   cacheKey: string;
@@ -54,7 +55,15 @@ type BillingAccessRemoteState = {
 };
 
 export function useMatrixBillingAccess(): BillingAccessState {
-  return useManagedMatrixBillingAccess();
+  const state = useManagedMatrixBillingAccess();
+  if (!e2eBillingBypass) return state;
+  return {
+    active: false,
+    checking: false,
+    entitlement: null,
+    accessReason: "e2e_test_bypass",
+    accessIssue: null,
+  };
 }
 
 function useManagedMatrixBillingAccess(): BillingAccessState {

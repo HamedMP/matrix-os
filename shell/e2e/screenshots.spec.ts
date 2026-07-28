@@ -2,6 +2,11 @@ import { test, expect } from "@playwright/test";
 
 test.describe("Visual regression", () => {
   test.beforeEach(async ({ page }) => {
+    // Match the platform-owned app shell request boundary so the server-rendered
+    // page enters the authenticated workspace before client screenshots begin.
+    await page.setExtraHTTPHeaders({
+      "x-matrix-platform-session": "platform",
+    });
     // Mock gateway APIs so the shell renders without a running backend
     await page.route("**/api/settings/**", (route) => {
       const pathname = new URL(route.request().url()).pathname;
@@ -68,6 +73,46 @@ test.describe("Visual regression", () => {
     await page.mouse.move(720, 450);
     await page.waitForTimeout(300);
     await expect(page).toHaveScreenshot("settings-panel.png", {
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+
+  test("billing checkout selection conflict", async ({ page }) => {
+    await page.route("**/billing/status**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ access: { runtimeProxyAllowed: false } }),
+      }),
+    );
+    await page.route("**/billing/checkout", (route) =>
+      route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "Checkout selection conflicts with an open session",
+          code: "checkout_selection_conflict",
+          selection: {
+            planSlug: "matrix_starter",
+            interval: "annual",
+            regionSlug: "region_nbg1",
+          },
+        }),
+      }),
+    );
+
+    await page.getByTestId("dock-settings").dispatchEvent("click");
+    await page.getByRole("button", { name: "Billing" }).click();
+    await expect(page.getByText("Not active")).toBeVisible();
+    await page.getByRole("button", { name: "Continue to pay" }).click();
+    await expect(
+      page.getByText(
+        "A Starter annual checkout in Nuremberg, Germany is already open. Select those choices to continue it.",
+      ),
+    ).toBeVisible();
+    await page.mouse.move(720, 450);
+    await page.waitForTimeout(300);
+    await expect(page).toHaveScreenshot("billing-checkout-selection-conflict.png", {
       maxDiffPixelRatio: 0.01,
     });
   });

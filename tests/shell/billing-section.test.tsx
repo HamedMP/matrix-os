@@ -290,16 +290,19 @@ describe("BillingSection", () => {
     );
   });
 
-  it("lets the user resume an existing checkout instead of reporting an outage", async () => {
+  it("explains how to resume a checkout with different selections", async () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;
-    const checkoutUrl = "https://checkout.stripe.test/existing";
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (input === "/billing/checkout") {
         return new Response(JSON.stringify({
-          error: "Checkout is already starting",
-          code: "checkout_pending",
-          url: checkoutUrl,
+          error: "Checkout selection conflicts with an open session",
+          code: "checkout_selection_conflict",
+          selection: {
+            planSlug: "matrix_starter",
+            interval: "annual",
+            regionSlug: "region_nbg1",
+          },
         }), {
           status: 409,
           headers: { "content-type": "application/json" },
@@ -310,18 +313,19 @@ describe("BillingSection", () => {
         headers: { "content-type": "application/json" },
       });
     });
-    const navigate = vi.fn();
 
     const { BillingSection } = await loadBillingSection();
 
-    render(<BillingSection mode="provisioning" onCheckoutNavigate={navigate} />);
+    render(<BillingSection mode="provisioning" />);
     await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
 
-    expect(await screen.findByText("A checkout is already open for this computer.")).toBeTruthy();
+    expect(
+      await screen.findByText(
+        "A Starter annual checkout in Nuremberg, Germany is already open. Select those choices to continue it.",
+      ),
+    ).toBeTruthy();
     expect(screen.queryByText("Checkout is unavailable. Try again in a moment.")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Continue existing checkout" }));
-    expect(navigate).toHaveBeenCalledWith(checkoutUrl);
     expect(fetchMock).toHaveBeenCalledWith(
       "/billing/checkout",
       expect.objectContaining({ method: "POST" }),

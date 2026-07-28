@@ -409,9 +409,13 @@ describe('platform billing routes', () => {
     expect(first.status).toBe(200);
     expect(replacement.status).toBe(409);
     await expect(replacement.json()).resolves.toEqual({
-      error: 'Checkout is already starting',
-      code: 'checkout_pending',
-      url: 'https://checkout.stripe.test/session',
+      error: 'Checkout selection conflicts with an open session',
+      code: 'checkout_selection_conflict',
+      selection: {
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        regionSlug: 'region_fsn1',
+      },
     });
     expect(stripe.createCheckoutSession).toHaveBeenCalledOnce();
   });

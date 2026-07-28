@@ -171,26 +171,47 @@ jobs:
           stripe_secret_tmpfile="$(mktemp)"
           stripe_curl_config_tmpfile="$(mktemp)"
           stripe_webhooks_tmpfile="$(mktemp)"
-          trap 'rm -f "$stripe_secret_tmpfile" "$stripe_curl_config_tmpfile" "$stripe_webhooks_tmpfile"' EXIT
-          chmod 600 "$stripe_secret_tmpfile" "$stripe_curl_config_tmpfile" "$stripe_webhooks_tmpfile"
+          stripe_webhook_matches_tmpfile="$(mktemp)"
+          trap 'rm -f "$stripe_secret_tmpfile" "$stripe_curl_config_tmpfile" "$stripe_webhooks_tmpfile" "$stripe_webhook_matches_tmpfile"' EXIT
+          chmod 600 "$stripe_secret_tmpfile" "$stripe_curl_config_tmpfile" "$stripe_webhooks_tmpfile" "$stripe_webhook_matches_tmpfile"
 
           gcloud secrets versions access latest \
             --secret stripe-secret-key \
             --project "$GCP_PROJECT_ID" >"$stripe_secret_tmpfile"
           printf 'header = "Authorization: Bearer %s"\n' "$(<"$stripe_secret_tmpfile")" \
             >"$stripe_curl_config_tmpfile"
-          curl --fail --silent --show-error --max-time 10 \
-            --config "$stripe_curl_config_tmpfile" \
-            --get "https://api.stripe.com/v1/webhook_endpoints" \
-            --data-urlencode "limit=100" \
-            >"$stripe_webhooks_tmpfile"
-
           stripe_webhook_url="${MATRIX_APP_URL%/}/billing/webhooks/stripe"
-          enabled_endpoint_count="$(
-            jq --arg url "$stripe_webhook_url" \
-              '[.data[] | select(.url == $url and .status == "enabled")] | length' \
-              "$stripe_webhooks_tmpfile"
-          )"
+          starting_after=""
+          while true; do
+            stripe_page_args=(--data-urlencode "limit=100")
+            if [ -n "$starting_after" ]; then
+              stripe_page_args+=(--data-urlencode "starting_after=$starting_after")
+            fi
+            curl --fail --silent --show-error --max-time 10 \
+              --config "$stripe_curl_config_tmpfile" \
+              --get "https://api.stripe.com/v1/webhook_endpoints" \
+              "${stripe_page_args[@]}" \
+              >"$stripe_webhooks_tmpfile"
+            jq -c --arg url "$stripe_webhook_url" \
+              '.data[] | select(.url == $url and .status == "enabled")' \
+              "$stripe_webhooks_tmpfile" >>"$stripe_webhook_matches_tmpfile"
+
+            has_more="$(jq -r '.has_more' "$stripe_webhooks_tmpfile")"
+            if [ "$has_more" = "false" ]; then
+              break
+            fi
+            if [ "$has_more" != "true" ]; then
+              echo "Stripe webhook endpoint response did not include a valid has_more value." >&2
+              exit 1
+            fi
+            starting_after="$(jq -r '.data[-1].id // empty' "$stripe_webhooks_tmpfile")"
+            if [ -z "$starting_after" ]; then
+              echo "Stripe webhook endpoint pagination did not include a cursor." >&2
+              exit 1
+            fi
+          done
+
+          enabled_endpoint_count="$(wc -l <"$stripe_webhook_matches_tmpfile" | tr -d '[:space:]')"
           if [ "$enabled_endpoint_count" != "1" ]; then
             echo "Stripe must have exactly one enabled webhook endpoint for the platform billing URL." >&2
             exit 1
@@ -204,12 +225,9 @@ jobs:
             checkout.session.expired
           )
           for event_type in "${required_stripe_events[@]}"; do
-            if ! jq -e --arg url "$stripe_webhook_url" --arg event "$event_type" \
-              'any(.data[];
-                .url == $url
-                and .status == "enabled"
-                and ((.enabled_events | index("*")) != null or (.enabled_events | index($event)) != null)
-              )' "$stripe_webhooks_tmpfile" >/dev/null; then
+            if ! jq -s -e --arg event "$event_type" \
+              'any(.[]; (.enabled_events | index("*")) != null or (.enabled_events | index($event)) != null)' \
+              "$stripe_webhook_matches_tmpfile" >/dev/null; then
               echo "Stripe webhook is missing required event: $event_type" >&2
               exit 1
             fi

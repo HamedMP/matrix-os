@@ -113,6 +113,21 @@ function captureBillingTelemetry(
   );
 }
 
+function checkoutSelectionConflictMessage(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const selection = value as Record<string, unknown>;
+  const profile = MATRIX_BILLING_SERVER_PROFILES.find(
+    (candidate) => candidate.planSlug === selection.planSlug,
+  );
+  const region = MATRIX_BILLING_REGIONS.find(
+    (candidate) => candidate.featureSlug === selection.regionSlug,
+  );
+  if (!profile || !region || (selection.interval !== "monthly" && selection.interval !== "annual")) {
+    return null;
+  }
+  return `A ${profile.label} ${selection.interval} checkout in ${region.label} is already open. Select those choices to continue it.`;
+}
+
 function CheckoutPanel({
   mode,
   onCheckoutIntent,
@@ -144,7 +159,6 @@ function CheckoutPanel({
   const annualSavings = annualSavingsPercent(selectedProfile);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
-  const [existingCheckoutUrl, setExistingCheckoutUrl] = useState<string | null>(null);
   const telemetryPropertiesRef = useRef(telemetryProperties);
 
   useEffect(() => {
@@ -179,7 +193,6 @@ function CheckoutPanel({
     }
     setCheckoutLoading(true);
     setCheckoutError(null);
-    setExistingCheckoutUrl(null);
     captureBillingTelemetry("checkout_intent", telemetryPropertiesRef.current);
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), BILLING_CHECKOUT_TIMEOUT_MS);
@@ -207,18 +220,20 @@ function CheckoutPanel({
           error_kind: err instanceof Error ? err.name : typeof err,
         });
         return null;
-      })) as { code?: unknown; url?: unknown } | null;
+      })) as { code?: unknown; selection?: unknown; url?: unknown } | null;
       if (!response.ok) {
-        if (
-          response.status === 409
-          && body?.code === "checkout_pending"
-          && typeof body.url === "string"
-          && body.url.length > 0
-        ) {
-          setExistingCheckoutUrl(body.url);
+        if (response.status === 409 && body?.code === "checkout_selection_conflict") {
+          const message = checkoutSelectionConflictMessage(body.selection);
+          reportCheckoutError(
+            "checkout_selection_conflict",
+            message ?? "A checkout with different choices is already open for this computer.",
+          );
+          return;
+        }
+        if (response.status === 409 && body?.code === "checkout_pending") {
           reportCheckoutError(
             "checkout_pending",
-            "A checkout is already open for this computer.",
+            "Checkout is still being confirmed. Try again in a moment.",
           );
           return;
         }
@@ -357,22 +372,7 @@ function CheckoutPanel({
         No trial. Plan changes and coupons are handled in the billing portal.
       </p>}
       {checkoutError && (
-        <div className="mt-2 text-center text-xs text-red-300">
-          <p>{checkoutError}</p>
-          {existingCheckoutUrl && (
-            <button
-              type="button"
-              onClick={() =>
-                (onCheckoutNavigate ?? ((target: string) => window.location.assign(target)))(
-                  existingCheckoutUrl,
-                )
-              }
-              className="mt-2 font-semibold text-cream underline decoration-cream/40 underline-offset-4 hover:decoration-cream"
-            >
-              Continue existing checkout
-            </button>
-          )}
-        </div>
+        <p className="mt-2 text-center text-xs text-red-300">{checkoutError}</p>
       )}
     </aside>
   );

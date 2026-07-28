@@ -314,6 +314,8 @@ describe('CI workflows', () => {
     expect(workflow).toContain('/billing/webhooks/stripe');
     expect(workflow).toContain('https://api.stripe.com/v1/webhook_endpoints');
     expect(workflow).toContain('stripe-secret-key');
+    expect(workflow).toContain('has_more');
+    expect(workflow).toContain('starting_after');
   });
 
   it('keeps production platform Cloud Run warm while allowing staging to scale to zero', () => {
