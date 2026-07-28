@@ -854,8 +854,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
 
-    expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}}"');
-    expect(workflow).toContain('git checkout --detach "${{ needs.gate.outputs.base_sha }}"');
+    expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${HEAD_SHA:0:7}}"');
+    expect(workflow).toContain('bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${BASE_SHA:0:7}');
     expect(workflow).not.toContain('dist/activation/**');
     expect(workflow).toContain('for phase in ${BOOTSTRAP_VERSION:+bootstrap} activation');
     expect(workflow).toContain('for target_version in ${BOOTSTRAP_VERSION:+"$BOOTSTRAP_VERSION"} "$VERSION"');
@@ -931,7 +931,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then');
     expect(workflow).toContain('ref: ${{ needs.gate.outputs.head_sha }}');
     expect(workflow).toContain('REQUESTED_VERSION: ${{ needs.gate.outputs.requested_version }}');
-    expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}}"');
+    expect(workflow).toContain('VERSION="${REQUESTED_VERSION:-v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${HEAD_SHA:0:7}}"');
+    expect(workflow).toContain('([0-9]+-[0-9]+-)?[0-9a-f]{7}$');
     expect(workflow).toContain('Invalid pinned preview version');
     expect(workflow).toContain('[ "${REQUESTED_VERSION##*-}" != "${head_sha:0:7}" ]');
   });
@@ -967,16 +968,11 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   });
 
   it('preview deployment waits for one accepted target instead of trusting aggregate HTTP 200', () => {
-    const root = process.cwd();
-    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
-
+    const workflow = readFileSync(join(process.cwd(), '.github/workflows/preview-vps.yml'), 'utf8');
     expect(workflow).toContain('deploy_deadline=$((SECONDS + 4500))');
     expect(workflow.slice(workflow.indexOf('  deploy:'), workflow.indexOf('  teardown:'))).toContain('timeout-minutes: 180');
-    expect(workflow).toContain(
-      '.triggered == 1 and .failed == 0 and (.results | length) == 1',
-    );
-    expect(workflow).toContain('.results[0].handle == $handle');
-    expect(workflow).toContain('.results[0].status == "triggered"');
+    expect(workflow).toContain('.triggered == 1 and .failed == 0 and (.results | length) == 1');
+    expect(workflow).toMatch(/\.results\[0\]\.handle == \$handle[\s\S]*\.results\[0\]\.status == "triggered"/);
     expect(workflow).toContain('Waiting for the preview update boundary.');
     expect(workflow).toContain('Preview deploy was not accepted before the deadline.');
   });
