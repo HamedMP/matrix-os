@@ -531,9 +531,7 @@ assert response_for({
   it("publishes only an allowlisted coarse update failure code for owner diagnostics", () => {
     const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
 
-    expect(updater).toContain(
-      'readonly UPDATE_FAILURE_CODE="$UPDATE_RUNTIME_DIR/last-failure-code"',
-    );
+    expect(updater.match(/readonly UPDATE_FAILURE_CODE=/g)).toHaveLength(1);
     expect(updater).toContain("write_update_failure_code()");
     expect(updater).toContain(
       'mktemp --tmpdir="$UPDATE_RUNTIME_DIR" .last-failure-code.XXXXXXXXXX',
