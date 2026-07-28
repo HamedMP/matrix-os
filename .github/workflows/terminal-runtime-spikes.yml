@@ -440,7 +440,8 @@ jobs:
             sleep 15
           done
           if [ "$spike_control_ready" != true ]; then
-            echo "Exact-head spike control did not become ready." >&2
+            update_status="$(jq -r 'if .exitCode != 0 then "unavailable" elif .stdout == "Update service: idle\n" then "idle_mismatch" elif .stdout == "Update service: running\n" then "running" elif .stdout == "Update service: failed\n" then "failed" else "unexpected" end' "$run_response" 2>/dev/null || printf unavailable)"
+            echo "update_status=${update_status}" >&2
             exit 1
           fi
           run_body="$(jq -cn --arg sha "$HEAD_SHA" '{

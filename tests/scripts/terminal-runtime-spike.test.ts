@@ -271,7 +271,7 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('spike_control_deadline=$((SECONDS + 300))');
     expect(workflow).toContain('command:["/opt/matrix/bin/matrix-update","status"]');
     expect(workflow).toContain('.stdout == "Update service: idle\\n"');
-    expect(workflow).toContain('Waiting for exact-head spike control.');
+    expect(workflow).toContain('echo "update_status=${update_status}" >&2');
     expect(workflow).toContain('spike_launch_deadline=$((SECONDS + 300))');
     expect(workflow).toContain(
       '[ "$diagnostic" = "spike_control_unavailable" ]',
