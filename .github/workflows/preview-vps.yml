@@ -235,7 +235,6 @@ jobs:
           ./scripts/build-host-bundle.sh
           mv dist/host-bundle dist/bootstrap
           git checkout --detach "${{ needs.gate.outputs.head_sha }}"
-
       - name: Build host bundle
         env:
           HOST_BUNDLE_VERSION: ${{ steps.version.outputs.version }}

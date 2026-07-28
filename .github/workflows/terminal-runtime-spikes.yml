@@ -105,7 +105,6 @@ jobs:
           done
           echo "Disposable preview disposal did not converge." >&2
           exit 1
-
   bootstrap:
     name: Bootstrap legacy disposable updater
     if: github.event.label.name == 'terminal-updater-bootstrap' && github.event.pull_request.head.repo.full_name == github.repository
