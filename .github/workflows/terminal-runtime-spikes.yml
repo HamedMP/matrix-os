@@ -265,9 +265,13 @@ jobs:
             ' "$1"
           }
           while [ "$SECONDS" -lt "$deadline" ]; do
-            fleet="$(curl --fail --silent --show-error --max-time 30 \
+            if ! fleet="$(curl --fail --silent --show-error --max-time 30 \
               -H "authorization: Bearer ${PLATFORM_SECRET}" \
-              "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"
+              "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"; then
+              echo "Fleet query failed; retrying." >&2
+              sleep 15
+              continue
+            fi
             machine="$(jq -ce --arg handle "$HANDLE" '
               [.machines[] | select(.handle == $handle and .runtimeSlot == $handle and .status == "running")]
               | if length == 1 then .[0] else {} end

@@ -23,13 +23,10 @@ stopEmptiesCgroup keeperLossDeterministic serverLossDeterministic readinessGated
 const s2Checks = passing(`exactOptionSyntax cacheMappedByRuntime layoutRestored viewportRestored
 scrollbackBounded lossWindowBounded commandsConfirmationGated forceRunAbsent corruptionFallback
 deletionComplete diskAccountingBounded liveSerializationDisableSafe`);
-const productionChecks = passing(`runtimeLive continuousOutput codingAgentPreserved
-twoDevicesOneRuntime detachPreservesRuntime renamePreservesIdentity bundleOnePreservesRuntime
-bundleTwoPreservesRuntime supervisorPreserved failedUpdatePreservesRuntime
-explicitRollbackPreservesRuntime daemonReloadPreservesRuntime forceRunAbsent journalPrivacy
-rebootStartsNoRuntime rebootShowsInterrupted explicitRecoverRestoresRuntime
-concurrentRecoverSingleUnit corruptionFallsBackFresh recoverDeleteCannotResurrect
-deleteWaitsForEmptyCgroup deleteRemovesRecoveryState`);
+const productionChecks = passing(`runtimeLive continuousOutput codingAgentPreserved twoDevicesOneRuntime
+detachPreservesRuntime renamePreservesIdentity bundleOnePreservesRuntime bundleTwoPreservesRuntime
+supervisorPreserved failedUpdatePreservesRuntime explicitRollbackPreservesRuntime daemonReloadPreservesRuntime forceRunAbsent journalPrivacy
+rebootStartsNoRuntime rebootShowsInterrupted explicitRecoverRestoresRuntime concurrentRecoverSingleUnit corruptionFallsBackFresh recoverDeleteCannotResurrect deleteWaitsForEmptyCgroup deleteRemovesRecoveryState`);
 async function evidence(overrides: Record<string, unknown> = {}): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'matrix-terminal-evidence-'));
   roots.push(root);
@@ -188,10 +185,7 @@ describe('terminal runtime spike evidence', () => {
     expect(syncAgent).toContain(
       'if [ -f "$extract_dir/bin/zellij" ]; then\n    backup_zellij_for_rollback',
     );
-    const applyUpdate = syncAgent.slice(
-      syncAgent.indexOf('apply_update()'),
-      syncAgent.indexOf('# ── Rollback'),
-    );
+    const applyUpdate = syncAgent.slice(syncAgent.indexOf('apply_update()'), syncAgent.indexOf('# ── Rollback'));
     const serviceStop = applyUpdate.indexOf(
       'systemctl stop matrix-symphony matrix-gateway matrix-shell',
     );
@@ -261,6 +255,9 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('timeout-minutes: 180');
     expect(workflow.split('\n')).toContain('          deadline=$((SECONDS + 4500))');
     expect(workflow).toContain("runtime_version=\"$(jq -r '.runtimeVersion // \"\"' <<<\"$machine\")\"");
+    expect(workflow).toMatch(
+      /if ! fleet="\$\(curl --fail[\s\S]{0,300}\/vps\/fleet"\)"; then\n\s+echo "Fleet query failed; retrying\." >&2\n\s+sleep 15\n\s+continue\n\s+fi/,
+    );
     expect(workflow).toContain('echo "update_diagnostic=${update_diagnostic}"');
     expect(workflow).toContain(
       'test("^Update service: (idle|running|failed) phase=(idle|admitted|resolving|downloading|validating|extracting|preparing|committing|health_check|rollback|failed) failure=(none|[a-z0-9_]{1,64})\\\\n$")',
@@ -273,9 +270,7 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).toContain('.stdout == "Update service: idle\\n"');
     expect(workflow).toContain('echo "update_status=${update_status}" >&2');
     expect(workflow).toContain('spike_launch_deadline=$((SECONDS + 300))');
-    expect(workflow).toContain(
-      '[ "$diagnostic" = "spike_control_unavailable" ]',
-    );
+    expect(workflow).toContain('[ "$diagnostic" = "spike_control_unavailable" ]');
     expect(workflow.match(/--insecure/g)).toHaveLength(4);
     expect(workflow).toContain('PLATFORM_SECRET never leaves the runner');
     expect(workflow.match(/gateway_http_status=\$http_code/g)).toHaveLength(2);
