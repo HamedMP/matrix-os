@@ -395,7 +395,7 @@ assert b'"status":"accepted"' in responses[0]
     expect(updater).toContain("sleep 6");
   });
 
-  it("clears an orphaned running state when request publication loses no queued work", () => {
+  it("clears a failed publication so a later request can be admitted", () => {
     const service = join(root, "distro/customer-vps/host-bin/matrix-update-service");
     const regression = String.raw`
 import pathlib
@@ -413,8 +413,14 @@ runtime_globals["read_frame"] = lambda connection: (
     b'{"schemaVersion":1,"operation":"Repair"}'
 )
 runtime_globals["_read_state"] = lambda: "idle"
-runtime_globals["publish_request"] = lambda request: False
 runtime_globals["_write_state"] = states.append
+attempts = iter([OSError("disk failure"), True])
+def publish(request):
+    outcome = next(attempts)
+    if isinstance(outcome, Exception):
+        raise outcome
+    return outcome
+runtime_globals["publish_request"] = publish
 
 class Connection:
     def settimeout(self, timeout):
@@ -432,10 +438,11 @@ class Worker:
 with tempfile.TemporaryDirectory() as directory:
     runtime_globals["REQUEST_PATH"] = pathlib.Path(directory) / "request.json"
     module["_serve_connection"](Connection(), 1000, Worker())
+    module["_serve_connection"](Connection(), 1000, Worker())
 
-assert states == ["running", "idle"]
-assert len(responses) == 1
-assert b'"code":"busy"' in responses[0]
+assert states == ["running", "idle", "running"]
+assert b'"code":"failed"' in responses[0]
+assert b'"status":"accepted"' in responses[1]
 `;
     expect(spawnSync("python3", ["-c", regression, service]).status).toBe(0);
   });

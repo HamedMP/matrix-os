@@ -409,13 +409,18 @@ def _serve_connection(
         connection.sendall(_error("busy", "Update operation failed"))
         return
     _write_state("running")
-    if not publish_request(request):
+    try:
+        published = publish_request(request)
+    except OSError:
+        published = False
+    if not published:
         # A root-published request may have won the no-replace link race. Keep
         # that queued operation authoritative; otherwise undo our admission
         # state so a failed publication cannot wedge the service until restart.
-        if not REQUEST_PATH.exists():
+        queued = REQUEST_PATH.exists()
+        if not queued:
             _write_state("idle")
-        connection.sendall(_error("busy", "Update operation failed"))
+        connection.sendall(_error("busy" if queued else "failed", "Update operation failed"))
         return
     # The worker checks the typed request before every bounded six-second
     # sleep. Avoid asynchronous wakeup signals entirely: the service socket can
