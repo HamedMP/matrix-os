@@ -180,6 +180,21 @@ except module["ProtocolError"]:
     expect(updater).not.toContain("--force-run-commands");
   });
 
+  it("installs and rolls back the optional preview proof helper with the host layer", () => {
+    const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
+
+    expect(updater).toContain('name="matrix-terminal-spike-control"');
+    expect(updater).toContain(
+      'rm -f -- "$BIN_DIR/matrix-terminal-spike-control"',
+    );
+    expect(updater).toContain(
+      '"$BIN_DIR/matrix-terminal-spike-control"; do',
+    );
+    expect(updater).toContain(
+      'matrix-terminal-runtime-op \\\n    matrix-terminal-spike-control; do',
+    );
+  });
+
   it("publishes operation state through collision-resistant root-owned temp files", () => {
     const updater = read("distro/customer-vps/host-bin/matrix-sync-agent");
 
