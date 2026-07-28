@@ -268,12 +268,12 @@ describe('terminal runtime spike evidence', () => {
     expect(workflow).not.toContain("jq -r '.imageVersion // \"\"'");
     expect(workflow).toContain('--resolve "app.matrix-os.com:443:${PUBLIC_IPV4}"');
     expect(workflow).toContain("'https://app.matrix-os.com/api/terminal/run'");
-    expect(workflow).toContain('spike_control_deadline=$((SECONDS + 4500))');
+    expect(workflow).toContain('spike_control_deadline=$((SECONDS + 300))');
     expect(workflow).toContain(
       'command:["/usr/bin/test","-x","/opt/matrix/bin/matrix-terminal-spike-control"]',
     );
     expect(workflow).toContain('Waiting for exact-head spike control.');
-    expect(workflow).toContain('spike_launch_deadline=$((SECONDS + 4500))');
+    expect(workflow).toContain('spike_launch_deadline=$((SECONDS + 300))');
     expect(workflow).toContain(
       '[ "$diagnostic" = "spike_control_unavailable" ]',
     );
@@ -475,6 +475,8 @@ describe('terminal runtime spike evidence', () => {
     expect(runner).toContain('run_key="$pr_head_sha"');
     expect(runner).toContain('evidence_root="/tmp/matrix-terminal-spike-evidence-${run_key}"');
     expect(runner).toContain('base_id="1${pr_head_sha:0:31}"');
+    expect(runner).toContain("sleep 2\ncleanup\ntrap 'status=$?");
+    expect(runner).toContain('curl --fail --silent --max-time 1 http://127.0.0.1:4000/health');
     expect(runner).toContain('zellij delete-session "matrix-t-${runtime_id}" --force');
     expect(runner).toContain('attach-probe.mjs');
     expect(attachProbe).toContain('clientCgroup');

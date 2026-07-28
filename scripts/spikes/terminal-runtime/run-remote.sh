@@ -43,6 +43,7 @@ cleanup() {
 build_summary() {
   /opt/matrix/runtime/node/bin/node "$source_dir/build-evidence.mjs" "$evidence_root" "$pr_head_sha" || true
 }
+sleep 2
 cleanup
 trap 'status=$?; cleanup; build_summary; exit $status' EXIT
 rm -rf -- "$evidence_root" "$runtime_root" "$cache_root" "$config_root" "$config_home_root" "$data_root"
@@ -195,7 +196,9 @@ wait_main_pid_changed() {
   for _ in $(seq 1 600); do
     state="$(systemctl is-active "$unit" 2>/dev/null || true)"
     current="$(systemctl show "$unit" -p MainPID --value 2>/dev/null || true)"
-    if [ "$state" = active ] && printf '%s' "$current" | grep -Eq '^[1-9][0-9]*$' && [ "$current" != "$previous" ]; then
+    if [ "$state" = active ] && printf '%s' "$current" | grep -Eq '^[1-9][0-9]*$' &&
+      [ "$current" != "$previous" ] && { [ "$unit" != matrix-gateway.service ] ||
+      curl --fail --silent --max-time 1 http://127.0.0.1:4000/health >/dev/null; }; then
       printf '%s' "$current"
       return 0
     fi

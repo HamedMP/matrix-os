@@ -114,7 +114,6 @@ fail_phase() {
   write_state failed
   exit 1
 }
-
 phase1() {
   trap fail_phase ERR
   install -d -o root -g root -m 0700 "$root_parent"
@@ -216,7 +215,6 @@ EOF
   fi
   write_state phase1-ready
 }
-
 phase2() {
   trap fail_phase ERR
   [ "$(cat "$state_file")" = reboot-scheduled ]

@@ -417,7 +417,7 @@ jobs:
             command:["/usr/bin/test","-x","/opt/matrix/bin/matrix-terminal-spike-control"],
             timeoutMs:10000
           }')"
-          spike_control_deadline=$((SECONDS + 4500))
+          spike_control_deadline=$((SECONDS + 300))
           spike_control_ready=false
           while [ "$SECONDS" -lt "$spike_control_deadline" ]; do
             set +e
@@ -456,10 +456,7 @@ jobs:
           # accepted by the platform's CUSTOMER_VPS_TLS_VERIFY=false transport.
           # Only this disposable preview's derived gateway token crosses it;
           # PLATFORM_SECRET never leaves the runner.
-          # A clean preview can spend more than ten minutes downloading and
-          # validating the 672 MiB host bundle before the atomic service stop.
-          # Keep this bounded, but leave observed runtime with deployment margin.
-          spike_launch_deadline=$((SECONDS + 4500))
+          spike_launch_deadline=$((SECONDS + 300))
           spike_launch_ready=false
           while [ "$SECONDS" -lt "$spike_launch_deadline" ]; do
             set +e
