@@ -5,6 +5,7 @@
 #include <poll.h>
 #include <pwd.h>
 #include <signal.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,6 +33,43 @@ static int set_cloexec(int fd) {
   int flags = fcntl(fd, F_GETFD);
   if (flags < 0) return -1;
   return fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+}
+
+static int notify_ready(void) {
+  const char *notify_socket = getenv("NOTIFY_SOCKET");
+  static const char ready[] = "READY=1";
+  if (notify_socket == NULL || notify_socket[0] == '\0') {
+    errno = ENOENT;
+    return -1;
+  }
+
+  size_t path_length = strlen(notify_socket);
+  if (path_length >= sizeof(((struct sockaddr_un *)0)->sun_path)) {
+    errno = ENAMETOOLONG;
+    return -1;
+  }
+
+  int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+  if (fd < 0) return -1;
+
+  struct sockaddr_un address;
+  memset(&address, 0, sizeof(address));
+  address.sun_family = AF_UNIX;
+  if (notify_socket[0] == '@') {
+    address.sun_path[0] = '\0';
+    memcpy(address.sun_path + 1, notify_socket + 1, path_length - 1);
+  } else {
+    memcpy(address.sun_path, notify_socket, path_length + 1);
+  }
+  socklen_t address_length = (socklen_t)(
+      offsetof(struct sockaddr_un, sun_path) + path_length +
+      (notify_socket[0] == '@' ? 0 : 1));
+  ssize_t sent = sendto(fd, ready, sizeof(ready) - 1, MSG_NOSIGNAL,
+                        (struct sockaddr *)&address, address_length);
+  int saved_errno = errno;
+  close(fd);
+  errno = saved_errno;
+  return sent == (ssize_t)(sizeof(ready) - 1) ? 0 : -1;
 }
 
 static int create_listener(const char *path, uid_t owner_uid, gid_t owner_gid) {
@@ -201,7 +239,11 @@ int main(void) {
   };
   pid_t maintenance = spawn_maintenance();
   size_t workers = 0;
-  if (maintenance < 0) stopping = 1;
+  int exit_status = 0;
+  if (maintenance < 0 || notify_ready() < 0) {
+    exit_status = 1;
+    stopping = 1;
+  }
   while (!stopping) {
     int result = poll(listeners, 2, 1000);
     if (result < 0) {
@@ -244,5 +286,5 @@ int main(void) {
   if (maintenance > 0) (void)kill(maintenance, SIGTERM);
   while (waitpid(-1, NULL, 0) > 0 || errno == EINTR) {
   }
-  return 0;
+  return exit_status;
 }

@@ -35,6 +35,8 @@ describe('customer VPS terminal runtime services', () => {
     expect(supervisor).toContain('ExecStart=/opt/matrix/bin/matrix-terminal-supervisor');
     expect(supervisor).toContain('RuntimeDirectory=matrix-terminal-runtime');
     expect(supervisor).toContain('RuntimeDirectoryMode=0750');
+    expect(supervisor).toContain('Type=notify');
+    expect(supervisor).toContain('NotifyAccess=main');
     expect(supervisor).toContain('WantedBy=multi-user.target');
     expect(supervisor).not.toContain('matrix-terminal-session@');
 
@@ -111,6 +113,8 @@ describe('customer VPS terminal runtime services', () => {
       expect(source).toContain('/run/matrix-terminal-runtime/supervisor.sock');
       expect(source).toContain('/run/matrix-terminal-runtime/keeper.sock');
       expect(source).toContain('/opt/matrix/bin/matrix-terminal-runtime-op');
+      expect(source).toContain('NOTIFY_SOCKET');
+      expect(source).toContain('READY=1');
       expect(source).toContain('#define MAX_WORKERS 128');
       expect(source).toContain('workers >= MAX_WORKERS');
       expect(source).not.toContain('system(');

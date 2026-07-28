@@ -4,7 +4,8 @@ After=local-fs.target
 Before=matrix-gateway.service
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
 User=root
 Group=matrix
 RuntimeDirectory=matrix-terminal-runtime
